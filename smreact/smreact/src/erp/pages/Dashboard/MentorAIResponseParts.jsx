@@ -45,6 +45,53 @@ export function TrendIndicator({ trend, compact = false }) {
   );
 }
 
+/* AnimatedNumber — counts up from 0 to the numeric part of `value` on
+   mount (Total Students: 86, Attendance: 93.2%, Pending Fees: Rs.
+   486,000, …), preserving whatever prefix/suffix/comma-formatting the
+   value already had. Values with no digits at all (a letter grade
+   like "A", a word like "Improving") are rendered as plain, static
+   text — nothing to count, so nothing is animated. Purely a display
+   effect: the actual `value` string driving it is untouched, still
+   whatever the response data already computed. */
+const NUMBER_SHAPE_RE = /^([^\d]*)([\d,]*\d(?:\.\d+)?)([^\d]*)$/;
+const ANIMATED_NUMBER_MS = 900;
+
+export function AnimatedNumber({ value }) {
+  const text = String(value ?? '');
+  const match = text.match(NUMBER_SHAPE_RE);
+  const [display, setDisplay] = React.useState(match ? text : text);
+  const reduceMotion = typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false;
+
+  React.useEffect(() => {
+    if (!match || reduceMotion) { setDisplay(text); return undefined; }
+    const [, prefix, numStr, suffix] = match;
+    const target = Number(numStr.replace(/,/g, ''));
+    const decimals = numStr.includes('.') ? numStr.split('.')[1].length : 0;
+    const useGrouping = numStr.includes(',');
+    if (!Number.isFinite(target)) { setDisplay(text); return undefined; }
+    const start = performance.now();
+    let raf;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / ANIMATED_NUMBER_MS);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      const current = target * eased;
+      const formatted = current.toLocaleString('en-US', {
+        minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+        useGrouping,
+      });
+      setDisplay(`${prefix}${formatted}${suffix}`);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  return <>{display}</>;
+}
+
 export function MetricRow({ metrics }) {
   if (!metrics || metrics.length === 0) return null;
   return (
@@ -53,7 +100,7 @@ export function MetricRow({ metrics }) {
         <div className="mai-metric" key={i}>
           <div className="mai-metric-label">{m.label}</div>
           <div className="mai-metric-value" style={{ color: TONE_COLOR[m.tone] || TONE_COLOR.neutral }}>
-            {m.value}
+            <AnimatedNumber value={m.value} />
             {m.trend && <TrendIndicator trend={m.trend} compact />}
           </div>
           {m.sub && <div className="mai-metric-sub">{m.sub}</div>}
@@ -255,6 +302,134 @@ export function LoadingState({ label = 'Mentor AI is analyzing your school data�
     <div className="mai-loading">
       <span className="mai-loading-spin"><i className="fa-solid fa-circle-notch fa-spin" aria-hidden="true" /></span>
       <span>{label}</span>
+    </div>
+  );
+}
+
+/* AgentProgress — the "agentic" working animation: steps light up on a
+   fixed cadence, independent of when the real (mock) service call
+   resolves. MentorAIPanel awaits Promise.all([askMentorAI(...), a
+   minimum-duration timer]) so this always plays out fully at least once. */
+const AGENT_STEP_MS = 550;
+
+/* Ambient "AI is thinking" phrases — purely cosmetic flavor text shown
+   ABOVE the real, category-specific step list (which still comes
+   unchanged from mentorAiService.stepsForQuery below). Rotates on its
+   own cadence so it doesn't have to line up 1:1 with the real steps. */
+const AGENT_AMBIENT_PHRASES = ['Analyzing school data…', 'Checking ERP records…', 'Finding relevant insights…', 'Preparing your report…'];
+const AGENT_AMBIENT_MS = 900;
+
+export function AgentProgress({ steps }) {
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [ambientIndex, setAmbientIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    setActiveIndex(0);
+    if (!steps || steps.length <= 1) return undefined;
+    const id = setInterval(() => {
+      setActiveIndex((i) => (i < steps.length - 1 ? i + 1 : i));
+    }, AGENT_STEP_MS);
+    return () => clearInterval(id);
+  }, [steps]);
+
+  React.useEffect(() => {
+    setAmbientIndex(0);
+    const id = setInterval(() => {
+      setAmbientIndex((i) => (i + 1) % AGENT_AMBIENT_PHRASES.length);
+    }, AGENT_AMBIENT_MS);
+    return () => clearInterval(id);
+  }, [steps]);
+
+  if (!steps || steps.length === 0) return <LoadingState />;
+
+  return (
+    <div className="mai-agent">
+      <div className="mai-agent-h">
+        <span className="mai-agent-h-ic"><i className="fa-solid fa-robot" aria-hidden="true" /></span>
+        <span>Mentor AI Agent is working…</span>
+      </div>
+      <div className="mai-agent-ambient">
+        <span className="mai-agent-ambient-txt" key={ambientIndex}>{AGENT_AMBIENT_PHRASES[ambientIndex]}</span>
+        <span className="mai-agent-dots" aria-hidden="true"><span /><span /><span /></span>
+      </div>
+      <ul className="mai-agent-steps">
+        {steps.map((label, i) => {
+          const state = i < activeIndex ? 'done' : i === activeIndex ? 'active' : 'pending';
+          return (
+            <li key={label} className={`mai-agent-step mai-agent-step--${state}`}>
+              <span className="mai-agent-step-ic">
+                {state === 'done' && <i className="fa-solid fa-check" aria-hidden="true" />}
+                {state === 'active' && <i className="fa-solid fa-circle-notch fa-spin" aria-hidden="true" />}
+                {state === 'pending' && <i className="fa-regular fa-circle" aria-hidden="true" />}
+              </span>
+              <span>{label}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/* ExportMenu — the top-right "Export" dropdown (PDF / Excel / Word) on
+   every response card. Shows a brief "Generating…" state before the
+   file (or print dialog, for PDF) actually fires. Positioned in the
+   response header, next to the title — Copy/Follow-up remain a
+   separate bottom row (see SecondaryActions below). */
+export function ExportMenu({ onExport }) {
+  const [open, setOpen] = React.useState(false);
+  const [generating, setGenerating] = React.useState(null); // 'pdf' | 'excel' | 'word' | null
+  const wrapRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const onDocClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const runExport = (format) => {
+    setOpen(false);
+    setGenerating(format);
+    setTimeout(() => {
+      onExport?.(format);
+      setGenerating(null);
+    }, 350);
+  };
+
+  return (
+    <div className="mai-export" ref={wrapRef}>
+      <button type="button" className="mai-export-btn" onClick={() => setOpen((o) => !o)} disabled={!!generating}>
+        {generating ? (
+          <><i className="fa-solid fa-circle-notch fa-spin" aria-hidden="true" /> Generating {generating.toUpperCase()}…</>
+        ) : (
+          <><i className="fa-solid fa-file-export" aria-hidden="true" /> Export <i className="fa-solid fa-chevron-down mai-export-caret" aria-hidden="true" /></>
+        )}
+      </button>
+      {open && (
+        <div className="mai-export-menu" role="menu">
+          <button type="button" role="menuitem" onClick={() => runExport('pdf')}><i className="fa-solid fa-file-pdf" aria-hidden="true" /> PDF</button>
+          <button type="button" role="menuitem" onClick={() => runExport('excel')}><i className="fa-solid fa-file-excel" aria-hidden="true" /> Excel</button>
+          <button type="button" role="menuitem" onClick={() => runExport('word')}><i className="fa-solid fa-file-word" aria-hidden="true" /> Word</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* SecondaryActions — the bottom Copy Summary / Ask Follow-up row, kept
+   separate from Export now that Export lives top-right on the card. */
+export function SecondaryActions({ onCopy, onFollowUp, copied }) {
+  return (
+    <div className="mai-actions">
+      <button type="button" className="mai-action-btn" onClick={onCopy}>
+        <i className={`fa-solid ${copied ? 'fa-check' : 'fa-copy'}`} aria-hidden="true" /> {copied ? 'Copied' : 'Copy Summary'}
+      </button>
+      {onFollowUp && (
+        <button type="button" className="mai-action-btn mai-action-btn--primary" onClick={onFollowUp}>
+          <i className="fa-solid fa-arrow-turn-up" aria-hidden="true" /> Ask Follow-up
+        </button>
+      )}
     </div>
   );
 }

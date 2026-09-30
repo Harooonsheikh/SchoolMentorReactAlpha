@@ -1,6 +1,5 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
-import UniversalSearch from '../../shared/UniversalSearch';
 import MentorAISearchBar from './MentorAISearchBar';
 import {
   AreaChart, Area, Line, BarChart, Bar, ComposedChart, Cell,
@@ -8,18 +7,32 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
 } from 'recharts';
 import { useModules } from '../../context/ModuleContext';
-import { usePermissions } from '../../context/PermissionsContext';
+import { DASH_CSS } from './Dashboard';
 import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal from './AppPendingReportModal';
+import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvanceAdjustmentReportModal } from './DailyReceivingReport';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
+import { buildDiscountMap, computeFeeDashboardExtras } from './feeDashboardExtra';
+import { effectivePermsForUser } from '../UserPermissions/permissionsData';
 import useAsync from '../../hooks/useAsync';
-import * as feeService from '../../services/feeService';
-import * as dashboardService from '../../services/dashboardService';
-import * as accountsService from '../../services/accountsService';
-import * as attendanceService from '../../services/attendanceService';
-import * as notificationService from '../../services/notificationService';
+import * as accountsService from './_forked/services/accountsService';
+import * as feeService from './_forked/services/feeService';
+import { buildStandardReportHtml } from '../../reports/reportKit';
 import {
+  STUDENT_STATS,
+  HR_STATS,
+  CRM_STATS,
+  EXAM_STATS,
+  ACADEMICS_STATS,
+  ATTENDANCE_STATS,
+  FEE_STATS,
+  AUDIT_STATS,
   MODULE_COLOR,
+  SCHOOL_MENTOR_ANNOUNCEMENTS,
+  TEACHER_APP_STATUS,
+  PARENT_APP_STATUS,
+  STUDENT_ATTENDANCE_TODAY,
+  STAFF_ATTENDANCE_TODAY,
 } from './dashboardData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -48,13 +61,134 @@ import {
 
 /* ─── Mock data for the new sections (matches spec exactly) ─────── */
 
+const LP_DATA_BY_CLASS = {
+  'II-Pre': [
+    { subject: 'Math',           classwork: 1,  notebook: 1 },
+    { subject: 'English',        classwork: 1,  notebook: 1 },
+    { subject: 'Science',        classwork: 3,  notebook: 2 },
+    { subject: 'Social Studies', classwork: 13, notebook: 6 },
+    { subject: 'Urdu',           classwork: 1,  notebook: 0 },
+    { subject: 'DLL',            classwork: 1,  notebook: 1 },
+  ],
+  'I': [
+    { subject: 'Math', classwork: 8, notebook: 6 }, { subject: 'English', classwork: 9, notebook: 7 },
+    { subject: 'Science', classwork: 6, notebook: 5 }, { subject: 'Social Studies', classwork: 10, notebook: 8 },
+    { subject: 'Urdu', classwork: 7, notebook: 6 }, { subject: 'DLL', classwork: 4, notebook: 3 },
+  ],
+  'II': [
+    { subject: 'Math', classwork: 12, notebook: 10 }, { subject: 'English', classwork: 14, notebook: 11 },
+    { subject: 'Science', classwork: 9, notebook: 7 }, { subject: 'Social Studies', classwork: 15, notebook: 12 },
+    { subject: 'Urdu', classwork: 11, notebook: 9 }, { subject: 'DLL', classwork: 6, notebook: 4 },
+  ],
+  'III': [
+    { subject: 'Math', classwork: 16, notebook: 13 }, { subject: 'English', classwork: 18, notebook: 15 },
+    { subject: 'Science', classwork: 12, notebook: 10 }, { subject: 'Social Studies', classwork: 17, notebook: 14 },
+    { subject: 'Urdu', classwork: 14, notebook: 11 }, { subject: 'DLL', classwork: 8, notebook: 6 },
+  ],
+  'IV': [
+    { subject: 'Math', classwork: 18, notebook: 15 }, { subject: 'English', classwork: 19, notebook: 16 },
+    { subject: 'Science', classwork: 15, notebook: 12 }, { subject: 'Social Studies', classwork: 18, notebook: 15 },
+    { subject: 'Urdu', classwork: 16, notebook: 13 }, { subject: 'DLL', classwork: 9, notebook: 7 },
+  ],
+  'V':    [{ subject: 'Math', classwork: 19, notebook: 17 }, { subject: 'English', classwork: 20, notebook: 18 }, { subject: 'Science', classwork: 17, notebook: 14 }, { subject: 'Social Studies', classwork: 19, notebook: 17 }, { subject: 'Urdu', classwork: 17, notebook: 14 }, { subject: 'DLL', classwork: 10, notebook: 8 }],
+  'VI':   [{ subject: 'Math', classwork: 20, notebook: 18 }, { subject: 'English', classwork: 19, notebook: 16 }, { subject: 'Science', classwork: 18, notebook: 15 }, { subject: 'Social Studies', classwork: 20, notebook: 18 }, { subject: 'Urdu', classwork: 18, notebook: 16 }, { subject: 'DLL', classwork: 11, notebook: 9 }],
+  'VII':  [{ subject: 'Math', classwork: 17, notebook: 15 }, { subject: 'English', classwork: 18, notebook: 15 }, { subject: 'Science', classwork: 16, notebook: 13 }, { subject: 'Social Studies', classwork: 17, notebook: 14 }, { subject: 'Urdu', classwork: 15, notebook: 12 }, { subject: 'DLL', classwork: 10, notebook: 8 }],
+  'VIII': [{ subject: 'Math', classwork: 14, notebook: 12 }, { subject: 'English', classwork: 16, notebook: 13 }, { subject: 'Science', classwork: 13, notebook: 11 }, { subject: 'Social Studies', classwork: 15, notebook: 12 }, { subject: 'Urdu', classwork: 12, notebook: 10 }, { subject: 'DLL', classwork: 8, notebook: 6 }],
+};
+const LP_CLASSES = ['II-Pre', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
 
+const PAPER_DATA_BY_CLASS = {
+  'IV': [{ subject: 'English', count: 14 }, { subject: 'Science', count: 8 }],
+  'I':  [{ subject: 'English', count: 6 },  { subject: 'Science', count: 3 }],
+  'II': [{ subject: 'English', count: 9 },  { subject: 'Science', count: 5 }],
+  'III':[{ subject: 'English', count: 11 }, { subject: 'Science', count: 6 }],
+  'V':  [{ subject: 'English', count: 12 }, { subject: 'Science', count: 9 }],
+  'VI': [{ subject: 'English', count: 10 }, { subject: 'Science', count: 7 }],
+};
+const PAPER_CLASSES = ['IV', 'I', 'II', 'III', 'V', 'VI'];
 
+const PROFIT_LOSS_BY_YEAR = {
+  2026: [
+    { m: 'Jan', revenue: 3.20, expense: -2.80, pl:  0.80 },
+    { m: 'Feb', revenue: 1.00, expense: -0.80, pl:  0.20 },
+    { m: 'Mar', revenue: 1.05, expense: -0.78, pl:  0.27 },
+    { m: 'Apr', revenue: 1.10, expense: -0.85, pl:  0.25 },
+    { m: 'May', revenue: 1.02, expense: -0.82, pl:  0.20 },
+    { m: 'Jun', revenue: 0.95, expense: -0.80, pl:  0.15 },
+    { m: 'Jul', revenue: 0.70, expense: -0.85, pl: -0.15 },
+    { m: 'Aug', revenue: 1.08, expense: -0.86, pl:  0.22 },
+    { m: 'Sep', revenue: 1.10, expense: -0.88, pl:  0.22 },
+    { m: 'Oct', revenue: 1.06, expense: -0.84, pl:  0.22 },
+    { m: 'Nov', revenue: 1.02, expense: -0.82, pl:  0.20 },
+    { m: 'Dec', revenue: 1.00, expense: -0.80, pl:  0.20 },
+  ],
+  2025: [
+    { m: 'Jan', revenue: 2.80, expense: -2.30, pl:  0.50 }, { m: 'Feb', revenue: 2.90, expense: -2.40, pl:  0.50 },
+    { m: 'Mar', revenue: 2.85, expense: -2.35, pl:  0.50 }, { m: 'Apr', revenue: 3.00, expense: -2.45, pl:  0.55 },
+    { m: 'May', revenue: 3.10, expense: -2.50, pl:  0.60 }, { m: 'Jun', revenue: 1.40, expense: -1.20, pl:  0.20 },
+    { m: 'Jul', revenue: 0.35, expense: -0.45, pl: -0.10 }, { m: 'Aug', revenue: 3.40, expense: -2.70, pl:  0.70 },
+    { m: 'Sep', revenue: 3.20, expense: -2.55, pl:  0.65 }, { m: 'Oct', revenue: 3.05, expense: -2.45, pl:  0.60 },
+    { m: 'Nov', revenue: 3.00, expense: -2.40, pl:  0.60 }, { m: 'Dec', revenue: 2.85, expense: -2.30, pl:  0.55 },
+  ],
+  2024: [
+    { m: 'Jan', revenue: 2.40, expense: -2.00, pl:  0.40 }, { m: 'Feb', revenue: 2.45, expense: -2.05, pl:  0.40 },
+    { m: 'Mar', revenue: 2.50, expense: -2.10, pl:  0.40 }, { m: 'Apr', revenue: 2.60, expense: -2.15, pl:  0.45 },
+    { m: 'May', revenue: 2.65, expense: -2.20, pl:  0.45 }, { m: 'Jun', revenue: 1.20, expense: -1.05, pl:  0.15 },
+    { m: 'Jul', revenue: 0.28, expense: -0.38, pl: -0.10 }, { m: 'Aug', revenue: 2.95, expense: -2.35, pl:  0.60 },
+    { m: 'Sep', revenue: 2.80, expense: -2.25, pl:  0.55 }, { m: 'Oct', revenue: 2.65, expense: -2.15, pl:  0.50 },
+    { m: 'Nov', revenue: 2.60, expense: -2.10, pl:  0.50 }, { m: 'Dec', revenue: 2.50, expense: -2.05, pl:  0.45 },
+  ],
+};
 
+const STUDENT_BIRTHDAYS = [
+  { name: 'Ayaan Raza',     grade: 'Grade 2',  date: '01 May', dob: 1  },
+  { name: 'Sara Ahmed',     grade: 'Grade 5',  date: '04 May', dob: 4  },
+  { name: 'Hassan Ali',     grade: 'Grade 7',  date: '08 May', dob: 8  },
+  { name: 'Zara Khan',      grade: 'Grade 3',  date: '12 May', dob: 12 },
+  { name: 'Bilal Tariq',    grade: 'Grade 8',  date: '15 May', dob: 15 },
+  { name: 'Maha Siddiqui',  grade: 'Grade 1',  date: '18 May', dob: 18 },
+  { name: 'Usman Farooq',   grade: 'Grade 6',  date: '22 May', dob: 22 },
+  { name: 'Nadia Malik',    grade: 'Grade 4',  date: '25 May', dob: 25 },
+  { name: 'Hamza Irfan',    grade: 'Grade 9',  date: '28 May', dob: 28 },
+  { name: 'Fatima Saleem',  grade: 'Grade 10', date: '31 May', dob: 31 },
+];
 
+const TEACHER_BIRTHDAYS = [
+  { name: 'Mr. Usman Khalid',   role: 'Math Teacher',     date: '05 May', dob: 5  },
+  { name: 'Ms. Ayesha Raza',    role: 'Science Teacher',  date: '13 May', dob: 13 },
+  { name: 'Dr. Hira Noor',      role: 'English Teacher',  date: '19 May', dob: 19 },
+  { name: 'Mr. Bilal Ahmed',    role: 'HR Officer',       date: '24 May', dob: 24 },
+  { name: 'Ms. Sana Mirza',     role: 'Coordinator',      date: '30 May', dob: 30 },
+];
 
+const TODAY_DAY = 31;        /* Mock "today" — matches CURRENT_SESSION's daysLeft pivot */
 
-
+const ACTIVITIES = [
+  { id: 1, date: '01 Jun 2026', title: 'Final Term Exams Begin',
+    desc: 'Final term examinations start for all classes Grade 1–10.',
+    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 1 },
+  { id: 2, date: '03 Jun 2026', title: 'PTM — All Classes',
+    desc: 'Parent-Teacher Meeting for Q3 result discussion.',
+    category: 'School Event',  type: 'event',    module: 'students', daysAway: 3 },
+  { id: 3, date: '05 Jun 2026', title: 'World Environment Day Activity',
+    desc: 'Tree plantation drive and environment awareness program.',
+    category: 'School Event',  type: 'event',    module: null,        daysAway: 5 },
+  { id: 4, date: '10 Jun 2026', title: 'Sports Day',
+    desc: 'Annual sports day with inter-house competitions.',
+    category: 'School Event',  type: 'event',    module: null,        daysAway: 10 },
+  { id: 5, date: '15 Jun 2026', title: 'Result Cards Distribution',
+    desc: 'Final term result cards distributed to parents.',
+    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 15 },
+  { id: 6, date: '20 Jun 2026', title: 'Summer Vacation Begins',
+    desc: 'School closes for summer vacation until August 2026.',
+    category: 'Holiday',       type: 'holiday',  module: null,        daysAway: 20 },
+  { id: 7, date: '25 Jun 2026', title: 'Staff Training Day',
+    desc: 'Professional development session for all teaching staff.',
+    category: 'HR',            type: 'event',    module: 'hr',       daysAway: 25 },
+  { id: 8, date: '30 Jun 2026', title: 'Monthly Fee Deadline',
+    desc: 'Last date for submission of July 2026 fee challans.',
+    category: 'Fee',           type: 'deadline', module: 'fee',      daysAway: 30 },
+];
 
 const TYPE_COLOR = {
   exam:     { bg: 'rgba(220, 38, 38, .12)', fg: '#DC2626' },
@@ -68,39 +202,7 @@ const TYPE_COLOR = {
    (src/components/Accounts.jsx), so the numbers shown here always
    match what Accounts reports for the same month. */
 const FIN_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const fmtPKR = (n) => `PKR ${(Number(n) || 0).toLocaleString('en-PK')}`;
-/* Compact axis label for the full-width Profit/Loss chart — live figures are
-   actual PKR (not the sibling's "millions" mock), so the Y-axis needs K/M/B
-   shortening to stay legible. Exact totals still show in the header + tooltip. */
-const fmtAxisPKR = (n) => {
-  const v = Number(n) || 0; const a = Math.abs(v); const s = v < 0 ? '−' : '';
-  if (a >= 1e9) return `${s}${(a / 1e9).toFixed(1)}B`;
-  if (a >= 1e6) return `${s}${(a / 1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `${s}${Math.round(a / 1e3)}K`;
-  return `${s}${a}`;
-};
-
-/* Profit/Loss tooltip — PKR-formatted (live ledger values), showing Revenue,
-   Expenses and the signed Net for the hovered month. */
-function ProfitLossTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  const find = (key) => payload.find((p) => p.dataKey === key)?.value ?? 0;
-  const revenue = find('revenue'); const expense = find('expense'); const pl = find('pl');
-  const row = (color, name, node) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, marginTop: 3 }}>
-      <span style={{ color, fontWeight: 600 }}>{name}</span>{node}
-    </div>
-  );
-  return (
-    <div style={{ background: 'var(--bg-card, #fff)', border: '1px solid var(--border-light, #E2E8F0)', borderRadius: 8, padding: '8px 12px', fontSize: 12, boxShadow: '0 4px 12px rgba(15, 23, 42, .08)' }}>
-      <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{label}</div>
-      {row('#1E40AF', 'Revenue', <b>{fmtPKR(revenue)}</b>)}
-      {row('#DC2626', 'Expenses', <b>{fmtPKR(expense)}</b>)}
-      {row('#16A34A', 'Profit/Loss', <b style={{ color: pl >= 0 ? '#16A34A' : '#DC2626' }}>{pl >= 0 ? '+' : '−'}{fmtPKR(Math.abs(pl))}</b>)}
-    </div>
-  );
-}
 
 /* Gradient stat-tile palette — reuses hex values already present
    elsewhere in this file (dash-pri / adm-tc gradients) so the new
@@ -135,11 +237,12 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-/* ─── PKR-formatted tooltip for the Fee Analytics visual charts —
-   bars/slices carry a `fill` color set directly on the Cell, so this
-   reads payload[0].payload.color (Recharts doesn't echo a plain
-   <Bar fill> back onto payload[i].color for single-series charts).
-   Pass `showPct` for the donut so each row also shows its share. */
+/* ─── PKR-formatted tooltip for the Fee Analytics Overview charts —
+   bars/slices carry a `fill` color (set directly on the Bar/Cell), so
+   this reads payload[0].payload.color instead of p.color (Recharts
+   doesn't echo a plain <Bar fill> back onto payload[i].color the way
+   it does for multi-series charts). Pass `showPct` for the donut so
+   each row also shows its share of the total. */
 function FeeChartTooltip({ active, payload, showPct }) {
   if (!active || !payload?.length) return null;
   const total = showPct ? payload.reduce((a, p) => a + (p.value || 0), 0) : 0;
@@ -164,16 +267,56 @@ function FeeChartTooltip({ active, payload, showPct }) {
   );
 }
 
+/* ─── Count-up number for the Fee Analytics Overview highlight strip ───
+   Animates from 0 to `value` on every mount, and re-animates from
+   whatever it was showing to a NEW `value` whenever that changes (e.g.
+   the month filter). Since AdminDashboard fully unmounts/remounts on
+   every dashboard visit (App.js renders it as `{active === 'dashboard'
+   && <Dashboard/>}`, not a hidden tab), the mount case alone already
+   means this — and every Recharts animation below it — naturally
+   replays automatically each time the user comes back to the
+   dashboard, with no extra "trigger on visit" logic needed anywhere. */
+function AnimatedNumber({ value, prefix = '', suffix = '', duration = 1400, decimals = 0 }) {
+  const [display, setDisplay] = useState(0);
+  const fromRef = useRef(0);
+
+  useEffect(() => {
+    const target = Number(value) || 0;
+    const from = fromRef.current;
+    const start = performance.now();
+    let frame;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - (1 - t) ** 3; // ease-out cubic — fast start, gentle settle
+      setDisplay(from + (target - from) * eased);
+      if (t < 1) {
+        frame = requestAnimationFrame(tick);
+      } else {
+        setDisplay(target);
+        fromRef.current = target;
+      }
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, duration]);
+
+  const formatted = decimals > 0
+    ? display.toFixed(decimals)
+    : Math.round(display).toLocaleString('en-PK');
+  return <>{prefix}{formatted}{suffix}</>;
+}
+
 /* ─── Scroll-triggered chart replay ───
    Every chart card on the dashboard re-plays its entrance animation
    every time it scrolls into view — not just once on first page load.
    An IntersectionObserver watches the card's own container; each fresh
    not-visible → visible edge bumps `replayKey`, which callers use as a
    React `key` on the chart's inner tree. Changing that key fully
-   unmounts + remounts the chart, so Recharts restart from their 0 /
-   empty state exactly like a first mount, instead of Recharts' default
-   "animate once per mount" behaviour. Scrolling back up and re-entering
-   replays it again, every single time.
+   unmounts + remounts the chart, so Recharts/AnimatedNumber restart
+   from their 0 / empty state exactly like a first mount, instead of
+   Recharts' default "animate once per mount" behaviour. Scrolling back
+   up and re-entering replays it again, every single time.
    `wasVisibleRef` only allows a new replay after a genuine exit, so a
    still-visible card mid-animation can't be re-triggered by scroll
    jitter, and the 60ms debounce coalesces the flurry of intersection
@@ -185,8 +328,8 @@ function useScrollReplay(threshold = 0.25) {
   const [replayKey, setReplayKey] = useState(0);
   /* `inView` is the live in/out state — used by CSS-driven bars (width
      transitions) that can't be reset via a React `key` remount the way
-     Recharts is, since a plain div has no "0 state" to return to other
-     than re-rendering it at 0 ourselves. */
+     Recharts/AnimatedNumber are, since a plain div has no "0 state" to
+     return to other than re-rendering it at 0 ourselves. */
   const [inView, setInView] = useState(false);
   const wasVisibleRef = useRef(false);
 
@@ -225,22 +368,211 @@ function useScrollReplay(threshold = 0.25) {
   return { ref, replayKey, inView };
 }
 
-export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {}, showAllModules = false }) {
-  const { moduleActive: visModuleActive, user, session, ownerName } = visibility;
-  const { isActive: ctxIsActive } = useModules();
-  /* Teacher dashboard: get-dashboard ke saare sections dikhao, module-permission
-     se hide mat karo. Admin par pehle jaisa school-level isActive/moduleActive. */
-  const isActive = showAllModules ? () => true : ctxIsActive;
-  const moduleActive = showAllModules ? () => true : visModuleActive;
+/* ─── Custom tooltip for the Profit/Loss Overview chart ───
+   Reads the same revenue/expense/pl fields already in profitData —
+   only formats them for display (Rs. …M, sign, absolute value). */
+function ProfitLossTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const find = (key) => payload.find(p => p.dataKey === key)?.value;
+  const revenue = find('revenue') ?? 0;
+  const expense = find('expense') ?? 0;
+  const pl = find('pl') ?? 0;
+  return (
+    <div className="pl-tooltip">
+      <div className="pl-tooltip-month">{label}</div>
+      <div className="pl-tooltip-row">
+        <span className="pl-tooltip-lbl"><span className="pl-tooltip-dot" style={{ background: '#1E40AF' }} />Revenue</span>
+        <b>Rs. {Math.abs(revenue).toFixed(2)}M</b>
+      </div>
+      <div className="pl-tooltip-row">
+        <span className="pl-tooltip-lbl"><span className="pl-tooltip-dot" style={{ background: '#DC2626' }} />Expenses</span>
+        <b>Rs. {Math.abs(expense).toFixed(2)}M</b>
+      </div>
+      <div className="pl-tooltip-row">
+        <span className="pl-tooltip-lbl"><span className="pl-tooltip-dot" style={{ background: '#16A34A' }} />Profit/Loss</span>
+        <b style={{ color: pl >= 0 ? '#16A34A' : '#DC2626' }}>{pl >= 0 ? '+' : '−'}Rs. {Math.abs(pl).toFixed(2)}M</b>
+      </div>
+    </div>
+  );
+}
 
-  /* Per-card dashboard permissions — User Permissions ka "Dashboard" tree
-     (permissionsData.js → dashboard.*). canScreen School Head / no-perm-data
-     (fullAccess) par true deta hai, warna sirf granted cards. Yehi head aur
-     staff ko SAME layout par rakhta hai magar har staff sirf wahi cards
-     dekhta hai jinki use ijazat di gayi hai. Label EXACT wahi jo permission
-     tree ke child labels hain (API subMenuName se match). */
-  const { canScreen } = usePermissions();
-  const canCard = (label) => canScreen('Dashboard', label);
+/* ─── Locked placeholder for a Dashboard card the current role/user
+   isn't permitted to view. Shows only the card's name — everything
+   else (values, charts, buttons) is withheld — plus an "i" icon
+   explaining how to get access. Same footprint class as the real
+   card so the grid layout doesn't shift. */
+function LockedCard({ title, icon, className = '' }) {
+  return (
+    <div className={`dash-locked-card ${className}`}>
+      <div className="dash-locked-card-h">
+        {icon && <i className={`fa-solid ${icon} dash-locked-card-ic`} aria-hidden="true"></i>}
+        <span className="dash-locked-card-t">{title}</span>
+      </div>
+      <Tooltip text="Ask your super admin to give you access of this card">
+        <span className="dash-locked-card-i" aria-label={`"${title}" is restricted — ask your super admin to give you access of this card`}>
+          <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+        </span>
+      </Tooltip>
+    </div>
+  );
+}
+
+export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {} }) {
+  const { moduleActive, user, session, role } = visibility;
+  const { isActive } = useModules();      /* per-spec: explicit useModules guard for new sections */
+
+  /* ─── Per-card dashboard permissions ───
+     Reads the same effectivePermsForUser() used by the User Permissions
+     module, driven by whatever role/user is currently impersonated via
+     the "View dashboard as another user" switcher (Dashboard.jsx). A
+     card whose `dashboard.<id>.view` isn't granted renders as a locked
+     placeholder instead of being hidden outright. */
+  const dashPerms = useMemo(
+    () => effectivePermsForUser(user, role ? [role] : []),
+    [user, role]
+  );
+  /* Isolated demo fork: this ERP's permissionsData tree is an older
+     version that doesn't define the newer dashboard card nodes
+     (fee_analytics_overview, fee_discountgiven, …), so !!dashPerms[...]
+     would lock them out. Match the source demo (localhost:3001) where the
+     user sees every card: show a card UNLESS it is explicitly denied. */
+  const canSeeCard = useCallback(
+    (cardId) => dashPerms[`dashboard.${cardId}.view`] !== false,
+    [dashPerms]
+  );
+
+  /* ─── Fee Analytics — live for the selected month (cards 1-8) ───
+     Reads the same feeService data every other Fee report already reads;
+     see feeDashboardExtra.js for why cards 5/8 can't reuse the existing
+     "Discount Given Report" / "Advance Fee Payment Report" data as-is,
+     for how cards 1-4 & 7 are derived from the same ledger, and for how
+     card 6 "Advance Adjustments" instead mirrors Fee.jsx's own advance
+     ledger (mockAdvanceLedger) behind the Advance Fee Adjustment Report —
+     it's in the main calc flow (feeds Pending Fee), while card 8
+     "Advance Payments Received" (after Pending Fee) deliberately isn't. */
+  const [feeMonthIdx, setFeeMonthIdx] = useState(4); // seed data is May 2026
+  const { data: faClasses = [] }        = useAsync(feeService.getFeeClasses, []);
+  const { data: faStudentsMap = {} }    = useAsync(feeService.getTransportFee, []);
+  const { data: faHeadsMap = {} }       = useAsync(feeService.getFeeHeads, []);
+  const { data: faDiscountRows = [] }   = useAsync(feeService.getFeeDiscounts, []);
+  const { data: faGeneratedSet }        = useAsync(feeService.getGeneratedChallans, [], new Set());
+  const { data: faReceipts = [] }       = useAsync(feeService.getReceipts, []);
+  const { data: faAdvanceLedger = [] }  = useAsync(feeService.getAdvanceLedger, []);
+  const faDiscMap = useMemo(() => buildDiscountMap(faDiscountRows), [faDiscountRows]);
+  const feeExtras = useMemo(() => computeFeeDashboardExtras({
+    classes: faClasses, studentsMap: faStudentsMap, headsMap: faHeadsMap,
+    discMap: faDiscMap, generatedSet: faGeneratedSet || new Set(), receipts: faReceipts,
+    advanceLedger: faAdvanceLedger, monthIdx: feeMonthIdx,
+  }), [faClasses, faStudentsMap, faHeadsMap, faDiscMap, faGeneratedSet, faReceipts, faAdvanceLedger, feeMonthIdx]);
+  const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} 2026`;
+
+  /* ─── Fee Analytics Overview — graphical summary above the cards.
+     Same feeExtras object the 8 cards below already read from (no
+     second data-fetch, no duplicate calc) — this just reshapes those
+     same totals into the 3 chart datasets + the mini highlight strip.
+     Re-derives whenever the month (or feeExtras) changes, same as the
+     cards. The detailed card grid stays UNMOUNTED (not just visually
+     hidden) until "View Cards" is clicked — `feeCardsRef` then scrolls
+     it into view once it renders. */
+  const [showFeeCards, setShowFeeCards] = useState(false);
+  const feeCardsRef = useRef(null);
+  const toggleFeeCards = () => {
+    setShowFeeCards(v => !v);
+  };
+  useEffect(() => {
+    if (showFeeCards) feeCardsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [showFeeCards]);
+  /* Read once per mount (not reactively watched) — good enough for an
+     OS-level preference that essentially never flips mid-session, and
+     keeps every chart below from animating for anyone who's asked
+     their system to reduce motion. */
+  const chartsAnimated = typeof window === 'undefined' || !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  /* One useScrollReplay per chart card so each replays independently on
+     scroll re-entry — except the donut + bar pair in .fa-chart-grid,
+     which share one so they always start/finish in lockstep. */
+  const faHighlightsReplay = useScrollReplay();
+  const overviewCompReplay = useScrollReplay();
+  const feeGridReplay = useScrollReplay();
+  const plOverviewReplay = useScrollReplay();
+  const lpChartReplay = useScrollReplay();
+  const paperSecReplay = useScrollReplay();
+  const subjCompletionReplay = useScrollReplay();
+  /* Scroll-replay for every other numeric readout on the dashboard —
+     count up from 0 every time it re-enters the viewport, same as the
+     Fee Analytics highlight tiles. */
+  const heroStatsReplay = useScrollReplay();
+  const tilesReplay = useScrollReplay();
+  const financeCardsReplay = useScrollReplay();
+  const overviewChartData = useMemo(() => ([
+    { name: 'Current Month Fee Position', short: 'Curr. Month',    value: feeExtras.currentMonthTotal,      color: '#2563EB' },
+    { name: 'Previous Dues',              short: 'Prev. Dues',     value: feeExtras.previousDuesTotal,      color: '#EF4444' },
+    { name: 'Total Net Receivable',       short: 'Net Receivable', value: feeExtras.netReceivableTotal,     color: '#1E40AF' },
+    { name: 'Fee Received',               short: 'Received',       value: feeExtras.receivedTotal,          color: '#16A34A' },
+    { name: 'Discount Given',             short: 'Discount',       value: feeExtras.discountTotal,          color: '#D97706' },
+    { name: 'Advance Adjustments',        short: 'Adv. Adjusted',  value: feeExtras.advanceAdjustmentTotal, color: '#7C3AED' },
+    { name: 'Pending Fee',                short: 'Pending',        value: feeExtras.pendingTotal,           color: '#DC2626' },
+    { name: 'Advance Payments Received',  short: 'Adv. Received',  value: feeExtras.advanceTotal,           color: '#A78BFA' },
+  ]), [feeExtras]);
+  /* Net Receivable − Received − Discount − Advance Adjustments = Pending —
+     the same formula the Pending Fee card itself prints, just charted. */
+  const breakdownChartData = useMemo(() => ([
+    { name: 'Fee Received',        value: feeExtras.receivedTotal,          color: '#16A34A' },
+    { name: 'Discount Given',      value: feeExtras.discountTotal,          color: '#D97706' },
+    { name: 'Advance Adjustments', value: feeExtras.advanceAdjustmentTotal, color: '#7C3AED' },
+    { name: 'Pending Fee',         value: feeExtras.pendingTotal,           color: '#DC2626' },
+  ].filter(d => d.value > 0)), [feeExtras]);
+  const collectionsChartData = useMemo(() => ([
+    { name: 'Collected',         short: 'Collected',   value: feeExtras.receivedTotal, color: '#16A34A' },
+    { name: 'Pending',           short: 'Pending',     value: feeExtras.pendingTotal,  color: '#DC2626' },
+    { name: 'Advance Collected', short: 'Adv. Collected', value: feeExtras.advanceTotal, color: '#A78BFA' },
+  ]), [feeExtras]);
+  /* value is the raw number so AnimatedNumber can count up to it — see
+     that component below for why this replays on every dashboard visit. */
+  const faHighlights = [
+    { label: 'Collection %',           value: feeExtras.receivedPct,                   suffix: '%', icon: 'fa-chart-line',     tone: 'green' },
+    { label: 'Pending %',              value: feeExtras.pendingPct,                    suffix: '%', icon: 'fa-hourglass-half', tone: 'red' },
+    { label: 'Students Paid',          value: feeExtras.receivedStudentCount,          suffix: '',  icon: 'fa-user-check',     tone: 'green' },
+    { label: 'Students With Dues',     value: feeExtras.studentsWithDues,              suffix: '',  icon: 'fa-user-clock',     tone: 'red' },
+    { label: 'Students Adjusted',      value: feeExtras.advanceAdjustmentStudentCount, suffix: '',  icon: 'fa-user-gear',      tone: 'purple' },
+    { label: 'Students Paid in Advance', value: feeExtras.advanceStudentCount,         suffix: '',  icon: 'fa-user-plus',      tone: 'violet' },
+  ];
+
+  const downloadFeeReceivedReport = () => {
+    const html = buildFeeReceivedDashboardReportHTML(feeExtras, feeMonthLabel);
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    toast('Fee Received Report — sent to print.', 'success');
+  };
+  const downloadFeeDiscountReport = () => {
+    const html = buildDiscountGivenDashboardReportHTML(feeExtras, feeMonthLabel);
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    toast('Discount Given Report — sent to print.', 'success');
+  };
+  const downloadFeeAdvanceReport = () => {
+    const html = buildAdvanceDashboardReportHTML(feeExtras, feeMonthLabel);
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    toast('Advance Payment Report — sent to print.', 'success');
+  };
+  const downloadFeeAdvanceAdjustmentReport = () => {
+    const html = buildAdvanceAdjustmentDashboardReportHTML(feeExtras, feeMonthLabel);
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    toast('Advance Adjustment Report — sent to print.', 'success');
+  };
 
   const NAV_LABELS = {
     students: 'Students', hr: 'Human Resource', crm: 'Admission CRM',
@@ -254,299 +586,70 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
   };
 
-  /* ─── Real dashboard data — ek hi API se poora dashboard ────────
-     null = loading; fail hone par {} taake koi section crash na ho. */
-  const [dash, setDash] = useState(null);
-  const [dashErr, setDashErr] = useState(false);
-
-  // School Mentor user notifications (read/unread)
-  const [userNotifications, setUserNotifications] = useState([]);
-  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
-
-  const getCurrentLoginUserId = () => {
-    if (typeof sessionStorage === 'undefined') return 0;
-    return Number(sessionStorage.getItem('UserID') || 0);
-  };
-
-  const loadUserNotifications = async () => {
-    const loginUserId = getCurrentLoginUserId();
-
-    if (!loginUserId) {
-      setUserNotifications([]);
-      setNotificationUnreadCount(0);
-      return;
-    }
-
-    try {
-      const res = await notificationService.getUserNotifications(loginUserId);
-
-      if (!res?.success) {
-        setUserNotifications([]);
-        setNotificationUnreadCount(0);
-        return;
-      }
-
- const formatted = (Array.isArray(res.data) ? res.data : []).map((n) => ({
-    id: n.notificationID ?? n.id,
-    recipientID: n.recipientID,
-    recipientId: n.recipientID,
-        title: n.title || n.subject || 'Announcement',
-        preview: n.message || n.description || '',
-        description: n.message || n.description || '',
-        sender: n.senderName || 'School Mentor — HQ',
-        category: n.notificationType || n.category || 'General',
-        date: n.createdAt
-          ? new Date(n.createdAt).toLocaleDateString('en-PK', {
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric',
-            })
-          : '',
-        time: n.createdAt
-          ? new Date(n.createdAt).toLocaleTimeString('en-PK', {
-              hour: 'numeric',
-              minute: '2-digit',
-            })
-          : '',
-        status: n.isRead ? '' : 'new',
-        raw: n,
-      }));
-
-      setUserNotifications(formatted);
-      setNotificationUnreadCount(
-        Number.isFinite(Number(res.unreadCount))
-          ? Number(res.unreadCount)
-          : formatted.filter((n) => n.status === 'new').length
-      );
-    } catch (e) {
-      console.error('Notification loading error:', e);
-      setUserNotifications([]);
-      setNotificationUnreadCount(0);
-    }
-  };
-
-  useEffect(() => {
-    let alive = true;
-    const { month, year } = dashboardService.currentMonthYear();
-    dashboardService.getDashboard(month, year)
-      .then(d => { if (alive) setDash(d || {}); })
-      .catch(() => { if (alive) { setDash({}); setDashErr(true); } });
-    return () => { alive = false; };
-  }, []);
-
-  useEffect(() => {
-    loadUserNotifications();
-  }, [user?.id, session?.id]);
-
-  /* Safe accessors — har section 0/[] fallback ke sath real data padhta hai. */
-  const D   = dash || {};
-  const kpi = D.Kpi || {};
-  const snap = D.ModuleSnapshot || {};
-  const fee  = D.FeeAnalytics || {};
-  const app  = Array.isArray(D.AppAdoption) ? D.AppAdoption : [];
-  const appOf = (t) => app.find(a => a.AccountType === t) || { Total: 0, Downloaded: 0, Pending: 0 };
-  const todaysAtt = D.TodaysAttendance || { Students: {}, Staff: {} };
-  const stuAtt = todaysAtt.Students || {}; const staffAtt = todaysAtt.Staff || {};
-  const lessonPlans = Array.isArray(D.LessonPlanAnalytics) ? D.LessonPlanAnalytics : [];
-  const paperStats  = Array.isArray(D.PaperGeneratorStats) ? D.PaperGeneratorStats : [];
-  const stuBdays   = Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : [];
-  const staffBdays = Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : [];
-  const upActivities = Array.isArray(D.UpcomingActivities) ? D.UpcomingActivities : [];
-  const actSummary = D.ActivitiesSummary || {};
-  /* Announcements — get-dashboard `Announcements` array kai backend versions me
-     PascalCase (Title/Message/CreatedDate…) deta hai, jabke card lowercase
-     (title/preview/date/time/sender) padhta tha → "undefined · undefined".
-     Yahan defensively normalize karte hain (dono naming chalti hai), aur bina
-     title/preview wali junk entries filter kar dete hain taake khaali announcement
-     empty-state dikhaye, undefined nahi. */
-  const announcements = (() => {
-    const pickA = (o, ...keys) => {
-      for (const k of keys) { const v = o?.[k]; if (v != null && v !== '') return v; }
-      return '';
-    };
-    return (Array.isArray(D.Announcements) ? D.Announcements : [])
-      .map((a, idx) => {
-        const created = pickA(a, 'AnnounceDate', 'announceDate', 'date', 'Date', 'createdDate', 'CreatedDate', 'createdAt', 'CreatedAt', 'publishedDate', 'PublishedDate', 'publishDate', 'PublishDate');
-        const dt = created ? new Date(created) : null;
-        const validDt = dt && !Number.isNaN(+dt);
-        const rawStatus = pickA(a, 'status', 'Status', 'isNew', 'IsNew', 'isRead', 'IsRead');
-        const isNew = rawStatus === true || String(rawStatus).toLowerCase() === 'new'
-          || (String(pickA(a, 'isRead', 'IsRead')).toLowerCase() === 'false');
-        const preview = pickA(a, 'preview', 'Preview', 'message', 'Message', 'body', 'Body', 'description', 'Description', 'detail', 'Detail', 'content', 'Content');
-        return {
-          id:      pickA(a, 'id', 'ID') || `an-${idx}`,
-          sender:  pickA(a, 'sender', 'Sender', 'senderName', 'SenderName', 'createdBy', 'CreatedBy', 'author', 'Author') || 'School Mentor — HQ',
-          title:   pickA(a, 'title', 'Title', 'subject', 'Subject', 'heading', 'Heading', 'name', 'Name'),
-          preview,
-          description: preview,
-          category: pickA(a, 'category', 'Category') || 'General',
-          date:    validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
-          time:    pickA(a, 'time', 'Time') || (validDt ? dt.toLocaleTimeString('en-PK', { hour: 'numeric', minute: '2-digit' }) : ''),
-          status:  isNew ? 'new' : (String(rawStatus) || ''),
-          raw: a,
-        };
-      })
-      .filter((a) => a.title || a.preview);
-  })();
-  const finOverview = D.FinancialOverview || {};
-  const revenueStreams = Array.isArray(D.RevenueStreams) ? D.RevenueStreams : [];
-  const plTrend = Array.isArray(D.ProfitLossTrend) ? D.ProfitLossTrend : [];
-  const pctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
-
-  /* Fee Analytics formulas (cards, not backend fields):
-       Total Net Receivable = Current Month Fee Position + Previous Dues
-       Pending Fee          = Total Net Receivable − Fee Received
-     Rings/progress bhi isi receivable ke against. */
-  const currentMonthFeeVal = Number(fee.CurrentMonthFeePosition) || 0;
-  const previousDuesVal = Number(fee.PreviousDues) || 0;
-  const feeReceivedVal = Number(fee.FeeReceived) || 0;
-  /* Discount concessions — dono ASLI get-dashboard fields (cards bhi yehi
-     dikhate hain): DiscountGiven = challan BANTE waqt, ReceivedDiscount =
-     wasooli ke waqt. Chart me total concession = dono ka jorh. */
-  const discountGivenVal = Number(fee.DiscountGiven) || 0;
-  const receivedDiscountVal = Number(fee.ReceivedDiscount) || 0;
-  const totalDiscountVal = discountGivenVal + receivedDiscountVal;
-  const totalNetReceivableVal = currentMonthFeeVal + previousDuesVal;
-  const pendingFeeVal = Math.max(0, totalNetReceivableVal - feeReceivedVal);
-  const feePaidPct = pctOf(feeReceivedVal, totalNetReceivableVal);
-  const feePendingPct = pctOf(pendingFeeVal, totalNetReceivableVal);
-
-  /* Per-fee-card view permissions — User Permissions ke "Dashboard" tree se.
-     Har card AUR har graph series inhi se gate hoti hai, taake jo fee metric
-     kisi staff ko allow nahi, wo na card me na graph me dikhe. */
-  const feeVis = {
-    currentMonth:  canCard('Current Month Fee Position'),
-    previousDues:  canCard('Previous Dues'),
-    netReceivable: canCard('Total Net Receivable'),
-    received:      canCard('Fee Received'),
-    pending:       canCard('Pending Fee'),
-    discount:      canCard('Discount Given During Receiving'),
-  };
-  /* Fee section tabhi dikhao jab school-level fee module on ho AUR user ko
-     kam-az-kam ek fee card ki ijazat ho. */
-  const anyFeeCard = Object.values(feeVis).some(Boolean);
-
-  /* Fee Analytics visual charts — reshapes the SAME live values the
-     cards above already show (no extra fetch, no mock). Discount series bhi
-     ab live hai (get-dashboard DiscountGiven + ReceivedDiscount) — wahi jo
-     cards par amber me dikhta hai. Har bar apni card-permission se filter
-     hoti hai. */
-  const feeOverviewData = useMemo(() => ([
-    { name: 'Current Month Fee Position', short: 'Curr. Month',    value: currentMonthFeeVal,    color: '#2563EB', show: feeVis.currentMonth },
-    { name: 'Previous Dues',              short: 'Prev. Dues',     value: previousDuesVal,       color: '#EF4444', show: feeVis.previousDues },
-    { name: 'Total Net Receivable',       short: 'Net Receivable', value: totalNetReceivableVal, color: '#1E40AF', show: feeVis.netReceivable },
-    { name: 'Fee Received',               short: 'Received',       value: feeReceivedVal,        color: '#16A34A', show: feeVis.received },
-    { name: 'Discount',                   short: 'Discount',       value: totalDiscountVal,      color: '#D97706', show: feeVis.discount },
-    { name: 'Pending Fee',                short: 'Pending',        value: pendingFeeVal,         color: '#DC2626', show: feeVis.pending },
-  ].filter(d => d.show)), [currentMonthFeeVal, previousDuesVal, totalNetReceivableVal, feeReceivedVal, totalDiscountVal, pendingFeeVal, feeVis.currentMonth, feeVis.previousDues, feeVis.netReceivable, feeVis.received, feeVis.discount, feeVis.pending]);
-  /* Donut: Fee Received + Pending Fee sum to Total Net Receivable. */
-  const feeBreakdownData = useMemo(() => ([
-    { name: 'Fee Received', value: feeReceivedVal, color: '#16A34A', show: feeVis.received },
-    { name: 'Pending Fee',  value: pendingFeeVal,  color: '#DC2626', show: feeVis.pending },
-  ].filter(d => d.show && d.value > 0)), [feeReceivedVal, pendingFeeVal, feeVis.received, feeVis.pending]);
-  const feeCollectionsData = useMemo(() => ([
-    { name: 'Collected',   short: 'Collected',   value: feeReceivedVal, color: '#16A34A', show: feeVis.received },
-    { name: 'Outstanding', short: 'Outstanding', value: pendingFeeVal,  color: '#DC2626', show: feeVis.pending },
-  ].filter(d => d.show)), [feeReceivedVal, pendingFeeVal, feeVis.received, feeVis.pending]);
-
-  /* Previous Dues / Students-with-Dues — seedha get-dashboard ke FeeAnalytics se. */
-  const studentsWithDuesVal = fee.StudentsPending || 0;
-
-  /* Teachers / Parents mobile-app adoption cards.
-     Total ab REAL active counts se (Kpi.ActiveStaff / Kpi.ActiveStudents) — wahi jo
-     hero KPIs aur report dikhate hain — taake sab consistent rahe (pehle AppAdoption
-     ka alag total 10/17 aata tha jo 12 staff / 15 students se match nahi karta tha).
-     Downloaded dashboard ki asli value se; Pending = Total − Downloaded. */
-  const teacherApp = appOf('Teacher');
-  const parentApp  = appOf('Parent');
-  const teacherTotal = Number(kpi.ActiveStaff)    || Number(teacherApp.Total) || 0;
-  const parentTotal  = Number(kpi.ActiveStudents) || Number(parentApp.Total)  || 0;
-  const teacherDl    = Number(teacherApp.Downloaded) || 0;
-  const parentDl     = Number(parentApp.Downloaded)  || 0;
-  const teacherAppData = { total: teacherTotal, downloaded: teacherDl, pending: Math.max(0, teacherTotal - teacherDl), pct: pctOf(teacherDl, teacherTotal) };
-  const parentAppData  = { total: parentTotal,  downloaded: parentDl,  pending: Math.max(0, parentTotal - parentDl),   pct: pctOf(parentDl, parentTotal) };
-
-  /* Today's Attendance — SEEDHA get-dashboard ke TodaysAttendance se (koi extra
-     attendance API nahi). Present/Absent/Leave + Total wahi backend deta hai. */
-  const studentAttData = {
-    total: stuAtt.StudentTotal || 0, present: stuAtt.StudentPresent || 0,
-    absent: stuAtt.StudentAbsent || 0, leave: stuAtt.StudentLeave || 0,
-    percentage: pctOf(stuAtt.StudentPresent, stuAtt.StudentTotal),
-  };
-  const staffAttData = {
-    total: staffAtt.StaffTotal || 0, present: staffAtt.StaffPresent || 0,
-    absent: staffAtt.StaffAbsent || 0, leave: staffAtt.StaffLeave || 0,
-    percentage: pctOf(staffAtt.StaffPresent, staffAtt.StaffTotal),
-  };
-
-  /* Revenue Streams — API [{Month, Head, Amount}] ko month-wise total me. */
-  const revenueChart = useMemo(() => {
-    const byMonth = {};
-    revenueStreams.forEach(r => { const m = Number(r.Month); byMonth[m] = (byMonth[m] || 0) + (Number(r.Amount) || 0); });
-    return Object.keys(byMonth).sort((a, b) => a - b).map(m => ({ m: SHORT_MONTHS[Number(m) - 1] || m, amount: byMonth[m] }));
-  }, [revenueStreams]);
-  const revenueTotal = useMemo(() => revenueStreams.reduce((s, r) => s + (Number(r.Amount) || 0), 0), [revenueStreams]);
-
-  /* Profit/Loss trend — API [{Month, Income, Expenses, ProfitLoss}]. */
-  const profitChart = useMemo(() => plTrend.map(p => ({
-    m: SHORT_MONTHS[Number(p.Month) - 1] || p.Month,
-    revenue: Number(p.Income) || 0, expense: Number(p.Expenses) || 0, pl: Number(p.ProfitLoss) || 0,
-  })), [plTrend]);
-  const plNet = useMemo(() => plTrend.reduce((s, p) => s + (Number(p.ProfitLoss) || 0), 0), [plTrend]);
-
-  /* ─── Module tiles — sirf wahi jinke liye API data hai ─────────
-     REMOVED: CRM/Active Leads, Exams Scheduled, Today's Activity (audit)
-     kyunke get-dashboard in ka data nahi deta. */
+  /* ─── Existing top sections (kept) ──────────────────────────── */
   const tiles = [
     moduleActive('students') && { key: 'students', accent: MODULE_COLOR.students, label: 'Students', icon: 'fa-user-graduate',
-      value: snap.TotalStudents || 0,
-      meta: <><span className="dash-tile-meta-pill">+{snap.NewStudentsThisWeek || 0} this week</span><span>{snap.InactiveStudents || 0} inactive</span></>,
+      value: STUDENT_STATS.activeStudents,
+      meta: <>
+        <span className="dash-tile-meta-pill">+{STUDENT_STATS.recentAdmissions.length} this week</span>
+        <span className="dash-tile-meta-pill dash-tile-meta-pill--m">Male: {STUDENT_STATS.maleStudents}</span>
+        <span className="dash-tile-meta-pill dash-tile-meta-pill--f">Female: {STUDENT_STATS.femaleStudents}</span>
+        <span>{STUDENT_STATS.inactiveStudents} inactive</span>
+      </>,
       target: 'students' },
     moduleActive('hr') && { key: 'hr', accent: MODULE_COLOR.hr, label: 'Employees', icon: 'fa-users',
-      value: snap.TotalEmployees || 0,
-      meta: <><span className="dash-tile-meta-pill">{snap.TotalDepartments || 0} depts</span><span>{snap.InactiveEmployees || 0} inactive</span></>,
+      value: HR_STATS.activeEmployees,
+      meta: <><span className="dash-tile-meta-pill">{HR_STATS.departments.length} depts</span><span>{HR_STATS.inactiveEmployees} inactive</span></>,
       target: 'hr' },
+    moduleActive('admissions') && { key: 'crm', accent: MODULE_COLOR.admissions, label: 'Active Leads', icon: 'fa-handshake',
+      value: CRM_STATS.totalLeads,
+      meta: <><span className="dash-tile-meta-pill">{CRM_STATS.followups.today} today</span><span>{CRM_STATS.followups.overdue} overdue</span></>,
+      target: 'crm' },
+    moduleActive('examination') && { key: 'exam', accent: MODULE_COLOR.examination, label: 'Exams Scheduled', icon: 'fa-file-pen',
+      value: EXAM_STATS.totalExams,
+      meta: <><span className="dash-tile-meta-pill">{EXAM_STATS.currentTermExams} current term</span><span>{EXAM_STATS.pendingResults} results pending</span></>,
+      target: 'exam' },
     moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Activities', icon: 'fa-calendar-days',
-      value: actSummary.TotalActivities || 0,
-      meta: <><span className="dash-tile-meta-pill">{actSummary.UpcomingCount || 0} upcoming</span><span>{actSummary.OngoingCount || 0} ongoing</span></>,
+      value: ACADEMICS_STATS.activities.completed + ACADEMICS_STATS.activities.ongoing + ACADEMICS_STATS.activities.upcoming,
+      meta: <><span className="dash-tile-meta-pill">{ACADEMICS_STATS.activities.upcoming} upcoming</span><span>{ACADEMICS_STATS.activities.ongoing} ongoing</span></>,
       target: 'acad' },
     moduleActive('fee') && { key: 'fee', accent: MODULE_COLOR.fee, label: 'Fee Collection', icon: 'fa-money-bill-wave',
-      value: <>{feePaidPct}<small>%</small></>,
-      meta: <><span className="dash-tile-meta-pill">{fee.StudentsPending || 0} pending</span></>,
+      value: FEE_STATS.collectionPct, suffix: '%',
+      meta: <><span className="dash-tile-meta-pill">{FEE_STATS.defaulters} defaulters</span><span>PKR {(FEE_STATS.outstandingTotal / 100000).toFixed(1)}L outstanding</span></>,
       target: 'fee' },
+    moduleActive('auditlogs') && { key: 'audit', accent: MODULE_COLOR.auditlogs, label: "Today's Activity", icon: 'fa-clipboard-list',
+      value: AUDIT_STATS.today,
+      meta: <><span className="dash-tile-meta-pill">{AUDIT_STATS.activeUsersToday} users</span><span>{AUDIT_STATS.thisWeek} this week</span></>,
+      target: 'audit' },
   ].filter(Boolean);
 
-  /* Announcements — API array khaali hai to empty-state; pill sirf 'new' par. */
-const latestAnnouncement = userNotifications[0] || null;
+  /* Newest announcement surfaces in the top card; sender + count of
+     remaining new ones are computed for the pill + footer line. */
+  const latestAnnouncement = SCHOOL_MENTOR_ANNOUNCEMENTS[0];
+  const newAnnouncementCount = SCHOOL_MENTOR_ANNOUNCEMENTS.filter(a => a.status === 'new').length;
 
-const newAnnouncementCount = userNotifications.filter(
-   n => n.status === "new"
-).length; /* Greeting */
+  /* Greeting */
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const todayLabel = new Date().toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' });
-  /* Greeting me asli logged-in owner ka pehla naam (visibility.ownerName), mock user nahi. */
-  const firstName = ((ownerName || user.name || '').replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0]) || 'there';
+  const firstName = user.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0];
 
   /* ─── New section local state ──────────────────────────────── */
+  const [lpClass,    setLpClass]    = useState('II-Pre');
+  const [paperClass, setPaperClass] = useState('IV');
+  const [revenueYear, setRevenueYear] = useState(2026);
   const [birthdayTab, setBirthdayTab] = useState('all');
 
   /* Monthly Financial Summary — reads the same Accounts transaction
-     ledger as Accounts → Reports (getAccTxns) — the identical per-entry
-     revenue/expense rows, so Income/Expenses/Net P&L here always match
-     what that module reports. Supports three period filters —
-     Month / From–To / Single Date — by reducing that ledger over the
-     chosen window instead of a single fixed month.
-     NOTE: getAccTxns() only returns the CURRENT month's entries (the
-     backend has no multi-month ledger endpoint wired yet), so choosing
-     a month/range/date outside the current month simply yields 0 until
-     that endpoint exists — the reduce itself is fully live. */
+     ledger as Accounts → Reports (getAccTxns), so Expenses/Income/
+     Net P&L here always match what that module reports. Supports the
+     same three period filters as the OneLink Payments card below —
+     Month / From–To / Single Date. */
   const { data: financeTxns } = useAsync(accountsService.getAccTxns, [], { rev: [], exp: [] });
-  const nowYM = new Date().toISOString().slice(0, 7);
-  const [financeSeg, setFinanceSeg]       = useState('month'); // 'month' | 'range' | 'single'
-  const [financeMonth, setFinanceMonth]   = useState(nowYM);
-  const [financeFrom, setFinanceFrom]     = useState(`${nowYM}-01`);
-  const [financeTo, setFinanceTo]         = useState(() => new Date().toISOString().slice(0, 10));
+  const [financeSeg, setFinanceSeg]     = useState('month'); // 'month' | 'range' | 'single'
+  const [financeMonth, setFinanceMonth] = useState('2026-05');
+  const [financeFrom, setFinanceFrom]   = useState('2026-05-01');
+  const [financeTo, setFinanceTo]       = useState('2026-05-31');
   const [financeSingle, setFinanceSingle] = useState(() => new Date().toISOString().slice(0, 10));
   const financeSummary = useMemo(() => {
     const inPeriod = (x) => {
@@ -556,75 +659,37 @@ const newAnnouncementCount = userNotifications.filter(
         : financeSeg === 'range' ? (d >= financeFrom && d <= financeTo)
         : d === financeSingle;
     };
-    const income  = (financeTxns.rev || []).filter(inPeriod).reduce((a, x) => a + Number(x.amount || 0), 0);
-    const expense = (financeTxns.exp || []).filter(inPeriod).reduce((a, x) => a + Number(x.amount || 0), 0);
+    const rev = (financeTxns.rev || []).filter(inPeriod).reduce((a, x) => a + Number(x.amount || 0), 0);
+    const exp = (financeTxns.exp || []).filter(inPeriod).reduce((a, x) => a + Number(x.amount || 0), 0);
     const [yy, mm] = financeMonth.split('-');
     const label = financeSeg === 'month' ? `${FIN_MONTH_NAMES[Number(mm) - 1]} ${yy}`
       : financeSeg === 'range' ? `${financeFrom} to ${financeTo}`
       : financeSingle;
-    /* Ledger khaali ho (teacher ko accounts API na mile, ya month me entries na hon)
-       to get-dashboard FinancialOverview current month ke cards bhar de. */
-    if (!income && !expense && financeSeg === 'month' && financeMonth === nowYM) {
-      const apiIncome = Number(finOverview.OverallIncome) || 0;
-      const apiExpense = Number(finOverview.OverallExpenses) || 0;
-      const apiPl = finOverview.NetProfitLoss != null
-        ? Number(finOverview.NetProfitLoss)
-        : apiIncome - apiExpense;
-      if (apiIncome || apiExpense || apiPl) {
-        return { label, income: apiIncome, expense: apiExpense, pl: apiPl };
-      }
-    }
-    return { label, income, expense, pl: income - expense };
-  }, [financeTxns, financeSeg, financeMonth, financeFrom, financeTo, financeSingle, finOverview, nowYM]);
+    return { label, income: rev, expense: exp, pl: rev - exp };
+  }, [financeTxns, financeSeg, financeMonth, financeFrom, financeTo, financeSingle]);
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showReport,        setShowReport]        = useState(null); /* 'teachers' | 'parents' | null */
+  const [showDailyReceiving, setShowDailyReceiving] = useState(false);
+  const [showDailyAdvancePayment, setShowDailyAdvancePayment] = useState(false);
+  const [showDailyAdvanceAdjustment, setShowDailyAdvanceAdjustment] = useState(false);
 
-  /* Lesson Plan + Paper Generator — ab poore API arrays se (class-wise
-     mock hata diya, kyunke API sirf subject-wise data deta hai). */
-  const lpData    = lessonPlans; /* [{SubjectName, ClassworkCount, NotebookCount}] */
-  const paperData = paperStats;  /* [{SubjectName, TotalGenerated}] */
-  const lpMaxCw = useMemo(() => (lpData.length ? Math.max(...lpData.map(d => Number(d.ClassworkCount) || 0)) : 0), [lpData]);
-  const paperTotal = useMemo(() => paperData.reduce((s, p) => s + (Number(p.TotalGenerated) || 0), 0), [paperData]);
+  const lpData    = LP_DATA_BY_CLASS[lpClass]    || LP_DATA_BY_CLASS['II-Pre'];
+  const paperData = PAPER_DATA_BY_CLASS[paperClass] || PAPER_DATA_BY_CLASS['IV'];
+  const profitData  = PROFIT_LOSS_BY_YEAR[revenueYear]  || PROFIT_LOSS_BY_YEAR[2026];
+  const plTotal = useMemo(() => profitData.reduce((s, d) => s + d.pl, 0), [profitData]);
+  const lpMaxCw = useMemo(() => Math.max(...lpData.map(d => d.classwork)), [lpData]);
+  const paperTotal = useMemo(() => paperData.reduce((s, p) => s + p.count, 0), [paperData]);
 
-  const studentBdays = isActive('students') ? stuBdays : [];
-  const teacherBdays = isActive('hr') ? staffBdays : [];
+  const studentBdays = isActive('students') ? STUDENT_BIRTHDAYS : [];
+  const teacherBdays = isActive('hr') ? TEACHER_BIRTHDAYS : [];
   const showStudents = birthdayTab === 'all' || birthdayTab === 'students';
   const showTeachers = birthdayTab === 'all' || birthdayTab === 'teachers';
 
-  /* Birthday helpers — API item {FirstName, LastName, DateOfBirth, PersonType}. */
-  const realTodayDay = new Date().getDate();
-  const bdayName  = (b) => `${b.FirstName || ''} ${b.LastName || ''}`.trim() || '—';
-  const bdayDay   = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? 0 : d.getDate(); };
-  const bdayLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }); };
-
-  /* Current month/year label — banners aur activity headers ke liye. */
-  const cmyLabel = (() => { const c = dashboardService.currentMonthYear(); return `${FIN_MONTH_NAMES[c.month - 1]} ${c.year}`; })();
-
-  /* Upcoming Activities helpers — API {Title, StartAt, EndAt}. */
-  const actDateLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }); };
-  const actDaysAway  = (iso) => { const d = new Date(iso); if (isNaN(d.getTime())) return 0; return Math.round((d.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000); };
-
-  /* Recharts animations are disabled when the user has asked their
-     system to reduce motion. */
-  const chartsAnimated = typeof window === 'undefined' || !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  /* One useScrollReplay per chart card so each replays independently on
-     scroll re-entry — except the donut + collections pair in
-     .fa-chart-grid, which share one so they always start/finish in
-     lockstep. */
-  const overviewCompReplay = useScrollReplay();
-  const feeGridReplay = useScrollReplay();
-  const plOverviewReplay = useScrollReplay();
-  const lpChartReplay = useScrollReplay();
-  const subjCompletionReplay = useScrollReplay();
-  const paperSecReplay = useScrollReplay();
-
   return (
     <>
-      {/* DASH_CSS parent Dashboard.jsx inject karta hai (wahi AdminDashboard ko
-          wrap karta hai) — yahan dobara import karne se AdminDashboard⟷Dashboard
-          circular import banta tha jo HMR par "Element type is invalid" deta. */}
+      <style>{DASH_CSS}</style>
       <style>{ADM_NEW_CSS}</style>
 
       {/* ═════════ 0. UNIVERSAL SEARCH BAR ═════════
@@ -634,7 +699,7 @@ const newAnnouncementCount = userNotifications.filter(
             can clamp it later. Module-activation gating happens inside
             the hook via ModuleContext. */}
       <div className="adm-uvs-row">
-        <UniversalSearch
+        <MentorAISearchBar
           onNavigate={(target, params) => {
             navigate(target, params);
             toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
@@ -643,6 +708,7 @@ const newAnnouncementCount = userNotifications.filter(
           sessionId={session?.id || null}
           toast={toast}
           placeholder="Search students, employees, lesson plans, exams, fees…"
+          ctx={{ role: 'admin', sessionId: session?.id || null }}
         />
       </div>
 
@@ -654,26 +720,28 @@ const newAnnouncementCount = userNotifications.filter(
             {greeting}, {firstName}
           </div>
           <div className="dash-hero-sub">
-            <b>{todayLabel}</b> · Session {session.label}.
-            {moduleActive('academics') && <> You have <b>{actSummary.UpcomingCount || 0}</b> upcoming activities.</>}
+            <b>{todayLabel}</b> · Session {session.label}. You have{' '}
+            {moduleActive('admissions') && <><b>{CRM_STATS.followups.overdue + CRM_STATS.followups.today}</b> follow-ups</>}
+            {moduleActive('admissions') && moduleActive('academics') && ' and '}
+            {moduleActive('academics') && <><b>{ACADEMICS_STATS.lessonPlans.pending}</b> lesson plans pending</>}.
           </div>
         </div>
-        <div className="dash-hero-r">
+        <div className="dash-hero-r" ref={heroStatsReplay.ref}>
           {moduleActive('students') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{kpi.ActiveStudents || 0}</div>
+              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={STUDENT_STATS.activeStudents} duration={CHART_ANIM_MS} /></div>
               <div className="dash-hero-stat-lbl">Active Students</div>
             </div>
           )}
           {moduleActive('hr') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{kpi.ActiveStaff || 0}<small>/{snap.TotalEmployees || 0}</small></div>
+              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={HR_STATS.activeEmployees} duration={CHART_ANIM_MS} /><small>/{HR_STATS.totalEmployees}</small></div>
               <div className="dash-hero-stat-lbl">Staff Active</div>
             </div>
           )}
           {moduleActive('attendance') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{studentAttData.percentage}<small>%</small></div>
+              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={ATTENDANCE_STATS.todayStudentPct} duration={CHART_ANIM_MS} /><small>%</small></div>
               <div className="dash-hero-stat-lbl">Attendance Today</div>
             </div>
           )}
@@ -684,11 +752,10 @@ const newAnnouncementCount = userNotifications.filter(
           1. School Mentor Announcements
           2. Teachers Mobile App Status
           3. Parents Mobile App Status                            */}
-      {(canCard('School Mentor Announcements') || canCard('Teachers Mobile App Status') || canCard('Parents Mobile App Status')) && (
       <div className="adm-top-cards">
 
         {/* ── Card 1: Announcements ── */}
-        {canCard('School Mentor Announcements') && (
+        {canSeeCard('announcements') ? (
         <div className="adm-tc adm-tc--announce">
           <div className="adm-tc-h">
             <div className="adm-tc-h-l">
@@ -697,39 +764,36 @@ const newAnnouncementCount = userNotifications.filter(
               </div>
               <div>
                 <div className="adm-tc-t">School Mentor Announcements</div>
-                <div className="adm-tc-s">{latestAnnouncement ? latestAnnouncement.sender : 'School Mentor — HQ'}</div>
+                <div className="adm-tc-s">{latestAnnouncement.sender}</div>
               </div>
             </div>
-            {/* Only show pill when there are actual unread items */}
+            {/* Only show when there are actual unread items — now a real
+                button (not just a status pill) so it's both the loudest
+                visual cue on the card AND a direct shortcut into the
+                unread list, same destination as "View Details" below. */}
             {newAnnouncementCount > 0 && (
-              <Tooltip text={`${newAnnouncementCount} unread message${newAnnouncementCount > 1 ? 's' : ''}`}>
-                <span className="adm-tc-pill adm-tc-pill--new">
-                  <span className="adm-tc-pill-dot" /> {newAnnouncementCount}
-                </span>
+              <Tooltip text={`View ${newAnnouncementCount} unread message${newAnnouncementCount > 1 ? 's' : ''}`}>
+                <button
+                  type="button"
+                  className="adm-tc-pill adm-tc-pill--new"
+                  onClick={() => setShowAnnouncements(true)}
+                  aria-label={`${newAnnouncementCount} unread announcement${newAnnouncementCount > 1 ? 's' : ''} — view all`}
+                >
+                  <span className="adm-tc-pill-dot" /> {newAnnouncementCount} New
+                </button>
               </Tooltip>
             )}
           </div>
 
           <div className="adm-tc-body">
-            {latestAnnouncement ? (
-              <>
-                <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
-                <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
-              </>
-            ) : (
-              <>
-                <div className="adm-tc-an-title">No announcements yet</div>
-                <div className="adm-tc-an-preview">New announcements from School Mentor will appear here.</div>
-              </>
-            )}
+            <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
+            <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
           </div>
 
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestAnnouncement
-                ? ([latestAnnouncement.date, latestAnnouncement.time].filter(Boolean).join(' · ') || '—')
-                : '—'}
+              {latestAnnouncement.date} · {latestAnnouncement.time}
             </span>
             <Tooltip text="View all announcements">
               <button
@@ -742,89 +806,86 @@ const newAnnouncementCount = userNotifications.filter(
             </Tooltip>
           </div>
         </div>
-        )}
+        ) : <LockedCard title="School Mentor Announcements" icon="fa-bullhorn" />}
 
         {/* ── Card 2: Teachers Mobile App ── */}
-        {canCard('Teachers Mobile App Status') && (
+        {canSeeCard('teacherapp') ? (
         <AppStatusCard
           tone="green"
           title="Teachers Mobile App"
           subtitle="Adoption status"
           icon="fa-chalkboard-user"
-          data={teacherAppData}
+          data={TEACHER_APP_STATUS}
           ctaLabel="Download Report"
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('teachers')}
         />
-        )}
+        ) : <LockedCard title="Teachers Mobile App Status" icon="fa-chalkboard-user" />}
 
         {/* ── Card 3: Parents Mobile App ── */}
-        {canCard('Parents Mobile App Status') && (
+        {canSeeCard('parentapp') ? (
         <AppStatusCard
           tone="amber"
           title="Parents Mobile App"
           subtitle="Adoption status"
           icon="fa-people-roof"
-          data={parentAppData}
+          data={PARENT_APP_STATUS}
           ctaLabel="Download Report"
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('parents')}
         />
-        )}
+        ) : <LockedCard title="Parents Mobile App Status" icon="fa-people-roof" />}
       </div>
-      )}
 
       {/* ─── Modals (rendered on demand) ─── */}
       {showAnnouncements && (
-<AnnouncementsModal
-  announcements={userNotifications}
-          unreadCount={notificationUnreadCount}
+        <AnnouncementsModal
           onClose={() => setShowAnnouncements(false)}
           toast={toast}
-         onMarkRead={(recipientId) => {
-
-  const loginUserId = Number(
-    sessionStorage.getItem("UserID") || 0
-  );
-
-  return notificationService
-    .markNotificationRead(loginUserId, recipientId)
-    .then(() => {
-
-      // Update UI instantly
-   setUserNotifications(prev =>
-  prev.map(item =>
-    item.recipientID === recipientId
-      ? {
-          ...item,
-          status: "",
-          isRead: true
-        }
-      : item
-  )
-);
-
-    });
-
-}}
-          onMarkAllRead={async () => {
-            const loginUserId = getCurrentLoginUserId();
-            if (!loginUserId) return;
-            await notificationService.markAllNotificationsRead(loginUserId);
-            await loadUserNotifications();
-          }}
         />
       )}
       {showReport && (
         <AppPendingReportModal
           mode={showReport}
-          counts={showReport === 'teachers' ? appOf('Teacher') : appOf('Parent')}
           onClose={() => setShowReport(null)}
           toast={toast}
         />
       )}
+      {showDailyReceiving && (
+        <DailyReceivingReportModal
+          receipts={faReceipts}
+          classes={faClasses}
+          studentsMap={faStudentsMap}
+          onClose={() => setShowDailyReceiving(false)}
+          toast={toast}
+        />
+      )}
+      {showDailyAdvancePayment && (
+        <DailyAdvancePaymentReportModal
+          receipts={faReceipts}
+          classes={faClasses}
+          studentsMap={faStudentsMap}
+          headsMap={faHeadsMap}
+          discMap={faDiscMap}
+          generatedSet={faGeneratedSet || new Set()}
+          onClose={() => setShowDailyAdvancePayment(false)}
+          toast={toast}
+        />
+      )}
+      {showDailyAdvanceAdjustment && (
+        <DailyAdvanceAdjustmentReportModal
+          advanceLedger={faAdvanceLedger}
+          classes={faClasses}
+          studentsMap={faStudentsMap}
+          onClose={() => setShowDailyAdvanceAdjustment(false)}
+          toast={toast}
+        />
+      )}
 
-      {tiles.length > 0 && canCard('Live Module Snapshot') && (
+      {tiles.length > 0 && (
+        !canSeeCard('snapshot') ? (
+          <LockedCard title="Live Module Snapshot" icon="fa-chart-simple" />
+        ) : (
         <div className="dash-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title">
@@ -832,7 +893,7 @@ const newAnnouncementCount = userNotifications.filter(
             </div>
             <span className="dash-sec-sub">Click any tile to open its module</span>
           </div>
-          <div className="dash-tiles">
+          <div className="dash-tiles" ref={tilesReplay.ref}>
             {tiles.map(t => {
               const grad = TILE_GRADIENT[t.key];
               return (
@@ -853,7 +914,9 @@ const newAnnouncementCount = userNotifications.filter(
                     <div className="dash-tile-lbl">{t.label}</div>
                     <div className="dash-tile-arrow"><i className="fa-solid fa-arrow-up" aria-hidden="true"></i></div>
                   </div>
-                  <div className="dash-tile-val">{t.value}</div>
+                  <div className="dash-tile-val">
+                    <AnimatedNumber key={`${t.key}-${tilesReplay.replayKey}`} value={t.value} suffix={t.suffix || ''} duration={CHART_ANIM_MS} />
+                  </div>
                   <div className="dash-tile-meta">{t.meta}</div>
                 </div>
               </Tooltip>
@@ -861,253 +924,72 @@ const newAnnouncementCount = userNotifications.filter(
             })}
           </div>
         </div>
+        )
       )}
 
       {/* ═════════ 3. FEE ANALYTICS ═════════ */}
-      {isActive('fee') && anyFeeCard && (
+      {isActive('fee') && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-coins" aria-hidden="true"></i> Fee Analytics</div>
-            <button type="button" className="dash-sec-link" onClick={() => openModule('fee')}>
-              Open Fee <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
-            </button>
+            <div className="adm-h-right">
+              <span className="adm-h-meta">Month:</span>
+              <select
+                className="adm-select"
+                value={feeMonthIdx}
+                onChange={(e) => setFeeMonthIdx(Number(e.target.value))}
+                aria-label="Select month for Fee Analytics"
+              >
+                {FIN_MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m} 2026</option>)}
+              </select>
+              <button type="button" className="dash-sec-link" onClick={() => openModule('fee')}>
+                Open Fee <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
 
-          {/* ═════════ TOP ROW — 3 summary cards ═════════ */}
-          <div className="fa-top-grid">
-
-            {/* Card 1 — Current Month Fee Position (primary summary) */}
-            {feeVis.currentMonth && (
-            <div className="stat-card fee-card fa-card fc-tone--brand fa-card--primary">
-              <div className="fc-header">
-                <div className="fc-icon-chip">
-                  <i className="fa-solid fa-money-check-dollar" aria-hidden="true"></i>
-                </div>
-                <div className="fc-title">Current Month Fee Position</div>
-              </div>
-              <div className="fc-amount fa-amount--lg">{fmtPKR(currentMonthFeeVal)}</div>
-              <div className="fc-divider" />
-              <div className="fa-meta-rows">
-                <div className="fa-meta-row">
-                  <span className="fa-meta-lbl">
-                    <i className="fa-solid fa-tag" aria-hidden="true"></i> Discount Given
-                  </span>
-                  <span className="fa-meta-val fa-meta-val--amber">{fmtPKR(fee.DiscountGiven)}</span>
-                </div>
-                <div className="fa-meta-row">
-                  <span className="fa-meta-lbl">
-                    <i className="fa-solid fa-file-invoice" aria-hidden="true"></i> Challans Generated
-                  </span>
-                  <span className="fa-meta-val">
-                    <span className="fc-highlight">{fee.ChallansGenerated || 0}</span><span className="fa-meta-div">/</span><span className="fa-meta-total">{fee.TotalStudentsForChallanRatio || 0}</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-            )}
-
-            {/* Card 2 — Previous Dues */}
-            {feeVis.previousDues && (
-            <div className="stat-card fee-card fa-card fc-tone--red fc-bordered">
-              <div className="fc-header">
-                <div className="fc-icon-chip">
-                  <i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
-                </div>
-                <div className="fc-title fc-title--red">Previous Dues</div>
-              </div>
-              <div className="fc-amount fc-amount--red fa-amount--lg">{fmtPKR(previousDuesVal)}</div>
-              <div className="fc-divider" />
-              <div className="fa-meta-rows">
-                <div className="fa-meta-row">
-                  <span className="fa-meta-lbl">
-                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students with Dues
-                  </span>
-                  <span className="fa-meta-val fa-meta-val--red">{studentsWithDuesVal}</span>
-                </div>
-                <div className="fa-meta-row fa-meta-row--muted">
-                  <i className="fa-solid fa-clock" aria-hidden="true"></i>
-                  <span>Carried from past months</span>
-                </div>
-              </div>
-            </div>
-            )}
-
-            {/* Card 3 — Total Net Receivable */}
-            {feeVis.netReceivable && (
-            <div className="stat-card fee-card fa-card fc-tone--slate fa-card--total">
-              <div className="fc-header">
-                <div className="fc-icon-chip">
-                  <i className="fa-solid fa-scale-balanced" aria-hidden="true"></i>
-                </div>
-                <div className="fc-title">Total Net Receivable</div>
-              </div>
-              <div className="fc-amount fa-amount--lg">{fmtPKR(totalNetReceivableVal)}</div>
-              <div className="fa-formula">
-                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-                <span>Current Month Fee Position + Previous Dues</span>
-              </div>
-              <div className="fc-divider" />
-              <div className="fa-formula-breakdown">
-                <div>
-                  <span className="fa-bd-lbl">This Month</span>
-                  <span className="fa-bd-val">{fmtPKR(currentMonthFeeVal)}</span>
-                </div>
-                <span className="fa-bd-op">+</span>
-                <div>
-                  <span className="fa-bd-lbl">Previous</span>
-                  <span className="fa-bd-val fa-bd-val--red">{fmtPKR(previousDuesVal)}</span>
-                </div>
-              </div>
-            </div>
-            )}
-          </div>
-
-          {/* ═════════ BOTTOM ROW — 2 LARGE status cards ═════════ */}
-          <div className="fa-bottom-grid">
-
-            {/* Card 4 — Fee Received (large with progress) */}
-            {feeVis.received && (
-            <div className="stat-card fee-card fa-card fa-large fc-tone--green fc-bordered fc-tint--green">
-              <div className="fa-large-row">
-                <div className="fa-large-l">
-                  <div className="fc-header">
-                    <div className="fc-icon-chip">
-                      <i className="fa-solid fa-circle-check" aria-hidden="true"></i>
-                    </div>
-                    <div className="fc-title">Fee Received</div>
-                  </div>
-                  <div className="fc-amount fc-amount--green fa-amount--xl">{fmtPKR(feeReceivedVal)}</div>
-                  <div className="fa-status-meta">
-                    <i className="fa-solid fa-user-check" aria-hidden="true"></i>
-                    <span>Students Paid:&nbsp;</span>
-                    <span className="fa-status-strong">{fee.StudentsPaid || 0}<span className="fa-meta-div">/</span>{fee.TotalStudentsWithChallan || 0}</span>
-                  </div>
-                  {/* Jo raqam wasool hote waqt discount me chhori gayi — API ka
-                      ReceivedDiscount. Upar wale card ka "Discount Given" challan
-                      BANTE waqt ka discount hai; ye us ka jora hai, is liye rang
-                      bhi wahi amber. */}
-                  <div className="fa-status-meta fa-status-meta--amber">
-                    <i className="fa-solid fa-tag" aria-hidden="true"></i>
-                    <span>Received Discount:&nbsp;</span>
-                    <span className="fa-status-strong fa-status-strong--amber">{fmtPKR(fee.ReceivedDiscount)}</span>
-                  </div>
-                </div>
-                <div className="fa-large-r">
-                  <div className="fa-ring fa-ring--green" style={{ '--ring-pct': feePaidPct }}>
-                    <svg viewBox="0 0 36 36" width="100%" height="100%">
-                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(22,163,74,.15)" strokeWidth="3" />
-                      <circle
-                        cx="18" cy="18" r="15.9" fill="none"
-                        stroke="#16A34A" strokeWidth="3" strokeLinecap="round"
-                        strokeDasharray="100, 100"
-                        strokeDashoffset={100 - feePaidPct}
-                        transform="rotate(-90 18 18)"
-                      />
-                    </svg>
-                    <div className="fa-ring-text">
-                      <div className="fa-ring-pct">{feePaidPct}%</div>
-                      <div className="fa-ring-lbl">Paid</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="fa-progress">
-                <div className="fa-progress-h">
-                  <span>Collection Progress</span>
-                  <span><b>{fee.StudentsPaid || 0}</b> of {fee.TotalStudentsWithChallan || 0} students</span>
-                </div>
-                <div className="fa-progress-track">
-                  <div className="fa-progress-fill fa-progress-fill--green" style={{ width: `${feePaidPct}%` }} />
-                </div>
-              </div>
-            </div>
-            )}
-
-            {/* Card 5 — Pending Fee (large with progress) */}
-            {feeVis.pending && (
-            <div className="stat-card fee-card fa-card fa-large fc-tone--red fc-bordered">
-              <div className="fa-large-row">
-                <div className="fa-large-l">
-                  <div className="fc-header">
-                    <div className="fc-icon-chip">
-                      <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i>
-                    </div>
-                    <div className="fc-title fc-title--red">Pending Fee</div>
-                  </div>
-                  <div className="fc-amount fc-amount--red fa-amount--xl">{fmtPKR(pendingFeeVal)}</div>
-                  <div className="fa-status-meta">
-                    <i className="fa-solid fa-user-clock" aria-hidden="true"></i>
-                    <span>Students Pending:&nbsp;</span>
-                    <span className="fa-status-strong fa-status-strong--red">{fee.StudentsPending || 0}<span className="fa-meta-div">/</span>{fee.TotalStudentsWithChallan || 0}</span>
-                  </div>
-                </div>
-                <div className="fa-large-r">
-                  <div className="fa-ring fa-ring--red" style={{ '--ring-pct': feePendingPct }}>
-                    <svg viewBox="0 0 36 36" width="100%" height="100%">
-                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(220,38,38,.15)" strokeWidth="3" />
-                      <circle
-                        cx="18" cy="18" r="15.9" fill="none"
-                        stroke="#DC2626" strokeWidth="3" strokeLinecap="round"
-                        strokeDasharray="100, 100"
-                        strokeDashoffset={100 - feePendingPct}
-                        transform="rotate(-90 18 18)"
-                      />
-                    </svg>
-                    <div className="fa-ring-text">
-                      <div className="fa-ring-pct">{feePendingPct}%</div>
-                      <div className="fa-ring-lbl">Pending</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="fa-progress">
-                <div className="fa-progress-h">
-                  <span>Recovery Action Needed</span>
-                  <span><b>{fee.StudentsPending || 0}</b> of {fee.TotalStudentsWithChallan || 0} students</span>
-                </div>
-                <div className="fa-progress-track">
-                  <div className="fa-progress-fill fa-progress-fill--red" style={{ width: `${feePendingPct}%` }} />
-                </div>
-              </div>
-            </div>
-            )}
-          </div>
-
-          {/* Download / Print Report link below the grid */}
-          <div className="adm-link-row">
-            <button
-              type="button"
-              className="adm-link-btn"
-              onClick={() => { openModule('fee'); toast('Fee report opening...', 'info'); }}
-            >
-              Download/Print Report <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
-            </button>
-          </div>
-
-          {/* ═════════ FEE ANALYTICS — visual charts ═════════
-              Reshapes the SAME live values shown in the cards above
-              (currentMonthFeeVal / previousDuesVal / totalNetReceivableVal
-              / feeReceivedVal / totalDiscountVal / pendingFeeVal) into three
-              Recharts views. No extra fetch, no mock — sab get-dashboard
-              FeeAnalytics se, wahi jo upar ke cards dikhate hain. */}
+          {/* ═════════ FEE ANALYTICS OVERVIEW — graphical summary,
+              reshaping the SAME feeExtras totals the 8 cards below
+              already read (no second fetch). "View Cards" scrolls
+              down to feeCardsRef, the top of the existing card grid,
+              instead of duplicating it. Gated by its own
+              dashboard.fee_analytics_overview.view permission, same
+              pattern as every other card here. ═════════ */}
+          {canSeeCard('fee_analytics_overview') ? (
           <div className="fa-overview">
             <div className="fa-overview-head">
               <div className="fa-overview-title">
                 <i className="fa-solid fa-chart-column" aria-hidden="true"></i> Fee Analytics Overview
+                <span className="fa-live-badge"><span className="fa-live-dot" /> Live</span>
               </div>
-              <div className="fa-overview-sub">A quick visual read of <b>{cmyLabel}</b>&apos;s fee position</div>
+              <div className="fa-overview-sub">A quick visual read of <b>{feeMonthLabel}</b>&apos;s fee position, before the detailed cards below</div>
             </div>
 
-            {/* Overview Comparison — full-width horizontal bar. Sirf tab jab
-                kam-az-kam ek permitted bar ho. */}
-            {feeOverviewData.length > 0 && (
+            <div className="fa-highlight-strip" ref={faHighlightsReplay.ref}>
+              {faHighlights.map((h, i) => (
+                <div
+                  key={h.label}
+                  className={`fa-highlight-tile fa-highlight-tile--${h.tone}`}
+                  style={{ animationDelay: `${i * 70}ms` }}
+                >
+                  <i className={`fa-solid ${h.icon}`} aria-hidden="true"></i>
+                  <div>
+                    <div className="fa-highlight-val">
+                      <AnimatedNumber key={faHighlightsReplay.replayKey} value={h.value} suffix={h.suffix} duration={CHART_ANIM_MS} />
+                    </div>
+                    <div className="fa-highlight-lbl">{h.label}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="fa-chart-card fa-chart-card--wide" ref={overviewCompReplay.ref}>
               <div className="adm-card-h">
                 <div className="adm-card-h-t">Overview Comparison</div>
-                <span className="adm-card-h-meta">{cmyLabel}</span>
+                <span className="adm-card-h-meta">{feeMonthLabel}</span>
               </div>
               <ResponsiveContainer key={overviewCompReplay.replayKey} width="100%" height={320}>
-                <BarChart data={feeOverviewData} layout="vertical" margin={{ top: 4, right: 28, left: 8, bottom: 4 }}>
+                <BarChart data={overviewChartData} layout="vertical" margin={{ top: 4, right: 28, left: 8, bottom: 4 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
                   <YAxis type="category" dataKey="short" width={100} tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }} tickLine={false} axisLine={false} />
@@ -1116,31 +998,27 @@ const newAnnouncementCount = userNotifications.filter(
                     dataKey="value" name="Amount" radius={[0, 6, 6, 0]} maxBarSize={20}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                   >
-                    {feeOverviewData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    {overviewChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            )}
 
-            {/* Donut + Collections bar side-by-side — Received/Pending cards ki
-                permission par. Neither allowed → poora grid hide. */}
-            {(feeVis.received || feeVis.pending) && (
             <div className="fa-chart-grid" ref={feeGridReplay.ref}>
               <div className="fa-chart-card">
                 <div className="adm-card-h">
                   <div className="adm-card-h-t">Net Receivable Breakdown</div>
                 </div>
-                {feeBreakdownData.length === 0 ? (
-                  <div className="fa-chart-empty">No amounts recorded yet for {cmyLabel}.</div>
+                {breakdownChartData.length === 0 ? (
+                  <div className="fa-chart-empty">No amounts recorded yet for {feeMonthLabel}.</div>
                 ) : (
                   <ResponsiveContainer key={feeGridReplay.replayKey} width="100%" height={260}>
                     <PieChart>
                       <Pie
-                        data={feeBreakdownData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="85%" paddingAngle={2}
+                        data={breakdownChartData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="85%" paddingAngle={2}
                         isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                       >
-                        {feeBreakdownData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                        {breakdownChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
                       </Pie>
                       <RTooltip content={<FeeChartTooltip showPct />} />
                       <Legend verticalAlign="bottom" height={48} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, fontWeight: 600 }} />
@@ -1154,7 +1032,7 @@ const newAnnouncementCount = userNotifications.filter(
                   <div className="adm-card-h-t">Collections vs Outstanding</div>
                 </div>
                 <ResponsiveContainer key={`coll-${feeGridReplay.replayKey}`} width="100%" height={260}>
-                  <BarChart data={feeCollectionsData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <BarChart data={collectionsChartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                     <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="short" tick={{ fontSize: 11, fill: '#64748B', fontWeight: 600 }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
                     <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
@@ -1163,35 +1041,427 @@ const newAnnouncementCount = userNotifications.filter(
                       dataKey="value" name="Amount" radius={[6, 6, 0, 0]} maxBarSize={64}
                       isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                     >
-                      {feeCollectionsData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                      {collectionsChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
-            )}
+
+            <div className="fa-viewcards-row">
+              <button
+                type="button"
+                className={`fa-viewcards-btn${showFeeCards ? ' fa-viewcards-btn--open' : ''}`}
+                onClick={toggleFeeCards}
+                aria-expanded={showFeeCards}
+              >
+                <i className="fa-solid fa-table-cells-large" aria-hidden="true"></i> {showFeeCards ? 'Hide Cards' : 'View Cards'}
+                <i className={`fa-solid fa-chevron-down fa-viewcards-chev${showFeeCards ? ' fa-viewcards-chev--open' : ''}`} aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
+          ) : <LockedCard title="Fee Analytics Overview" icon="fa-chart-column" className="fa-overview-locked" />}
+
+          {/* ═════════ DETAILED FEE ANALYTICS CARDS — hidden until
+              "View Cards" is clicked; stays unmounted (not just
+              display:none) while collapsed. ═════════ */}
+          {showFeeCards && (
+          <>
+          {/* ═════════ TOP ROW — 3 summary cards ═════════ */}
+          <div className="fa-top-grid" ref={feeCardsRef}>
+
+            {/* Card 1 — Current Month Fee Position (primary summary) */}
+            {canSeeCard('fee_currentmonth') ? (
+            <div className="stat-card fee-card fa-card fc-tone--brand fa-card--primary">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-money-check-dollar" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Current Month Fee Position</div>
+                <FeeAnalyticsInfoButton cardKey="currentMonth" />
+              </div>
+              <div className="fc-amount fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.currentMonthTotal} duration={CHART_ANIM_MS} /></div>
+              <div className="fa-formula">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Generated challans for {feeMonthLabel}</span>
+              </div>
+              <div className="fc-divider" />
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-file-invoice" aria-hidden="true"></i> Challans Generated
+                  </span>
+                  <span className="fa-meta-val">
+                    <span className="fc-highlight">{feeExtras.challansGenerated}</span><span className="fa-meta-div">/</span><span className="fa-meta-total">{feeExtras.totalStudents}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            ) : <LockedCard title="Current Month Fee Position" icon="fa-money-check-dollar" />}
+
+            {/* Card 2 — Previous Dues */}
+            {canSeeCard('fee_previousdues') ? (
+            <div className="stat-card fee-card fa-card fc-tone--red fc-bordered">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title fc-title--red">Previous Dues</div>
+                <FeeAnalyticsInfoButton cardKey="previousDues" />
+              </div>
+              <div className="fc-amount fc-amount--red fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.previousDuesTotal} duration={CHART_ANIM_MS} /></div>
+              <div className="fc-divider" />
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students with Dues
+                  </span>
+                  <span className="fa-meta-val fa-meta-val--red">{feeExtras.studentsWithDues}</span>
+                </div>
+                <div className="fa-meta-row fa-meta-row--muted">
+                  <i className="fa-solid fa-clock" aria-hidden="true"></i>
+                  <span>Carried from past months</span>
+                </div>
+              </div>
+            </div>
+            ) : <LockedCard title="Previous Dues" icon="fa-circle-exclamation" />}
+
+            {/* Card 3 — Total Net Receivable */}
+            {canSeeCard('fee_netreceivable') ? (
+            <div className="stat-card fee-card fa-card fc-tone--slate fa-card--total">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-scale-balanced" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Total Net Receivable</div>
+                <FeeAnalyticsInfoButton cardKey="netReceivable" />
+              </div>
+              <div className="fc-amount fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.netReceivableTotal} duration={CHART_ANIM_MS} /></div>
+              <div className="fa-formula">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Current Month Net Receivable + Previous Dues</span>
+              </div>
+              <div className="fc-divider" />
+              <div className="fa-formula-breakdown">
+                <div>
+                  <span className="fa-bd-lbl">This Month</span>
+                  <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.currentMonthTotal} duration={CHART_ANIM_MS} /></span>
+                </div>
+                <span className="fa-bd-op">+</span>
+                <div>
+                  <span className="fa-bd-lbl">Previous</span>
+                  <span className="fa-bd-val fa-bd-val--red"><AnimatedNumber prefix="PKR " value={feeExtras.previousDuesTotal} duration={CHART_ANIM_MS} /></span>
+                </div>
+              </div>
+            </div>
+            ) : <LockedCard title="Total Net Receivable" icon="fa-scale-balanced" />}
+          </div>
+
+          {/* ═════════ SECOND ROW — 3 cards (Received / Discount / Advance) ═════════ */}
+          <div className="fa-second-grid">
+
+            {/* Card 4 — Fee Received */}
+            {canSeeCard('fee_received') ? (
+            <div className="stat-card fee-card fa-card fc-tone--green fc-bordered">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-circle-check" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Fee Received</div>
+                <FeeAnalyticsInfoButton cardKey="received" />
+              </div>
+              <div className="fc-amount fc-amount--green fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.receivedTotal} duration={CHART_ANIM_MS} /></div>
+              <div className="fa-formula">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Amount actually collected in {feeMonthLabel}</span>
+              </div>
+              <div className="fc-divider" />
+              <div className="fa-progress">
+                <div className="fa-progress-h">
+                  <span>Collected</span>
+                  <span><b>{feeExtras.receivedPct}%</b> of Net Receivable</span>
+                </div>
+                <div className="fa-progress-track">
+                  <div className="fa-progress-fill fa-progress-fill--green" style={{ width: `${feeExtras.receivedPct}%` }} />
+                </div>
+              </div>
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students Paid
+                  </span>
+                  <span className="fa-meta-val fa-meta-val--green">{feeExtras.receivedStudentCount}</span>
+                </div>
+              </div>
+              <div className="adm-tc-foot adm-tc-foot--row2">
+                <Tooltip text="View or download fee receiving transactions for a single day">
+                  <button type="button" className="adm-tc-btn adm-tc-btn--half" onClick={() => setShowDailyReceiving(true)} aria-label="Open Daily Receiving Report">
+                    <i className="fa-solid fa-calendar-day" aria-hidden="true"></i> Daily Report
+                  </button>
+                </Tooltip>
+                <Tooltip text="Download the student-wise Fee Received report">
+                  <button type="button" className="adm-tc-btn adm-tc-btn--half" onClick={downloadFeeReceivedReport} aria-label="Download Fee Received report">
+                    <i className="fa-solid fa-download" aria-hidden="true"></i> Download Report
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+            ) : <LockedCard title="Fee Received" icon="fa-circle-check" />}
+
+            {/* Card 5 — Discount Given During Receiving */}
+            {canSeeCard('fee_discountgiven') ? (
+            <div className="stat-card fee-card fa-card fc-tone--amber fc-bordered">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-tags" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Discount Given During Receiving</div>
+                <FeeAnalyticsInfoButton cardKey="discountGiven" />
+              </div>
+              <div className="fc-amount fc-amount--amber fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.discountTotal} duration={CHART_ANIM_MS} /></div>
+              <div className="fa-formula">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Additional discounts provided during payment receiving</span>
+              </div>
+              <div className="fc-divider" />
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students Given Discount
+                  </span>
+                  <span className="fa-meta-val fa-meta-val--amber">{feeExtras.discountStudentCount}</span>
+                </div>
+                <div className="fa-meta-row fa-meta-row--muted">
+                  <i className="fa-solid fa-arrow-down" aria-hidden="true"></i>
+                  <span>Reduces outstanding receivable</span>
+                </div>
+              </div>
+              <div className="adm-tc-foot">
+                <Tooltip text="Download the student-wise Discount Given report">
+                  <button type="button" className="adm-tc-btn adm-tc-btn--full" onClick={downloadFeeDiscountReport} aria-label="Download Discount Given report">
+                    <i className="fa-solid fa-download" aria-hidden="true"></i> Download Report
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+            ) : <LockedCard title="Discount Given During Receiving" icon="fa-tags" />}
+
+            {/* Card 6 — Advance Adjustments. Sits in the main calculation
+                flow (Fee Received → Discount → Advance Adjustments →
+                Pending Fee) since, unlike Advance Payments Received
+                below, this figure genuinely reduces Pending Fee. */}
+            {canSeeCard('fee_advanceadjustments') ? (
+            <div className="stat-card fee-card fa-card fc-tone--purple fc-bordered">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Advance Adjustments</div>
+                <FeeAnalyticsInfoButton cardKey="advanceAdjustments" />
+              </div>
+              <div className="fc-amount fc-amount--purple fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.advanceAdjustmentTotal} duration={CHART_ANIM_MS} /></div>
+              <div className="fa-formula">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Previous advance payments adjusted against current fee</span>
+              </div>
+              <div className="fc-divider" />
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students Adjusted
+                  </span>
+                  <span className="fa-meta-val fa-meta-val--purple">{feeExtras.advanceAdjustmentStudentCount}</span>
+                </div>
+                <div className="fa-meta-row fa-meta-row--muted">
+                  <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                  <span>Amount adjusted from previous advance balances</span>
+                </div>
+              </div>
+              <div className="adm-tc-foot adm-tc-foot--row2">
+                <Tooltip text="View or download advance adjustments made on a single day">
+                  <button type="button" className="adm-tc-btn adm-tc-btn--half" onClick={() => setShowDailyAdvanceAdjustment(true)} aria-label="Open Daily Advance Adjustment Report">
+                    <i className="fa-solid fa-calendar-day" aria-hidden="true"></i> Daily Report
+                  </button>
+                </Tooltip>
+                <Tooltip text="Download the student-wise Advance Adjustments report">
+                  <button type="button" className="adm-tc-btn adm-tc-btn--half" onClick={downloadFeeAdvanceAdjustmentReport} aria-label="Download Advance Adjustments report">
+                    <i className="fa-solid fa-download" aria-hidden="true"></i> Download Report
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+            ) : <LockedCard title="Advance Adjustments" icon="fa-arrow-right-arrow-left" />}
+          </div>
+
+          {/* ═════════ THIRD ROW — Pending Fee, final outcome (full width) ═════════ */}
+          {canSeeCard('fee_pending') ? (
+          <div className="stat-card fee-card fa-card fa-large fa-final fc-tone--red fc-bordered">
+            <div className="fc-header">
+              <div className="fc-icon-chip">
+                <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i>
+              </div>
+              <div className="fc-title fc-title--red">Pending Fee</div>
+              <span className="fa-final-tag">Final Outcome</span>
+              <FeeAnalyticsInfoButton cardKey="pending" />
+            </div>
+            <div className="fc-amount fc-amount--red fa-amount--xl"><AnimatedNumber prefix="PKR " value={feeExtras.pendingTotal} duration={CHART_ANIM_MS} /></div>
+
+            <div className="fa-progress">
+              <div className="fa-progress-h">
+                <span>Recovery Action Needed</span>
+                <span><b>{feeExtras.pendingPct}%</b> of Net Receivable still outstanding</span>
+              </div>
+              <div className="fa-progress-track">
+                <div className="fa-progress-fill fa-progress-fill--red" style={{ width: `${feeExtras.pendingPct}%` }} />
+              </div>
+            </div>
+
+            <div className="fc-divider" />
+            <div className="fa-formula">
+              <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+              <span>{feeMonthLabel}: Net Receivable − Fee Received − Receiving Discount − Advance Adjustments = Pending Fee</span>
+            </div>
+            <div className="fa-formula-breakdown fa-formula-breakdown--wrap">
+              <div>
+                <span className="fa-bd-lbl">Net Receivable</span>
+                <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.netReceivableTotal} duration={CHART_ANIM_MS} /></span>
+              </div>
+              <span className="fa-bd-op">−</span>
+              <div>
+                <span className="fa-bd-lbl">Received</span>
+                <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.receivedTotal} duration={CHART_ANIM_MS} /></span>
+              </div>
+              <span className="fa-bd-op">−</span>
+              <div>
+                <span className="fa-bd-lbl">Receiving Discount</span>
+                <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.discountTotal} duration={CHART_ANIM_MS} /></span>
+              </div>
+              <span className="fa-bd-op">−</span>
+              <div>
+                <span className="fa-bd-lbl">Advance Adjustments</span>
+                <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.advanceAdjustmentTotal} duration={CHART_ANIM_MS} /></span>
+              </div>
+              <span className="fa-bd-op fa-bd-op--eq">=</span>
+              <div>
+                <span className="fa-bd-lbl">Pending</span>
+                <span className="fa-bd-val fa-bd-val--red"><AnimatedNumber prefix="PKR " value={feeExtras.pendingTotal} duration={CHART_ANIM_MS} /></span>
+              </div>
+            </div>
+
+            <div className="fa-advance-note">
+              <div className="fa-advance-note-top">
+                <span className="fa-advance-note-lbl">
+                  <i className="fa-solid fa-piggy-bank" aria-hidden="true"></i> Advance Available
+                </span>
+                <span className="fa-advance-note-val"><AnimatedNumber prefix="PKR " value={feeExtras.advanceTotal} duration={CHART_ANIM_MS} /></span>
+              </div>
+              <div className="fa-advance-note-cap">This amount will be adjusted in future fee payments. It is not part of the Pending Fee above.</div>
+            </div>
+          </div>
+          ) : <LockedCard title="Pending Fee" icon="fa-hourglass-half" />}
+
+          {/* ═════════ Advance Payments Received — a separate
+              information card below Pending Fee, not part of the main
+              calculation flow above it. This is money collected above
+              what was payable, carried forward as a future adjustment
+              balance — it deliberately does NOT reduce Pending Fee,
+              does NOT appear in Fee Received, and does NOT affect the
+              collection percentage (see Card 6 "Advance Adjustments"
+              above for the money that DOES reduce Pending Fee, once a
+              balance like this is actually applied to a challan). ═════════ */}
+          {canSeeCard('fee_advance') ? (
+          <div className="stat-card fee-card fa-card fa-large fc-tone--purple fc-bordered">
+            <div className="fc-header">
+              <div className="fc-icon-chip">
+                <i className="fa-solid fa-piggy-bank" aria-hidden="true"></i>
+              </div>
+              <div className="fc-title">Advance Payments Received</div>
+              <FeeAnalyticsInfoButton cardKey="advance" />
+            </div>
+            <div className="fc-amount fc-amount--purple fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.advanceTotal} duration={CHART_ANIM_MS} /></div>
+            <span className="fa-badge fa-badge--purple">Future Adjustment Balance</span>
+            <div className="fa-formula">
+              <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+              <span>Extra amount collected above current payable, carried forward</span>
+            </div>
+            <div className="fc-divider" />
+            <div className="fa-meta-rows">
+              <div className="fa-meta-row">
+                <span className="fa-meta-lbl">
+                  <i className="fa-solid fa-users" aria-hidden="true"></i> Students Paid in Advance
+                </span>
+                <span className="fa-meta-val fa-meta-val--purple">{feeExtras.advanceStudentCount}</span>
+              </div>
+              <div className="fa-meta-row fa-meta-row--muted">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Does not reduce current pending dues</span>
+              </div>
+            </div>
+            <div className="adm-tc-foot adm-tc-foot--row2">
+              <Tooltip text="View or download advance payments created on a single day">
+                <button type="button" className="adm-tc-btn adm-tc-btn--half" onClick={() => setShowDailyAdvancePayment(true)} aria-label="Open Daily Advance Payment Report">
+                  <i className="fa-solid fa-calendar-day" aria-hidden="true"></i> Daily Report
+                </button>
+              </Tooltip>
+              <Tooltip text="Download the student-wise Advance Payment report">
+                <button type="button" className="adm-tc-btn adm-tc-btn--half" onClick={downloadFeeAdvanceReport} aria-label="Download Advance Payment report">
+                  <i className="fa-solid fa-download" aria-hidden="true"></i> Download Report
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+          ) : <LockedCard title="Advance Payments Received" icon="fa-piggy-bank" />}
+
+          {/* Download / Print Report link below the grid */}
+          <div className="adm-link-row">
+            <button
+              type="button"
+              className="adm-link-btn"
+              onClick={() => { openModule('fee'); toast('Fee report opening...', 'info'); }}
+            >
+              Download/Print Report <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+          </>
+          )}
         </div>
       )}
 
       <div className="adm-divider" />
 
-      {/* OneLink Payments section hata diya — get-dashboard API OneLink/bank
-          payment data nahi deti, is liye dummy card show nahi karte. */}
+      {/* ═════════ 3b. ONELINK PAYMENTS ═════════ */}
+      {isActive('fee') && (
+        canSeeCard('onelink')
+          ? <OneLinkPaymentSection openModule={openModule} toast={toast} />
+          : <LockedCard title="OneLink Payments" icon="fa-building-columns" />
+      )}
+
+      <div className="adm-divider" />
 
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
-      {isActive('accounts') && (canCard('Monthly Financial Summary') || canCard('Profit/Loss Overview')) && (
+      {isActive('accounts') && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
-            <span className="adm-h-meta">{cmyLabel}</span>
+            <select
+              className="adm-select"
+              value={revenueYear}
+              onChange={(e) => setRevenueYear(Number(e.target.value))}
+              aria-label="Select year"
+            >
+              <option value={2026}>2026</option>
+              <option value={2025}>2025</option>
+              <option value={2024}>2024</option>
+            </select>
           </div>
 
           {/* ─── Monthly Financial Summary (NEW) ───
               Parent card + month selector, 3 sub-cards reading the same
               Accounts ledger (getAccTxns) that Accounts → Reports uses,
               via the identical per-month reduce. No new backend calls. */}
-          {canCard('Monthly Financial Summary') && (
+          {!canSeeCard('finsummary') ? (
+            <LockedCard title="Monthly Financial Summary" icon="fa-sack-dollar" />
+          ) : (
           <div className="fin-summary-card">
             <div className="fin-summary-head">
               <div className="fin-summary-head-l">
@@ -1201,38 +1471,57 @@ const newAnnouncementCount = userNotifications.filter(
                   <div className="fin-summary-s">{financeSummary.label} · from Accounts ledger</div>
                 </div>
               </div>
-              {/* Period selector — Month / From–To / Single Date. Wired to the
-                  existing financeSeg/financeMonth/financeFrom/financeTo/financeSingle
-                  state; financeSummary reduces the live Accounts ledger over the pick. */}
-              <div className="fin-period" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <div className="adm-seg" role="tablist" aria-label="Financial period filter">
+              <div className="ol-controls">
+                <div className="adm-seg" role="tablist" aria-label="Financial summary period filter">
                   <button type="button" className={`adm-seg-btn${financeSeg === 'month' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'month'} onClick={() => setFinanceSeg('month')}>Month</button>
                   <button type="button" className={`adm-seg-btn${financeSeg === 'range' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'range'} onClick={() => setFinanceSeg('range')}>From – To</button>
                   <button type="button" className={`adm-seg-btn${financeSeg === 'single' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'single'} onClick={() => setFinanceSeg('single')}>Single Date</button>
                 </div>
+
                 {financeSeg === 'month' && (
-                  <input type="month" className="fin-summary-month-input" value={financeMonth} onChange={(e) => setFinanceMonth(e.target.value)} aria-label="Select month" />
+                  <label className="fin-summary-month">
+                    <span className="fin-summary-month-lbl">Month</span>
+                    <input
+                      type="month"
+                      className="fin-summary-month-input"
+                      value={financeMonth}
+                      min="2026-01"
+                      max="2026-05"
+                      onChange={(e) => setFinanceMonth(e.target.value)}
+                      aria-label="Select month for financial summary"
+                    />
+                  </label>
                 )}
                 {financeSeg === 'range' && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <input type="date" className="fin-summary-month-input" value={financeFrom} onChange={(e) => setFinanceFrom(e.target.value)} aria-label="From date" />
-                    <span style={{ color: 'var(--text-muted, #64748B)', fontWeight: 700 }}>–</span>
-                    <input type="date" className="fin-summary-month-input" value={financeTo} onChange={(e) => setFinanceTo(e.target.value)} aria-label="To date" />
-                  </span>
+                  <>
+                    <label className="fin-summary-month">
+                      <span className="fin-summary-month-lbl">From</span>
+                      <input type="date" className="fin-summary-month-input" value={financeFrom} onChange={(e) => setFinanceFrom(e.target.value)} aria-label="From date for financial summary" />
+                    </label>
+                    <label className="fin-summary-month">
+                      <span className="fin-summary-month-lbl">To</span>
+                      <input type="date" className="fin-summary-month-input" value={financeTo} onChange={(e) => setFinanceTo(e.target.value)} aria-label="To date for financial summary" />
+                    </label>
+                  </>
                 )}
                 {financeSeg === 'single' && (
-                  <input type="date" className="fin-summary-month-input" value={financeSingle} onChange={(e) => setFinanceSingle(e.target.value)} aria-label="Select date" />
+                  <label className="fin-summary-month">
+                    <span className="fin-summary-month-lbl">Date</span>
+                    <input type="date" className="fin-summary-month-input" value={financeSingle} onChange={(e) => setFinanceSingle(e.target.value)} aria-label="Select date for financial summary" />
+                  </label>
                 )}
               </div>
             </div>
 
-            <div className="fin-summary-grid">
+            <div className="fin-summary-grid" ref={financeCardsReplay.ref}>
               <div className="fee-card fa-card fc-tone--red fc-bordered fin-summary-sub">
                 <div className="fc-header">
                   <div className="fc-icon-chip"><i className="fa-solid fa-arrow-trend-down" aria-hidden="true"></i></div>
                   <div className="fc-title fc-title--red">Overall Expenses</div>
                 </div>
-                <div className="fc-amount fc-amount--red fa-amount--lg">{fmtPKR(financeSummary.expense)}</div>
+                <div className="fc-amount fc-amount--red fa-amount--lg">
+                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.expense} duration={CHART_ANIM_MS} />
+                </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
                   <span>{financeSummary.label}</span>
@@ -1244,7 +1533,9 @@ const newAnnouncementCount = userNotifications.filter(
                   <div className="fc-icon-chip"><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i></div>
                   <div className="fc-title">Overall Income</div>
                 </div>
-                <div className="fc-amount fc-amount--green fa-amount--lg">{fmtPKR(financeSummary.income)}</div>
+                <div className="fc-amount fc-amount--green fa-amount--lg">
+                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.income} duration={CHART_ANIM_MS} />
+                </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
                   <span>{financeSummary.label}</span>
@@ -1259,7 +1550,8 @@ const newAnnouncementCount = userNotifications.filter(
                   <div className={`fc-title${financeSummary.pl < 0 ? ' fc-title--red' : ''}`}>Net Profit / Loss</div>
                 </div>
                 <div className={`fc-amount fa-amount--lg ${financeSummary.pl >= 0 ? 'fc-amount--green' : 'fc-amount--red'}`}>
-                  {financeSummary.pl >= 0 ? '+' : '−'}{fmtPKR(Math.abs(financeSummary.pl))}
+                  {financeSummary.pl >= 0 ? '+' : '−'}
+                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={Math.abs(financeSummary.pl)} duration={CHART_ANIM_MS} />
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -1270,42 +1562,52 @@ const newAnnouncementCount = userNotifications.filter(
           </div>
           )}
 
-          {/* Profit/Loss Overview — full width (Revenue Streams removed).
-              Per-bar green/red P&L on its own hidden right axis so the bars
-              read clearly against the wider revenue/expense line scale.
-              Wired to the LIVE Accounts ledger (profitChart / plNet), so it
-              scales to actual PKR — no mock "millions" data. */}
-          {canCard('Profit/Loss Overview') && (
+          {/* Profit/Loss Overview — full width (Revenue Streams removed) */}
+          {!canSeeCard('plchart') ? (
+            <LockedCard title="Profit/Loss Overview" icon="fa-chart-column" />
+          ) : (
           <div className="pl-overview" ref={plOverviewReplay.ref}>
             <div className="adm-card-h">
-              <div className="adm-card-h-t">Profit/Loss Overview</div>
+              <div className="adm-card-h-t">Profit/Loss Overview <span className="fa-live-badge"><span className="fa-live-dot" /> Live</span></div>
               <div className="pl-head-right">
-                <span className="adm-card-h-meta" style={{ color: plNet >= 0 ? '#16A34A' : '#DC2626', fontWeight: 800 }}>
-                  Net Profit / Loss: <b>{plNet >= 0 ? '+' : '−'}{fmtPKR(Math.abs(plNet))}</b>
+                <select
+                  className="adm-select pl-year-select"
+                  value={revenueYear}
+                  onChange={(e) => setRevenueYear(Number(e.target.value))}
+                  aria-label="Select year for Profit/Loss Overview"
+                >
+                  <option value={2026}>2026</option>
+                  <option value={2025}>2025</option>
+                  <option value={2024}>2024</option>
+                </select>
+                <span className="adm-card-h-meta" style={{ color: plTotal >= 0 ? '#16A34A' : '#DC2626', fontWeight: 800 }}>
+                  Net Profit / Loss: <b>{plTotal >= 0 ? '+' : '−'}Rs. <AnimatedNumber key={plOverviewReplay.replayKey} value={Math.abs(plTotal)} decimals={2} duration={CHART_ANIM_MS} />M</b>
                 </span>
               </div>
             </div>
             <div className="pl-chart-scroll">
               <ResponsiveContainer key={plOverviewReplay.replayKey} width="100%" height={360} minWidth={640}>
-                <ComposedChart data={profitChart} margin={{ top: 12, right: 28, left: 4, bottom: 4 }}>
+                <ComposedChart data={profitData} margin={{ top: 12, right: 28, left: 4, bottom: 4 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="m" tick={{ fontSize: 12.5, fill: '#64748B', fontWeight: 600 }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={['auto', 'auto']} tick={{ fontSize: 12, fill: '#64748B' }} tickLine={false} axisLine={false} width={64} tickFormatter={fmtAxisPKR} />
-                  {/* Hidden right axis scaled to the pl series' own range so the
-                      Profit/Loss bars aren't squashed against the revenue scale. */}
-                  <YAxis yAxisId="pl" orientation="right" domain={[(dataMin) => Math.min(0, dataMin * 1.15), (dataMax) => (dataMax > 0 ? dataMax * 1.2 : dataMax * 0.8)]} hide />
+                  <YAxis domain={[-3, 5]} tick={{ fontSize: 12, fill: '#64748B' }} tickLine={false} axisLine={false} width={46} tickFormatter={(v) => `${v}M`} />
+                  {/* Hidden right axis, scaled to the pl series' own range so the
+                      Profit/Loss bars read clearly instead of being squashed
+                      against the much wider revenue/expense scale. Display-only —
+                      the underlying pl values are unchanged. */}
+                  <YAxis yAxisId="pl" orientation="right" domain={[(dataMin) => Math.min(0, dataMin - 0.15), (dataMax) => dataMax + 0.2]} hide />
                   <RTooltip content={<ProfitLossTooltip />} cursor={{ fill: 'rgba(30, 64, 175, .07)' }} />
                   <Bar yAxisId="pl" dataKey="pl" name="Profit/Loss" fillOpacity={0.88} radius={[8, 8, 0, 0]} barSize={30}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                   >
-                    {profitChart.map((d, i) => (
+                    {profitData.map((d, i) => (
                       <Cell key={i} fill={d.pl >= 0 ? '#16A34A' : '#DC2626'} />
                     ))}
                   </Bar>
-                  <Line type="monotone" dataKey="revenue" name="Revenue"  stroke="#1E40AF" strokeWidth={2.6} dot={{ r: 4, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }}
+                  <Line type="monotone" dataKey="revenue" name="Revenue"   stroke="#1E40AF" strokeWidth={2.6} dot={{ r: 4, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={150}
                   />
-                  <Line type="monotone" dataKey="expense" name="Expenses" stroke="#DC2626" strokeWidth={2.6} dot={{ r: 4, stroke: '#DC2626', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }}
+                  <Line type="monotone" dataKey="expense" name="Expenses"  stroke="#DC2626" strokeWidth={2.6} dot={{ r: 4, stroke: '#DC2626', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={300}
                   />
                 </ComposedChart>
@@ -1345,16 +1647,30 @@ const newAnnouncementCount = userNotifications.filter(
              - status constants:  ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE,PENDING}
                                   STAFF_ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE}
        */}
-      {moduleActive('attendance') && canCard("Today's Attendance") && <AttendanceSection openModule={openModule} studentData={studentAttData} staffData={staffAttData} />}
+      {moduleActive('attendance') && (
+        canSeeCard('attendance')
+          ? <AttendanceSection openModule={openModule} />
+          : <LockedCard title="Today's Attendance" icon="fa-clipboard-check" />
+      )}
 
       <div className="adm-divider" />
 
       {/* ═════════ 4. LESSON PLAN ANALYTICS ═════════ */}
-      {isActive('academics') && canCard('Lesson Plan Analytics') && (
+      {isActive('academics') && (
+        !canSeeCard('lessonplananalytics') ? (
+          <LockedCard title="Lesson Plan Analytics" icon="fa-book-open-reader" />
+        ) : (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
-            <div className="dash-sec-title"><i className="fa-solid fa-book-open-reader" aria-hidden="true"></i> Lesson Plan Analytics</div>
-            <span className="adm-h-meta">All Subjects</span>
+            <div className="dash-sec-title"><i className="fa-solid fa-book-open-reader" aria-hidden="true"></i> Lesson Plan Analytics <span className="fa-live-badge"><span className="fa-live-dot" /> Live</span></div>
+            <select
+              className="adm-select"
+              value={lpClass}
+              onChange={(e) => setLpClass(e.target.value)}
+              aria-label="Select class"
+            >
+              {LP_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
 
           <div className="adm-2col">
@@ -1372,13 +1688,13 @@ const newAnnouncementCount = userNotifications.filter(
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
-                  <XAxis dataKey="SubjectName" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[0, 'auto']} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[0, 20]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Area type="monotone" dataKey="ClassworkCount" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }}
+                  <Area type="monotone" dataKey="classwork" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                   />
-                  <Area type="monotone" dataKey="NotebookCount"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }}
+                  <Area type="monotone" dataKey="notebook"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={150}
                   />
                 </AreaChart>
@@ -1389,52 +1705,54 @@ const newAnnouncementCount = userNotifications.filter(
               </div>
             </div>
 
-           <div className="adm-side-card" ref={subjCompletionReplay.ref}>
-  <div className="adm-side-title">Subject-wise Completion</div>
-
-  <div className="adm-bars subject-completion-scroll">
-    {lpData.length === 0 && (
-      <div className="adm-bar-row">
-        <div className="adm-bar-lbl">No lesson plan data yet</div>
-      </div>
-    )}
-
-    {lpData.map((d, index) => {
-      const pct = lpMaxCw > 0
-        ? ((Number(d.ClassworkCount) || 0) / lpMaxCw) * 100
-        : 0;
-
-      return (
-        <div key={`${d.SubjectName}-${index}`} className="adm-bar-row">
-          <div className="adm-bar-lbl">{d.SubjectName}</div>
-          <div className="adm-bar-track">
-            <div
-              className="adm-bar-fill"
-              style={{
-                width: `${subjCompletionReplay.inView ? pct : 0}%`,
-                transitionDuration: `${CHART_ANIM_MS}ms`,
-                transitionTimingFunction: 'ease-out',
-              }}
-            />
+            <div className="adm-side-card" ref={subjCompletionReplay.ref}>
+              <div className="adm-side-title">Subject-wise Completion</div>
+              <div className="adm-bars">
+                {lpData.map(d => {
+                  const pct = lpMaxCw > 0 ? (d.classwork / lpMaxCw) * 100 : 0;
+                  return (
+                    <div key={d.subject} className="adm-bar-row">
+                      <div className="adm-bar-lbl">{d.subject}</div>
+                      <div className="adm-bar-track">
+                        <div
+                          className="adm-bar-fill"
+                          style={{
+                            width: `${subjCompletionReplay.inView ? pct : 0}%`,
+                            transitionDuration: `${CHART_ANIM_MS}ms`,
+                            transitionTimingFunction: 'ease-out',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
-      );
-    })}
-  </div>
-</div>
-          </div>
-        </div>
+        )
       )}
 
       <div className="adm-divider" />
 
       {/* ═════════ 5. PAPER GENERATOR ═════════ */}
-      {isActive('paper_generator') && canCard('Question Paper Generator') && (
+      {isActive('paper_generator') && (
+        !canSeeCard('papergenerator') ? (
+          <LockedCard title="Question Paper Generator" icon="fa-scroll" />
+        ) : (
         <div className="dash-sec adm-sec" ref={paperSecReplay.ref}>
           <div className="dash-sec-h">
-            <div className="dash-sec-title"><i className="fa-solid fa-scroll" aria-hidden="true"></i> Question Paper Generator</div>
+            <div className="dash-sec-title"><i className="fa-solid fa-scroll" aria-hidden="true"></i> Question Paper Generator <span className="fa-live-badge"><span className="fa-live-dot" /> Live</span></div>
             <div className="adm-h-right">
-              <span className="adm-h-meta">Total: <b>{paperTotal} Papers</b></span>
+              <span className="adm-h-meta">Total: <b><AnimatedNumber key={paperSecReplay.replayKey} value={paperTotal} duration={CHART_ANIM_MS} /> Papers</b></span>
+              <select
+                className="adm-select"
+                value={paperClass}
+                onChange={(e) => setPaperClass(e.target.value)}
+                aria-label="Select class"
+              >
+                {PAPER_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
           </div>
 
@@ -1446,12 +1764,10 @@ const newAnnouncementCount = userNotifications.filter(
                   <tr><th>Subject</th><th>Total Generated Question Papers</th></tr>
                 </thead>
                 <tbody>
-                  {paperData.length === 0 ? (
-                    <tr><td colSpan={2}>No question papers generated yet</td></tr>
-                  ) : paperData.map((p, index) => (
-                    <tr key={`${p.SubjectName}-${index}`}>
-                      <td><b>{p.SubjectName}</b></td>
-                      <td>{p.TotalGenerated} Question Papers</td>
+                  {paperData.map(p => (
+                    <tr key={p.subject}>
+                      <td><b>{p.subject}</b></td>
+                      <td><AnimatedNumber key={`${p.subject}-${paperSecReplay.replayKey}`} value={p.count} duration={CHART_ANIM_MS} /> Question Papers</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1463,10 +1779,10 @@ const newAnnouncementCount = userNotifications.filter(
               <ResponsiveContainer key={paperSecReplay.replayKey} width="100%" height={180}>
                 <BarChart data={paperData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="SubjectName" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
                   <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Bar dataKey="TotalGenerated" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1"
+                  <Bar dataKey="count" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1"
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                   />
                 </BarChart>
@@ -1474,12 +1790,16 @@ const newAnnouncementCount = userNotifications.filter(
             </div>
           </div>
         </div>
+        )
       )}
 
       <div className="adm-divider" />
 
       {/* ═════════ 7. BIRTHDAYS THIS MONTH ═════════ */}
-      {(isActive('students') || isActive('hr')) && canCard('Birthdays This Month') && (
+      {(isActive('students') || isActive('hr')) && (
+        !canSeeCard('birthdays') ? (
+          <LockedCard title="Birthdays This Month" icon="fa-cake-candles" />
+        ) : (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title">
@@ -1506,7 +1826,7 @@ const newAnnouncementCount = userNotifications.filter(
 
           <div className="adm-info-banner">
             <i className="fa-solid fa-calendar" aria-hidden="true"></i>
-            <span>Showing birthdays for {cmyLabel}</span>
+            <span>Showing birthdays for May 2026</span>
           </div>
 
           <div className="adm-bday-row">
@@ -1517,29 +1837,25 @@ const newAnnouncementCount = userNotifications.filter(
                   <span className="adm-pill-blue">{studentBdays.length}</span>
                 </div>
                 <div className="adm-bday-list">
-                  {studentBdays.length === 0 && (
-                    <div className="adm-bday-meta">No student birthdays this month</div>
-                  )}
                   {studentBdays.map(b => {
-                    const day = bdayDay(b.DateOfBirth);
-                    const isToday = day === realTodayDay;
-                    const isTomorrow = day === realTodayDay + 1;
+                    const isToday = b.dob === TODAY_DAY;
+                    const isTomorrow = b.dob === TODAY_DAY + 1;
                     return (
                       <div
-                        key={b.ID ?? bdayName(b)}
+                        key={b.name}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
-                        <div className="adm-bday-av">{initials(bdayName(b))}</div>
+                        <div className="adm-bday-av">{initials(b.name)}</div>
                         <div className="adm-bday-info">
-                          <div className="adm-bday-name">{bdayName(b)}</div>
-                          <div className="adm-bday-meta">{b.PersonType || 'Student'}</div>
+                          <div className="adm-bday-name">{b.name}</div>
+                          <div className="adm-bday-meta">{b.grade}</div>
                         </div>
                         {isToday ? (
                           <span className="adm-pill-green">Today! 🎂</span>
                         ) : isTomorrow ? (
                           <span className="adm-pill-amber">Tomorrow</span>
                         ) : (
-                          <span className="adm-pill-blue">{bdayLabel(b.DateOfBirth)}</span>
+                          <span className="adm-pill-blue">{b.date}</span>
                         )}
                       </div>
                     );
@@ -1555,29 +1871,25 @@ const newAnnouncementCount = userNotifications.filter(
                   <span className="adm-pill-blue">{teacherBdays.length}</span>
                 </div>
                 <div className="adm-bday-list">
-                  {teacherBdays.length === 0 && (
-                    <div className="adm-bday-meta">No staff birthdays this month</div>
-                  )}
                   {teacherBdays.map(b => {
-                    const day = bdayDay(b.DateOfBirth);
-                    const isToday = day === realTodayDay;
-                    const isTomorrow = day === realTodayDay + 1;
+                    const isToday = b.dob === TODAY_DAY;
+                    const isTomorrow = b.dob === TODAY_DAY + 1;
                     return (
                       <div
-                        key={b.ID ?? bdayName(b)}
+                        key={b.name}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
-                        <div className="adm-bday-av adm-bday-av--purple">{initials(bdayName(b))}</div>
+                        <div className="adm-bday-av adm-bday-av--purple">{initials(b.name)}</div>
                         <div className="adm-bday-info">
-                          <div className="adm-bday-name">{bdayName(b)}</div>
-                          <div className="adm-bday-meta">{b.PersonType || 'Staff'}</div>
+                          <div className="adm-bday-name">{b.name}</div>
+                          <div className="adm-bday-meta">{b.role}</div>
                         </div>
                         {isToday ? (
                           <span className="adm-pill-green">Today! 🎂</span>
                         ) : isTomorrow ? (
                           <span className="adm-pill-amber">Tomorrow</span>
                         ) : (
-                          <span className="adm-pill-blue">{bdayLabel(b.DateOfBirth)}</span>
+                          <span className="adm-pill-blue">{b.date}</span>
                         )}
                       </div>
                     );
@@ -1587,37 +1899,33 @@ const newAnnouncementCount = userNotifications.filter(
             )}
           </div>
         </div>
+        )
       )}
 
       <div className="adm-divider" />
 
       {/* ═════════ 8. UPCOMING ACTIVITIES ═════════ */}
-      {canCard('Upcoming Activities') && (
+      {!canSeeCard('activities') ? (
+        <LockedCard title="Upcoming Activities" icon="fa-calendar-day" />
+      ) : (
       <div className="dash-sec adm-sec">
         <div className="dash-sec-h">
           <div className="dash-sec-title">
             <span className="adm-h-ic adm-h-ic--star"><i className="fa-solid fa-calendar-day" aria-hidden="true"></i></span>
             Upcoming Activities
           </div>
-          <span className="adm-h-meta">{cmyLabel}</span>
+          <span className="adm-h-meta">May 2026</span>
         </div>
         <div className="adm-info-banner">
           <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
           <span>School events, exams, and important dates for this month.</span>
         </div>
 
-        {upActivities.length === 0 ? (
-          <div className="adm-info-banner">
-            <i className="fa-solid fa-calendar-xmark" aria-hidden="true"></i>
-            <span>No upcoming activities scheduled.</span>
-          </div>
-        ) : (
         <div className="adm-act-grid">
-          {upActivities.map(a => {
-            const c = TYPE_COLOR.event;
-            const daysAway = actDaysAway(a.StartAt);
-            const daysLabel = daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : daysAway > 0 ? `In ${daysAway} days` : 'Past';
-            const daysTone = daysAway <= 1 ? 'amber' : (daysAway <= 7 ? 'brand' : 'muted');
+          {ACTIVITIES.map(a => {
+            const c = TYPE_COLOR[a.type] || TYPE_COLOR.event;
+            const daysLabel = a.daysAway === 1 ? 'Tomorrow' : `In ${a.daysAway} days`;
+            const daysTone = a.daysAway === 1 ? 'amber' : (a.daysAway <= 7 ? 'brand' : 'muted');
             /* Every card now lands on Academics → Scheme of Studies →
                Calendar → Activity Calendar via the openActivityCalendar
                callback hoisted from App.js. */
@@ -1626,7 +1934,7 @@ const newAnnouncementCount = userNotifications.filter(
               toast('Opening Activity Calendar…', 'info');
             };
             return (
-              <Tooltip key={a.ID} text="Open Academics → Activity Calendar">
+              <Tooltip key={a.id} text="Open Academics → Activity Calendar">
                 <div
                   className="adm-act-card clickable"
                   style={{ '--act-bar': c.fg }}
@@ -1638,13 +1946,14 @@ const newAnnouncementCount = userNotifications.filter(
                   <div className="adm-act-h">
                     <span className="adm-act-chip" style={{ background: c.bg, color: c.fg }}>
                       <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
-                      {actDateLabel(a.StartAt)}
+                      {a.date}
                     </span>
                     <span className={`adm-act-days adm-act-days--${daysTone}`}>{daysLabel}</span>
                   </div>
-                  <div className="adm-act-title">{a.Title}</div>
-                  <div className="adm-act-desc">{a.Description}</div>
+                  <div className="adm-act-title">{a.title}</div>
+                  <div className="adm-act-desc">{a.desc}</div>
                   <div className="adm-act-foot">
+                    <span className="adm-act-cat" style={{ background: c.bg, color: c.fg }}>{a.category}</span>
                     <span className="adm-act-mod">
                       <i className="fa-solid fa-calendar-plus" aria-hidden="true"></i>
                       Activity Calendar
@@ -1655,7 +1964,6 @@ const newAnnouncementCount = userNotifications.filter(
             );
           })}
         </div>
-        )}
       </div>
       )}
     </>
@@ -1667,117 +1975,31 @@ const newAnnouncementCount = userNotifications.filter(
    Renders the 2-card row with the same `.fee-card` chrome used by
    the Fee Analytics section. Field names match the Attendance
    module schema (present / absent / leave / total / percentage). */
-function AttendanceSection({ openModule, studentData, staffData }) {
+function AttendanceSection({ openModule }) {
+  /* Period filter — same three modes as Financial Overview / OneLink
+     Payments below (Day / Month / Custom Range). The underlying present /
+     absent / leave figures are a single daily snapshot (mock/attendance.js
+     has no per-day history — the Attendance module itself synthesizes its
+     own Monthly/Range reports from this same snapshot), so switching
+     periods here changes the label the same way choosing a different Day
+     already did; it does not fabricate different numbers per period. */
+  const [attSeg, setAttSeg]     = useState('day'); // 'day' | 'month' | 'range'
+  const [attDate, setAttDate]   = useState(() => new Date().toISOString().slice(0, 10));
+  const [attMonth, setAttMonth] = useState('2026-05');
+  const [attFrom, setAttFrom]   = useState('2026-05-01');
+  const [attTo, setAttTo]       = useState('2026-05-31');
+
+  const attDateLabel = new Date(`${attDate}T00:00:00`).toLocaleDateString('en-PK', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const [attMonthYY, attMonthMM] = attMonth.split('-');
+  const attPeriodLabel = attSeg === 'day' ? attDateLabel
+    : attSeg === 'month' ? `${FIN_MONTH_NAMES[Number(attMonthMM) - 1]} ${attMonthYY}`
+    : `${attFrom} to ${attTo}`;
+
   /* Status colour ladder per spec: >=90 green · >=75 amber · else red */
   const pctColor = (p) => (p >= 90 ? '#16A34A' : p >= 75 ? '#D97706' : '#DC2626');
   const pctTone  = (p) => (p >= 90 ? 'green'   : p >= 75 ? 'amber'   : 'red');
-  const ST_CODE_TO_STATUS = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
-  const pctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
-  const todayISO = new Date().toISOString().slice(0, 10);
-
-  /* Period selector — Day / Month / Custom Range, mirroring Financial Overview.
-     Day=today uses the get-dashboard snapshot (studentData/staffData props, no
-     extra call); any other date/month/range fetches the live attendance ledger
-     via /api/student-attendance + /api/staff-attendance (action:"get", all
-     classes) and aggregates present/absent/leave client-side. */
-  const [attSeg, setAttSeg]     = useState('day');            // 'day' | 'month' | 'range'
-  const [attDate, setAttDate]   = useState(todayISO);
-  const [attMonth, setAttMonth] = useState(todayISO.slice(0, 7));
-  const [attFrom, setAttFrom]   = useState(`${todayISO.slice(0, 7)}-01`);
-  const [attTo, setAttTo]       = useState(todayISO);
-  const [live, setLive]         = useState(null);             // aggregated {student, staff} or null → use today props
-  const [loading, setLoading]   = useState(false);
-
-  const isToday = attSeg === 'day' && attDate === todayISO;
-
-  /* Dates to fetch for the current selection (future dates dropped, hard-capped). */
-  const periodDates = useMemo(() => {
-    if (attSeg === 'day') return attDate ? [attDate] : [];
-    let start, end;
-    if (attSeg === 'month') {
-      start = new Date(`${attMonth}-01T00:00:00`);
-      end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
-    } else {
-      start = new Date(`${attFrom}T00:00:00`);
-      end = new Date(`${attTo}T00:00:00`);
-    }
-    if (Number.isNaN(+start) || Number.isNaN(+end) || end < start) return [];
-    const today = new Date(`${todayISO}T00:00:00`);
-    if (end > today) end = today;                              // never fetch the future
-    const list = [];
-    const cur = new Date(start);
-    let guard = 0;
-    while (cur <= end && guard < 92) {                         // cap ~3 months of daily calls
-      list.push(cur.toISOString().slice(0, 10));
-      cur.setDate(cur.getDate() + 1);
-      guard++;
-    }
-    return list;
-  }, [attSeg, attDate, attMonth, attFrom, attTo, todayISO]);
-
-  const datesKey = periodDates.join(',');
-
-  useEffect(() => {
-    if (isToday) { setLive(null); setLoading(false); return undefined; }
-    let alive = true;
-    setLoading(true);
-    const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
-    const sessionID = Number(sessionStorage.getItem('sessionID')) || 0;
-    const norm = (r) => {
-      const raw = String(r.Status ?? r.status ?? '').toLowerCase();
-      return ST_CODE_TO_STATUS[raw] || raw;
-    };
-    const acc = { sP: 0, sA: 0, sL: 0, sT: 0, fP: 0, fA: 0, fL: 0, fT: 0 };
-    Promise.all(periodDates.map(async (dateStr) => {
-      try {
-        const [sres, fres] = await Promise.all([
-          attendanceService.studentAttendance({
-            id: 0, branchID, studentID: 0, sessionID, classID: 0, sectionID: 0,
-            attendanceDate: dateStr, status: '', platform: 'ERP',
-            isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
-          }),
-          attendanceService.staffAttendance({
-            id: 0, staffID: 0, branchID, attendanceDate: dateStr,
-            checkInTime: '', checkOutTime: '', status: '', platform: '',
-            isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
-          }),
-        ]);
-        (sres?.data || []).forEach((r) => {
-          const st = norm(r); acc.sT++;
-          if (st === 'present' || st === 'late') acc.sP++;
-          else if (st === 'absent') acc.sA++;
-          else if (st === 'leave') acc.sL++;
-        });
-        (fres?.data || []).forEach((r) => {
-          const st = norm(r); acc.fT++;
-          if (st === 'present' || st === 'late') acc.fP++;
-          else if (st === 'absent') acc.fA++;
-          else if (st === 'leave') acc.fL++;
-        });
-      } catch (err) { /* one bad date shouldn't sink the whole period */ }
-    })).then(() => {
-      if (!alive) return;
-      setLive({
-        student: { total: acc.sT, present: acc.sP, absent: acc.sA, leave: acc.sL, percentage: pctOf(acc.sP, acc.sT) },
-        staff:   { total: acc.fT, present: acc.fP, absent: acc.fA, leave: acc.fL, percentage: pctOf(acc.fP, acc.fT) },
-      });
-      setLoading(false);
-    });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isToday, datesKey]);
-
-  const empty = { total: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
-  const stuShow   = isToday ? studentData : (live?.student || empty);
-  const staffShow = isToday ? staffData   : (live?.staff   || empty);
-
-  const periodLabel = attSeg === 'day'
-    ? (isToday ? 'Today' : new Date(`${attDate}T00:00:00`).toLocaleDateString('en-PK', { day: 'numeric', month: 'long', year: 'numeric' }))
-    : attSeg === 'month'
-      ? new Date(`${attMonth}-01T00:00:00`).toLocaleDateString('en-PK', { month: 'long', year: 'numeric' })
-      : `${attFrom} → ${attTo}`;
-  /* Day = one day's roster (enrolled total); Month/Range aggregate marked records. */
-  const unitSuffix = attSeg === 'day' ? 'enrolled' : 'records';
 
   return (
     <div className="dash-sec adm-sec">
@@ -1786,41 +2008,63 @@ function AttendanceSection({ openModule, studentData, staffData }) {
           <span className="adm-h-ic"><i className="fa-solid fa-clipboard-check" aria-hidden="true"></i></span>
           Attendance
         </div>
-        <div className="adm-h-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div className="adm-seg" role="tablist" aria-label="Attendance period filter">
-            <button type="button" className={`adm-seg-btn${attSeg === 'day' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'day'} onClick={() => setAttSeg('day')}>Day</button>
-            <button type="button" className={`adm-seg-btn${attSeg === 'month' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'month'} onClick={() => setAttSeg('month')}>Month</button>
-            <button type="button" className={`adm-seg-btn${attSeg === 'range' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'range'} onClick={() => setAttSeg('range')}>Custom Range</button>
-          </div>
-          {attSeg === 'day' && (
-            <input type="date" max={todayISO} className="fin-summary-month-input" value={attDate} onChange={(e) => setAttDate(e.target.value)} aria-label="Attendance date" />
-          )}
-          {attSeg === 'month' && (
-            <input type="month" max={todayISO.slice(0, 7)} className="fin-summary-month-input" value={attMonth} onChange={(e) => setAttMonth(e.target.value)} aria-label="Attendance month" />
-          )}
-          {attSeg === 'range' && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <input type="date" max={todayISO} className="fin-summary-month-input" value={attFrom} onChange={(e) => setAttFrom(e.target.value)} aria-label="From date" />
-              <span style={{ color: 'var(--text-muted, #64748B)', fontWeight: 700 }}>–</span>
-              <input type="date" max={todayISO} className="fin-summary-month-input" value={attTo} onChange={(e) => setAttTo(e.target.value)} aria-label="To date" />
-            </span>
-          )}
+        <div className="adm-h-right">
           <button type="button" className="dash-sec-link" onClick={() => openModule('att')}>
             View Full Report <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
           </button>
         </div>
       </div>
 
-      <div className="att-grid" style={{ opacity: loading ? 0.55 : 1, transition: 'opacity .15s' }}>
+      <div className="ol-controls" style={{ marginBottom: 14 }}>
+        <div className="adm-seg" role="tablist" aria-label="Attendance period filter">
+          <button type="button" className={`adm-seg-btn${attSeg === 'day' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'day'} onClick={() => setAttSeg('day')}>Day</button>
+          <button type="button" className={`adm-seg-btn${attSeg === 'month' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'month'} onClick={() => setAttSeg('month')}>Month</button>
+          <button type="button" className={`adm-seg-btn${attSeg === 'range' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'range'} onClick={() => setAttSeg('range')}>Custom Range</button>
+        </div>
+
+        {attSeg === 'day' && (
+          <label className="dash-day-pick">
+            <span className="dash-day-pick-lbl">Day</span>
+            <input
+              type="date"
+              className="dash-day-pick-input"
+              value={attDate}
+              onChange={(e) => setAttDate(e.target.value)}
+              aria-label="Select day for attendance"
+            />
+          </label>
+        )}
+        {attSeg === 'month' && (
+          <label className="fin-summary-month">
+            <span className="fin-summary-month-lbl">Month</span>
+            <input type="month" className="fin-summary-month-input" value={attMonth} min="2026-01" max="2026-05" onChange={(e) => setAttMonth(e.target.value)} aria-label="Select month for attendance" />
+          </label>
+        )}
+        {attSeg === 'range' && (
+          <>
+            <label className="fin-summary-month">
+              <span className="fin-summary-month-lbl">From</span>
+              <input type="date" className="fin-summary-month-input" value={attFrom} onChange={(e) => setAttFrom(e.target.value)} aria-label="From date for attendance" />
+            </label>
+            <label className="fin-summary-month">
+              <span className="fin-summary-month-lbl">To</span>
+              <input type="date" className="fin-summary-month-input" value={attTo} onChange={(e) => setAttTo(e.target.value)} aria-label="To date for attendance" />
+            </label>
+          </>
+        )}
+        <span className="adm-h-meta">{attPeriodLabel}</span>
+      </div>
+
+      <div className="att-grid">
         {/* Student card */}
         <AttendanceCard
           icon="fa-user-graduate"
           tone="brand"
-          title={`Student Attendance · ${periodLabel}`}
-          data={stuShow}
+          title={`Student Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
+          data={STUDENT_ATTENDANCE_TODAY}
           unitSingular="student"
           unitPlural="students"
-          unitSuffix={unitSuffix}
+          unitSuffix="enrolled"
           pctColor={pctColor}
           pctTone={pctTone}
         />
@@ -1828,11 +2072,11 @@ function AttendanceSection({ openModule, studentData, staffData }) {
         <AttendanceCard
           icon="fa-chalkboard-user"
           tone="purple"
-          title={`Staff Attendance · ${periodLabel}`}
-          data={staffShow}
+          title={`Staff Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
+          data={STAFF_ATTENDANCE_TODAY}
           unitSingular="staff member"
           unitPlural="staff members"
-          unitSuffix={attSeg === 'day' ? '' : unitSuffix}
+          unitSuffix=""
           pctColor={pctColor}
           pctTone={pctTone}
         />
@@ -1856,7 +2100,7 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
 
       {/* Hero percentage in the status colour */}
       <div className="att-pct" style={{ color }}>
-        {pct}<span className="att-pct-sym">%</span>
+        <AnimatedNumber key={barReplay.replayKey} value={pct} duration={CHART_ANIM_MS} /><span className="att-pct-sym">%</span>
         <span className={`att-pct-tag att-pct-tag--${pctTone(pct)}`}>
           {pct >= 90 ? 'Excellent' : pct >= 75 ? 'Watch' : 'Critical'}
         </span>
@@ -1865,14 +2109,14 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
       {/* Pills row — Present · Absent · Leave (leave only if > 0) */}
       <div className="att-pills">
         <span className="att-pill att-pill--green">
-          <span className="att-pill-dot" /> {data.present} Present
+          <span className="att-pill-dot" /> <AnimatedNumber key={barReplay.replayKey} value={data.present} duration={CHART_ANIM_MS} /> Present
         </span>
         <span className="att-pill att-pill--red">
-          <span className="att-pill-dot" /> {data.absent} Absent
+          <span className="att-pill-dot" /> <AnimatedNumber key={barReplay.replayKey} value={data.absent} duration={CHART_ANIM_MS} /> Absent
         </span>
         {typeof data.leave === 'number' && data.leave > 0 && (
           <span className="att-pill att-pill--amber">
-            <span className="att-pill-dot" /> {data.leave} Leave
+            <span className="att-pill-dot" /> <AnimatedNumber key={barReplay.replayKey} value={data.leave} duration={CHART_ANIM_MS} /> Leave
           </span>
         )}
       </div>
@@ -1893,7 +2137,7 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
       <div className="fc-support att-support">
         <i className="fa-solid fa-users" aria-hidden="true"></i>
         <span>
-          of <span className="fc-highlight">{data.total}</span>
+          of <span className="fc-highlight"><AnimatedNumber key={barReplay.replayKey} value={data.total} duration={CHART_ANIM_MS} /></span>
           {' '}{data.total === 1 ? unitSingular : unitPlural}
           {unitSuffix ? ` ${unitSuffix}` : ''}
         </span>
@@ -1911,10 +2155,20 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
    the download icon opens the identical detailed report. */
 const OL_MONTH_NAMES = FIN_MONTH_NAMES;
 
+/* "Payment Collection Summary" tile — display-only labels for the
+   payment method breakdown, shown here as the school's own preferred
+   channel names instead of the raw payment `method` value (kept as-is
+   everywhere else this same data is used). */
+const OL_MODE_DISPLAY_NAMES = {
+  'Bank Transfer': '1-Link',
+  'Online / App': 'Visa / Master Cards',
+};
+
 function OneLinkPaymentSection({ openModule, toast }) {
   const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: receipts = [] }    = useAsync(feeService.getReceipts, []);
+  const kpiReplay = useScrollReplay();
 
   const [seg, setSeg]     = useState('month');
   const [month, setMonth] = useState('2026-05');
@@ -1953,6 +2207,12 @@ function OneLinkPaymentSection({ openModule, toast }) {
     transactions.forEach(x => { const k = x.method || 'Bank Transfer'; map[k] = (map[k] || 0) + (+x.amount || 0); });
     return Object.keys(map).map(k => ({ name: k, amt: map[k] }));
   }, [transactions]);
+  /* Display-only relabelling for the "Payment Collection Summary" tile
+     (and its matching print report) — the underlying payment `method`
+     values ('Bank Transfer' / 'Online / App') are left untouched so
+     grouping above and every other screen that shows a payment's
+     method still reads the real value. */
+  const olModeDisplayName = (name) => OL_MODE_DISPLAY_NAMES[name] || name;
 
   const periodLabel = seg === 'month'
     ? `${OL_MONTH_NAMES[Number(month.split('-')[1]) - 1]} ${month.split('-')[0]}`
@@ -2027,13 +2287,13 @@ function OneLinkPaymentSection({ openModule, toast }) {
           </div>
         </div>
 
-        <div className="fin-summary-grid ol-grid">
+        <div className="fin-summary-grid ol-grid" ref={kpiReplay.ref}>
           <div className="fee-card fa-card fc-tone--purple fc-bordered fin-summary-sub">
             <div className="fc-header">
               <div className="fc-icon-chip"><i className="fa-solid fa-receipt" aria-hidden="true"></i></div>
               <div className="fc-title">OneLink Transactions</div>
             </div>
-            <div className="fc-amount fa-amount--lg">{totalTxns}</div>
+            <div className="fc-amount fa-amount--lg"><AnimatedNumber key={kpiReplay.replayKey} value={totalTxns} duration={CHART_ANIM_MS} /></div>
             <div className="fc-support">
               <i className="fa-solid fa-calendar" aria-hidden="true"></i>
               <span>{periodLabel}</span>
@@ -2045,7 +2305,7 @@ function OneLinkPaymentSection({ openModule, toast }) {
               <div className="fc-icon-chip"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i></div>
               <div className="fc-title">Total Received</div>
             </div>
-            <div className="fc-amount fc-amount--green fa-amount--lg">{fmtPKR(totalAmt)}</div>
+            <div className="fc-amount fc-amount--green fa-amount--lg"><AnimatedNumber key={kpiReplay.replayKey} prefix="PKR " value={totalAmt} duration={CHART_ANIM_MS} /></div>
             <div className="fc-support">
               <i className="fa-solid fa-calendar" aria-hidden="true"></i>
               <span>{periodLabel}</span>
@@ -2063,8 +2323,8 @@ function OneLinkPaymentSection({ openModule, toast }) {
               <div className="fa-meta-rows">
                 {modeBreak.map(m => (
                   <div key={m.name} className="fa-meta-row">
-                    <span className="fa-meta-lbl"><i className="fa-solid fa-building-columns" aria-hidden="true"></i> {m.name}</span>
-                    <span className="fa-meta-val">{fmtPKR(m.amt)}</span>
+                    <span className="fa-meta-lbl"><i className="fa-solid fa-building-columns" aria-hidden="true"></i> {olModeDisplayName(m.name)}</span>
+                    <span className="fa-meta-val"><AnimatedNumber key={`${m.name}-${kpiReplay.replayKey}`} prefix="PKR " value={m.amt} duration={CHART_ANIM_MS} /></span>
                   </div>
                 ))}
               </div>
@@ -2078,6 +2338,7 @@ function OneLinkPaymentSection({ openModule, toast }) {
 
 function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, modeBreak, periodLabel }) {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const accent = '#7C3AED';
   const rows = transactions.map((x, i) => `
     <tr>
       <td>${i + 1}</td>
@@ -2088,50 +2349,183 @@ function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, mo
       <td>${esc(x.method || 'Bank Transfer')}</td>
       <td style="text-align:right;font-weight:700;color:#16A34A">${(+x.amount || 0).toLocaleString('en-PK')}</td>
     </tr>`).join('');
-  const modeKpis = modeBreak.map(m => `<div class="kpi"><div class="l">${esc(m.name)}</div><div class="v">Rs. ${m.amt.toLocaleString('en-PK')}</div></div>`).join('');
+  const modeKpis = modeBreak.map(m => `<div class="kpi"><div class="l">${esc(OL_MODE_DISPLAY_NAMES[m.name] || m.name)}</div><div class="v">Rs. ${m.amt.toLocaleString('en-PK')}</div></div>`).join('');
   const today = new Date().toLocaleDateString('en-GB');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>OneLink Payment Report — ${esc(periodLabel)}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{background:#fff}
-body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4}
-.rep-page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff}
-.rep-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #7C3AED;padding-bottom:10px;margin-bottom:10px}
-.rep-logo{width:42px;height:42px;border:2px solid #7C3AED;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#7C3AED;font-weight:800}
-.rep-name{font-size:18px;font-weight:800;color:#7C3AED;line-height:1.1}
-.rep-title{font-size:12px;font-weight:600;color:#444;margin-top:3px}
-.rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F5F3FF;padding:9px 13px;border-radius:6px}
-.rep-secttl{font-size:12px;font-weight:800;color:#7C3AED;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #DDD6FE}
-.rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px}
-.rep-tbl th{background:#7C3AED;color:#fff;padding:6px 7px;text-align:left;font-size:10px;font-weight:700}
-.rep-tbl td{padding:5px 7px;border-bottom:1px solid #e5e9f2;vertical-align:top}
-.rep-foot{margin-top:16px;text-align:center;font-size:9px;color:#999;border-top:1px solid #e5e9f2;padding-top:8px}
-.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-.kpi{border:1px solid #E5E7EB;border-radius:6px;padding:9px 11px;background:#F8FAFF}
-.kpi .l{font-size:9.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
-.kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px}
-@page{size:A4 portrait;margin:14mm}
-@media print{.rep-page{width:auto;min-height:0;margin:0;padding:0}body{font-size:10px}}
-</style></head><body><div class="rep-page">
-  <div class="rep-head">
-    <div class="rep-logo">OS</div>
-    <div><div class="rep-name">The Oxford System, Lahore Campus</div><div class="rep-title">OneLink Payment Report</div></div>
-  </div>
-  <div class="rep-filters"><span><b>Period:</b> ${esc(periodLabel)}</span><span><b>Transactions:</b> ${totalTxns}</span><span><b>Total Received:</b> Rs. ${totalAmt.toLocaleString('en-PK')}</span></div>
-  <div class="kpi-row">
-    <div class="kpi"><div class="l">Total Transactions</div><div class="v">${totalTxns}</div></div>
-    <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${totalAmt.toLocaleString('en-PK')}</div></div>
-    <div class="kpi"><div class="l">Period</div><div class="v">${esc(periodLabel)}</div></div>
-    <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
-  </div>
-  ${modeBreak.length ? `<div class="rep-secttl">Payment Collection Summary</div><div class="kpi-row">${modeKpis}</div>` : ''}
-  <div class="rep-secttl">Transaction Details</div>
-  <table class="rep-tbl">
-    <thead><tr><th>Sn.</th><th>Txn / Ref No</th><th>Student</th><th>Reg No</th><th>Date &amp; Time</th><th>Method</th><th style="text-align:right">Amount</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#94A3B8;padding:20px">No OneLink payments in this period.</td></tr>'}</tbody>
-  </table>
-  <div class="rep-foot">Computer generated report — The Oxford System, Lahore Campus · OneLink Payment Report · ${esc(today)}</div>
-</div></body></html>`;
+  const inner = `
+    <div class="rep-filters"><span><b>Period:</b> ${esc(periodLabel)}</span><span><b>Transactions:</b> ${totalTxns}</span><span><b>Total Received:</b> Rs. ${totalAmt.toLocaleString('en-PK')}</span></div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Total Transactions</div><div class="v">${totalTxns}</div></div>
+      <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${totalAmt.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Period</div><div class="v">${esc(periodLabel)}</div></div>
+      <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+    </div>
+    ${modeBreak.length ? `<div class="rep-secttl">Payment Collection Summary</div><div class="kpi-row">${modeKpis}</div>` : ''}
+    <div class="rep-secttl">Transaction Details</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Sn.</th><th>Txn / Ref No</th><th>Student</th><th>Reg No</th><th>Date &amp; Time</th><th>Method</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#94A3B8;padding:20px">No OneLink payments in this period.</td></tr>'}</tbody>
+    </table>`;
+  return feeDashReportHTML({ accent, title: 'OneLink Payment Report', innerHtml: inner });
+}
+
+/* ─── Fee Analytics Cards 5, 6 & 7 — Download Report builders ───
+   All funnel through feeDashReportHTML below, which delegates its
+   header/logo/footer chrome to the shared src/reports/reportKit.js —
+   the same ERP-wide standard Academics, Examination, Attendance and
+   HR now use — while keeping .rep-tbl/.kpi/.rep-secttl as report BODY
+   styling (report-specific `accent` still colors table headers, KPI
+   highlights and footer totals, same as before). */
+function feeDashBodyCSS(accent) {
+  return `
+    .rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F8FAFF;padding:9px 13px;border-radius:6px}
+    .rep-secttl{font-size:12px;font-weight:800;color:${accent};margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #E5E7EB}
+    .rep-tbl{width:100%;border-collapse:collapse;font-size:9.5px;margin-bottom:4px}
+    .rep-tbl th{background:${accent};color:#fff;padding:6px 6px;text-align:left;font-size:9.5px;font-weight:700}
+    .rep-tbl td{padding:5px 6px;border-bottom:1px solid #e5e9f2;vertical-align:top}
+    .rep-tbl tfoot td{font-weight:800;background:#F8FAFF;border-top:2px solid ${accent}}
+    .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+    .kpi{border:1px solid #E5E7EB;border-radius:6px;padding:9px 11px;background:#F8FAFF}
+    .kpi .l{font-size:9.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+    .kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px}
+  `;
+}
+export function feeDashReportHTML({ accent, title, innerHtml }) {
+  const bodyHtml = `<style>${feeDashBodyCSS(accent)}</style>${innerHtml}`;
+  return buildStandardReportHtml({ title, format: 'pdf', isColor: true, bodyHtml });
+}
+
+function buildDiscountGivenDashboardReportHTML({ discountRows, discountTotal, discountStudentCount }, monthLabel) {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const accent = '#D97706';
+  const today = new Date().toLocaleDateString('en-GB');
+  const rows = discountRows.map((r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><b>${esc(r.studentName)}</b></td>
+      <td>${esc(r.reg)}</td>
+      <td>${esc(r.cls)}</td>
+      <td>${esc(r.sec)}</td>
+      <td>${esc(r.head)}</td>
+      <td style="text-align:right">${r.original.toLocaleString('en-PK')}</td>
+      <td style="text-align:right;font-weight:700;color:${accent}">${r.discountGiven.toLocaleString('en-PK')}</td>
+      <td style="text-align:right">${r.finalPayable.toLocaleString('en-PK')}</td>
+      <td>${esc(r.givenBy)}</td>
+      <td>${esc(r.date)}</td>
+      <td>${esc(r.time)}</td>
+    </tr>`).join('');
+  const inner = `
+    <div class="rep-filters"><span><b>Month:</b> ${esc(monthLabel)}</span><span><b>Students:</b> ${discountStudentCount}</span><span><b>Rows:</b> ${discountRows.length}</span><span><b>Grand Total Discount:</b> Rs. ${discountTotal.toLocaleString('en-PK')}</span></div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Students Given Discount</div><div class="v">${discountStudentCount}</div></div>
+      <div class="kpi"><div class="l">Grand Total Discount Given</div><div class="v">Rs. ${discountTotal.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+    </div>
+    <div class="rep-secttl">Discount Given During Receiving: Student-wise, Fee-head-wise</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Sn.</th><th>Student Name</th><th>Reg No</th><th>Class</th><th>Section</th><th>Fee Head</th><th style="text-align:right">Original Amount</th><th style="text-align:right">Discount Given</th><th style="text-align:right">Final Payable</th><th>Discount Given By</th><th>Date</th><th>Time</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" style="text-align:center;color:#94A3B8;padding:20px">No receiving-time discount given yet.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="7" style="text-align:right">Grand Total Discount Given</td><td style="text-align:right;color:${accent}">Rs. ${discountTotal.toLocaleString('en-PK')}</td><td colspan="4"></td></tr></tfoot>
+    </table>`;
+  return feeDashReportHTML({ accent, title: 'Discount Given During Receiving Report', innerHtml: inner });
+}
+
+function buildAdvanceDashboardReportHTML({ advanceRows, advanceTotal, advanceStudentCount }, monthLabel) {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const accent = '#7C3AED';
+  const today = new Date().toLocaleDateString('en-GB');
+  const rows = advanceRows.map((r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><b>${esc(r.studentName)}</b></td>
+      <td>${esc(r.reg)}</td>
+      <td>${esc(r.cls)}</td>
+      <td>${esc(r.sec)}</td>
+      <td style="text-align:right">${r.currentChallanAmount.toLocaleString('en-PK')}</td>
+      <td style="text-align:right">${r.amountReceived.toLocaleString('en-PK')}</td>
+      <td style="text-align:right;font-weight:700;color:${accent}">${r.advanceAmount.toLocaleString('en-PK')}</td>
+      <td>${esc(r.method)}</td>
+      <td>${esc(r.receivedBy)}</td>
+      <td>${esc(r.date)}</td>
+      <td>${esc(r.time)}</td>
+    </tr>`).join('');
+  const inner = `
+    <div class="rep-filters"><span><b>Month:</b> ${esc(monthLabel)}</span><span><b>Students:</b> ${advanceStudentCount}</span><span><b>Grand Total Advance:</b> Rs. ${advanceTotal.toLocaleString('en-PK')}</span></div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Students Paid in Advance</div><div class="v">${advanceStudentCount}</div></div>
+      <div class="kpi"><div class="l">Grand Total Advance Amount</div><div class="v">Rs. ${advanceTotal.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+    </div>
+    <div class="rep-secttl">Advance Payments Received: Student-wise</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Sn.</th><th>Student Name</th><th>Reg No</th><th>Class</th><th>Section</th><th style="text-align:right">Current Challan Amount</th><th style="text-align:right">Amount Received</th><th style="text-align:right">Advance Amount</th><th>Payment Method</th><th>Received By</th><th>Date</th><th>Time</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" style="text-align:center;color:#94A3B8;padding:20px">No advance payments received this month.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="7" style="text-align:right">Grand Total Advance Amount</td><td style="text-align:right;color:${accent}">Rs. ${advanceTotal.toLocaleString('en-PK')}</td><td colspan="4"></td></tr></tfoot>
+    </table>`;
+  return feeDashReportHTML({ accent, title: 'Advance Payments Received Report', innerHtml: inner });
+}
+
+function buildAdvanceAdjustmentDashboardReportHTML({ advanceAdjustmentRows, advanceAdjustmentTotal, advanceAdjustmentStudentCount }, monthLabel) {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const accent = '#7C3AED';
+  const today = new Date().toLocaleDateString('en-GB');
+  const rows = advanceAdjustmentRows.map((r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><b>${esc(r.studentName)}</b></td>
+      <td>${esc(r.cls)}</td>
+      <td>${esc(r.sec)}</td>
+      <td style="text-align:right">${r.previousAdvanceBalance.toLocaleString('en-PK')}</td>
+      <td style="text-align:right;font-weight:700;color:${accent}">${r.adjustedAmount.toLocaleString('en-PK')}</td>
+      <td style="text-align:right">${r.remainingAdvanceBalance.toLocaleString('en-PK')}</td>
+      <td>${esc(r.adjustmentDate)}</td>
+    </tr>`).join('');
+  const inner = `
+    <div class="rep-filters"><span><b>Month:</b> ${esc(monthLabel)}</span><span><b>Students Adjusted:</b> ${advanceAdjustmentStudentCount}</span><span><b>Grand Total Adjusted:</b> Rs. ${advanceAdjustmentTotal.toLocaleString('en-PK')}</span></div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Students Adjusted</div><div class="v">${advanceAdjustmentStudentCount}</div></div>
+      <div class="kpi"><div class="l">Grand Total Adjusted</div><div class="v">Rs. ${advanceAdjustmentTotal.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+    </div>
+    <div class="rep-secttl">Advance Adjustments: Previous Advance Balance Applied Against This Month's Fee</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Sn.</th><th>Student Name</th><th>Class</th><th>Section</th><th style="text-align:right">Previous Advance Balance</th><th style="text-align:right">Adjusted Amount</th><th style="text-align:right">Remaining Advance Balance</th><th>Adjustment Date</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:#94A3B8;padding:20px">No advance adjustments this month.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5" style="text-align:right">Grand Total Adjusted</td><td style="text-align:right;color:${accent}">Rs. ${advanceAdjustmentTotal.toLocaleString('en-PK')}</td><td colspan="2"></td></tr></tfoot>
+    </table>`;
+  return feeDashReportHTML({ accent, title: 'Advance Adjustments Report', innerHtml: inner });
+}
+
+function buildFeeReceivedDashboardReportHTML({ receivedRows, receivedTotal, receivedStudentCount }, monthLabel) {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const accent = '#16A34A';
+  const today = new Date().toLocaleDateString('en-GB');
+  const rows = receivedRows.map((r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><b>${esc(r.studentName)}</b></td>
+      <td>${esc(r.reg)}</td>
+      <td>${esc(r.cls)}</td>
+      <td>${esc(r.sec)}</td>
+      <td style="text-align:right;font-weight:700;color:${accent}">${r.amount.toLocaleString('en-PK')}</td>
+      <td>${esc(r.method)}</td>
+      <td>${esc(r.receivedBy)}</td>
+      <td>${esc(r.date)}</td>
+      <td>${esc(r.time)}</td>
+    </tr>`).join('');
+  const inner = `
+    <div class="rep-filters"><span><b>Month:</b> ${esc(monthLabel)}</span><span><b>Students Paid:</b> ${receivedStudentCount}</span><span><b>Grand Total Received:</b> Rs. ${receivedTotal.toLocaleString('en-PK')}</span></div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Students Paid</div><div class="v">${receivedStudentCount}</div></div>
+      <div class="kpi"><div class="l">Grand Total Received</div><div class="v">Rs. ${receivedTotal.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+    </div>
+    <div class="rep-secttl">Fee Received: Student-wise, All Payment Sources</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Sn.</th><th>Student Name</th><th>Reg No</th><th>Class</th><th>Section</th><th style="text-align:right">Amount Received</th><th>Payment Method</th><th>Received By</th><th>Date</th><th>Time</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#94A3B8;padding:20px">No fee received in this month.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5" style="text-align:right">Grand Total Received</td><td style="text-align:right;color:${accent}">Rs. ${receivedTotal.toLocaleString('en-PK')}</td><td colspan="4"></td></tr></tfoot>
+    </table>`;
+  return feeDashReportHTML({ accent, title: 'Fee Received Report', innerHtml: inner });
 }
 
 /* ─── Reusable App-status card (Teachers / Parents variants) ─── */
@@ -2149,22 +2543,22 @@ function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 
             <div className="adm-tc-s">{subtitle}</div>
           </div>
         </div>
-        <span className={`adm-tc-pill adm-tc-pill--${tone}`}>{data.pct}%</span>
+        <span className={`adm-tc-pill adm-tc-pill--${tone}`}><AnimatedNumber key={replay.replayKey} value={data.pct} suffix="%" duration={CHART_ANIM_MS} /></span>
       </div>
 
       <div className="adm-tc-body">
         <div className="adm-tc-stats">
           <div className="adm-tc-stat">
             <div className="adm-tc-stat-lbl">Total</div>
-            <div className="adm-tc-stat-val">{data.total.toLocaleString('en-PK')}</div>
+            <div className="adm-tc-stat-val"><AnimatedNumber key={replay.replayKey} value={data.total} duration={CHART_ANIM_MS} /></div>
           </div>
           <div className="adm-tc-stat">
             <div className="adm-tc-stat-lbl">Downloaded</div>
-            <div className="adm-tc-stat-val adm-tc-stat-val--green">{data.downloaded.toLocaleString('en-PK')}</div>
+            <div className="adm-tc-stat-val adm-tc-stat-val--green"><AnimatedNumber key={replay.replayKey} value={data.downloaded} duration={CHART_ANIM_MS} /></div>
           </div>
           <div className="adm-tc-stat">
             <div className="adm-tc-stat-lbl">Pending</div>
-            <div className="adm-tc-stat-val adm-tc-stat-val--amber">{data.pending.toLocaleString('en-PK')}</div>
+            <div className="adm-tc-stat-val adm-tc-stat-val--amber"><AnimatedNumber key={replay.replayKey} value={data.pending} duration={CHART_ANIM_MS} /></div>
           </div>
         </div>
 
@@ -2180,8 +2574,8 @@ function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 
             />
           </div>
           <div className="adm-tc-bar-meta">
-            <span><i className="fa-solid fa-mobile-screen-button" aria-hidden="true"></i> {(data.downloaded || 0).toLocaleString('en-PK')} downloaded</span>
-            <span className="adm-tc-bar-pct">{data.pct}% adopted</span>
+            <span><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i> +<AnimatedNumber key={replay.replayKey} value={data.newThisMonth} duration={CHART_ANIM_MS} /> this month</span>
+            <span className="adm-tc-bar-pct"><AnimatedNumber key={replay.replayKey} value={data.pct} suffix="% adopted" duration={CHART_ANIM_MS} /></span>
           </div>
         </div>
       </div>
@@ -2261,11 +2655,13 @@ export const ADM_NEW_CSS = `
 .adm-tc--green::before    { background: linear-gradient(90deg, #15803D, #16A34A, #22C55E); }
 .adm-tc--amber::before    { background: linear-gradient(90deg, #B45309, #D97706, #F59E0B); }
 
-/* ── Announcement card — deliberately more eye-catching than its siblings so a
-   new school-wide announcement doesn't go unnoticed: a slow breathing glow on
-   the card, a shimmering sweep on its top accent bar, and a periodic "ring" on
-   the bullhorn icon. All loop continuously but stay subtle. Disabled for users
-   who asked the OS for reduced motion. ── */
+/* ── Announcement card — deliberately more eye-catching than its
+   siblings so a new school-wide announcement doesn't go unnoticed on
+   the dashboard: a slow breathing glow on the card, a shimmering
+   sweep on its top accent bar, and a periodic "ring" on the bullhorn
+   icon. All three loop continuously but stay subtle enough not to be
+   annoying at a glance. Disabled for users who've asked the OS for
+   reduced motion. ── */
 @media (prefers-reduced-motion: no-preference) {
   .adm-tc--announce {
     animation: dashRise .35s ease, annGlow 2.6s ease-in-out infinite;
@@ -2309,9 +2705,14 @@ export const ADM_NEW_CSS = `
 /* Header row */
 .adm-tc-h {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; margin-bottom: 12px;
+  gap: 8px 10px; margin-bottom: 12px;
+  flex-wrap: wrap;
 }
-.adm-tc-h-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* The unread pill can be wider than the title/sender block on a
+   narrow 3-up card — wrap it onto its own row instead of letting the
+   two nowrap blocks fight for space and visually collide. */
+.adm-tc-h-l { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.adm-tc--announce .adm-tc-h > .adm-tc-pill--new { margin-left: auto; }
 .adm-tc-ic {
   width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -2337,19 +2738,43 @@ export const ADM_NEW_CSS = `
   font: 800 11px/1 var(--dash-font);
   white-space: nowrap; flex-shrink: 0;
 }
-.adm-tc-pill--new {
-  background: rgba(220, 38, 38, .12); color: #B91C1C;
-}
-[data-theme="dark"] .adm-tc-pill--new { background: rgba(248, 113, 113, .18); color: #FCA5A5; }
+.adm-tc-pill--green { background: rgba(21, 128, 61, .14); color: #15803D; }
+.adm-tc-pill--amber { background: rgba(217, 119, 6, .14); color: #92400E; }
 [data-theme="dark"] .adm-tc-pill--green { background: rgba(74, 222, 128, .18); color: #BBF7D0; }
 [data-theme="dark"] .adm-tc-pill--amber { background: rgba(245, 158, 11, .18); color: #FCD34D; }
+
+/* Unread-announcements pill — the one real, clickable button on this
+   card besides "View Details" (same destination), so it's styled as a
+   loud solid CTA rather than a quiet status tint like the pills above. */
+.adm-tc-pill--new {
+  gap: 5px;
+  padding: 5px 11px;
+  font-size: 11.5px;
+  max-width: 100%;
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(220, 38, 38, .38);
+  transition: transform .18s, box-shadow .18s;
+}
+.adm-tc-pill--new:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(220, 38, 38, .48); }
+.adm-tc-pill--new:active { transform: translateY(0); }
+.adm-tc-pill--new:focus-visible { outline: 2px solid #FCA5A5; outline-offset: 2px; }
+[data-theme="dark"] .adm-tc-pill--new { background: linear-gradient(135deg, #F87171, #DC2626); box-shadow: 0 3px 10px rgba(248, 113, 113, .3); }
+[data-theme="dark"] .adm-tc-pill--new:hover { box-shadow: 0 6px 16px rgba(248, 113, 113, .4); }
 .adm-tc-pill--new .adm-tc-pill-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: #DC2626;
+  width: 6px; height: 6px; border-radius: 50%; background: #fff;
   animation: dashPulse 1.4s ease-in-out infinite;
 }
 @keyframes dashPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
-.adm-tc-pill--green { background: rgba(21, 128, 61, .14); color: #15803D; }
-.adm-tc-pill--amber { background: rgba(217, 119, 6, .14); color: #92400E; }
+@media (prefers-reduced-motion: no-preference) {
+  .adm-tc--announce .adm-tc-pill--new { animation: annPillPulse 1.6s ease-in-out infinite; }
+}
+@keyframes annPillPulse {
+  0%, 100% { box-shadow: 0 3px 10px rgba(220,38,38,.38), 0 0 0 0 rgba(220,38,38,.35); }
+  50%      { box-shadow: 0 3px 10px rgba(220,38,38,.38), 0 0 0 6px rgba(220,38,38,0); }
+}
 
 /* Body */
 .adm-tc-body { flex: 1; display: flex; flex-direction: column; gap: 10px; }
@@ -2433,6 +2858,14 @@ export const ADM_NEW_CSS = `
 .adm-tc-btn i { font-size: 9px; transition: transform .2s; }
 .adm-tc-btn:hover i { transform: translateX(2px); }
 .adm-tc-btn--full { width: 100%; justify-content: center; }
+/* Two equal-width buttons sharing one row in a card footer (e.g. Fee
+   Received's "Daily Receiving Report" + "Download Report") instead of
+   the usual single full-width button, or single button + meta text. */
+.adm-tc-btn--half { flex: 1; justify-content: center; min-width: 0; }
+@media (max-width: 420px) {
+  .adm-tc-foot--row2 { flex-wrap: wrap; }
+  .adm-tc-foot--row2 .adm-tc-btn--half { flex-basis: 100%; }
+}
 .adm-tc--green .adm-tc-btn { background: linear-gradient(135deg, #15803D, #16A34A); }
 .adm-tc--green .adm-tc-btn:hover { box-shadow: 0 6px 14px rgba(22, 163, 74, .28); }
 .adm-tc--amber .adm-tc-btn { background: linear-gradient(135deg, #B45309, #D97706); }
@@ -2497,6 +2930,29 @@ export const ADM_NEW_CSS = `
 }
 [data-theme="dark"] .fin-summary-month { background: var(--bg-card, #0E1628); border-color: var(--border-light, #1C2E50); }
 [data-theme="dark"] .fin-summary-month-input { color-scheme: dark; }
+
+/* ─── Generic day picker pill — Fee Received card, Today's Attendance ─── */
+.dash-day-pick {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 999px;
+  transition: all .15s;
+}
+.dash-day-pick:hover { border-color: #93C5FD; }
+.dash-day-pick:focus-within { border-color: #1E40AF; box-shadow: 0 0 0 3px rgba(30, 64, 175, .16); }
+.dash-day-pick-lbl {
+  font: 800 10.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
+}
+.dash-day-pick-input {
+  border: none; outline: none; background: transparent;
+  font: 700 12.5px/1 var(--dash-font); color: var(--text-primary);
+  padding: 7px 4px; cursor: pointer;
+}
+[data-theme="dark"] .dash-day-pick { background: var(--bg-card, #0E1628); border-color: var(--border-light, #1C2E50); }
+[data-theme="dark"] .dash-day-pick-input { color-scheme: dark; }
 .fin-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .fin-summary-sub { min-height: 0; padding: 16px 18px; }
 .fin-summary-sub .fc-support { margin-top: 10px; }
@@ -2582,27 +3038,82 @@ export const ADM_NEW_CSS = `
 [data-theme="dark"] .adm-link-btn { color: #93C5FD; }
 [data-theme="dark"] .adm-link-btn:hover { background: rgba(96, 165, 250, .12); }
 
-/* ═══ Fee Analytics — 3 + 2 layout ═══ */
-.fa-top-grid {
+/* ═══ Fee Analytics — 3 + 3 + 1 + 1 layout ═══
+   Row 1: Current Month / Previous Dues / Net Receivable (inputs)
+   Row 2: Received / Discount Given / Advance Adjustments — everything
+          that genuinely reduces Pending Fee, in the main calc flow
+   Row 3: Pending Fee — single full-width "final outcome" card
+   Row 4: Advance Payments Received — single full-width, purely
+          informational card AFTER Pending Fee; it's a future balance
+          that does NOT reduce Pending Fee (that only happens once it
+          becomes an Advance Adjustment in Row 2, a later month) */
+.fa-top-grid,
+.fa-second-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
   margin-bottom: 14px;
 }
-.fa-bottom-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 14px;
-  margin-bottom: 14px;
-}
 @media (max-width: 1024px) {
-  .fa-top-grid    { grid-template-columns: repeat(2, 1fr); }
-  .fa-top-grid > :last-child { grid-column: span 2; }
-  .fa-bottom-grid { grid-template-columns: 1fr; }
+  .fa-top-grid, .fa-second-grid { grid-template-columns: repeat(2, 1fr); }
+  .fa-top-grid > :last-child, .fa-second-grid > :last-child { grid-column: span 2; }
 }
 @media (max-width: 640px) {
-  .fa-top-grid, .fa-bottom-grid { grid-template-columns: 1fr; }
-  .fa-top-grid > :last-child { grid-column: auto; }
+  .fa-top-grid, .fa-second-grid { grid-template-columns: 1fr; }
+  .fa-top-grid > :last-child, .fa-second-grid > :last-child { grid-column: auto; }
+}
+
+/* Row 3 — Pending Fee "final outcome" card gets extra breathing room
+   and a slightly stronger border so it visually reads as the summary. */
+.fa-final { margin-bottom: 14px; border-width: 1.5px; }
+.fa-final-tag {
+  font: 800 9.5px/1 var(--dash-font);
+  text-transform: uppercase; letter-spacing: .4px;
+  color: #DC2626; background: rgba(220, 38, 38, .1);
+  padding: 3px 8px; border-radius: 20px;
+  margin-left: 8px;
+}
+[data-theme="dark"] .fa-final-tag { background: rgba(248, 113, 113, .16); color: #FCA5A5; }
+
+/* Small pill under an amount — used by the Advance card to make the
+   "this is not money you can spend against pending" distinction loud. */
+.fa-badge {
+  display: inline-flex; align-items: center;
+  font: 800 10px/1 var(--dash-font);
+  text-transform: uppercase; letter-spacing: .3px;
+  padding: 4px 10px; border-radius: 20px;
+  margin: 6px 0 2px;
+}
+.fa-badge--purple { background: rgba(124, 58, 237, .12); color: #7C3AED; }
+[data-theme="dark"] .fa-badge--purple { background: rgba(167, 139, 250, .18); color: #C4B5FD; }
+
+/* "Advance Available" callout inside the Pending Fee card — purposely
+   tinted purple (not red) so it reads as a separate, unrelated figure. */
+.fa-advance-note {
+  margin-top: 12px; padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(124, 58, 237, .06);
+  border: 1px solid rgba(124, 58, 237, .18);
+}
+.fa-advance-note-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.fa-advance-note-lbl {
+  font: 700 12px/1.3 var(--dash-font); color: #7C3AED;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.fa-advance-note-lbl i { font-size: 11px; }
+.fa-advance-note-val { font: 800 15px/1.2 var(--dash-font); color: #7C3AED; }
+.fa-advance-note-cap {
+  margin-top: 4px;
+  font: 500 10.5px/1.4 var(--dash-font);
+  color: var(--text-muted, #64748B);
+}
+[data-theme="dark"] .fa-advance-note { background: rgba(167, 139, 250, .08); border-color: rgba(167, 139, 250, .28); }
+[data-theme="dark"] .fa-advance-note-lbl,
+[data-theme="dark"] .fa-advance-note-val { color: #C4B5FD; }
+@media (max-width: 640px) {
+  .fa-advance-note-top { flex-direction: column; align-items: flex-start; gap: 2px; }
 }
 
 /* ─── Card chrome ─── */
@@ -2632,7 +3143,7 @@ export const ADM_NEW_CSS = `
 [data-theme="dark"] .fee-card::before { background: rgba(255, 255, 255, .04); }
 
 /* ─── Header ─── */
-.fc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.fc-header { display: flex; align-items: center; flex-wrap: wrap; row-gap: 4px; gap: 8px; margin-bottom: 10px; }
 .fc-icon-chip {
   width: 30px; height: 30px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -2665,6 +3176,8 @@ export const ADM_NEW_CSS = `
 }
 .fc-amount--red   { color: #DC2626; }
 .fc-amount--green { color: #16A34A; }
+.fc-amount--amber  { color: #D97706; }
+.fc-amount--purple { color: #7C3AED; }
 
 /* Quantity-style amount (Card 1) — split big number + small unit */
 .fc-amount--qty { display: flex; align-items: baseline; gap: 8px; }
@@ -2764,8 +3277,8 @@ export const ADM_NEW_CSS = `
   display: flex; flex-direction: column; gap: 8px;
 }
 .fa-meta-row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px;
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between;
+  gap: 6px 10px;
   padding: 7px 10px;
   background: var(--bg-muted, #F8FAFF);
   border-radius: 9px;
@@ -2792,7 +3305,9 @@ export const ADM_NEW_CSS = `
   white-space: nowrap;
 }
 .fa-meta-val--amber { color: #D97706; }
+.fa-meta-val--purple { color: #7C3AED; }
 .fa-meta-val--red   { color: #DC2626; }
+.fa-meta-val--green { color: #16A34A; }
 .fa-meta-div {
   font-weight: 600;
   color: var(--text-muted, #94A3B8);
@@ -2820,6 +3335,11 @@ export const ADM_NEW_CSS = `
   border-radius: 9px;
 }
 [data-theme="dark"] .fa-formula-breakdown { background: rgba(96, 165, 250, .05); }
+/* Pending Fee's 4-term formula (Net Receivable − Received − Discount −
+   Advance) needs to wrap on narrower cards; the original 2-term
+   breakdown (Total Net Receivable) stays single-line as before. */
+.fa-formula-breakdown--wrap { flex-wrap: wrap; justify-content: flex-start; }
+.fa-formula-breakdown--wrap > div { flex: 1 1 84px; }
 .fa-formula-breakdown > div {
   display: flex; flex-direction: column; gap: 2px;
   min-width: 0; flex: 1;
@@ -2840,6 +3360,8 @@ export const ADM_NEW_CSS = `
   color: var(--text-muted, #94A3B8);
   flex-shrink: 0;
 }
+.fa-bd-op--eq { color: #DC2626; }
+[data-theme="dark"] .fa-bd-op--eq { color: #F87171; }
 
 /* ═══ Bottom-row LARGE cards ═══ */
 .fa-large { min-height: 230px; padding: 22px 24px; }
@@ -2851,7 +3373,7 @@ export const ADM_NEW_CSS = `
 .fa-large-l { flex: 1; min-width: 0; }
 .fa-large-r { flex-shrink: 0; }
 
-/* Inline status meta line ("Students Paid: 425/612") */
+/* Inline status meta line ("Challans Paid: 425/612") */
 .fa-status-meta {
   display: flex; align-items: center; gap: 6px;
   margin-top: 12px;
@@ -2866,37 +3388,33 @@ export const ADM_NEW_CSS = `
   color: #16A34A;
 }
 .fa-status-strong--red { color: #DC2626; }
-/* "Received Discount" wali line — icon aur raqam dono amber, bilkul upar wale
-   card ke "Discount Given" jaise. Ye rules .fa-status-meta i / .fa-status-strong
-   ke BAAD aane chahiyen: specificity barabar hai, faisla tarteeb se hota hai. */
-.fa-status-meta--amber i   { color: #D97706; }
-.fa-status-strong--amber   { color: #D97706; }
 
-/* ─── Donut ring (right side of large cards) ─── */
-.fa-ring {
-  position: relative;
-  width: 96px; height: 96px;
-  flex-shrink: 0;
+/* ─── Vertical progress bar (right side of large cards) ───
+   Replaces the old donut ring, which rendered clipped/half-hidden in
+   the constrained right column at some widths. */
+.fa-vbar {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; width: 72px; flex-shrink: 0;
 }
-.fa-ring svg { display: block; transform-origin: center; }
-.fa-ring-text {
-  position: absolute; inset: 0;
-  text-align: center;
-}
-.fa-ring-pct {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  font: 800 15px/1 var(--dash-font);
+.fa-vbar-pct {
+  font: 800 16px/1 var(--dash-font);
   color: var(--text-primary);
   letter-spacing: -.02em;
 }
-.fa-ring--green .fa-ring-pct { color: #16A34A; }
-.fa-ring--red   .fa-ring-pct { color: #DC2626; }
-.fa-ring-lbl {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, 10px);
+.fa-vbar-track {
+  width: 24px; height: 76px; border-radius: 12px;
+  background: var(--bg-muted, #F1F5F9);
+  overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+[data-theme="dark"] .fa-vbar-track { background: rgba(255, 255, 255, .06); }
+.fa-vbar-fill {
+  width: 100%; border-radius: 12px;
+  transition: height .5s cubic-bezier(.2, .8, .2, 1);
+}
+.fa-vbar-fill--green { background: linear-gradient(180deg, #22C55E, #16A34A); }
+.fa-vbar-fill--red   { background: linear-gradient(180deg, #F87171, #DC2626); }
+.fa-vbar-lbl {
   font: 700 9.5px/1 var(--dash-font);
   color: var(--text-muted, #64748B);
   text-transform: uppercase; letter-spacing: .5px;
@@ -2904,9 +3422,13 @@ export const ADM_NEW_CSS = `
 
 /* ─── Progress bar at bottom of large card ─── */
 .fa-progress { display: flex; flex-direction: column; gap: 6px; }
+/* Fee Received stacks a meta row right under its progress bar — give
+   it breathing room instead of the bar's track touching the row. */
+.fa-progress + .fa-meta-rows { margin-top: 12px; }
 .fa-progress-h {
-  display: flex; align-items: center; justify-content: space-between;
-  font: 700 11px/1 var(--dash-font);
+  display: flex; align-items: center; flex-wrap: wrap;
+  justify-content: space-between; gap: 4px;
+  font: 700 11px/1.3 var(--dash-font);
   color: var(--text-muted, #64748B);
 }
 .fa-progress-h b { color: var(--text-primary); font-weight: 800; }
@@ -3039,6 +3561,39 @@ export const ADM_NEW_CSS = `
   .att-pct-sym { font-size: 20px; }
 }
 
+/* ─── Locked dashboard card (permission-gated) ─── */
+.dash-locked-card {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  min-height: 64px;
+  padding: 16px 18px;
+  background: var(--bg-muted, #F8FAFF);
+  border: 1px dashed var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  animation: dashRise .35s ease;
+}
+[data-theme="dark"] .dash-locked-card { background: rgba(255, 255, 255, .03); }
+.dash-locked-card-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dash-locked-card-ic {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px;
+  background: rgba(100, 116, 139, .14); color: #64748B;
+}
+.dash-locked-card-t {
+  font: 700 13px/1.3 var(--dash-font);
+  color: var(--text-muted, #64748B);
+  letter-spacing: -0.1px;
+}
+.dash-locked-card-i {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; cursor: help;
+  background: rgba(100, 116, 139, .14); color: #64748B;
+}
+[data-theme="dark"] .dash-locked-card-ic,
+[data-theme="dark"] .dash-locked-card-i { background: rgba(148, 163, 184, .16); color: #94A3B8; }
+
 /* ─── 2-column layout for chart/side panels ─── */
 .adm-2col {
   display: grid; gap: 14px;
@@ -3052,18 +3607,6 @@ export const ADM_NEW_CSS = `
   animation: dashRise .35s ease;
 }
 .adm-side-card { padding: 14px 16px; }
-
-/* ─── Profit/Loss Overview — full-width card (Revenue Streams removed) ─── */
-.pl-overview {
-  background: var(--bg-card, #fff);
-  border: 1px solid var(--border-light, #E2E8F0);
-  border-radius: 14px; padding: 16px 18px;
-  animation: dashRise .35s ease;
-}
-.pl-head-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.pl-chart-scroll { width: 100%; overflow-x: auto; }
-.pl-legend { justify-content: center; }
-@media (max-width: 600px) { .pl-overview { padding: 12px; } }
 .adm-side-title {
   font: 800 13px/1.2 var(--dash-font); color: var(--text-primary);
   margin-bottom: 14px;
@@ -3101,6 +3644,62 @@ export const ADM_NEW_CSS = `
 }
 .adm-card-h-meta { font: 700 12px/1 var(--dash-font); color: var(--text-muted, #64748B); }
 .adm-card-h-meta b { color: var(--text-primary); font-weight: 800; }
+
+/* ─── Profit/Loss Overview — full-width redesign ───
+   Now spans the whole content width instead of sharing a 2-col grid
+   with the old revenue chart, with a taller chart and a richer
+   tooltip/legend. */
+.pl-overview {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  padding: 20px 24px 18px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  animation: dashRise .35s ease;
+}
+[data-theme="dark"] .pl-overview { background: var(--bg-card); border-color: var(--border-light); }
+.pl-head-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pl-year-select { height: 30px; min-width: 84px; }
+.pl-chart-scroll { overflow-x: auto; margin: 6px 0 2px; }
+.pl-legend {
+  justify-content: center;
+  gap: 26px;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.pl-legend .adm-legend-i { font-size: 12.5px; }
+.pl-legend .adm-legend-dot { width: 11px; height: 11px; }
+
+.pl-tooltip {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 10px;
+  padding: 10px 14px;
+  min-width: 190px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .14);
+}
+.pl-tooltip-month {
+  font: 800 12.5px/1 var(--dash-font);
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border-light, #E2E8F0);
+}
+.pl-tooltip-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px;
+  font: 600 11.5px/1.5 var(--dash-font);
+  color: var(--text-secondary, #475569);
+  padding: 2px 0;
+}
+.pl-tooltip-row b { color: var(--text-primary); font-weight: 800; white-space: nowrap; }
+.pl-tooltip-lbl { display: inline-flex; align-items: center; gap: 6px; }
+.pl-tooltip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+@media (max-width: 700px) {
+  .pl-overview { padding: 16px 16px 14px; }
+  .pl-legend { gap: 16px; }
+}
 
 /* Subject-wise completion bars */
 .adm-bars { display: flex; flex-direction: column; gap: 12px; }
@@ -3302,6 +3901,7 @@ export const ADM_NEW_CSS = `
 [data-theme="dark"] .adm-side-card,
 [data-theme="dark"] .adm-bday-card,
 [data-theme="dark"] .adm-act-card,
+[data-theme="dark"] .pl-overview,
 [data-theme="dark"] .adm-ghost-btn { background: var(--bg-card); border-color: var(--border-light); }
 [data-theme="dark"] .adm-table th { background: rgba(96, 165, 250, .06); }
 
@@ -3360,9 +3960,10 @@ export const ADM_NEW_CSS = `
   .adm-card-h-t { font-size: 13px; }
   .adm-card-h-meta { font-size: 11.5px; }
 
-  /* Fee Analytics 3+2 grids — collapse to 1-col */
+  /* Fee Analytics 3+3+1 grids — collapse to 1-col */
   .fa-top-grid,
-  .fa-bottom-grid {
+  .fa-second-grid,
+  .fa-final {
     gap: 10px;
     margin-bottom: 10px;
   }
@@ -3371,6 +3972,12 @@ export const ADM_NEW_CSS = `
     min-height: 0;
     border-radius: 12px;
   }
+  /* Cards now show real (potentially 7-digit) live PKR totals — give
+     narrow screens extra headroom so a long amount never gets clipped
+     by .fee-card's overflow:hidden. */
+  .fa-amount--lg { font-size: 20px; }
+  .fa-amount--xl { font-size: 24px; }
+  .fa-final-tag { font-size: 9px; padding: 2px 7px; }
 
   /* Attendance 2-card grid */
   .att-grid { gap: 10px; margin-bottom: 10px; }
@@ -3444,18 +4051,180 @@ export const ADM_NEW_CSS = `
   .adm-card-h-t { font-size: 12.5px; }
   .adm-bday-card { padding: 8px 10px; }
 }
-  .subject-completion-scroll {
-  max-height: 230px;
-  overflow-y: auto;
-  padding-right: 8px;
-}
 
-.subject-completion-scroll::-webkit-scrollbar {
-  width: 5px;
+/* ═══ Fee Analytics Overview — graphical summary above the cards ═══
+   One outer card (.fa-overview) holding: title, a mini highlight
+   strip, one full-width comparison bar chart, a 2-up chart grid
+   (donut + collections bar), then the "View Cards" button. Reuses
+   .adm-chart-card / .adm-card-h* tokens already defined above so it
+   matches every other chart card on this dashboard. */
+.fa-overview {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  padding: 20px 22px 18px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  animation: dashRise .35s ease;
 }
+.fa-overview-locked { margin-bottom: 16px; }
+.fa-overview-head { margin-bottom: 14px; }
+.fa-overview-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 800 15px/1.2 var(--dash-font); color: var(--text-primary); letter-spacing: -0.2px;
+}
+.fa-overview-title i { color: #1E40AF; font-size: 14px; }
+[data-theme="dark"] .fa-overview-title i { color: #93C5FD; }
+/* Continuous "Live" indicator — unlike the one-time entrance animations
+   below, this never stops, so the section always reads as animated no
+   matter when you happen to look at it. */
+.fa-live-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 800 9.5px/1 var(--dash-font); letter-spacing: .5px; text-transform: uppercase;
+  color: #16A34A; background: rgba(22, 163, 74, .1);
+  border: 1px solid rgba(22, 163, 74, .25);
+  padding: 3px 8px; border-radius: 999px;
+}
+[data-theme="dark"] .fa-live-badge { color: #4ADE80; background: rgba(74, 222, 128, .14); border-color: rgba(74, 222, 128, .3); }
+.fa-live-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+@media (prefers-reduced-motion: no-preference) {
+  .fa-live-dot { animation: faLivePulse 1.8s ease-in-out infinite; }
+}
+@keyframes faLivePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22,163,74,.45); }
+  50%      { opacity: .55; box-shadow: 0 0 0 4px rgba(22,163,74,0); }
+}
+.fa-overview-sub {
+  font: 500 12px/1.4 var(--dash-font); color: var(--text-muted, #64748B);
+  margin-top: 4px;
+}
+.fa-overview-sub b { color: var(--text-primary); font-weight: 700; }
 
-.subject-completion-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+/* Mini highlight strip */
+.fa-highlight-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.fa-highlight-tile {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 9px;
+  border: 1px solid var(--border-light, #E2E8F0);
   border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--bg-muted, #F8FAFC);
+}
+.fa-highlight-tile i { font-size: 14px; flex-shrink: 0; position: relative; z-index: 1; }
+.fa-highlight-val { font: 800 14px/1.15 var(--dash-font); color: var(--text-primary); position: relative; z-index: 1; }
+.fa-highlight-lbl { font: 600 10px/1.3 var(--dash-font); color: var(--text-muted, #64748B); white-space: nowrap; position: relative; z-index: 1; }
+.fa-highlight-tile--green  i { color: #16A34A; }
+.fa-highlight-tile--red    i { color: #DC2626; }
+.fa-highlight-tile--purple i { color: #7C3AED; }
+.fa-highlight-tile--violet i { color: #A78BFA; }
+
+/* Staggered entrance (animationDelay set inline per tile index), slow
+   and generous enough to still be visible even if you glance a beat
+   after mount — only for users who haven't asked for reduced motion;
+   the base rule above already renders every tile fully visible with
+   no JS/CSS dependency either way. */
+@media (prefers-reduced-motion: no-preference) {
+  .fa-highlight-tile { opacity: 0; animation: faTileIn .8s cubic-bezier(.22, 1.4, .36, 1) forwards; }
+  /* Continuous light sweep — unlike the entrance above, this NEVER
+     stops, so the strip always reads as "live" no matter when it's
+     looked at. Staggered per tile via nth-child so the sweep travels
+     across the row like a wave instead of flashing in unison. */
+  .fa-highlight-tile::after {
+    content: ''; position: absolute; inset: 0; left: -60%; width: 40%;
+    background: linear-gradient(115deg, transparent, rgba(255,255,255,.4), transparent);
+    transform: skewX(-20deg);
+    animation: faShimmer 3.6s ease-in-out infinite;
+  }
+  [data-theme="dark"] .fa-highlight-tile::after { background: linear-gradient(115deg, transparent, rgba(255,255,255,.14), transparent); }
+  .fa-highlight-strip .fa-highlight-tile:nth-child(1)::after { animation-delay: .8s; }
+  .fa-highlight-strip .fa-highlight-tile:nth-child(2)::after { animation-delay: 1.2s; }
+  .fa-highlight-strip .fa-highlight-tile:nth-child(3)::after { animation-delay: 1.6s; }
+  .fa-highlight-strip .fa-highlight-tile:nth-child(4)::after { animation-delay: 2s; }
+  .fa-highlight-strip .fa-highlight-tile:nth-child(5)::after { animation-delay: 2.4s; }
+  .fa-highlight-strip .fa-highlight-tile:nth-child(6)::after { animation-delay: 2.8s; }
+}
+@keyframes faTileIn {
+  from { opacity: 0; transform: translateY(10px) scale(.94); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes faShimmer {
+  0%   { left: -60%; }
+  35%  { left: 130%; }
+  100% { left: 130%; }
+}
+
+/* Chart cards */
+.fa-chart-card {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.fa-chart-card--wide { padding-bottom: 6px; }
+.fa-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.fa-chart-grid .fa-chart-card { margin-bottom: 0; }
+/* Card-level entrance, staggered to land just ahead of each chart's own
+   internal draw-in (animationBegin 200 / 500 / 800ms above) so the
+   whole section reads as one slow, deliberate cascading reveal rather
+   than a blink-and-you-miss-it flash. */
+@media (prefers-reduced-motion: no-preference) {
+  .fa-chart-card { opacity: 0; animation: faTileIn .7s cubic-bezier(.22, 1.4, .36, 1) forwards; }
+  .fa-chart-card--wide { animation-delay: 100ms; }
+  .fa-chart-grid .fa-chart-card:nth-child(1) { animation-delay: 400ms; }
+  .fa-chart-grid .fa-chart-card:nth-child(2) { animation-delay: 700ms; }
+}
+.fa-chart-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 260px;
+  font: 600 12.5px/1.4 var(--dash-font); color: var(--text-muted, #64748B);
+  text-align: center;
+}
+
+/* View Cards CTA */
+.fa-viewcards-row { display: flex; justify-content: center; margin-top: 6px; }
+.fa-viewcards-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 800 12.5px/1 var(--dash-font); color: #fff;
+  background: linear-gradient(135deg, #1E40AF, #2563EB);
+  border: none; border-radius: 999px;
+  padding: 10px 20px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(30, 64, 175, .25);
+  transition: transform .15s, box-shadow .15s;
+}
+.fa-viewcards-btn:hover { transform: translateY(1px); box-shadow: 0 1px 4px rgba(30, 64, 175, .25); }
+.fa-viewcards-btn--open { background: linear-gradient(135deg, #475569, #64748B); }
+.fa-viewcards-chev { font-size: 10px; animation: faChevBounce 1.6s ease-in-out infinite; transition: transform .2s; }
+.fa-viewcards-chev--open { animation: none; transform: rotate(180deg); }
+@keyframes faChevBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(2px); }
+}
+
+[data-theme="dark"] .fa-overview { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fa-highlight-tile { background: rgba(255,255,255,.04); border-color: var(--border-light); }
+[data-theme="dark"] .fa-chart-card { background: var(--bg-card); border-color: var(--border-light); }
+
+@media (max-width: 1024px) {
+  .fa-highlight-strip { grid-template-columns: repeat(3, 1fr); }
+  .fa-chart-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .fa-overview { padding: 16px 14px 14px; }
+  .fa-highlight-strip { grid-template-columns: repeat(2, 1fr); }
+  .fa-highlight-val { font-size: 13px; }
+  .fa-overview-title { font-size: 14px; }
+  .fa-viewcards-btn { width: 100%; justify-content: center; }
 }
 `;

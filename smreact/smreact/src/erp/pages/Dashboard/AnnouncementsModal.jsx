@@ -11,28 +11,8 @@ import { DASH_MODAL_CSS } from './dashModalCss';
    read" toggle that mutates the in-memory list (would be persisted
    to backend in production).
    ═══════════════════════════════════════════════════════════════════ */
-function normalizeAnnouncements(list) {
-  const src = Array.isArray(list) ? list : SCHOOL_MENTOR_ANNOUNCEMENTS;
-  return src.map((a, idx) => ({
-    ...a,
-    id: a.id ?? a.ID ?? `an-${idx}`,
-    title: a.title || a.Title || 'Announcement',
-    description: a.description || a.preview || a.Body || a.body || '',
-    date: a.date || '',
-    time: a.time || '',
-    sender: a.sender || 'School Mentor — HQ',
-    category: a.category || 'General',
-    status: a.status || (a.isRead ? 'read' : 'new'),
-    recipientID: a.recipientID || a.raw?.recipientID,
-    notificationID: a.notificationID || a.raw?.notificationID,
-  }));
-}
-
-export default function AnnouncementsModal({ announcements, onClose, toast = () => {}, onMarkRead, onMarkAllRead, unreadCount: apiUnreadCount }) {
-  const [items, setItems] = useState(() => normalizeAnnouncements(announcements));
-  useEffect(() => {
-    setItems(normalizeAnnouncements(announcements));
-  }, [announcements]);
+export default function AnnouncementsModal({ onClose, toast = () => {} }) {
+  const [items, setItems] = useState(SCHOOL_MENTOR_ANNOUNCEMENTS);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -44,29 +24,14 @@ export default function AnnouncementsModal({ announcements, onClose, toast = () 
     };
   }, [onClose]);
 
-  const unreadCount = apiUnreadCount ?? items.filter(i => i.status === 'new').length;
+  const unreadCount = items.filter(i => i.status === 'new').length;
 
-  const markRead = async (item) => {
-    // Use recipientID from API response, not notificationID
-    if (onMarkRead && item?.recipientID) {
-      await onMarkRead(item.recipientID);
-    }
-
-    setItems(prev => prev.map(i =>
-      (i.recipientID === item.recipientID || i.id === item.id)
-        ? { ...i, status: 'read', isRead: true }
-        : i
-    ));
+  const markRead = (id) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'read' } : i));
   };
-
-  const markAllRead = async () => {
+  const markAllRead = () => {
     if (unreadCount === 0) return;
-
-    if (onMarkAllRead) {
-      await onMarkAllRead();
-    }
-
-    setItems(prev => prev.map(i => ({ ...i, status: 'read', isRead: true })));
+    setItems(prev => prev.map(i => ({ ...i, status: 'read' })));
     toast('All announcements marked as read', 'success');
   };
 
@@ -151,7 +116,7 @@ export default function AnnouncementsModal({ announcements, onClose, toast = () 
                           <button
                             type="button"
                             className="an-mark-read"
-                            onClick={() => markRead(a)}
+                            onClick={() => markRead(a.id)}
                           >
                             Mark as read <i className="fa-solid fa-check" aria-hidden="true"></i>
                           </button>

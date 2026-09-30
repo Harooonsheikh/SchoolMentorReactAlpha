@@ -127,7 +127,7 @@ export function FeeAnalyticsInfoModal({ cardKey, onClose }) {
 
           {content.showRelationship && (
             <>
-              <div className="fai-section-h">How the 5 cards relate</div>
+              <div className="fai-section-h">How this flows into Pending Fee</div>
               <div className="fai-flow">
                 {FEE_ANALYTICS_FLOW.map((f) => (
                   <React.Fragment key={f.key}>

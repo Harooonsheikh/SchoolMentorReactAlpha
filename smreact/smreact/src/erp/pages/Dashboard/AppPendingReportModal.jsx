@@ -1,43 +1,23 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
-import { SCHOOL_BRAND } from './dashboardData';
+import { SCHOOL_BRAND, TEACHER_APP_PENDING, PARENT_APP_PENDING } from './dashboardData';
 import { DASH_MODAL_CSS } from './dashModalCss';
-import * as dashboardService from '../../services/dashboardService';
 
 /* ═══════════════════════════════════════════════════════════════════
-   APP DOWNLOAD REPORT MODAL — A4-sized report viewer for the Teachers /
-   Parents mobile-app adoption list. Header has school logo + name +
+   APP PENDING REPORT MODAL — A4-sized report viewer for "Teachers /
+   Parents Pending Download" lists. Header has school logo + name +
    campus + title + generated timestamp. Body is a clean ERP-style
    table. Footer carries page-of-page markers via @media print.
 
-   Data ab LIVE hai — branch ke registered app users (FCM token wale =
-   "downloaded") us endpoint se aate hain jo dashboard ke Downloaded
-   count ka bhi source hai:
-     GET /branch/{branchId}/fcm-tokens?accountType={teacher|parent}
-   (dashboardService.getBranchFcmTokens). Row shape:
-     { id, name, userName, accountType, accountTypeID, fcmToken, hasToken }
-
-   Mode prop → accountType:
-     'teachers' → accountType=teacher
-     'parents'  → accountType=parent
+   Mode prop selects the dataset + columns:
+     'teachers'  → flat list with Designation / Dept columns
+     'parents'   → class-wise grouping with sub-headers per class
 
    Print isolation in PRT_CSS hides everything except the A4 surfaces
    when window.print() fires.
    ═══════════════════════════════════════════════════════════════════ */
-
-/* Rows per A4 page — first page fits less to leave room for the title block. */
-const ROWS_FIRST_PAGE  = 18;
-const ROWS_OTHER_PAGES = 28;
-
 export default function AppPendingReportModal({ mode = 'teachers', onClose, toast = () => {} }) {
-  const isTeacher = mode === 'teachers';
-  const accountType = isTeacher ? 'teacher' : 'parent';
-
-  const [rows, setRows]       = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
-
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -48,48 +28,75 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
     };
   }, [onClose]);
 
-  /* Live fetch on open (and whenever the mode/accountType changes). */
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    dashboardService.getBranchFcmTokens(accountType)
-      .then((list) => { if (alive) { setRows(Array.isArray(list) ? list : []); setLoading(false); } })
-      .catch((err) => { if (alive) { setError(err.message || 'Could not load report'); setLoading(false); } });
-    return () => { alive = false; };
-  }, [accountType]);
-
-  /* ─── Meta per mode ─── */
+  /* ─── Resolve dataset + meta per mode ─── */
+  const isTeacher = mode === 'teachers';
   const title = isTeacher
-    ? 'Teachers Mobile App Download Report'
-    : 'Parents Mobile App Download Report';
+    ? 'Teachers Mobile App Pending Download Report'
+    : 'Parents Mobile App Pending Download Report';
   const subtitle = isTeacher
-    ? 'List of teachers who have installed and registered on the Teachers Mobile App'
-    : 'List of parents who have installed and registered on the Parents Mobile App';
+    ? 'List of teachers who have not installed or signed in to the Teachers Mobile App'
+    : 'Class-wise list of parents who have not installed or signed in to the Parents Mobile App';
 
-  const totalRows = rows.length;
+  /* Group parents by class for class-wise display. */
+  const parentGroups = useMemo(() => {
+    if (isTeacher) return [];
+    const map = new Map();
+    PARENT_APP_PENDING.forEach(p => {
+      if (!map.has(p.cls)) map.set(p.cls, []);
+      map.get(p.cls).push(p);
+    });
+    return [...map.entries()].map(([cls, rows]) => ({ cls, rows }));
+  }, [isTeacher]);
 
-  /* Paginate the flat list — same layout for teachers and parents (the API
-     returns name / username / account type, no class grouping). */
-  const pages = useMemo(() => {
+  const totalRows = isTeacher
+    ? TEACHER_APP_PENDING.length
+    : PARENT_APP_PENDING.length;
+
+  /* Rows per A4 page — split for proper page breaks. Sized so the
+     header + table fit on one A4 surface; first page fits less to
+     leave room for the title block. */
+  const ROWS_FIRST_PAGE  = isTeacher ? 18 : 22;
+  const ROWS_OTHER_PAGES = isTeacher ? 28 : 32;
+
+  /* Paginate teachers; for parents, pagination follows the group
+     ordering and never splits a row across pages. */
+  const teacherPages = useMemo(() => {
+    if (!isTeacher) return [];
     const out = [];
     let i = 0;
-    while (i < rows.length) {
+    while (i < TEACHER_APP_PENDING.length) {
       const cap = out.length === 0 ? ROWS_FIRST_PAGE : ROWS_OTHER_PAGES;
-      out.push(rows.slice(i, i + cap));
+      out.push(TEACHER_APP_PENDING.slice(i, i + cap));
       i += cap;
     }
     return out.length ? out : [[]];
-  }, [rows]);
+  }, [isTeacher, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES]);
 
-  const totalPages = pages.length;
+  /* For parent groups we lay rows out group-by-group across pages. */
+  const parentPages = useMemo(() => {
+    if (isTeacher) return [];
+    const pages = [[]];
+    let pageRowCount = 0;
+    parentGroups.forEach(g => {
+      const cap = pages.length === 1 ? ROWS_FIRST_PAGE : ROWS_OTHER_PAGES;
+      const rowsThisGroup = g.rows.length + 1; /* +1 for the group header */
+      if (pageRowCount + rowsThisGroup > cap && pages[pages.length - 1].length > 0) {
+        pages.push([]);
+        pageRowCount = 0;
+      }
+      pages[pages.length - 1].push(g);
+      pageRowCount += rowsThisGroup;
+    });
+    return pages;
+  }, [isTeacher, parentGroups, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES]);
+
+  const totalPages = isTeacher ? teacherPages.length : parentPages.length;
   const generated = new Date().toLocaleString('en-PK', {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: true,
   });
 
   const handlePrint = () => {
-    if (loading || error || totalRows === 0) return;
     toast('Opening browser print dialog — choose "Save as PDF"', 'info');
     /* Tiny delay so the toast can paint before the dialog blocks. */
     setTimeout(() => window.print(), 80);
@@ -109,7 +116,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
             <div>
               <div className="up-modal-title" id="rpt-modal-title">{title}</div>
               <div className="up-modal-sub">
-                <span>{loading ? 'Loading…' : `${totalRows} ${isTeacher ? 'teachers' : 'parents'}`}</span>
+                <span>{totalRows} {isTeacher ? 'teachers' : 'parents'}</span>
                 <span>·</span>
                 <span>{totalPages} page{totalPages !== 1 ? 's' : ''}</span>
               </div>
@@ -124,23 +131,8 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
 
         {/* ─── A4 preview stage ─── */}
         <div className="rpt-stage">
-          {loading ? (
-            <div className="rpt-state">
-              <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
-              <div>Loading report…</div>
-            </div>
-          ) : error ? (
-            <div className="rpt-state rpt-state--err">
-              <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
-              <div>{error}</div>
-            </div>
-          ) : totalRows === 0 ? (
-            <div className="rpt-state">
-              <i className="fa-solid fa-mobile-screen-button" aria-hidden="true"></i>
-              <div>No {isTeacher ? 'teachers' : 'parents'} have registered on the app yet.</div>
-            </div>
-          ) : (
-            pages.map((pageRows, pi) => (
+          {isTeacher ? (
+            teacherPages.map((rows, pi) => (
               <A4Page
                 key={pi}
                 pageNum={pi + 1}
@@ -154,25 +146,24 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                   <thead>
                     <tr>
                       <th style={{ width: 50 }}>Sr.&nbsp;No.</th>
-                      <th>Name</th>
-                      <th>Username / Phone</th>
-                      <th>Account Type</th>
+                      <th>Teacher Name</th>
+                      <th>Designation / Department</th>
+                      <th>Contact Number</th>
                       <th>App Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pageRows.map((r, i) => {
+                    {rows.map((t, i) => {
                       const sno = pi === 0 ? i + 1 : ROWS_FIRST_PAGE + (pi - 1) * ROWS_OTHER_PAGES + i + 1;
-                      const installed = r.hasToken !== false;
                       return (
-                        <tr key={r.id ?? sno}>
+                        <tr key={sno}>
                           <td className="rpt-sno">{sno}</td>
-                          <td className="rpt-name">{r.name || '—'}</td>
-                          <td className="rpt-mono">{r.userName || '—'}</td>
-                          <td>{r.accountType || (isTeacher ? 'Teacher' : 'Parent')}</td>
+                          <td className="rpt-name">{t.name}</td>
+                          <td>{t.designation} · <span className="rpt-meta">{t.dept}</span></td>
+                          <td className="rpt-mono">{t.contact}</td>
                           <td>
-                            <span className={`rpt-status rpt-status--${installed ? 'green' : 'amber'}`}>
-                              {installed ? 'Installed' : 'Not Installed'}
+                            <span className={`rpt-status rpt-status--${t.status === 'Not Logged In' ? 'amber' : 'red'}`}>
+                              {t.status}
                             </span>
                           </td>
                         </tr>
@@ -182,25 +173,81 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                 </table>
               </A4Page>
             ))
+          ) : (
+            parentPages.map((groups, pi) => {
+              /* Compute serial number offset for the first row on this page */
+              let serialOffset = 0;
+              for (let j = 0; j < pi; j++) {
+                serialOffset += parentPages[j].reduce((s, g) => s + g.rows.length, 0);
+              }
+              let runningSerial = serialOffset;
+              return (
+                <A4Page
+                  key={pi}
+                  pageNum={pi + 1}
+                  totalPages={totalPages}
+                  title={title}
+                  subtitle={subtitle}
+                  generated={generated}
+                  showHeader={pi === 0}
+                >
+                  <table className="rpt-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 50 }}>Sr.&nbsp;No.</th>
+                        <th>Class</th>
+                        <th>Student Name</th>
+                        <th>Parent Name</th>
+                        <th>Contact Number</th>
+                        <th>App Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groups.flatMap(g => [
+                        <tr key={`grp-${g.cls}`} className="rpt-group-row">
+                          <td colSpan={6}>
+                            <i className="fa-solid fa-chalkboard" aria-hidden="true"></i>{' '}
+                            <b>{g.cls}</b>
+                            <span className="rpt-group-meta"> · {g.rows.length} parent{g.rows.length !== 1 ? 's' : ''}</span>
+                          </td>
+                        </tr>,
+                        ...g.rows.map((p, i) => {
+                          runningSerial += 1;
+                          return (
+                            <tr key={`${g.cls}-${i}`}>
+                              <td className="rpt-sno">{runningSerial}</td>
+                              <td>{g.cls}</td>
+                              <td className="rpt-name">{p.student}</td>
+                              <td>{p.parent}</td>
+                              <td className="rpt-mono">{p.contact}</td>
+                              <td>
+                                <span className={`rpt-status rpt-status--${p.status === 'Not Logged In' ? 'amber' : 'red'}`}>
+                                  {p.status}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        }),
+                      ])}
+                    </tbody>
+                  </table>
+                </A4Page>
+              );
+            })
           )}
         </div>
 
         {/* ─── Modal foot (hidden in print) ─── */}
         <div className="up-modal-foot up-modal-foot--split rpt-no-print">
           <div className="up-modal-foot-l">
-            <span className="up-badge up-badge--blue">{totalRows} registered</span>
+            <span className="up-badge up-badge--blue">{totalRows} pending</span>
             <span className="up-badge up-badge--gray">{totalPages} A4 page{totalPages !== 1 ? 's' : ''}</span>
           </div>
           <div className="up-modal-foot-r">
             <button type="button" className="up-btn up-btn-ghost" onClick={onClose}>
               <i className="fa-solid fa-xmark" aria-hidden="true"></i> Close
             </button>
-            <button
-              type="button"
-              className="up-btn up-btn-primary"
-              onClick={handlePrint}
-              disabled={loading || !!error || totalRows === 0}
-            >
+            <button type="button" className="up-btn up-btn-primary" onClick={handlePrint}>
               <i className="fa-solid fa-print" aria-hidden="true"></i> Print / Save as PDF
             </button>
           </div>
@@ -387,19 +434,6 @@ const PRT_CSS = `
 }
 .rpt-status--red   { background: #FEE2E2; color: #B91C1C; }
 .rpt-status--amber { background: #FEF3C7; color: #92400E; }
-.rpt-status--green { background: #DCFCE7; color: #15803D; }
-
-/* ─── Loading / error / empty state (shown in place of A4 pages) ─── */
-.rpt-state {
-  margin: auto;
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  padding: 40px 24px;
-  font: 700 14px/1.4 'Plus Jakarta Sans', sans-serif;
-  color: #475569; text-align: center;
-}
-.rpt-state i { font-size: 32px; color: #94A3B8; }
-.rpt-state--err i { color: #DC2626; }
-[data-theme="dark"] .rpt-state { color: #94A3B8; }
 
 .rpt-group-row td {
   background: #EFF6FF !important;
