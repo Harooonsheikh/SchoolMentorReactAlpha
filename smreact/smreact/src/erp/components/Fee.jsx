@@ -26,7 +26,7 @@ const localDateISO = (d) => {
   const p = (x) => String(x).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
-const localTodayISO = () => localDateISO(new Date());
+export const localTodayISO = () => localDateISO(new Date());
 
 /* Is challan par is waqt banti LATE FINE.
    - Agar backend ne "Late Fine" row persist kar di hai to wahi authority.
@@ -10486,7 +10486,7 @@ const ledgerRowNet = (r) => Math.max((+r.challanAmount || 0) - (+r.discount || 0
    pend = 0 − (−3000) = 3000 (galat) aa jaata tha. */
 const ledgerRowNetSigned = (r) => (+r.challanAmount || 0) - (+r.discount || 0);
 const ledgerRowUnpaid = (r) => r.receivedAmount == null;
-const ledgerRowRecv = (r) => +r.receivedAmount || 0;
+export const ledgerRowRecv = (r) => +r.receivedAmount || 0;
 const ledgerRowPend = (r) => (ledgerRowUnpaid(r) ? ledgerRowNet(r) : Math.max(ledgerRowNetSigned(r) - ledgerRowRecv(r), 0));
 
 /* Build the month-by-month history for one student straight from their real
@@ -12922,7 +12922,7 @@ function ledgerMonthLabel(rec) {
    running < 0 = advance. Receipt se advance BARHE → "received" event (us receipt ki
    date); naya challan bill ho kar advance GHATE → "adjusted" event (challan ki issue
    date, us challan ke mahine ke khilaf). Pehle challan ka carry = opening balance. */
-function ledgerAdvanceEvents(recs) {
+export function ledgerAdvanceEvents(recs) {
   const list = (recs || []).slice().sort((a, b) =>
     ((Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month)) -
      (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month))));
@@ -12989,7 +12989,7 @@ function ledgerPeriods(fromM, fromY, toM, toY) {
    dobara compute kar ke payable/paid + Head-Wise me shaamil ki jaati hai. Jis din
    backend row bhejne lage, isLateFineRow match ho jaayegi aur ye reconstruction
    apne aap skip ho jaayegi (double-count nahi hoga). */
-function ledgerModel(recs, settings = null) {
+export function ledgerModel(recs, settings = null) {
   const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
   const headPrevOf = (r) => +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
   /* Mahine-wise sort — running-ledger sahi chalne ke liye. */
@@ -13005,7 +13005,7 @@ function ledgerModel(recs, settings = null) {
      "Previous Pending" line pichle mahine ka hi baqaya hota hai — agar hum har mahine ka
      pending jod dein to wahi raqam do-do baar ginn jaati thi (e.g. 15,500 + 15,500 = 31,000).
      Is liye sirf PEHLE mahine ka carry opening balance, baaki running me already shaamil. */
-  let running = 0, seen = false, advApplied = 0;
+  let running = 0, seen = false, advApplied = 0, prevDuesAgg = 0;
   list.forEach(rec => {
     const rows = rec.detailRows || [];
     /* Head-wise previousPendingorAdv (jaise Admission par −1000 advance) — aggregate
@@ -13024,6 +13024,7 @@ function ledgerModel(recs, settings = null) {
     const isFirst = !seen;
     if (isFirst) { running = carrySigned; seen = true; }
     const openDebt = isFirst ? Math.max(0, carrySigned) : 0;   // sirf pehle mahine ka pichla baqaya
+    prevDuesAgg += openDebt;   // dashboard: Previous Dues split (current = payable − prevDues)
     /* Is mahine laga pichla ADVANCE credit (running < 0 tha) — total advance me jodo. */
     if (running < 0) advApplied += Math.min(-running, newBilled);
     payable += newBilled + openDebt;
@@ -13122,6 +13123,11 @@ function ledgerModel(recs, settings = null) {
   return {
     billed: list.length > 0,
     payable, paid, remaining, disc, advance,
+    /* Dashboard Fee Analytics split — prevDues = pehle mahine ka opening baqaya,
+       currBilled = is period ka naya bill (payable − prevDues, taake Curr + Prev
+       hamesha Net Receivable ke barabar rahe). Reports extra fields ignore karti hain. */
+    prevDues: prevDuesAgg,
+    currBilled: Math.max(0, payable - prevDuesAgg),
     /* Late fine alag se bhi — KPI tiles aur report footers is se "Fine Collected"
        / "Fine Outstanding" dikhate hain. */
     fine: fineTotal, fineRecv, finePend: Math.max(0, fineTotal - fineRecv),
@@ -13134,7 +13140,7 @@ function ledgerModel(recs, settings = null) {
 /* Pulls the given periods' challans and joins them onto the class roster.
    Returns the same { classes, studentsMap, allStudents, totals } shape the
    panels already consume, so the A4 builders keep working untouched. */
-function useLedgerReportData(periods) {
+export function useLedgerReportData(periods) {
   const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   /* Late fine reports me dikhane ke liye settings chahiye (rate + on/off). */
@@ -14572,7 +14578,7 @@ function headsLabelFor(mode, heads) {
        (cutoff tak, installment ki receiving date se). Baad me hui wasooli nahi ginti —
        purane mahine ka report us waqt ka asal baqaya dikhata hai.
    Returns Map(head → pending). */
-function ledgerPendingAsOf(recs, monthKey, cutoffISO) {
+export function ledgerPendingAsOf(recs, monthKey, cutoffISO) {
   const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
   const list = (recs || [])
     .filter(r => startOf(r) <= monthKey)

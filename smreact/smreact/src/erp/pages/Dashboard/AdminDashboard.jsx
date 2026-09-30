@@ -12,7 +12,9 @@ import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal from './AppPendingReportModal';
 import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvanceAdjustmentReportModal } from './DailyReceivingReport';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
-import { buildDiscountMap, computeFeeDashboardExtras } from './feeDashboardExtra';
+import { buildDiscountMap } from './feeDashboardExtra';
+import { useLedgerReportData } from '../../components/Fee';
+import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser } from '../UserPermissions/permissionsData';
 import useAsync from '../../hooks/useAsync';
 import * as accountsService from './_forked/services/accountsService';
@@ -450,7 +452,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      ledger (mockAdvanceLedger) behind the Advance Fee Adjustment Report —
      it's in the main calc flow (feeds Pending Fee), while card 8
      "Advance Payments Received" (after Pending Fee) deliberately isn't. */
-  const [feeMonthIdx, setFeeMonthIdx] = useState(4); // seed data is May 2026
+  const [feeMonthIdx, setFeeMonthIdx] = useState(() => new Date().getMonth()); // default: current month (live)
+  const feeYear = new Date().getFullYear();
   const { data: faClasses = [] }        = useAsync(feeService.getFeeClasses, []);
   const { data: faStudentsMap = {} }    = useAsync(feeService.getTransportFee, []);
   const { data: faHeadsMap = {} }       = useAsync(feeService.getFeeHeads, []);
@@ -459,12 +462,17 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const { data: faReceipts = [] }       = useAsync(feeService.getReceipts, []);
   const { data: faAdvanceLedger = [] }  = useAsync(feeService.getAdvanceLedger, []);
   const faDiscMap = useMemo(() => buildDiscountMap(faDiscountRows), [faDiscountRows]);
-  const feeExtras = useMemo(() => computeFeeDashboardExtras({
-    classes: faClasses, studentsMap: faStudentsMap, headsMap: faHeadsMap,
-    discMap: faDiscMap, generatedSet: faGeneratedSet || new Set(), receipts: faReceipts,
-    advanceLedger: faAdvanceLedger, monthIdx: feeMonthIdx,
-  }), [faClasses, faStudentsMap, faHeadsMap, faDiscMap, faGeneratedSet, faReceipts, faAdvanceLedger, feeMonthIdx]);
-  const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} 2026`;
+  /* LIVE Fee Analytics — same BranchLedger source + formulas as Fee → Reports
+     (useLedgerReportData → ledgerModel), so every dashboard figure equals its
+     Fee report. The forked reads above remain only for the Daily Receiving
+     popups (secondary, behind buttons) until those are ported too. */
+  const faLedgerPeriods = useMemo(() => [{ month: feeMonthIdx + 1, year: feeYear }], [feeMonthIdx, feeYear]);
+  const { allStudents: faLedger = [] } = useLedgerReportData(faLedgerPeriods);
+  const feeExtras = useMemo(
+    () => computeFeeExtrasFromLedger(faLedger, { month: feeMonthIdx + 1, year: feeYear }),
+    [faLedger, feeMonthIdx, feeYear],
+  );
+  const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} ${feeYear}`;
 
   /* ─── Fee Analytics Overview — graphical summary above the cards.
      Same feeExtras object the 8 cards below already read from (no
@@ -1429,14 +1437,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
 
       <div className="adm-divider" />
 
-      {/* ═════════ 3b. ONELINK PAYMENTS ═════════ */}
-      {isActive('fee') && (
-        canSeeCard('onelink')
-          ? <OneLinkPaymentSection openModule={openModule} toast={toast} />
-          : <LockedCard title="OneLink Payments" icon="fa-building-columns" />
-      )}
-
-      <div className="adm-divider" />
+      {/* OneLink Payments section removed per request — its live source
+          (feeService.getReceipts) is a stub, so it had no real data. */}
 
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
       {isActive('accounts') && (
