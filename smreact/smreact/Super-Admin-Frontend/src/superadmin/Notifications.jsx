@@ -3,52 +3,56 @@ import React, { useEffect, useMemo, useState } from 'react';
 // const API_BASE = process.env.REACT_APP_SUPERADMIN_API || 'https://your-superadmin-api';
 const API_BASE = "http://50.190.164.42:4100/SchoolMentorSuperAdminAPI";
 const apiGet = async (url) => {
-  try {
-    const response = await fetch(`${API_BASE}${url}`, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
 
-    if (!response.ok) {
-      throw new Error(`GET API Error: ${response.status}`);
+  const token = localStorage.getItem("mentor_ai_access");
+
+  const response = await fetch(`${API_BASE}${url}`, {
+
+    headers: {
+      Accept: "*/*",
+      "Content-Type": "application/json",
+
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`
+          }
+        : {})
     }
 
-    return await response.json();
-  } catch (error) {
-    console.error('Notification GET API failed:', error);
-    return {
-      success: false,
-      message: error.message,
-      data: []
-    };
-  }
+  });
+
+
+  return await response.json();
+
 };
 
 const apiPost = async (url, body) => {
-  try {
-    const response = await fetch(`${API_BASE}${url}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
 
-    if (!response.ok) {
-      throw new Error(`POST API Error: ${response.status}`);
-    }
+  const token = localStorage.getItem("mentor_ai_access");
 
-    return await response.json();
-  } catch (error) {
-    console.error('Notification POST API failed:', error);
-    return {
-      success: false,
-      message: error.message,
-    };
-  }
+  const response = await fetch(`${API_BASE}${url}`, {
+
+    method: "POST",
+
+    headers: {
+      Accept: "*/*",
+      "Content-Type": "application/json",
+
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`
+          }
+        : {})
+    },
+
+    body: JSON.stringify(body)
+
+  });
+
+
+  return await response.json();
+
 };
-
 const mapAudience = (value) => ({
   all: 'All',
   principal: 'Principal',
@@ -133,13 +137,11 @@ export default function Notifications({ toast }) {
     if (res.success) {
       setModal(null);
       const summary = res.data || {};
-      toast?.(
-        `Notification sent successfully. Recipients: ${summary.recipientCount ?? 0}, Delivered: ${summary.deliveredCount ?? 0}, Failed: ${summary.failedCount ?? 0}`,
-        'success'
-      );
+     toast?.('Notification sent successfully.', 'success');
+
       loadNotifications();
     } else {
-      toast?.(res.message || 'Unable to send notification', 'warn');
+  toast?.('Unable to send notification.', 'warn');
     }
   };
   // Edit API endpoint is not available in API guide. Keep disabled until backend endpoint is provided.

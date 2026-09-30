@@ -191,10 +191,10 @@ notificationType: form.notificationType          }),
 
       const result = response?.data || {}
 
-      showToast(
-        `${response?.message || 'Notification sent successfully.'} Recipients: ${result.recipientCount ?? 0}, Delivered: ${result.deliveredCount ?? 0}, Failed: ${result.failedCount ?? 0}`,
-      )
-
+      // showToast(
+      //   `${response?.message || 'Notification sent successfully.'} Recipients: ${result.recipientCount ?? 0}, Delivered: ${result.deliveredCount ?? 0}, Failed: ${result.failedCount ?? 0}`,
+      // )
+showToast('Notification sent successfully.')
       await loadNotifications()
       return true
     } catch (error) {
