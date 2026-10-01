@@ -1,26 +1,122 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
+import SpinnerButton from '../../components/SpinnerButton'
 import { createPortal } from 'react-dom'
 import {
   loadAcc, saveAcc, rs, num, fmtDate, fmtStamp, periodLabel,
   bookCalc, monthsBetween, plForMonth,
 } from './data'
+import {
+  fetchAccountTypes, fetchAccountEntriesByMonth, fetchAllAccountEntries,
+  saveAccountEntry, deleteAccountEntry,
+  fetchAccountBooks, fetchAccountBookDetail, saveAccountBook, deleteAccountBook,
+  saveAccountBookTxn, clearAccountHeadCache,
+} from '../../api/accountsApi'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './Accounts.css'
+import { CHAIN_API_BASE } from '@/config/env'
+import { getStoredUser } from '@/auth/tokenStorage'
+import { currentNetworkId } from '@/api/networkSchoolsApi'
+const BASE = `${CHAIN_API_BASE}/api/accounts`
+
+const authHeaders = (json = false) => {
+  const u = getStoredUser?.() || {}
+  const token = u.token || u.accessToken || u.access_token || u.jwt
+  return {
+    accept: '*/*',
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+}
+const getNetworkId = () =>
+  Number(typeof currentNetworkId === 'function' ? currentNetworkId() : currentNetworkId) || 0
+const getUserId = () => {
+  const u = getStoredUser?.() || {}
+  return Number(u.id ?? u.ID ?? u.userId ?? u.UserID) || 0
+}
+const thisMonthISO = () => new Date().toISOString().slice(0, 7)
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const monthBounds = (m) => { const [y, mo] = m.split('-').map(Number); const last = new Date(y, mo, 0).getDate(); return { from: `${m}-01`, to: `${m}-${String(last).padStart(2, '0')}` } }
-
+const callApi = async (url, method, body) => {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: authHeaders(body !== undefined),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    })
+    const json = await res.json().catch(() => ({}))
+    console.log(method, url, res.status, json)
+    const ok = res.ok && json.success !== false
+    return { ok, status: res.status, message: json.message || (ok ? '' : `Request failed (${res.status})`), data: json.data }
+  } catch (e) {
+    console.error(method, url, e)
+    return { ok: false, status: 0, message: 'Server se connect nahi ho saka' }
+  }
+}
+const TYPE_NAME = { rev: 'Revenue', exp: 'Expense' }
+const EDIT_METHODS = ['PUT', 'PATCH', 'POST']
 export default function Accounts() {
   const [acc, setAcc] = useState(null)
   const [tab, setTab] = useState('coa')
   const [toast, setToast] = useState(null)
+const [accountTypes, setAccountTypes] = useState([])
+  const [headsLoading, setHeadsLoading] = useState(true)
 
-  useEffect(() => { setAcc(loadAcc()) }, [])
+ 
+  useEffect(() => {
+    const a = loadAcc()
+    setAcc({ ...a, types: a.types.map((t) => ({ ...t, heads: [] })) })
+  }, [])
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const r = await callApi(`${BASE}/get-account-types`, 'GET')
+      if (!alive) return
+      if (r.ok) setAccountTypes(r.data || [])
+      else { setHeadsLoading(false); setToast({ text: r.message || 'Account types load nahi hue', type: 'warn' }) }
+    })()
+    return () => { alive = false }
+  }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
-
-  const fire = (text, type = 'success') => setToast({ text, type })
-  const commit = (next) => { setAcc(next); saveAcc(next) }
+ const loadHeads = async () => {
+    setHeadsLoading(true)
+    clearAccountHeadCache()  // heads badle → auto-post (Payments/HR) taza heads dekhe
+    try {
+      const nid = getNetworkId()
+      const results = await Promise.all(
+        Object.entries(TYPE_NAME).map(async ([key, name]) => {
+          const typeId = accountTypes.find((t) => t.AccountTypeName === name)?.ID
+          if (!typeId) return [key, null]
+          const r = await callApi(`${BASE}/get-account-heads-by-network/${nid}/${typeId}`, 'GET')
+          if (!r.ok) return [key, null]
+          return [key, (r.data || [])
+            .filter((h) => h.IsActive !== false)
+            .map((h) => ({ no: h.ID, name: h.AccountHead, desc: h.Description || '' }))]
+        }),
+      )
+      if (results.some(([, v]) => v === null)) fire('Kuch account heads load nahi hue', 'warn')
+      setAcc((prev) => prev && ({
+        ...prev,
+        types: prev.types.map((t) => {
+          const r = results.find(([k]) => k === t.key)
+          return r && r[1] ? { ...t, heads: r[1] } : t
+        }),
+      }))
+    } finally {
+      setHeadsLoading(false)
+    }
+  }
+  useEffect(() => {
+    if (accountTypes.length && acc) loadHeads()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountTypes, !!acc])
+  // Stable identity zaroori hai: fire/commit child ke effect deps me jaate hain
+  // (Transactions loadEntries, Reports loader). Memoize na karein to har parent
+  // re-render par naya function → child ka GET dobara chalta hai (2 dafa loader),
+  // aur error par fire→re-render→refetch→error ka infinite loop (screen crash).
+  const fire = useCallback((text, type = 'success') => setToast({ text, type }), [])
+  const commit = useCallback((next) => { setAcc(next); saveAcc(next) }, [])
   if (!acc) return null
 
   return (
@@ -42,10 +138,9 @@ export default function Accounts() {
         ))}
       </div>
 
-      {tab === 'coa' && <ChartOfAccounts acc={acc} commit={commit} fire={fire} />}
-      {tab === 'txn' && <Transactions acc={acc} commit={commit} fire={fire} />}
-      {tab === 'books' && <AccountBooks acc={acc} commit={commit} fire={fire} />}
-      {tab === 'reports' && <Reports acc={acc} fire={fire} />}
+{tab === 'coa' && <ChartOfAccounts acc={acc} commit={commit} fire={fire} accountTypes={accountTypes} reloadHeads={loadHeads} loading={headsLoading} />}      {tab === 'txn' && <Transactions fire={fire} />}
+      {tab === 'books' && <AccountBooks fire={fire} />}
+      {tab === 'reports' && <Reports fire={fire} />}
 
       {toast && createPortal(
         <div className="ss-toast-wrap"><div className={`ss-toast ${toast.type}`}><i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check' : toast.type === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} /> {toast.text}</div></div>,
@@ -56,23 +151,53 @@ export default function Accounts() {
 }
 
 /* ════════ CHART OF ACCOUNTS ════════ */
-function ChartOfAccounts({ acc, commit, fire }) {
+function ChartOfAccounts({ acc, fire, accountTypes, reloadHeads, loading }) {
   const [open, setOpen] = useState({ exp: true, rev: false })
   const [headModal, setHeadModal] = useState(null) // { typeKey, head }
   const [del, setDel] = useState(null)
 
-  const saveHead = (typeKey, payload, headNo) => {
-    const types = acc.types.map((t) => {
-      if (t.key !== typeKey) return t
-      if (headNo != null) return { ...t, heads: t.heads.map((h) => (h.no === headNo ? { ...h, ...payload } : h)) }
-      return { ...t, heads: [...t.heads, { no: acc.nextHeadNo, ...payload }] }
-    })
-    commit({ ...acc, types, nextHeadNo: headNo != null ? acc.nextHeadNo : acc.nextHeadNo + 1 })
-    setHeadModal(null); fire(headNo != null ? 'Account head updated' : 'Account head added')
+  // ADD => POST | EDIT => PUT (405 aaye to PATCH, phir POST) — same endpoint: save-account-head
+  const saveHead = async (typeKey, payload, headNo) => {
+    const typeId = accountTypes.find((t) => t.AccountTypeName === TYPE_NAME[typeKey])?.ID
+    if (!typeId) return fire('Account types abhi load nahi hue, dobara try karein', 'warn')
+
+    const isEdit = headNo != null
+    const userId = getUserId()
+    const body = {
+      id: isEdit ? headNo : 0,        // edit par head ki real ID
+      networkID: getNetworkId(),
+      branchID: null,
+      accountHead: payload.name,
+      accountTypeID: typeId,          // Revenue => 1, Expense => 2
+      description: payload.desc,
+      createdBy: userId,
+      modifiedBy: userId,
+    }
+
+    let r
+    if (isEdit) {
+      for (const m of EDIT_METHODS) {
+        r = await callApi(`${BASE}/save-account-head`, m, body)
+        if (r.status !== 405) break      // sirf 405 par agla method try karo
+      }
+    } else {
+      r = await callApi(`${BASE}/save-account-head`, 'POST', body)
+    }
+    if (!r.ok) return fire(r.message || 'Save failed', 'warn')   // modal khula rahega
+
+    setHeadModal(null)
+    fire(isEdit ? 'Account head updated' : 'Account head added')
+    await reloadHeads()
   }
-  const doDel = () => {
-    const types = acc.types.map((t) => (t.key === del.typeKey ? { ...t, heads: t.heads.filter((h) => h.no !== del.no) } : t))
-    commit({ ...acc, types }); setDel(null); fire('Account head deleted', 'info')
+
+  // DELETE: /delete-account-head/{headId}/{userId}
+  const doDel = async () => {
+    const r = await callApi(`${BASE}/delete-account-head/${del.no}/${getUserId()}`, 'DELETE')
+    if (!r.ok) return fire(r.message || 'Delete failed', 'warn')  // confirm modal khula rahega
+
+    setDel(null)
+    fire('Account head deleted', 'info')
+    await reloadHeads()
   }
 
   return (
@@ -90,20 +215,31 @@ function ChartOfAccounts({ acc, commit, fire }) {
           <div className="acc-coa-head" onClick={() => setOpen((o) => ({ ...o, [t.key]: !o[t.key] }))}>
             <div className={`acc-coa-ic ${t.key}`}><i className={`fa-solid ${t.icon}`} /></div>
             <div><div className="acc-coa-name">{t.name}</div><div className="acc-coa-sub">{t.key === 'rev' ? 'Inflows — money the school receives' : 'Outflows — money the school spends'}</div></div>
-            <span className="acc-coa-count">{t.heads.length} head{t.heads.length !== 1 ? 's' : ''}</span>
+            <span className="acc-coa-count">{loading ? <i className="fa-solid fa-spinner fa-spin" /> : `${t.heads.length} head${t.heads.length !== 1 ? 's' : ''}`}</span>
             <i className={`fa-solid fa-chevron-${open[t.key] ? 'up' : 'down'}`} style={{ color: 'var(--tm)', marginLeft: 10 }} />
           </div>
           {open[t.key] && (
             <div className="acc-coa-body">
-              {t.heads.map((h) => (
-                <div className="acc-head-row" key={h.no}>
-                  <span className="acc-head-no">#{h.no}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}><div className="acc-head-name">{h.name}</div>{h.desc && <div className="acc-head-desc">{h.desc}</div>}</div>
-                  <button className="btn-sm" style={{ height: 28 }} onClick={() => setHeadModal({ typeKey: t.key, head: h })}><i className="fa-solid fa-pen" /></button>
-                  <button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel({ typeKey: t.key, no: h.no, name: h.name })}><i className="fa-solid fa-trash-can" /></button>
+              {loading ? (
+                <div style={{ textAlign: 'center', padding: '26px 0', color: 'var(--tm)', fontSize: 13, fontWeight: 600 }}>
+                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} /> Loading account heads...
                 </div>
-              ))}
-              <button className="btn-primary" style={{ marginTop: 4 }} onClick={() => setHeadModal({ typeKey: t.key })}><i className="fa-solid fa-plus" /> Add Head under {t.name}</button>
+              ) : (
+                <>
+                  {t.heads.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '18px 0', color: 'var(--tm)', fontSize: 13 }}>No heads yet</div>
+                  )}
+                  {t.heads.map((h) => (
+                    <div className="acc-head-row" key={h.no}>
+                      <span className="acc-head-no">#{h.no}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}><div className="acc-head-name">{h.name}</div>{h.desc && <div className="acc-head-desc">{h.desc}</div>}</div>
+                      <button className="btn-sm" style={{ height: 28 }} onClick={() => setHeadModal({ typeKey: t.key, head: h })}><i className="fa-solid fa-pen" /></button>
+                      <button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel({ typeKey: t.key, no: h.no, name: h.name })}><i className="fa-solid fa-trash-can" /></button>
+                    </div>
+                  ))}
+                  <button className="btn-primary" style={{ marginTop: 4 }} onClick={() => setHeadModal({ typeKey: t.key })}><i className="fa-solid fa-plus" /> Add Head under {t.name}</button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -114,15 +250,14 @@ function ChartOfAccounts({ acc, commit, fire }) {
     </>
   )
 }
-
 function HeadModal({ modal, onClose, onSave, onToast }) {
   const h = modal.head
   const [name, setName] = useState(h?.name || '')
   const [desc, setDesc] = useState(h?.desc || '')
-  const save = () => { if (!name.trim()) return onToast('Please enter a head name', 'warn'); onSave(modal.typeKey, { name: name.trim(), desc: desc.trim() }, h?.no) }
+  const save = () => { if (!name.trim()) return onToast('Please enter a head name', 'warn'); return onSave(modal.typeKey, { name: name.trim(), desc: desc.trim() }, h?.no) }
   return (
     <Shell title={h ? 'Edit Account Head' : 'Add Account Head'} icon="fa-folder-plus" onClose={onClose} maxWidth={460}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save</SpinnerButton></>}>
       <div className="acc-field" style={{ marginBottom: 14 }}><label>Head Name</label><input className="acc-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Building Rent" /></div>
       <div className="acc-field"><label>Description</label><input className="acc-input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" /></div>
     </Shell>
@@ -130,29 +265,55 @@ function HeadModal({ modal, onClose, onSave, onToast }) {
 }
 
 /* ════════ TRANSACTIONS ════════ */
-function Transactions({ acc, commit, fire }) {
+function Transactions({ fire }) {
   const [seg, setSeg] = useState('rev')
-  const [month, setMonth] = useState(acc.month)
+  const [month, setMonth] = useState(thisMonthISO())
   const [search, setSearch] = useState('')
   const [entryModal, setEntryModal] = useState(null)
   const [del, setDel] = useState(null)
 
-  const heads = acc.types.find((t) => t.key === seg)?.heads || []
+  const [types, setTypes] = useState([])
+  const [entries, setEntries] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+
+  // Heads (Chart of Accounts) — read-only, taake entry ka head dropdown bhare.
+  useEffect(() => {
+    let alive = true
+    fetchAccountTypes().then((t) => { if (alive) setTypes(t) }).catch(() => { if (alive) setTypes([]) })
+    return () => { alive = false }
+  }, [])
+
+  // Selected segment + month ki entries.
+  const loadEntries = useCallback(async () => {
+    setLoading(true)
+    try { setEntries(await fetchAccountEntriesByMonth(seg, month)) }
+    catch (e) { setEntries([]); fire(e?.message || 'Could not load entries', 'error') }
+    finally { setLoading(false) }
+  }, [seg, month, fire])
+  useEffect(() => { loadEntries() }, [loadEntries])
+
+  const heads = types.find((t) => t.key === seg)?.heads || []
   const list = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return acc.txns[seg].filter((x) => x.month === month && (!q || `${x.head}${x.detail}${x.amount}${x.date}`.toLowerCase().includes(q))).sort((a, b) => (a.date < b.date ? 1 : -1))
-  }, [acc.txns, seg, month, search])
+    return entries.filter((x) => (!q || `${x.head}${x.detail}${x.amount}${x.date}`.toLowerCase().includes(q))).sort((a, b) => (a.date < b.date ? 1 : -1))
+  }, [entries, search])
   const total = list.reduce((a, x) => a + Number(x.amount || 0), 0)
 
-  const saveEntry = (payload, id) => {
-    const head = heads.find((h) => h.no === Number(payload.headNo))
-    const rec = { ...payload, headNo: Number(payload.headNo), head: head?.name || '', month: payload.date.slice(0, 7), amount: Number(payload.amount) }
-    let txns
-    if (id) txns = { ...acc.txns, [seg]: acc.txns[seg].map((x) => (x.id === id ? { ...x, ...rec, updatedBy: acc.currentUser, updatedAt: new Date().toISOString() } : x)) }
-    else txns = { ...acc.txns, [seg]: [{ id: `x${Date.now()}`, ...rec, createdBy: acc.currentUser, createdAt: new Date().toISOString(), updatedBy: null, updatedAt: null }, ...acc.txns[seg]] }
-    commit({ ...acc, txns }); setEntryModal(null); fire(id ? 'Entry updated' : 'Entry recorded')
+  const saveEntry = async (payload, id) => {
+    setBusy(true)
+    try {
+      await saveAccountEntry(seg, { ...payload, id: id || 0 })
+      setEntryModal(null); fire(id ? 'Entry updated' : 'Entry recorded')
+      loadEntries()
+    } catch (e) { fire(e?.message || 'Could not save entry', 'error') }
+    finally { setBusy(false) }
   }
-  const doDel = () => { commit({ ...acc, txns: { ...acc.txns, [seg]: acc.txns[seg].filter((x) => x.id !== del.id) } }); setDel(null); fire('Entry deleted', 'info') }
+  const doDel = async () => {
+    try { await deleteAccountEntry(del.id); fire('Entry deleted', 'info'); loadEntries() }
+    catch (e) { fire(e?.message || 'Could not delete entry', 'error') }
+    finally { setDel(null) }
+  }
 
   const downloadReport = () => {
     const cols = [{ label: 'Date', a: 'l' }, { label: 'Head', a: 'l' }, { label: 'Details', a: 'l' }, { label: 'Amount', a: 'r' }, { label: 'Recorded By', a: 'l' }]
@@ -174,7 +335,7 @@ function Transactions({ acc, commit, fire }) {
 
       <div className="acc-bar">
         <div className="acc-field"><label>Select Month</label><input className="acc-input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></div>
-        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }} onClick={() => setEntryModal({ mode: 'add' })}><i className="fa-solid fa-plus" /> New {seg === 'rev' ? 'Revenue' : 'Expense'}</button>
+        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }} onClick={() => setEntryModal({ mode: 'add' })} disabled={busy}><i className="fa-solid fa-plus" /> New {seg === 'rev' ? 'Revenue' : 'Expense'}</button>
         <div className="acc-field" style={{ flex: 1, minWidth: 220 }}><label>Search</label><div className="search-box"><i className="fa-solid fa-magnifying-glass" /><input className="search-input" placeholder="Search by head, details, amount or date" value={search} onChange={(e) => setSearch(e.target.value)} /></div></div>
       </div>
 
@@ -192,7 +353,9 @@ function Transactions({ acc, commit, fire }) {
           <table className="acc-table">
             <thead><tr><th>Date</th><th>Head</th><th>Details</th><th className="r">Amount</th><th>Recorded By</th><th className="c">Action</th></tr></thead>
             <tbody>
-              {list.length === 0 ? (
+              {loading ? (
+                <tr><td colSpan={6}><div className="acc-empty"><i className="fa-solid fa-spinner fa-spin" /><div style={{ fontSize: 13, fontWeight: 700 }}>Loading entries…</div></div></td></tr>
+              ) : list.length === 0 ? (
                 <tr><td colSpan={6}><div className="acc-empty"><i className="fa-solid fa-right-left" /><div style={{ fontSize: 13, fontWeight: 700 }}>No entries for {periodLabel(month)}</div></div></td></tr>
               ) : list.map((x) => (
                 <tr key={x.id}>
@@ -228,11 +391,11 @@ function TxnModal({ modal, seg, heads, onClose, onSave, onToast }) {
   const save = () => {
     if (!v.headNo) return onToast('Please select an account head', 'warn')
     if (!v.amount || Number(v.amount) <= 0) return onToast('Please enter a valid amount', 'warn')
-    onSave(v, modal.mode === 'edit' ? x.id : null)
+    return onSave(v, modal.mode === 'edit' ? x.id : null)
   }
   return (
     <Shell title={`${modal.mode === 'edit' ? 'Edit' : 'New'} ${seg === 'rev' ? 'Revenue' : 'Expense'} Entry`} icon={seg === 'rev' ? 'fa-arrow-down-long' : 'fa-arrow-up-long'} onClose={onClose}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Entry</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save Entry</SpinnerButton></>}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div className="acc-field"><label>Account Head</label><select className="acc-input" value={v.headNo} onChange={set('headNo')}><option value="">Select Head</option>{heads.map((h) => <option key={h.no} value={h.no}>#{h.no} · {h.name}</option>)}</select></div>
         <div className="acc-field"><label>Date</label><input className="acc-input" type="date" value={v.date} onChange={set('date')} /></div>
@@ -248,34 +411,73 @@ function TxnModal({ modal, seg, heads, onClose, onSave, onToast }) {
 }
 
 /* ════════ ACCOUNT BOOKS ════════ */
-function AccountBooks({ acc, commit, fire }) {
-  const [openId, setOpenId] = useState(null)
+function AccountBooks({ fire }) {
+  const [books, setBooks] = useState([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
+  const [openId, setOpenId] = useState(null)         // numeric bookID
+  const [detail, setDetail] = useState(null)         // fetched book + ledger
+  const [detailLoading, setDetailLoading] = useState(false)
   const [bookModal, setBookModal] = useState(false)
   const [txnModal, setTxnModal] = useState(false)
-  const [del, setDel] = useState(null)
+  const [del, setDel] = useState(null)               // bookID pending delete
+  const [busy, setBusy] = useState(false)
 
-  const list = acc.books.filter((b) => {
+  const refetch = useCallback(async () => {
+    setLoading(true)
+    try { setBooks(await fetchAccountBooks()) }
+    catch (e) { setBooks([]); fire(e?.message || 'Could not load account books', 'error') }
+    finally { setLoading(false) }
+  }, [fire])
+  useEffect(() => { refetch() }, [refetch])
+
+  const loadDetail = useCallback(async (bookID) => {
+    setDetailLoading(true)
+    try { setDetail(await fetchAccountBookDetail(bookID)) }
+    catch (e) { fire(e?.message || 'Could not load account book', 'error'); setDetail(null); setOpenId(null) }
+    finally { setDetailLoading(false) }
+  }, [fire])
+  const openBook = (bookID) => { setOpenId(bookID); setDetail(null); loadDetail(bookID) }
+  const closeBook = () => { setOpenId(null); setDetail(null) }
+
+  const list = books.filter((b) => {
     const q = search.trim().toLowerCase()
     return (status === 'all' || b.status === status) && (!q || `${b.name}${b.party}${b.desc}`.toLowerCase().includes(q))
   })
-  const book = acc.books.find((b) => b.id === openId)
 
-  const addBook = (payload) => {
-    const id = `bk${acc.booksNextId}`
-    commit({ ...acc, booksNextId: acc.booksNextId + 1, books: [...acc.books, { id, ...payload, opening: Number(payload.opening) || 0, status: 'active', createdBy: acc.currentUser, txns: [] }] })
-    setBookModal(false); fire('Account book created')
+  const addBook = async (payload) => {
+    setBusy(true)
+    try { await saveAccountBook(payload); setBookModal(false); fire('Account book created'); refetch() }
+    catch (e) { fire(e?.message || 'Could not create account book', 'error') }
+    finally { setBusy(false) }
   }
-  const addTxn = (payload) => {
-    const id = `bt${acc.booksTxnNextId}`
-    const amount = payload.type === 'adjustment' ? Number(payload.amount) : Math.abs(Number(payload.amount))
-    const books = acc.books.map((b) => (b.id === openId ? { ...b, txns: [...b.txns, { id, type: payload.type, amount, date: payload.date, notes: payload.notes, enteredBy: acc.currentUser, at: new Date().toISOString() }] } : b))
-    commit({ ...acc, booksTxnNextId: acc.booksTxnNextId + 1, books }); setTxnModal(false); fire('Ledger entry added')
+  const addTxn = async (payload) => {
+    if (!openId) return
+    setBusy(true)
+    try { await saveAccountBookTxn({ bookId: openId, ...payload }); setTxnModal(false); fire('Ledger entry added'); await loadDetail(openId); refetch() }
+    catch (e) { fire(e?.message || 'Could not add ledger entry', 'error') }
+    finally { setBusy(false) }
   }
-  const deleteBook = () => { commit({ ...acc, books: acc.books.filter((b) => b.id !== del) }); setDel(null); setOpenId(null); fire('Account book deleted', 'info') }
+  const deleteBook = async () => {
+    try { await deleteAccountBook(del); fire('Account book deleted', 'info'); closeBook(); refetch() }
+    catch (e) { fire(e?.message || 'Could not delete account book', 'error') }
+    finally { setDel(null) }
+  }
 
-  if (book) {
+  if (openId) {
+    if (detailLoading || !detail) {
+      return (
+        <>
+          <div className="acc-book-topbar">
+            <button className="btn-secondary" onClick={closeBook}><i className="fa-solid fa-arrow-left" /> All Books</button>
+            <div className="acc-book-topbar-title">Account Book</div>
+          </div>
+          <div className="acc-empty"><i className="fa-solid fa-spinner fa-spin" /><div style={{ fontSize: 13, fontWeight: 700 }}>Loading account book…</div></div>
+        </>
+      )
+    }
+    const book = detail
     const c = bookCalc(book)
     const ledgerReport = () => {
       printAccReport({
@@ -290,11 +492,11 @@ function AccountBooks({ acc, commit, fire }) {
     return (
       <>
         <div className="acc-book-topbar">
-          <button className="btn-secondary" onClick={() => setOpenId(null)}><i className="fa-solid fa-arrow-left" /> All Books</button>
+          <button className="btn-secondary" onClick={closeBook}><i className="fa-solid fa-arrow-left" /> All Books</button>
           <div className="acc-book-topbar-title">{book.name}</div>
           <span className={`badge ${book.status === 'active' ? 'b-green' : book.status === 'settled' ? 'b-blue' : 'b-gray'}`} style={{ marginLeft: 'auto' }}>{book.status}</span>
           <button className="btn-secondary" onClick={ledgerReport}><i className="fa-solid fa-file-export" /> Ledger Report</button>
-          <button className="btn-sm" style={{ height: 38, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(book.id)}><i className="fa-solid fa-trash-can" /> Delete</button>
+          <button className="btn-sm" style={{ height: 38, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(book.bookID)}><i className="fa-solid fa-trash-can" /> Delete</button>
         </div>
 
         <div className="acc-book-summary">
@@ -307,7 +509,7 @@ function AccountBooks({ acc, commit, fire }) {
         <div className="section-card">
           <div className="card-header">
             <div><div className="card-title"><i className="fa-solid fa-book-open" /> Ledger — {book.party}</div><div className="card-sub">{book.desc}</div></div>
-            <button className="btn-primary" onClick={() => setTxnModal(true)}><i className="fa-solid fa-plus" /> Add Entry</button>
+            <button className="btn-primary" onClick={() => setTxnModal(true)} disabled={busy}><i className="fa-solid fa-plus" /> Add Entry</button>
           </div>
           <div className="tbl-wrap">
             <table className="acc-table">
@@ -338,8 +540,8 @@ function AccountBooks({ acc, commit, fire }) {
     )
   }
 
-  const totalPayable = acc.books.filter((b) => b.type === 'payable').reduce((a, b) => a + bookCalc(b).balance, 0)
-  const totalReceivable = acc.books.filter((b) => b.type === 'receivable').reduce((a, b) => a + bookCalc(b).balance, 0)
+  const totalPayable = books.filter((b) => b.type === 'payable').reduce((a, b) => a + bookCalc(b).balance, 0)
+  const totalReceivable = books.filter((b) => b.type === 'receivable').reduce((a, b) => a + bookCalc(b).balance, 0)
   return (
     <>
       <div className="acc-overview-banner">
@@ -351,7 +553,7 @@ function AccountBooks({ acc, commit, fire }) {
       </div>
 
       <div className="acc-kpis">
-        <div className="acc-kpi info"><div className="acc-kpi-top"><i className="fa-solid fa-book" /> Total Books</div><div className="acc-kpi-val">{acc.books.length}</div></div>
+        <div className="acc-kpi info"><div className="acc-kpi-top"><i className="fa-solid fa-book" /> Total Books</div><div className="acc-kpi-val">{books.length}</div></div>
         <div className="acc-kpi red"><div className="acc-kpi-top"><i className="fa-solid fa-arrow-up-from-bracket" /> Total Payable</div><div className="acc-kpi-val">{rs(totalPayable)}</div><div className="acc-kpi-sub">owed by school</div></div>
         <div className="acc-kpi green"><div className="acc-kpi-top"><i className="fa-solid fa-arrow-down-to-bracket" /> Total Receivable</div><div className="acc-kpi-val">{rs(totalReceivable)}</div><div className="acc-kpi-sub">owed to school</div></div>
       </div>
@@ -359,15 +561,16 @@ function AccountBooks({ acc, commit, fire }) {
       <div className="acc-bar">
         <div className="acc-field" style={{ flex: 1, minWidth: 240 }}><label>Search Books</label><div className="search-box"><i className="fa-solid fa-magnifying-glass" /><input className="search-input" placeholder="Search by book name, party or description" value={search} onChange={(e) => setSearch(e.target.value)} /></div></div>
         <div className="acc-field"><label>Status</label><select className="acc-input" value={status} onChange={(e) => setStatus(e.target.value)}><option value="all">All Books</option><option value="active">Active</option><option value="settled">Settled</option><option value="closed">Closed</option></select></div>
-        <button className="btn-primary" onClick={() => setBookModal(true)}><i className="fa-solid fa-plus" /> Add New Account Book</button>
+        <button className="btn-primary" onClick={() => setBookModal(true)} disabled={busy}><i className="fa-solid fa-plus" /> Add New Account Book</button>
       </div>
 
       <div className="acc-books-grid">
-        {list.length === 0 ? <div className="acc-empty" style={{ gridColumn: '1/-1' }}><i className="fa-solid fa-book-open" /><div style={{ fontSize: 14, fontWeight: 700 }}>No account books found</div></div>
+        {loading ? <div className="acc-empty" style={{ gridColumn: '1/-1' }}><i className="fa-solid fa-spinner fa-spin" /><div style={{ fontSize: 14, fontWeight: 700 }}>Loading account books…</div></div>
+          : list.length === 0 ? <div className="acc-empty" style={{ gridColumn: '1/-1' }}><i className="fa-solid fa-book-open" /><div style={{ fontSize: 14, fontWeight: 700 }}>No account books found</div></div>
           : list.map((b) => {
             const c = bookCalc(b)
             return (
-              <div className="acc-book-card" key={b.id} onClick={() => setOpenId(b.id)}>
+              <div className="acc-book-card" key={b.id} onClick={() => openBook(b.bookID)}>
                 <div className="acc-book-card-top">
                   <div className="acc-book-ic" style={b.type === 'receivable' ? { background: 'linear-gradient(135deg,#0369A1,#0284C7)' } : undefined}><i className={`fa-solid ${b.type === 'receivable' ? 'fa-hand-holding-dollar' : 'fa-store'}`} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}><div className="acc-book-name">{b.name}</div><div className="acc-book-party">{b.party}</div></div>
@@ -394,10 +597,10 @@ function AccountBooks({ acc, commit, fire }) {
 function BookModal({ onClose, onSave, onToast }) {
   const [v, setV] = useState({ name: '', party: '', desc: '', type: 'payable', opening: '', openDate: todayISO(), includeInCash: false })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
-  const save = () => { if (!v.name.trim()) return onToast('Please enter a book name', 'warn'); onSave({ ...v, name: v.name.trim(), party: v.party.trim(), desc: v.desc.trim() }) }
+  const save = () => { if (!v.name.trim()) return onToast('Please enter a book name', 'warn'); return onSave({ ...v, name: v.name.trim(), party: v.party.trim(), desc: v.desc.trim() }) }
   return (
     <Shell title="Add Account Book" icon="fa-book-medical" onClose={onClose}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Create Book</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Create Book</SpinnerButton></>}>
       <div className="acc-field" style={{ marginBottom: 12 }}><label>Book Name</label><input className="acc-input" value={v.name} onChange={set('name')} placeholder="e.g. Crescent Uniforms — Supplier" /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div className="acc-field"><label>Party</label><input className="acc-input" value={v.party} onChange={set('party')} placeholder="Supplier / vendor name" /></div>
@@ -416,10 +619,10 @@ function BookModal({ onClose, onSave, onToast }) {
 function BookTxnModal({ onClose, onSave, onToast }) {
   const [v, setV] = useState({ type: 'received', amount: '', date: todayISO(), notes: '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
-  const save = () => { if (!v.amount) return onToast('Please enter an amount', 'warn'); onSave(v) }
+  const save = () => { if (!v.amount) return onToast('Please enter an amount', 'warn'); return onSave(v) }
   return (
     <Shell title="Add Ledger Entry" icon="fa-plus" onClose={onClose} maxWidth={460}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Add Entry</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Add Entry</SpinnerButton></>}>
       <div className="acc-field" style={{ marginBottom: 12 }}><label>Entry Type</label><select className="acc-input" value={v.type} onChange={set('type')}><option value="received">Received / Credited (increases balance)</option><option value="returned">Returned / Paid (decreases balance)</option><option value="adjustment">Adjustment (signed)</option></select></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div className="acc-field"><label>Amount (Rs){v.type === 'adjustment' ? ' — use − for negative' : ''}</label><input className="acc-input" type="number" value={v.amount} onChange={set('amount')} placeholder="0" /></div>
@@ -441,12 +644,36 @@ const REPORT_TYPES = [
   { key: 'overview', label: 'Financial Overview', icon: 'fa-chart-pie' },
 ]
 
-function Reports({ acc, fire }) {
+function Reports({ fire }) {
+  const month0 = thisMonthISO()
   const [type, setType] = useState('revenue')
-  const mb = monthBounds(acc.month)
-  const [ctrl, setCtrl] = useState({ from: mb.from, to: mb.to, head: 'all', plFrom: acc.month, plTo: acc.month, cashDate: mb.to })
+  const mb = monthBounds(month0)
+  const [ctrl, setCtrl] = useState({ from: mb.from, to: mb.to, head: 'all', plFrom: month0, plTo: month0, cashDate: mb.to })
   const set = (k) => (e) => setCtrl((s) => ({ ...s, [k]: e.target.value }))
 
+  const [data, setData] = useState(null)   // { types, txns:{rev,exp}, books, month }
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    Promise.all([
+      fetchAccountTypes().catch(() => []),
+      fetchAllAccountEntries('rev').catch(() => []),
+      fetchAllAccountEntries('exp').catch(() => []),
+      fetchAccountBooks().catch(() => []),
+    ]).then(([types, rev, exp, books]) => {
+      if (!alive) return
+      setData({ types, txns: { rev, exp }, books, month: month0 })
+    }).catch((e) => {
+      if (!alive) return
+      setData({ types: [], txns: { rev: [], exp: [] }, books: [], month: month0 })
+      fire(e?.message || 'Could not load report data', 'error')
+    }).finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [fire, month0])
+
+  const acc = useMemo(() => data || { types: [], txns: { rev: [], exp: [] }, books: [], month: month0 }, [data, month0])
   const report = useMemo(() => buildReport(acc, type, ctrl), [acc, type, ctrl])
 
   return (
@@ -474,7 +701,7 @@ function Reports({ acc, fire }) {
           </>
         )}
         {type === 'cash' && <div className="acc-field"><label>As of Date</label><input className="acc-input" type="date" value={ctrl.cashDate} onChange={set('cashDate')} /></div>}
-        <button className="acc-pdf-btn" onClick={() => (report.rows.length ? printAccReport(report, fire) : fire('No data to export for this report', 'warn'))}><i className="fa-solid fa-file-pdf" /> Download A4 Report</button>
+        <button className="acc-pdf-btn" disabled={loading} onClick={() => (report.rows.length ? printAccReport(report, fire) : fire('No data to export for this report', 'warn'))}><i className="fa-solid fa-file-pdf" /> Download A4 Report</button>
       </div>
 
       {report.kpis?.length > 0 && (
@@ -489,7 +716,9 @@ function Reports({ acc, fire }) {
           <table className="acc-table">
             <thead><tr>{report.columns.map((c, i) => <th key={i} className={c.a === 'r' ? 'r' : c.a === 'c' ? 'c' : ''}>{c.label}</th>)}</tr></thead>
             <tbody>
-              {report.rows.length === 0 ? (
+              {loading ? (
+                <tr><td colSpan={report.columns.length}><div className="acc-empty"><i className="fa-solid fa-spinner fa-spin" /><div style={{ fontSize: 13, fontWeight: 700 }}>Loading report data…</div></div></td></tr>
+              ) : report.rows.length === 0 ? (
                 <tr><td colSpan={report.columns.length}><div className="acc-empty"><i className="fa-solid fa-chart-column" /><div style={{ fontSize: 13, fontWeight: 700 }}>No data for this report</div></div></td></tr>
               ) : report.rows.map((row, ri) => (
                 <tr key={ri}>{row.map((cell, ci) => <td key={ci} className={report.columns[ci].a === 'r' ? 'r' : report.columns[ci].a === 'c' ? 'c' : ''}>{cell}</td>)}</tr>
@@ -674,7 +903,7 @@ function ConfirmModal({ title, body, onClose, onConfirm }) {
           <div className="confirm-sub">{body}</div>
           <div className="confirm-btns">
             <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button>
+            <SpinnerButton className="btn-danger" icon="fa-trash-can" onClick={onConfirm}>Delete</SpinnerButton>
           </div>
         </div>
       </div>

@@ -208,7 +208,9 @@ const segTypeId = (seg) => (seg === 'rev' ? 1 : 2)
 
 function mapHead(h = {}) {
   return {
-    no:       pick(h, 'accountID', 'AccountID', 'id', 'ID'),
+    // Entry save me branchAccountID = head ki apni record ID (get-account-heads
+    // response ka `ID`, e.g. 2004), NOT `AccountID` (733) — warna entry save nahi hoti.
+    no:       pick(h, 'ID', 'id', 'accountHeadID', 'AccountHeadID'),
     recordId: pick(h, 'id', 'ID'),
     name:     pick(h, 'accountHead', 'AccountHead', 'headName', 'HeadName') || '',
     desc:     pick(h, 'description', 'Description') || '',
@@ -310,4 +312,43 @@ export async function saveAccountEntry(seg, payload, networkId = currentNetworkI
 /* Delete a revenue/expense entry by id. */
 export async function deleteAccountEntry(id, networkId = currentNetworkId()) {
   return callJson(`/delete-account-entry/${id}/${networkId}`, { method: 'DELETE' })
+}
+
+/* ════════ AUTO-POST — fee → Revenue head, salary → Expense head ════════
+   ERP me yeh cross-posting backend karta hai; chain ke payments/HR backend
+   nahi karte, is liye wahan successful receiving/payroll ke baad frontend se
+   yeh helper Accounts me entry daal deta hai. seg 'rev' (school payment) |
+   'exp' (HR salary). Head naam se match hota hai (fee/salary jaisa), warna us
+   type ka pehla head; koi head na ho to chup-chaap skip (reason:'no-head').
+
+   AHAM: payment ko kabhi fail nahi karta — caller is ko try/catch me rakhe.
+   Note: yeh sirf aage barhne wali posting hai — payment baad me edit/delete ho
+   to account entry khud reverse NAHI hoti (backend parity na hone ki wajah). */
+const _segHeadsCache = {}
+async function segmentHeads(seg, networkId) {
+  const hit = _segHeadsCache[`${networkId}:${seg}`]
+  if (hit) return hit
+  const types = await fetchAccountTypes(networkId)
+  for (const t of types) _segHeadsCache[`${networkId}:${t.key}`] = t.heads || []
+  return _segHeadsCache[`${networkId}:${seg}`] || []
+}
+/* Jab Accounts tab me koi head add/delete ho to cache saaf karein taake
+   agli auto-post taza heads dekhe. */
+export function clearAccountHeadCache() {
+  for (const k of Object.keys(_segHeadsCache)) delete _segHeadsCache[k]
+}
+
+export async function postAutoAccountEntry(seg, { amount, date, detail } = {}, networkId = currentNetworkId()) {
+  const amt = Number(amount) || 0
+  if (!networkId || amt <= 0) return { posted: false, reason: 'skip' }
+  const heads = await segmentHeads(seg, networkId)
+  if (!heads.length) return { posted: false, reason: 'no-head' }
+  /* Head naam se match. Revenue → "school payment" jaisa head (chain me fee
+     head nahi hota — wo ERP ki misaal thi). Expense → HR/salary jaisa head. */
+  const kw = seg === 'rev'
+    ? /school|payment|revenue|income/i
+    : /salary|payroll|wage|staff|\bhr\b|expense/i
+  const head = heads.find((h) => kw.test(h.name)) || heads[0]
+  await saveAccountEntry(seg, { headNo: head.no, date, detail, amount: amt }, networkId)
+  return { posted: true, head: head.name }
 }
