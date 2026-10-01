@@ -206,13 +206,13 @@ function leaveToForm(l) {
     casual: pick(l, 'casualLeaves', 'CasualLeaves') ?? '',
     sick: pick(l, 'sickLeaves', 'SickLeaves') ?? '',
     balance: pick(l, 'leaveBalance', 'LeaveBalance') ?? '',
-    policy: '',   // API me policy column nahi
+    policy: pick(l, 'leavePolicy', 'LeavePolicy') ?? '',
     absentDed: pick(l, 'deductionOneDayAbsent', 'DeductionOneDayAbsent') ?? '',
     unpaidDed: pick(l, 'deductionUnpaidLeaves', 'DeductionUnpaidLeaves') ?? '',
     _leaveId: pick(l, 'id', 'ID') ?? 0,
   }
 }
-const LEAVE_KEYS = ['annual', 'casual', 'sick', 'balance', 'absentDed', 'unpaidDed']
+const LEAVE_KEYS = ['annual', 'casual', 'sick', 'balance', 'policy', 'absentDed', 'unpaidDed']
 
 function toEmp(e, leave, mirror, quals) {
   const fixed = FIXED_HEADS
@@ -337,6 +337,7 @@ async function saveLeaves(employeeID, l = {}) {
       sickLeaves: Number(l.sick) || 0,
       maternityPaternityLeaves: 0,
       leaveBalance: Number(l.balance) || 0,
+      leavePolicy: l.policy || '',
       enableLeaveDeduction: true,
       deductionOneDayAbsent: Number(l.absentDed) || 0,
       deductionUnpaidLeaves: Number(l.unpaidDed) || 0,

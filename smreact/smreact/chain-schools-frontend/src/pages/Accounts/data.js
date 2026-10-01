@@ -89,6 +89,14 @@ export function periodLabel(m) { if (!m) return '—'; const [y, mo] = m.split('
 
 /* ── compute helpers ── */
 export function bookCalc(b) {
+  /* List view books arrive without their ledger — trust the server's
+     aggregate totals so cards & stats are right without loading every
+     entry (API-backed books carry serverBalance; dekhein accountsApi.js). */
+  if ((!b.txns || b.txns.length === 0) && b.serverBalance != null) {
+    const received = Number(b.serverReceived || 0)
+    const returnedAll = Number(b.serverReturned || 0)
+    return { received, returnedAll, balance: Number(b.serverBalance || 0), withBal: [] }
+  }
   const sorted = [...(b.txns || [])].sort((a, c) => (a.date < c.date ? -1 : 1))
   let bal = b.opening || 0
   let received = 0

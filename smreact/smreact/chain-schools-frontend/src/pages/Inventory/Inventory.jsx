@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
+import SpinnerButton from '../../components/SpinnerButton'
 import { createPortal } from 'react-dom'
 import {
   MONTHS, ITEM_STATUSES, CONDITIONS,
@@ -122,7 +123,7 @@ function Manage({ inv, reload, fire }) {
           <div style={{ flex: 1, fontSize: 16, fontWeight: 800, color: 'var(--t1)', alignSelf: 'center' }}>{item.name}</div>
           <button className="btn-secondary" onClick={() => printLabel(item)}><i className="fa-solid fa-barcode" /> Print Barcode</button>
           <button className="btn-secondary" onClick={() => setItemModal({ mode: 'edit', item })}><i className="fa-solid fa-pen" /> Edit</button>
-          <button className="btn-sm" style={{ height: 38, borderColor: item.active ? 'var(--warn)' : 'var(--success)', color: item.active ? 'var(--warn)' : 'var(--success)' }} onClick={() => toggleActive(item)}><i className={`fa-solid ${item.active ? 'fa-circle-pause' : 'fa-circle-check'}`} /> {item.active ? 'Mark Inactive' : 'Reactivate'}</button>
+          <button className="btn-sm" style={{ height: 38, borderColor: item.active ? 'var(--warn)' : 'var(--success)', color: item.active ? 'var(--warn)' : 'var(--success)' }} onClick={() => toggleActive(item)}><i className={`fa-solid ${item.active ? 'fa-circle-pause' : 'fa-circle-check'}`} /> {item.active ? 'Mark Inactive' : 'Mark Active'}</button>
           {!item.active && <button className="btn-sm" style={{ height: 38, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(item)}><i className="fa-solid fa-trash-can" /> Delete</button>}
         </div>
         <div className="inv-detail-grid">
@@ -213,22 +214,27 @@ function Manage({ inv, reload, fire }) {
 function ItemModal({ modal, inv, onClose, onSave, onToast }) {
   const it = modal.item
   const [v, setV] = useState(() => ({ name: it?.name || '', cat: it?.cat || inv.categories[0], code: it?.code || '', qty: it?.qty ?? '', low: it?.low ?? 0, date: it?.date || todayISO(), cond: it?.cond || 'Good', status: it?.status || 'In Use', loc: it?.loc || '', desc: it?.desc || '' }))
+  const posInt = (val) => (val === '' ? '' : Math.floor(Math.abs(Number(val) || 0)))
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  const setNum = (k) => (e) => setV((s) => ({ ...s, [k]: posInt(e.target.value) }))
   const save = () => {
     if (!v.name.trim()) return onToast('Please enter an item name', 'warn')
+    const qty = Number(v.qty) || 0
+    const low = Number(v.low) || 0
+    if (low > 0 && low >= qty) return onToast('Low-stock alert must be less than quantity', 'warn')
     const code = v.code.trim() || nextItemCode(inv, v.name)
-    onSave({ ...v, name: v.name.trim(), code, loc: v.loc.trim(), desc: v.desc.trim(), qty: Number(v.qty) || 0, low: Number(v.low) || 0 }, modal.mode === 'edit' ? it.id : null)
+    return onSave({ ...v, name: v.name.trim(), code, loc: v.loc.trim(), desc: v.desc.trim(), qty, low }, modal.mode === 'edit' ? it.id : null)
   }
   return (
     <Shell title={it ? 'Edit Inventory Item' : 'Add Inventory Item'} icon="fa-box" onClose={onClose}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Item</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save Item</SpinnerButton></>}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div className="inv-field"><label>Item Name</label><input className="inv-input" value={v.name} onChange={set('name')} placeholder="e.g. Student Chair" /></div>
         <div className="inv-field"><label>Category</label><select className="inv-input" value={v.cat} onChange={set('cat')}>{inv.categories.map((c) => <option key={c}>{c}</option>)}</select></div>
-        <div className="inv-field"><label>Inventory # {!it && <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(auto)</span>}</label><input className="inv-input" value={v.code} onChange={set('code')} placeholder="auto-generated" /></div>
+        <div className="inv-field"><label>Inventory # {!it && <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(auto)</span>}</label><input className="inv-input" value={v.code} readOnly disabled placeholder="auto-generated" style={{ background: 'var(--muted)', cursor: 'not-allowed' }} /></div>
         <div className="inv-field"><label>Location</label><input className="inv-input" value={v.loc} onChange={set('loc')} placeholder="e.g. Computer Lab" /></div>
-        <div className="inv-field"><label>Quantity</label><input className="inv-input" type="number" value={v.qty} onChange={set('qty')} placeholder="0" /></div>
-        <div className="inv-field"><label>Low-stock Alert</label><input className="inv-input" type="number" value={v.low} onChange={set('low')} placeholder="0" /></div>
+        <div className="inv-field"><label>Quantity</label><input className="inv-input" type="number" min="0" step="1" value={v.qty} onChange={setNum('qty')} placeholder="0" /></div>
+        <div className="inv-field"><label>Low-stock Alert</label><input className="inv-input" type="number" min="0" step="1" value={v.low} onChange={setNum('low')} placeholder="0" /></div>
         <div className="inv-field"><label>Condition</label><select className="inv-input" value={v.cond} onChange={set('cond')}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></div>
         <div className="inv-field"><label>Status</label><select className="inv-input" value={v.status} onChange={set('status')}>{ITEM_STATUSES.map((s) => <option key={s}>{s}</option>)}</select></div>
         <div className="inv-field"><label>Date Added</label><input className="inv-input" type="date" value={v.date} onChange={set('date')} /></div>
@@ -343,7 +349,7 @@ function POS({ inv, reload, fire }) {
             <div className="inv-cart-foot">
               <div className="inv-field" style={{ marginBottom: 12 }}><label>Buyer Name (Student / Parent)</label><input className="inv-input" value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="e.g. Ahmed Raza — Class 5B" /></div>
               <div className="inv-cart-total"><span style={{ fontWeight: 700, color: 'var(--tm)' }}>Total</span><span className="inv-cart-total-val">{rs(total)}</span></div>
-              <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg,#16A34A,#15803D)' }} onClick={checkout}><i className="fa-solid fa-receipt" /> Generate Receipt</button>
+              <SpinnerButton style={{ width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg,#16A34A,#15803D)' }} icon="fa-receipt" onClick={checkout}>Generate Receipt</SpinnerButton>
             </div>
           </div>
         </div>
@@ -408,10 +414,10 @@ function ProductModal({ modal, onClose, onSave, onToast }) {
   const p = modal.prod
   const [v, setV] = useState({ name: p?.name || '', cat: p?.cat || 'Stationery', barcode: p?.barcode || '', stock: p?.stock ?? '', low: p?.low ?? 0, cost: p?.cost ?? '', price: p?.price ?? '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
-  const save = () => { if (!v.name.trim()) return onToast('Please enter a product name', 'warn'); onSave({ name: v.name.trim(), cat: v.cat.trim() || 'Other', barcode: v.barcode.trim(), stock: Number(v.stock) || 0, low: Number(v.low) || 0, cost: Number(v.cost) || 0, price: Number(v.price) || 0 }, modal.mode === 'edit' ? p.id : null) }
+  const save = () => { if (!v.name.trim()) return onToast('Please enter a product name', 'warn'); return onSave({ name: v.name.trim(), cat: v.cat.trim() || 'Other', barcode: v.barcode.trim(), stock: Number(v.stock) || 0, low: Number(v.low) || 0, cost: Number(v.cost) || 0, price: Number(v.price) || 0 }, modal.mode === 'edit' ? p.id : null) }
   return (
     <Shell title={p ? 'Edit Product' : 'Add Product'} icon="fa-box-open" onClose={onClose} maxWidth={520}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Product</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save Product</SpinnerButton></>}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="inv-field"><label>Product Name</label><input className="inv-input" value={v.name} onChange={set('name')} placeholder="e.g. Notebook (100 pages)" /></div>
         <div className="inv-field"><label>Category</label><input className="inv-input" value={v.cat} onChange={set('cat')} placeholder="e.g. Stationery" /></div>
@@ -437,13 +443,18 @@ const INV_REPORTS = [
   { key: 'pos_product', label: 'Product-wise Sales', icon: 'fa-box', group: 'Sales', ctrl: 'none' },
   { key: 'pos_lowstock', label: 'Low Stock', icon: 'fa-triangle-exclamation', group: 'Sales', ctrl: 'none' },
   { key: 'pos_pnl', label: 'Profit & Loss', icon: 'fa-scale-balanced', group: 'Finance', ctrl: 'range' },
-  { key: 'pos_invvalue', label: 'Inventory Value', icon: 'fa-wallet', group: 'Finance', ctrl: 'none' },
+  { key: 'pos_invvalue', label: 'Product Value', icon: 'fa-wallet', group: 'Finance', ctrl: 'none' },
   { key: 'pos_pvs', label: 'Purchase vs Sale', icon: 'fa-right-left', group: 'Finance', ctrl: 'none' },
 ]
 
 function Reports({ inv, fire }) {
   const [type, setType] = useState('inv_total')
-  const [ctrl, setCtrl] = useState({ date: todayISO(), month: '2026-05', from: '2026-05-01', to: '2026-05-31' })
+  /* Default hamesha MOJOODA mahina — pehle May 2026 hardcoded tha jis se report
+     khaali/purani dikhti thi. */
+  const nowYM = todayISO().slice(0, 7)
+  const [ry, rm] = nowYM.split('-')
+  const monthEnd = `${nowYM}-${String(new Date(Number(ry), Number(rm), 0).getDate()).padStart(2, '0')}`
+  const [ctrl, setCtrl] = useState({ date: todayISO(), month: nowYM, from: `${nowYM}-01`, to: monthEnd })
   const set = (k) => (e) => setCtrl((s) => ({ ...s, [k]: e.target.value }))
   const meta = INV_REPORTS.find((r) => r.key === type)
   const report = useMemo(() => buildInvReport(inv, type, ctrl), [inv, type, ctrl])
@@ -564,7 +575,7 @@ function buildInvReport(inv, type, ctrl) {
     const list = inv.products.slice().sort((a, b) => (a.name < b.name ? -1 : 1))
     let tPur = 0; let tSale = 0
     const rows = list.map((p) => { const pv = p.stock * p.cost; const sv = p.stock * p.price; tPur += pv; tSale += sv; return [p.name, num(p.stock), num(p.cost), num(pv), num(p.price), num(sv)] })
-    return { title: 'Current Inventory Value Report', period: `As of ${fmtDate(todayISO())}`, filters: [['Products', String(list.length)], ['Stock Units', num(list.reduce((a, p) => a + p.stock, 0))]],
+    return { title: 'Current Product Value Report', period: `As of ${fmtDate(todayISO())}`, filters: [['Products', String(list.length)], ['Stock Units', num(list.reduce((a, p) => a + p.stock, 0))]],
       kpis: [{ label: 'Purchase Value', value: rs(tPur), icon: 'fa-cart-shopping', cls: 'info' }, { label: 'Sale Value', value: rs(tSale), icon: 'fa-tags', cls: 'green' }, { label: 'Expected Gross Profit', value: rs(tSale - tPur), icon: 'fa-scale-balanced', cls: tSale - tPur >= 0 ? 'green' : 'red' }],
       sections: [{ columns: [C('Product'), C('Stock', 'c'), C('Cost/Unit', 'r'), C('Purchase Value', 'r'), C('Sale/Unit', 'r'), C('Sale Value', 'r')], rows, totals: ['', '', 'Total', num(tPur), '', num(tSale)] }] }
   }
@@ -669,7 +680,7 @@ function ConfirmModal({ title, body, onClose, onConfirm }) {
           <div className="confirm-sub">{body}</div>
           <div className="confirm-btns">
             <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button>
+            <SpinnerButton className="btn-danger" icon="fa-trash-can" onClick={onConfirm}>Delete</SpinnerButton>
           </div>
         </div>
       </div>

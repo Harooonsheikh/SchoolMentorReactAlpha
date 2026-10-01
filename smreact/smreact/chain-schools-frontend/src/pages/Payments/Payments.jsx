@@ -12,6 +12,7 @@ import {
   fetchChallansEach, saveChallan as saveChallanApi, deleteChallan as deleteChallanApi,
   fetchReceivingsEach, saveReceiving as saveReceivingApi, deleteReceiving as deleteReceivingApi,
 } from '../../api/schoolPaymentsApi'
+import { postAutoAccountEntry } from '../../api/accountsApi'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './Payments.css'
 
@@ -408,6 +409,18 @@ export default function Payments() {
       putRecv(id, saved)
       setRecvModal(null)
       fire('Payment recorded successfully')
+      /* Accounts me apne aap Revenue entry — ERP backend ki tarah, par chain
+         ka backend ye nahi karta is liye yahin se. Fail ho to payment phir
+         bhi record hai; sirf koi Revenue head hi na ho to narmi se bata do. */
+      try {
+        const school = schools.find((s) => s.id === id)
+        const r = await postAutoAccountEntry('rev', {
+          amount: payload.paidNow,
+          date: payload.date,
+          detail: `School payment${school ? ` — ${school.name}` : ''} · ${monthLabel(applied.month, applied.year)}`,
+        })
+        if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded — par Accounts me koi Revenue head nahi, entry post nahi hui', 'warn')
+      } catch { /* account posting optional — payment already saved */ }
     } catch (err) {
       fire(err?.message || 'Could not record payment', 'warn')
     } finally {
@@ -1172,6 +1185,7 @@ function RecvModal({ school, setup, challan, recv, period, busy, onClose, onSave
       netPayable,
       receivedAmount: prevReceived + recvAmt,
       remainingAmount: Math.max(0, remaining),
+      paidNow: recvAmt,   // sirf is dafa aayi raqam — Accounts revenue isi par
       via,
       date,
     })

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
+import SpinnerButton from '../../components/SpinnerButton'
 import { createPortal } from 'react-dom'
 import {
   loadHr, saveHr, MONTHS, EMP_TYPES, PAY_METHODS,
@@ -10,6 +11,7 @@ import {
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import { staffLeaveAbsent } from '../Attendance/data'
 import * as hrApi from '../../api/hrApi'
+import { postAutoAccountEntry } from '../../api/accountsApi'
 import './HumanResource.css'
 
 export default function HumanResource() {
@@ -86,7 +88,6 @@ function Basics({ hr, run, fire }) {
   }
   const doDel = async () => {
     const target = del
-    setDel(null)
     await run(async () => {
       if (target.kind === 'dept') {
         /* Pehle is department ki designations, phir department. */
@@ -94,6 +95,7 @@ function Basics({ hr, run, fire }) {
         await hrApi.deleteHrDept(target.id)
       } else await hrApi.deleteHrDesig(target.id)
     }, 'Deleted', 'info')
+    setDel(null)
   }
 
   return (
@@ -139,10 +141,10 @@ function Basics({ hr, run, fire }) {
 function DeptModal({ modal, onClose, onSave, onToast }) {
   const d = modal.dept
   const [name, setName] = useState(d?.name || ''); const [desc, setDesc] = useState(d?.desc || '')
-  const save = () => { if (!name.trim()) return onToast('Enter a department name', 'warn'); onSave({ name: name.trim(), desc: desc.trim() }, d?.id) }
+  const save = () => { if (!name.trim()) return onToast('Enter a department name', 'warn'); return onSave({ name: name.trim(), desc: desc.trim() }, d?.id) }
   return (
     <Shell title={d ? 'Edit Department' : 'Add Department'} icon="fa-building" onClose={onClose} maxWidth={440}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save</SpinnerButton></>}>
       <div className="hr-field" style={{ marginBottom: 12 }}><label>Department Name</label><input className="hr-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Administration" /></div>
       <div className="hr-field"><label>Description</label><input className="hr-input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" /></div>
     </Shell>
@@ -155,11 +157,11 @@ function DesigModal({ modal, depts, quals, onClose, onSave, onToast }) {
   const save = () => {
     if (!v.name.trim()) return onToast('Enter a designation name', 'warn')
     const qualId = Number(v.qualId) || 0
-    onSave({ dId: Number(v.dId), name: v.name.trim(), qualId, qual: quals.find((q) => q.id === qualId)?.name || '', desc: v.desc.trim() }, x?.id)
+    return onSave({ dId: Number(v.dId), name: v.name.trim(), qualId, qual: quals.find((q) => q.id === qualId)?.name || '', desc: v.desc.trim() }, x?.id)
   }
   return (
     <Shell title={x ? 'Edit Designation' : 'Add Designation'} icon="fa-user-tag" onClose={onClose} maxWidth={460}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save</SpinnerButton></>}>
       <div className="hr-field" style={{ marginBottom: 12 }}><label>Department</label><select className="hr-input" value={v.dId} onChange={set('dId')}>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
       <div className="hr-grid2">
         <div className="hr-field"><label>Designation Name</label><input className="hr-input" value={v.name} onChange={set('name')} placeholder="e.g. Teacher" /></div>
@@ -193,7 +195,7 @@ function Employees({ hr, run, fire }) {
   const toggleStatus = (e) => (e.status === 'Active'
     ? run(() => hrApi.markHrEmployeeInactive(e.id), 'Employee marked inactive', 'info')
     : run(() => hrApi.restoreHrEmployee(e.id), 'Employee reactivated', 'info'))
-  const doDel = () => { const id = del.id; setDel(null); run(() => hrApi.deleteHrEmployeePermanent(id), 'Employee deleted', 'info') }
+  const doDel = async () => { const id = del.id; await run(() => hrApi.deleteHrEmployeePermanent(id), 'Employee deleted', 'info'); setDel(null) }
 
   return (
     <>
@@ -257,9 +259,14 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
     leaves: e?.leaves ? { ...e.leaves } : { annual: '', casual: '', sick: '', balance: '', policy: '', absentDed: '', unpaidDed: '' },
     financial: e?.financial ? { ...e.financial } : { salaryAdvance: 0, loanBalance: 0, securityDeposit: 0, clearanceStatus: 'pending' },
   }))
+  /* Amount hamesha positive integer — minus/decimal strip, warna deduction
+     negative ho kar Net ko ulta barha deti hai (Gross − (−x) = Gross + x). */
+  const posInt = (val) => (val === '' ? '' : Math.floor(Math.abs(Number(val) || 0)))
   const set = (k) => (ev) => setV((s) => ({ ...s, [k]: ev.target.value }))
-  const setLeave = (k) => (ev) => setV((s) => ({ ...s, leaves: { ...s.leaves, [k]: ev.target.value } }))
-  const setHead = (i, k, val) => setV((s) => ({ ...s, salaryHeads: s.salaryHeads.map((h, j) => (j === i ? { ...h, [k]: val } : h)) }))
+  const setNum = (k) => (ev) => setV((s) => ({ ...s, [k]: posInt(ev.target.value) }))
+  /* Leave fields me policy text hai, baqi sab counts/amounts positive. */
+  const setLeave = (k) => (ev) => setV((s) => ({ ...s, leaves: { ...s.leaves, [k]: k === 'policy' ? ev.target.value : posInt(ev.target.value) } }))
+  const setHead = (i, k, val) => setV((s) => ({ ...s, salaryHeads: s.salaryHeads.map((h, j) => (j === i ? { ...h, [k]: k === 'amount' ? posInt(val) : val } : h)) }))
   const addHead = () => setV((s) => ({ ...s, salaryHeads: [...s.salaryHeads, { name: '', type: 'allow', amount: 0 }] }))
   const rmHead = (i) => setV((s) => ({ ...s, salaryHeads: s.salaryHeads.filter((_, j) => j !== i) }))
 
@@ -269,12 +276,12 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
   const save = () => {
     if (!v.firstName.trim()) return onToast('Enter the employee first name', 'warn')
     if (!desigOpts.find((x) => x.id === Number(v.desId)) && desigOpts[0]) v.desId = desigOpts[0].id
-    onSave({ ...v, firstName: v.firstName.trim(), lastName: v.lastName.trim(), dId: Number(v.dId), desId: Number(v.desId), basicSalary: Number(v.basicSalary) || 0, salaryHeads: v.salaryHeads.filter((h) => h.name.trim()).map((h) => ({ id: h.id, name: h.name.trim(), type: h.type, amount: Number(h.amount) || 0 })) }, e?.id)
+    return onSave({ ...v, firstName: v.firstName.trim(), lastName: v.lastName.trim(), dId: Number(v.dId), desId: Number(v.desId), basicSalary: Number(v.basicSalary) || 0, salaryHeads: v.salaryHeads.filter((h) => h.name.trim()).map((h) => ({ id: h.id, name: h.name.trim(), type: h.type, amount: Number(h.amount) || 0 })) }, e?.id)
   }
 
   return (
     <Shell title={e ? 'Edit Employee' : 'Add Employee'} sub={e ? `${fullName(e)} · ${e.eid}` : 'New staff member'} icon="fa-user-tie" onClose={onClose} maxWidth={620}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Employee</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>{e ? 'Update Employee' : 'Save Employee'}</SpinnerButton></>}>
       <div className="hr-modal-tabs">{EMP_TABS.map(([k, lbl]) => <button key={k} className={`hr-modal-tab${mt === k ? ' active' : ''}`} onClick={() => setMt(k)}>{lbl}</button>)}</div>
 
       {mt === 'personal' && (
@@ -308,7 +315,7 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
       {mt === 'salary' && (
         <>
           <div className="hr-grid3" style={{ marginBottom: 14 }}>
-            <div className="hr-field"><label>Basic Salary (Rs)</label><input className="hr-input" type="number" value={v.basicSalary} onChange={set('basicSalary')} /></div>
+            <div className="hr-field"><label>Basic Salary (Rs)</label><input className="hr-input" type="number" min="0" step="1" value={v.basicSalary} onChange={setNum('basicSalary')} /></div>
             <div className="hr-field"><label>Pay Method</label><select className="hr-input" value={v.payMethod} onChange={set('payMethod')}>{PAY_METHODS.map((m) => <option key={m}>{m}</option>)}</select></div>
             <div className="hr-field"><label>Bank Name</label><input className="hr-input" value={v.bankName} onChange={set('bankName')} /></div>
           </div>
@@ -317,7 +324,7 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
             <div className="hr-head-row" key={i}>
               <input className="hr-input" style={{ flex: 1 }} value={h.name} onChange={(ev) => setHead(i, 'name', ev.target.value)} placeholder="Head name" />
               <select className="hr-input" style={{ width: 120 }} value={h.type} onChange={(ev) => setHead(i, 'type', ev.target.value)}><option value="allow">Allowance</option><option value="deduct">Deduction</option></select>
-              <input className="hr-input" style={{ width: 110 }} type="number" value={h.amount} onChange={(ev) => setHead(i, 'amount', ev.target.value)} placeholder="0" />
+              <input className="hr-input" style={{ width: 110 }} type="number" min="0" step="1" value={h.amount} onChange={(ev) => setHead(i, 'amount', ev.target.value)} placeholder="0" />
               <button className="btn-sm" style={{ height: 38, borderColor: 'var(--err)', color: 'var(--err)' }} onClick={() => rmHead(i)}><i className="fa-solid fa-xmark" /></button>
             </div>
           ))}
@@ -330,11 +337,11 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
       {mt === 'leave' && (
         <div className="hr-grid3">
           {[['annual', 'Annual Leave'], ['casual', 'Casual Leave'], ['sick', 'Sick Leave'], ['balance', 'Current Balance']].map(([k, l]) => (
-            <div className="hr-field" key={k}><label>{l}</label><input className="hr-input" type="number" value={v.leaves[k]} onChange={setLeave(k)} /></div>
+            <div className="hr-field" key={k}><label>{l}</label><input className="hr-input" type="number" min="0" step="1" value={v.leaves[k]} onChange={setLeave(k)} /></div>
           ))}
           <div className="hr-field"><label>Policy</label><input className="hr-input" value={v.leaves.policy} onChange={setLeave('policy')} /></div>
-          <div className="hr-field"><label>Absent Deduction/day</label><input className="hr-input" type="number" value={v.leaves.absentDed} onChange={setLeave('absentDed')} /></div>
-          <div className="hr-field"><label>Unpaid Leave Deduction</label><input className="hr-input" type="number" value={v.leaves.unpaidDed} onChange={setLeave('unpaidDed')} /></div>
+          <div className="hr-field"><label>Absent Deduction/day</label><input className="hr-input" type="number" min="0" step="1" value={v.leaves.absentDed} onChange={setLeave('absentDed')} /></div>
+          <div className="hr-field"><label>Unpaid Leave Deduction</label><input className="hr-input" type="number" min="0" step="1" value={v.leaves.unpaidDed} onChange={setLeave('unpaidDed')} /></div>
         </div>
       )}
     </Shell>
@@ -362,7 +369,16 @@ function Payroll({ hr, commit, fire }) {
 
   const active = hr.emps.filter((e) => e.status === 'Active')
   const recOf = (id) => hr.payroll[payKey(id, year, month)]
-  const totals = active.reduce((a, e) => { a.gross += gross(e); a.ded += deductions(e); a.net += netPay(e); return a }, { gross: 0, ded: 0, net: 0 })
+  /* net = standard net ka jama; outstanding = jo abhi tak baqi hai (net − paid)
+     ka jama — partially paid employee ka sirf remaining ginta hai. */
+  const totals = active.reduce((a, e) => {
+    const rec = recOf(e.id)
+    const paid = (rec?.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+    const net = rec?.netPayable ?? netPay(e)
+    a.gross += gross(e); a.ded += deductions(e); a.net += net
+    a.outstanding += Math.max(0, net - paid)
+    return a
+  }, { gross: 0, ded: 0, net: 0, outstanding: 0 })
 
   /* Setup fields → payroll-setup API body. UI month 0-based, API 1–12. */
   const setupPayload = (empId, s = {}) => ({
@@ -402,6 +418,18 @@ function Payroll({ hr, commit, fire }) {
       nextHr = { ...nextHr, loans: applyLoanDeduction(hr, empId, effLoan), payroll: { ...nextHr.payroll, [key]: { ...rec, apiPayrollId, payments, loanRecorded: true } } }
     }
     commit(nextHr); fire(`Payment of ${rs(payment.amount)} recorded`)
+    /* Accounts me apne aap Expense entry — ERP backend ki tarah, par chain ka
+       backend ye nahi karta is liye yahin se. Fail ho to payment phir bhi
+       record hai; sirf koi Expense head hi na ho to narmi se bata do. */
+    try {
+      const emp = hr.emps.find((x) => x.id === empId)
+      const r = await postAutoAccountEntry('exp', {
+        amount: payment.amount,
+        date: payment.date,
+        detail: `Salary payment${emp ? ` — ${fullName(emp)}` : ''} · ${MONTHS[month]} ${year}`,
+      })
+      if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded — par Accounts me koi Expense head nahi, entry post nahi hui', 'warn')
+    } catch { /* account posting optional — payment already saved */ }
   }
   const generateAll = () => {
     const p = { ...hr.payroll }
@@ -429,7 +457,7 @@ function Payroll({ hr, commit, fire }) {
         <div className="hr-kpi info"><div className="hr-kpi-top"><i className="fa-solid fa-users" /> Employees</div><div className="hr-kpi-val">{active.length}</div></div>
         <div className="hr-kpi"><div className="hr-kpi-top"><i className="fa-solid fa-sack-dollar" /> Gross Payroll</div><div className="hr-kpi-val" style={{ fontSize: 16 }}>{rs(totals.gross)}</div></div>
         <div className="hr-kpi red"><div className="hr-kpi-top"><i className="fa-solid fa-minus" /> Deductions</div><div className="hr-kpi-val" style={{ fontSize: 16 }}>{rs(totals.ded)}</div></div>
-        <div className="hr-kpi green"><div className="hr-kpi-top"><i className="fa-solid fa-money-bill-wave" /> Net Payable</div><div className="hr-kpi-val" style={{ fontSize: 16 }}>{rs(totals.net)}</div></div>
+        <div className="hr-kpi green"><div className="hr-kpi-top"><i className="fa-solid fa-money-bill-wave" /> Net Payable</div><div className="hr-kpi-val" style={{ fontSize: 16 }}>{rs(totals.outstanding)}</div><div className="hr-kpi-sub">outstanding (paid ghata kar)</div></div>
       </div>
 
       <div className="section-card">
@@ -442,13 +470,19 @@ function Payroll({ hr, commit, fire }) {
                 const rec = recOf(e.id); const st = payStatus(rec)
                 const paid = (rec?.payments || []).reduce((a, p) => a + Number(p.amount || 0), 0)
                 const isPaid = st.label === 'Paid'
+                /* ERP ki tarah Net Payable hamesha FULL rehta hai; remaining
+                   (= net − paid) alag se dikhaya jata hai. */
+                const netAmt = rec?.netPayable ?? netPay(e)
+                const remainingAmt = Math.max(0, netAmt - paid)
                 return (
                   <Fragment key={e.id}>
                     <tr>
                       <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                       <td><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><div className="hr-avatar">{initials(e)}</div><div><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{fullName(e)}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{e.eid}</div></div></div></td>
                       <td>{desigName(hr, e.desId)}</td>
-                      <td className="r" style={{ fontWeight: 800 }}>{num(rec?.netPayable ?? netPay(e))}</td>
+                      <td className="r" style={{ fontWeight: 800 }}>{num(netAmt)}{paid > 0 && (remainingAmt > 0
+                        ? <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--err)' }}>Rs {num(remainingAmt)} left</div>
+                        : <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)' }}>Settled</div>)}</td>
                       <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
                       <td className="c">
                         <div className="hr-menu-wrap" onClick={(ev) => ev.stopPropagation()}>
@@ -482,7 +516,7 @@ function Payroll({ hr, commit, fire }) {
                 )
               })}
             </tbody>
-            <tfoot><tr><td colSpan={3}>TOTAL (standard net)</td><td className="r">{num(totals.net)}</td><td colSpan={4} /></tr></tfoot>
+            <tfoot><tr><td colSpan={3}>TOTAL (outstanding)</td><td className="r">{num(totals.outstanding)}</td><td colSpan={4} /></tr></tfoot>
           </table>
         </div>
       </div>
@@ -563,8 +597,12 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
     }
   })
   const set = (k) => (ev) => setV((s) => ({ ...s, [k]: ev.target.value }))
-  const setLeaveCount = (ev) => { const c = Number(ev.target.value) || 0; setV((s) => ({ ...s, leaveCount: ev.target.value, leaveDeduct: c * (Number(e.leaves?.absentDed) || 0) })) }
-  const setAbsentCount = (ev) => { const c = Number(ev.target.value) || 0; setV((s) => ({ ...s, absentCount: ev.target.value, absentDeduct: c * (Number(e.leaves?.unpaidDed) || 0) })) }
+  /* Payroll ke amount/count fields hamesha positive integer — minus/decimal
+     strip, warna deduction negative ho kar Net ulta barha deti hai. */
+  const posInt = (val) => (val === '' ? '' : Math.floor(Math.abs(Number(val) || 0)))
+  const setNum = (k) => (ev) => setV((s) => ({ ...s, [k]: posInt(ev.target.value) }))
+  const setLeaveCount = (ev) => { const c = posInt(ev.target.value); setV((s) => ({ ...s, leaveCount: c, leaveDeduct: (Number(c) || 0) * (Number(e.leaves?.absentDed) || 0) })) }
+  const setAbsentCount = (ev) => { const c = posInt(ev.target.value); setV((s) => ({ ...s, absentCount: c, absentDeduct: (Number(c) || 0) * (Number(e.leaves?.unpaidDed) || 0) })) }
 
   const N = (x) => Number(x) || 0
   const totalGross = gross(e) + N(v.bonus)
@@ -578,23 +616,23 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
   const [payComment, setPayComment] = useState('')
 
-  const saveSetup = () => {
-    onSaveSetup(empId, { basicPay: Number(e.basicSalary || 0), bonus: N(v.bonus), totalGross, stdDeductions: deductions(e), loanDeduct: N(v.loanDeduct), customLoan: N(v.customLoan), fineDeduct: N(v.fineDeduct), fineComment: v.fineComment, leaveCount: N(v.leaveCount), leaveDeduct: N(v.leaveDeduct), leaveComment: v.leaveComment, absentCount: N(v.absentCount), absentDeduct: N(v.absentDeduct), absentComment: v.absentComment, totalDeductions: totalDed, netPayable: net })
+  const saveSetup = async () => {
+    await onSaveSetup(empId, { basicPay: Number(e.basicSalary || 0), bonus: N(v.bonus), totalGross, stdDeductions: deductions(e), loanDeduct: N(v.loanDeduct), customLoan: N(v.customLoan), fineDeduct: N(v.fineDeduct), fineComment: v.fineComment, leaveCount: N(v.leaveCount), leaveDeduct: N(v.leaveDeduct), leaveComment: v.leaveComment, absentCount: N(v.absentCount), absentDeduct: N(v.absentDeduct), absentComment: v.absentComment, totalDeductions: totalDed, netPayable: net })
     setTab('payment')
   }
-  const makePayment = () => {
+  const makePayment = async () => {
     const amt = N(payAmt)
     if (amt <= 0) return onToast('Enter a valid payment amount', 'warn')
     if (amt > remaining + 0.01) return onToast(`Amount cannot exceed remaining ${rs(remaining)}`, 'warn')
-    onRecordPayment(empId, { amount: amt, date: payDate, comment: payComment.trim() })
+    await onRecordPayment(empId, { amount: amt, date: payDate, comment: payComment.trim() })
     onClose()
   }
 
   return (
     <Shell title="Pay Roll" sub={`${fullName(e)} · ${MONTHS[month]} ${year}`} icon="fa-money-check-dollar" onClose={onClose} maxWidth={620}
       foot={tab === 'setup'
-        ? <><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={saveSetup}><i className="fa-solid fa-floppy-disk" /> Save &amp; Next</button></>
-        : <><button className="btn-secondary" onClick={onClose}>Close</button><button className="btn-primary" disabled={!rec.netPayable && !hasPayments} onClick={makePayment}><i className="fa-solid fa-money-bill-wave" /> Make Payment</button></>}>
+        ? <><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={saveSetup}>Save &amp; Next</SpinnerButton></>
+        : <><button className="btn-secondary" onClick={onClose}>Close</button><SpinnerButton disabled={!rec.netPayable && !hasPayments} icon="fa-money-bill-wave" onClick={makePayment}>Make Payment</SpinnerButton></>}>
       <div className="hr-mtabs">
         <button className={`hr-mtab${tab === 'setup' ? ' active' : ''}`} onClick={() => setTab('setup')}><i className="fa-solid fa-sliders" /> Setup</button>
         <button className={`hr-mtab${tab === 'payment' ? ' active' : ''}`} onClick={() => { if (rec.netPayable || hasPayments) setTab('payment'); else onToast('Save setup first', 'warn') }}><i className="fa-solid fa-money-bill-wave" /> Make Payment</button>
@@ -606,17 +644,17 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
             <div className="hr-field"><label>Basic Pay</label><input className="hr-input" value={num(e.basicSalary)} readOnly style={{ background: 'var(--muted)' }} /></div>
             <div className="hr-field"><label>Allowances</label><input className="hr-input" value={num(allowances(e))} readOnly style={{ background: 'var(--muted)' }} /></div>
             <div className="hr-field"><label>Std. Deductions</label><input className="hr-input" value={num(deductions(e))} readOnly style={{ background: 'var(--muted)' }} /></div>
-            <div className="hr-field"><label>Bonus (+)</label><input className="hr-input" type="number" value={v.bonus} onChange={set('bonus')} /></div>
+            <div className="hr-field"><label>Bonus (+)</label><input className="hr-input" type="number" min="0" step="1" value={v.bonus} onChange={setNum('bonus')} /></div>
             <div className="hr-field"><label>Loan Outstanding</label><input className="hr-input" value={num(loanRemaining(hr, empId))} readOnly style={{ background: 'var(--muted)' }} /></div>
-            <div className="hr-field"><label>Loan Deduction (–)</label><input className="hr-input" type="number" value={v.loanDeduct} onChange={set('loanDeduct')} /></div>
-            <div className="hr-field"><label>Custom Loan Deduction (–)</label><input className="hr-input" type="number" value={v.customLoan} onChange={set('customLoan')} /></div>
-            <div className="hr-field"><label>Fine Deduction (–)</label><input className="hr-input" type="number" value={v.fineDeduct} onChange={set('fineDeduct')} /></div>
+            <div className="hr-field"><label>Loan Deduction (–)</label><input className="hr-input" type="number" min="0" step="1" value={v.loanDeduct} onChange={setNum('loanDeduct')} disabled={N(v.customLoan) > 0} style={N(v.customLoan) > 0 ? { background: 'var(--muted)', cursor: 'not-allowed' } : undefined} /></div>
+            <div className="hr-field"><label>Custom Loan Deduction (–)</label><input className="hr-input" type="number" min="0" step="1" value={v.customLoan} onChange={setNum('customLoan')} disabled={N(v.loanDeduct) > 0} style={N(v.loanDeduct) > 0 ? { background: 'var(--muted)', cursor: 'not-allowed' } : undefined} /></div>
+            <div className="hr-field"><label>Fine Deduction (–)</label><input className="hr-input" type="number" min="0" step="1" value={v.fineDeduct} onChange={setNum('fineDeduct')} /></div>
             <div className="hr-field"><label>Fine Comment</label><input className="hr-input" value={v.fineComment} onChange={set('fineComment')} /></div>
-            <div className="hr-field"><label>Leave Days</label><input className="hr-input" type="number" value={v.leaveCount} onChange={setLeaveCount} /></div>
-            <div className="hr-field"><label>Leave Deduction (–)</label><input className="hr-input" type="number" value={v.leaveDeduct} onChange={set('leaveDeduct')} /></div>
+            <div className="hr-field"><label>Leave Days</label><input className="hr-input" type="number" min="0" step="1" value={v.leaveCount} onChange={setLeaveCount} /></div>
+            <div className="hr-field"><label>Leave Deduction (–)</label><input className="hr-input" type="number" min="0" step="1" value={v.leaveDeduct} onChange={setNum('leaveDeduct')} /></div>
             <div className="hr-field"><label>Leave Comment</label><input className="hr-input" value={v.leaveComment} onChange={set('leaveComment')} /></div>
-            <div className="hr-field"><label>Absent Days</label><input className="hr-input" type="number" value={v.absentCount} onChange={setAbsentCount} /></div>
-            <div className="hr-field"><label>Absent Deduction (–)</label><input className="hr-input" type="number" value={v.absentDeduct} onChange={set('absentDeduct')} /></div>
+            <div className="hr-field"><label>Absent Days</label><input className="hr-input" type="number" min="0" step="1" value={v.absentCount} onChange={setAbsentCount} /></div>
+            <div className="hr-field"><label>Absent Deduction (–)</label><input className="hr-input" type="number" min="0" step="1" value={v.absentDeduct} onChange={setNum('absentDeduct')} /></div>
             <div className="hr-field"><label>Absent Comment</label><input className="hr-input" value={v.absentComment} onChange={set('absentComment')} /></div>
           </div>
           <div className="hr-net-bar">
@@ -635,7 +673,7 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
             <div className="hr-sum-card"><div className="l">Remaining</div><div className="v" style={{ color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{rs(remaining)}</div></div>
           </div>
           <div className="hr-grid3">
-            <div className="hr-field"><label>Payment Amount (Rs)</label><input className="hr-input" type="number" value={payAmt} onChange={(ev) => setPayAmt(ev.target.value)} placeholder="0" /></div>
+            <div className="hr-field"><label>Payment Amount (Rs)</label><input className="hr-input" type="number" min="0" step="1" value={payAmt} onChange={(ev) => setPayAmt(posInt(ev.target.value))} placeholder="0" /></div>
             <div className="hr-field"><label>Payment Date</label><input className="hr-input" type="date" value={payDate} onChange={(ev) => setPayDate(ev.target.value)} /></div>
             <div className="hr-field"><label>Comment</label><input className="hr-input" value={payComment} onChange={(ev) => setPayComment(ev.target.value)} placeholder="e.g. Bank transfer" /></div>
           </div>
@@ -657,6 +695,9 @@ function AdvLoanModal({ empId, hr, onSaveLoans, onClose, onToast }) {
   const setNlv = (k) => (ev) => setNl((s) => ({ ...s, [k]: ev.target.value }))
   const [rp, setRp] = useState({ loanId: activeLoans[0]?.id || '', amount: '', date: new Date().toISOString().slice(0, 10), comment: '' })
   const setRpv = (k) => (ev) => setRp((s) => ({ ...s, [k]: ev.target.value }))
+  /* Loan/repayment amounts hamesha positive integer. */
+  const posInt = (val) => (val === '' ? '' : Math.floor(Math.abs(Number(val) || 0)))
+  const setNlNum = (k) => (ev) => setNl((s) => ({ ...s, [k]: posInt(ev.target.value) }))
   // Always resolve to a valid active loan so the form never breaks after loans change.
   const selLoanId = activeLoans.some((l) => l.id === Number(rp.loanId)) ? Number(rp.loanId) : (activeLoans[0]?.id || '')
   const selLoan = activeLoans.find((l) => l.id === selLoanId)
@@ -702,9 +743,9 @@ function AdvLoanModal({ empId, hr, onSaveLoans, onClose, onToast }) {
   return (
     <Shell title="Advance / Loan" sub={`For: ${fullName(e)}`} icon="fa-hand-holding-dollar" onClose={onClose} maxWidth={620}
       foot={tab === 'setup'
-        ? <><button className="btn-secondary" onClick={onClose}>Close</button><button className="btn-primary" onClick={saveNewLoan}><i className="fa-solid fa-floppy-disk" /> Save Loan</button></>
+        ? <><button className="btn-secondary" onClick={onClose}>Close</button><SpinnerButton icon="fa-floppy-disk" onClick={saveNewLoan}>Save Loan</SpinnerButton></>
         : tab === 'repay'
-          ? <><button className="btn-secondary" onClick={onClose}>Close</button><button className="btn-primary" disabled={!activeLoans.length} onClick={saveRepay}><i className="fa-solid fa-money-bill-transfer" /> Record Repayment</button></>
+          ? <><button className="btn-secondary" onClick={onClose}>Close</button><SpinnerButton disabled={!activeLoans.length} icon="fa-money-bill-transfer" onClick={saveRepay}>Record Repayment</SpinnerButton></>
           : <button className="btn-secondary" onClick={onClose}>Close</button>}>
       <div className="hr-sum-cards">
         <div className="hr-sum-card"><div className="l">Active Loans</div><div className="v">{activeLoanCount(hr, empId)}</div></div>
@@ -719,13 +760,13 @@ function AdvLoanModal({ empId, hr, onSaveLoans, onClose, onToast }) {
 
       {tab === 'setup' && (
         <div className="hr-grid2">
-          <div className="hr-field"><label>Loan / Advance Amount (Rs)</label><input className="hr-input" type="number" value={nl.amount} onChange={setNlv('amount')} placeholder="0" /></div>
+          <div className="hr-field"><label>Loan / Advance Amount (Rs)</label><input className="hr-input" type="number" min="0" step="1" value={nl.amount} onChange={setNlNum('amount')} placeholder="0" /></div>
           <div className="hr-field"><label>Repayment Type</label><select className="hr-input" value={nl.repaymentType} onChange={setNlv('repaymentType')}><option value="">Select…</option><option>Lump Sum</option><option>Installment</option></select></div>
           <div className="hr-field"><label>Deduction Start Date</label><input className="hr-input" type="date" value={nl.deductDate} onChange={setNlv('deductDate')} /></div>
           <div className="hr-field"><label>Comment</label><input className="hr-input" value={nl.comment} onChange={setNlv('comment')} placeholder="Purpose of loan" /></div>
           {nl.repaymentType === 'Installment' && <>
             <div className="hr-field"><label>Installment Type</label><select className="hr-input" value={nl.installmentType} onChange={setNlv('installmentType')}><option value="">Select…</option><option>Monthly</option><option>Weekly</option></select></div>
-            <div className="hr-field"><label>Installment Amount (Rs)</label><input className="hr-input" type="number" value={nl.installmentAmount} onChange={setNlv('installmentAmount')} placeholder="0" /></div>
+            <div className="hr-field"><label>Installment Amount (Rs)</label><input className="hr-input" type="number" min="0" step="1" value={nl.installmentAmount} onChange={setNlNum('installmentAmount')} placeholder="0" /></div>
           </>}
         </div>
       )}
@@ -745,7 +786,7 @@ function AdvLoanModal({ empId, hr, onSaveLoans, onClose, onToast }) {
               </div>
             )}
             <div className="hr-grid3">
-              <div className="hr-field"><label>Received Amount (Rs)</label><input className="hr-input" type="number" value={rp.amount} onChange={setRpv('amount')} placeholder="0" /></div>
+              <div className="hr-field"><label>Received Amount (Rs)</label><input className="hr-input" type="number" min="0" step="1" value={rp.amount} onChange={(ev) => setRp((s) => ({ ...s, amount: posInt(ev.target.value) }))} placeholder="0" /></div>
               <div className="hr-field"><label>Received Date</label><input className="hr-input" type="date" value={rp.date} onChange={setRpv('date')} /></div>
               <div className="hr-field"><label>Comment</label><input className="hr-input" value={rp.comment} onChange={setRpv('comment')} placeholder="e.g. Cash / bank transfer" /></div>
             </div>
@@ -1005,7 +1046,7 @@ function ConfirmModal({ title, body, onClose, onConfirm }) {
           <div className="confirm-sub">{body}</div>
           <div className="confirm-btns">
             <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button>
+            <SpinnerButton className="btn-danger" icon="fa-trash-can" onClick={onConfirm}>Delete</SpinnerButton>
           </div>
         </div>
       </div>

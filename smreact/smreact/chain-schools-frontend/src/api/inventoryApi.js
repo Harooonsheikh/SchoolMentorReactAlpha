@@ -67,7 +67,9 @@ const mapItem = (r) => ({
   status: r.status || 'In Use',
   loc: clean(r.location),
   desc: clean(r.description),
-  active: r.isActive !== false,
+  /* Network list kabhi camelCase (isActive) aur kabhi PascalCase (IsActive)
+     bhej sakta hai — dono padho, warna inactivated item bhi active dikhta hai. */
+  active: (r.isActive ?? r.IsActive) !== false,
   history: [],
 })
 
@@ -128,7 +130,9 @@ function inventoryBody(p, { action, isPOS, networkId }) {
     location: nz(p.loc),
     description: nz(p.desc),
     image: '-',
-    barcode: "",
+    /* Barcode: POS product (isPOS true) ka asli barcode value jata hai; inventory
+       item (isPOS false) ke liye "" (empty) — "-" server par error deta hai. */
+    barcode: isPOS ? String(p.barcode || '').trim() : '',
     lowStock: Number(p.low) || 0,
     stockQuantity: isPOS ? (Number(p.stock) || 0) : 0,
     purchasePrice: isPOS ? (Number(p.cost) || 0) : 0,

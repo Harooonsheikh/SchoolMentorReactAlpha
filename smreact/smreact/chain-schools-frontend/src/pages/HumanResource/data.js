@@ -63,8 +63,10 @@ export const initials = (e) => (fullName(e).split(' ').map((w) => w[0]).join('')
 export const deptName = (hr, id) => hr.depts.find((d) => d.id === id)?.name || '—'
 export const desigName = (hr, id) => hr.desigs.find((d) => d.id === id)?.name || '—'
 
-export const allowances = (e) => (e.salaryHeads || []).filter((h) => h.type === 'allow').reduce((a, h) => a + Number(h.amount || 0), 0)
-export const deductions = (e) => (e.salaryHeads || []).filter((h) => h.type === 'deduct').reduce((a, h) => a + Number(h.amount || 0), 0)
+/* Amount hamesha magnitude (positive) — allow jama, deduct nafi. abs is liye
+   ke koi purana record negative amount rakhe to Net ulta na ho. */
+export const allowances = (e) => (e.salaryHeads || []).filter((h) => h.type === 'allow').reduce((a, h) => a + Math.abs(Number(h.amount || 0)), 0)
+export const deductions = (e) => (e.salaryHeads || []).filter((h) => h.type === 'deduct').reduce((a, h) => a + Math.abs(Number(h.amount || 0)), 0)
 export const gross = (e) => Number(e.basicSalary || 0) + allowances(e)
 export const netPay = (e) => gross(e) - deductions(e)
 
