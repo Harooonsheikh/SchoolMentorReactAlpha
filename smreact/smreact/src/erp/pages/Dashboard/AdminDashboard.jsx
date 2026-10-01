@@ -17,6 +17,7 @@ import { useLedgerReportData } from '../../components/Fee';
 import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser } from '../UserPermissions/permissionsData';
 import useAsync from '../../hooks/useAsync';
+import * as dashboardService from '../../services/dashboardService';
 import * as accountsService from './_forked/services/accountsService';
 import * as feeService from './_forked/services/feeService';
 import { buildStandardReportHtml } from '../../reports/reportKit';
@@ -423,6 +424,54 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const { moduleActive, user, session, role } = visibility;
   const { isActive } = useModules();      /* per-spec: explicit useModules guard for new sections */
 
+  /* ─── LIVE dashboard data (get-dashboard API) — har non-fee section ab real
+     data se bharta hai (mock constants ki jagah). Fee section alag se
+     BranchLedger (Fee reports jaisa) se aata hai, is liye yahan FeeAnalytics
+     use NAHI karte. */
+  const [dash, setDash] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const { month, year } = dashboardService.currentMonthYear();
+    dashboardService.getDashboard(month, year)
+      .then((d) => { if (alive) setDash(d || {}); })
+      .catch(() => { if (alive) setDash({}); });
+    return () => { alive = false; };
+  }, []);
+  const D    = dash || {};
+  const kpi  = D.Kpi || {};
+  const snap = D.ModuleSnapshot || {};
+  const appAdoption = Array.isArray(D.AppAdoption) ? D.AppAdoption : [];
+  const appOf = (t) => appAdoption.find((a) => a.AccountType === t) || { Total: 0, Downloaded: 0, Pending: 0 };
+  const todaysAtt   = D.TodaysAttendance || { Students: {}, Staff: {} };
+  const liveStuAtt  = todaysAtt.Students || {};
+  const liveStaffAtt = todaysAtt.Staff || {};
+  const liveLessonPlans  = Array.isArray(D.LessonPlanAnalytics) ? D.LessonPlanAnalytics : [];
+  const livePaperStats   = Array.isArray(D.PaperGeneratorStats) ? D.PaperGeneratorStats : [];
+  const liveStuBdays     = Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : [];
+  const liveStaffBdays   = Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : [];
+  const liveUpActivities = Array.isArray(D.UpcomingActivities) ? D.UpcomingActivities : [];
+  const liveRevenueStreams = Array.isArray(D.RevenueStreams) ? D.RevenueStreams : [];
+  const liveFinOverview  = D.FinancialOverview || {};
+  const dPctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
+
+  /* Live Teachers / Parents mobile-app adoption (get-dashboard AppAdoption =
+     same source as GET /branch/{id}/fcm-tokens). Totals from active counts so
+     they match the KPIs; pending = total − downloaded. */
+  const teacherAppLive = appOf('Teacher');
+  const parentAppLive  = appOf('Parent');
+  const teacherAppStatus = {
+    total: Number(kpi.ActiveStaff) || Number(teacherAppLive.Total) || 0,
+    downloaded: Number(teacherAppLive.Downloaded) || 0,
+    get pending() { return Math.max(0, this.total - this.downloaded); },
+    get pct() { return dPctOf(this.downloaded, this.total); },
+  };
+  const parentAppStatus = {
+    total: Number(kpi.ActiveStudents) || Number(parentAppLive.Total) || 0,
+    downloaded: Number(parentAppLive.Downloaded) || 0,
+    get pending() { return Math.max(0, this.total - this.downloaded); },
+    get pct() { return dPctOf(this.downloaded, this.total); },
+  };
+
   /* ─── Per-card dashboard permissions ───
      Reads the same effectivePermsForUser() used by the User Permissions
      module, driven by whatever role/user is currently impersonated via
@@ -595,46 +644,57 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   };
 
   /* ─── Existing top sections (kept) ──────────────────────────── */
+  /* LIVE module snapshot tiles — get-dashboard se. Jin modules ka get-dashboard
+     me koi count nahi (CRM leads / exams / audit), un tiles ko mock se bharne
+     ke bajaye hata diya gaya (real data nahi hai). */
   const tiles = [
     moduleActive('students') && { key: 'students', accent: MODULE_COLOR.students, label: 'Students', icon: 'fa-user-graduate',
-      value: STUDENT_STATS.activeStudents,
+      value: Number(snap.TotalStudents) || Number(kpi.ActiveStudents) || 0,
       meta: <>
-        <span className="dash-tile-meta-pill">+{STUDENT_STATS.recentAdmissions.length} this week</span>
-        <span className="dash-tile-meta-pill dash-tile-meta-pill--m">Male: {STUDENT_STATS.maleStudents}</span>
-        <span className="dash-tile-meta-pill dash-tile-meta-pill--f">Female: {STUDENT_STATS.femaleStudents}</span>
-        <span>{STUDENT_STATS.inactiveStudents} inactive</span>
+        {Number(snap.NewStudentsThisWeek) > 0 && <span className="dash-tile-meta-pill">+{snap.NewStudentsThisWeek} this week</span>}
+        <span>{Number(snap.InactiveStudents) || 0} inactive</span>
       </>,
       target: 'students' },
     moduleActive('hr') && { key: 'hr', accent: MODULE_COLOR.hr, label: 'Employees', icon: 'fa-users',
-      value: HR_STATS.activeEmployees,
-      meta: <><span className="dash-tile-meta-pill">{HR_STATS.departments.length} depts</span><span>{HR_STATS.inactiveEmployees} inactive</span></>,
+      value: Number(kpi.ActiveStaff) || Number(snap.TotalEmployees) || 0,
+      meta: <><span className="dash-tile-meta-pill">{Number(snap.TotalDepartments) || 0} depts</span><span>{Number(snap.InactiveEmployees) || 0} inactive</span></>,
       target: 'hr' },
-    moduleActive('admissions') && { key: 'crm', accent: MODULE_COLOR.admissions, label: 'Active Leads', icon: 'fa-handshake',
-      value: CRM_STATS.totalLeads,
-      meta: <><span className="dash-tile-meta-pill">{CRM_STATS.followups.today} today</span><span>{CRM_STATS.followups.overdue} overdue</span></>,
-      target: 'crm' },
-    moduleActive('examination') && { key: 'exam', accent: MODULE_COLOR.examination, label: 'Exams Scheduled', icon: 'fa-file-pen',
-      value: EXAM_STATS.totalExams,
-      meta: <><span className="dash-tile-meta-pill">{EXAM_STATS.currentTermExams} current term</span><span>{EXAM_STATS.pendingResults} results pending</span></>,
-      target: 'exam' },
-    moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Activities', icon: 'fa-calendar-days',
-      value: ACADEMICS_STATS.activities.completed + ACADEMICS_STATS.activities.ongoing + ACADEMICS_STATS.activities.upcoming,
-      meta: <><span className="dash-tile-meta-pill">{ACADEMICS_STATS.activities.upcoming} upcoming</span><span>{ACADEMICS_STATS.activities.ongoing} ongoing</span></>,
+    moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Upcoming Activities', icon: 'fa-calendar-days',
+      value: liveUpActivities.length,
+      meta: <><span className="dash-tile-meta-pill">{liveUpActivities.length} upcoming</span></>,
       target: 'acad' },
     moduleActive('fee') && { key: 'fee', accent: MODULE_COLOR.fee, label: 'Fee Collection', icon: 'fa-money-bill-wave',
-      value: FEE_STATS.collectionPct, suffix: '%',
-      meta: <><span className="dash-tile-meta-pill">{FEE_STATS.defaulters} defaulters</span><span>PKR {(FEE_STATS.outstandingTotal / 100000).toFixed(1)}L outstanding</span></>,
+      value: feeExtras.receivedPct, suffix: '%',
+      meta: <><span className="dash-tile-meta-pill">{feeExtras.studentsWithDues} defaulters</span><span>PKR {(feeExtras.pendingTotal / 100000).toFixed(1)}L outstanding</span></>,
       target: 'fee' },
-    moduleActive('auditlogs') && { key: 'audit', accent: MODULE_COLOR.auditlogs, label: "Today's Activity", icon: 'fa-clipboard-list',
-      value: AUDIT_STATS.today,
-      meta: <><span className="dash-tile-meta-pill">{AUDIT_STATS.activeUsersToday} users</span><span>{AUDIT_STATS.thisWeek} this week</span></>,
-      target: 'audit' },
   ].filter(Boolean);
 
   /* Newest announcement surfaces in the top card; sender + count of
      remaining new ones are computed for the pill + footer line. */
-  const latestAnnouncement = SCHOOL_MENTOR_ANNOUNCEMENTS[0];
-  const newAnnouncementCount = SCHOOL_MENTOR_ANNOUNCEMENTS.filter(a => a.status === 'new').length;
+  /* LIVE announcements (get-dashboard Announcements — PascalCase Title/Body/
+     AnnounceDate). Card lowercase fields padhta hai → normalize; bina title/body
+     wali junk entries filter. */
+  const liveAnnouncements = (Array.isArray(D.Announcements) ? D.Announcements : [])
+    .map((a, idx) => {
+      const created = a.AnnounceDate || a.announceDate || a.Date || a.date || a.CreatedDate || '';
+      const dt = created ? new Date(created) : null;
+      const validDt = dt && !Number.isNaN(+dt);
+      const preview = a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '';
+      return {
+        id: a.ID ?? a.id ?? `an-${idx}`,
+        sender: a.Sender ?? a.sender ?? a.CreatedBy ?? 'School Mentor — HQ',
+        title: a.Title ?? a.title ?? a.Subject ?? '',
+        preview,
+        description: preview,
+        category: a.Category ?? a.category ?? 'General',
+        date: validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
+        time: validDt ? dt.toLocaleTimeString('en-PK', { hour: 'numeric', minute: '2-digit' }) : '',
+        status: 'new',
+      };
+    })
+    .filter((a) => a.title || a.preview);
+  const latestAnnouncement = liveAnnouncements[0] || null;
+  const newAnnouncementCount = liveAnnouncements.length;
 
   /* Greeting */
   const hour = new Date().getHours();
@@ -728,28 +788,25 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             {greeting}, {firstName}
           </div>
           <div className="dash-hero-sub">
-            <b>{todayLabel}</b> · Session {session.label}. You have{' '}
-            {moduleActive('admissions') && <><b>{CRM_STATS.followups.overdue + CRM_STATS.followups.today}</b> follow-ups</>}
-            {moduleActive('admissions') && moduleActive('academics') && ' and '}
-            {moduleActive('academics') && <><b>{ACADEMICS_STATS.lessonPlans.pending}</b> lesson plans pending</>}.
+            <b>{todayLabel}</b> · Session {session.label}. <b>{Number(kpi.ActiveStudents) || Number(snap.TotalStudents) || 0}</b> students · <b>{Number(kpi.ActiveStaff) || Number(snap.TotalEmployees) || 0}</b> staff active.
           </div>
         </div>
         <div className="dash-hero-r" ref={heroStatsReplay.ref}>
           {moduleActive('students') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={STUDENT_STATS.activeStudents} duration={CHART_ANIM_MS} /></div>
+              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={Number(kpi.ActiveStudents) || Number(snap.TotalStudents) || 0} duration={CHART_ANIM_MS} /></div>
               <div className="dash-hero-stat-lbl">Active Students</div>
             </div>
           )}
           {moduleActive('hr') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={HR_STATS.activeEmployees} duration={CHART_ANIM_MS} /><small>/{HR_STATS.totalEmployees}</small></div>
+              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={Number(kpi.ActiveStaff) || Number(snap.TotalEmployees) || 0} duration={CHART_ANIM_MS} /><small>/{Number(snap.TotalEmployees) || Number(kpi.ActiveStaff) || 0}</small></div>
               <div className="dash-hero-stat-lbl">Staff Active</div>
             </div>
           )}
           {moduleActive('attendance') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={ATTENDANCE_STATS.todayStudentPct} duration={CHART_ANIM_MS} /><small>%</small></div>
+              <div className="dash-hero-stat-val"><AnimatedNumber key={heroStatsReplay.replayKey} value={dPctOf(liveStuAtt.StudentPresent, liveStuAtt.StudentTotal)} duration={CHART_ANIM_MS} /><small>%</small></div>
               <div className="dash-hero-stat-lbl">Attendance Today</div>
             </div>
           )}
@@ -772,7 +829,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               </div>
               <div>
                 <div className="adm-tc-t">School Mentor Announcements</div>
-                <div className="adm-tc-s">{latestAnnouncement.sender}</div>
+                <div className="adm-tc-s">{latestAnnouncement?.sender || 'School Mentor — HQ'}</div>
               </div>
             </div>
             {/* Only show when there are actual unread items — now a real
@@ -794,14 +851,14 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           </div>
 
           <div className="adm-tc-body">
-            <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
-            <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
+            <div className="adm-tc-an-title">{latestAnnouncement?.title || 'No announcements yet'}</div>
+            <div className="adm-tc-an-preview">{latestAnnouncement?.preview || 'New announcements will appear here.'}</div>
           </div>
 
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestAnnouncement.date} · {latestAnnouncement.time}
+              {latestAnnouncement ? `${latestAnnouncement.date} · ${latestAnnouncement.time}` : '—'}
             </span>
             <Tooltip text="View all announcements">
               <button
@@ -823,7 +880,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           title="Teachers Mobile App"
           subtitle="Adoption status"
           icon="fa-chalkboard-user"
-          data={TEACHER_APP_STATUS}
+          data={teacherAppStatus}
           ctaLabel="Download Report"
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('teachers')}
@@ -837,7 +894,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           title="Parents Mobile App"
           subtitle="Adoption status"
           icon="fa-people-roof"
-          data={PARENT_APP_STATUS}
+          data={parentAppStatus}
           ctaLabel="Download Report"
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('parents')}

@@ -1,12 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { useModules } from '../../context/ModuleContext';
 import { usePermissionsStore } from '../../context/PermissionsContext';
 import { findRole, initialsOf } from '../UserPermissions/permissionsData';
-import { CURRENT_SESSION, dashboardTypeFor } from './dashboardData';
+import { CURRENT_SESSION } from './dashboardData';
+import { useSettings } from '../Settings/settingsStore';
+import { buildUrl } from '../../../utils/apiConfig';
+import { getUserRole } from '../../services/rolesService';
 import AdminDashboard from './AdminDashboard';
-import TeacherDashboard from './TeacherDashboard';
 import SystemDialogs from '../../shared/SystemDialogs';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -21,7 +23,7 @@ export default function Dashboard({
 }) {
   const { isActive } = useModules();
   const { users, roles } = usePermissionsStore();
-  const [currentUserId, setCurrentUserId] = useState('u1');
+  const [currentUserId] = useState('u1');
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   const currentUser = useMemo(
@@ -32,14 +34,89 @@ export default function Dashboard({
     () => findRole(roles, currentUser.role),
     [roles, currentUser]
   );
-  const dashType = dashboardTypeFor(currentUser);
+  /* Head aur staff dono ko ek hi Command Center (live dashboard jaisa); mock
+     teacher/admin split hata diya. */
+  const dashType = 'admin';
+
+  /* ─── REAL logged-in identity (mock user-switcher ki jagah) ─── */
+  /* Owner ka naam — sidebar/profile wala hi source (login par set hota hai). */
+  const ownerName = (() => {
+    try { return sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || currentUser.name; }
+    catch { return currentUser.name; }
+  })();
+
+  /* Assigned ROLE — GET /get-user-role/{employeeId} (User Permissions jaisa). */
+  const [ownerRole, setOwnerRole] = useState('');
+  useEffect(() => {
+    const empId = sessionStorage.getItem('employee_ID');
+    if (!empId) return undefined;
+    let alive = true;
+    getUserRole(empId)
+      .then((d) => {
+        const row = Array.isArray(d) ? d[0] : d;
+        const name = row ? (row.roleName ?? row.RoleName ?? row.name ?? '') : '';
+        if (alive) setOwnerRole(name);
+      })
+      .catch(() => { if (alive) setOwnerRole(''); });
+    return () => { alive = false; };
+  }, []);
+
+  /* Real school/branch — report-header API (sidebar jaisa source). */
+  const [branchInfo, setBranchInfo] = useState(null);
+  useEffect(() => {
+    const branchId = sessionStorage.getItem('branchID');
+    if (!branchId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json().catch(() => null);
+        if (!cancelled && json?.success) setBranchInfo(json.data || null);
+      } catch { /* ignore — fallback label chal jayega */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const schoolLabel = [branchInfo?.branchName, branchInfo?.address].filter(Boolean).join(' — ') || 'your campus';
+
+  const accountType = (() => {
+    try { return (sessionStorage.getItem('accountType') || '').trim(); }
+    catch { return ''; }
+  })();
+
+  /* Real active session (Settings → Sessions) — mock CURRENT_SESSION ki jagah. */
+  const { currentSession } = useSettings();
+  const session = useMemo(() => {
+    if (!currentSession) return CURRENT_SESSION;
+    let daysLeft = null;
+    if (currentSession.endDate) {
+      const end = new Date(`${currentSession.endDate}T00:00:00`);
+      const diff = Math.ceil((end.getTime() - Date.now()) / 86400000);
+      daysLeft = diff > 0 ? diff : 0;
+    }
+    return {
+      id:        currentSession.id,
+      label:     currentSession.name || CURRENT_SESSION.label,
+      startDate: currentSession.startDate,
+      endDate:   currentSession.endDate,
+      daysLeft,
+    };
+  }, [currentSession]);
+
+  /* visibility.user — asli logged-in identity (naam + role), baqi fields fallback. */
+  const dashUser = useMemo(() => ({
+    ...currentUser,
+    name: ownerName || currentUser.name,
+    role: accountType || currentUser.role,
+  }), [currentUser, ownerName, accountType]);
 
   const visibility = useMemo(() => ({
     moduleActive: (modId) => !modId || isActive(modId),
-    session:      CURRENT_SESSION,
-    user:         currentUser,
+    session,
+    user:         dashUser,
     role:         currentRole,
-  }), [isActive, currentUser, currentRole]);
+    ownerName,
+    schoolName:   branchInfo?.branchName || '',
+  }), [isActive, session, dashUser, currentRole, ownerName, branchInfo]);
 
   return (
     <>
@@ -52,40 +129,26 @@ export default function Dashboard({
             <i className={`fa-solid ${dashType === 'teacher' ? 'fa-chalkboard-user' : 'fa-gauge-high'}`}></i>
           </div>
           <div>
-            <div className="dash-head-t">
-              {dashType === 'teacher' ? 'My Workspace' : 'Command Center'}
-            </div>
-            <div className="dash-head-s">
-              {dashType === 'teacher'
-                ? `Personal dashboard scoped to ${currentUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
-                : `Live operations across The Oxford System, Lahore Campus`}
-            </div>
+            <div className="dash-head-t">Command Center</div>
+            <div className="dash-head-s">{`Live operations across ${schoolLabel}`}</div>
           </div>
         </div>
         <div className="dash-head-r">
-          <Tooltip text={`Active academic session — ${CURRENT_SESSION.label}`}>
+          <Tooltip text={session.id ? `Active academic session — ${session.label}` : 'Loading the active academic session…'}>
             <div className="dash-session">
               <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
-              <span>Session {CURRENT_SESSION.label}</span>
-              <span className="dash-session-days">{CURRENT_SESSION.daysLeft}d left</span>
+              <span>Session {session.label}</span>
+              {session.daysLeft != null && (
+                <span className="dash-session-days">{session.daysLeft}d left</span>
+              )}
             </div>
           </Tooltip>
-          <Tooltip text="Switch perspective to another user (demo)">
+          {/* Logged-in owner (mock user-switcher hata diya) */}
+          <Tooltip text="Logged-in user">
             <div className="dash-impersonate">
-              <span className="up-avatar dash-impersonate-av">{initialsOf(currentUser.name)}</span>
-              <select
-                value={currentUserId}
-                onChange={(e) => setCurrentUserId(e.target.value)}
-                className="dash-impersonate-sel"
-                aria-label="View dashboard as another user"
-              >
-                {users.map(u => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} — {findRole(roles, u.role)?.name || '—'}
-                  </option>
-                ))}
-              </select>
-              <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
+              <span className="up-avatar dash-impersonate-av">{initialsOf(ownerName)}</span>
+              <span style={{ font: '700 12px/1 var(--dash-font)', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{ownerName}</span>
+              <span style={{ font: '700 9.5px/1 var(--dash-font)', color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '.4px', background: 'rgba(30,64,175,.10)', border: '1px solid rgba(30,64,175,.20)', padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap' }}>{ownerRole || accountType || '—'}</span>
             </div>
           </Tooltip>
           <Tooltip text="Open Dashboard tutorials">
@@ -100,10 +163,9 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Inner dashboard */}
-      {dashType === 'teacher'
-        ? <TeacherDashboard visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />
-        : <AdminDashboard   visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />}
+      {/* Inner dashboard — sab (head + staff) ko ek hi Command Center. */}
+      <AdminDashboard visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />
+
 
       {/* ─── Demo system surfaces (slow / offline banners + server / session /
             confirm dialogs) — driven by the floating bottom-right trigger

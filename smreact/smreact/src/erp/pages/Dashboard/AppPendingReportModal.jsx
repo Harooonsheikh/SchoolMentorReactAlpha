@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
-import { SCHOOL_BRAND, TEACHER_APP_PENDING, PARENT_APP_PENDING } from './dashboardData';
+import { SCHOOL_BRAND } from './dashboardData';
+import { getBranchFcmTokens } from '../../services/dashboardService';
 import { DASH_MODAL_CSS } from './dashModalCss';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -31,11 +32,32 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
   /* ─── Resolve dataset + meta per mode ─── */
   const isTeacher = mode === 'teachers';
   const title = isTeacher
-    ? 'Teachers Mobile App Pending Download Report'
-    : 'Parents Mobile App Pending Download Report';
+    ? 'Teachers Mobile App — Download Report'
+    : 'Parents Mobile App — Download Report';
   const subtitle = isTeacher
-    ? 'List of teachers who have not installed or signed in to the Teachers Mobile App'
-    : 'Class-wise list of parents who have not installed or signed in to the Parents Mobile App';
+    ? 'List of teachers who have installed / signed in to the Teachers Mobile App'
+    : 'List of parents who have installed / signed in to the Parents Mobile App';
+
+  /* LIVE downloaded users — GET /branch/{id}/fcm-tokens?accountType=... returns
+     those who registered an FCM token (= downloaded). Gives name + userName
+     (phone). Mapped below into the shapes the existing table already renders. */
+  const [downloaded, setDownloaded] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    getBranchFcmTokens(isTeacher ? 'teacher' : 'parent')
+      .then((list) => { if (alive) setDownloaded((Array.isArray(list) ? list : []).filter((r) => r.hasToken)); })
+      .catch(() => { if (alive) setDownloaded([]); });
+    return () => { alive = false; };
+  }, [isTeacher]);
+
+  const TEACHER_APP_PENDING = useMemo(
+    () => downloaded.map((r) => ({ name: r.name || '—', designation: '—', dept: '—', contact: r.userName || '—', status: 'Downloaded' })),
+    [downloaded],
+  );
+  const PARENT_APP_PENDING = useMemo(
+    () => downloaded.map((r) => ({ cls: 'All', student: '—', parent: r.name || '—', contact: r.userName || '—', status: 'Downloaded' })),
+    [downloaded],
+  );
 
   /* Group parents by class for class-wise display. */
   const parentGroups = useMemo(() => {
@@ -46,7 +68,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
       map.get(p.cls).push(p);
     });
     return [...map.entries()].map(([cls, rows]) => ({ cls, rows }));
-  }, [isTeacher]);
+  }, [isTeacher, PARENT_APP_PENDING]);
 
   const totalRows = isTeacher
     ? TEACHER_APP_PENDING.length
@@ -70,7 +92,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
       i += cap;
     }
     return out.length ? out : [[]];
-  }, [isTeacher, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES]);
+  }, [isTeacher, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES, TEACHER_APP_PENDING]);
 
   /* For parent groups we lay rows out group-by-group across pages. */
   const parentPages = useMemo(() => {
