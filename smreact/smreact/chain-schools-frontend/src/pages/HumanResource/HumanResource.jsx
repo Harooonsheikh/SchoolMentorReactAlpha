@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
@@ -8,6 +8,8 @@ import {
   empLoans, loanRemaining, loanTotalReturned, activeLoanCount, monthlyLoanDeduct, payKey,
 } from './data'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
+import { staffLeaveAbsent } from '../Attendance/data'
+import * as hrApi from '../../api/hrApi'
 import './HumanResource.css'
 
 export default function HumanResource() {
@@ -15,10 +17,29 @@ export default function HumanResource() {
   const [tab, setTab] = useState('basics')
   const [toast, setToast] = useState(null)
 
-  useEffect(() => { setHr(loadHr()) }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
-  const fire = (text, type = 'success') => setToast({ text, type })
+  const fire = useCallback((text, type = 'success') => setToast({ text, type }), [])
   const commit = (next) => { setHr(next); saveHr(next) }
+
+  /* Departments, designations aur employees Chain HR API se (src/api/hrApi.js).
+     Payroll + loans ka API nahi hai — wo pehle ki tarah localStorage (data.js)
+     me, API ki employee ids par. Taza list localStorage me bhi likhi jati hai
+     taake Attendance / User Permissions pages ko wohi employees milen. */
+  const reload = useCallback(async () => {
+    const [basics, emps] = await Promise.all([hrApi.getHrBasics(), hrApi.getHrEmployees()])
+    setHr((h) => { const next = { ...(h || loadHr()), ...basics, emps }; saveHr(next); return next })
+  }, [])
+  useEffect(() => {
+    reload().catch((err) => {
+      setHr((h) => h || { ...loadHr(), depts: [], desigs: [], emps: [] })
+      fire(err.message || 'Could not load HR data', 'warn')
+    })
+  }, [reload, fire])
+  /* API action → reload → toast. Fail par error toast, modal khula rehta hai. */
+  const run = async (fn, okText, okType) => {
+    try { await fn(); await reload(); if (okText) fire(okText, okType); return true }
+    catch (err) { fire(err.message || 'Something went wrong', 'warn'); return false }
+  }
   if (!hr) return null
 
   return (
@@ -37,8 +58,8 @@ export default function HumanResource() {
         ))}
       </div>
 
-      {tab === 'basics' && <Basics hr={hr} commit={commit} fire={fire} />}
-      {tab === 'employees' && <Employees hr={hr} commit={commit} fire={fire} />}
+      {tab === 'basics' && <Basics hr={hr} run={run} fire={fire} />}
+      {tab === 'employees' && <Employees hr={hr} run={run} fire={fire} />}
       {tab === 'payroll' && <Payroll hr={hr} commit={commit} fire={fire} />}
       {tab === 'reports' && <Reports hr={hr} fire={fire} />}
 
@@ -51,26 +72,28 @@ export default function HumanResource() {
 }
 
 /* ════════ HR BASICS ════════ */
-function Basics({ hr, commit, fire }) {
+function Basics({ hr, run, fire }) {
   const [open, setOpen] = useState({})
   const [deptModal, setDeptModal] = useState(null)
   const [desigModal, setDesigModal] = useState(null)
   const [del, setDel] = useState(null)
 
-  const saveDept = (data, id) => {
-    if (id) commit({ ...hr, depts: hr.depts.map((d) => (d.id === id ? { ...d, ...data } : d)) })
-    else { const nid = hr.nextDeptId + 1; commit({ ...hr, nextDeptId: nid, depts: [...hr.depts, { id: nid, ...data }] }) }
-    setDeptModal(null); fire(id ? 'Department updated' : 'Department added')
+  const saveDept = async (data, id) => {
+    if (await run(() => hrApi.saveHrDept({ id, name: data.name, desc: data.desc }), id ? 'Department updated' : 'Department added')) setDeptModal(null)
   }
-  const saveDesig = (data, id) => {
-    if (id) commit({ ...hr, desigs: hr.desigs.map((d) => (d.id === id ? { ...d, ...data } : d)) })
-    else { const nid = hr.nextDesigId + 1; commit({ ...hr, nextDesigId: nid, desigs: [...hr.desigs, { id: nid, ...data }] }) }
-    setDesigModal(null); fire(id ? 'Designation updated' : 'Designation added')
+  const saveDesig = async (data, id) => {
+    if (await run(() => hrApi.saveHrDesig({ id, ...data }), id ? 'Designation updated' : 'Designation added')) setDesigModal(null)
   }
-  const doDel = () => {
-    if (del.kind === 'dept') commit({ ...hr, depts: hr.depts.filter((d) => d.id !== del.id), desigs: hr.desigs.filter((d) => d.dId !== del.id) })
-    else commit({ ...hr, desigs: hr.desigs.filter((d) => d.id !== del.id) })
-    setDel(null); fire('Deleted', 'info')
+  const doDel = async () => {
+    const target = del
+    setDel(null)
+    await run(async () => {
+      if (target.kind === 'dept') {
+        /* Pehle is department ki designations, phir department. */
+        for (const x of hr.desigs.filter((d) => d.dId === target.id)) await hrApi.deleteHrDesig(x.id)
+        await hrApi.deleteHrDept(target.id)
+      } else await hrApi.deleteHrDesig(target.id)
+    }, 'Deleted', 'info')
   }
 
   return (
@@ -107,7 +130,7 @@ function Basics({ hr, commit, fire }) {
         )
       })}
       {deptModal && <DeptModal modal={deptModal} onClose={() => setDeptModal(null)} onSave={saveDept} onToast={fire} />}
-      {desigModal && <DesigModal modal={desigModal} depts={hr.depts} onClose={() => setDesigModal(null)} onSave={saveDesig} onToast={fire} />}
+      {desigModal && <DesigModal modal={desigModal} depts={hr.depts} quals={hr.quals || []} onClose={() => setDesigModal(null)} onSave={saveDesig} onToast={fire} />}
       {del && <ConfirmModal title={`Delete ${del.kind === 'dept' ? 'Department' : 'Designation'}?`} body={`“${del.name}” will be removed${del.kind === 'dept' ? ' along with its designations' : ''}.`} onClose={() => setDel(null)} onConfirm={doDel} />}
     </>
   )
@@ -125,18 +148,22 @@ function DeptModal({ modal, onClose, onSave, onToast }) {
     </Shell>
   )
 }
-function DesigModal({ modal, depts, onClose, onSave, onToast }) {
+function DesigModal({ modal, depts, quals, onClose, onSave, onToast }) {
   const x = modal.desig
-  const [v, setV] = useState({ dId: x?.dId || modal.dId || depts[0]?.id, name: x?.name || '', qual: x?.qual || '', desc: x?.desc || '' })
+  const [v, setV] = useState({ dId: x?.dId || modal.dId || depts[0]?.id, name: x?.name || '', qualId: x?.qualId || '', desc: x?.desc || '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: k === 'dId' ? Number(e.target.value) : e.target.value }))
-  const save = () => { if (!v.name.trim()) return onToast('Enter a designation name', 'warn'); onSave({ dId: Number(v.dId), name: v.name.trim(), qual: v.qual.trim(), desc: v.desc.trim() }, x?.id) }
+  const save = () => {
+    if (!v.name.trim()) return onToast('Enter a designation name', 'warn')
+    const qualId = Number(v.qualId) || 0
+    onSave({ dId: Number(v.dId), name: v.name.trim(), qualId, qual: quals.find((q) => q.id === qualId)?.name || '', desc: v.desc.trim() }, x?.id)
+  }
   return (
     <Shell title={x ? 'Edit Designation' : 'Add Designation'} icon="fa-user-tag" onClose={onClose} maxWidth={460}
       foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save</button></>}>
       <div className="hr-field" style={{ marginBottom: 12 }}><label>Department</label><select className="hr-input" value={v.dId} onChange={set('dId')}>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
       <div className="hr-grid2">
         <div className="hr-field"><label>Designation Name</label><input className="hr-input" value={v.name} onChange={set('name')} placeholder="e.g. Teacher" /></div>
-        <div className="hr-field"><label>Qualification</label><input className="hr-input" value={v.qual} onChange={set('qual')} placeholder="e.g. BEd" /></div>
+        <div className="hr-field"><label>Qualification</label><select className="hr-input" value={v.qualId} onChange={set('qualId')}><option value="">Select qualification</option>{quals.map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}</select></div>
       </div>
       <div className="hr-field" style={{ marginTop: 12 }}><label>Description</label><input className="hr-input" value={v.desc} onChange={set('desc')} placeholder="Short description" /></div>
     </Shell>
@@ -144,7 +171,7 @@ function DesigModal({ modal, depts, onClose, onSave, onToast }) {
 }
 
 /* ════════ EMPLOYEE MANAGEMENT ════════ */
-function Employees({ hr, commit, fire }) {
+function Employees({ hr, run, fire }) {
   const [seg, setSeg] = useState('active')
   const [search, setSearch] = useState('')
   const [fd, setFd] = useState(''); const [fdes, setFdes] = useState('')
@@ -159,13 +186,14 @@ function Employees({ hr, commit, fire }) {
       && (!q || `${fullName(e)}${e.eid}${e.cnic}${e.phone}${deptName(hr, e.dId)}${desigName(hr, e.desId)}`.toLowerCase().includes(q)))
   }, [hr, seg, search, fd, fdes])
 
-  const saveEmp = (data, id) => {
-    if (id) commit({ ...hr, emps: hr.emps.map((e) => (e.id === id ? { ...e, ...data } : e)) })
-    else { const nid = hr.nextEmpId + 1; commit({ ...hr, nextEmpId: nid, emps: [...hr.emps, { id: nid, eid: `EMP-${String(nid).padStart(3, '0')}`, status: 'Active', ...data }] }) }
-    setEmpModal(null); fire(id ? 'Employee updated' : 'Employee added')
+  const saveEmp = async (data, id) => {
+    const prev = id ? hr.emps.find((e) => e.id === id) : null
+    if (await run(() => hrApi.saveHrEmployee(data, prev), id ? 'Employee updated' : 'Employee added')) setEmpModal(null)
   }
-  const toggleStatus = (e) => { const status = e.status === 'Active' ? 'Inactive' : 'Active'; commit({ ...hr, emps: hr.emps.map((x) => (x.id === e.id ? { ...x, status } : x)) }); fire(status === 'Active' ? 'Employee reactivated' : 'Employee marked inactive', 'info') }
-  const doDel = () => { commit({ ...hr, emps: hr.emps.filter((e) => e.id !== del.id) }); setDel(null); fire('Employee deleted', 'info') }
+  const toggleStatus = (e) => (e.status === 'Active'
+    ? run(() => hrApi.markHrEmployeeInactive(e.id), 'Employee marked inactive', 'info')
+    : run(() => hrApi.restoreHrEmployee(e.id), 'Employee reactivated', 'info'))
+  const doDel = () => { const id = del.id; setDel(null); run(() => hrApi.deleteHrEmployeePermanent(id), 'Employee deleted', 'info') }
 
   return (
     <>
@@ -223,10 +251,10 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
   const [mt, setMt] = useState('personal')
   const [v, setV] = useState(() => ({
     firstName: e?.firstName || '', lastName: e?.lastName || '', fn: e?.fn || '', cnic: e?.cnic || '', dob: e?.dob || '', gender: e?.gender || 'Male', marital: e?.marital || 'Single', phone: e?.phone || '', email: e?.email || '', address: e?.address || '', blood: e?.blood || '', emergency: e?.emergency || '',
-    dId: e?.dId || hr.depts[0]?.id, desId: e?.desId || hr.desigs[0]?.id, join: e?.join || '', type: e?.type || 'Permanent', manager: e?.manager || '', qual: e?.qual || '', exp: e?.exp || '', shift: e?.shift || '', city: e?.city || '', role: e?.role || '',
+    dId: e?.dId || hr.depts[0]?.id, desId: e?.desId || hr.desigs[0]?.id, join: e?.join || '', type: e?.type || 'Permanent', manager: e?.manager || '', qualId: e?.qualId || '', exp: e?.exp || '', shift: e?.shift || '', city: e?.city || '', role: e?.role || '',
     basicSalary: e?.basicSalary ?? '', payMethod: e?.payMethod || 'Bank Transfer', bankName: e?.bankName || '', bankAcc: e?.bankAcc || '',
     salaryHeads: e?.salaryHeads ? JSON.parse(JSON.stringify(e.salaryHeads)) : [{ name: 'House Allowance', type: 'allow', amount: 0 }],
-    leaves: e?.leaves ? { ...e.leaves } : { annual: 20, casual: 8, sick: 6, balance: 18, policy: 'Standard', absentDed: 150, unpaidDed: 1200 },
+    leaves: e?.leaves ? { ...e.leaves } : { annual: '', casual: '', sick: '', balance: '', policy: '', absentDed: '', unpaidDed: '' },
     financial: e?.financial ? { ...e.financial } : { salaryAdvance: 0, loanBalance: 0, securityDeposit: 0, clearanceStatus: 'pending' },
   }))
   const set = (k) => (ev) => setV((s) => ({ ...s, [k]: ev.target.value }))
@@ -241,7 +269,7 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
   const save = () => {
     if (!v.firstName.trim()) return onToast('Enter the employee first name', 'warn')
     if (!desigOpts.find((x) => x.id === Number(v.desId)) && desigOpts[0]) v.desId = desigOpts[0].id
-    onSave({ ...v, firstName: v.firstName.trim(), lastName: v.lastName.trim(), dId: Number(v.dId), desId: Number(v.desId), basicSalary: Number(v.basicSalary) || 0, salaryHeads: v.salaryHeads.filter((h) => h.name.trim()).map((h) => ({ name: h.name.trim(), type: h.type, amount: Number(h.amount) || 0 })) }, e?.id)
+    onSave({ ...v, firstName: v.firstName.trim(), lastName: v.lastName.trim(), dId: Number(v.dId), desId: Number(v.desId), basicSalary: Number(v.basicSalary) || 0, salaryHeads: v.salaryHeads.filter((h) => h.name.trim()).map((h) => ({ id: h.id, name: h.name.trim(), type: h.type, amount: Number(h.amount) || 0 })) }, e?.id)
   }
 
   return (
@@ -271,7 +299,7 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
           <div className="hr-field"><label>Joining Date</label><input className="hr-input" type="date" value={v.join} onChange={set('join')} /></div>
           <div className="hr-field"><label>Employment Type</label><select className="hr-input" value={v.type} onChange={set('type')}>{EMP_TYPES.map((t) => <option key={t}>{t}</option>)}</select></div>
           <div className="hr-field"><label>Reporting Manager</label><input className="hr-input" value={v.manager} onChange={set('manager')} /></div>
-          <div className="hr-field"><label>Qualification</label><input className="hr-input" value={v.qual} onChange={set('qual')} /></div>
+          <div className="hr-field"><label>Qualification</label><select className="hr-input" value={v.qualId} onChange={set('qualId')}><option value="">Select qualification</option>{(hr.quals || []).map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}</select></div>
           <div className="hr-field"><label>Experience</label><input className="hr-input" value={v.exp} onChange={set('exp')} placeholder="e.g. 5 yrs" /></div>
           <div className="hr-field"><label>Shift</label><input className="hr-input" value={v.shift} onChange={set('shift')} placeholder="e.g. 8:00 AM – 2:00 PM" /></div>
           <div className="hr-field" style={{ gridColumn: '1/-1' }}><label>Role / Responsibilities</label><input className="hr-input" value={v.role} onChange={set('role')} /></div>
@@ -336,20 +364,42 @@ function Payroll({ hr, commit, fire }) {
   const recOf = (id) => hr.payroll[payKey(id, year, month)]
   const totals = active.reduce((a, e) => { a.gross += gross(e); a.ded += deductions(e); a.net += netPay(e); return a }, { gross: 0, ded: 0, net: 0 })
 
-  const saveSetup = (empId, setup) => {
+  /* Setup fields → payroll-setup API body. UI month 0-based, API 1–12. */
+  const setupPayload = (empId, s = {}) => ({
+    employeeID: empId, payrollMonth: month + 1, payrollYear: year,
+    bonus: s.bonus, loanDeduction: s.loanDeduct, customLoanAmount: s.customLoan,
+    fineDeduction: s.fineDeduct, fineComment: s.fineComment,
+    leaveCount: s.leaveCount, leaveDeduction: s.leaveDeduct, leaveComment: s.leaveComment,
+    absentCount: s.absentCount, absentDeduction: s.absentDeduct, absentComment: s.absentComment,
+  })
+  /* Setup ko API par bhejo (POST /api/hr/payroll-setup) aur wapas aaya payrollID
+     local record me rakho — payment isi id par lagti hai. API fail ho to record
+     phir bhi local save hota hai (UI wohi rehti hai). */
+  const saveSetup = async (empId, setup) => {
     const key = payKey(empId, year, month); const existing = hr.payroll[key] || {}
-    commit({ ...hr, payroll: { ...hr.payroll, [key]: { ...existing, month: MONTHS[month], year, ...setup, payments: existing.payments || [], generatedAt: existing.generatedAt || new Date().toISOString().slice(0, 10) } } })
-    fire('Payroll saved')
+    let apiPayrollId = existing.apiPayrollId || 0
+    try {
+      const json = await hrApi.saveHrPayrollSetup(setupPayload(empId, setup))
+      apiPayrollId = hrApi.payrollIdFromResponse(json) || apiPayrollId
+      fire('Payroll saved')
+    } catch (err) { fire(err.message || 'Saved locally — server sync failed', 'warn') }
+    commit({ ...hr, payroll: { ...hr.payroll, [key]: { ...existing, month: MONTHS[month], year, ...setup, apiPayrollId, payments: existing.payments || [], generatedAt: existing.generatedAt || new Date().toISOString().slice(0, 10) } } })
   }
-  const recordPayment = (empId, payment) => {
+  const recordPayment = async (empId, payment) => {
     const key = payKey(empId, year, month); const rec = hr.payroll[key]; if (!rec) return
+    /* Payment ke liye server par payrollID chahiye — na ho to pehle setup POST. */
+    let apiPayrollId = rec.apiPayrollId || 0
+    try {
+      if (!apiPayrollId) apiPayrollId = hrApi.payrollIdFromResponse(await hrApi.saveHrPayrollSetup(setupPayload(empId, rec))) || 0
+      await hrApi.saveHrPayrollPayment({ payrollID: apiPayrollId, amount: payment.amount, comment: payment.comment, paymentDate: payment.date })
+    } catch (err) { fire(err.message || 'Payment saved locally — server sync failed', 'warn') }
     const payments = [...(rec.payments || []), payment]
     const paid = payments.reduce((a, p) => a + Number(p.amount || 0), 0)
-    let nextHr = { ...hr, payroll: { ...hr.payroll, [key]: { ...rec, payments } } }
+    let nextHr = { ...hr, payroll: { ...hr.payroll, [key]: { ...rec, apiPayrollId, payments } } }
     // when fully paid, apply the loan installment deduction against active loans (once)
     const effLoan = (rec.customLoan > 0 ? rec.customLoan : rec.loanDeduct) || 0
     if (paid >= rec.netPayable && !rec.loanRecorded && effLoan > 0) {
-      nextHr = { ...nextHr, loans: applyLoanDeduction(hr, empId, effLoan), payroll: { ...nextHr.payroll, [key]: { ...rec, payments, loanRecorded: true } } }
+      nextHr = { ...nextHr, loans: applyLoanDeduction(hr, empId, effLoan), payroll: { ...nextHr.payroll, [key]: { ...rec, apiPayrollId, payments, loanRecorded: true } } }
     }
     commit(nextHr); fire(`Payment of ${rs(payment.amount)} recorded`)
   }
@@ -358,7 +408,14 @@ function Payroll({ hr, commit, fire }) {
     active.forEach((e) => { const key = payKey(e.id, year, month); if (!p[key]) { const ld = monthlyLoanDeduct(hr, e.id); p[key] = { month: MONTHS[month], year, basicPay: Number(e.basicSalary || 0), bonus: 0, totalGross: gross(e), stdDeductions: deductions(e), loanDeduct: ld, customLoan: 0, fineDeduct: 0, leaveDeduct: 0, absentDeduct: 0, totalDeductions: deductions(e) + ld, netPayable: gross(e) - deductions(e) - ld, payments: [], generatedAt: new Date().toISOString().slice(0, 10) } } })
     commit({ ...hr, payroll: p }); fire('Payroll generated for all pending')
   }
-  const saveLoans = (empId, list, bumpId) => commit({ ...hr, ...(bumpId ? { nextLoanId: (hr.nextLoanId || 1002) + 1 } : {}), loans: { ...hr.loans, [empId]: list } })
+  /* Loan write ke baad us employee ke loans API se taza karo (real server ids
+     ke saath — repayment isi id par jati hai). Read SP abhi na ho to jo local
+     `list` bana hai wohi rakh lo, taake UI na ruke. */
+  const saveLoans = async (empId, list, bumpId) => {
+    let loans = list
+    try { loans = await hrApi.getHrEmployeeLoans(empId) } catch { /* read SP down → local list */ }
+    commit({ ...hr, ...(bumpId ? { nextLoanId: (hr.nextLoanId || 1002) + 1 } : {}), loans: { ...hr.loans, [empId]: loans } })
+  }
 
   return (
     <>
@@ -492,10 +549,18 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
   const rec = hr.payroll[payKey(empId, year, month)] || {}
   const hasPayments = (rec.payments || []).length > 0
   const [tab, setTab] = useState(hasPayments ? 'payment' : 'setup')
-  const [v, setV] = useState({
-    bonus: rec.bonus || 0, loanDeduct: rec.loanDeduct ?? monthlyLoanDeduct(hr, empId), customLoan: rec.customLoan || 0,
-    fineDeduct: rec.fineDeduct || 0, fineComment: rec.fineComment || '', leaveCount: rec.leaveCount || 0, leaveDeduct: rec.leaveDeduct || 0, leaveComment: rec.leaveComment || '',
-    absentCount: rec.absentCount || 0, absentDeduct: rec.absentDeduct || 0, absentComment: rec.absentComment || '',
+  const [v, setV] = useState(() => {
+    /* Saved payroll ho to wahi; warna is mahine ki Attendance se leave/absent din
+       pre-fill (deduction wahi formula jo manual entry par chalta hai). */
+    const auto = staffLeaveAbsent(e?.eid, year, month)
+    const leaveCount = rec.leaveCount ?? auto.leave
+    const absentCount = rec.absentCount ?? auto.absent
+    return {
+      bonus: rec.bonus || 0, loanDeduct: rec.loanDeduct ?? monthlyLoanDeduct(hr, empId), customLoan: rec.customLoan || 0,
+      fineDeduct: rec.fineDeduct || 0, fineComment: rec.fineComment || '',
+      leaveCount, leaveDeduct: rec.leaveDeduct ?? (leaveCount * (Number(e?.leaves?.absentDed) || 0)), leaveComment: rec.leaveComment || '',
+      absentCount, absentDeduct: rec.absentDeduct ?? (absentCount * (Number(e?.leaves?.unpaidDed) || 0)), absentComment: rec.absentComment || '',
+    }
   })
   const set = (k) => (ev) => setV((s) => ({ ...s, [k]: ev.target.value }))
   const setLeaveCount = (ev) => { const c = Number(ev.target.value) || 0; setV((s) => ({ ...s, leaveCount: ev.target.value, leaveDeduct: c * (Number(e.leaves?.absentDed) || 0) })) }
@@ -597,28 +662,41 @@ function AdvLoanModal({ empId, hr, onSaveLoans, onClose, onToast }) {
   const selLoan = activeLoans.find((l) => l.id === selLoanId)
   const repayAfter = selLoan ? Math.max(0, selLoan.remaining - (Number(rp.amount) || 0)) : 0
 
-  const saveNewLoan = () => {
+  const saveNewLoan = async () => {
     const amt = Number(nl.amount) || 0
     if (amt <= 0) return onToast('Enter a valid loan amount', 'warn')
     if (!nl.repaymentType) return onToast('Select a repayment type', 'warn')
     if (nl.repaymentType === 'Installment' && (!nl.installmentType || !Number(nl.installmentAmount))) return onToast('Complete the installment details', 'warn')
+    const isInst = nl.repaymentType === 'Installment'
+    const instAmt = isInst ? Number(nl.installmentAmount) : amt
     const id = hr.nextLoanId || (1000 + loans.length + 1)
-    const next = [...loans, { id, loanNumber: loans.length + 1, amount: amt, comment: nl.comment.trim() || 'N/A', repaymentType: nl.repaymentType, deductDate: nl.deductDate, installmentType: nl.repaymentType === 'Installment' ? nl.installmentType : null, installmentAmount: nl.repaymentType === 'Installment' ? Number(nl.installmentAmount) : amt, status: 'active', received: [], remaining: amt, createdAt: new Date().toISOString().slice(0, 10) }]
-    onSaveLoans(empId, next, true)
+    const next = [...loans, { id, loanNumber: loans.length + 1, amount: amt, comment: nl.comment.trim() || 'N/A', repaymentType: nl.repaymentType, deductDate: nl.deductDate, installmentType: isInst ? nl.installmentType : null, installmentAmount: instAmt, status: 'active', received: [], remaining: amt, createdAt: new Date().toISOString().slice(0, 10) }]
+    try {
+      await hrApi.saveHrEmployeeLoan({ employeeID: empId, loanAmount: amt, comments: nl.comment.trim(), repaymentType: nl.repaymentType, repaymentDate: nl.deductDate, installmentType: isInst ? nl.installmentType : '', installmentAmount: instAmt })
+    } catch (err) { onToast(err.message || 'Loan saved locally — server sync failed', 'warn') }
+    await onSaveLoans(empId, next, true)
     setNl({ amount: '', comment: '', repaymentType: '', deductDate: new Date().toISOString().slice(0, 10), installmentType: '', installmentAmount: '' })
     onToast(`Loan of ${rs(amt)} set up`)
   }
-  const saveRepay = () => {
+  const saveRepay = async () => {
     const amt = Number(rp.amount) || 0; const loan = loans.find((l) => l.id === selLoanId)
     if (!loan) return onToast('Select a loan', 'warn')
     if (amt <= 0) return onToast('Enter a valid amount', 'warn')
     if (amt > loan.remaining) return onToast(`Amount cannot exceed remaining ${rs(loan.remaining)}`, 'warn')
     const next = loans.map((l) => { if (l.id !== loan.id) return l; const remaining = l.remaining - amt; return { ...l, received: [...(l.received || []), { amount: amt, date: rp.date, comment: rp.comment.trim() }], remaining: Math.max(0, remaining), status: remaining <= 0 ? 'returned' : 'active' } })
-    onSaveLoans(empId, next); setRp((s) => ({ ...s, amount: '', comment: '' })); onToast(`Repayment of ${rs(amt)} recorded`)
+    try {
+      await hrApi.saveHrEmployeeLoanRepayment({ loanID: loan.id, amount: amt, repaymentDate: rp.date, comments: rp.comment.trim() })
+    } catch (err) { onToast(err.message || 'Repayment saved locally — server sync failed', 'warn') }
+    await onSaveLoans(empId, next); setRp((s) => ({ ...s, amount: '', comment: '' })); onToast(`Repayment of ${rs(amt)} recorded`)
   }
-  const markReturned = (loan) => {
+  /* Chain API me mark-returned endpoint nahi — poore remaining ki ek repayment
+     bhej kar loan band hota hai (wahi asar). */
+  const markReturned = async (loan) => {
     const next = loans.map((l) => { if (l.id !== loan.id) return l; const received = [...(l.received || [])]; if (l.remaining > 0) received.push({ amount: l.remaining, date: new Date().toISOString().slice(0, 10), comment: 'Final settlement — marked returned' }); return { ...l, received, remaining: 0, status: 'returned' } })
-    onSaveLoans(empId, next); onToast('Loan marked returned', 'info')
+    try {
+      if (loan.remaining > 0) await hrApi.saveHrEmployeeLoanRepayment({ loanID: loan.id, amount: loan.remaining, repaymentDate: new Date().toISOString().slice(0, 10), comments: 'Final settlement — marked returned' })
+    } catch (err) { onToast(err.message || 'Marked locally — server sync failed', 'warn') }
+    await onSaveLoans(empId, next); onToast('Loan marked returned', 'info')
   }
 
   return (

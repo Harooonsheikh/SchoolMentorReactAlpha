@@ -62,5 +62,21 @@ export function dayType(att, d) {
 }
 export const recKey = (empId, iso) => `${empId}|${iso}`
 
+/* Aik employee (eid) ke aik mahine (month0 = 0-based) ke marked leave/absent
+   din — Payroll setup ko pre-fill karne ke liye. Sirf working days gintey hain
+   (weekly off / holiday chhod kar). */
+export function staffLeaveAbsent(empId, year, month0) {
+  if (!empId) return { leave: 0, absent: 0 }
+  const att = loadAtt()
+  let leave = 0; let absent = 0
+  monthDates(year, month0).forEach((d) => {
+    if (dayType(att, d).type !== 'working') return
+    const r = att.records[recKey(empId, isoOf(d))]
+    if (r?.status === 'absent') absent += 1
+    else if (r?.status === 'leave') leave += 1
+  })
+  return { leave, absent }
+}
+
 /* Time format 24h → 12h. */
 export function fmtTime(t) { if (!t || !t.includes(':')) return t || '—'; const [h, m] = t.split(':').map(Number); const ap = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
