@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ExcelJS from 'exceljs';
 import Tooltip from '../components/Tooltip';
+import { activeSessionName, buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    REPORT KIT — the ERP-wide standard report system.
@@ -32,8 +33,92 @@ import Tooltip from '../components/Tooltip';
    once (see export below) before using <StandardReportPicker>.
    ═══════════════════════════════════════════════════════════════════ */
 
-export const REPORT_SCHOOL_NAME = 'The Oxford System, Lahore Campus';
-export const REPORT_ACADEMIC_YEAR = 'Academic Year 2026–2027';
+/* ─── Current branch ka header (naam / logo / session) ───
+   Pehle yahan 'The Oxford System, Lahore Campus' aur 'Academic Year 2026–2027'
+   hard-coded the — Fee dashboard ki saari reports (Fee Received, Discount,
+   Advance, Daily Receiving …) har branch par wahi chhapti thin. Ab
+   /report-header/{branchID} se aata hai aur branchID ke saath cache hota hai. */
+const RK_SS_KEY = 'reportBranchHeader';
+const RK_EMPTY = { branchID: null, name: '', logo: '', address: '', phone: '', email: '', session: '' };
+let _branchCache = (() => {
+  try { const v = JSON.parse(sessionStorage.getItem(RK_SS_KEY) || 'null'); return v && v.branchID ? v : { ...RK_EMPTY }; }
+  catch { return { ...RK_EMPTY }; }
+})();
+let _branchLoading = null;
+
+/* Current branch ka header — GET /report-header/{branchID} (sessionStorage branchID). */
+export function loadReportBranch() {
+  const branchID = sessionStorage.getItem('branchID');
+  if (!branchID) return Promise.resolve(_branchCache);
+  if (_branchCache.branchID === branchID) return Promise.resolve(_branchCache);
+  if (_branchLoading) return _branchLoading;
+  _branchLoading = fetch(buildUrl(`/report-header/${branchID}`), { headers: { Accept: '*/*' } })
+    .then(res => res.json().catch(() => null).then(json => {
+      if (!res.ok || !json || json.success === false) throw new Error('report-header failed');
+      const d = json.data || {};
+      _branchCache = {
+        branchID,
+        name:    d.branchName || d.name || '',
+        logo:    d.branchLogo ? resolveMediaUrl(d.branchLogo) : '',
+        address: d.address || d.branchAddress || '',
+        phone:   d.phone || d.phoneNo || d.contactNo || d.mobile || '',
+        email:   d.email || d.branchEmail || '',
+        session: d.academicSession || '',
+      };
+      try {
+        sessionStorage.setItem(RK_SS_KEY, JSON.stringify(_branchCache));
+        if (_branchCache.name) sessionStorage.setItem('branchName', _branchCache.name);
+      } catch { /* ignore */ }
+      return _branchCache;
+    }))
+    .catch(() => _branchCache)
+    .finally(() => { _branchLoading = null; });
+  return _branchLoading;
+}
+
+/* Pehle se load — abhi, aur har 1.5 sec check (fetch sirf tab jab branch badle),
+   taake report kholte waqt header kabhi khali/dummy na aaye. */
+if (typeof window !== 'undefined') {
+  loadReportBranch();
+  window.setInterval(() => {
+    const id = sessionStorage.getItem('branchID');
+    if (id && _branchCache.branchID !== id) loadReportBranch();
+  }, 1500);
+}
+
+export function currentBranch() {
+  const branchID = sessionStorage.getItem('branchID');
+  if (_branchCache.branchID !== branchID) { loadReportBranch(); return { ...RK_EMPTY, name: sessionStorage.getItem('branchName') || '' }; }
+  return _branchCache;
+}
+
+/* Dashboard reports: window foran kholo (pop-up blocker se bachao) → current
+   branch ka header load hone ka intezar → report likho → logo load → print. */
+export async function openDashReport(buildHtml, { toast = () => {}, okMsg = '' } = {}) {
+  const w = window.open('', '_blank');
+  if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+  w.document.write('<p style="font-family:Segoe UI,Arial,sans-serif;padding:24px;color:#475569">Loading report…</p>');
+  await loadReportBranch();
+  const html = buildHtml();
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  const imgs = Array.from(w.document.images || []);
+  await Promise.all(imgs.map(img => (img.complete ? null : new Promise(r => { img.onload = r; img.onerror = r; }))));
+  setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 200);
+  if (okMsg) toast(okMsg, 'success');
+}
+
+export function reportSchoolName() {
+  return currentBranch().name || sessionStorage.getItem('branchName') || sessionStorage.getItem('displayName') || '';
+}
+export function reportAcademicYear() {
+  const s = activeSessionName() || currentBranch().session || '';
+  return s ? (/academic/i.test(s) ? s : `Academic Year ${s}`) : '';
+}
+/* Purane imports ke liye — ab yeh getter hain, constant nahi. */
+export const REPORT_SCHOOL_NAME = '';
+export const REPORT_ACADEMIC_YEAR = '';
 
 /* `.report-picker-overlay`/`.rp-*` — the CSS every <StandardReportPicker>
    render needs. Verbatim copy of the block that already lived inline in
@@ -278,10 +363,16 @@ export function reportLogoSvg(isColor, initials = 'OX') {
    to "<Academic Year> · <Colorful|Colorless> Report" (Academics'
    own convention) but a module may override it (e.g. Examination
    passing its own term/exam context). ─── */
-export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitleLine, schoolName = REPORT_SCHOOL_NAME, logoInitials = 'OX' }) {
+export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitleLine, schoolName, logoInitials }) {
   const p = reportPalette(isColor);
-  const logoSvg = reportLogoSvg(isColor, logoInitials);
-  const sub = subtitleLine || `${REPORT_ACADEMIC_YEAR} · ${p.styleLabel} Report${isColor ? '' : ' (low-ink)'}`;
+  schoolName = schoolName || reportSchoolName();
+  const initials = logoInitials || (schoolName.replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'SM');
+  const branchLogo = currentBranch().logo;
+  const logoSvg = branchLogo
+    ? `<img src="${branchLogo}" alt="" style="width:100%;height:100%;object-fit:contain;background:#fff;border-radius:12px" />`
+    : reportLogoSvg(isColor, initials);
+  const yearLine = reportAcademicYear();
+  const sub = subtitleLine || `${yearLine ? yearLine + ' · ' : ''}${p.styleLabel} Report${isColor ? '' : ' (low-ink)'}`;
   const fmtLabel = (format || 'pdf').toUpperCase();
   const generatedOn = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -343,16 +434,62 @@ export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitle
    buildReportTableHtml below) + footer + print toolbar. `orientation`
    lets wide-table reports (Examination's) go landscape while
    Academics' single-topic reports stay portrait. ─── */
-export function buildStandardReportHtml({ title, format = 'pdf', isColor, bodyHtml, subtitleLine, schoolName, logoInitials, orientation = 'portrait', includeToolbar = true }) {
-  const { headerBlock, footerBlock, toolbarBlock, palette } = buildReportHeaderFooter({ isColor, reportTitle: title, format, subtitleLine, schoolName, logoInitials });
-  const pageWidth = orientation === 'landscape' ? '297mm' : '210mm';
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title} — Report</title>
-    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${palette.textD};font-size:13px}.page{width:${pageWidth};margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4 ${orientation};margin:15mm}}</style>
-  </head><body><div class="page">
-    ${headerBlock}
-    <div style="padding:28px 32px">${bodyHtml}</div>
-    ${footerBlock}
-    ${includeToolbar ? toolbarBlock : ''}
+export function buildStandardReportHtml({ title = '', bodyHtml = '', orientation = 'portrait', includeToolbar = true } = {}) {
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const b = currentBranch();
+  const session = activeSessionName() || b.session || '';
+  const sessionLine = session ? (/academic/i.test(session) ? session : `Academic Session ${session}`) : '';
+  const initials = (b.name || 'School').replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'SM';
+  const logo = b.logo
+    ? `<img src="${esc(b.logo)}" alt="" style="width:100%;height:100%;object-fit:contain" />`
+    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font:900 22px Arial,sans-serif;color:#1E3A8A">${esc(initials)}</div>`;
+  const contact = [b.phone && `&#9742; ${esc(b.phone)}`, b.email && `&#9993; ${esc(b.email)}`].filter(Boolean).join(' &nbsp;·&nbsp; ');
+  const generated = new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+  const width = orientation === 'landscape' ? '297mm' : '210mm';
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(title)}${b.name ? ` — ${esc(b.name)}` : ''}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A;font-size:12px}
+    .page{width:${width};margin:0 auto}
+    .hd{background:#1E3A8A;color:#fff;padding:22px 30px 20px}
+    .hd-top{display:flex;align-items:center;gap:16px}
+    .hd-logo{width:70px;height:70px;border-radius:14px;background:#fff;padding:6px;flex-shrink:0;overflow:hidden}
+    .hd-name{font-size:20px;font-weight:800;line-height:1.2}
+    .hd-addr{font-size:11.5px;color:rgba(255,255,255,.85);margin-top:3px}
+    .hd-ct{font-size:11px;color:rgba(255,255,255,.75);margin-top:2px}
+    .hd-div{height:1px;background:rgba(255,255,255,.22);margin:14px 0 12px}
+    .hd-title{font-size:19px;font-weight:800}
+    .hd-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .hd-chip{background:rgba(255,255,255,.14);padding:4px 12px;border-radius:20px;font-size:11px}
+    .bd{padding:22px 30px}
+    .ft{border-top:1px solid #E5E7EB;padding:12px 30px;display:flex;justify-content:space-between;font-size:10.5px;color:#64748B}
+    .no-print{text-align:center;padding:20px;background:#F8FAFC;border-top:1px solid #E2E8F0}
+    .no-print button{border:none;padding:11px 26px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;margin:0 5px}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4 ${orientation};margin:12mm}}
+  </style></head><body><div class="page">
+    <div class="hd">
+      <div class="hd-top">
+        <div class="hd-logo">${logo}</div>
+        <div>
+          <div class="hd-name">${esc(b.name)}</div>
+          ${b.address ? `<div class="hd-addr">${esc(b.address)}</div>` : ''}
+          ${contact ? `<div class="hd-ct">${contact}</div>` : ''}
+        </div>
+      </div>
+      <div class="hd-div"></div>
+      <div class="hd-title">${esc(title)}</div>
+      <div class="hd-chips">
+        ${sessionLine ? `<span class="hd-chip">${esc(sessionLine)}</span>` : ''}
+        <span class="hd-chip"><b>Generated:</b> ${esc(generated)}</span>
+      </div>
+    </div>
+    <div class="bd">${bodyHtml}</div>
+    <div class="ft"><span>${esc(b.name)}</span><span>School Mentor ERP</span><span>${esc(title)}</span></div>
+    ${includeToolbar ? `<div class="no-print">
+      <button onclick="window.print()" style="background:#1E3A8A;color:#fff">Print / Save as PDF</button>
+      <button onclick="window.close()" style="background:#fff;border:1.5px solid #CBD5E1;color:#64748B">Close</button>
+    </div>` : ''}
   </div></body></html>`;
 }
 

@@ -50,3 +50,27 @@ export async function getBranchFcmTokens(accountType) {
   }
   return Array.isArray(json?.data) ? json.data : [];
 }
+
+/* Branch ka POORA active staff — Teachers App Status report ke liye.
+     GET /api/LaunchSetup/get-employees-by-branch/{branchId}?isActive=true
+   fcm-tokens sirf un ko bhejta hai jin ke paas token hai, is liye "Not
+   Downloaded" wale yahin se aate hain. branchID sessionStorage se. */
+export async function getBranchStaff() {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const token = sessionStorage.getItem('token');
+  const res = await fetch(
+    buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}?isActive=true`),
+    { headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load staff list');
+  }
+  return (Array.isArray(json?.data) ? json.data : []).map(e => ({
+    id:          Number(e.id) || 0,
+    name:        [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || e.name || e.employeeName || '—',
+    phone:       e.phone || e.mobile || e.contactNo || '',
+    designation: e.designationName || e.designation || '',
+    department:  e.departmentName || e.department || '',
+  }));
+}

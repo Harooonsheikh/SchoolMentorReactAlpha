@@ -4287,3 +4287,4 @@ export const ADM_NEW_CSS = `
   .fa-viewcards-btn { width: 100%; justify-content: center; }
 }
 `;
+export { openDashReport } from '../../reports/reportKit';

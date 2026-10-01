@@ -1,7 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DASH_MODAL_CSS } from './dashModalCss';
-import { feeDashReportHTML } from './AdminDashboard';
+import { feeDashReportHTML, openDashReport } from './AdminDashboard';
+import {
+  localISO, useDailyLedger, useLoginNames,
+  buildDailyReceivingFromLedger, buildDailyAdvanceFromLedger, buildDailyAdjustmentFromLedger,
+} from './dashboardLedgerDaily';
 
 /* ═══════════════════════════════════════════════════════════════════
    DAILY RECEIVING REPORT MODAL — attached to the Fee Analytics
@@ -35,62 +39,8 @@ import { feeDashReportHTML } from './AdminDashboard';
    report builder is built from — genuinely reusing the existing
    reporting system rather than inventing a new one. */
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
-/* Mirrors Fee.jsx's own `receivedBy` helper / feeDashboardExtra.js's
-   `receivedByLabel` — explicit on the payment, otherwise derived from
-   its source. Kept as its own copy here, same self-contained-module
-   convention already used by every other file in this folder. */
-function receivedByLabel(p) {
-  if (!p) return '—';
-  if (p.by) return p.by;
-  if (p.source === 'onelink' || p.source === 'bank') return 'OneLink / Bank';
-  return 'Front Desk';
-}
-
-function buildDailyRows({ receipts = [], classes = [], studentsMap = {}, date }) {
-  if (!date) return { rows: [], totalAmount: 0, studentsPaid: 0, transactions: 0 };
-
-  const classesByKey = {};
-  classes.forEach((c) => { classesByKey[c.key] = c; });
-  const studentLookup = {};
-  classes.forEach((c) => (studentsMap[c.key] || []).forEach((s) => {
-    studentLookup[`${c.key}|${s.reg}`] = s;
-  }));
-
-  const rows = [];
-  const matchedRegs = new Set();
-  let totalAmount = 0;
-  let transactions = 0;
-
-  receipts.forEach((rec) => {
-    const s = studentLookup[`${rec.classKey}|${rec.reg}`];
-    if (!s) return;
-    (rec.payments || []).forEach((p) => {
-      if (p.date !== date) return;
-      transactions += 1;
-      matchedRegs.add(rec.reg);
-      totalAmount += (+p.amount || 0);
-
-      const cls = classesByKey[rec.classKey]?.cls || rec.classKey;
-      const sec = classesByKey[rec.classKey]?.sec || '';
-      const method = p.method || '—';
-      const by = receivedByLabel(p);
-      const time = p.time || '—';
-      const heads = Object.entries(p.perHead || {});
-
-      if (heads.length === 0) {
-        rows.push({ reg: rec.reg, studentName: s.name, cls, sec, head: '—', amount: +p.amount || 0, method, by, time });
-      } else {
-        heads.forEach(([head, amt]) => {
-          rows.push({ reg: rec.reg, studentName: s.name, cls, sec, head, amount: +amt || 0, method, by, time });
-        });
-      }
-    });
-  });
-
-  return { rows, totalAmount, studentsPaid: matchedRegs.size, transactions };
-}
+/* Local date (UTC nahi) — dekhein dashboardLedgerDaily.localISO. */
+const todayISO = () => localISO();
 
 function buildDailyReceivingReportHTML({ rows, date, totalAmount, studentsPaid, transactions }) {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -125,13 +75,17 @@ function buildDailyReceivingReportHTML({ rows, date, totalAmount, studentsPaid, 
   return feeDashReportHTML({ accent, title: 'Daily Fee Receiving Report', innerHtml: inner });
 }
 
-export default function DailyReceivingReportModal({ receipts = [], classes = [], studentsMap = {}, onClose, toast = () => {} }) {
+export default function DailyReceivingReportModal({ onClose, toast = () => {} }) {
   const [date, setDate] = useState(todayISO());
   const [viewed, setViewed] = useState(false);
 
+  /* REAL current-branch data — BranchLedger installments (Fee → Daily Collections jaisa). */
+  const { records, byStudent, loading, error } = useDailyLedger(date, 6);
+  const raw = useMemo(() => buildDailyReceivingFromLedger(records, byStudent, date), [records, byStudent, date]);
+  const names = useLoginNames(raw.rows.map(r => r.byId));
   const report = useMemo(
-    () => buildDailyRows({ receipts, classes, studentsMap, date }),
-    [receipts, classes, studentsMap, date]
+    () => ({ ...raw, rows: raw.rows.map(r => ({ ...r, by: (r.byId && names[String(r.byId)]) || '—' })) }),
+    [raw, names]
   );
 
   const handleDateChange = (e) => {
@@ -146,13 +100,9 @@ export default function DailyReceivingReportModal({ receipts = [], classes = [],
 
   const handleDownload = () => {
     if (!date) { toast('Please select a date first', 'error'); return; }
-    const html = buildDailyReceivingReportHTML({ ...report, date });
-    const w = window.open('', '_blank');
-    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
-    w.document.write(html);
-    w.document.close();
-    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    toast('Daily Fee Receiving Report — sent to print.', 'success');
+    if (loading) { toast('Data abhi load ho raha hai — thora intezar karein', 'info'); return; }
+    if (error) { toast(String(error), 'error'); return; }
+    openDashReport(() => buildDailyReceivingReportHTML({ ...report, date }), { toast, okMsg: 'Daily Fee Receiving Report — sent to print.' });
   };
 
   return createPortal((
@@ -198,7 +148,13 @@ export default function DailyReceivingReportModal({ receipts = [], classes = [],
             </div>
           </div>
 
-          {viewed && (
+          {viewed && (loading || error) && (
+            <div className="up-empty">
+              <div className="up-empty-ic"><i className={`fa-solid ${loading ? 'fa-circle-notch fa-spin' : 'fa-triangle-exclamation'}`} aria-hidden="true"></i></div>
+              <div className="up-empty-t">{loading ? 'Loading branch fee data…' : String(error)}</div>
+            </div>
+          )}
+          {viewed && !loading && !error && (
             report.rows.length === 0 ? (
               <div className="up-empty">
                 <div className="up-empty-ic"><i className="fa-solid fa-receipt" aria-hidden="true"></i></div>
@@ -279,71 +235,6 @@ export default function DailyReceivingReportModal({ receipts = [], classes = [],
    formula as Card 6 / Fee Receiving itself (prev dues + this month's
    heads − approved discount − existing static advance), scoped to
    whichever month the selected day falls in. */
-function buildDailyAdvanceRows({ receipts = [], classes = [], studentsMap = {}, headsMap = {}, discMap = {}, generatedSet = new Set(), date }) {
-  if (!date) return { rows: [], totalAmount: 0, studentsPaid: 0, transactions: 0 };
-  const dateMonthIdx = new Date(date).getMonth();
-
-  const classesByKey = {};
-  classes.forEach((c) => { classesByKey[c.key] = c; });
-  const studentLookup = {};
-  classes.forEach((c) => (studentsMap[c.key] || []).forEach((s) => {
-    studentLookup[`${c.key}|${s.reg}`] = s;
-  }));
-
-  const rows = [];
-  let totalAmount = 0;
-  let transactions = 0;
-
-  receipts.forEach((rec) => {
-    const s = studentLookup[`${rec.classKey}|${rec.reg}`];
-    if (!s) return;
-    const monthPayments = (rec.payments || []).filter((p) => new Date(p.date).getMonth() === dateMonthIdx);
-    const todaysPayments = monthPayments.filter((p) => p.date === date);
-    if (!todaysPayments.length) return;
-
-    const generated = generatedSet.has(`${rec.classKey}|${rec.reg}|${dateMonthIdx}`);
-    const discForStudent = discMap[rec.classKey]?.[rec.reg];
-    const heads = (headsMap[rec.classKey] || []).map((h) => {
-      const std = +h.amt || 0;
-      const disc = Math.min(+(discForStudent?.[h.name]) || 0, std);
-      return { std, disc };
-    });
-    if (generated && +s.transport > 0) heads.push({ std: +s.transport, disc: 0 });
-    const prev = +s.dues || 0;
-    const staticAdvance = +s.advance || 0;
-    const thisMonthHeads = generated ? heads.reduce((a, h) => a + h.std, 0) : 0;
-    const discBaked = generated ? heads.reduce((a, h) => a + h.disc, 0) : 0;
-    const payable = Math.max(0, prev + thisMonthHeads - discBaked - staticAdvance);
-
-    /* Advance created TODAY = how much today's payment(s) pushed the
-       month's cumulative-paid-so-far past payable, beyond whatever had
-       already crossed that line on earlier days this month. */
-    const cumBeforeToday = monthPayments.filter((p) => p.date < date).reduce((a, p) => a + (+p.amount || 0), 0);
-    const todaysTotal = todaysPayments.reduce((a, p) => a + (+p.amount || 0), 0);
-    const cumThroughToday = cumBeforeToday + todaysTotal;
-    const advanceCreatedToday = Math.max(0, cumThroughToday - payable) - Math.max(0, cumBeforeToday - payable);
-    if (advanceCreatedToday <= 0) return;
-
-    const last = todaysPayments[todaysPayments.length - 1];
-    transactions += 1;
-    totalAmount += advanceCreatedToday;
-    rows.push({
-      reg: rec.reg,
-      studentName: s.name,
-      cls: classesByKey[rec.classKey]?.cls || rec.classKey,
-      sec: classesByKey[rec.classKey]?.sec || '',
-      payable,
-      amountReceived: todaysTotal,
-      advanceAmount: advanceCreatedToday,
-      method: last?.method || '—',
-      by: receivedByLabel(last),
-      time: last?.time || '—',
-    });
-  });
-
-  return { rows, totalAmount, studentsPaid: rows.length, transactions };
-}
-
 function buildDailyAdvanceReportHTML({ rows, totalAmount, studentsPaid, transactions }, date) {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const accent = '#7C3AED';
@@ -378,26 +269,26 @@ function buildDailyAdvanceReportHTML({ rows, totalAmount, studentsPaid, transact
   return feeDashReportHTML({ accent, title: 'Daily Advance Payment Report', innerHtml: inner });
 }
 
-export function DailyAdvancePaymentReportModal({ receipts = [], classes = [], studentsMap = {}, headsMap = {}, discMap = {}, generatedSet = new Set(), onClose, toast = () => {} }) {
+export function DailyAdvancePaymentReportModal({ onClose, toast = () => {} }) {
   const [date, setDate] = useState(todayISO());
   const [viewed, setViewed] = useState(false);
 
+  /* REAL current-branch data — advance poori history se banta hai, is liye 12 mahine. */
+  const { records, byStudent, loading, error } = useDailyLedger(date, 12);
+  const raw = useMemo(() => buildDailyAdvanceFromLedger(records, byStudent, date), [records, byStudent, date]);
+  const names = useLoginNames(raw.rows.map(r => r.byId));
   const report = useMemo(
-    () => buildDailyAdvanceRows({ receipts, classes, studentsMap, headsMap, discMap, generatedSet, date }),
-    [receipts, classes, studentsMap, headsMap, discMap, generatedSet, date]
+    () => ({ ...raw, rows: raw.rows.map(r => ({ ...r, by: (r.byId && names[String(r.byId)]) || '—' })) }),
+    [raw, names]
   );
 
   const handleDateChange = (e) => { setDate(e.target.value); setViewed(false); };
   const handleView = () => { if (!date) { toast('Please select a date first', 'error'); return; } setViewed(true); };
   const handleDownload = () => {
     if (!date) { toast('Please select a date first', 'error'); return; }
-    const html = buildDailyAdvanceReportHTML(report, date);
-    const w = window.open('', '_blank');
-    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
-    w.document.write(html);
-    w.document.close();
-    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    toast('Daily Advance Payment Report — sent to print.', 'success');
+    if (loading) { toast('Data abhi load ho raha hai — thora intezar karein', 'info'); return; }
+    if (error) { toast(String(error), 'error'); return; }
+    openDashReport(() => buildDailyAdvanceReportHTML(report, date), { toast, okMsg: 'Daily Advance Payment Report — sent to print.' });
   };
 
   return createPortal((
@@ -432,7 +323,13 @@ export function DailyAdvancePaymentReportModal({ receipts = [], classes = [], st
             </div>
           </div>
 
-          {viewed && (
+          {viewed && (loading || error) && (
+            <div className="up-empty">
+              <div className="up-empty-ic"><i className={`fa-solid ${loading ? 'fa-circle-notch fa-spin' : 'fa-triangle-exclamation'}`} aria-hidden="true"></i></div>
+              <div className="up-empty-t">{loading ? 'Loading branch fee data…' : String(error)}</div>
+            </div>
+          )}
+          {viewed && !loading && !error && (
             report.rows.length === 0 ? (
               <div className="up-empty">
                 <div className="up-empty-ic"><i className="fa-solid fa-piggy-bank" aria-hidden="true"></i></div>
@@ -510,35 +407,6 @@ export function DailyAdvancePaymentReportModal({ receipts = [], classes = [], st
    answers this for a whole month) — filters `mockAdvanceLedger`'s
    'adjusted' entries to exactly the selected date instead of a whole
    month. */
-function buildDailyAdvanceAdjustmentRows({ advanceLedger = [], classes = [], studentsMap = {}, date }) {
-  if (!date) return { rows: [], totalAmount: 0, studentsAdjusted: 0 };
-
-  const rows = [];
-  let totalAmount = 0;
-
-  classes.forEach((c) => {
-    (studentsMap[c.key] || []).forEach((s) => {
-      const entries = advanceLedger.filter((e) => e.classKey === c.key && e.reg === s.reg);
-      const opening = Math.max(0, entries
-        .filter((e) => e.date < date)
-        .reduce((sum, e) => sum + (e.type === 'received' ? e.amount : -e.amount), 0));
-      const todaysAdjusted = entries.filter((e) => e.type === 'adjusted' && e.date === date);
-      const adjustedAmount = todaysAdjusted.reduce((a, e) => a + e.amount, 0);
-      if (adjustedAmount <= 0) return;
-      const remainingAdvanceBalance = Math.max(0, opening - adjustedAmount);
-      rows.push({
-        reg: s.reg, studentName: s.name, cls: c.cls, sec: c.sec,
-        previousAdvanceBalance: opening,
-        adjustedAmount,
-        remainingAdvanceBalance,
-      });
-      totalAmount += adjustedAmount;
-    });
-  });
-
-  return { rows, totalAmount, studentsAdjusted: rows.length };
-}
-
 function buildDailyAdvanceAdjustmentReportHTML({ rows, totalAmount, studentsAdjusted }, date) {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const accent = '#7C3AED';
@@ -570,26 +438,21 @@ function buildDailyAdvanceAdjustmentReportHTML({ rows, totalAmount, studentsAdju
   return feeDashReportHTML({ accent, title: 'Daily Advance Adjustment Report', innerHtml: inner });
 }
 
-export function DailyAdvanceAdjustmentReportModal({ advanceLedger = [], classes = [], studentsMap = {}, onClose, toast = () => {} }) {
+export function DailyAdvanceAdjustmentReportModal({ onClose, toast = () => {} }) {
   const [date, setDate] = useState(todayISO());
   const [viewed, setViewed] = useState(false);
 
-  const report = useMemo(
-    () => buildDailyAdvanceAdjustmentRows({ advanceLedger, classes, studentsMap, date }),
-    [advanceLedger, classes, studentsMap, date]
-  );
+  /* REAL current-branch data — BranchLedger advance events (Fee → Advance Adjustment jaisa). */
+  const { records, byStudent, loading, error } = useDailyLedger(date, 12);
+  const report = useMemo(() => buildDailyAdjustmentFromLedger(records, byStudent, date), [records, byStudent, date]);
 
   const handleDateChange = (e) => { setDate(e.target.value); setViewed(false); };
   const handleView = () => { if (!date) { toast('Please select a date first', 'error'); return; } setViewed(true); };
   const handleDownload = () => {
     if (!date) { toast('Please select a date first', 'error'); return; }
-    const html = buildDailyAdvanceAdjustmentReportHTML(report, date);
-    const w = window.open('', '_blank');
-    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
-    w.document.write(html);
-    w.document.close();
-    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    toast('Daily Advance Adjustment Report — sent to print.', 'success');
+    if (loading) { toast('Data abhi load ho raha hai — thora intezar karein', 'info'); return; }
+    if (error) { toast(String(error), 'error'); return; }
+    openDashReport(() => buildDailyAdvanceAdjustmentReportHTML(report, date), { toast, okMsg: 'Daily Advance Adjustment Report — sent to print.' });
   };
 
   return createPortal((
@@ -624,7 +487,13 @@ export function DailyAdvanceAdjustmentReportModal({ advanceLedger = [], classes 
             </div>
           </div>
 
-          {viewed && (
+          {viewed && (loading || error) && (
+            <div className="up-empty">
+              <div className="up-empty-ic"><i className={`fa-solid ${loading ? 'fa-circle-notch fa-spin' : 'fa-triangle-exclamation'}`} aria-hidden="true"></i></div>
+              <div className="up-empty-t">{loading ? 'Loading branch fee data…' : String(error)}</div>
+            </div>
+          )}
+          {viewed && !loading && !error && (
             report.rows.length === 0 ? (
               <div className="up-empty">
                 <div className="up-empty-ic"><i className="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i></div>

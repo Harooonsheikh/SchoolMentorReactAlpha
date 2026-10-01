@@ -1,9 +1,86 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
-import { SCHOOL_BRAND } from './dashboardData';
-import { getBranchFcmTokens } from '../../services/dashboardService';
 import { DASH_MODAL_CSS } from './dashModalCss';
+import { getBranchFcmTokens, getBranchStaff } from '../../services/dashboardService';
+import { loadReportBranch } from '../../reports/reportKit';
+import { activeSessionName } from '../../../utils/apiConfig';
+import { buildUrl } from '../../../utils/apiConfig';
+
+/* Current branch ke saare active students (class/section-wise) — Parents App
+   report ke liye. Seedha API se, kisi aur service file par depend nahi.
+     GET /api/LaunchSetup/get-class-section-studentlist-by-branch/{branchID} */
+async function getClassStudentRoster() {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  if (!branchID) throw new Error('No branch selected');
+  const res = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(json?.message || 'Could not load students');
+  const pick = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && o[k] !== '') return o[k]; } return undefined; };
+  const classes = [];
+  const studentsMap = {};
+  (Array.isArray(json?.data) ? json.data : []).forEach(g => {
+    const gradeId = pick(g, 'id', 'gradeID', 'gradeId', 'classID') || 0;
+    const cls = pick(g, 'name', 'gradeName', 'className') || '-';
+    (Array.isArray(g.sections) ? g.sections : []).forEach(sec => {
+      const sectionId = pick(sec, 'sectionID', 'id', 'sectionId') || 0;
+      const key = `g${gradeId}-s${sectionId}`;
+      classes.push({ key, cls, sec: pick(sec, 'sectionName', 'name') || '-' });
+      studentsMap[key] = (Array.isArray(sec.students) ? sec.students : [])
+        .filter(st => st?.isActive !== false)
+        .map(st => {
+          const studentID = Number(pick(st, 'id', 'studentID', 'studentId')) || 0;
+          return {
+            studentID,
+            applicantsID: Number(pick(st, 'applicantsID', 'applicantID', 'applicantId')) || studentID,
+            name: [pick(st, 'firstName', 'name', 'studentName'), pick(st, 'lastName')].filter(Boolean).join(' ').trim() || '-',
+            father: pick(st, 'fatherName', 'guardianName') || '-',
+            phone: String(pick(st, 'mobileNo', 'mobile', 'phone', 'contactNumber', 'contactNo', 'guardianContact', 'fatherMobile', 'parentMobile') || '').trim(),
+          };
+        });
+    });
+  });
+  return { classes, studentsMap };
+}
+
+/* Current branch (sessionStorage 'branchID') ka header → A4Page ka brand shape.
+   API fail ho to sessionStorage ka branch naam — kabhi demo 'Oxford' naam nahi. */
+/* Token sach me hai ya nahi — API kabhi "null", "", "false", 0 jaisi values
+   bhejti hai; pehle `!!r.fcmToken` in sab ko "downloaded" maan leta tha. */
+function isRealToken(t) {
+  const v = String(t ?? '').trim().toLowerCase();
+  return v.length > 20 && v !== 'null' && v !== 'undefined';
+}
+function hasAppToken(r) {
+  const f = r.hasToken ?? r.hasFcmToken ?? r.HasToken;
+  const flag = f === true || f === 1 || String(f).trim().toLowerCase() === 'true' || String(f).trim() === '1';
+  return flag && isRealToken(r.fcmToken ?? r.FcmToken ?? r.token);
+}
+
+/* Phone number ka aakhri 10 digits — "0321-6162257", "+923216162257" aur
+   "03216162257" teeno ek hi number gine jayen. */
+function phoneKey(v) {
+  const d = String(v || '').replace(/\D/g, '');
+  return d.length >= 10 ? d.slice(-10) : '';
+}
+const nameKey = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/* Status order — report me pehle Not Downloaded, phir Pending, phir Downloaded. */
+const STATUS_ORDER = { 'Not Downloaded': 0, 'Pending': 1, 'Downloaded': 2 };
+const STATUS_TONE  = { 'Not Downloaded': 'red', 'Pending': 'amber', 'Downloaded': 'green' };
+
+function toBrand(h) {
+  const ssName = sessionStorage.getItem('branchName') || sessionStorage.getItem('displayName') || '';
+  if (!h) return { name: ssName, campus: '', address: '', phone: '', email: '', logo: '' };
+  return {
+    name:    h.branchName || h.schoolName || h.name || ssName,
+    campus:  h.campusName || h.branchCode || h.academicSession || '',
+    address: h.address || h.branchAddress || '',
+    phone:   h.phone || h.phoneNo || h.contactNo || h.mobile || '',
+    email:   h.email || h.branchEmail || '',
+    logo:    h.branchLogo || h.logo || '',
+  };
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    APP PENDING REPORT MODAL — A4-sized report viewer for "Teachers /
@@ -31,48 +108,138 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
 
   /* ─── Resolve dataset + meta per mode ─── */
   const isTeacher = mode === 'teachers';
-  const title = isTeacher
-    ? 'Teachers Mobile App — Download Report'
-    : 'Parents Mobile App — Download Report';
-  const subtitle = isTeacher
-    ? 'List of teachers who have installed / signed in to the Teachers Mobile App'
-    : 'List of parents who have installed / signed in to the Parents Mobile App';
 
-  /* LIVE downloaded users — GET /branch/{id}/fcm-tokens?accountType=... returns
-     those who registered an FCM token (= downloaded). Gives name + userName
-     (phone). Mapped below into the shapes the existing table already renders. */
-  const [downloaded, setDownloaded] = useState([]);
+  /* ─── Current branch ka header + poora staff with app status (API) ───
+     Pehle SCHOOL_BRAND aur TEACHER_APP_PENDING (hard-coded mock) use ho rahe
+     the, is liye har branch par 'The Oxford System' aur wahi 16 naam aate the. */
+  const [brand, setBrand] = useState(() => toBrand(null));
+  const [teacherRows, setTeacherRows] = useState([]);
+  const [parentRows, setParentRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
   useEffect(() => {
     let alive = true;
-    getBranchFcmTokens(isTeacher ? 'teacher' : 'parent')
-      .then((list) => { if (alive) setDownloaded((Array.isArray(list) ? list : []).filter((r) => r.hasToken)); })
-      .catch(() => { if (alive) setDownloaded([]); });
+    setLoading(true);
+    setLoadError('');
+    Promise.allSettled([
+      loadReportBranch(),
+      getBranchFcmTokens(isTeacher ? 'teacher' : 'parent'),
+      isTeacher ? getBranchStaff() : getClassStudentRoster(),
+    ]).then(([hdr, list, staff]) => {
+      if (!alive) return;
+      if (hdr.status === 'fulfilled' && hdr.value) {
+        const h = hdr.value;
+        setBrand({ name: h.name || '', campus: '', address: h.address || '', phone: h.phone || '', email: h.email || '', logo: h.logo || '', session: h.session || '' });
+      }
+      if (!isTeacher) {
+        /* ─── PARENTS: poore branch ke active students (roster) + un ke parent
+           ka app status. Pehle PARENT_APP_PENDING (40 jhoote naam) aate the. ─── */
+        if (staff.status !== 'fulfilled') { setLoadError(staff.reason?.message || 'Could not load students'); setLoading(false); return; }
+        if (list.status !== 'fulfilled')  { setLoadError(list.reason?.message || 'Could not load app status'); setLoading(false); return; }
+        const byAcc = new Map(), byPhone = new Map(), byName = new Map();
+        list.value.forEach(r => {
+          const has = hasAppToken(r);
+          const put = (map, k) => { if (k) map.set(k, (map.get(k) || false) || has); };
+          put(byAcc,   Number(r.accountTypeID) || 0);
+          put(byPhone, phoneKey(r.userName));
+          put(byName,  nameKey(r.name));
+        });
+        const { classes = [], studentsMap = {} } = staff.value || {};
+        const rows = [];
+        classes.forEach(c => (studentsMap[c.key] || []).forEach(st => {
+          const ph = phoneKey(st.phone);
+          let hit;
+          if (byAcc.has(Number(st.studentID)))            hit = byAcc.get(Number(st.studentID));
+          else if (byAcc.has(Number(st.applicantsID)))    hit = byAcc.get(Number(st.applicantsID));
+          else if (ph && byPhone.has(ph))                 hit = byPhone.get(ph);   // siblings ek hi parent login
+          /* Parent API ka `name` asal me BACHE ka naam hota hai (har bache ki alag row,
+             accountTypeID = us bache ki id) — is liye naam student se milao, father se nahi. */
+          else if (st.name && st.name !== '-' && byName.has(nameKey(st.name))) hit = byName.get(nameKey(st.name));
+          rows.push({
+            cls: `${c.cls}${c.sec && c.sec !== '-' ? ` ${c.sec}` : ''}`,
+            student: st.name,
+            parent: st.father && st.father !== '-' ? st.father : '—',
+            contact: st.phone || '—',
+            status: hit === true ? 'Downloaded' : hit === false ? 'Pending' : 'Not Downloaded',
+          });
+        }));
+        setParentRows(rows);
+        setLoading(false);
+        return;
+      }
+
+      if (staff.status !== 'fulfilled') {
+        setLoadError(staff.reason?.message || 'Could not load staff list');
+        setLoading(false);
+        return;
+      }
+      /* fcm-tokens fail ho to sab ko "Not Downloaded" dikhana jhoot hoga. */
+      if (list.status !== 'fulfilled') {
+        setLoadError(list.reason?.message || 'Could not load app status');
+        setLoading(false);
+        return;
+      }
+
+      /* fcm-tokens rows ko teen chaabiyon se index karo: employee id
+         (accountTypeID), phone (userName = mobile no.), aur naam. */
+      const byEmp = new Map(), byPhone = new Map(), byName = new Map();
+      list.value.forEach(r => {
+        const has = hasAppToken(r);
+        const put = (map, k) => {
+          if (!k) return;
+          map.set(k, (map.get(k) || false) || has);   // kisi ek device par token = downloaded
+        };
+        put(byEmp,   Number(r.accountTypeID) || 0);
+        put(byPhone, phoneKey(r.userName));
+        put(byName,  nameKey(r.name));
+      });
+
+      const rows = staff.value.map(e => {
+        let hit;
+        if (byEmp.has(e.id))                               hit = byEmp.get(e.id);
+        else if (phoneKey(e.phone) && byPhone.has(phoneKey(e.phone))) hit = byPhone.get(phoneKey(e.phone));
+        else if (byName.has(nameKey(e.name)))              hit = byName.get(nameKey(e.name));
+        /* hit === true  → token hai → Downloaded
+           hit === false → row hai magar token nahi (app hai, login/logout) → Pending
+           undefined     → API me koi row hi nahi → Not Downloaded */
+        const status = hit === true ? 'Downloaded' : hit === false ? 'Pending' : 'Not Downloaded';
+        return { ...e, status };
+      }).sort((a, b) =>
+        (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || a.name.localeCompare(b.name));
+
+      setTeacherRows(rows);
+      setLoading(false);
+    });
     return () => { alive = false; };
   }, [isTeacher]);
-
-  const TEACHER_APP_PENDING = useMemo(
-    () => downloaded.map((r) => ({ name: r.name || '—', designation: '—', dept: '—', contact: r.userName || '—', status: 'Downloaded' })),
-    [downloaded],
-  );
-  const PARENT_APP_PENDING = useMemo(
-    () => downloaded.map((r) => ({ cls: 'All', student: '—', parent: r.name || '—', contact: r.userName || '—', status: 'Downloaded' })),
-    [downloaded],
-  );
+  const title = isTeacher
+    ? 'Teachers Mobile App Status Report'
+    : 'Parents Mobile App Status Report';
+  const subtitle = isTeacher
+    ? 'All active staff of this branch with their Teachers Mobile App status'
+    : 'Class-wise list of all active students of this branch with their parent\'s Parents Mobile App status';
 
   /* Group parents by class for class-wise display. */
   const parentGroups = useMemo(() => {
     if (isTeacher) return [];
     const map = new Map();
-    PARENT_APP_PENDING.forEach(p => {
+    parentRows.forEach(p => {
       if (!map.has(p.cls)) map.set(p.cls, []);
       map.get(p.cls).push(p);
     });
     return [...map.entries()].map(([cls, rows]) => ({ cls, rows }));
-  }, [isTeacher, PARENT_APP_PENDING]);
+  }, [isTeacher, parentRows]);
+
+  const statusCount = useMemo(() => {
+    const c = { 'Downloaded': 0, 'Pending': 0, 'Not Downloaded': 0 };
+    (isTeacher ? teacherRows : parentRows).forEach(r => { c[r.status] = (c[r.status] || 0) + 1; });
+    return c;
+  }, [isTeacher, teacherRows, parentRows]);
 
   const totalRows = isTeacher
-    ? TEACHER_APP_PENDING.length
-    : PARENT_APP_PENDING.length;
+    ? teacherRows.length
+    : parentRows.length;
 
   /* Rows per A4 page — split for proper page breaks. Sized so the
      header + table fit on one A4 surface; first page fits less to
@@ -86,13 +253,13 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
     if (!isTeacher) return [];
     const out = [];
     let i = 0;
-    while (i < TEACHER_APP_PENDING.length) {
+    while (i < teacherRows.length) {
       const cap = out.length === 0 ? ROWS_FIRST_PAGE : ROWS_OTHER_PAGES;
-      out.push(TEACHER_APP_PENDING.slice(i, i + cap));
+      out.push(teacherRows.slice(i, i + cap));
       i += cap;
     }
     return out.length ? out : [[]];
-  }, [isTeacher, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES, TEACHER_APP_PENDING]);
+  }, [isTeacher, teacherRows, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES]);
 
   /* For parent groups we lay rows out group-by-group across pages. */
   const parentPages = useMemo(() => {
@@ -138,7 +305,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
             <div>
               <div className="up-modal-title" id="rpt-modal-title">{title}</div>
               <div className="up-modal-sub">
-                <span>{totalRows} {isTeacher ? 'teachers' : 'parents'}</span>
+                <span>{totalRows} {isTeacher ? 'staff' : 'students'}</span>
                 <span>·</span>
                 <span>{totalPages} page{totalPages !== 1 ? 's' : ''}</span>
               </div>
@@ -163,28 +330,39 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                 subtitle={subtitle}
                 generated={generated}
                 showHeader={pi === 0}
+                brand={brand}
               >
                 <table className="rpt-table">
                   <thead>
                     <tr>
                       <th style={{ width: 50 }}>Sr.&nbsp;No.</th>
-                      <th>Teacher Name</th>
+                      <th>Staff Name</th>
                       <th>Designation / Department</th>
                       <th>Contact Number</th>
                       <th>App Status</th>
                     </tr>
                   </thead>
                   <tbody>
+                    {(loading || loadError || rows.length === 0) && (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', padding: 18 }}>
+                          {loading ? 'Loading…' : (loadError || 'No active staff found for this branch.')}
+                        </td>
+                      </tr>
+                    )}
                     {rows.map((t, i) => {
                       const sno = pi === 0 ? i + 1 : ROWS_FIRST_PAGE + (pi - 1) * ROWS_OTHER_PAGES + i + 1;
                       return (
                         <tr key={sno}>
                           <td className="rpt-sno">{sno}</td>
                           <td className="rpt-name">{t.name}</td>
-                          <td>{t.designation} · <span className="rpt-meta">{t.dept}</span></td>
-                          <td className="rpt-mono">{t.contact}</td>
                           <td>
-                            <span className={`rpt-status rpt-status--${t.status === 'Not Logged In' ? 'amber' : 'red'}`}>
+                            {t.designation || '—'}
+                            {t.department ? <> · <span className="rpt-meta">{t.department}</span></> : null}
+                          </td>
+                          <td className="rpt-mono">{t.phone || '—'}</td>
+                          <td>
+                            <span className={`rpt-status rpt-status--${STATUS_TONE[t.status] || 'red'}`}>
                               {t.status}
                             </span>
                           </td>
@@ -212,6 +390,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                   subtitle={subtitle}
                   generated={generated}
                   showHeader={pi === 0}
+                  brand={brand}
                 >
                   <table className="rpt-table">
                     <thead>
@@ -225,12 +404,19 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                       </tr>
                     </thead>
                     <tbody>
+                      {(loading || loadError || parentRows.length === 0) && (
+                        <tr>
+                          <td colSpan={6} style={{ textAlign: 'center', padding: 18 }}>
+                            {loading ? 'Loading…' : (loadError || 'No active students found for this branch.')}
+                          </td>
+                        </tr>
+                      )}
                       {groups.flatMap(g => [
                         <tr key={`grp-${g.cls}`} className="rpt-group-row">
                           <td colSpan={6}>
                             <i className="fa-solid fa-chalkboard" aria-hidden="true"></i>{' '}
                             <b>{g.cls}</b>
-                            <span className="rpt-group-meta"> · {g.rows.length} parent{g.rows.length !== 1 ? 's' : ''}</span>
+                            <span className="rpt-group-meta"> · {g.rows.length} student{g.rows.length !== 1 ? 's' : ''}</span>
                           </td>
                         </tr>,
                         ...g.rows.map((p, i) => {
@@ -243,7 +429,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                               <td>{p.parent}</td>
                               <td className="rpt-mono">{p.contact}</td>
                               <td>
-                                <span className={`rpt-status rpt-status--${p.status === 'Not Logged In' ? 'amber' : 'red'}`}>
+                                <span className={`rpt-status rpt-status--${STATUS_TONE[p.status] || 'red'}`}>
                                   {p.status}
                                 </span>
                               </td>
@@ -262,7 +448,8 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
         {/* ─── Modal foot (hidden in print) ─── */}
         <div className="up-modal-foot up-modal-foot--split rpt-no-print">
           <div className="up-modal-foot-l">
-            <span className="up-badge up-badge--blue">{totalRows} pending</span>
+            <span className="up-badge up-badge--blue">{totalRows} {isTeacher ? 'staff' : 'students'}</span>
+            <span className="up-badge up-badge--gray">{statusCount['Downloaded']} downloaded · {statusCount['Pending']} pending · {statusCount['Not Downloaded']} not downloaded</span>
             <span className="up-badge up-badge--gray">{totalPages} A4 page{totalPages !== 1 ? 's' : ''}</span>
           </div>
           <div className="up-modal-foot-r">
@@ -283,54 +470,45 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
 }
 
 /* ─── A4 page wrapper ─────────────────────────────────────────── */
-function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, children }) {
+function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, brand = {}, children }) {
   return (
     <div className="rpt-a4">
       {showHeader ? (
         <>
-          <header className="rpt-head">
-            <div className="rpt-head-l">
-              <div className="rpt-logo">
-                {/* School crest — same shape as the sidebar logo */}
-                <svg width="56" height="56" viewBox="0 0 36 36" fill="none" aria-hidden="true">
-                  <rect width="36" height="36" fill="url(#rpt-grad)" />
-                  <defs>
-                    <linearGradient id="rpt-grad" x1="0" y1="0" x2="36" y2="36">
-                      <stop stopColor="#1E3A8A" />
-                      <stop offset="1" stopColor="#1E40AF" />
-                    </linearGradient>
-                  </defs>
-                  <path d="M18 10C14 10 10 11.5 10 11.5L10 26C10 26 14 24.5 18 24.5C22 24.5 26 26 26 26L26 11.5C26 11.5 22 10 18 10Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.4)" strokeWidth="0.8" />
-                  <path d="M18 10L18 24.5" stroke="rgba(255,255,255,0.5)" strokeWidth="0.8" />
-                  <path d="M13 9L15 6L18 8L21 6L23 9" stroke="#FCD34D" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+          <header className="rpt-hd">
+            <div className="rpt-hd-top">
+              <div className="rpt-hd-logo">
+                {brand.logo
+                  ? <img src={brand.logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                  : <span className="rpt-hd-ini">{(brand.name || 'School').replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'SM'}</span>}
               </div>
-              <div className="rpt-school">
-                <div className="rpt-school-n">{SCHOOL_BRAND.name}</div>
-                <div className="rpt-school-c">{SCHOOL_BRAND.campus}</div>
-                <div className="rpt-school-addr">{SCHOOL_BRAND.address}</div>
-                <div className="rpt-school-contact">
-                  <i className="fa-solid fa-phone" aria-hidden="true"></i> {SCHOOL_BRAND.phone}
-                  <span className="rpt-sep">·</span>
-                  <i className="fa-solid fa-envelope" aria-hidden="true"></i> {SCHOOL_BRAND.email}
-                </div>
+              <div>
+                <div className="rpt-hd-name">{brand.name}</div>
+                {brand.address ? <div className="rpt-hd-addr">{brand.address}</div> : null}
+                {(brand.phone || brand.email) ? (
+                  <div className="rpt-hd-ct">
+                    {brand.phone ? <>&#9742; {brand.phone}</> : null}
+                    {brand.phone && brand.email ? <span className="rpt-sep">·</span> : null}
+                    {brand.email ? <>&#9993; {brand.email}</> : null}
+                  </div>
+                ) : null}
               </div>
             </div>
-            <div className="rpt-head-r">
-              <div className="rpt-stamp">Confidential</div>
-              <div className="rpt-genon">Generated</div>
-              <div className="rpt-gentime">{generated}</div>
+            <div className="rpt-hd-div" />
+            <div className="rpt-hd-title">{title}</div>
+            <div className="rpt-hd-sub">{subtitle}</div>
+            <div className="rpt-hd-chips">
+              {(() => {
+                const s = activeSessionName() || brand.session || '';
+                return s ? <span className="rpt-hd-chip">{/academic/i.test(s) ? s : `Academic Session ${s}`}</span> : null;
+              })()}
+              <span className="rpt-hd-chip"><b>Generated:</b> {generated}</span>
             </div>
           </header>
-
-          <div className="rpt-title-block">
-            <div className="rpt-title">{title}</div>
-            <div className="rpt-subtitle">{subtitle}</div>
-          </div>
         </>
       ) : (
         <header className="rpt-head rpt-head--cont">
-          <div className="rpt-head-cont-l">{SCHOOL_BRAND.name} · {SCHOOL_BRAND.campus}</div>
+          <div className="rpt-head-cont-l">{brand.name}{brand.campus ? ` · ${brand.campus}` : ''}</div>
           <div className="rpt-head-cont-r">{title} (continued)</div>
         </header>
       )}
@@ -338,7 +516,7 @@ function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, c
       {children}
 
       <footer className="rpt-foot">
-        <span>{SCHOOL_BRAND.name} · {SCHOOL_BRAND.campus}</span>
+        <span>{brand.name}{brand.campus ? ` · ${brand.campus}` : ''}</span>
         <span>Page {pageNum} of {totalPages}</span>
       </footer>
     </div>
@@ -402,6 +580,33 @@ const PRT_CSS = `
 .rpt-genon { font: 700 9.5px/1 'Plus Jakarta Sans', sans-serif; color: #64748B; text-transform: uppercase; letter-spacing: .5px; margin-top: 8px; }
 .rpt-gentime { font: 700 11px/1.3 'Plus Jakarta Sans', sans-serif; color: #0F172A; margin-top: 3px; max-width: 200px; }
 
+.rpt-hd {
+  background: #1E3A8A; color: #FFFFFF;
+  margin: -36px -40px 18px; padding: 22px 30px 18px;
+  border-radius: 4px 4px 0 0;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+.rpt-hd-top { display: flex; align-items: center; gap: 16px; }
+.rpt-hd-logo {
+  width: 70px; height: 70px; border-radius: 14px; background: #fff;
+  padding: 6px; flex-shrink: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.rpt-hd-ini { font: 900 22px/1 Arial, sans-serif; color: #1E3A8A; }
+.rpt-hd-name { font-size: 20px; font-weight: 800; line-height: 1.2; }
+.rpt-hd-addr { font-size: 11.5px; opacity: .85; margin-top: 3px; }
+.rpt-hd-ct { font-size: 11px; opacity: .75; margin-top: 2px; }
+.rpt-hd .rpt-sep { color: rgba(255,255,255,.6); }
+.rpt-hd-div { height: 1px; background: rgba(255,255,255,.22); margin: 14px 0 12px; }
+.rpt-hd-title { font-size: 19px; font-weight: 800; }
+.rpt-hd-sub { font-size: 11.5px; opacity: .8; margin-top: 3px; }
+.rpt-hd-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.rpt-hd-chip { background: rgba(255,255,255,.14); padding: 4px 12px; border-radius: 20px; font-size: 11px; }
+[data-theme="dark"] .rpt-a4 .rpt-hd { color: #FFFFFF !important; background: #1E3A8A !important; }
+[data-theme="dark"] .rpt-a4 .rpt-hd-ini { color: #1E3A8A !important; }
+@media print { .rpt-hd { margin: 0 0 18px; border-radius: 0; } }
+
 .rpt-head--cont {
   padding-bottom: 8px; border-bottom: 1px solid #CBD5E1;
   font: 700 10.5px/1 'Plus Jakarta Sans', sans-serif;
@@ -456,6 +661,7 @@ const PRT_CSS = `
 }
 .rpt-status--red   { background: #FEE2E2; color: #B91C1C; }
 .rpt-status--amber { background: #FEF3C7; color: #92400E; }
+.rpt-status--green { background: #DCFCE7; color: #166534; }
 
 .rpt-group-row td {
   background: #EFF6FF !important;
