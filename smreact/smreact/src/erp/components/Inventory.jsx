@@ -740,19 +740,17 @@ export default function Inventory({ toast }) {
    permanent-delete.
    ═══════════════════════════════════════════════════════════════════ */
 function InventoryManagement({ toast }) {
-  const { data: serverItems = [] } = useAsync(inventoryService.getInvItems, []);
+  const itemsQ = useAsync(inventoryService.getInvItems, []);
+  const reloadItems = itemsQ.refetch;
   const { data: categories = [] }  = useAsync(inventoryService.getInvCategories, []);
   const { data: school = {} }      = useAsync(inventoryService.getInvSchool, {});
-  const { data: serverNextId = 100 } = useAsync(inventoryService.getInvNextItemId, 100);
 
-  /* Local mutable mirror — service returns clones so we can edit
-     in-place without affecting the seed for the next caller. */
+  /* Local mirror of the server list so optimistic UI reads stay snappy; it
+     re-syncs whenever a fetch/refetch resolves (server is the source of
+     truth — every write is followed by reloadItems()). */
   const [items, setItems] = useState(null);
-  useEffect(() => { if (serverItems.length && items == null) setItems(serverItems); }, [serverItems, items]);
+  useEffect(() => { if (itemsQ.data) setItems(itemsQ.data); }, [itemsQ.data]);
   const list = useMemo(() => items || [], [items]);
-
-  const [nextId, setNextId] = useState(null);
-  useEffect(() => { if (nextId == null && serverNextId) setNextId(serverNextId); }, [serverNextId, nextId]);
 
   /* View state */
   const [seg, setSeg]                 = useState('active');
@@ -787,67 +785,61 @@ function InventoryManagement({ toast }) {
 
   const detailItem = detailId ? list.find(i => i.id === detailId) : null;
 
-  /* ─── Actions ─── */
-  const handleSave = ({ name, cat, code, qty, date, cond, status, loc, desc, img }) => {
+  /* ─── Actions (persist to API, then re-fetch the server list) ─── */
+  const handleSave = async ({ name, cat, code, qty, date, cond, status, loc, desc, img }) => {
     if (!name.trim()) { toast('Please enter an item name', 'error'); return; }
     if ((Number(qty) || 0) < 1) { toast('Quantity must be at least 1', 'error'); return; }
     const finalCode = (code || '').trim() || genItemCode(name, cat, list);
+    const isEdit = editCfg?.mode === 'edit' && editCfg.item;
 
-    if (editCfg?.mode === 'edit' && editCfg.item) {
-      setItems(prev => prev.map(i => i.id === editCfg.item.id
-        ? {
-            ...i,
-            name: name.trim(), cat, code: finalCode, qty: Number(qty) || 0,
-            date, cond, status, loc: loc.trim(), desc: desc.trim(),
-            img: img ?? i.img,
-            history: [...(i.history || []), { t: 'Item details updated', at: todayISO() }],
-          }
-        : i));
-      toast('Item updated successfully', 'success');
-    } else {
-      const id = nextId || 100;
-      setNextId(id + 1);
-      setItems(prev => [
-        ...(prev || []),
-        {
-          id, active: true,
-          name: name.trim(), cat, code: finalCode, qty: Number(qty) || 0,
-          low: 0, date, cond, status, loc: loc.trim(), desc: desc.trim(),
-          img: img ?? null,
-          history: [{ t: 'Item added to inventory', at: todayISO() }],
-        },
-      ]);
-      toast('Item added successfully', 'success');
+    try {
+      await inventoryService.saveInvItem({
+        id:   isEdit ? editCfg.item.id : 0,
+        name: name.trim(), cat, code: finalCode, qty: Number(qty) || 0,
+        low:  isEdit ? editCfg.item.low : 0,
+        date, cond, status, loc: loc.trim(), desc: desc.trim(),
+        img:  img ?? (isEdit ? editCfg.item.img : null),
+        active: isEdit ? editCfg.item.active : true,
+      });
+      toast(isEdit ? 'Item updated successfully' : 'Item added successfully', 'success');
+      setEditCfg(null);
+      reloadItems();
+    } catch (e) {
+      toast(e.message || 'Could not save item', 'error');
     }
-    setEditCfg(null);
   };
 
   const askMarkInactive = (item) => setConfirmCfg({
     kind: 'inactive', item,
-    onYes: () => {
-      setItems(prev => prev.map(i => i.id === item.id
-        ? { ...i, active: false, history: [...(i.history || []), { t: 'Marked Inactive', at: todayISO() }] }
-        : i));
-      toast('Item marked inactive', 'info');
-      setConfirmCfg(null);
-      if (detailId === item.id) setDetailId(null);
+    onYes: async () => {
+      try {
+        await inventoryService.saveInvItem({ ...item, active: false });
+        toast('Item marked inactive', 'info');
+        setConfirmCfg(null);
+        if (detailId === item.id) setDetailId(null);
+        reloadItems();
+      } catch (e) { toast(e.message || 'Could not update item', 'error'); }
     },
   });
 
-  const restore = (item) => {
-    setItems(prev => prev.map(i => i.id === item.id
-      ? { ...i, active: true, history: [...(i.history || []), { t: 'Restored to active', at: todayISO() }] }
-      : i));
-    toast('Item restored to active', 'success');
+  const restore = async (item) => {
+    try {
+      await inventoryService.saveInvItem({ ...item, active: true });
+      toast('Item restored to active', 'success');
+      reloadItems();
+    } catch (e) { toast(e.message || 'Could not restore item', 'error'); }
   };
 
   const askDelete = (item) => setConfirmCfg({
     kind: 'delete', item,
-    onYes: () => {
-      setItems(prev => prev.filter(i => i.id !== item.id));
-      toast('Item permanently deleted', 'info');
-      setConfirmCfg(null);
-      if (detailId === item.id) setDetailId(null);
+    onYes: async () => {
+      try {
+        await inventoryService.deleteInvItem(item);
+        toast('Item permanently deleted', 'info');
+        setConfirmCfg(null);
+        if (detailId === item.id) setDetailId(null);
+        reloadItems();
+      } catch (e) { toast(e.message || 'Could not delete item', 'error'); }
     },
   });
 
@@ -1548,20 +1540,19 @@ const POS_SUBTABS = [
 ];
 
 function PointOfSale({ toast }) {
-  const { data: serverProducts = [] }     = useAsync(inventoryService.getInvProducts, []);
-  const { data: serverSales = [] }        = useAsync(inventoryService.getInvSales, []);
-  const { data: serverNextReceipt = 1018 } = useAsync(inventoryService.getInvNextReceiptNo, 1018);
-  const { data: school = {} }             = useAsync(inventoryService.getInvSchool, {});
+  const productsQ = useAsync(inventoryService.getInvProducts, []);
+  const salesQ    = useAsync(inventoryService.getInvSales, []);
+  const reloadProducts = productsQ.refetch;
+  const reloadSales    = salesQ.refetch;
+  const { data: school = {} } = useAsync(inventoryService.getInvSchool, {});
 
-  /* Local mutable mirrors */
+  /* Local mirrors that re-sync on every fetch/refetch (server is the source
+     of truth — stock is reduced server-side on each sale). */
   const [products, setProducts] = useState(null);
-  useEffect(() => { if (serverProducts.length && products == null) setProducts(serverProducts); }, [serverProducts, products]);
+  useEffect(() => { if (productsQ.data) setProducts(productsQ.data); }, [productsQ.data]);
 
   const [sales, setSales] = useState(null);
-  useEffect(() => { if (serverSales.length && sales == null) setSales(serverSales); }, [serverSales, sales]);
-
-  const [nextReceipt, setNextReceipt] = useState(null);
-  useEffect(() => { if (nextReceipt == null && serverNextReceipt) setNextReceipt(serverNextReceipt); }, [serverNextReceipt, nextReceipt]);
+  useEffect(() => { if (salesQ.data) setSales(salesQ.data); }, [salesQ.data]);
 
   const productList = useMemo(() => products || [], [products]);
   const saleList    = useMemo(() => sales    || [], [sales]);
@@ -1578,24 +1569,24 @@ function PointOfSale({ toast }) {
     return { products: productList.length, todayTotal, lowProducts };
   }, [productList, saleList]);
 
-  /* Sale handler — used by PosSellView's checkout flow */
-  const finalizeSale = ({ cart, buyer, discAmount, discType, discInput, fmt }) => {
+  /* Sale handler — persist to API, re-fetch products (stock reduced
+     server-side) + sales, then print the receipt. */
+  const finalizeSale = async ({ cart, buyer, discAmount, discType, discInput, fmt }) => {
     const sub2  = cart.reduce((a, c) => a + c.price * c.qty, 0);
     const grand = sub2 - discAmount;
-    const no    = `RCP-${(nextReceipt || 1018) + 1}`;
-    setNextReceipt((nextReceipt || 1018) + 1);
 
-    /* Reduce stock */
-    const lows = [];
-    setProducts(prev => prev.map(p => {
-      const line = cart.find(c => c.id === p.id);
-      if (!line) return p;
-      const ns = Math.max(0, p.stock - line.qty);
-      const updated = { ...p, stock: ns };
-      if (ns <= updated.low) lows.push(updated.name);
-      return updated;
-    }));
+    let saleId;
+    try {
+      const res = await inventoryService.saveInvSale({
+        cart, buyer, discAmount, discType, subtotal: sub2, total: grand,
+      });
+      saleId = res?.data?.saleId;
+    } catch (e) {
+      toast(e.message || 'Could not complete the sale', 'error');
+      return;
+    }
 
+    const no = saleId ? `RCP-${saleId}` : 'RCP';
     const sale = {
       no, date: todayISO(), buyer: buyer.trim() || 'Walk-in',
       by: 'Front Desk',
@@ -1603,10 +1594,12 @@ function PointOfSale({ toast }) {
       subtotal: sub2, discount: discAmount, discType, discInput,
       total: grand,
     };
-    setSales(prev => [sale, ...(prev || [])]);
 
     toast(`Sale completed — receipt ${no}`, 'success');
-    if (lows.length) setTimeout(() => toast(`Low stock: ${lows.join(', ')}`, 'info'), 400);
+
+    /* Refresh from server: stock + the new sale row. */
+    reloadProducts();
+    reloadSales();
 
     /* Fire print in chosen format */
     if (fmt === 'thermal') openThermalPrintWindow(sale, school, toast);
@@ -1677,9 +1670,9 @@ function PointOfSale({ toast }) {
       ) : sub === 'products' ? (
         <PosProductsView
           products={productList}
-          onAdd={(p) => setProducts(prev => [...(prev || []), p])}
-          onUpdate={(p) => setProducts(prev => prev.map(x => x.id === p.id ? p : x))}
-          onDelete={(id) => setProducts(prev => prev.filter(x => x.id !== id))}
+          onAdd={async (p) => { await inventoryService.saveInvProduct(p); reloadProducts(); }}
+          onUpdate={async (p) => { await inventoryService.saveInvProduct(p); reloadProducts(); }}
+          onDelete={async (p) => { await inventoryService.deleteInvProduct(p); reloadProducts(); }}
           toast={toast}
         />
       ) : sub === 'sales' ? (
@@ -1738,7 +1731,7 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
     if (have + 1 > p.stock) { toast('Not enough stock available', 'error'); return; }
     setCart(prev => line
       ? prev.map(c => c.id === pid ? { ...c, qty: c.qty + 1 } : c)
-      : [...prev, { id: pid, name: p.name, price: p.price, qty: 1 }]);
+      : [...prev, { id: pid, name: p.name, price: p.price, qty: 1, cat: p.cat, barcode: p.barcode }]);
   };
 
   const adjustQty = (pid, delta) => {
@@ -2110,7 +2103,13 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
 
   const askDelete = (p) => setConfirmCfg({
     product: p,
-    onYes: () => { onDelete(p.id); toast('Product deleted', 'info'); setConfirmCfg(null); },
+    onYes: async () => {
+      try {
+        await onDelete(p);
+        toast('Product deleted', 'info');
+        setConfirmCfg(null);
+      } catch (e) { toast(e.message || 'Could not delete product', 'error'); }
+    },
   });
 
   return (
@@ -2238,16 +2237,19 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
           cfg={editCfg}
           existingProducts={products}
           onClose={() => setEditCfg(null)}
-          onSave={(payload) => {
-            if (editCfg.mode === 'edit') {
-              onUpdate({ ...editCfg.product, ...payload });
-              toast('Product updated', 'success');
-            } else {
-              const nextId = Math.max(0, ...products.map(p => p.id)) + 1;
-              onAdd({ id: nextId, ...payload });
-              toast('Product added', 'success');
+          onSave={async (payload) => {
+            try {
+              if (editCfg.mode === 'edit') {
+                await onUpdate({ ...editCfg.product, ...payload });
+                toast('Product updated', 'success');
+              } else {
+                await onAdd(payload);
+                toast('Product added', 'success');
+              }
+              setEditCfg(null);
+            } catch (e) {
+              toast(e.message || 'Could not save product', 'error');
             }
-            setEditCfg(null);
           }}
           toast={toast}
         />

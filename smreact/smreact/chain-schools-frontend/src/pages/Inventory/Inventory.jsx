@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
-  loadInv, saveInv, MONTHS, ITEM_STATUSES, CONDITIONS,
+  MONTHS, ITEM_STATUSES, CONDITIONS,
   rs, num, todayISO, fmtDate, nextItemCode, barcodeBars,
 } from './data'
+import {
+  fetchInventory, saveNetworkItem, deleteNetworkItem,
+  saveNetworkProduct, deleteNetworkProduct, saveNetworkSale,
+} from '../../api/inventoryApi'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './Inventory.css'
 
@@ -15,10 +19,13 @@ export default function Inventory() {
   const [tab, setTab] = useState('manage')
   const [toast, setToast] = useState(null)
 
-  useEffect(() => { setInv(loadInv()) }, [])
-  useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
   const fire = (text, type = 'success') => setToast({ text, type })
-  const commit = (next) => { setInv(next); saveInv(next) }
+  const reload = useCallback(async () => {
+    try { setInv(await fetchInventory()) }
+    catch (e) { setInv({ items: [], products: [], sales: [], categories: [] }); setToast({ text: e.message || 'Could not load inventory', type: 'warn' }) }
+  }, [])
+  useEffect(() => { reload() }, [reload])
+  useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
   if (!inv) return null
 
   return (
@@ -37,8 +44,8 @@ export default function Inventory() {
         ))}
       </div>
 
-      {tab === 'manage' && <Manage inv={inv} commit={commit} fire={fire} />}
-      {tab === 'pos' && <POS inv={inv} commit={commit} fire={fire} />}
+      {tab === 'manage' && <Manage inv={inv} reload={reload} fire={fire} />}
+      {tab === 'pos' && <POS inv={inv} reload={reload} fire={fire} />}
       {tab === 'reports' && <Reports inv={inv} fire={fire} />}
 
       {toast && createPortal(
@@ -54,7 +61,7 @@ function Barcode({ code }) {
 }
 
 /* ════════ INVENTORY MANAGEMENT ════════ */
-function Manage({ inv, commit, fire }) {
+function Manage({ inv, reload, fire }) {
   const [seg, setSeg] = useState('active')
   const [search, setSearch] = useState('')
   const [cat, setCat] = useState('all')
@@ -77,17 +84,28 @@ function Manage({ inv, commit, fire }) {
 
   const item = inv.items.find((i) => i.id === openId)
 
-  const saveItem = (data, id) => {
-    if (id) commit({ ...inv, items: inv.items.map((i) => (i.id === id ? { ...i, ...data } : i)) })
-    else { const nid = inv.nextItemId + 1; commit({ ...inv, nextItemId: nid, items: [...inv.items, { id: nid, active: true, history: [{ t: 'Item added to inventory', at: todayISO() }], ...data }] }) }
-    setItemModal(null); fire(id ? 'Item updated' : 'Item added')
+  const saveItem = async (data, id) => {
+    try {
+      await saveNetworkItem({ ...data, id: id || 0 })
+      setItemModal(null); fire(id ? 'Item updated' : 'Item added')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not save item', 'warn') }
   }
-  const toggleActive = (it) => {
+  const toggleActive = async (it) => {
     const active = !it.active
-    commit({ ...inv, items: inv.items.map((i) => (i.id === it.id ? { ...i, active, history: [...i.history, { t: active ? 'Marked Active' : 'Marked Inactive', at: todayISO() }] } : i)) })
-    fire(active ? 'Item reactivated' : 'Item marked inactive', 'info')
+    try {
+      await saveNetworkItem({ ...it, active })
+      fire(active ? 'Item reactivated' : 'Item marked inactive', 'info')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not update item', 'warn') }
   }
-  const doDelete = () => { commit({ ...inv, items: inv.items.filter((i) => i.id !== del.id) }); setDel(null); setOpenId(null); fire('Item deleted', 'info') }
+  const doDelete = async () => {
+    try {
+      await deleteNetworkItem(del)
+      setDel(null); setOpenId(null); fire('Item deleted', 'info')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not delete item', 'warn') }
+  }
 
   const printLabel = (it) => {
     const chain = loadChainProfile()
@@ -221,7 +239,7 @@ function ItemModal({ modal, inv, onClose, onSave, onToast }) {
 }
 
 /* ════════ POINT OF SALE ════════ */
-function POS({ inv, commit, fire }) {
+function POS({ inv, reload, fire }) {
   const [pt, setPt] = useState('sell')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState([])
@@ -239,28 +257,38 @@ function POS({ inv, commit, fire }) {
     setCart((c) => {
       const ex = c.find((l) => l.id === p.id)
       if (ex) { if (ex.qty >= p.stock) { fire('Not enough stock', 'warn'); return c } return c.map((l) => (l.id === p.id ? { ...l, qty: l.qty + 1 } : l)) }
-      return [...c, { id: p.id, name: p.name, price: p.price, qty: 1, stock: p.stock }]
+      return [...c, { id: p.id, name: p.name, price: p.price, qty: 1, stock: p.stock, cat: p.cat, barcode: p.barcode }]
     })
   }
   const setQty = (id, q) => setCart((c) => c.map((l) => (l.id === id ? { ...l, qty: Math.max(1, Math.min(q, l.stock)) } : l)))
   const removeLine = (id) => setCart((c) => c.filter((l) => l.id !== id))
 
-  const checkout = () => {
+  const checkout = async () => {
     if (!cart.length) return fire('Cart is empty', 'warn')
-    const no = `RCP-${inv.nextReceiptNo}`
-    const sale = { no, date: today, buyer: buyer.trim() || 'Walk-in', lines: cart.map((l) => ({ name: l.name, qty: l.qty, price: l.price })), total, by: 'Front Desk' }
-    const products = inv.products.map((p) => { const l = cart.find((x) => x.id === p.id); return l ? { ...p, stock: p.stock - l.qty } : p })
-    commit({ ...inv, nextReceiptNo: inv.nextReceiptNo + 1, products, sales: [sale, ...inv.sales] })
-    printReceipt(sale, fire)
-    setCart([]); setBuyer(''); fire('Sale completed · receipt generated')
+    try {
+      const res = await saveNetworkSale({ cart, buyer, total })
+      const no = res?.data?.saleId ? `RCP-${res.data.saleId}` : 'RCP'
+      const sale = { no, date: today, buyer: buyer.trim() || 'Walk-in', lines: cart.map((l) => ({ name: l.name, qty: l.qty, price: l.price })), total, by: 'Front Desk' }
+      printReceipt(sale, fire)
+      setCart([]); setBuyer(''); fire('Sale completed · receipt generated')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not complete sale', 'warn') }
   }
 
-  const saveProd = (data, id) => {
-    if (id) commit({ ...inv, products: inv.products.map((p) => (p.id === id ? { ...p, ...data } : p)) })
-    else { const nid = inv.nextProdId + 1; commit({ ...inv, nextProdId: nid, products: [...inv.products, { id: nid, ...data }] }) }
-    setProdModal(null); fire(id ? 'Product updated' : 'Product added')
+  const saveProd = async (data, id) => {
+    try {
+      await saveNetworkProduct({ ...data, id: id || 0 })
+      setProdModal(null); fire(id ? 'Product updated' : 'Product added')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not save product', 'warn') }
   }
-  const doDelProd = () => { commit({ ...inv, products: inv.products.filter((p) => p.id !== del.id) }); setDel(null); fire('Product deleted', 'info') }
+  const doDelProd = async () => {
+    try {
+      await deleteNetworkProduct(del)
+      setDel(null); fire('Product deleted', 'info')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not delete product', 'warn') }
+  }
 
   const prodList = inv.products.filter((p) => { const q = search.trim().toLowerCase(); return !q || `${p.name}${p.barcode}`.toLowerCase().includes(q) })
 
