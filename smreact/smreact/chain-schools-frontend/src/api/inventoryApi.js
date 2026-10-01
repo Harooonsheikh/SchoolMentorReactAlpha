@@ -128,7 +128,7 @@ function inventoryBody(p, { action, isPOS, networkId }) {
     location: nz(p.loc),
     description: nz(p.desc),
     image: '-',
-    barcode: nz(p.barcode),
+    barcode: "",
     lowStock: Number(p.low) || 0,
     stockQuantity: isPOS ? (Number(p.stock) || 0) : 0,
     purchasePrice: isPOS ? (Number(p.cost) || 0) : 0,
