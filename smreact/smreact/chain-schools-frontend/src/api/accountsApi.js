@@ -223,6 +223,11 @@ function mapEntry(e = {}) {
   const date = dateOnly(pick(e, 'entryDate', 'EntryDate', 'transactionDate', 'TransactionDate', 'date', 'Date'))
   return {
     id:        pick(e, 'id', 'ID'),
+    /* Network-level entry (chain head office ka apna) → BranchID null. Koi
+       BranchID ho to wo kisi SCHOOL ki apni entry hai jo backend cross-post
+       karta hai (jaise school payment receiving → us branch ki books me
+       Expense) — chain ki list me ye nahi aani chahiye. */
+    branchID:  pick(e, 'branchID', 'BranchID') ?? null,
     headNo:    pick(e, 'branchAccountID', 'BranchAccountID', 'accountID', 'AccountID', 'accountHeadID', 'AccountHeadID') || '',
     head:      pick(e, 'accountHead', 'AccountHead', 'headName', 'HeadName') || '',
     date,
@@ -273,7 +278,11 @@ export async function fetchAccountEntriesByMonth(seg, ym, networkId = currentNet
   )
   const json = await res.json().catch(() => null)
   if (!res.ok) throw new Error(json?.message || 'Could not load account entries')
-  return rowsOf(json).map(mapEntry)
+  /* Sirf network-level (BranchID null) — branch ki apni entries (backend ka
+     school-side cross-post, e.g. school payment ka Expense) chain ki list se
+     bahar. Warna ek hi school payment Revenue (chain) aur Expense (branch)
+     dono me dikhta hai. */
+  return rowsOf(json).map(mapEntry).filter((e) => e.branchID == null)
 }
 
 /* ALL entries for a segment (used by Reports for arbitrary date ranges —
@@ -283,7 +292,8 @@ export async function fetchAllAccountEntries(seg, networkId = currentNetworkId()
   const res = await fetch(`${BASE}/get-account-entries-by-network/${networkId}/${segTypeId(seg)}`, { headers: { Accept: '*/*' } })
   const json = await res.json().catch(() => null)
   if (!res.ok) throw new Error(json?.message || 'Could not load account entries')
-  return rowsOf(json).map(mapEntry)
+  /* Sirf network-level (BranchID null) — upar wali fetch jaisa. */
+  return rowsOf(json).map(mapEntry).filter((e) => e.branchID == null)
 }
 
 /* Add (id 0) or update (>0) a revenue/expense entry. */
