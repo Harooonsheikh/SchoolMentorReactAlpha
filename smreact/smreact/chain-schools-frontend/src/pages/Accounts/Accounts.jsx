@@ -279,6 +279,16 @@ function Transactions({ fire }) {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
 
+  // Wallets (Financial Accounts) for the "Received In / Paid From Account"
+  // picker — same localStorage store the Wallets tab manages.
+  const [finAccounts, setFinAccounts] = useState([])
+  const [defaultAcctId, setDefaultAcctId] = useState('')
+  useEffect(() => {
+    const a = loadAcc()
+    setFinAccounts(a.finAccounts.filter((x) => x.status === 'active'))
+    setDefaultAcctId(defaultFinAccountId(a))
+  }, [])
+
   // Heads (Chart of Accounts) — read-only, taake entry ka head dropdown bhare.
   useEffect(() => {
     let alive = true
@@ -390,15 +400,15 @@ function Transactions({ fire }) {
         </div>
       </div>
 
-      {entryModal && <TxnModal modal={entryModal} seg={seg} heads={heads} onClose={() => setEntryModal(null)} onSave={saveEntry} onToast={fire} />}
+      {entryModal && <TxnModal modal={entryModal} seg={seg} heads={heads} finAccounts={finAccounts} defaultAcctId={defaultAcctId} onClose={() => setEntryModal(null)} onSave={saveEntry} onToast={fire} />}
       {del && <ConfirmModal title="Delete Entry?" body="This transaction will be permanently removed." onClose={() => setDel(null)} onConfirm={doDel} />}
     </>
   )
 }
 
-function TxnModal({ modal, seg, heads, onClose, onSave, onToast }) {
+function TxnModal({ modal, seg, heads, finAccounts, defaultAcctId, onClose, onSave, onToast }) {
   const x = modal.txn || {}
-  const [v, setV] = useState({ headNo: x.headNo || '', date: x.date || todayISO(), detail: x.detail || '', amount: x.amount || '', chqNo: x.chqNo || '', chqDate: x.chqDate || '' })
+  const [v, setV] = useState({ headNo: x.headNo || '', date: x.date || todayISO(), detail: x.detail || '', amount: x.amount || '', chqNo: x.chqNo || '', chqDate: x.chqDate || '', acctId: x.acctId || defaultAcctId || '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
   const save = () => {
     if (!v.headNo) return onToast('Please select an account head', 'warn')
@@ -414,10 +424,23 @@ function TxnModal({ modal, seg, heads, onClose, onSave, onToast }) {
       </div>
       <div className="acc-field" style={{ marginBottom: 12 }}><label>Amount (Rs)</label><input className="acc-input" type="number" value={v.amount} onChange={set('amount')} placeholder="0" /></div>
       <div className="acc-field" style={{ marginBottom: 12 }}><label>Details</label><textarea className="acc-input" rows={2} value={v.detail} onChange={set('detail')} placeholder="Description of this transaction" /></div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div className="acc-field"><label>Cheque No. (optional)</label><input className="acc-input" value={v.chqNo} onChange={set('chqNo')} placeholder="e.g. CHQ-44120" /></div>
         <div className="acc-field"><label>Cheque Date (optional)</label><input className="acc-input" type="date" value={v.chqDate} onChange={set('chqDate')} /></div>
       </div>
+      {finAccounts?.length > 0 && (
+        <div className="acc-entry-acctbox">
+          <div className="acc-field">
+            <label><i className="fa-solid fa-wallet" /> {seg === 'rev' ? 'Received In Account' : 'Paid From Account'}</label>
+            <select className="acc-input" value={v.acctId} onChange={set('acctId')}>
+              {finAccounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {finTypeMeta(a.type).label}{a.id === defaultAcctId ? ' (Default)' : ''}</option>)}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 6 }}>
+              <i className="fa-solid fa-circle-info" /> {seg === 'rev' ? ' Choose which account this money is received into. Its balance will increase.' : ' Choose which account this expense is paid from. Its balance will decrease.'}
+            </div>
+          </div>
+        </div>
+      )}
     </Shell>
   )
 }

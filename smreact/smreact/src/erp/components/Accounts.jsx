@@ -1042,6 +1042,10 @@ function Transactions({ toast, isOtherSession }) {
           amount: Number(form.amount) || 0,
           chequeDate: form.chqDate ? toIso(form.chqDate) : null,
           chequeNo: form.chqNo,
+          /* "Received In / Paid From" account book. Best-guess field name —
+             backend must add support for this to actually persist / move the
+             book balance (currently ignored server-side). */
+          receivedInAccountID: form.acctId ? Number(form.acctId) : null,
           enteredBy: userID,
           createdBy: userID,
           modifiedBy: userID,
@@ -1495,6 +1499,12 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
   const [chqDate, setChqDate] = useState('');
   const [chqNo, setChqNo]     = useState('');
   const [enteredBy, setEnteredBy] = useState(currentUser || '');
+  /* "Received In Account" (revenue) / "Paid From Account" (expense) — which
+     wallet (Account Book) the money goes into / comes from. UI only for now:
+     backend /save-account-entry needs a matching field to actually persist it
+     (sent as receivedInAccountID as a best-guess until the backend adds it). */
+  const [acctId, setAcctId]   = useState('');
+  const [books, setBooks]     = useState([]);
 
   /* Load the account heads for this branch + account type when the modal opens. */
   useEffect(() => {
@@ -1511,6 +1521,16 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
     return () => { cancelled = true; };
   }, [cfg, branchID, accountTypeID]);
 
+  /* Load Account Books (wallets) for the Received-In / Paid-From dropdown. */
+  useEffect(() => {
+    if (!cfg) return undefined;
+    let cancelled = false;
+    accountsService.getAccBooks()
+      .then(list => { if (!cancelled) setBooks(Array.isArray(list) ? list : []); })
+      .catch(() => { if (!cancelled) setBooks([]); });
+    return () => { cancelled = true; };
+  }, [cfg]);
+
   useEffect(() => {
     if (!cfg) return;
     if (cfg.mode === 'edit' && cfg.txn) {
@@ -1522,6 +1542,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
       setChqDate(x.chqDate || '');
       setChqNo(x.chqNo || '');
       setEnteredBy(x.createdBy || currentUser);
+      setAcctId(String(x.receivedInAccountID ?? x.bookID ?? ''));
     } else {
       const today = new Date();
       const day = String(today.getDate()).padStart(2, '0');
@@ -1529,6 +1550,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
       setHeadId('');
       setDetail(''); setAmount(''); setChqDate(''); setChqNo('');
       setEnteredBy(currentUser || '');
+      setAcctId('');
     }
   }, [cfg, currentUser, defaultMonth]);
 
@@ -1553,6 +1575,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
       id: cfg.mode === 'edit' ? (cfg.txn?.recordId || cfg.txn?.id || 0) : 0,
       branchAccountID: headId,
       date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy,
+      acctId,
     });
   };
 
@@ -1582,7 +1605,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
                 <em>{isRev ? 'Revenue' : 'Expense'}</em>
               </div>
               <div className="fee-modal-sub">
-                {isEdit ? `Head No. ${cfg.txn?.headNo}` : 'Record a transaction against an account head'}
+                {isEdit ? `Head No. ${cfg.txn?.headNo ?? ''}` : 'Record a transaction against an account head'}
               </div>
             </div>
           </div>
@@ -1611,7 +1634,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
               </div>
             </div>
             <div className="fee-field">
-              <span className="fee-label">{isRev ? 'Revenue Details' : 'Expenditure Details'}</span>
+              <span className="fee-label">{isRev ? 'Revenue' : 'Expense'} Details</span>
               <input className="fee-input" value={detail} onChange={e => setDetail(e.target.value)} placeholder="Enter Details Here" />
             </div>
             <div className="fee-field">
@@ -1631,9 +1654,32 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
             </div>
             <div className="fee-field">
               <span className="fee-label">Entered By</span>
-              <input className="fee-input" value={loginUserName || loginUserId} disabled readOnly />
+              <input className="fee-input" value={loginUserName} disabled readOnly />
             </div>
           </div>
+
+          {books.length > 0 && (
+            <div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
+              <div className="fee-field">
+                <span className="fee-label"><i className="fa-solid fa-wallet"></i> {isRev ? 'Received In Account' : 'Paid From Account'}</span>
+                <div className="fee-select-wrap">
+                  <select className="fee-select" value={acctId} onChange={e => setAcctId(e.target.value)}>
+                    <option value="">{isRev ? 'Select account to receive into' : 'Select account to pay from'}</option>
+                    {books.map(b => (
+                      <option key={b.bookID} value={b.bookID}>{b.name}{b.includeInCash ? ' — Cash' : ''}</option>
+                    ))}
+                  </select>
+                  <i className="fa-solid fa-chevron-down"></i>
+                </div>
+                <div className="fee-hint">
+                  <i className="fa-solid fa-circle-info"></i>
+                  {isRev
+                    ? 'Choose which account this money is received into. Its balance will increase.'
+                    : 'Choose which account this expense is paid from. Its balance will decrease.'}
+                </div>
+              </div>
+            </div>
+          )}
 
           {auditNote}
         </div>
@@ -1644,7 +1690,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
           </Tooltip>
           <Tooltip text={isEdit ? 'Save changes (logs you as the editor)' : 'Add this transaction to the ledger'}>
             <button className="fee-btn fee-btn-primary" onClick={handleSubmit}>
-              <i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Save Changes' : 'Save'}
+              <i className="fa-solid fa-floppy-disk"></i> Save Entry
             </button>
           </Tooltip>
         </div>
@@ -5869,6 +5915,18 @@ const ACC_CSS = `
 }
 .fee-hint i { color: #1E3A8A; font-size: 11px; flex-shrink: 0; }
 
+/* Received-In / Paid-From account box (mirrors the reference design). */
+.acc-entry-acctbox {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(8,145,178,.05), rgba(14,116,144,.02));
+  border: 1.5px solid rgba(8,145,178,.18);
+}
+[data-theme="dark"] .acc-entry-acctbox {
+  background: rgba(8,145,178,.08);
+  border-color: rgba(8,145,178,.25);
+}
+
 /* Smart-search dropdown (mirrors Fee module's design) */
 .fee-search-anchor { position: relative; width: 100%; }
 .fee-search-results {
@@ -6328,6 +6386,7 @@ const ACC_CSS = `
   gap: 16px;
   align-items: end;
 }
+.acc-entry-grid.acc-entry-grid--2 { grid-template-columns: 1fr 1fr; gap: 12px; }
 .acc-audit-note {
   display: flex;
   align-items: flex-start;

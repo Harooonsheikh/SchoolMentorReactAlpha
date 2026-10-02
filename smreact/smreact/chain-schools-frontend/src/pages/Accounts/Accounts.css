@@ -109,6 +109,9 @@ textarea.acc-input { height: auto; padding: 9px 12px; resize: vertical; }
 .acc-info-note { display: flex; align-items: flex-start; gap: 8px; background: var(--muted); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 10px 12px; font-size: 12.5px; color: var(--t2); line-height: 1.6; }
 .acc-info-note i { color: var(--brand); margin-top: 2px; flex-shrink: 0; }
 
+/* "Received In / Paid From Account" box inside the transaction entry modal */
+.acc-entry-acctbox { padding: 14px 16px; border-radius: var(--r-md); background: linear-gradient(135deg,rgba(8,145,178,.05),rgba(14,116,144,.02)); border: 1.5px solid rgba(8,145,178,.18); }
+
 .acc-books-tagchip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; padding: 2px 9px; border-radius: var(--r-f); border: 1px solid var(--bl); background: var(--muted); color: var(--tm); margin-left: 8px; vertical-align: middle; }
 
 .acc-ov-stat { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: var(--r-md); background: var(--card); border: 1.5px solid var(--bl); box-shadow: var(--s-xs); }
