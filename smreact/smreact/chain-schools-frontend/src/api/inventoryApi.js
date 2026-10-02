@@ -6,10 +6,17 @@
    ki rows branchID se bandhi hoti hain aur chain ki rows networkID se — is
    liye har row me branchID: null aur networkID = logged-in network jata hai.
 
-     GET    /api/Inventory/list?networkId=&isPos=&id=      items / products
-     GET    /api/Inventory/list-sales?networkId=           POS sales
+     POST   /api/Inventory/manage  action:get               items (active/inactive)
+     GET    /api/Inventory/list?networkId=&isPos=true        POS products
+     GET    /api/Inventory/list-sales?networkId=             POS sales
      POST   /api/Inventory/manage   (MdlAHM_Branch_Inventory)  add/edit/delete
      POST   /api/Inventory/save     (MdlInventorySale)         record a sale
+
+   Items ka GET ab /manage action:get se jata hai: ye server-side isActive
+   par filter karta hai (live-tested) — isActive:true → sirf active, false →
+   sirf inactive. Page ko dono chahiye (Active/Inactive tabs), is liye dono
+   call kar ke merge karte hain. (Pehle /list?isPos=false tha jo inactive
+   rows theek se nahi laata tha.)
 
    academicsSetupApi ki tarah ye axios client se nahi jata (wo apna token
    lagata hai / 401 par logout) — seedha fetch, ERP base par.
@@ -98,15 +105,25 @@ const mapSale = (r) => ({
   })),
 })
 
+/* Inventory items (isPOS false) /manage action:get se — isActive true/false
+   dono. Server har call sirf usi status ki rows deta hai; id par dedupe
+   taake agar kabhi overlap ho to item double na ho. */
+function fetchItems(isActive, networkId) {
+  return call('/manage', { method: 'POST', body: inventoryBody({ active: isActive }, { action: 'get', isPOS: false, networkId }) })
+}
+
 /* Load the whole inventory store the page needs in one go. */
 export async function fetchInventory(networkId = currentNetworkId()) {
   if (!networkId) return { items: [], products: [], sales: [], categories: DEFAULT_CATS }
-  const [itemsJson, prodJson, salesJson] = await Promise.all([
-    call(`/list?networkId=${networkId}&isPos=false`),
+  const [activeJson, inactiveJson, prodJson, salesJson] = await Promise.all([
+    fetchItems(true, networkId),
+    fetchItems(false, networkId),
     call(`/list?networkId=${networkId}&isPos=true`),
     call(`/list-sales?networkId=${networkId}`).catch(() => ({ data: [] })),
   ])
-  const items = rows(itemsJson).map(mapItem)
+  const byId = new Map()
+  ;[...rows(activeJson), ...rows(inactiveJson)].forEach((r) => { if (r && !byId.has(r.id)) byId.set(r.id, r) })
+  const items = [...byId.values()].map(mapItem)
   const products = rows(prodJson).map(mapProduct)
   const sales = rows(salesJson).map(mapSale)
   const categories = Array.from(new Set([...DEFAULT_CATS, ...items.map((i) => i.cat).filter(Boolean)]))
