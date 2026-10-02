@@ -52,19 +52,10 @@ const biLabel = (id) => (BI_PERIODS.find((p) => p.id === id) || BI_PERIODS[2]).l
 const FEE_PERIODS = BI_PERIODS.filter((p) => p.id !== 'all');
 
 /* ── Fee Analytics ke chhe card ────────────────────────────────────────
-   Faisla (Super Admin ka): ye cards abhi 0 par park hain.
-
-   Wajah yeh hai ke admin_dashboard koi period parameter nahi leta — wo
-   hamesha SIRF chalte mahine ka `CurrentMonthDetails` deta hai. Yaani
-   Today / Yesterday / Last Month ka fee data mojood hi nahi, aur upar
-   lagay period bar ke bawajood cards har arse ka sach nahi bata sakte.
-   Aisi soorat me jhoota (ya adhoora) aankra dikhane ke bajaye saaf 0
-   dikhaya jata hai.
-
-   JIS DIN backend period-wise fee route de (ya admin_dashboard from/to
-   lena shuru kare): sirf yahan `d.feeTotals.<field>` wapas laga dein —
-   mapping api/services/dashboard.js me pehle se mojood hai. */
-const FEE_CARD_VALUE = 0;
+   Ab LIVE hain: admin_dashboard ke `CurrentMonthDetails` ka jama (d.feeTotals)
+   dikhate hain — bilkul wahi rows jo neeche "Current Month Details" table me
+   aati hain. API sirf CHALTE mahine ka fee data deti hai (route par koi
+   from/to nahi), is liye period bar ke doosre option par cards 0 rehte hain. */
 
 /* ── Improvements Summary ke teen card ────────────────────────────────
    Faisla (Super Admin ka): ye bhi abhi 0 par park hain.
@@ -270,6 +261,13 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
     prevDues: t.prevDues + r.prevDues, challan: t.challan + r.challan, discount: t.discount + r.discount,
     receivable: t.receivable + r.receivable, received: t.received + r.received, pending: t.pending + r.pending,
   }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
+
+  /* Fee Analytics cards ka jama — admin_dashboard ke CurrentMonthDetails se
+     (d.feeTotals, search se mustaqil). Fee data sirf CHALTE mahine ka hai, is
+     liye doosre arse par sab 0. */
+  const feeTotals = feePeriod === 'thisMonth'
+    ? (d.feeTotals || { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 })
+    : { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 };
   const totalStudents = d.students.total, totalStaff = d.staff.total;
 
   /* Bugs Summary ke cards:
@@ -346,21 +344,29 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             </div>
           </div>
           <div className="fee-grid">
-            <FeeCard tone="red"    icon="fa-circle-exclamation" label="Previous Dues"           val={`${fmt(FEE_CARD_VALUE)} PKR`} />
-            <FeeCard tone="teal"   icon="fa-file-invoice"       label="Fee Challan This Month"  val={`${fmt(FEE_CARD_VALUE)} PKR`} />
-            <FeeCard tone="orange" icon="fa-percent"            label="Fee Discount This Month" val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+            <FeeCard tone="red"    icon="fa-circle-exclamation" label="Previous Dues"           val={`${fmt(feeTotals.prevDues)} PKR`} />
+            <FeeCard tone="teal"   icon="fa-file-invoice"       label="Fee Challan This Month"  val={`${fmt(feeTotals.challan)} PKR`} />
+            <FeeCard tone="orange" icon="fa-percent"            label="Fee Discount This Month" val={`${fmt(feeTotals.discount)} PKR`} />
           </div>
           <div className="fee-grid-2">
-            <FeeCard tone="slate" icon="fa-percent"           label="Fee Challan After Discount" val={`${fmt(FEE_CARD_VALUE)} PKR`} />
-            <FeeCard tone="green" icon="fa-money-bill-wave"    label="Fee Received"               val={`${fmt(FEE_CARD_VALUE)} PKR`} />
-            <FeeCard tone="red2"  icon="fa-circle-exclamation" label="Total Pending"              val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+            <FeeCard tone="slate" icon="fa-percent"           label="Fee Challan After Discount" val={`${fmt(feeTotals.receivable)} PKR`} />
+            <FeeCard tone="green" icon="fa-money-bill-wave"    label="Fee Received"               val={`${fmt(feeTotals.received)} PKR`} />
+            <FeeCard tone="red2"  icon="fa-circle-exclamation" label="Total Pending"              val={`${fmt(feeTotals.pending)} PKR`} />
           </div>
-          {/* Cards 0 kyun hain — screen par bhi likha ho, warna "toota hua"
-              lagta hai. Neeche wali table apni asal rows dikhati hai. */}
-          <div className="db-locked" style={{ marginTop: -8 }}>
-            <i className="fa-solid fa-circle-info" />
-            <span>Fee figures are parked at <b>0</b>: <code>admin_dashboard</code> takes no period parameter, so no Today / Yesterday / Last Month fee data exists to report. The Current Month Details table below still lists the current month's rows as the API returns them.</span>
-          </div>
+          {/* Aankre admin_dashboard ke CurrentMonthDetails se (is chalte mahine
+              ke) — wahi rows jo neeche table me aati hain. Doosre arse ka fee
+              data API deti hi nahi, is liye un par cards 0 rehte hain. */}
+          {feePeriod === 'thisMonth' ? (
+            <div className="db-locked db-locked-ok" style={{ marginTop: -8 }}>
+              <i className="fa-solid fa-circle-check" />
+              <span>Fee figures are live for the <b>current month</b> — challan, discount, received and pending across all schools (same rows as the Current Month Details table below).</span>
+            </div>
+          ) : (
+            <div className="db-locked" style={{ marginTop: -8 }}>
+              <i className="fa-solid fa-circle-info" />
+              <span><code>admin_dashboard</code> only returns the <b>current month</b> — switch to <b>This Month</b> to see fee figures. Other periods aren't tracked by the API.</span>
+            </div>
+          )}
         </>
       )}
 
