@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom'
 import {
   MODULE_TREE, PRIMARY_ACTIONS, ADVANCED_ACTIONS, ACTION_LABELS,
   getApplicablePerms, isPermApplicable, permStats, permsForUser,
+  permsFromApiPermissions, apiPermissionsFromPerms,
 } from './permissionsData'
+import { getNetworkMenuPermissions, saveNetworkMenuPermissions } from '../../api/networkMenuPermissionsApi'
 
 /* ═══════════════════════════════════════════════════════════════════
    EDIT PERMISSIONS — full-screen matrix modal.
@@ -18,10 +20,14 @@ import {
    "Apply Role Template" dropdown (no roles here) — a user's matrix
    IS their permissions, edited directly.
    ═══════════════════════════════════════════════════════════════════ */
-export default function PermissionMatrixModal({ empId, empName, onClose, onSave }) {
+export default function PermissionMatrixModal({ empId, empName, onClose, onSave, onError }) {
+  /* Local mirror se foran seed (list ka badge jis par bana) — phir API ki
+     saved permissions aa kar overwrite kar deti hain. */
   const [perms, setPerms] = useState(() => ({ ...permsForUser(empId) }))
   const [selModId, setSelModId] = useState(MODULE_TREE[0].id)
   const [showAdv, setShowAdv] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
@@ -29,6 +35,27 @@ export default function PermissionMatrixModal({ empId, empName, onClose, onSave 
     document.body.style.overflow = 'hidden'
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
   }, [onClose])
+
+  /* Is user ki SAVED permissions API se lao (get-network-menu-permissions).
+     Aa jayen to matrix wahi dikhaye; na hon / error ho to local mirror hi
+     rahe. Load hone tak Save band — warna stale state save ho sakti hai. */
+  useEffect(() => {
+    if (empId == null) { setLoading(false); return undefined }
+    let alive = true
+    getNetworkMenuPermissions(empId)
+      .then((apiPerms) => {
+        if (!alive) return
+        setPerms(permsFromApiPermissions(apiPerms))
+        /* Jis module me perm hai usi tab par khulo. */
+        const mapped = permsFromApiPermissions(apiPerms)
+        const grantedChildIds = new Set(Object.keys(mapped).map((k) => k.slice(0, k.lastIndexOf('.'))))
+        const modWithPerm = MODULE_TREE.find((m) => m.children.some((c) => grantedChildIds.has(c.id)))
+        if (modWithPerm) setSelModId(modWithPerm.id)
+      })
+      .catch((err) => { console.error('Could not load user menu permissions:', err) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [empId])
 
   const selectedModule = MODULE_TREE.find((m) => m.id === selModId) || MODULE_TREE[0]
 
@@ -75,7 +102,9 @@ export default function PermissionMatrixModal({ empId, empName, onClose, onSave 
 
   const stats = useMemo(() => permStats(perms), [perms])
 
-  const onSubmit = () => {
+  const onSubmit = async () => {
+    if (saving || loading) return
+    /* Local mirror ke liye sirf granted (true) keys. */
     const cleaned = {}
     MODULE_TREE.forEach((mod) => {
       mod.children.forEach((c) => {
@@ -85,7 +114,17 @@ export default function PermissionMatrixModal({ empId, empName, onClose, onSave 
         })
       })
     })
-    onSave(cleaned)
+    setSaving(true)
+    try {
+      /* API ko HAR applicable row bhejo (true + false) taake unchecking persist ho. */
+      await saveNetworkMenuPermissions({ employeeId: empId, permissions: apiPermissionsFromPerms(perms) })
+      onSave(cleaned)
+    } catch (err) {
+      console.error('Could not save permissions:', err)
+      onError?.(err.message || 'Could not save permissions')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const modOn = moduleCounts[selModId]?.allOn
@@ -196,8 +235,14 @@ export default function PermissionMatrixModal({ empId, empName, onClose, onSave 
             <span className="up-badge up-badge--red">Restricted: {stats.restricted}</span>
           </div>
           <div className="up-modal-foot-r">
-            <button type="button" className="up-btn up-btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="button" className="up-btn up-btn-primary" onClick={onSubmit}><i className="fa-solid fa-floppy-disk" aria-hidden="true" /> Save Permissions</button>
+            <button type="button" className="up-btn up-btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="button" className="up-btn up-btn-primary" onClick={onSubmit} disabled={loading || saving}>
+              {saving
+                ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Saving…</>
+                : loading
+                  ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading…</>
+                  : <><i className="fa-solid fa-floppy-disk" aria-hidden="true" /> Save Permissions</>}
+            </button>
           </div>
         </div>
       </div>

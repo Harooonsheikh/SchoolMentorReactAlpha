@@ -7,6 +7,7 @@ import { ERP_LOGIN_URL, ERP_URL } from '../config/env'
 import { getToken, getStoredUser } from '../auth/tokenStorage'
 import ErrorBoundary from '../components/ErrorBoundary'
 import { cachedNetworkPermissions, fetchNetworkPermissions, isNavItemAllowed } from '../api/networkPermissionsApi'
+import { cachedUserModuleAccess, fetchUserModuleAccess, isUserNavItemAllowed } from '../api/networkMenuPermissionsApi'
 import '../styles/admin.css'
 
 /* Initials from a name, e.g. "Chain Admin" → "CA". */
@@ -62,11 +63,28 @@ export default function AdminLayout() {
       })
     return () => { alive = false }
   }, [])
+
+  /* Per-user menu permissions — login ke baad get-network-menu-permissions
+     se. Network Head Office (owner) → poora access; baqi user → sirf wahi
+     module jis ki koi action isAccessable:true ho. Cache se foran, phir taza.
+     Fail-open: API nakaam ho to sab dikhao. */
+  const [userAccess, setUserAccess] = useState(() => cachedUserModuleAccess())
+  useEffect(() => {
+    let alive = true
+    fetchUserModuleAccess()
+      .then((access) => { if (alive) setUserAccess(access) })
+      .catch(() => { if (alive) setUserAccess((prev) => prev || { fullAccess: true }) })
+    return () => { alive = false }
+  }, [])
+
   const navSections = useMemo(
     () => NAV_SECTIONS
-      .map((s) => ({ ...s, items: s.items.filter((i) => isNavItemAllowed(i.key, navFlags)) }))
+      .map((s) => ({
+        ...s,
+        items: s.items.filter((i) => isNavItemAllowed(i.key, navFlags) && isUserNavItemAllowed(i.key, userAccess)),
+      }))
       .filter((s) => s.items.length),
-    [navFlags],
+    [navFlags, userAccess],
   )
 
   /* Sign out → session clear karke ERP ke login par wapas. Is portal ka apna

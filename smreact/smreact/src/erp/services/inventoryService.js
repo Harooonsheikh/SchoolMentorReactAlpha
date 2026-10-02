@@ -7,13 +7,18 @@ import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
    service; prod proxies through IIS → alphaapi). Verified live against
    the Inventory controller:
 
-     GET    /api/Inventory/list?branchId=&isPos=&id=      → items / products
-     GET    /api/Inventory/list-sales?branchId=&from&to   → POS sales
+     POST   /api/Inventory/manage  action:get              → items (active/inactive)
+     GET    /api/Inventory/list?branchId=&isPos=true        → POS products
+     GET    /api/Inventory/list-sales?branchId=&from&to     → POS sales
      POST   /api/Inventory/manage   (MdlAHM_Branch_Inventory)  add/edit/delete
      POST   /api/Inventory/save     (MdlInventorySale)         record a sale
      DELETE /api/Inventory/delete/{id}?modifiedBy=            delete a SALE
 
    isPOS=false → physical inventory items. isPOS=true → shop products.
+   Items ka GET /manage action:get se jata hai: server isActive par filter
+   karta hai (isActive:true → active, false → inactive). Page ko dono chahiye,
+   is liye dono laa kar merge karte hain — /list?isPos=false inactive rows
+   theek se nahi laata tha.
    A shop SALE (save) reduces product stock server-side, so the UI must
    re-fetch products after a sale, never decrement locally.
 
@@ -131,9 +136,18 @@ function mapSale(r) {
 }
 
 /* ─── READ APIs ─── */
+
+/* Items (isPOS false) /manage action:get se — isActive true + false dono.
+   Server har call sirf usi status ki rows deta hai; id par dedupe taake
+   kabhi overlap ho to item double na ho. */
 export async function getInvItems() {
-  const json = await readJson(`${BASE}/list?branchId=${branchId()}&isPos=false`);
-  return (json.data || []).map(mapItem);
+  const [activeJson, inactiveJson] = await Promise.all([
+    postJson('manage', inventoryBody({ active: true },  { action: 'get', isPOS: false }), 'Could not load inventory items'),
+    postJson('manage', inventoryBody({ active: false }, { action: 'get', isPOS: false }), 'Could not load inventory items'),
+  ]);
+  const byId = new Map();
+  [...(activeJson.data || []), ...(inactiveJson.data || [])].forEach((r) => { if (r && !byId.has(r.id)) byId.set(r.id, r); });
+  return [...byId.values()].map(mapItem);
 }
 
 export async function getInvProducts() {

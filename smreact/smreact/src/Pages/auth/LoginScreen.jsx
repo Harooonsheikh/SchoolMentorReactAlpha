@@ -196,6 +196,13 @@ export default function LoginScreen({ onLogin, onSignup }) {
         email:         data?.email || '',
         role:          data?.accountType || 'Network Head Office',
         accountType:   data?.accountType ?? 'network',
+        /* Per-user menu permissions ke liye (chain portal sidebar gating):
+           Head Office account ka koi employeeID nahi hota → chain use poora
+           access deta hai. Baqi (staff) users ka employeeID aata hai →
+           get-network-menu-permissions se sirf granted modules dikhte hain.
+           networkID bhi saath, taake staff ke liye sahi network query ho. */
+        employeeID:    data?.employeeID ?? data?.employee_ID ?? data?.employeeId ?? null,
+        networkID:     data?.networkID ?? data?.networkId ?? netId,
       };
 
       /* Poora login response bhi saath jata hai, taake chain portal ki koi bhi

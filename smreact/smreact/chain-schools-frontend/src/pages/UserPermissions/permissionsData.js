@@ -262,6 +262,64 @@ export function saveUserPerms(empId, perms) {
   saveAllUserPerms({ ...all, [empId]: perms })
 }
 
+/* ─── API ⇆ matrix converters ─────────────────────────────────────────
+   save/get-network-menu-permissions har permission ko
+     { menuName, subMenuName, action, isAccessable }
+   ke taur par rakhti hai (ERP ke user-menu-permissions jaisa). Yahan
+   us shakal aur editor ke flat `${childId}.${actionKey}` map ke beech
+   do-tarfa tarjuma hota hai. Label matching case-insensitive + trim;
+   jo match na ho wo ignore. ─────────────────────────────────────────── */
+const _CHILD_ID_BY_LABEL = (() => {
+  const map = {}
+  MODULE_TREE.forEach((m) => {
+    const menu = String(m.label).trim().toLowerCase()
+    m.children.forEach((c) => { map[`${menu}|${String(c.label).trim().toLowerCase()}`] = c.id })
+  })
+  return map
+})()
+const _ACTION_KEY_BY_LABEL = (() => {
+  const map = {}
+  Object.entries(ACTION_LABELS).forEach(([key, label]) => { map[String(label).trim().toLowerCase()] = key })
+  return map
+})()
+
+/* API rows → editor perm map. Sirf isAccessable:true waale checkbox on karte hain. */
+export function permsFromApiPermissions(apiPerms) {
+  const out = {}
+  ;(apiPerms || []).forEach((p) => {
+    if (!p || !p.isAccessable) return
+    const menu = String(p.menuName || '').trim().toLowerCase()
+    const sub  = String(p.subMenuName || '').trim().toLowerCase()
+    const childId = _CHILD_ID_BY_LABEL[`${menu}|${sub}`]
+    if (!childId) return
+    const rawAct = String(p.action || '').trim().toLowerCase()
+    const actKey = _ACTION_KEY_BY_LABEL[rawAct] || rawAct
+    if (!actKey) return
+    out[`${childId}.${actKey}`] = true
+  })
+  return out
+}
+
+/* Editor perm map → save-network-menu-permissions ka permissions[] array.
+   HAR applicable permission apni value ke saath (checked → true, unchecked →
+   false), taake unchecking bhi persist ho. */
+export function apiPermissionsFromPerms(perms) {
+  const out = []
+  MODULE_TREE.forEach((m) => {
+    m.children.forEach((c) => {
+      getApplicablePerms(c.id).forEach((actKey) => {
+        out.push({
+          menuName: m.label,
+          subMenuName: c.label,
+          action: ACTION_LABELS[actKey] || actKey,
+          isAccessable: !!perms?.[`${c.id}.${actKey}`],
+        })
+      })
+    })
+  })
+  return out
+}
+
 /* Quick single-permission check — used by Dashboard.jsx and any other
    screen that wants to gate on this user's saved matrix. */
 export function hasPerm(empId, screenId, action) {

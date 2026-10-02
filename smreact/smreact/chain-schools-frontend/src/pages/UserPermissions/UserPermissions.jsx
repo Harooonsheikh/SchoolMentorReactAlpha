@@ -138,6 +138,8 @@ function UsersPermTab({ users, fire }) {
     return users.filter((u) => !q || u.fullName.toLowerCase().includes(q))
   }, [users, search])
 
+  /* Modal API par save kar chuka — yahan sirf local mirror (list ka badge)
+     update karo + toast + band. */
   const save = (perms) => {
     saveUserPerms(editing.id, perms)
     fire('Permissions updated')
@@ -178,6 +180,7 @@ function UsersPermTab({ users, fire }) {
           empName={editing.fullName}
           onClose={() => setEditing(null)}
           onSave={save}
+          onError={(msg) => fire(msg || 'Could not save permissions', 'warn')}
         />
       )}
     </div>

@@ -18,11 +18,14 @@ import { getStoredUser } from '@/auth/tokenStorage'
 
 const MANAGE_URL = `${CHAIN_API_BASE}/api/Network_Setup/network-schools/manage`
 
-/* Logged-in network ki id. ERP handoff `csp_user` me network id `id` par aati
-   hai (dekhein main.jsx / LoginScreen ka handoff). */
+/* Logged-in network ki id. `networkID` ko tarjeeh — staff login
+   (NetworkEmployee) ke response me `id` user ki apni id hoti hai (e.g. 6)
+   aur asli network `networkID` (e.g. 2) par aata hai; sirf Head Office ka
+   `id` hi network id hota hai. Is liye networkID pehle, phir id par girte
+   hain (purane head-office sessions ke liye jin me networkID nahi tha). */
 export function currentNetworkId() {
   const u = getStoredUser()
-  const id = u?.id ?? u?.networkID ?? u?.networkId
+  const id = u?.networkID ?? u?.networkId ?? u?.id
   return Number(id) || 0
 }
 
