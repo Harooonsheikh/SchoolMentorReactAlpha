@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useView } from '../../config/viewContext'
 import TutorialButton from '../../components/TutorialButton'
 import { fetchChainDashboard } from '../../api/chainDashboardApi'
+import { cachedUserModuleAccess, fetchUserModuleAccess, isUserNavItemAllowed } from '../../api/networkMenuPermissionsApi'
 import './Dashboard.css'
 
 /* Ye screen ab poori tarah Network_Setup/GetDashboard se chalti hai —
@@ -189,6 +190,20 @@ function HeadOfficeDashboard({ d }) {
   const { usage, chain, finance, hr, ranking, modules, studentTrend, growth } = d
   const schoolCount = usage.totalSchools || chain.totalSchools
 
+  /* Logged-in user ki module permissions — wahi sidebar wali (fetchUserModuleAccess).
+     Jis module ki permission na ho, hero ka shortcut button locked: click par
+     screen nahi khulti, hover par tooltip. Head Office / fail-open → sab allowed. */
+  const [userAccess, setUserAccess] = useState(() => cachedUserModuleAccess())
+  useEffect(() => {
+    let alive = true
+    fetchUserModuleAccess().then((a) => { if (alive) setUserAccess(a) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const canGo = (key) => isUserNavItemAllowed(key, userAccess)
+  const NO_PERM = 'No permission for this module — please ask your admin to enable it.'
+  const go = (key, path) => { if (canGo(key)) navigate(path) }
+  const lockStyle = (key) => (canGo(key) ? undefined : { opacity: 0.55, cursor: 'not-allowed' })
+
   return (
     <>
       {/* Hero */}
@@ -199,8 +214,12 @@ function HeadOfficeDashboard({ d }) {
             <div className="hero-title">Network Executive Overview</div>
             <div className="hero-sub">Aggregated platform usage and operational performance across all {schoolCount} connected schools — usage analytics, finances, HR and attendance at a glance.</div>
             <div className="hero-actions">
-              <button className="hero-btn-white" onClick={() => navigate('/school-progress')}><i className="fa-solid fa-chart-line" /> School Progress</button>
-              <button className="hero-btn-outline" onClick={() => navigate('/school-payments')}><i className="fa-solid fa-credit-card" /> Payments</button>
+              <button className="hero-btn-white" onClick={() => go('progress', '/school-progress')} aria-disabled={!canGo('progress')} data-tip={canGo('progress') ? undefined : NO_PERM} style={lockStyle('progress')}>
+                <i className={`fa-solid ${canGo('progress') ? 'fa-chart-line' : 'fa-lock'}`} /> School Progress
+              </button>
+              <button className="hero-btn-outline" onClick={() => go('payments', '/school-payments')} aria-disabled={!canGo('payments')} data-tip={canGo('payments') ? undefined : NO_PERM} style={lockStyle('payments')}>
+                <i className={`fa-solid ${canGo('payments') ? 'fa-credit-card' : 'fa-lock'}`} /> Payments
+              </button>
               <TutorialButton />
             </div>
           </div>

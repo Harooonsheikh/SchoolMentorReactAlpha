@@ -298,7 +298,17 @@ function Transactions({ fire }) {
   const heads = types.find((t) => t.key === seg)?.heads || []
   const list = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return entries.filter((x) => (!q || `${x.head}${x.detail}${x.amount}${x.date}`.toLowerCase().includes(q))).sort((a, b) => (a.date < b.date ? 1 : -1))
+    /* Sabse nayi entry sabse upar: pehle DATE (column) descending, phir usi
+       din ke andar CREATED time descending (3:12 wala 2:26 se, 2:26 wala 2:11
+       se upar). createdAt barabar ho to bari id upar (naya record). */
+    return entries
+      .filter((x) => (!q || `${x.head}${x.detail}${x.amount}${x.date}`.toLowerCase().includes(q)))
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1
+        const ca = String(a.createdAt || ''); const cb = String(b.createdAt || '')
+        if (ca !== cb) return ca < cb ? 1 : -1
+        return (Number(b.id) || 0) - (Number(a.id) || 0)
+      })
   }, [entries, search])
   const total = list.reduce((a, x) => a + Number(x.amount || 0), 0)
 

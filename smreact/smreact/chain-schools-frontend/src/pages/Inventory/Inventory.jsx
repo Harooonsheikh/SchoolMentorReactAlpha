@@ -87,7 +87,12 @@ function Manage({ inv, reload, fire }) {
 
   const saveItem = async (data, id) => {
     try {
-      await saveNetworkItem({ ...data, id: id || 0 })
+      /* Edit par item ka maujooda active/inactive status barqarar rakho — form
+         `active` nahi bhejta, is liye warna inactive item update karte hi active
+         ho jata tha (API me isActive true chala jata). Naya item → active. */
+      const existing = id ? inv.items.find((i) => i.id === id) : null
+      const active = data.active ?? existing?.active ?? true
+      await saveNetworkItem({ ...data, id: id || 0, active })
       setItemModal(null); fire(id ? 'Item updated' : 'Item added')
       await reload()
     } catch (e) { fire(e.message || 'Could not save item', 'warn') }

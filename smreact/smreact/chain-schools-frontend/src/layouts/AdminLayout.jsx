@@ -81,7 +81,10 @@ export default function AdminLayout() {
     () => NAV_SECTIONS
       .map((s) => ({
         ...s,
-        items: s.items.filter((i) => isNavItemAllowed(i.key, navFlags) && isUserNavItemAllowed(i.key, userAccess)),
+        /* Dashboard har user ko hamesha dikhta hai (landing screen) — na network
+           flag, na per-user permission use rokti hai. Baqi modules dono gates se. */
+        items: s.items.filter((i) => i.key === 'dashboard'
+          || (isNavItemAllowed(i.key, navFlags) && isUserNavItemAllowed(i.key, userAccess))),
       }))
       .filter((s) => s.items.length),
     [navFlags, userAccess],
