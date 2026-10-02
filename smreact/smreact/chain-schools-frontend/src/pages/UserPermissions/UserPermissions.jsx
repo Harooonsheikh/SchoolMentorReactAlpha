@@ -8,7 +8,8 @@ import { loadHr, fullName } from '../HumanResource/data'
 import './UserPermissions.css'
 
 export default function UserPermissions() {
-  const [tab, setTab] = useState('assign')
+  /* Assign School tab abhi k liye band — default seedha User Permission par. */
+  const [tab, setTab] = useState('perm')
   const [users, setUsers] = useState([])
   const [assignStore, setAssignStore] = useState({})
   const [toast, setToast] = useState(null)
@@ -38,8 +39,10 @@ export default function UserPermissions() {
         <TutorialButton />
       </div>
 
-      <div className="um-tabs" style={{ gridTemplateColumns: 'repeat(2,1fr)' }}>
+      <div className="um-tabs" style={{ gridTemplateColumns: 'repeat(1,1fr)' }}>
+        {/* Assign School tab abhi band (comment) — dobara chahiye to grid 'repeat(2,1fr)' karke ye button uncomment karein.
         <button className={`um-tab${tab === 'assign' ? ' active' : ''}`} onClick={() => setTab('assign')}><i className="fa-solid fa-school" /> Assign School</button>
+        */}
         <button className={`um-tab${tab === 'perm' ? ' active' : ''}`} onClick={() => setTab('perm')}><i className="fa-solid fa-shield-halved" /> User Permission</button>
       </div>
 
