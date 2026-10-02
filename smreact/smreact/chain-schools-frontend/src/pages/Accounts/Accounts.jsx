@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import {
   loadAcc, saveAcc, rs, num, fmtDate, fmtStamp, periodLabel,
   bookCalc, monthsBetween, plForMonth,
+  defaultFinAccountId, finAccountBalance, saveFinAccount, setFinAccountStatus, saveTransfer, deleteTransfer,
 } from './data'
 import {
   fetchAccountTypes, fetchAccountEntriesByMonth, fetchAllAccountEntries,
@@ -133,12 +134,13 @@ const [accountTypes, setAccountTypes] = useState([])
       </div>
 
       <div className="acc-tabs">
-        {[['coa', 'fa-sitemap', 'Chart of Accounts'], ['txn', 'fa-right-left', 'Transactions'], ['books', 'fa-book-open', 'Account Books'], ['reports', 'fa-chart-column', 'Reports']].map(([k, ic, lbl]) => (
+        {[['coa', 'fa-sitemap', 'Chart of Accounts'], ['txn', 'fa-right-left', 'Transactions'], ['accounts', 'fa-wallet', 'Wallets'], ['books', 'fa-book-open', 'Account Books'], ['reports', 'fa-chart-column', 'Reports']].map(([k, ic, lbl]) => (
           <button key={k} className={`acc-tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}><i className={`fa-solid ${ic}`} /> {lbl}</button>
         ))}
       </div>
 
 {tab === 'coa' && <ChartOfAccounts acc={acc} commit={commit} fire={fire} accountTypes={accountTypes} reloadHeads={loadHeads} loading={headsLoading} />}      {tab === 'txn' && <Transactions fire={fire} />}
+      {tab === 'accounts' && <AccountsManagementTab acc={acc} commit={commit} fire={fire} />}
       {tab === 'books' && <AccountBooks fire={fire} />}
       {tab === 'reports' && <Reports fire={fire} />}
 
@@ -893,21 +895,431 @@ function Shell({ title, icon, maxWidth, foot, children, onClose }) {
   )
 }
 
-function ConfirmModal({ title, body, onClose, onConfirm }) {
+function ConfirmModal({ title, body, onClose, onConfirm, icon = 'fa-trash-can', confirmLabel = 'Delete', tone = 'danger' }) {
+  const iconStyle = tone === 'danger'
+    ? { background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626' }
+    : { background: 'rgba(30,58,138,.1)', border: '2px solid rgba(30,58,138,.25)', color: '#1E40AF' }
   return createPortal(
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="modal" style={{ maxWidth: 420 }}>
         <div className="modal-body" style={{ textAlign: 'center', padding: '40px 30px' }}>
-          <div className="confirm-icon" style={{ background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626' }}><i className="fa-solid fa-trash-can" /></div>
+          <div className="confirm-icon" style={iconStyle}><i className={`fa-solid ${icon}`} /></div>
           <div className="confirm-title">{title}</div>
           <div className="confirm-sub">{body}</div>
           <div className="confirm-btns">
             <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <SpinnerButton className="btn-danger" icon="fa-trash-can" onClick={onConfirm}>Delete</SpinnerButton>
+            <SpinnerButton className={tone === 'danger' ? 'btn-danger' : 'btn-primary'} icon={icon} onClick={onConfirm}>{confirmLabel}</SpinnerButton>
           </div>
         </div>
       </div>
     </div>,
     document.body,
+  )
+}
+
+/* ════════ WALLETS (ACCOUNTS MANAGEMENT) ════════
+   Where the school physically holds money (cash till, bank accounts,
+   owner wallet, anything else), transfers between them, and a bank-style
+   statement per wallet. Demo/localStorage-backed via ./data — wire it to
+   the chain accounts API when wallet endpoints exist. Transfers move
+   balances only (their own acc.transfers array) and never touch
+   Profit & Loss. */
+const FIN_TYPES = [
+  { key: 'cash', label: 'Cash', icon: 'fa-money-bill-wave' },
+  { key: 'bank', label: 'Bank', icon: 'fa-building-columns' },
+  { key: 'owner', label: 'Owner', icon: 'fa-user-tie' },
+  { key: 'other', label: 'Other', icon: 'fa-wallet' },
+]
+const finTypeMeta = (key) => FIN_TYPES.find((t) => t.key === key) || FIN_TYPES[3]
+
+function AccountsManagementTab({ acc, commit, fire }) {
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('all')
+  const [editAccount, setEditAccount] = useState(null) // { mode:'add'|'edit', account? }
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [statementFor, setStatementFor] = useState(null)
+  const [toggleTarget, setToggleTarget] = useState(null) // account being disabled (confirm)
+  const [delTransfer, setDelTransfer] = useState(null)
+
+  const defaultId = defaultFinAccountId(acc)
+  const activeAccounts = acc.finAccounts.filter((a) => a.status === 'active')
+  const balanceOf = (a) => finAccountBalance(acc, a)
+
+  const filtered = acc.finAccounts.filter((a) => {
+    const q = search.trim().toLowerCase()
+    const matchQ = !q || a.name.toLowerCase().includes(q) || (a.bankName || '').toLowerCase().includes(q) || (a.accountNo || '').includes(q)
+    return matchQ && (status === 'all' || a.status === status)
+  })
+  const totalOpening = acc.finAccounts.reduce((a, x) => a + (Number(x.opening) || 0), 0)
+  const totalCurrent = acc.finAccounts.reduce((a, x) => a + balanceOf(x), 0)
+
+  const onSaveAccount = (payload) => {
+    const id = editAccount?.mode === 'edit' ? editAccount.account.id : undefined
+    commit(saveFinAccount(acc, payload, id))
+    fire(id ? 'Account updated' : 'Account created')
+    setEditAccount(null)
+  }
+  const onToggleStatus = (a) => {
+    if (a.status === 'active') { setToggleTarget(a); return }
+    commit(setFinAccountStatus(acc, a.id, 'active'))
+    fire(`${a.name} re-enabled`)
+  }
+  const confirmDisable = () => {
+    commit(setFinAccountStatus(acc, toggleTarget.id, 'inactive'))
+    fire(`${toggleTarget.name} disabled`, 'info')
+    setToggleTarget(null)
+  }
+  const onSaveTransfer = (payload) => {
+    commit(saveTransfer(acc, payload))
+    const fromName = acc.finAccounts.find((a) => a.id === payload.fromId)?.name || 'account'
+    const toName = acc.finAccounts.find((a) => a.id === payload.toId)?.name || 'account'
+    fire(`Transferred ${rs(payload.amount)} from ${fromName} to ${toName}`)
+    setTransferOpen(false)
+  }
+  const confirmDeleteTransfer = () => {
+    commit(deleteTransfer(acc, delTransfer.id))
+    fire('Transfer deleted', 'info')
+    setDelTransfer(null)
+  }
+
+  return (
+    <>
+      <div className="acc-overview-banner">
+        <div className="acc-overview-ic" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-wallet" /></div>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div className="acc-overview-title">Wallets <span className="acc-books-tagchip">Cash, Bank &amp; Owner Accounts</span></div>
+          <div className="acc-overview-sub">Manage every place the school holds money. This includes <strong>Cash In Hand, bank accounts, and owner or custom wallets</strong>. Move balances between accounts, choose where each income lands and each expense is paid from, and view a full bank-style statement per account. <strong>Transfers move balances only. They never affect Profit &amp; Loss.</strong></div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div className="acc-ov-stat"><div className="acc-ov-stat-ic all"><i className="fa-solid fa-layer-group" /></div><div><div className="acc-ov-stat-val">{acc.finAccounts.length}</div><div className="acc-ov-stat-lbl">Accounts &middot; {activeAccounts.length} active</div></div></div>
+          <div className="acc-ov-stat"><div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}><i className="fa-solid fa-flag" /></div><div><div className="acc-ov-stat-val">{rs(totalOpening)}</div><div className="acc-ov-stat-lbl">Total Opening</div></div></div>
+          <div className="acc-ov-stat"><div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-wallet" /></div><div><div className="acc-ov-stat-val">{rs(totalCurrent)}</div><div className="acc-ov-stat-lbl">Total Available</div></div></div>
+        </div>
+      </div>
+
+      <div className="acc-bar">
+        <div className="acc-field" style={{ flex: 1, minWidth: 240 }}><label>Search Accounts</label><div className="search-box"><i className="fa-solid fa-magnifying-glass" /><input className="search-input" placeholder="Search by account name, bank or type" value={search} onChange={(e) => setSearch(e.target.value)} /></div></div>
+        <div className="acc-field"><label>Status</label><select className="acc-input" value={status} onChange={(e) => setStatus(e.target.value)}><option value="all">All Accounts</option><option value="active">Active</option><option value="inactive">Disabled</option></select></div>
+        <button className="btn-secondary" onClick={() => setTransferOpen(true)} disabled={activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}><i className="fa-solid fa-right-left" /> Transfer Money</button>
+        <button className="btn-primary" onClick={() => setEditAccount({ mode: 'add' })}><i className="fa-solid fa-plus" /> Create Account</button>
+      </div>
+
+      <div className="acc-books-grid">
+        {filtered.length === 0 ? <div className="acc-empty" style={{ gridColumn: '1/-1' }}><i className="fa-solid fa-wallet" /><div style={{ fontSize: 14, fontWeight: 700 }}>No accounts found</div></div>
+          : filtered.map((a) => {
+            const tm = finTypeMeta(a.type)
+            const bal = balanceOf(a)
+            const sub = a.type === 'bank' && (a.bankName || a.accountNo)
+              ? `${a.bankName || 'Bank'}${a.accountNo ? ` · ${a.accountNo}` : ''}`
+              : (a.description || `${tm.label} account`)
+            return (
+              <div className={`acc-wallet-card${a.status === 'inactive' ? ' inactive' : ''}`} key={a.id}>
+                <div className="acc-wallet-card-top">
+                  <div className={`acc-wallet-ic ${a.type}`}><i className={`fa-solid ${tm.icon}`} /></div>
+                  <div className="acc-wallet-tt">
+                    <div className="acc-wallet-name">
+                      {a.name}
+                      {a.isDefault && <span className="acc-default-chip"><i className="fa-solid fa-star" /> Default</span>}
+                    </div>
+                    <div className="acc-wallet-sub">
+                      <span className={`acc-type-badge ${a.type}`}><i className={`fa-solid ${tm.icon}`} /> {tm.label}</span>
+                      <span className={`badge ${a.status === 'active' ? 'b-green' : 'b-gray'}`}>{a.status === 'active' ? 'Active' : 'Disabled'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="acc-wallet-body">
+                  <div className="acc-wallet-balrow">
+                    <div className="acc-wallet-bal"><div className="acc-wallet-bal-lbl">Opening</div><div className="acc-wallet-bal-val">{rs(a.opening)}</div></div>
+                    <div className="acc-wallet-bal current"><div className="acc-wallet-bal-lbl">Current Balance</div><div className="acc-wallet-bal-val" style={{ color: bal < 0 ? 'var(--err)' : undefined }}>{rs(bal)}</div></div>
+                  </div>
+                  <div style={{ marginTop: 11, fontSize: 11.5, color: 'var(--tm)', lineHeight: 1.5 }}>{sub}</div>
+                </div>
+                <div className="acc-wallet-foot">
+                  <button className="btn-sm acc-wallet-stmtbtn" style={{ height: 28 }} onClick={() => setStatementFor(a)}><i className="fa-solid fa-file-invoice-dollar" /> View Statement</button>
+                  <button className="btn-sm" style={{ height: 28 }} onClick={() => setEditAccount({ mode: 'edit', account: a })}><i className="fa-solid fa-pen" /></button>
+                  {!a.isDefault && (
+                    <button
+                      className="btn-sm"
+                      style={a.status === 'active' ? { height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } : { height: 28 }}
+                      onClick={() => onToggleStatus(a)}
+                    >
+                      <i className={`fa-solid ${a.status === 'active' ? 'fa-ban' : 'fa-circle-check'}`} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+      </div>
+
+      <div className="section-card" style={{ marginTop: 18 }}>
+        <div className="card-header"><div className="card-title"><i className="fa-solid fa-right-left" /> Transfer History</div></div>
+        <div className="tbl-wrap">
+          <table className="acc-table">
+            <thead><tr><th>Date</th><th>From Account</th><th>To Account</th><th>Note</th><th className="r">Amount</th><th>Entered By</th><th className="c">Action</th></tr></thead>
+            <tbody>
+              {acc.transfers.length === 0 ? (
+                <tr><td colSpan={7}><div className="acc-empty"><i className="fa-solid fa-right-left" /><div style={{ fontSize: 13, fontWeight: 700 }}>No transfers yet</div></div></td></tr>
+              ) : [...acc.transfers].sort((a, b) => (b.date + b.at).localeCompare(a.date + a.at)).map((t) => (
+                <tr key={t.id}>
+                  <td>{fmtDate(t.date)}</td>
+                  <td><span className="acc-stmt-tag debit"><i className="fa-solid fa-arrow-up-long" /> {acc.finAccounts.find((a) => a.id === t.fromId)?.name || '—'}</span></td>
+                  <td><span className="acc-stmt-tag credit"><i className="fa-solid fa-arrow-down-long" /> {acc.finAccounts.find((a) => a.id === t.toId)?.name || '—'}</span></td>
+                  <td>{t.note || '—'}</td>
+                  <td className="r">{num(t.amount)}</td>
+                  <td>{t.by || '—'}</td>
+                  <td className="c"><button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDelTransfer(t)}><i className="fa-solid fa-trash-can" /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {editAccount && <FinAccountModal cfg={editAccount} onClose={() => setEditAccount(null)} onSave={onSaveAccount} onToast={fire} />}
+      {transferOpen && <TransferModal accounts={activeAccounts} users={acc.users} currentUser={acc.currentUser} balanceOf={balanceOf} onClose={() => setTransferOpen(false)} onSave={onSaveTransfer} onToast={fire} />}
+      {statementFor && <FinAccountStatementModal account={statementFor} acc={acc} defaultId={defaultId} onClose={() => setStatementFor(null)} onToast={fire} />}
+      {toggleTarget && (
+        <ConfirmModal
+          title="Disable this account?"
+          body={`"${toggleTarget.name}" will be hidden from account pickers. Its balance and history are kept, and it can be re-enabled any time.`}
+          icon="fa-ban" confirmLabel="Yes, Disable" tone="primary"
+          onClose={() => setToggleTarget(null)}
+          onConfirm={confirmDisable}
+        />
+      )}
+      {delTransfer && (
+        <ConfirmModal
+          title="Delete this transfer?"
+          body="Both account balances will recalculate. This action cannot be undone."
+          onClose={() => setDelTransfer(null)}
+          onConfirm={confirmDeleteTransfer}
+        />
+      )}
+    </>
+  )
+}
+
+function FinAccountModal({ cfg, onClose, onSave, onToast }) {
+  const isEdit = cfg.mode === 'edit'
+  const isDefault = !!cfg.account?.isDefault
+  const a = cfg.account || {}
+  const [v, setV] = useState({
+    name: a.name || '', type: a.type || 'cash', opening: a.opening ?? '',
+    status: a.status || 'active', bankName: a.bankName || '', accountNo: a.accountNo || '', description: a.description || '',
+  })
+  const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  const showBank = v.type === 'bank'
+  const showAccountNo = v.type === 'bank' || v.type === 'other'
+  const save = () => {
+    if (!v.name.trim()) return onToast('Please enter an account name', 'warn')
+    onSave({
+      name: v.name.trim(), type: v.type, opening: Number(v.opening) || 0,
+      status: isDefault ? 'active' : v.status,
+      bankName: showBank ? v.bankName.trim() : '',
+      accountNo: showAccountNo ? v.accountNo.trim() : '',
+      description: v.description.trim(),
+    })
+  }
+  return (
+    <Shell title={isEdit ? 'Edit Account' : 'Create Account'} icon={isEdit ? 'fa-pen-to-square' : 'fa-wallet'} onClose={onClose}
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> {isEdit ? 'Save Changes' : 'Save Account'}</button></>}>
+      <div className="acc-info-note" style={{ marginBottom: 14 }}>
+        <i className="fa-solid fa-circle-info" /> An account is a wallet where the school holds money. This includes <strong>Cash In Hand, a bank account, the owner&apos;s account</strong> or any custom location. Income can be received into it and expenses paid from it.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div className="acc-field"><label>Account Name *</label><input className="acc-input" value={v.name} onChange={set('name')} placeholder="e.g. Bank of Punjab" /></div>
+        <div className="acc-field"><label>Account Type *</label><select className="acc-input" value={v.type} onChange={set('type')}>{FIN_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div className="acc-field"><label>Opening Balance</label><input className="acc-input" type="number" value={v.opening} onChange={set('opening')} placeholder="0" /></div>
+        <div className="acc-field"><label>Status</label><select className="acc-input" value={v.status} onChange={set('status')} disabled={isDefault}><option value="active">Active</option><option value="inactive">Disabled</option></select></div>
+      </div>
+      {(showBank || showAccountNo) && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          {showBank && <div className="acc-field"><label>Bank Name (optional)</label><input className="acc-input" value={v.bankName} onChange={set('bankName')} placeholder="e.g. Bank Alfalah" /></div>}
+          {showAccountNo && <div className="acc-field"><label>Account Number (optional)</label><input className="acc-input" value={v.accountNo} onChange={set('accountNo')} placeholder="e.g. PK00-XXXX-0000-0000" /></div>}
+        </div>
+      )}
+      <div className="acc-field"><label>Description</label><textarea className="acc-input" rows={2} value={v.description} onChange={set('description')} placeholder="Short description of this account" /></div>
+      {isDefault && (
+        <div className="acc-info-note" style={{ marginTop: 12 }}>
+          <i className="fa-solid fa-star" /> This is the <strong>default receiving account</strong>. It always stays active and receives income unless another account is chosen.
+        </div>
+      )}
+    </Shell>
+  )
+}
+
+function TransferModal({ accounts, users, currentUser, balanceOf, onClose, onSave, onToast }) {
+  const [v, setV] = useState({ fromId: accounts[0]?.id || '', toId: accounts[1]?.id || accounts[0]?.id || '', amount: '', date: todayISO(), note: '', by: currentUser || 'Sana Malik' })
+  const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  const fromAcct = accounts.find((a) => a.id === v.fromId)
+  const toAcct = accounts.find((a) => a.id === v.toId)
+  const fromBal = fromAcct ? balanceOf(fromAcct) : 0
+  const toBal = toAcct ? balanceOf(toAcct) : 0
+  const amt = Number(v.amount) || 0
+  const sameAccount = !!v.fromId && v.fromId === v.toId
+  const overdraft = amt > 0 && fromBal - amt < 0
+  const save = () => {
+    if (!v.fromId || !v.toId) return onToast('Please choose both accounts', 'warn')
+    if (v.fromId === v.toId) return onToast('Source and destination must be different', 'warn')
+    if (!amt || amt <= 0) return onToast('Please enter a valid amount', 'warn')
+    onSave({ fromId: v.fromId, toId: v.toId, amount: amt, date: v.date, note: v.note.trim(), by: v.by || 'Sana Malik' })
+  }
+  return (
+    <Shell title="Transfer Money" icon="fa-right-left" onClose={onClose}
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save} disabled={sameAccount}><i className="fa-solid fa-right-left" /> Transfer</button></>}>
+      <div className="acc-info-note" style={{ marginBottom: 14 }}>
+        <i className="fa-solid fa-circle-info" /> A transfer moves a balance between two accounts only. The source account decreases and the destination increases. <strong>This is not income or an expense and does not affect Profit &amp; Loss.</strong>
+      </div>
+
+      <div className="acc-xfer-flow">
+        <div className="acc-field"><label>From Account *</label><select className="acc-input" value={v.fromId} onChange={set('fromId')}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {finTypeMeta(a.type).label}</option>)}</select><div className="acc-xfer-bal"><i className="fa-solid fa-wallet" /> Available: {rs(fromBal)}</div></div>
+        <div className="acc-xfer-arrow"><i className="fa-solid fa-arrow-right-long" /></div>
+        <div className="acc-field"><label>To Account *</label><select className="acc-input" value={v.toId} onChange={set('toId')}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {finTypeMeta(a.type).label}</option>)}</select><div className="acc-xfer-bal"><i className="fa-solid fa-wallet" /> Available: {rs(toBal)}</div></div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, margin: '16px 0 12px' }}>
+        <div className="acc-field"><label>Amount *</label><input className="acc-input" type="number" value={v.amount} onChange={set('amount')} placeholder="Enter amount" /></div>
+        <div className="acc-field"><label>Date</label><input className="acc-input" type="date" value={v.date} onChange={set('date')} /></div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div className="acc-field"><label>Entered By</label><select className="acc-input" value={v.by} onChange={set('by')}>{(users || []).map((u) => <option key={u} value={u}>{u}</option>)}</select></div>
+        <div className="acc-field"><label>Note</label><input className="acc-input" value={v.note} onChange={set('note')} placeholder="e.g. Deposit cash to bank" /></div>
+      </div>
+
+      {amt > 0 && v.fromId && v.toId && (
+        <div className={`acc-xfer-preview${sameAccount || overdraft ? ' err' : ''}`}>
+          {sameAccount ? (
+            <>
+              <div className="acc-xfer-preview-h"><i className="fa-solid fa-triangle-exclamation" /> Invalid transfer</div>
+              <div className="acc-xfer-preview-row"><span className="l">Source and destination are the same account.</span></div>
+            </>
+          ) : (
+            <>
+              <div className="acc-xfer-preview-h"><i className="fa-solid fa-eye" /> After Transfer{overdraft ? ' · insufficient balance warning' : ''}</div>
+              <div className="acc-xfer-preview-row"><span className="l">{fromAcct?.name}</span><span className="v down">{rs(fromBal)} <i className="fa-solid fa-arrow-right" /> {rs(fromBal - amt)}</span></div>
+              <div className="acc-xfer-preview-row"><span className="l">{toAcct?.name}</span><span className="v up">{rs(toBal)} <i className="fa-solid fa-arrow-right" /> {rs(toBal + amt)}</span></div>
+              {overdraft && (
+                <div className="acc-xfer-preview-row"><span className="l" style={{ color: 'var(--err)' }}><i className="fa-solid fa-triangle-exclamation" /> This exceeds the available balance. The source account will go negative.</span></div>
+              )}
+              <div className="acc-xfer-preview-row" style={{ borderTop: '1px dashed var(--bm)', marginTop: 6, paddingTop: 8 }}><span className="l"><i className="fa-solid fa-circle-info" /> Balance movement only. It is not counted in Profit &amp; Loss.</span></div>
+            </>
+          )}
+        </div>
+      )}
+    </Shell>
+  )
+}
+
+function FinAccountStatementModal({ account, acc, defaultId, onClose, onToast }) {
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [filter, setFilter] = useState('all')
+
+  const tm = finTypeMeta(account.type)
+  const current = finAccountBalance(acc, account)
+  const income = acc.txns.rev.filter((t) => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
+  const expense = acc.txns.exp.filter((t) => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
+  const transfersIn = acc.transfers.filter((t) => t.toId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
+  const transfersOut = acc.transfers.filter((t) => t.fromId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
+
+  const moves = []
+  acc.txns.rev.forEach((t) => { if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Revenue · ${t.head}`, cat: 'revenue', amount: Number(t.amount) || 0, kind: 'credit' }) })
+  acc.txns.exp.forEach((t) => { if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Expense · ${t.head}`, cat: 'expense', amount: Number(t.amount) || 0, kind: 'debit' }) })
+  acc.transfers.forEach((tr) => {
+    if (tr.toId === account.id) { const fn = acc.finAccounts.find((a) => a.id === tr.fromId)?.name || 'another account'; moves.push({ date: tr.date, desc: tr.note || `Transfer from ${fn}`, ref: `Transfer from ${fn}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'credit' }) }
+    if (tr.fromId === account.id) { const tn = acc.finAccounts.find((a) => a.id === tr.toId)?.name || 'another account'; moves.push({ date: tr.date, desc: tr.note || `Transfer to ${tn}`, ref: `Transfer to ${tn}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'debit' }) }
+  })
+  moves.sort((a, b) => a.date.localeCompare(b.date))
+
+  const broughtForward = (Number(account.opening) || 0) + moves.filter((m) => !from || m.date < from).reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0)
+  let rangeMoves = moves.filter((m) => (!from || m.date >= from) && (!to || m.date <= to))
+  if (filter !== 'all') rangeMoves = rangeMoves.filter((m) => m.kind === filter)
+  let running = broughtForward
+  const rows = rangeMoves.map((m) => { running += m.kind === 'credit' ? m.amount : -m.amount; return { ...m, balance: running } })
+  const closing = (Number(account.opening) || 0) + moves.filter((m) => !to || m.date <= to).reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0)
+  const totalDebit = rangeMoves.filter((m) => m.kind === 'debit').reduce((a, m) => a + m.amount, 0)
+  const totalCredit = rangeMoves.filter((m) => m.kind === 'credit').reduce((a, m) => a + m.amount, 0)
+  const openLabel = from ? 'Balance Brought Forward' : 'Opening Balance'
+  const openDate = from || (account.createdAt || '').slice(0, 10)
+  const catLabel = (m) => (m.cat === 'transfer' ? 'Transfer' : (m.kind === 'credit' ? 'Credit' : 'Debit'))
+  const tagFor = (m) => (m.cat === 'transfer' ? 'xfer' : (m.kind === 'credit' ? 'credit' : 'debit'))
+
+  const doPrint = () => {
+    printAccReport({
+      title: account.name, period: `${from ? fmtDate(from) : 'All time'} → ${to ? fmtDate(to) : 'today'}`,
+      filters: [['Brought Forward', rs(broughtForward)], ['Closing Balance', rs(closing)]],
+      columns: [{ label: 'Date', a: 'l' }, { label: 'Description', a: 'l' }, { label: 'Type', a: 'l' }, { label: 'Debit', a: 'r' }, { label: 'Credit', a: 'r' }, { label: 'Balance', a: 'r' }],
+      rows: [
+        [openDate ? fmtDate(openDate) : '—', openLabel, 'Opening', '', '', num(broughtForward)],
+        ...rows.map((r) => [fmtDate(r.date), r.desc, catLabel(r), r.kind === 'debit' ? num(r.amount) : '', r.kind === 'credit' ? num(r.amount) : '', num(r.balance)]),
+      ],
+      totals: ['', 'Period Totals', '', num(totalDebit), num(totalCredit), num(closing)],
+    }, onToast)
+  }
+  const doCsv = () => {
+    const csvEsc = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`
+    const lines = [
+      `${account.name} Statement`, `${from || 'All time'} to ${to || 'today'}`, '',
+      ['Date', 'Description', 'Type', 'Debit', 'Credit', 'Balance'].join(','),
+      [openDate, csvEsc(openLabel), 'Opening', '', '', broughtForward].join(','),
+      ...rows.map((r) => [fmtDate(r.date), csvEsc(r.desc), catLabel(r), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
+      ['', 'Closing Balance', '', '', '', closing].join(','),
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const el = document.createElement('a')
+    el.href = url; el.download = `${account.name.replace(/[^A-Za-z0-9]+/g, '-')}-statement-${from || 'all'}-to-${to || 'all'}.csv`
+    document.body.appendChild(el); el.click(); document.body.removeChild(el)
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <Shell title={account.name} icon={tm.icon} maxWidth={920} onClose={onClose}
+      foot={<button className="btn-secondary" onClick={onClose}>Close</button>}>
+      <div className="acc-book-summary" style={{ marginBottom: 16 }}>
+        <div className="acc-bsum b-opening"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Opening Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-flag" /></span></div><div className="acc-bsum-val">{rs(account.opening)}</div><div className="acc-bsum-meta">{account.type === 'bank' && account.bankName ? account.bankName : `${tm.label} account`}</div></div>
+        <div className="acc-bsum b-balance"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Current Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-scale-balanced" /></span></div><div className="acc-bsum-val">{rs(current)}</div><div className="acc-bsum-meta">available now</div></div>
+        <div className="acc-bsum b-in"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Income Received</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-down" /></span></div><div className="acc-bsum-val">{rs(income)}</div><div className="acc-bsum-meta">into this account</div></div>
+        <div className="acc-bsum b-out"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Expenses Paid</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-up" /></span></div><div className="acc-bsum-val">{rs(expense)}</div><div className="acc-bsum-meta">from this account</div></div>
+        <div className="acc-bsum b-cash"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Transfers In</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-right-to-bracket" /></span></div><div className="acc-bsum-val sm">{rs(transfersIn)}</div><div className="acc-bsum-meta">received via transfer</div></div>
+        <div className="acc-bsum b-date"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Transfers Out</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-right-from-bracket" /></span></div><div className="acc-bsum-val sm">{rs(transfersOut)}</div><div className="acc-bsum-meta">sent via transfer</div></div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+        <div className="acc-field"><label>From Date</label><input className="acc-input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+        <div className="acc-field"><label>To Date</label><input className="acc-input" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="acc-field"><label>Movement</label><select className="acc-input" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">All Movements</option><option value="credit">Credit (In)</option><option value="debit">Debit (Out)</option></select></div>
+        <button className="btn-secondary" style={{ alignSelf: 'end', height: 38 }} onClick={doPrint}><i className="fa-solid fa-print" /> Print</button>
+        <button className="btn-secondary" style={{ alignSelf: 'end', height: 38 }} onClick={doCsv}><i className="fa-solid fa-file-csv" /> CSV</button>
+      </div>
+      <div className="tbl-wrap">
+        <table className="acc-table">
+          <thead><tr><th>Date</th><th>Description</th><th>Type</th><th className="r">Debit (Out)</th><th className="r">Credit (In)</th><th className="r">Balance</th></tr></thead>
+          <tbody>
+            <tr style={{ background: 'var(--muted)', fontWeight: 700 }}>
+              <td>{openDate ? fmtDate(openDate) : '—'}</td><td>{openLabel}</td>
+              <td><span className="acc-stmt-tag opening"><i className="fa-solid fa-flag" /> Opening</span></td>
+              <td className="r">—</td><td className="r">—</td><td className="r acc-stmt-bal">{rs(broughtForward)}</td>
+            </tr>
+            {rows.length === 0 ? (
+              <tr><td colSpan={6}><div className="acc-empty" style={{ padding: 20 }}>No movements in this period.</div></td></tr>
+            ) : rows.map((r, i) => (
+              <tr key={i}>
+                <td>{fmtDate(r.date)}</td>
+                <td>{r.desc}<div style={{ fontSize: 10.5, color: 'var(--tm)', marginTop: 2 }}>{r.ref}</div></td>
+                <td><span className={`acc-stmt-tag ${tagFor(r)}`}><i className={`fa-solid ${r.cat === 'transfer' ? 'fa-right-left' : (r.kind === 'credit' ? 'fa-arrow-down-long' : 'fa-arrow-up-long')}`} /> {catLabel(r)}</span></td>
+                <td className={`r${r.kind === 'debit' ? ' acc-stmt-debit' : ''}`}>{r.kind === 'debit' ? rs(r.amount) : '—'}</td>
+                <td className={`r${r.kind === 'credit' ? ' acc-stmt-credit' : ''}`}>{r.kind === 'credit' ? rs(r.amount) : '—'}</td>
+                <td className="r acc-stmt-bal">{rs(r.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot><tr><td colSpan={3}>Period Totals:</td><td className="r acc-stmt-debit">{rs(totalDebit)}</td><td className="r acc-stmt-credit">{rs(totalCredit)}</td><td className="r acc-stmt-bal">{rs(closing)}</td></tr></tfoot>
+        </table>
+      </div>
+    </Shell>
   )
 }

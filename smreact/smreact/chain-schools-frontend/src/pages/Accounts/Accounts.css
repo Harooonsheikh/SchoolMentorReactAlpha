@@ -1,7 +1,7 @@
 /* ═══════════ ACCOUNTS MODULE ═══════════ */
 
 /* Main tabs */
-.acc-tabs { display: grid; grid-template-columns: repeat(4,1fr); background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--s-sm); margin-bottom: 20px; }
+.acc-tabs { display: grid; grid-template-columns: repeat(5,1fr); background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--s-sm); margin-bottom: 20px; }
 .acc-tab { padding: 13px 10px; border: none; background: transparent; font-family: var(--font); font-size: 13px; font-weight: 600; color: var(--tm); cursor: pointer; transition: var(--tr); display: flex; align-items: center; justify-content: center; gap: 7px; border-right: 1px solid var(--bl); }
 .acc-tab:last-child { border-right: none; }
 .acc-tab:hover:not(.active) { background: var(--muted); color: var(--t1); }
@@ -99,4 +99,98 @@ textarea.acc-input { height: auto; padding: 9px 12px; resize: vertical; }
   .acc-tabs { grid-template-columns: 1fr 1fr; }
   .acc-table { font-size: 11.5px; }
   .acc-bar { gap: 8px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   WALLETS TAB — wallet cards, type badges, statement tags, transfer
+   flow/preview and the statement summary tiles. Ported from the ERP
+   reference design, mapped onto this project's CSS tokens.
+   ═══════════════════════════════════════════════════════════════════ */
+.acc-info-note { display: flex; align-items: flex-start; gap: 8px; background: var(--muted); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 10px 12px; font-size: 12.5px; color: var(--t2); line-height: 1.6; }
+.acc-info-note i { color: var(--brand); margin-top: 2px; flex-shrink: 0; }
+
+.acc-books-tagchip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; padding: 2px 9px; border-radius: var(--r-f); border: 1px solid var(--bl); background: var(--muted); color: var(--tm); margin-left: 8px; vertical-align: middle; }
+
+.acc-ov-stat { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: var(--r-md); background: var(--card); border: 1.5px solid var(--bl); box-shadow: var(--s-xs); }
+.acc-ov-stat-ic { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #fff; flex-shrink: 0; }
+.acc-ov-stat-ic.all { background: linear-gradient(135deg,#1E3A8A,#2563EB); }
+.acc-ov-stat-val { font-size: 17px; font-weight: 800; color: var(--t1); line-height: 1; }
+.acc-ov-stat-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--tm); margin-top: 3px; }
+
+.acc-wallet-card { border: 1.5px solid var(--bl); border-radius: var(--r-lg); background: var(--card); box-shadow: var(--s-xs); overflow: hidden; transition: var(--tr); display: flex; flex-direction: column; position: relative; }
+.acc-wallet-card:hover { transform: translateY(-3px); box-shadow: var(--s-md); border-color: var(--bm); }
+.acc-wallet-card.inactive { opacity: .72; }
+.acc-wallet-card.inactive:hover { transform: none; }
+.acc-wallet-card-top { padding: 16px 18px; display: flex; align-items: flex-start; gap: 13px; border-bottom: 1px solid var(--bl); }
+.acc-wallet-ic { width: 46px; height: 46px; border-radius: 12px; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; box-shadow: 0 5px 14px rgba(8,145,178,.28); }
+.acc-wallet-ic.cash  { background: linear-gradient(135deg,#16A34A,#15803D); box-shadow: 0 5px 14px rgba(22,163,74,.3); }
+.acc-wallet-ic.bank  { background: linear-gradient(135deg,#1E3A8A,#2563EB); box-shadow: 0 5px 14px rgba(30,58,138,.3); }
+.acc-wallet-ic.owner { background: linear-gradient(135deg,#7C3AED,#6D28D9); box-shadow: 0 5px 14px rgba(124,58,237,.3); }
+.acc-wallet-ic.other { background: linear-gradient(135deg,#0891B2,#0E7490); }
+.acc-wallet-tt { flex: 1; min-width: 0; }
+.acc-wallet-name { font-size: 15px; font-weight: 800; color: var(--t1); line-height: 1.3; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.acc-wallet-sub { font-size: 11.5px; color: var(--tm); margin-top: 3px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.acc-type-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; padding: 2px 8px; border-radius: var(--r-f); }
+.acc-type-badge.cash  { background: rgba(22,163,74,.1); color: var(--success); border: 1px solid rgba(22,163,74,.25); }
+.acc-type-badge.bank  { background: rgba(37,99,235,.1); color: var(--brand-mid); border: 1px solid rgba(37,99,235,.25); }
+.acc-type-badge.owner { background: rgba(124,58,237,.1); color: #7C3AED; border: 1px solid rgba(124,58,237,.25); }
+.acc-type-badge.other { background: rgba(8,145,178,.1); color: #0E7490; border: 1px solid rgba(8,145,178,.25); }
+.acc-default-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; padding: 2px 8px; border-radius: var(--r-f); background: rgba(217,119,6,.12); color: var(--warn); border: 1px solid rgba(217,119,6,.3); }
+.acc-wallet-body { padding: 16px 18px; flex: 1; }
+.acc-wallet-balrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.acc-wallet-bal { padding: 11px 13px; border-radius: var(--r-md); background: var(--muted); border: 1px solid var(--bl); }
+.acc-wallet-bal-lbl { font-size: 10px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--tm); }
+.acc-wallet-bal-val { font-size: 16px; font-weight: 800; color: var(--t1); margin-top: 4px; }
+.acc-wallet-bal.current { background: linear-gradient(135deg,rgba(8,145,178,.08),rgba(14,116,144,.05)); border-color: rgba(8,145,178,.25); }
+.acc-wallet-bal.current .acc-wallet-bal-val { color: #0E7490; }
+.acc-wallet-foot { padding: 11px 14px; border-top: 1px solid var(--bl); display: flex; align-items: center; gap: 8px; background: var(--muted); flex-wrap: wrap; }
+.acc-wallet-stmtbtn { flex: 1; justify-content: center; min-width: 120px; }
+
+.acc-stmt-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; padding: 2px 9px; border-radius: var(--r-f); }
+.acc-stmt-tag.credit  { background: rgba(22,163,74,.1); color: var(--success); border: 1px solid rgba(22,163,74,.22); }
+.acc-stmt-tag.debit   { background: rgba(220,38,38,.1); color: var(--err); border: 1px solid rgba(220,38,38,.22); }
+.acc-stmt-tag.opening { background: rgba(37,99,235,.1); color: var(--brand-mid); border: 1px solid rgba(37,99,235,.22); }
+.acc-stmt-tag.xfer    { background: rgba(8,145,178,.1); color: #0E7490; border: 1px solid rgba(8,145,178,.22); }
+.acc-stmt-credit { color: var(--success); font-weight: 700; }
+.acc-stmt-debit { color: var(--err); font-weight: 700; }
+.acc-stmt-bal { font-weight: 800; color: var(--t1); }
+
+.acc-xfer-flow { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: start; margin-top: 4px; }
+.acc-xfer-arrow { align-self: center; padding-top: 18px; color: #0891B2; font-size: 18px; }
+.acc-xfer-bal { margin-top: 7px; font-size: 11.5px; font-weight: 700; color: var(--tm); padding: 6px 10px; background: var(--muted); border-radius: var(--r-sm); border: 1px solid var(--bl); }
+.acc-xfer-preview { margin-top: 16px; padding: 14px 16px; border-radius: var(--r-md); background: linear-gradient(135deg,rgba(8,145,178,.06),rgba(14,116,144,.03)); border: 1.5px solid rgba(8,145,178,.22); }
+.acc-xfer-preview.err { background: rgba(220,38,38,.06); border-color: rgba(220,38,38,.3); }
+.acc-xfer-preview-h { font-size: 12px; font-weight: 800; color: #0E7490; letter-spacing: .3px; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+.acc-xfer-preview.err .acc-xfer-preview-h { color: var(--err); }
+.acc-xfer-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 13px; }
+.acc-xfer-preview-row .l { color: var(--t2); font-weight: 600; }
+.acc-xfer-preview-row .v { font-weight: 800; color: var(--t1); }
+.acc-xfer-preview-row .v.down { color: var(--err); }
+.acc-xfer-preview-row .v.up { color: var(--success); }
+
+.acc-bsum { position: relative; padding: 13px 15px; border-radius: var(--r-lg); background: var(--card); border: 1px solid var(--bl); box-shadow: var(--s-xs); overflow: hidden; }
+.acc-bsum::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.acc-bsum.b-opening::before { background: linear-gradient(180deg,#2563EB,#1E40AF); }
+.acc-bsum.b-balance::before { background: linear-gradient(180deg,#7C3AED,#6D28D9); }
+.acc-bsum.b-in::before      { background: linear-gradient(180deg,#16A34A,#15803D); }
+.acc-bsum.b-out::before     { background: linear-gradient(180deg,#DC2626,#B91C1C); }
+.acc-bsum.b-cash::before    { background: linear-gradient(180deg,#0891B2,#0E7490); }
+.acc-bsum.b-date::before    { background: linear-gradient(180deg,#D97706,#B45309); }
+.acc-bsum-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.acc-bsum-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--tm); }
+.acc-bsum-ic { color: #7C3AED; font-size: 13px; }
+.acc-bsum.b-balance .acc-bsum-ic { color: #7C3AED; }
+.acc-bsum.b-in .acc-bsum-ic      { color: var(--success); }
+.acc-bsum.b-out .acc-bsum-ic     { color: var(--err); }
+.acc-bsum.b-opening .acc-bsum-ic { color: #1E40AF; }
+.acc-bsum.b-cash .acc-bsum-ic    { color: #0E7490; }
+.acc-bsum.b-date .acc-bsum-ic    { color: #B45309; }
+.acc-bsum-val { font-size: 18px; font-weight: 800; color: var(--t1); margin-top: 6px; }
+.acc-bsum-val.sm { font-size: 14px; }
+.acc-bsum-meta { font-size: 10.5px; color: var(--tm); margin-top: 2px; }
+
+@media (max-width: 600px) {
+  .acc-xfer-flow { grid-template-columns: 1fr; }
+  .acc-xfer-arrow { transform: rotate(90deg); padding: 4px 0; }
+  .acc-wallet-balrow { grid-template-columns: 1fr; }
 }
