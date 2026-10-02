@@ -274,7 +274,11 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
   const previewEmp = { basicSalary: Number(v.basicSalary) || 0, salaryHeads: v.salaryHeads.map((h) => ({ ...h, amount: Number(h.amount) || 0 })) }
 
   const save = () => {
-    if (!v.firstName.trim()) return onToast('Enter the employee first name', 'warn')
+    /* Backend sirf FirstName aur FatherName ko required rakhta hai (live-tested:
+       baqi sab null/khaali save ho jate hain). In dono ko yahin rok lete hain
+       taake backend ka NULL error toaster me na aaye. */
+    if (!v.firstName.trim()) { setMt('personal'); return onToast('Enter the employee first name', 'warn') }
+    if (!v.fn.trim()) { setMt('personal'); return onToast('Enter the father / husband name', 'warn') }
     if (!desigOpts.find((x) => x.id === Number(v.desId)) && desigOpts[0]) v.desId = desigOpts[0].id
     return onSave({ ...v, firstName: v.firstName.trim(), lastName: v.lastName.trim(), dId: Number(v.dId), desId: Number(v.desId), basicSalary: Number(v.basicSalary) || 0, salaryHeads: v.salaryHeads.filter((h) => h.name.trim()).map((h) => ({ id: h.id, name: h.name.trim(), type: h.type, amount: Number(h.amount) || 0 })) }, e?.id)
   }
@@ -288,7 +292,7 @@ function EmployeeModal({ modal, hr, onClose, onSave, onToast }) {
         <div className="hr-grid2">
           <div className="hr-field"><label>First Name *</label><input className="hr-input" value={v.firstName} onChange={set('firstName')} /></div>
           <div className="hr-field"><label>Last Name</label><input className="hr-input" value={v.lastName} onChange={set('lastName')} /></div>
-          <div className="hr-field"><label>Father / Husband Name</label><input className="hr-input" value={v.fn} onChange={set('fn')} /></div>
+          <div className="hr-field"><label>Father / Husband Name *</label><input className="hr-input" value={v.fn} onChange={set('fn')} /></div>
           <div className="hr-field"><label>CNIC</label><input className="hr-input" value={v.cnic} onChange={set('cnic')} placeholder="35201-XXXXXXX-X" /></div>
           <div className="hr-field"><label>Date of Birth</label><input className="hr-input" type="date" value={v.dob} onChange={set('dob')} /></div>
           <div className="hr-field"><label>Gender</label><select className="hr-input" value={v.gender} onChange={set('gender')}><option>Male</option><option>Female</option></select></div>
@@ -428,7 +432,7 @@ function Payroll({ hr, commit, fire }) {
         date: payment.date,
         detail: `Salary payment${emp ? ` — ${fullName(emp)}` : ''} · ${MONTHS[month]} ${year}`,
       })
-      if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded — par Accounts me koi Expense head nahi, entry post nahi hui', 'warn')
+      if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded, but no Expense head exists in Accounts — the entry was not posted', 'warn')
     } catch { /* account posting optional — payment already saved */ }
   }
   const generateAll = () => {

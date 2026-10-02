@@ -50,6 +50,50 @@ function apiMessage(json) {
   return json.message || json.Message || json.title || null
 }
 
+/* ── Backend ke raw SQL/DB errors ko saaf jumle me ──────────────────────
+   Backend kabhi seedha SQL ki ghalti toaster me bhej deta hai, jaise:
+     "Cannot insert the value NULL into column 'FatherName' … does not allow nulls"
+   User ko DB ki zubaan (column naam, table, "INSERT fails") nahi, saaf baat
+   chahiye — "Father name is required." Jo soorat pehchani jaye usay narm
+   jumle me badal dete hain; baqi jyun ka tyun aage (chupana nuqsan-deh). */
+const FIELD_LABELS = {
+  fathername: 'Father name', firstname: 'First name', lastname: 'Last name',
+  employeename: 'Employee name', name: 'Name', cnic: 'CNIC',
+  contactno: 'Contact number', phoneno: 'Phone number', phone: 'Phone number',
+  email: 'Email', gender: 'Gender', dob: 'Date of birth', dateofbirth: 'Date of birth',
+  address: 'Address', departmentid: 'Department', designationid: 'Designation',
+  joiningdate: 'Joining date', qualification: 'Qualification', qualificationid: 'Qualification',
+}
+/* "FatherName" → "Father name" (camelCase → lafz, pehla capital). */
+function humanizeColumn(col) {
+  const key = String(col || '').trim().toLowerCase()
+  if (FIELD_LABELS[key]) return FIELD_LABELS[key]
+  const words = String(col || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ').trim()
+  if (!words) return 'This field'
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+}
+function friendlyError(raw, fallback = 'Request failed') {
+  const m = String(raw || '').trim()
+  if (!m) return fallback
+  /* Required field — "Cannot insert the value NULL into column 'X'" ya
+     "column 'X' … does not allow nulls". */
+  const nullCol = m.match(/value NULL into column '([^']+)'/i)
+    || m.match(/column '([^']+)'[^.]*does not allow nulls/i)
+  if (nullCol) return `${humanizeColumn(nullCol[1])} is required.`
+  /* Value bohat lambi — "String or binary data would be truncated". */
+  if (/string or binary data would be truncated/i.test(m)) return 'One of the values is too long.'
+  /* Duplicate / unique key. */
+  if (/duplicate key|UNIQUE KEY|Violation of (?:PRIMARY|UNIQUE)/i.test(m)) return 'This record already exists.'
+  /* FK / reference — kuch aur isse juda hai. */
+  if (/REFERENCE constraint|FK_|conflicted with the (?:REFERENCE|FOREIGN KEY)/i.test(m)) {
+    return 'Cannot delete — related records still use it.'
+  }
+  /* API apni method ka naam aage laga deti hai ("Error in …Async: …") — hata do. */
+  const cut = m.indexOf('Async: ')
+  if (cut > 0 && /^Error in /i.test(m)) return m.slice(cut + 'Async: '.length).trim() || fallback
+  return m
+}
+
 /* JSON body ya FormData. success:false bhi 200 ke saath aa sakta hai. */
 async function call(path, { method = 'GET', body, form, fallback = 'Request failed' } = {}) {
   const headers = { Accept: '*/*' }
@@ -61,9 +105,7 @@ async function call(path, { method = 'GET', body, form, fallback = 'Request fail
   })
   const json = await res.json().catch(() => null)
   if (!res.ok || json?.success === false) {
-    const msg = apiMessage(json) || fallback
-    if (/REFERENCE constraint|FK_/i.test(msg)) throw new Error('Cannot delete — related records still use it.')
-    throw new Error(msg)
+    throw new Error(friendlyError(apiMessage(json), fallback))
   }
   return json
 }
@@ -431,7 +473,9 @@ export async function saveHrEmployee(v, previous = null) {
   const json = await call('/save-employee', { method: 'POST', form: fd, fallback: 'Could not save employee' })
   const inner = Array.isArray(json?.data) ? json.data[0] : null
   if (inner && (inner.Success === 0 || inner.Success === false)) {
-    throw new Error(inner.Message || 'Could not save employee')
+    /* inner.Message me bhi kabhi raw SQL aata hai (NULL column waghera) —
+       isay bhi saaf jumle me badlo. */
+    throw new Error(friendlyError(inner.Message, 'Could not save employee'))
   }
   const id = idFromResponse(json) || id0
   if (!id) throw new Error('Employee saved but the server did not return its id')

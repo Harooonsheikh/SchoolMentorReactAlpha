@@ -12,7 +12,7 @@ import {
   fetchChallansEach, saveChallan as saveChallanApi, deleteChallan as deleteChallanApi,
   fetchReceivingsEach, saveReceiving as saveReceivingApi, deleteReceiving as deleteReceivingApi,
 } from '../../api/schoolPaymentsApi'
-import { postAutoAccountEntry } from '../../api/accountsApi'
+import { postAutoAccountEntry, deleteAutoAccountEntries } from '../../api/accountsApi'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './Payments.css'
 
@@ -419,7 +419,7 @@ export default function Payments() {
           date: payload.date,
           detail: `School payment${school ? ` — ${school.name}` : ''} · ${monthLabel(applied.month, applied.year)}`,
         })
-        if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded — par Accounts me koi Revenue head nahi, entry post nahi hui', 'warn')
+        if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded, but no Revenue head exists in Accounts — the entry was not posted', 'warn')
       } catch { /* account posting optional — payment already saved */ }
     } catch (err) {
       fire(err?.message || 'Could not record payment', 'warn')
@@ -436,6 +436,16 @@ export default function Payments() {
       putRecv(id, null, gone?.id || 0)
       setConfirm(null)
       fire('Receiving record deleted', 'info')
+      /* Jo Revenue entry is payment ke saath Accounts me gayi thi, wo bhi hata
+         do — wahi detail jo post karte waqt bana tha. Fail ho to receiving to
+         delete ho hi chuki; account reversal optional hai. */
+      try {
+        const school = schools.find((s) => s.id === id)
+        const mo = gone?.month || applied.month
+        const yr = gone?.year || applied.year
+        const detail = `School payment${school ? ` — ${school.name}` : ''} · ${monthLabel(mo, yr)}`
+        await deleteAutoAccountEntries('rev', { detail })
+      } catch { /* account reversal optional — receiving already deleted */ }
     } catch (err) {
       fire(err?.message || 'Could not delete receiving record', 'warn')
     } finally {

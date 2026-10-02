@@ -362,3 +362,29 @@ export async function postAutoAccountEntry(seg, { amount, date, detail } = {}, n
   await saveAccountEntry(seg, { headNo: head.no, date, detail, amount: amt }, networkId)
   return { posted: true, head: head.name }
 }
+
+/* Auto-posted entry(s) ko WAPAS lena — jab school payment (receiving) ya HR
+   salary delete ho, to us ke saath bani account entry bhi hat jaye. Match us
+   ke `detail` par hota hai (wahi string jo post karte waqt banti thi, jaise
+   "School payment — <school> · <Month Year>"), kyunke payment aur entry ke
+   beech koi stored link nahi. Ek hi mahine me ek se zyada payment hon to unki
+   saari matching entries hat jati hain.
+
+   NOTE: sirf ENTRIES hatati hai — account HEAD (master) ko haath nahi lagati;
+   wo baqi entries ke liye rehta hai. Delete fail ho to payment-delete nahi
+   rukti (caller try/catch me rakhe). */
+const normDetail = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+export async function deleteAutoAccountEntries(seg, { detail } = {}, networkId = currentNetworkId()) {
+  const needle = normDetail(detail)
+  if (!networkId || !needle) return { deleted: 0 }
+  let entries = []
+  try { entries = await fetchAllAccountEntries(seg, networkId) } catch { return { deleted: 0 } }
+  const match = entries.filter((e) => normDetail(e.detail) === needle)
+  let deleted = 0
+  for (const e of match) {
+    if (!e.id) continue
+    try { await deleteAccountEntry(e.id, networkId); deleted += 1 } catch { /* ek na mite to baqi chalein */ }
+  }
+  return { deleted }
+}

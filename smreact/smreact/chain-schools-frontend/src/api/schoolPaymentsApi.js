@@ -27,6 +27,16 @@ function friendlyError(raw) {
   if (/Ledger_PaymentID/i.test(msg)) {
     return 'This school has a challan against its payment setup. Delete the challan first, then delete the setup.'
   }
+  /* Backend kabhi app-level paighaam Roman-Urdu me bhejta hai (SQL FK ke
+     bajaye), jaise "Is challan par receiving ho chuki hai. Pehle receiving
+     delete karein." — UI poori English hai, is liye English me dikhate hain. */
+  if (/receiving\s+ho\s+chuki|pehle\s+receiving[\s\S]*delete|receiving[\s\S]*pehle[\s\S]*delete/i.test(msg)) {
+    return 'This challan has a receiving record against it. Delete the receiving record first, then delete the challan.'
+  }
+  /* Isi tarah setup par challan maujood ho (Roman-Urdu). */
+  if (/pehle\s+challan[\s\S]*delete|challan[\s\S]*pehle[\s\S]*delete/i.test(msg)) {
+    return 'This school has a challan against its payment setup. Delete the challan first, then delete the setup.'
+  }
   /* Koi aur FK — asal naam nahi jaante, magar wajah wahi hai. */
   if (/REFERENCE constraint|FOREIGN KEY|conflicted with the DELETE/i.test(msg)) {
     return 'This record is linked to other payment records. Remove those first, then try again.'

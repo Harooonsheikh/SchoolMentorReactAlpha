@@ -52,7 +52,7 @@ const callApi = async (url, method, body) => {
     return { ok, status: res.status, message: json.message || (ok ? '' : `Request failed (${res.status})`), data: json.data }
   } catch (e) {
     console.error(method, url, e)
-    return { ok: false, status: 0, message: 'Server se connect nahi ho saka' }
+    return { ok: false, status: 0, message: 'Could not connect to the server' }
   }
 }
 const TYPE_NAME = { rev: 'Revenue', exp: 'Expense' }
@@ -75,7 +75,7 @@ const [accountTypes, setAccountTypes] = useState([])
       const r = await callApi(`${BASE}/get-account-types`, 'GET')
       if (!alive) return
       if (r.ok) setAccountTypes(r.data || [])
-      else { setHeadsLoading(false); setToast({ text: r.message || 'Account types load nahi hue', type: 'warn' }) }
+      else { setHeadsLoading(false); setToast({ text: r.message || 'Could not load account types', type: 'warn' }) }
     })()
     return () => { alive = false }
   }, [])
@@ -96,7 +96,7 @@ const [accountTypes, setAccountTypes] = useState([])
             .map((h) => ({ no: h.ID, name: h.AccountHead, desc: h.Description || '' }))]
         }),
       )
-      if (results.some(([, v]) => v === null)) fire('Kuch account heads load nahi hue', 'warn')
+      if (results.some(([, v]) => v === null)) fire('Some account heads could not be loaded', 'warn')
       setAcc((prev) => prev && ({
         ...prev,
         types: prev.types.map((t) => {
@@ -161,7 +161,7 @@ function ChartOfAccounts({ acc, fire, accountTypes, reloadHeads, loading }) {
   // ADD => POST | EDIT => PUT (405 aaye to PATCH, phir POST) — same endpoint: save-account-head
   const saveHead = async (typeKey, payload, headNo) => {
     const typeId = accountTypes.find((t) => t.AccountTypeName === TYPE_NAME[typeKey])?.ID
-    if (!typeId) return fire('Account types abhi load nahi hue, dobara try karein', 'warn')
+    if (!typeId) return fire('Account types are still loading — please try again', 'warn')
 
     const isEdit = headNo != null
     const userId = getUserId()
