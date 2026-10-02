@@ -217,7 +217,203 @@ async function callById(method, path, failMsg) {
   if (!res.ok) throw new Error(apiMessage(json) || failMsg);
   return json;
 }
+/* ─── Pre-Enrollment Challan APIs ─────────────────────────────────── */
+const PE_BASE = 'https://alphaapi.schoolmentor.ai/api/PreEnrollmentStudent';
 
+/* TODO: apne existing session helpers se replace karein */
+const peBranchId = () => Number(localStorage.getItem('branchId')) || 1;
+const peUserId   = () => {
+  try { return Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) || 0; }
+  catch { return 0; }
+};
+
+async function peRequest(path, { method = 'GET', body } = {}) {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`${PE_BASE}${path}`, {
+    method,
+    headers: {
+      accept: '*/*',
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok || data?.isSuccess === false || data?.success === false) {
+    throw new Error(data?.message || data?.title || `Request failed (${res.status})`);
+  }
+  return data;
+}
+
+const peDay = (d) => {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}T00:00:00`;
+};
+const PE_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+/* get-all ka response → UI ka challan shape { id, heads, month, year, total, payments } */
+export function normalizePreEnrollChallan(raw) {
+  const top  = raw?.data ?? raw?.result ?? raw;
+  const list = Array.isArray(top) ? top : (top ? [top] : []);
+  const L0   = list.find(Boolean);
+  if (!L0) return null;
+  const L = L0.ledger || L0;
+  if (!L?.id) return null;
+
+  const rows  = L.detailRows || L.details || L.detailList || [];
+  const heads = rows.map(r => ({
+    detailId: r.id,
+    head:     r.head || '',
+    subHead:  r.subHead || '',
+    name:     r.subHead || r.head || 'Fee',
+    amt:      Number(r.challanAmount ?? r.amount ?? 0),
+    received: Number(r.receivedAmount ?? r.receivingAmount ?? r.paidAmount ?? 0),
+  }));
+  const total    = heads.reduce((a, h) => a + h.amt, 0);
+  const received = heads.reduce((a, h) => a + h.received, 0);
+
+  /* Server par jo receiving hui hai usay ek payment row bana kar dikhate hain */
+  const perHead = {};
+  heads.forEach(h => { if (h.received > 0) perHead[h.name] = h.received; });
+  const payments = received > 0 ? [{
+    id: `srv-${L.id}`,
+    date: String(L.modifiedAt || L.dateofCreattion || '').slice(0, 10),
+    method: L.paymentMethod || 'Cash',
+    ref: '', txn: '',
+    amount: received,
+    perHead,
+  }] : [];
+
+  return {
+    id: L.id,
+    heads,
+    month: PE_MONTHS[(Number(L.month) || 1) - 1],
+    monthNo: Number(L.month) || 0,
+    year: Number(L.year) || 0,
+    dueDate: L.dueDate,
+    total,
+    payments,
+    generatedAt: L.createdAt || L.dateofCreattion,
+  };
+}
+
+/* GET get-all → ek student ka challan (month/year ke hisaab se) */
+export async function getPreEnrollChallan({ studentId, month, year }) {
+  const now = new Date();
+  const q = new URLSearchParams({
+    branchId:  String(peBranchId()),
+    studentId: String(studentId),
+    month:     String(month || now.getMonth() + 1),
+    year:      String(year || now.getFullYear()),
+  });
+  const data = await peRequest(`/get-all?${q}`);
+  return normalizePreEnrollChallan(data);
+}
+
+/* POST create-challan */
+export async function createPreEnrollChallan({ student, heads, dueInDays = 10 }) {
+  const now = new Date();
+  const due = new Date(now.getTime() + dueInDays * 86400000);
+  const uid = peUserId();
+  const branchId = peBranchId();
+  return peRequest('/create-challan', {
+    method: 'POST',
+    body: {
+      ledger: {
+        id: 0,
+        dateofCreattion: peDay(now),
+        dueDate: peDay(due),
+        studentID: Number(student._id) || 0,
+        branchID: branchId,
+        gradeID: Number(student._gradeId) || 0,
+        sectionID: Number(student._sectionId) || 0,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+        registrationNumber: String(student.reg || student.preId || ''),
+        paymentMethod: '',
+        plApplicantID: '',
+        plpsid: '',
+        tranType: '',
+        isActive: true,
+        createdBy: uid,
+        createdAt: now.toISOString(),
+        modifiedBy: uid,
+        modifiedAt: now.toISOString(),
+        detailRows: heads.map(h => ({
+          id: 0,
+          blid: 0,
+          branchId,
+          head: h.head || 'Account Payable',
+          subHead: h.subHead || h.name,
+          challanAmount: Number(h.amt) || 0,
+        })),
+      },
+    },
+  });
+}
+
+/* DELETE delete/{id} → poora challan delete */
+export function deletePreEnrollChallan(challanId) {
+  return peRequest(`/delete/${challanId}`, { method: 'DELETE' });
+}
+
+/* DELETE delete-receiving-detail/{id}?modifiedBy= → receiving reset */
+export function resetPreEnrollReceiving(challanId) {
+  return peRequest(`/delete-receiving-detail/${challanId}?modifiedBy=${peUserId()}`, { method: 'DELETE' });
+}
+/* POST receive-payment → challan ke heads par payment receive karo.
+   Payload create-challan jaisa hai; ledger.id = challan id,
+   detailRows = challan ke heads, challanAmount = abhi receive hone wali raqam. */
+/* POST receive-payment — flat body (ledger wrapper NAHI).
+   Required: detailRows, receivedDate, paymentMethod. */
+export async function receivePreEnrollPayment({ student, challan, payment }) {
+  const now = new Date();
+  const uid = peUserId();
+  const branchId = peBranchId();
+  const payDate = payment.date ? new Date(payment.date) : now;
+
+  const detailRows = (challan.heads || [])
+    .filter(h => Number(payment.perHead?.[h.name] || 0) > 0)
+    .map(h => {
+      const amt = Number(payment.perHead[h.name]) || 0;
+      return {
+        id: h.detailId || 0,
+        blid: Number(challan.id) || 0,
+        branchId,
+        head: h.head || 'Account Payable',
+        subHead: h.subHead || h.name,
+        challanAmount: Number(h.amt) || 0,
+        receivedAmount: amt,
+        amount: amt,
+      };
+    });
+
+  if (!detailRows.length) throw new Error('No matching challan heads found for this payment');
+
+  return peRequest('/receive-payment', {
+    method: 'POST',
+    body: {
+      id: 0,
+      ledgerId: Number(challan.id) || 0,
+      blid: Number(challan.id) || 0,
+      studentID: Number(student._id) || 0,
+      branchID: branchId,
+      gradeID: Number(student._gradeId) || 0,
+      sectionID: Number(student._sectionId) || 0,
+      registrationNumber: String(student.reg || student.preId || ''),
+      receivedDate: peDay(payDate),
+      paymentMethod: payment.method || 'Cash',
+      referenceNo: payment.ref || '',
+      transactionNo: payment.txn || '',
+      totalAmount: Number(payment.amount) || 0,
+      createdBy: uid,
+      modifiedBy: uid,
+      detailRows,
+    },
+  });
+}
 /* Soft delete (isActive → false); reason query param me jata hai. */
 export function removePreEnrollStudent(id, reason = '') {
   const qs = reason ? `?reason=${encodeURIComponent(reason)}` : '';

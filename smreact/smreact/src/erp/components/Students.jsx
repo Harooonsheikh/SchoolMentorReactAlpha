@@ -2749,8 +2749,7 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
                       label="Family Tree"
                       hint={famList.length
                         ? 'Select a Family Tree to Add Student in related fmaily'
-                        : 'Koi family tree nahi bani. Pehle Family Tree tab se banayein.'}
-                    >
+                        : 'No family tree exists yet. Create one from the Family Tree tab first.'}                    >
                       <select
                         className="stu-finput"
                         value={family}
@@ -2778,8 +2777,7 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
                           </div>
                           <div style={{ marginTop: 2 }}>
                             {famSiblings.length === 0
-                              ? 'Is family me abhi koi doosra student nahi.'
-                              : `Related: ${famSiblings
+                              ? 'No other student in this family yet.'                              : `Related: ${famSiblings
                                   .map(m => `${[m.first, m.last].filter(Boolean).join(' ')}${m._cls ? ` (${m._cls}${m._sec ? `-${m._sec}` : ''})` : ''}`)
                                   .join(', ')}`}
                           </div>
@@ -5734,8 +5732,33 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
 
   void inactive; // accepted for parity; only setInactive is used here
 
-  const [students, setStudents] = useState(null);
-useEffect(() => { if (serverStudents.length && students == null) setStudents(serverStudents.map(preLocalMerge)); }, [serverStudents, students]);  const list = useMemo(() => students || [], [students]);
+    const [students, setStudents] = useState(null);
+  const list = useMemo(() => students || [], [students]);
+
+  /* Har student ka is mahine ka challan server se laao (parallel). */
+  const hydrateChallans = useCallback(async (rows) => {
+    if (!rows?.length) return;
+    const now = new Date();
+    const results = await Promise.allSettled(rows.map(s =>
+      s._id
+        ? preEnrollmentService.getPreEnrollChallan({ studentId: s._id, month: now.getMonth() + 1, year: now.getFullYear() })
+        : Promise.resolve(null)
+    ));
+    setStudents(prev => (prev || []).map(s => {
+      const idx = rows.findIndex(r => r._id === s._id);
+      if (idx < 0 || results[idx].status !== 'fulfilled') return s;
+      const ch = results[idx].value;
+      if (!ch) return { ...s, challan: null, payments: [] };
+      return { ...s, challan: ch, payments: ch.payments || [] };    }));
+  }, []);
+
+  useEffect(() => {
+    if (serverStudents.length && students == null) {
+      const rows = serverStudents.map(preLocalMerge);
+      setStudents(rows);
+      hydrateChallans(rows);
+    }
+  }, [serverStudents, students, hydrateChallans]);
 
   /* Registration / Admission No counters — seeded from the same server
      values Active Students uses, so Enroll can auto-assign a running number. */
@@ -5750,14 +5773,17 @@ useEffect(() => { if (serverStudents.length && students == null) setStudents(ser
   const [receivingCfg, setReceivingCfg] = useState(null); // { student }
   const [confirmCfg, setConfirmCfg] = useState(null);   // { kind: 'enroll'|'reject', student }
   const [reportOpen, setReportOpen] = useState(false);
-  const [slipCfg, setSlipCfg] = useState(null);         // { kind: 'challan'|'receiving', student, payment? }
+    const [slipCfg, setSlipCfg] = useState(null);         // { kind: 'challan'|'receiving', student, payment? }
 
+  const [actCfg, setActCfg] = useState(null);           // { kind: 'delChallan' | 'resetRecv', student }
   /* Server se list dobara laao. Challan / payments ki API abhi nahi hai, is liye
      wo sirf UI state me hain — reload par unhein _id ke hisaab se wapas jod do. */
 const reloadList = async () => {
   try {
-    const fresh = await preEnrollmentService.getPreEnrollStudents();
-    setStudents(fresh.map(preLocalMerge));
+     const fresh = await preEnrollmentService.getPreEnrollStudents();
+    const rows = fresh.map(preLocalMerge);
+    setStudents(rows);
+    hydrateChallans(rows);
   } catch (err) {
     toast(err.message || 'Could not refresh pre-enrolled students', 'error');
   }
@@ -5804,20 +5830,81 @@ const reloadList = async () => {
     setEditCfg(null);
   };
 
-const handleChallanSave = (challan) => {
-  const student = challanCfg.student;
-  preEnrollmentService.savePreEnrollChallan({ preId: student.preId, challan }).catch(() => {});
-  const updated = { ...student, challan };
-  preLocalPatch(student.preId, { challan });
-  setStudents(prev => prev.map(s => s.preId === student.preId ? updated : s));
-}
- const handleReceivingSave = (payment) => {
-  const student = receivingCfg.student;
-  preEnrollmentService.savePreEnrollReceiving({ preId: student.preId, payment }).catch(() => {});
-  const updated = { ...student, payments: [...(student.payments || []), payment] };
-  preLocalPatch(student.preId, { payments: updated.payments });
-  setStudents(prev => prev.map(s => s.preId === student.preId ? updated : s));
- }
+  const handleChallanSave = async (challan) => {
+    const student = challanCfg.student;
+    if (!student._id) { toast('Student ID is missing — please reload and try again', 'error'); return; }    try {
+      await preEnrollmentService.createPreEnrollChallan({ student, heads: challan.heads });
+      const fresh = await preEnrollmentService.getPreEnrollChallan({ studentId: student._id });
+      const finalChallan = fresh || challan;
+      setStudents(prev => prev.map(s => s.preId === student.preId
+        ? { ...s, challan: finalChallan, payments: finalChallan.payments?.length ? finalChallan.payments : [] }
+        : s));
+      toast(`Challan generated for ${stuFullName(student)}`, 'success');
+      setChallanCfg(null);
+    } catch (err) {
+      toast(err.message || 'Could not generate challan', 'error');
+    }
+  };
+  const handleReceivingSave = async (payment) => {
+    const student = receivingCfg.student;
+    if (!student._id) { toast('Student ID is missing please reload and try again', 'error'); return; }    try {
+      await preEnrollmentService.receivePreEnrollPayment({ student, challan: student.challan, payment });
+
+      /* Server se fresh challan — received amounts wahan se aayenge */
+      const fresh = await preEnrollmentService
+        .getPreEnrollChallan({ studentId: student._id, month: student.challan.monthNo, year: student.challan.year })
+        .catch(() => null);
+
+      /* Server received amounts de to wahi, warna local payment list */
+      const payments = fresh ? (fresh.payments || []) : [...(student.payments || []), payment];
+
+      preLocalPatch(student.preId, { payments });
+      setStudents(prev => prev.map(s => s.preId === student.preId
+        ? { ...s, challan: fresh || s.challan, payments }
+        : s));
+
+      const totalChallan = Number((fresh || student.challan).total || 0);
+      const paidNow = payments.reduce((a, p) => a + Number(p.amount || 0), 0);
+      toast(
+        paidNow >= totalChallan
+          ? `${stuFullName(student)} — challan fully paid (${stuMoney(paidNow)})`
+          : `${stuMoney(payment.amount)} received · ${stuMoney(totalChallan - paidNow)} remaining`,
+        'success'
+      );
+      setReceivingCfg(null);
+    } catch (err) {
+      toast(err.message || 'Could not receive payment', 'error');
+    }
+  };
+ 
+   const handleDeleteChallan = async (student) => {
+    if (!student.challan?.id) { toast('No saved challan to delete', 'error'); return; }
+    try {
+      await preEnrollmentService.deletePreEnrollChallan(student.challan.id);
+      preLocalPatch(student.preId, { challan: null, payments: [] });
+      setStudents(prev => prev.map(s => s.preId === student.preId ? { ...s, challan: null, payments: [] } : s));
+      toast('Challan deleted', 'info');
+      setActCfg(null);
+    } catch (err) {
+      toast(err.message || 'Could not delete challan', 'error');
+    }
+  };
+
+  const handleResetReceiving = async (student) => {
+    if (!student.challan?.id) { toast('No saved challan found', 'error'); return; }
+    try {
+      await preEnrollmentService.resetPreEnrollReceiving(student.challan.id);
+      preLocalPatch(student.preId, { payments: [] });
+      const fresh = await preEnrollmentService.getPreEnrollChallan({ studentId: student._id }).catch(() => null);
+      setStudents(prev => prev.map(s => s.preId === student.preId
+        ? { ...s, challan: fresh || s.challan, payments: [] }
+        : s));
+      toast('Receiving reset — challan is unpaid again', 'info');
+      setActCfg(null);
+    } catch (err) {
+      toast(err.message || 'Could not reset receiving', 'error');
+    }
+  };
    const handleConfirm = async (cfg) => {
     const { kind, student } = cfg;
     try {
@@ -5920,15 +6007,34 @@ const handleChallanSave = (challan) => {
             key={s.preId}
             s={s}
             i={i + 1}
-            onChallan={() => setChallanCfg({ student: s })}
-            onReceiving={() => {
+            onChallan={() => {
+              if (s.challan?.id) { toast('Challan pehle se bana hua hai — naya banane ke liye pehle "Delete Challan" karein', 'error'); return; }              setChallanCfg({ student: s });
+            }}
+            onDeleteChallan={() => setActCfg({ kind: 'delChallan', student: s })}
+            onResetReceiving={() => setActCfg({ kind: 'resetRecv', student: s })}            onReceiving={() => {
               if (!s.challan) { toast('Generate a challan first', 'error'); return; }
               setReceivingCfg({ student: s });
             }}
             onEnroll={() => setConfirmCfg({ kind: 'enroll', student: s })}
             onReject={() => setConfirmCfg({ kind: 'reject', student: s })}
-            onSlip={(kind) => setSlipCfg({ kind, student: s })}
-            onEdit={() => setEditCfg({ student: s })}
+            onSlip={(kind) => {
+              if (kind === 'receiving') {
+                const pays = s.payments || [];
+                if (!pays.length) { toast('No payment has been received yet', 'error'); return; }
+                const perHead = {};
+                pays.forEach(p => Object.entries(p.perHead || {}).forEach(([n, v]) => {
+                  perHead[n] = (perHead[n] || 0) + Number(v || 0);
+                }));
+                const last = pays[pays.length - 1];
+                setSlipCfg({
+                  kind,
+                  student: s,
+                  payment: { ...last, perHead, amount: pays.reduce((a, p) => a + Number(p.amount || 0), 0) },
+                });
+                return;
+              }
+              setSlipCfg({ kind, student: s });
+            }}            onEdit={() => setEditCfg({ student: s })}
           />
         ))}
       </div>
@@ -6002,19 +6108,26 @@ classes={classes}
         />
       )}
 
-      {reportOpen && (
-        <PreEnrollReportPanel students={list} school={school} onClose={() => setReportOpen(false)} toast={toast} />
-      )}
-
-      {slipCfg && (
+{reportOpen && (
+  <PreEnrollReportPanel students={list} school={school} onClose={() => setReportOpen(false)} toast={toast} />
+)}
+          {slipCfg && (
         <PreEnrollSlipModal cfg={slipCfg} school={school} onClose={() => setSlipCfg(null)} toast={toast} />
+      )}
+      {actCfg && (
+        <PreEnrollActionConfirm
+          cfg={actCfg}
+          onClose={() => setActCfg(null)}
+          onConfirm={() => (actCfg.kind === 'delChallan'
+            ? handleDeleteChallan(actCfg.student)
+            : handleResetReceiving(actCfg.student))}
+        />
       )}
     </>
   );
 }
 
-function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject, onSlip, onEdit }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject, onSlip, onEdit, onDeleteChallan, onResetReceiving }) {  const [menuOpen, setMenuOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
   const anchorRef = useRef(null);
 
@@ -6078,6 +6191,22 @@ function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject,
             <button className="stu-actitem" disabled={!(s.payments || []).length} style={!(s.payments || []).length ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!(s.payments || []).length) return; fire(() => onSlip('receiving')); }}>
               <i className="fa-solid fa-receipt" style={{ color: '#0E7490' }}></i> Print Receiving Slip
             </button>
+                        <button
+              className="stu-actitem"
+              disabled={!(s.payments || []).length || !s.challan?.id}
+              style={(!(s.payments || []).length || !s.challan?.id) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (!(s.payments || []).length || !s.challan?.id) return; fire(onResetReceiving); }}
+            >
+              <i className="fa-solid fa-rotate-left" style={{ color: '#D97706' }}></i> Reset Receiving
+            </button>
+            <button
+              className="stu-actitem stu-actitem--danger"
+              disabled={!s.challan?.id}
+              style={!s.challan?.id ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (!s.challan?.id) return; fire(onDeleteChallan); }}
+            >
+              <i className="fa-solid fa-file-circle-xmark"></i> Delete Challan
+            </button>
             <div className="stu-actmenu-div"></div>
             <button className="stu-actitem" onClick={() => fire(onEnroll)}>
               <i className="fa-solid fa-user-check" style={{ color: '#16A34A' }}></i> Enroll to Active Students
@@ -6098,6 +6227,7 @@ function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
   const type = '1';
   const [picked, setPicked] = useState(() => (student.challan?.heads || []).map(h => h.name));
   const [msOpen, setMsOpen] = useState(false);
+    const [saving, setSaving] = useState(false);
   const msAnchorRef = useRef(null);
 
   useEffect(() => {
@@ -6118,9 +6248,18 @@ function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
   const pickedHeads = feeHeads.filter(h => picked.includes(h.name));
   const total = pickedHeads.reduce((a, h) => a + Number(h.amt || 0), 0);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    if (saving) return;
     if (picked.length === 0) { toast('Select at least one fee head', 'error'); return; }
-    onSave({ heads: pickedHeads.map(h => ({ name: h.name, amt: h.amt })), month, type, total, generatedAt: new Date().toISOString() });
+    setSaving(true);
+    try {
+      await onSave({
+        heads: pickedHeads.map(h => ({ name: h.name, amt: h.amt, head: h.head, subHead: h.subHead })),
+        month, type, total, generatedAt: new Date().toISOString(),
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const initials = (stuFullName(student) || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
@@ -6181,8 +6320,8 @@ function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
 
         <div className="fee-modal-foot">
           <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="fee-btn fee-btn-primary" onClick={handleGenerate}>
-            <i className="fa-solid fa-bolt"></i> Generate Challan
+           <button className="fee-btn fee-btn-primary" onClick={handleGenerate} disabled={saving}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-bolt'}`}></i> {saving ? 'Generating…' : 'Generate Challan'}
           </button>
         </div>
       </div>
@@ -6417,7 +6556,58 @@ function PreEnrollConfirm({ cfg, suggestedReg, suggestedAdm, onClose, onConfirm 
     </div>
   );
 }
-
+function PreEnrollActionConfirm({ cfg, onClose, onConfirm }) {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose, busy]);
+  if (!cfg) return null;
+  const isDel = cfg.kind === 'delChallan';
+  const tone  = isDel ? '#DC2626' : '#D97706';
+  const name  = stuFullName(cfg.student);
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await onConfirm(); } finally { setBusy(false); }
+  };
+  return (
+    <div className="stu-confirm-overlay" onClick={(e) => { if (!busy && e.target === e.currentTarget) onClose(); }}>
+      <div className="stu-confirm-dialog">
+        <div className="stu-confirm-glow" style={{ background: tone }} />
+        <div className="stu-confirm-hero" style={{ background: `linear-gradient(180deg, ${tone}0D, transparent)` }}>
+          <div className="stu-confirm-ring" style={{ '--ring': tone }}>
+            <div className="stu-confirm-icon-wrap" style={{ background: `${tone}1A`, color: tone }}>
+              <i className={`fa-solid ${isDel ? 'fa-file-circle-xmark' : 'fa-rotate-left'}`}></i>
+            </div>
+          </div>
+        </div>
+        <div className="stu-confirm-body">
+          <div className="stu-confirm-title">{isDel ? 'Delete Challan?' : 'Reset Receiving?'}</div>
+          <div className="stu-confirm-msg">
+            {isDel
+                           ? <>The challan of "<strong>{name}</strong>" ({stuMoney(cfg.student.challan?.total)}) will be deleted. You can generate a new one afterwards.</>
+              : <>All receivings of "<strong>{name}</strong>" will be removed and the challan will become <strong>unpaid</strong> again.</>}
+          </div>
+        </div>
+        <div className="stu-confirm-footer">
+          <button className="stu-btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            className="stu-btn-primary"
+            style={{ background: `linear-gradient(135deg,${tone},${tone})` }}
+            onClick={run}
+            disabled={busy}
+          >
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : (isDel ? 'fa-trash' : 'fa-rotate-left')}`}></i>{' '}
+            {busy ? 'Please wait…' : (isDel ? 'Yes, Delete' : 'Yes, Reset')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 /* ─── Reporting download — same A4 report convention as the other Students
    reports (rhead/rlogo/kpi-row/tbl/rfoot), school-branded via stuSchoolLogoSVG(). ── */
 function buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school }) {
@@ -6455,7 +6645,7 @@ function buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, sch
     html: `
       <div class="page">
         <div class="rhead">
-          <div class="rlogo">${stuSchoolLogoSVG()}</div>
+          <div class="rlogo">${stuLogoImg(school)}</div>
           <div><div class="rname">${stuEsc(school?.name || 'School')}</div><div class="rtitle">Pre-Enrollment Report — ${stuEsc(periodLabel)}</div></div>
           <div class="meta">Generated: ${genDate}<br/>${stuEsc(school?.session || '')}</div>
         </div>
@@ -6520,11 +6710,17 @@ function PreEnrollReportPanel({ students, school, onClose, toast }) {
     ? new Date(`${month}-01`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
     : `${stuFmtDate(from)} — ${stuFmtDate(to)}`;
 
-  const handleDownload = () => {
-    const { css, html } = buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school });
-    stuOpenPrintWindow(`Pre-Enrollment Report — ${periodLabel}`, css, html, toast);
+const handleDownload = async () => {
+  const branch = await fetchReportHeader();
+  const rptSchool = {
+    ...school,
+    name:    branch?.branchName || school?.name,
+    address: branch?.address    || school?.address,
+    logo:    studentService.stuFileUrl(branch?.branchLogo) || school?.logo,
   };
-
+  const { css, html } = buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school: rptSchool });
+  stuOpenPrintWindow(`Pre-Enrollment Report — ${periodLabel}`, css, html, toast);
+};
   return createPortal(
     <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="fee-modal lg">
@@ -6646,6 +6842,7 @@ function buildPreEnrollSlipHTML({ kind, student, payment, school, size }) {
         .slip{width:76mm;margin:0 auto;padding:4mm}
         .th-head{text-align:center;margin-bottom:6px}
         .th-logo{width:28px;height:28px;margin:0 auto 4px}
+        .th-logo img,.th-logo svg{width:100%;height:100%;object-fit:contain}
         .th-name{font-size:12px;font-weight:800;color:#111}
         .th-addr{font-size:8.5px;color:#555;margin-top:1px}
         .th-title{font-size:10.5px;font-weight:800;margin-top:6px;border-top:1px dashed #888;border-bottom:1px dashed #888;padding:4px 0;text-align:center}
@@ -6661,16 +6858,14 @@ function buildPreEnrollSlipHTML({ kind, student, payment, school, size }) {
       html: `
         <div class="slip">
           <div class="th-head">
-            <div class="th-logo">${stuSchoolLogoSVG()}</div>
-            <div class="th-name">${stuEsc(school?.name || 'School')}</div>
+<div class="th-logo">${stuLogoImg(school)}</div>            <div class="th-name">${stuEsc(school?.name || 'School')}</div>
             ${school?.address ? `<div class="th-addr">${stuEsc(school.address)}</div>` : ''}
           </div>
           <div class="th-title">${title}</div>
           <div class="th-kv"><span>Student</span><b>${stuEsc(stuFullName(student))}</b></div>
           <div class="th-kv"><span>Reg No</span><b>${stuEsc(student.reg || student.preId)}</b></div>
           <div class="th-kv"><span>Class</span><b>${stuEsc(student.cls)} (${stuEsc(student.sec)})</b></div>
-          <div class="th-kv"><span>Date</span><b>${genDate}</b></div>
-          ${!isChallan ? `<div class="th-kv"><span>Method</span><b>${stuEsc(payment?.method || '')}</b></div>` : ''}
+<div class="th-kv"><span>Date</span><b>${genDate}</b></div>${isChallan ? `<div class="th-kv"><span>Due Date</span><b>${stuFmtDate(String(student.challan?.dueDate || '').slice(0, 10))}</b></div>` : ''}          ${!isChallan ? `<div class="th-kv"><span>Method</span><b>${stuEsc(payment?.method || '')}</b></div>` : ''}
           <table><tbody>${rows}</tbody></table>
           <div class="th-total"><span>${totalLabel}</span><span>${stuMoney(total)}</span></div>
           <div class="th-foot">Powered by School Mentor&reg;</div>
@@ -6686,8 +6881,7 @@ function buildPreEnrollSlipHTML({ kind, student, payment, school, size }) {
       body{padding:18px 0;font-size:11px}
       .page{width:210mm;min-height:297mm;margin:0 auto;padding:16mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
       .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:12px;margin-bottom:16px}
-      .rlogo{width:46px;height:46px;flex-shrink:0}
-      .rname{font-size:18px;font-weight:800;color:#0F172A}
+.rlogo{width:46px;height:46px;flex-shrink:0}.rlogo img,.rlogo svg{width:100%;height:100%;object-fit:contain}      .rname{font-size:18px;font-weight:800;color:#0F172A}
       .rtitle{font-size:12.5px;font-weight:700;color:#1E3A8A;margin-top:3px}
       .meta{margin-left:auto;font-size:10px;color:#64748B;text-align:right;line-height:1.6}
       .sec-band{background:#1E3A8A;color:#fff;padding:7px 13px;border-radius:6px;font-weight:800;font-size:11.5px;margin:16px 0 9px}
@@ -6704,8 +6898,7 @@ function buildPreEnrollSlipHTML({ kind, student, payment, school, size }) {
     html: `
       <div class="page">
         <div class="rhead">
-          <div class="rlogo">${stuSchoolLogoSVG()}</div>
-          <div><div class="rname">${stuEsc(school?.name || 'School')}</div><div class="rtitle">${title}</div></div>
+<div class="rlogo">${stuLogoImg(school)}</div>          <div><div class="rname">${stuEsc(school?.name || 'School')}</div><div class="rtitle">${title}</div></div>
           <div class="meta">Generated: ${genDate}<br/>${stuEsc(school?.session || '')}</div>
         </div>
         <div class="sec-band">Student Details</div>
@@ -6713,7 +6906,7 @@ function buildPreEnrollSlipHTML({ kind, student, payment, school, size }) {
           <tbody>
             <tr><td><b>Name</b></td><td>${stuEsc(stuFullName(student))}</td><td><b>Reg No</b></td><td>${stuEsc(student.reg || student.preId)}</td></tr>
             <tr><td><b>Father Name</b></td><td>${stuEsc(student.father || '—')}</td><td><b>Class</b></td><td>${stuEsc(student.cls)} (${stuEsc(student.sec)})</td></tr>
-            <tr><td><b>Contact</b></td><td>${stuEsc(student.mobile || '—')}</td><td><b>Date</b></td><td>${genDate}</td></tr>
+            <tr><td><b>Contact</b></td><td>${stuEsc(student.mobile || '—')}</td><td><b>Date</b></td><td>${genDate}</td></tr>${isChallan ? `<tr><td><b>Fee Period</b></td><td>${stuEsc(student.challan?.month || '')} ${student.challan?.year || ''}</td><td><b>Due Date</b></td><td>${stuFmtDate(String(student.challan?.dueDate || '').slice(0, 10))}</td></tr>` : ''}
           </tbody>
         </table>
         <div class="sec-band">${isChallan ? 'Challan Details' : 'Payment Details'}</div>
@@ -6741,12 +6934,18 @@ function PreEnrollSlipModal({ cfg, school, onClose, toast }) {
   const { kind, student, payment } = cfg;
   const title = kind === 'challan' ? 'Print Challan Slip' : 'Print Receiving Slip';
 
-  const handlePrint = () => {
-    const { css, html } = buildPreEnrollSlipHTML({ kind, student, payment, school, size });
-    stuOpenPrintWindow(`${kind === 'challan' ? 'Challan' : 'Receipt'} — ${stuFullName(student)}`, css, html, toast);
-    onClose();
+ const handlePrint = async () => {
+  const branch = await fetchReportHeader();
+  const rptSchool = {
+    ...school,
+    name:    branch?.branchName || school?.name,
+    address: branch?.address    || school?.address,
+    logo:    studentService.stuFileUrl(branch?.branchLogo) || school?.logo,
   };
-
+  const { css, html } = buildPreEnrollSlipHTML({ kind, student, payment, school: rptSchool, size });
+  stuOpenPrintWindow(`${kind === 'challan' ? 'Challan' : 'Receipt'} — ${stuFullName(student)}`, css, html, toast);
+  onClose();
+};
   return createPortal(
     <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="fee-modal sm">
