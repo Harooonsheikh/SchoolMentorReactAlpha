@@ -218,18 +218,21 @@ async function callById(method, path, failMsg) {
   return json;
 }
 /* ─── Pre-Enrollment Challan APIs ─────────────────────────────────── */
-const PE_BASE = 'https://alphaapi.schoolmentor.ai/api/PreEnrollmentStudent';
+const PE_BASE = '/api/PreEnrollmentStudent';
 
 /* TODO: apne existing session helpers se replace karein */
-const peBranchId = () => Number(localStorage.getItem('branchId')) || 1;
-const peUserId   = () => {
+const peBranchId = () =>
+  Number(sessionStorage.getItem('branchID') || localStorage.getItem('branchId')) || 0;
+const peUserId = () => {
+  const direct = Number(sessionStorage.getItem('UserID'));
+  if (direct) return direct;
   try { return Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) || 0; }
   catch { return 0; }
 };
 
 async function peRequest(path, { method = 'GET', body } = {}) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(`${PE_BASE}${path}`, {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+  const res = await fetch(buildUrl(`${PE_BASE}${path}`), {
     method,
     headers: {
       accept: '*/*',
@@ -368,19 +371,20 @@ export function resetPreEnrollReceiving(challanId) {
    detailRows = challan ke heads, challanAmount = abhi receive hone wali raqam. */
 /* POST receive-payment — flat body (ledger wrapper NAHI).
    Required: detailRows, receivedDate, paymentMethod. */
-export async function receivePreEnrollPayment({ student, challan, payment }) {
+export async function receivePreEnrollPayment({ student, heads, payment }) {
   const now = new Date();
   const uid = peUserId();
   const branchId = peBranchId();
   const payDate = payment.date ? new Date(payment.date) : now;
 
-  const detailRows = (challan.heads || [])
+  const detailRows = (heads || [])
     .filter(h => Number(payment.perHead?.[h.name] || 0) > 0)
     .map(h => {
       const amt = Number(payment.perHead[h.name]) || 0;
+
       return {
         id: h.detailId || 0,
-        blid: Number(challan.id) || 0,
+        blid: Number(payment.challanId || 0),
         branchId,
         head: h.head || 'Account Payable',
         subHead: h.subHead || h.name,
@@ -390,30 +394,41 @@ export async function receivePreEnrollPayment({ student, challan, payment }) {
       };
     });
 
-  if (!detailRows.length) throw new Error('No matching challan heads found for this payment');
+  if (!detailRows.length) {
+    throw new Error('No matching class heads found for this payment');
+  }
 
   return peRequest('/receive-payment', {
     method: 'POST',
     body: {
       id: 0,
-      ledgerId: Number(challan.id) || 0,
-      blid: Number(challan.id) || 0,
+      ledgerId: Number(payment.challanId || 0),
+      blid: Number(payment.challanId || 0),
+
       studentID: Number(student._id) || 0,
       branchID: branchId,
       gradeID: Number(student._gradeId) || 0,
       sectionID: Number(student._sectionId) || 0,
-      registrationNumber: String(student.reg || student.preId || ''),
+
+      registrationNumber: String(
+        student.reg || student.preId || ''
+      ),
+
       receivedDate: peDay(payDate),
       paymentMethod: payment.method || 'Cash',
       referenceNo: payment.ref || '',
       transactionNo: payment.txn || '',
+
       totalAmount: Number(payment.amount) || 0,
+
       createdBy: uid,
       modifiedBy: uid,
+
       detailRows,
     },
   });
 }
+
 /* Soft delete (isActive → false); reason query param me jata hai. */
 export function removePreEnrollStudent(id, reason = '') {
   const qs = reason ? `?reason=${encodeURIComponent(reason)}` : '';

@@ -15898,22 +15898,66 @@ function ReportPanelPartialOneLink({ toast }) {
    until that ledger is available — never merged with regular fee data. */
 function ReportPanelPreEnrolled({ toast }) {
   const school = useContext(FeeReportBranchContext);
-  const { data: preEnrollStudents = [], loading, error } = useAsync(preEnrollmentService.getPreEnrollStudents, []);
   const today = localTodayISO();
   const [from, setFrom] = useState(localDateISO(new Date(Date.now() - 30 * 86400000)));
   const [to, setTo] = useState(today);
+  const [rowsAll, setRowsAll] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const rows = useMemo(() => {
-    const all = (preEnrollStudents || []).flatMap(s => (s.payments || []).map(p => ({
-      ...p,
-      preId: s.preId,
-      studentName: `${s.first || ''} ${s.last || ''}`.trim(),
-      cls: s.cls, sec: s.sec,
-    })));
-    return all
-      .filter(p => p.date >= from && p.date <= to)
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [preEnrollStudents, from, to]);
+  /* Har pre-enrolled student ka challan (range ke har mahine) laa kar payments nikaalo.
+     Enroll / Inactive ho chuke students ki payments Students tab ke log (localStorage) se. */
+  useEffect(() => {
+    let alive = true;
+    const f = new Date(from), t = new Date(to);
+    if (isNaN(f.getTime()) || isNaN(t.getTime()) || f > t) { setRowsAll([]); setLoading(false); return undefined; }
+    const months = ledgerPeriods(f.getMonth() + 1, f.getFullYear(), t.getMonth() + 1, t.getFullYear()).slice(-12);
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const students = await preEnrollmentService.getPreEnrollStudents();
+        const jobs = [];
+        (students || []).forEach(s => {
+          if (!s._id) return;
+          months.forEach(p => jobs.push(
+            preEnrollmentService.getPreEnrollChallan({ studentId: s._id, month: p.month, year: p.year })
+              .then(ch => ({ s, ch }))
+              .catch(() => null)
+          ));
+        });
+        const res = await Promise.all(jobs);
+        const seen = new Set();
+        const out = [];
+        res.forEach(r => {
+          if (!r || !r.ch || seen.has(r.ch.id)) return;
+          seen.add(r.ch.id);
+          (r.ch.payments || []).forEach(p => out.push({
+            ...p,
+            preId: r.s.preId,
+            studentName: `${r.s.first || ''} ${r.s.last || ''}`.trim(),
+            cls: r.s.cls, sec: r.s.sec,
+          }));
+        });
+        try {
+          const log = JSON.parse(localStorage.getItem('stuPreEnrollLog') || '[]');
+          log.forEach(e => (e.payments || []).forEach(p => out.push({
+            ...p, preId: e.reg || '—', studentName: e.name, cls: e.cls, sec: e.sec,
+          })));
+        } catch { /* ignore */ }
+        if (alive) setRowsAll(out);
+      } catch (e) {
+        if (alive) { setRowsAll([]); setError(e.message || 'Could not load pre-enrollment payments'); }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [from, to]);
+
+  const rows = useMemo(() => rowsAll
+    .filter(p => p.date && p.date >= from && p.date <= to)
+    .sort((a, b) => (a.date < b.date ? 1 : -1)), [rowsAll, from, to]);
 
   const total = rows.reduce((a, p) => a + (+p.amount || 0), 0);
   const studentsCount = new Set(rows.map(r => r.preId)).size;

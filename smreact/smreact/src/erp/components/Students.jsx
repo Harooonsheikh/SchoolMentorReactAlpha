@@ -5553,19 +5553,17 @@ const preToday = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, school, toast }) {
-  const { data: serverStudents = [] }  = useAsync(preEnrollmentService.getPreEnrollStudents, []);
   const { data: feeHeads = [] }        = useAsync(preEnrollmentService.getPreEnrollFeeHeads, []);
   const { data: classListLookup = [] } = useAsync(studentService.getStuClassList, []);
   const { data: sectionList = [] }     = useAsync(studentService.getStuSectionList, []);
   const { data: serverNextReg = 25101 } = useAsync(studentService.getStuNextReg, 25101);
   const { data: serverNextAdm = 1100 }  = useAsync(studentService.getStuNextAdm, 1100);
 
-  void inactive; // accepted for parity; only setInactive is used here
+  void inactive;
 
-    const [students, setStudents] = useState(null);
+  const [students, setStudents] = useState(null);
   const list = useMemo(() => students || [], [students]);
 
-  /* Har student ka is mahine ka challan server se laao (parallel). */
   const hydrateChallans = useCallback(async (rows) => {
     if (!rows?.length) return;
     const now = new Date();
@@ -5579,48 +5577,57 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
       if (idx < 0 || results[idx].status !== 'fulfilled') return s;
       const ch = results[idx].value;
       if (!ch) return { ...s, challan: null, payments: [] };
-      return { ...s, challan: ch, payments: ch.payments || [] };    }));
+      return { ...s, challan: ch, payments: ch.payments || [] };
+    }));
   }, []);
 
+  /* LOADER — list load hone tak spinner */
+  const [listLoading, setListLoading] = useState(true);
   useEffect(() => {
-    if (serverStudents.length && students == null) {
-      const rows = serverStudents.map(preLocalMerge);
-      setStudents(rows);
-      hydrateChallans(rows);
-    }
-  }, [serverStudents, students, hydrateChallans]);
+    let alive = true;
+    setListLoading(true);
+    preEnrollmentService.getPreEnrollStudents()
+      .then(data => {
+        if (!alive) return;
+        const rows = (Array.isArray(data) ? data : []).map(preLocalMerge);
+        setStudents(rows);
+        hydrateChallans(rows);
+      })
+      .catch(err => {
+        if (!alive) return;
+        setStudents([]);
+        toast(err.message || 'Could not load pre-enrolled students', 'error');
+      })
+      .finally(() => { if (alive) setListLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /* Registration / Admission No counters — seeded from the same server
-     values Active Students uses, so Enroll can auto-assign a running number. */
   const [nextReg, setNextReg] = useState(null);
   const [nextAdm, setNextAdm] = useState(null);
   useEffect(() => { if (nextReg == null && serverNextReg) setNextReg(serverNextReg); }, [serverNextReg, nextReg]);
   useEffect(() => { if (nextAdm == null && serverNextAdm) setNextAdm(serverNextAdm); }, [serverNextAdm, nextAdm]);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [editCfg, setEditCfg] = useState(null);         // { student }
-  const [challanCfg, setChallanCfg] = useState(null);   // { student }
-  const [receivingCfg, setReceivingCfg] = useState(null); // { student }
-  const [confirmCfg, setConfirmCfg] = useState(null);   // { kind: 'enroll'|'reject', student }
+  const [editCfg, setEditCfg] = useState(null);
+  const [challanCfg, setChallanCfg] = useState(null);
+  const [receivingCfg, setReceivingCfg] = useState(null);
+  const [confirmCfg, setConfirmCfg] = useState(null);
   const [reportOpen, setReportOpen] = useState(false);
-    const [slipCfg, setSlipCfg] = useState(null);         // { kind: 'challan'|'receiving', student, payment? }
+  const [slipCfg, setSlipCfg] = useState(null);
+  const [actCfg, setActCfg] = useState(null);
 
-  const [actCfg, setActCfg] = useState(null);           // { kind: 'delChallan' | 'resetRecv', student }
-  /* Server se list dobara laao. Challan / payments ki API abhi nahi hai, is liye
-     wo sirf UI state me hain — reload par unhein _id ke hisaab se wapas jod do. */
-const reloadList = async () => {
-  try {
-     const fresh = await preEnrollmentService.getPreEnrollStudents();
-    const rows = fresh.map(preLocalMerge);
-    setStudents(rows);
-    hydrateChallans(rows);
-  } catch (err) {
-    toast(err.message || 'Could not refresh pre-enrolled students', 'error');
-  }
-};
+  const reloadList = async () => {
+    try {
+      const fresh = await preEnrollmentService.getPreEnrollStudents();
+      const rows = fresh.map(preLocalMerge);
+      setStudents(rows);
+      hydrateChallans(rows);
+    } catch (err) {
+      toast(err.message || 'Could not refresh pre-enrolled students', 'error');
+    }
+  };
 
-  /* Server ko class/section NAAM nahi, real ids chahiye — chuni hui class+section
-     se resolve karo. */
   const resolveRow = (p) => (classes || []).find(c => c.cls === p.cls && c.sec === p.sec);
 
   const persistStudent = async (payload, existing) => {
@@ -5662,7 +5669,8 @@ const reloadList = async () => {
 
   const handleChallanSave = async (challan) => {
     const student = challanCfg.student;
-    if (!student._id) { toast('Student ID is missing — please reload and try again', 'error'); return; }    try {
+    if (!student._id) { toast('Student ID is missing — please reload and try again', 'error'); return; }
+    try {
       await preEnrollmentService.createPreEnrollChallan({ student, heads: challan.heads });
       const fresh = await preEnrollmentService.getPreEnrollChallan({ studentId: student._id });
       const finalChallan = fresh || challan;
@@ -5675,24 +5683,24 @@ const reloadList = async () => {
       toast(err.message || 'Could not generate challan', 'error');
     }
   };
+
   const handleReceivingSave = async (payment) => {
     const student = receivingCfg.student;
-    if (!student._id) { toast('Student ID is missing please reload and try again', 'error'); return; }    try {
-      await preEnrollmentService.receivePreEnrollPayment({ student, challan: student.challan, payment });
-
-      /* Server se fresh challan — received amounts wahan se aayenge */
+    if (!student._id) { toast('Student ID is missing — please reload and try again', 'error'); return; }
+    try {
+      await preEnrollmentService.receivePreEnrollPayment({
+        student,
+        heads: student.challan.heads,
+        payment: { ...payment, challanId: student.challan.id },
+      });
       const fresh = await preEnrollmentService
         .getPreEnrollChallan({ studentId: student._id, month: student.challan.monthNo, year: student.challan.year })
         .catch(() => null);
-
-      /* Server received amounts de to wahi, warna local payment list */
       const payments = fresh ? (fresh.payments || []) : [...(student.payments || []), payment];
-
       preLocalPatch(student.preId, { payments });
       setStudents(prev => prev.map(s => s.preId === student.preId
         ? { ...s, challan: fresh || s.challan, payments }
         : s));
-
       const totalChallan = Number((fresh || student.challan).total || 0);
       const paidNow = payments.reduce((a, p) => a + Number(p.amount || 0), 0);
       toast(
@@ -5706,9 +5714,14 @@ const reloadList = async () => {
       toast(err.message || 'Could not receive payment', 'error');
     }
   };
- 
+
    const handleDeleteChallan = async (student) => {
     if (!student.challan?.id) { toast('No saved challan to delete', 'error'); return; }
+    if ((student.payments || []).length > 0) {
+      toast('This challan already has a payment received. Please reset the receiving first.', 'error');
+      setActCfg(null);
+      return;
+    }
     try {
       await preEnrollmentService.deletePreEnrollChallan(student.challan.id);
       preLocalPatch(student.preId, { challan: null, payments: [] });
@@ -5716,7 +5729,13 @@ const reloadList = async () => {
       toast('Challan deleted', 'info');
       setActCfg(null);
     } catch (err) {
-      toast(err.message || 'Could not delete challan', 'error');
+      const msg = String(err.message || '');
+      toast(
+        /receiving/i.test(msg)
+          ? 'This challan already has a payment received. Please reset the receiving first.'
+          : (msg || 'Could not delete challan'),
+        'error'
+      );
     }
   };
 
@@ -5735,46 +5754,43 @@ const reloadList = async () => {
       toast(err.message || 'Could not reset receiving', 'error');
     }
   };
-   const handleConfirm = async (cfg) => {
+
+  const handleConfirm = async (cfg) => {
     const { kind, student } = cfg;
     try {
- if (kind === 'enroll') {
-  const typedReg = (cfg.reg || '').trim();
-  const typedAdm = (cfg.adm || '').trim();
-  const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
-  const finalAdm = typedAdm || String(nextAdm || 1100);
+      if (kind === 'enroll') {
+        const typedReg = (cfg.reg || '').trim();
+        const typedAdm = (cfg.adm || '').trim();
+        const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
+        const finalAdm = typedAdm || String(nextAdm || 1100);
 
-  /* 1) Pehle ERP (Active Students) me save */
-  await studentService.saveStuStudent({
-    ...student,
-    id:        0,
-    gradeId:   student._gradeId || 0,
-    sectionId: student._sectionId || 0,
-    reg:       finalReg,
-    adm:       finalAdm,
-    family:    (cfg.family || '').trim() || student.family || '',
-    admdate:   cfg.admdate || new Date().toISOString().slice(0, 10),
-    dues:      0,
-  });
+        await studentService.saveStuStudent({
+          ...student,
+          id:        0,
+          gradeId:   student._gradeId || 0,
+          sectionId: student._sectionId || 0,
+          reg:       finalReg,
+          adm:       finalAdm,
+          family:    (cfg.family || '').trim() || student.family || '',
+          admdate:   cfg.admdate || new Date().toISOString().slice(0, 10),
+          dues:      0,
+        });
 
-  /* 2) Phir pre-enrollment se HARD delete. Student ab ERP me hai, is liye
-     pre-enrollment record ki zaroorat nahi, na hi restore ki. */
-  try {
-    await preEnrollmentService.removePreEnrollStudentPermanent(student._id);
-  } catch (e) {
-    toast(`Student enrolled, but could not remove pre-enrollment record: ${e.message || ''}`, 'error');
-  }
+        try {
+          await preEnrollmentService.removePreEnrollStudentPermanent(student._id);
+        } catch (e) {
+          toast(`Student enrolled, but could not remove pre-enrollment record: ${e.message || ''}`, 'error');
+        }
 
-  if (!typedReg) setNextReg((nextReg || 25101) + 1);
-  if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
-  try { setClasses(await studentService.getStuClasses()); } catch { /* Active tab mount par reload karta hai */ }
-  preLogAdd({
-    status: 'enrolled', date: preToday(), name: stuFullName(student),
-    reg: finalReg, cls: student.cls, sec: student.sec, payments: student.payments || [],
-  });
-  toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
-}
-      else {
+        if (!typedReg) setNextReg((nextReg || 25101) + 1);
+        if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
+        try { setClasses(await studentService.getStuClasses()); } catch { /* ignore */ }
+        preLogAdd({
+          status: 'enrolled', date: preToday(), name: stuFullName(student),
+          reg: finalReg, cls: student.cls, sec: student.sec, payments: student.payments || [],
+        });
+        toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
+      } else {
         await preEnrollmentService.removePreEnrollStudent(student._id, 'Did not proceed after pre-enrollment');
         setInactive(prev => [{
           reg: student.reg, first: student.first, last: student.last, father: student.father,
@@ -5784,7 +5800,6 @@ const reloadList = async () => {
           inactiveDate: new Date().toISOString().slice(0, 10),
           dues: { total: 0, heads: [], session: '', months: '', history: [] },
         }, ...(prev || [])]);
-        /* Reporting ke liye record */
         preLogAdd({
           status: 'inactive', date: preToday(), name: stuFullName(student),
           reg: student.reg, cls: student.cls, sec: student.sec, payments: student.payments || [],
@@ -5798,6 +5813,7 @@ const reloadList = async () => {
     setStudents(prev => (prev || []).filter(s => s._id !== student._id));
     setConfirmCfg(null);
   };
+
   return (
     <>
       <div className="stu-toolbar">
@@ -5827,7 +5843,12 @@ const reloadList = async () => {
           <div className="th">Contact No</div>
           <div className="th c">Actions</div>
         </div>
-        {list.length === 0 ? (
+        {listLoading ? (
+          <div className="stu-empty">
+            <div className="stu-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+            <div className="stu-empty-title">Loading pre-enrolled students…</div>
+          </div>
+        ) : list.length === 0 ? (
           <div className="stu-list-empty">
             <i className="fa-solid fa-user-plus"></i>
             No pre-enrolled students yet. Use <strong>Add New Student</strong> to register one.
@@ -5838,10 +5859,12 @@ const reloadList = async () => {
             s={s}
             i={i + 1}
             onChallan={() => {
-              if (s.challan?.id) { toast('Challan pehle se bana hua hai — naya banane ke liye pehle "Delete Challan" karein', 'error'); return; }              setChallanCfg({ student: s });
+              if (s.challan?.id) { toast('A challan already exists — delete it first to generate a new one', 'error'); return; }
+              setChallanCfg({ student: s });
             }}
             onDeleteChallan={() => setActCfg({ kind: 'delChallan', student: s })}
-            onResetReceiving={() => setActCfg({ kind: 'resetRecv', student: s })}            onReceiving={() => {
+            onResetReceiving={() => setActCfg({ kind: 'resetRecv', student: s })}
+            onReceiving={() => {
               if (!s.challan) { toast('Generate a challan first', 'error'); return; }
               setReceivingCfg({ student: s });
             }}
@@ -5864,7 +5887,8 @@ const reloadList = async () => {
                 return;
               }
               setSlipCfg({ kind, student: s });
-            }}            onEdit={() => setEditCfg({ student: s })}
+            }}
+            onEdit={() => setEditCfg({ student: s })}
           />
         ))}
       </div>
@@ -5876,7 +5900,7 @@ const reloadList = async () => {
           student={null}
           classList={classListLookup}
           sectionList={sectionList}
-classes={classes}
+          classes={classes}
           families={[]}
           existingRegs={[]}
           suggestedReg={`${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`}
@@ -5896,7 +5920,7 @@ classes={classes}
           student={editCfg.student}
           classList={classListLookup}
           sectionList={sectionList}
-classes={classes}
+          classes={classes}
           families={[]}
           existingRegs={[]}
           suggestedReg=""
@@ -5938,12 +5962,14 @@ classes={classes}
         />
       )}
 
-{reportOpen && (
-  <PreEnrollReportPanel students={list} school={school} onClose={() => setReportOpen(false)} toast={toast} />
-)}
-          {slipCfg && (
+      {reportOpen && (
+        <PreEnrollReportPanel students={list} school={school} onClose={() => setReportOpen(false)} toast={toast} />
+      )}
+
+      {slipCfg && (
         <PreEnrollSlipModal cfg={slipCfg} school={school} onClose={() => setSlipCfg(null)} toast={toast} />
       )}
+
       {actCfg && (
         <PreEnrollActionConfirm
           cfg={actCfg}
@@ -6167,6 +6193,7 @@ function PreEnrollReceivingModal({ student, onClose, onSave, toast }) {
   const [method, setMethod] = useState('Cash');
   const [ref, setRef] = useState('');
   const [txn, setTxn] = useState('');
+  const [saving, setSaving] = useState(false);
   const heads = student.challan?.heads || [];
   const alreadyPerHead = {};
   (student.payments || []).forEach(p => {
@@ -6179,11 +6206,11 @@ function PreEnrollReceivingModal({ student, onClose, onSave, toast }) {
   });
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !saving) onClose(); };
     window.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
-  }, [onClose]);
+  }, [onClose, saving]);
 
   const setHead = (name, v) => setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
 
@@ -6198,16 +6225,22 @@ function PreEnrollReceivingModal({ student, onClose, onSave, toast }) {
   const receivingNow = rows.reduce((a, r) => a + r.recvNow, 0);
   const remainAfter = Math.max(0, totalChallan - alreadyPaid - receivingNow);
 
-  const handleReceive = () => {
+  const handleReceive = async () => {
+    if (saving) return;
     if (receivingNow <= 0) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
     const perHead = {};
     rows.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
-    onSave({ id: `pep-${Date.now()}`, date, method, ref: ref.trim(), txn: txn.trim(), amount: receivingNow, perHead, createdAt: new Date().toISOString() });
+    setSaving(true);
+    try {
+      await onSave({ id: `pep-${Date.now()}`, date, method, ref: ref.trim(), txn: txn.trim(), amount: receivingNow, perHead, createdAt: new Date().toISOString() });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return createPortal(
-    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fee-overlay open" onClick={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}>
       <div className="fee-modal lg">
         <div className="fee-modal-head">
           <div className="fee-modal-head-title">
@@ -6217,7 +6250,7 @@ function PreEnrollReceivingModal({ student, onClose, onSave, toast }) {
               <div className="fee-modal-sub">{student.cls} ({student.sec}) · {student.challan?.month}</div>
             </div>
           </div>
-          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} disabled={saving} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
 
         <div className="fee-modal-body">
@@ -6304,9 +6337,9 @@ function PreEnrollReceivingModal({ student, onClose, onSave, toast }) {
         </div>
 
         <div className="fee-modal-foot">
-          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="fee-btn fee-btn-primary" onClick={handleReceive}>
-            <i className="fa-solid fa-check"></i> Receive
+          <button className="fee-btn fee-btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" onClick={handleReceive} disabled={saving}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {saving ? 'Receiving…' : 'Receive'}
           </button>
         </div>
       </div>
@@ -6322,18 +6355,27 @@ function PreEnrollConfirm({ cfg, suggestedReg, suggestedAdm, onClose, onConfirm 
   const [adm, setAdm] = useState('');
   const [family, setFamily] = useState('');
   const [admdate, setAdmdate] = useState(new Date().toISOString().slice(0, 10));
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await onConfirm(isEnroll ? { ...cfg, reg, adm, family, admdate } : cfg); }
+    finally { setBusy(false); }
+  };
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) onClose(); };
     window.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
-  }, [onClose]);
+  }, [onClose, busy]);
+
   if (!cfg) return null;
   const name = stuFullName(cfg.student);
   const tone = isEnroll ? '#16A34A' : '#DC2626';
   return (
-    <div className="stu-confirm-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="stu-confirm-overlay" onClick={(e) => { if (!busy && e.target === e.currentTarget) onClose(); }}>
       <div className="stu-confirm-dialog">
         <div className="stu-confirm-glow" style={{ background: `linear-gradient(90deg,${tone},${tone})` }} />
         <div className="stu-confirm-hero" style={{ background: `linear-gradient(180deg, ${isEnroll ? 'rgba(22,163,74,.05)' : 'rgba(220,38,38,.05)'}, transparent)` }}>
@@ -6357,29 +6399,31 @@ function PreEnrollConfirm({ cfg, suggestedReg, suggestedAdm, onClose, onConfirm 
               </div>
               <div className="stu-fgrid stu-fgrid-2">
                 <Field label="Registration No" hint={`Leave blank to auto-assign ${suggestedReg}`}>
-                  <input className="stu-finput" value={reg} onChange={(e) => setReg(e.target.value)} placeholder={suggestedReg} />
+                  <input className="stu-finput" value={reg} onChange={(e) => setReg(e.target.value)} placeholder={suggestedReg} disabled={busy} />
                 </Field>
                 <Field label="Admission No" hint={`Leave blank to auto-assign ${suggestedAdm}`}>
-                  <input className="stu-finput" value={adm} onChange={(e) => setAdm(e.target.value)} placeholder={suggestedAdm} />
+                  <input className="stu-finput" value={adm} onChange={(e) => setAdm(e.target.value)} placeholder={suggestedAdm} disabled={busy} />
                 </Field>
                 <Field label="Family No" hint="Links siblings for family billing.">
-                  <input className="stu-finput" value={family} onChange={(e) => setFamily(e.target.value)} placeholder="e.g. 78855" />
+                  <input className="stu-finput" value={family} onChange={(e) => setFamily(e.target.value)} placeholder="e.g. 78855" disabled={busy} />
                 </Field>
                 <Field label="Date of Admission">
-                  <input className="stu-finput" type="date" value={admdate} onChange={(e) => setAdmdate(e.target.value)} />
+                  <input className="stu-finput" type="date" value={admdate} onChange={(e) => setAdmdate(e.target.value)} disabled={busy} />
                 </Field>
               </div>
             </>
           )}
         </div>
         <div className="stu-confirm-footer">
-          <button className="stu-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="stu-btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
           <button
             className="stu-btn-primary"
             style={{ background: `linear-gradient(135deg,${tone},${tone})`, boxShadow: `0 4px 14px ${isEnroll ? 'rgba(22,163,74,.35)' : 'rgba(220,38,38,.35)'}` }}
-            onClick={() => onConfirm(isEnroll ? { ...cfg, reg, adm, family, admdate } : cfg)}
+            onClick={run}
+            disabled={busy}
           >
-            <i className={`fa-solid ${isEnroll ? 'fa-user-check' : 'fa-user-slash'}`}></i> {isEnroll ? 'Yes, Enroll' : 'Yes, Move'}
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : (isEnroll ? 'fa-user-check' : 'fa-user-slash')}`}></i>{' '}
+            {busy ? (isEnroll ? 'Enrolling…' : 'Moving…') : (isEnroll ? 'Yes, Enroll' : 'Yes, Move')}
           </button>
         </div>
       </div>
