@@ -5,6 +5,10 @@ import TutorialModal from './TutorialModal';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession } from '../../utils/apiConfig';
 import { fetchReportHeader, resolveAcademicSession, formatAcademicYearLabel } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
+import {
+  StandardReportPicker, buildStandardReportHtml, downloadReportExcel,
+  reportPalette, reportStatusPill, loadReportBranch,
+} from '../reports/reportKit';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import RouteFallback from '../shared/RouteFallback';
@@ -589,10 +593,12 @@ return (
     )}
 
     {/* ─── MODALS ─── */}
-    <ReportPicker
+    <StandardReportPicker
       open={reportPicker.open}
-      name={reportPicker.name}
-      initialFormat={reportPicker.format}
+      title={reportPicker.name}
+      subtitle={`${reportPicker.name} — Choose style and format`}
+      formats={['pdf', 'word', 'excel']}
+      defaultFormat={reportPicker.format}
       onClose={closeReport}
       onGenerate={async (style, fmt) => {
         const subsToUse = reportSubjectsRef.current;
@@ -721,152 +727,6 @@ return (
 //     </div>
 //   );
 // }
-
-/* ═══════════════════════════════════════════════════════════════════
-   REPORT PICKER MODAL
-   ═══════════════════════════════════════════════════════════════════ */
-function ReportPicker({ open, name, initialFormat, onClose, onGenerate }) {
-  const [style, setStyle] = useState('color');
-  const [format, setFormat] = useState('pdf');
-
-
-  useEffect(() => {
-    if (open) {
-      setStyle('color');
-      setFormat(initialFormat || 'pdf');
-    }
-  }, [open, initialFormat]);
-
-  const downloadLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
-
-  /* Keyboard support: arrow-key + space/enter to pick a report style.
-     Lets the picker work for radio-style options without losing the
-     clickable card affordance. */
-  const onStyleKey = (e, value) => {
-    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
-  };
-
-  return (
-    <div
-      className={`report-picker-overlay${open ? ' open' : ''}`}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="rp-title"
-    >
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title" id="rp-title">Download Report</div>
-              <div className="rp-sub">{name} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close download dialog"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label" id="rp-style-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-labelledby="rp-style-label">
-            <div
-              className={`rp-option${style === 'color' ? ' selected' : ''}`}
-              onClick={() => setStyle('color')}
-              role="radio"
-              aria-checked={style === 'color'}
-              tabIndex={style === 'color' ? 0 : -1}
-              onKeyDown={e => onStyleKey(e, 'color')}
-            >
-              <div className="rp-check" aria-hidden="true"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview" aria-hidden="true">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full brand palette, summary cards, colored headers &amp; icons</div>
-              </div>
-            </div>
-            <div
-              className={`rp-option${style === 'bw' ? ' selected' : ''}`}
-              onClick={() => setStyle('bw')}
-              role="radio"
-              aria-checked={style === 'bw'}
-              tabIndex={style === 'bw' ? 0 : -1}
-              onKeyDown={e => onStyleKey(e, 'bw')}
-            >
-              <div className="rp-check" aria-hidden="true"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview" aria-hidden="true">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Low-ink layout — white background, light borders, no colored blocks</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button
-              className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`}
-              onClick={() => setFormat('pdf')}
-            >
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button
-              className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`}
-              onClick={() => setFormat('word')}
-            >
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close">
-            <button className="rp-btn cancel" onClick={onClose}>Cancel</button>
-          </Tooltip>
-          <Tooltip text="Generate and download the selected report">
-            <button className="rp-btn go" onClick={() => onGenerate(style, format)}>
-              <i className="fa-solid fa-download"></i>
-              <span>{downloadLabel}</span>
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ═══════════════════════════════════════════════════════════════════
    CONFIRM DIALOG
@@ -1409,22 +1269,144 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   REPORT GENERATOR (opens print-ready HTML in a new window)
+   REPORT GENERATOR — dispatches to the shared report kit
+   (src/erp/reports/reportKit.js) for the header/footer/logo/print-window
+   chrome. This file only owns the part that's genuinely
+   Academics-specific: what the body actually contains per report
+   type (Class Textbooks / Academic Calendar / Activity Calendar /
+   single Activity detail), and its Excel row-shape counterpart.
    ═══════════════════════════════════════════════════════════════════ */
+function academicsReportBody(name, ctx, isColor, textbookSubjects) {
+  const p = reportPalette(isColor);
+  /* Whole-calendar reports are triggered ONLY by the exact calendar-download buttons
+     ('Academic Calendar' / 'Activity Calendar'). Individual activity downloads pass the
+     activity's own name (ev.name) — jo bhi ho, wo neeche single-activity branch mein jaye,
+     chahe uske naam mein "Activity"/"Academic" word ho. (Pehle .includes() se collide ho raha tha.) */
+  const isAcademic = name === 'Academic Calendar';
+  const isActivity = name === 'Activity Calendar';
+
+  if (textbookSubjects !== null) {
+    return `<h2 style="font-size:16px;font-weight:700;color:${p.textD};margin:0 0 16px;border-bottom:${isColor ? '2px' : '1px'} solid ${p.border};padding-bottom:8px">${p.ico('📚')}Subjects &amp; Textbooks — ${name}</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:${p.tableHeadBg}">
+        <th style="padding:10px 12px;text-align:left;border:1px solid ${p.border};font-weight:700;color:${p.tableHeadFg}">#</th>
+        <th style="padding:10px 12px;text-align:left;border:1px solid ${p.border};font-weight:700;color:${p.tableHeadFg}">Subject</th>
+        <th style="padding:10px 12px;text-align:left;border:1px solid ${p.border};font-weight:700;color:${p.tableHeadFg}">Textbook</th>
+      </tr></thead>
+      <tbody>${textbookSubjects.length > 0 ? textbookSubjects.map((s, i) => `
+        <tr style="background:${i % 2 === 0 ? p.rowBaseBg : p.rowAltBg}">
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${i + 1}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textD};font-weight:600">${s.name}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${s.book || '—'}</td>
+        </tr>`).join('') : `
+        <tr>
+          <td colspan="3" style="padding:18px 12px;border:1px solid ${p.border};color:${p.textM};text-align:center;font-style:italic">No subjects found</td>
+        </tr>`}
+      </tbody></table>`;
+  }
+  if (isAcademic) {
+    return ctx.terms.map(t => `<div style="margin-bottom:20px">
+      <h3 style="font-size:13px;font-weight:700;color:${isColor ? p.accent : p.textD};${p.sectionAccent};margin:0 0 10px">${t.label}</h3>
+      ${t.entries.length === 0
+        ? `<p style="color:${p.textM};font-size:12px;font-style:italic">No dates added</p>`
+        : `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
+            <thead><tr style="background:${p.tableHeadBg}">
+              <th style="padding:8px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Heading/Event</th>
+              <th style="padding:8px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Date/Details</th>
+            </tr></thead>
+            <tbody>${t.entries.map((e, i) => `
+              <tr style="background:${i % 2 === 0 ? p.rowBaseBg : p.rowAltBg}">
+                <td style="padding:8px 12px;border:1px solid ${p.border};color:${p.textD};font-weight:600">${e.heading}</td>
+                <td style="padding:8px 12px;border:1px solid ${p.border};color:${p.textM}">${e.date}</td>
+              </tr>`).join('')}
+            </tbody></table>`}
+    </div>`).join('');
+  }
+  if (isActivity) {
+    return `<h2 style="font-size:16px;font-weight:700;color:${p.textD};margin:0 0 16px;border-bottom:${isColor ? '2px' : '1px'} solid ${p.border};padding-bottom:8px">${p.ico('🗓')}Scheduled Activities</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:${p.tableHeadBg}">
+        <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">#</th>
+        <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Activity</th>
+        <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Start</th>
+        <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">End</th>
+        <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Status</th>
+      </tr></thead>
+      <tbody>${ctx.events.map((ev, i) => `
+        <tr style="background:${i % 2 === 0 ? p.rowBaseBg : p.rowAltBg}">
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${i + 1}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textD};font-weight:600">${ev.name}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.start}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.end}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border}">${reportStatusPill(ev.status, ev.status === 'completed' ? 'green' : ev.status === 'ongoing' ? 'amber' : 'blue', p)}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  }
+  const ev = ctx.events.find(e => e.name === name);
+  if (ev) {
+    return `<div style="background:${isColor ? '#EFF6FF' : '#FFFFFF'};border:1px solid ${p.border};border-radius:8px;padding:16px;margin-bottom:20px">
+      <div style="font-size:11px;color:${p.textM};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Activity</div>
+      <div style="font-size:18px;font-weight:800;color:${p.textD}">${ev.name}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
+      <tr><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD};width:35%">Start Date</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.start}</td></tr>
+      <tr style="background:${p.rowAltBg}"><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD}">End Date</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.end}</td></tr>
+      <tr><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD}">Status</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.status}</td></tr>
+    </table>
+    ${ev.purpose ? `<h3 style="font-size:13px;font-weight:700;color:${p.textD};margin:0 0 8px">Purpose</h3><p style="font-size:13px;color:${p.textM};line-height:1.7;margin:0 0 16px">${ev.purpose}</p>` : ''}
+    ${ev.development ? `<h3 style="font-size:13px;font-weight:700;color:${p.textD};margin:0 0 8px">Development</h3><p style="font-size:13px;color:${p.textM};line-height:1.7;margin:0 0 16px">${ev.development}</p>` : ''}
+    ${ev.resource ? `<h3 style="font-size:13px;font-weight:700;color:${p.textD};margin:0 0 8px">Resources</h3><p style="font-size:13px;color:${p.textM};line-height:1.7;margin:0">${ev.resource}</p>` : ''}`;
+  }
+  return '';
+}
+
+/* Same 4 report shapes, as columns+rows instead of styled HTML — a
+   spreadsheet has no use for the PDF layout. Same rows/values as the
+   PDF/Word body above. */
+function academicsReportRows(name, ctx, textbookSubjects) {
+  if (textbookSubjects !== null) {
+    return {
+      columns: [{ key: 'i', label: '#', align: 'center' }, { key: 'subject', label: 'Subject' }, { key: 'book', label: 'Textbook' }],
+      rows: textbookSubjects.map((s, i) => ({ i: i + 1, subject: s.name, book: s.book || '—' })),
+    };
+  }
+  if (name === 'Academic Calendar') {
+    const rows = [];
+    ctx.terms.forEach(t => t.entries.forEach(e => rows.push({ term: t.label, heading: e.heading, date: e.date })));
+    return { columns: [{ key: 'term', label: 'Term' }, { key: 'heading', label: 'Heading/Event' }, { key: 'date', label: 'Date/Details' }], rows };
+  }
+  if (name === 'Activity Calendar') {
+    return {
+      columns: [{ key: 'i', label: '#', align: 'center' }, { key: 'name', label: 'Activity' }, { key: 'start', label: 'Start' }, { key: 'end', label: 'End' }, { key: 'status', label: 'Status' }],
+      rows: ctx.events.map((ev, i) => ({ i: i + 1, name: ev.name, start: ev.start, end: ev.end, status: ev.status })),
+    };
+  }
+  const ev = ctx.events.find(e => e.name === name);
+  if (ev) {
+    return {
+      columns: [{ key: 'field', label: 'Field' }, { key: 'value', label: 'Value' }],
+      rows: [
+        { field: 'Activity', value: ev.name }, { field: 'Start Date', value: ev.start }, { field: 'End Date', value: ev.end },
+        { field: 'Status', value: ev.status },
+        ev.purpose && { field: 'Purpose', value: ev.purpose },
+        ev.development && { field: 'Development', value: ev.development },
+        ev.resource && { field: 'Resources', value: ev.resource },
+      ].filter(Boolean),
+    };
+  }
+  return { columns: [{ key: 'v', label: '—' }], rows: [] };
+}
+
 async function generateReportWindow(name, style, format, ctx, classesData, subjectsForReport = null) {
   // ── Fetch report header (live academicSession from /report-header) ──
   let schoolName      = 'School Mentor ERP';
-  let schoolAddress   = '';
   let academicSession = '';
-  let branchLogoUrl   = null;
 
   try {
     const header = await fetchReportHeader();
     if (header) {
       schoolName      = header.branchName || schoolName;
-      schoolAddress   = header.address || '';
       academicSession = resolveAcademicSession(header);
-      branchLogoUrl   = resolveMediaUrl(header.branchLogo) || null;
     } else {
       academicSession = resolveAcademicSession(null);
     }
@@ -1433,212 +1415,38 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
     academicSession = resolveAcademicSession(null);
   }
   const yearLabel = formatAcademicYearLabel(academicSession) || 'Academic Session';
+  /* Kit header ka live branch logo / address / contact isi cache se aata hai. */
+  await loadReportBranch();
 
   const isColor = style === 'color';
-  /* ── Two coordinated palettes ──
-     • Colorful: brand blue header, light-blue table headers, alt-row stripes, status chips.
-     • Colorless: white header, dark-gray text, no row fills, status chips become bordered text
-       pills. No emoji icons in body headings. This is the dedicated low-ink layout. */
-  const headerBg     = isColor ? '#1E3A8A' : '#FFFFFF';
-  const headerFg     = isColor ? '#FFFFFF' : '#111111';
-  const headerSubFg  = isColor ? 'rgba(255,255,255,.75)' : '#4B5563';
-  const headerKick   = isColor ? 'rgba(255,255,255,.55)' : '#6B7280';
-  const headerDivCol = isColor ? 'rgba(255,255,255,.2)'  : '#E5E7EB';
-  const chipBg       = isColor ? 'rgba(255,255,255,.14)' : 'transparent';
-  const chipBorder   = isColor ? 'transparent' : '#D1D5DB';
-  const accent       = isColor ? '#1E40AF' : '#374151';
-  const textD        = isColor ? '#0F172A' : '#111111';
-  const textM        = isColor ? '#64748B' : '#4B5563';
-  const border       = isColor ? '#BFDBFE' : '#D1D5DB';
-  const tableHeadBg  = isColor ? '#EFF6FF' : '#FFFFFF';
-  const tableHeadFg  = textD;
-  const rowAltBg     = isColor ? '#F8FAFF' : '#FFFFFF';      // no alternating fill in colorless
-  const rowBaseBg    = '#FFFFFF';
-  const sectionAccent = isColor ? `border-left:3px solid ${accent};padding-left:10px` : `border-bottom:1px solid ${border};padding:0 0 6px`;
-  const styleLabel    = isColor ? 'Colorful' : 'Colorless';
-  /* Drop emoji icons in colorless to save ink and avoid font-substitution glyphs. */
-  const ico = (emoji) => isColor ? `${emoji} ` : '';
+  const styleLabel = isColor ? 'Colorful' : 'Colorless';
 
   const textbookSubjects = Array.isArray(subjectsForReport) ? subjectsForReport : null;
-  const isTextbookReport = textbookSubjects !== null;
-  /* Whole-calendar reports are triggered ONLY by the exact calendar-download buttons
-     ('Academic Calendar' / 'Activity Calendar'). Individual activity downloads pass the
-     activity's own name (ev.name) — jo bhi ho, wo neeche single-activity branch mein jaye,
-     chahe uske naam mein "Activity"/"Academic" word ho. (Pehle .includes() se collide ho raha tha.) */
-  const isAcademic = name === 'Academic Calendar';
   const isActivity = name === 'Activity Calendar';
   /* Activity report ka current-view period (Month/Week/Day/Year) — header title me dikhega. */
   const periodLabel = ctx?.periodLabel || '';
   const displayTitle = (isActivity && periodLabel) ? `${name} — ${periodLabel}` : name;
 
-  /* Status pill — colored fill in Colorful; bordered text-only pill in Colorless. */
-  const statusPill = (s) => {
-    const label = s[0].toUpperCase() + s.slice(1);
-    if (isColor) {
-      const bg = s === 'completed' ? 'rgba(22,163,74,.1)' : s === 'ongoing' ? 'rgba(217,119,6,.1)' : 'rgba(30,58,138,.1)';
-      const fg = s === 'completed' ? '#16A34A'           : s === 'ongoing' ? '#D97706'           : '#1E40AF';
-      return `<span style="background:${bg};color:${fg};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${label}</span>`;
-    }
-    return `<span style="border:1px solid ${border};color:${textD};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${label}</span>`;
-  };
-
-  let body = '';
-  if (isTextbookReport) {
-    body = `<h2 style="font-size:16px;font-weight:700;color:${textD};margin:0 0 16px;border-bottom:${isColor ? '2px' : '1px'} solid ${border};padding-bottom:8px">${ico('📚')}Subjects &amp; Textbooks — ${name}</h2>
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
-      <thead><tr style="background:${tableHeadBg}">
-        <th style="padding:10px 12px;text-align:left;border:1px solid ${border};font-weight:700;color:${tableHeadFg}">#</th>
-        <th style="padding:10px 12px;text-align:left;border:1px solid ${border};font-weight:700;color:${tableHeadFg}">Subject</th>
-        <th style="padding:10px 12px;text-align:left;border:1px solid ${border};font-weight:700;color:${tableHeadFg}">Textbook</th>
-      </tr></thead>
-      <tbody>${textbookSubjects.length > 0 ? textbookSubjects.map((s, i) => `
-        <tr style="background:${i % 2 === 0 ? rowBaseBg : rowAltBg}">
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${i + 1}</td>
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textD};font-weight:600">${s.name}</td>
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${s.book || '—'}</td>
-        </tr>`).join('') : `
-        <tr>
-          <td colspan="3" style="padding:18px 12px;border:1px solid ${border};color:${textM};text-align:center;font-style:italic">No subjects found</td>
-        </tr>`}
-      </tbody></table>`;
-  } else if (isAcademic) {
-    body = ctx.terms.map(t => `<div style="margin-bottom:20px">
-      <h3 style="font-size:13px;font-weight:700;color:${isColor ? accent : textD};${sectionAccent};margin:0 0 10px">${t.label}</h3>
-      ${t.entries.length === 0
-        ? `<p style="color:${textM};font-size:12px;font-style:italic">No dates added</p>`
-        : `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
-            <thead><tr style="background:${tableHeadBg}">
-              <th style="padding:8px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Heading/Event</th>
-              <th style="padding:8px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Date/Details</th>
-            </tr></thead>
-            <tbody>${t.entries.map((e, i) => `
-              <tr style="background:${i % 2 === 0 ? rowBaseBg : rowAltBg}">
-                <td style="padding:8px 12px;border:1px solid ${border};color:${textD};font-weight:600">${e.heading}</td>
-                <td style="padding:8px 12px;border:1px solid ${border};color:${textM}">${e.date}</td>
-              </tr>`).join('')}
-            </tbody></table>`}
-    </div>`).join('');
-  } else if (isActivity) {
-    body = `<h2 style="font-size:16px;font-weight:700;color:${textD};margin:0 0 16px;border-bottom:${isColor ? '2px' : '1px'} solid ${border};padding-bottom:8px">${ico('🗓')}Scheduled Activities</h2>
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-      <thead><tr style="background:${tableHeadBg}">
-        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">#</th>
-        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Activity</th>
-        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Start</th>
-        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">End</th>
-        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Status</th>
-      </tr></thead>
-      <tbody>${ctx.events.map((ev, i) => `
-        <tr style="background:${i % 2 === 0 ? rowBaseBg : rowAltBg}">
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${i + 1}</td>
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textD};font-weight:600">${ev.name}</td>
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${ev.start}</td>
-          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${ev.end}</td>
-          <td style="padding:9px 12px;border:1px solid ${border}">${statusPill(ev.status)}</td>
-        </tr>`).join('')}
-      </tbody></table>`;
-  } else {
-    const ev = ctx.events.find(e => e.name === name);
-    if (ev) {
-      body = `<div style="background:${isColor ? '#EFF6FF' : '#FFFFFF'};border:1px solid ${border};border-radius:8px;padding:16px;margin-bottom:20px">
-        <div style="font-size:11px;color:${textM};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Activity</div>
-        <div style="font-size:18px;font-weight:800;color:${textD}">${ev.name}</div>
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
-        <tr><td style="padding:10px 12px;border:1px solid ${border};font-weight:700;color:${textD};width:35%">Start Date</td><td style="padding:10px 12px;border:1px solid ${border};color:${textM}">${ev.start}</td></tr>
-        <tr style="background:${rowAltBg}"><td style="padding:10px 12px;border:1px solid ${border};font-weight:700;color:${textD}">End Date</td><td style="padding:10px 12px;border:1px solid ${border};color:${textM}">${ev.end}</td></tr>
-        <tr><td style="padding:10px 12px;border:1px solid ${border};font-weight:700;color:${textD}">Status</td><td style="padding:10px 12px;border:1px solid ${border};color:${textM}">${ev.status}</td></tr>
-      </table>
-      ${ev.purpose ? `<h3 style="font-size:13px;font-weight:700;color:${textD};margin:0 0 8px">Purpose</h3><p style="font-size:13px;color:${textM};line-height:1.7;margin:0 0 16px">${ev.purpose}</p>` : ''}
-      ${ev.development ? `<h3 style="font-size:13px;font-weight:700;color:${textD};margin:0 0 8px">Development</h3><p style="font-size:13px;color:${textM};line-height:1.7;margin:0 0 16px">${ev.development}</p>` : ''}
-      ${ev.resource ? `<h3 style="font-size:13px;font-weight:700;color:${textD};margin:0 0 8px">Resources</h3><p style="font-size:13px;color:${textM};line-height:1.7;margin:0">${ev.resource}</p>` : ''}`;
-    }
+  if (format === 'excel') {
+    const { columns, rows } = academicsReportRows(name, ctx, textbookSubjects);
+    const safeName = displayTitle.replace(/[^a-z0-9]+/gi, '-');
+    downloadReportExcel({
+      title: displayTitle, subtitle: yearLabel,
+      metaLine: `${schoolName} · ${rows.length} row${rows.length === 1 ? '' : 's'}`,
+      columns, rows, filename: `${safeName}.xlsx`, isColor,
+    });
+    return;
   }
 
-  /* Logo: monochrome dark-gray glyph in colorless to keep the school identity
-     while avoiding gradients & accent fills. */
-// ── Logo: real image if available, else fallback SVG ──
-  const uid = Date.now();
-  const logoSvg = branchLogoUrl
-    ? `<img src="${branchLogoUrl}" width="64" height="64"
-        style="border-radius:16px;object-fit:cover;display:block;
-        ${isColor ? 'box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)' : 'border:1.5px solid #E5E7EB'}"
-        onerror="this.style.display='none'" />`
-    : isColor
-      ? `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs><linearGradient id="lg${uid}" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse"><stop stop-color="#1a237e"/><stop offset="1" stop-color="#283593"/></linearGradient></defs>
-          <rect width="64" height="64" rx="16" fill="url(#lg${uid})"/>
-          <path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/>
-          <path d="M32 18L32 43.8" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/>
-          <path d="M23 17L26 11L32 15L38 11L41 17" stroke="#FCD34D" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-          <text x="32" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="rgba(255,255,255,0.9)">SM</text>
-        </svg>`
-      : `<svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="1" y="1" width="62" height="62" rx="12" fill="#FFFFFF" stroke="#1F2937" stroke-width="1.5"/>
-          <path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="none" stroke="#1F2937" stroke-width="1.3"/>
-          <path d="M32 18L32 43.8" stroke="#1F2937" stroke-width="1.3"/>
-          <text x="32" y="36" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" font-weight="800" fill="#1F2937">SM</text>
-        </svg>`;
-  /* Header markup — Colorful retains the decorative shapes; Colorless renders a
-     clean printable header with no large fills. */
-  const headerBlock = isColor
-    ? `<div style="background:${headerBg};padding:24px 32px 28px;color:${headerFg};position:relative;overflow:hidden">
-        <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-        <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(14,165,233,.15)"></div>
-        <div style="display:flex;align-items:center;gap:18px;position:relative;z-index:2">
-          <div style="width:64px;height:64px;border-radius:16px;overflow:hidden;flex-shrink:0;box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)">${logoSvg}</div>
-          <div>
-            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
-            <div style="font-size:20px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${schoolName}</div>
-          </div>
-        </div>
-        <div style="height:1px;background:${headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
-        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${displayTitle}</div>
-       <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">${yearLabel} · ${styleLabel} Report</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${format.toUpperCase()}</div>
-        </div>
-      </div>`
-    : `<div style="background:${headerBg};padding:22px 32px 22px;color:${headerFg};border-bottom:1px solid ${border}">
-        <div style="display:flex;align-items:center;gap:16px">
-          <div style="width:56px;height:56px;flex-shrink:0">${logoSvg}</div>
-          <div>
-            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
-            <div style="font-size:19px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2">${schoolName}</div>
-          </div>
-        </div>
-        <div style="height:1px;background:${headerDivCol};margin:16px 0 14px"></div>
-        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${displayTitle}</div>
-        <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">${yearLabel} · ${styleLabel} Report (low-ink)</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Format:</strong> ${format.toUpperCase()}</div>
-        </div>
-      </div>`;
-
-  /* Print/Close buttons — kept legible in both styles; Colorless avoids large filled blocks. */
-  const printBtnStyle = isColor
-    ? `background:${headerBg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px`
-    : `background:#FFFFFF;color:#111;border:1.5px solid #111;padding:11px 26px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px`;
-  const closeBtnStyle = `background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer`;
-  const toolbarBg     = isColor ? '#F8FAFC' : '#FFFFFF';
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${name} — Report</title>
-    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4;margin:15mm}}</style>
-  </head><body><div class="page">
-    ${headerBlock}
-    <div style="padding:28px 32px">${body}</div>
-    <div style="border-top:1px solid ${border};padding:14px 32px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${textM}">
-      <span>${schoolName}${schoolAddress ? ` · ${schoolAddress}` : ''}</span>
-      <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-      <span>Page 1 of 1</span>
-    </div>
-    <div class="no-print" style="text-align:center;padding:22px;background:${toolbarBg};border-top:1px solid #E2E8F0">
-      <button onclick="window.print()" style="${printBtnStyle}">${isColor ? '🖨 ' : ''}Print / Save as PDF</button>
-      <button onclick="window.close()" style="${closeBtnStyle}">Close</button>
-    </div>
-  </div></body></html>`;
+  const bodyHtml = academicsReportBody(name, ctx, isColor, textbookSubjects);
+  const html = buildStandardReportHtml({
+    title: displayTitle,
+    format,
+    isColor,
+    bodyHtml,
+    schoolName,
+    subtitleLine: `${yearLabel} · ${styleLabel} Report${isColor ? '' : ' (low-ink)'}`,
+  });
   deliverReport(name, format, html);
 }
 

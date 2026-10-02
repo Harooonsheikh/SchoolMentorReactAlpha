@@ -6,10 +6,8 @@ import * as timeTableService from '../services/timeTableService';
 import useAsync from '../hooks/useAsync';
 import { useSettings } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
-import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
-import ReportHeader from '../../reports/ReportHeader';
-import ReportFooter from '../../reports/ReportFooter';
 import { deliverReport } from './reportDelivery';
+import { StandardReportPicker, buildStandardReportHtml, downloadReportHtmlAsExcel, reportFileName, reportAcademicYear } from '../reports/reportKit';
 /* ═══════════════════════════════════════════════════════════════════
    TIME TABLE — module shell
    Ported from Launch Setup → Timetable screens.
@@ -138,130 +136,26 @@ async function runLimited(thunks, limit = 4) {
 // </div>
 // </body></html>`;
 // }
-function ttPageWrap(
-  hdr,
-  dateStr,
-  timeStr,
-  title,
-  body,
-  isBW
-) {
+/* Kit subtitle — live session (ERP active session, else the branch header). */
+function ttKitSubtitle(h, isBW) {
+  const s = reportAcademicYear() || (h && h.session) || '';
+  const yr = s ? (/academic/i.test(s) ? s : `Academic Year ${s}`) : '';
+  return `${yr ? yr + ' · ' : ''}${isBW ? 'Colorless' : 'Colorful'} Report${isBW ? ' (low-ink)' : ''}`;
+}
+
+/* Daily / Weekly / Period Count reports — body content (unchanged) wrapped in
+   the shared ERP report chrome (header / footer / print toolbar) from
+   src/erp/reports/reportKit.js. School name stays live from /report-header. */
+function ttPageWrap(hdr, dateStr, timeStr, title, body, isBW) {
   const h = hdr || {};
-
-  const schoolName =
-    h.name || 'School Mentor';
-
-  const schoolAddress =
-    h.address || '';
-
-  const academicSession =
-    h.session || '';
-
-  const headerHTML = ReportHeader({
-    schoolName,
-
-    reportTitle: title,
-
-    branch: {
-      branchName: schoolName,
-      branchLogo: h.logo || '',
-      address: schoolAddress,
-    },
-
-    academicSession,
-
-    generatedDate: dateStr,
-    generatedTime: timeStr,
-
-    isBW,
+  return buildStandardReportHtml({
+    title,
+    format: 'pdf',
+    isColor: !isBW,
+    bodyHtml: `<div style="font-size:12px">${body}</div>`,
+    subtitleLine: ttKitSubtitle(h, isBW),
+    schoolName: h.name || undefined,
   });
-
-  const footerHTML = ReportFooter({
-    schoolName,
-    address: schoolAddress,
-    isBW,
-  });
-
-  return `
-    <!DOCTYPE html>
-
-    <html>
-
-      <head>
-
-        <meta charset="UTF-8" />
-
-        <title>${title}</title>
-
-        <link
-          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
-          rel="stylesheet"
-        />
-
-        <style>
-
-          * {
-            box-sizing:border-box;
-            margin:0;
-            padding:0;
-          }
-
-          body {
-            font-family:
-              "Plus Jakarta Sans",
-              sans-serif;
-
-            font-size:12px;
-
-            color:#0F172A;
-
-            background:#FFFFFF;
-
-            -webkit-print-color-adjust:exact;
-            print-color-adjust:exact;
-          }
-
-          .tt-report-content {
-            padding:20px 26px;
-          }
-
-          @page {
-            size:A4 portrait;
-            margin:12mm 10mm;
-          }
-
-          @media print {
-
-            body {
-              -webkit-print-color-adjust:
-                exact;
-
-              print-color-adjust:
-                exact;
-            }
-
-          }
-
-        </style>
-
-      </head>
-
-      <body>
-
-        ${headerHTML}
-
-        <div class="tt-report-content">
-
-          ${body}
-
-        </div>
-
-        ${footerHTML}
-
-      </body>
-
-    </html>
-  `;
 }
 
 /* Period rows — used by Daily + Weekly reports.
@@ -459,40 +353,9 @@ function schoolPeriodCellHtml(p, subjColorMap, idxRef, isBW = false) {
 }
 
 function buildSchoolReport({ type, day, allData, header, classes = [], isBW = false }) {
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('en-PK', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const timeStr = now.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
-  /* Report header (school name + logo + address) from /report-header. */
+  /* Report header (school name + logo + address) — shared kit chrome, live branch. */
   const h = header || {};
-  const school = h.name || 'School Mentor';
-  const schoolLogo = h.logo || '';
-  const schoolAddr = h.address || '';
-  const headerHTML = ReportHeader({
-  schoolName: school,
-  reportTitle:
-    type === 'daywise'
-      ? `${DAYS[day]} Timetable Report`
-      : 'Weekly Timetable Report',
-
-  branch: {
-    branchLogo: schoolLogo,
-    address: schoolAddr,
-  },
-
-  academicSession: h.session || '',
-
-  generatedDate: dateStr,
-  generatedTime: timeStr,
-
-  isBW,
-});
-
-
-const footerHTML = ReportFooter({
-  schoolName: school,
-  address: schoolAddr,
-  isBW,
-});
+  const reportTitle = type === 'daywise' ? `${DAYS[day]} Timetable Report` : 'Weekly Timetable Report';
   // const schoolLogoHtml = schoolLogo
   //   ? `<img src="${schoolLogo}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:10px" onerror="this.remove()" />`
   //   : 'SM';
@@ -625,17 +488,10 @@ const footerHTML = ReportFooter({
   }
 
   const rptId = `RPT-TT-${Date.now().toString(36).toUpperCase()}`;
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>School Timetable Report</title>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"Plus Jakarta Sans",sans-serif;font-size:11px;color:#0F172A;background:#fff}
-@page{size:A4 landscape;margin:8mm 10mm}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-break{break-inside:avoid}}
-/* Colorless Report — flattens gradients / colored bands / colored
-   table heads to dark-on-white with thin gray borders. Activates only
-   when .tt-school-bw is present on the body. */
+  /* Colorless Report — flattens gradients / colored bands / colored table
+     heads to dark-on-white with thin gray borders. Scoped to the body
+     wrapper (.tt-school-bw) so the shared kit header/footer are untouched. */
+  const bwCss = `<style>
 .tt-school-bw [style*="border-bottom:3px solid #1E3A8A"]{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
 .tt-school-bw [style*="linear-gradient(135deg,#172554,#1E3A8A,#2563EB)"]{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
 .tt-school-bw [style*="linear-gradient(135deg,#1E3A8A,#1D4ED8)"]{background:transparent !important;color:#0F172A !important;border:1px solid #9CA3AF !important;}
@@ -652,23 +508,10 @@ body{font-family:"Plus Jakarta Sans",sans-serif;font-size:11px;color:#0F172A;bac
 /* Class avatar squares — flatten the per-class colored chip to a bordered
    monogram. Each avatar has both an inline width:22px AND a background. */
 .tt-school-bw div[style*="width:22px"][style*="height:22px"]{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
-</style></head><body${isBW ? ' class="tt-school-bw"' : ''}>
-<body>
-
-${headerHTML}
-
-<div>
-${bodyHtml}
-</div>
-
-${footerHTML}
-
-</body>  <div style="display:flex;align-items:center;gap:12px">
-    <div>
-      <div style="font-size:15px;font-weight:800;color:#0F172A;line-height:1">${school}</div>
-      <div style="font-size:8.5px;color:#64748B;letter-spacing:.6px;text-transform:uppercase;margin-top:3px">School Timetable Report · ${type === 'daywise' ? DAYS[day] + ' Schedule' : 'Full Week Schedule'}</div>
-    </div>
-  </div>
+</style>`;
+  /* Summary chips + report id (were in the old in-body header). */
+  const metaRow = `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px">
+  <div style="font-size:8.5px;color:#64748B;letter-spacing:.6px;text-transform:uppercase">School Timetable Report · ${type === 'daywise' ? DAYS[day] + ' Schedule' : 'Full Week Schedule'} · <span style="color:#94A3B8">${rptId}</span></div>
   <div style="display:flex;gap:16px;align-items:center">
     <div style="text-align:center;padding:6px 14px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px">
       <div style="font-size:16px;font-weight:800;color:#1E3A8A">${rows.length}</div>
@@ -678,24 +521,25 @@ ${footerHTML}
       <div style="font-size:16px;font-weight:800;color:#15803D">${totalPeriods}</div>
       <div style="font-size:7.5px;color:#64748B;text-transform:uppercase;letter-spacing:.5px">Total Periods</div>
     </div>
-    <div style="text-align:right;font-size:8.5px;color:#94A3B8;line-height:1.7">
-      <div style="font-weight:600;color:#475569">${dateStr}</div>
-      <div>${timeStr} · Administrator</div>
-      <div style="font-size:7.5px;margin-top:2px;color:#CBD5E1">${rptId}</div>
-    </div>
   </div>
-</div>
-${bodyHtml}
-<div style="margin-top:12px;padding-top:7px;border-top:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;font-size:8px;color:#94A3B8">
-  <span>${school}${schoolAddr ? ' · ' + schoolAddr : ''}</span>
+</div>`;
+  const legend = `<div style="margin-top:12px;padding-top:7px;border-top:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;font-size:8px;color:#94A3B8">
   <div style="display:flex;gap:14px">
     ${isBW
       ? '<span>Subject Period — bordered cell</span><span>Break — outlined cell</span><span>Teacher name shown below subject</span><span>Timings shown in each cell</span>'
       : '<span>📘 Blue = Subject Period</span><span>🔴 Red = Break</span><span>👤 Teacher name shown below subject</span><span>⏱ Timings shown in each cell</span>'}
   </div>
   <span>Confidential — For internal use only</span>
-</div>
-</body></html>`;
+</div>`;
+  return buildStandardReportHtml({
+    title: reportTitle,
+    format: 'pdf',
+    isColor: !isBW,
+    bodyHtml: `${bwCss}<div${isBW ? ' class="tt-school-bw"' : ''} style="font-size:11px">${metaRow}${bodyHtml}${legend}</div>`,
+    subtitleLine: ttKitSubtitle(h, isBW),
+    schoolName: h.name || undefined,
+    orientation: 'landscape',
+  });
 }
 
 /* In-app report preview overlay (replaces popup window).
@@ -1781,6 +1625,14 @@ function TTDownloadModal({
     /*
       Popup opened here for PDF / Word delivery.
     */
+    /* Excel → direct .xls download of the same report HTML (shared kit). */
+    if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`);
+      toast(`${style === 'color' ? 'Colorful' : 'Colorless'} Excel report downloaded`, 'success');
+      onClose();
+      return;
+    }
+
     const win = window.open(
       '',
       '_blank',
@@ -1819,15 +1671,19 @@ function TTDownloadModal({
   };
 
   return (
-    <ReportDownloadDialog
-      open={true}
-      reportName={
-        `${target.cls} · Section ${target.section}`
-      }
-      initialFormat="pdf"
-      filtersContent={filtersContent}
+    <StandardReportPicker
+      open
+      title={`${target.cls} · Section ${target.section}`}
+      subtitle={`${target.cls} · Section ${target.section} — Choose report type, style and format`}
+      formats={['pdf', 'word', 'excel']}
       onClose={onClose}
-      onGenerate={generate}
+      onGenerate={(style, format) => generate({ style, format })}
+      filters={
+        <>
+          <div className="rp-section-label">Report Type</div>
+          <div style={{ marginBottom: 22 }}>{filtersContent}</div>
+        </>
+      }
     />
   );
 }
@@ -2083,6 +1939,14 @@ function TTSchoolReportModal({
         ? `Day Wise School Report — ${DAYS[day]}`
         : 'Weekly School Report';
 
+    /* Excel → direct .xls download of the same report HTML (shared kit). */
+    if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`);
+      toast(`${style === 'color' ? 'Colorful' : 'Colorless'} Excel report downloaded`, 'success');
+      onClose();
+      return;
+    }
+
     const win = window.open(
       '',
       '_blank',
@@ -2121,13 +1985,19 @@ function TTSchoolReportModal({
   };
 
   return (
-    <ReportDownloadDialog
-      open={true}
-      reportName="School Timetable Report"
-      initialFormat="pdf"
-      filtersContent={filtersContent}
+    <StandardReportPicker
+      open
+      title="School Timetable Report"
+      subtitle="School Timetable Report — Choose report type, style and format"
+      formats={['pdf', 'word', 'excel']}
       onClose={onClose}
-      onGenerate={generate}
+      onGenerate={(style, format) => generate({ style, format })}
+      filters={
+        <>
+          <div className="rp-section-label">Report Type</div>
+          <div style={{ marginBottom: 22 }}>{filtersContent}</div>
+        </>
+      }
     />
   );
 }

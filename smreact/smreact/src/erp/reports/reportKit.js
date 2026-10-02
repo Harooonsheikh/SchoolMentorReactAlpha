@@ -363,18 +363,34 @@ export function reportLogoSvg(isColor, initials = 'OX') {
    to "<Academic Year> · <Colorful|Colorless> Report" (Academics'
    own convention) but a module may override it (e.g. Examination
    passing its own term/exam context). ─── */
+/* Escapes plain text but leaves entities that are already escaped alone,
+   so callers that pre-escape their title/school name aren't double-escaped. */
+export function escReportText(v) {
+  return String(v ?? '')
+    .replace(/&(?!(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitleLine, schoolName, logoInitials }) {
   const p = reportPalette(isColor);
-  schoolName = schoolName || reportSchoolName();
+  schoolName = escReportText(schoolName || reportSchoolName());
+  reportTitle = escReportText(reportTitle);
   const initials = logoInitials || (schoolName.replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'SM');
   const branchLogo = currentBranch().logo;
   const logoSvg = branchLogo
     ? `<img src="${branchLogo}" alt="" style="width:100%;height:100%;object-fit:contain;background:#fff;border-radius:12px" />`
     : reportLogoSvg(isColor, initials);
+  /* Live branch address / contact — the source design has none, so they
+     sit as small lines under the school name in both styles. */
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const br = currentBranch();
+  const contact = [br.phone && `&#9742; ${esc(br.phone)}`, br.email && `&#9993; ${esc(br.email)}`].filter(Boolean).join(' &nbsp;·&nbsp; ');
+  const infoLines = (fg) => `${br.address ? `<div style="font-size:11px;color:${fg};margin-top:3px">${esc(br.address)}</div>` : ''}${contact ? `<div style="font-size:10.5px;color:${fg};margin-top:2px">${contact}</div>` : ''}`;
   const yearLine = reportAcademicYear();
   const sub = subtitleLine || `${yearLine ? yearLine + ' · ' : ''}${p.styleLabel} Report${isColor ? '' : ' (low-ink)'}`;
   const fmtLabel = (format || 'pdf').toUpperCase();
-  const generatedOn = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const now = new Date();
+  const generatedOn = `${now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
 
   const headerBlock = isColor
     ? `<div style="background:${p.headerBg};padding:24px 32px 28px;color:${p.headerFg};position:relative;overflow:hidden">
@@ -385,6 +401,7 @@ export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitle
           <div>
             <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${p.headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
             <div style="font-size:20px;font-weight:800;color:${p.headerFg};letter-spacing:-.02em;line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${schoolName}</div>
+            ${infoLines(p.headerSubFg)}
           </div>
         </div>
         <div style="height:1px;background:${p.headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
@@ -401,6 +418,7 @@ export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitle
           <div>
             <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${p.headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
             <div style="font-size:19px;font-weight:800;color:${p.headerFg};letter-spacing:-.02em;line-height:1.2">${schoolName}</div>
+            ${infoLines(p.headerSubFg)}
           </div>
         </div>
         <div style="height:1px;background:${p.headerDivCol};margin:16px 0 14px"></div>
@@ -413,7 +431,7 @@ export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitle
       </div>`;
 
   const footerBlock = `<div style="border-top:1px solid ${p.border};padding:14px 32px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${p.textM}">
-    <span>${schoolName}</span><span>School Mentor ERP © 2026</span><span>Page 1 of 1</span>
+    <span>${schoolName}</span><span>School Mentor ERP © ${new Date().getFullYear()}</span><span>Page 1 of 1</span>
   </div>`;
 
   const printBtnStyle = isColor
@@ -434,62 +452,17 @@ export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitle
    buildReportTableHtml below) + footer + print toolbar. `orientation`
    lets wide-table reports (Examination's) go landscape while
    Academics' single-topic reports stay portrait. ─── */
-export function buildStandardReportHtml({ title = '', bodyHtml = '', orientation = 'portrait', includeToolbar = true } = {}) {
-  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const b = currentBranch();
-  const session = activeSessionName() || b.session || '';
-  const sessionLine = session ? (/academic/i.test(session) ? session : `Academic Session ${session}`) : '';
-  const initials = (b.name || 'School').replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'SM';
-  const logo = b.logo
-    ? `<img src="${esc(b.logo)}" alt="" style="width:100%;height:100%;object-fit:contain" />`
-    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font:900 22px Arial,sans-serif;color:#1E3A8A">${esc(initials)}</div>`;
-  const contact = [b.phone && `&#9742; ${esc(b.phone)}`, b.email && `&#9993; ${esc(b.email)}`].filter(Boolean).join(' &nbsp;·&nbsp; ');
-  const generated = new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
-  const width = orientation === 'landscape' ? '297mm' : '210mm';
-
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(title)}${b.name ? ` — ${esc(b.name)}` : ''}</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A;font-size:12px}
-    .page{width:${width};margin:0 auto}
-    .hd{background:#1E3A8A;color:#fff;padding:22px 30px 20px}
-    .hd-top{display:flex;align-items:center;gap:16px}
-    .hd-logo{width:70px;height:70px;border-radius:14px;background:#fff;padding:6px;flex-shrink:0;overflow:hidden}
-    .hd-name{font-size:20px;font-weight:800;line-height:1.2}
-    .hd-addr{font-size:11.5px;color:rgba(255,255,255,.85);margin-top:3px}
-    .hd-ct{font-size:11px;color:rgba(255,255,255,.75);margin-top:2px}
-    .hd-div{height:1px;background:rgba(255,255,255,.22);margin:14px 0 12px}
-    .hd-title{font-size:19px;font-weight:800}
-    .hd-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-    .hd-chip{background:rgba(255,255,255,.14);padding:4px 12px;border-radius:20px;font-size:11px}
-    .bd{padding:22px 30px}
-    .ft{border-top:1px solid #E5E7EB;padding:12px 30px;display:flex;justify-content:space-between;font-size:10.5px;color:#64748B}
-    .no-print{text-align:center;padding:20px;background:#F8FAFC;border-top:1px solid #E2E8F0}
-    .no-print button{border:none;padding:11px 26px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;margin:0 5px}
-    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4 ${orientation};margin:12mm}}
-  </style></head><body><div class="page">
-    <div class="hd">
-      <div class="hd-top">
-        <div class="hd-logo">${logo}</div>
-        <div>
-          <div class="hd-name">${esc(b.name)}</div>
-          ${b.address ? `<div class="hd-addr">${esc(b.address)}</div>` : ''}
-          ${contact ? `<div class="hd-ct">${contact}</div>` : ''}
-        </div>
-      </div>
-      <div class="hd-div"></div>
-      <div class="hd-title">${esc(title)}</div>
-      <div class="hd-chips">
-        ${sessionLine ? `<span class="hd-chip">${esc(sessionLine)}</span>` : ''}
-        <span class="hd-chip"><b>Generated:</b> ${esc(generated)}</span>
-      </div>
-    </div>
-    <div class="bd">${bodyHtml}</div>
-    <div class="ft"><span>${esc(b.name)}</span><span>School Mentor ERP</span><span>${esc(title)}</span></div>
-    ${includeToolbar ? `<div class="no-print">
-      <button onclick="window.print()" style="background:#1E3A8A;color:#fff">Print / Save as PDF</button>
-      <button onclick="window.close()" style="background:#fff;border:1.5px solid #CBD5E1;color:#64748B">Close</button>
-    </div>` : ''}
+export function buildStandardReportHtml({ title = '', format = 'pdf', isColor = true, bodyHtml = '', subtitleLine, schoolName, logoInitials, orientation = 'portrait', includeToolbar = true } = {}) {
+  const { headerBlock, footerBlock, toolbarBlock, palette } = buildReportHeaderFooter({ isColor, reportTitle: title, format, subtitleLine, schoolName, logoInitials });
+  const pageWidth = orientation === 'landscape' ? '297mm' : '210mm';
+  const name = escReportText(schoolName || reportSchoolName());
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escReportText(title)}${name ? ` — ${name}` : ' — Report'}</title>
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${palette.textD};font-size:13px}.page{width:${pageWidth};margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4 ${orientation};margin:15mm}}</style>
+  </head><body><div class="page">
+    ${headerBlock}
+    <div style="padding:28px 32px">${bodyHtml}</div>
+    ${footerBlock}
+    ${includeToolbar ? toolbarBlock : ''}
   </div></body></html>`;
 }
 

@@ -4,6 +4,10 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as inventoryService from '../services/inventoryService';
 import useAsync from '../hooks/useAsync';
+import {
+  StandardReportPicker, buildStandardReportHtml,
+  downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName,
+} from '../reports/reportKit';
 
 /* ─── module-wide helpers (mirrors HTML reference) ─── */
 const CAT_ICON = {
@@ -185,15 +189,7 @@ function buildSalesReportHTML(sales, school, opts = {}) {
   }).join('');
 
   return `
-    <div class="rhead">
-      <div class="rlogo">${schoolLogoSVG()}</div>
-      <div>
-        <div class="rname">${esc(school?.name || 'School')}</div>
-        <div class="rtitle">${esc(opts.title || 'Sales History Report')}</div>
-      </div>
-      <div class="meta">Generated: ${invFmtDate(today)}<br/>Records: ${sales.length}</div>
-    </div>
-
+    <div class="rfilters"><span>Records: <b>${sales.length}</b></span></div>
     <div class="kpi-row">
       <div class="kpi a"><div class="l">Today's Sales</div><div class="v">Rs ${fmtMoney(todayTotal)}</div><div class="m">${todayList.length} receipt(s)</div></div>
       <div class="kpi b"><div class="l">This Month</div><div class="v">Rs ${fmtMoney(monthTotal)}</div><div class="m">${MONTHS_SHORT[new Date().getMonth()]} ${new Date().getFullYear()}</div></div>
@@ -228,8 +224,7 @@ function buildSalesReportHTML(sales, school, opts = {}) {
       </tfoot>
     </table>
 
-    <div style="margin-top:14px;font-size:11px;color:#555">Total sales across the recorded period: <b>Rs ${fmtMoney(totalAmt)}</b> · ${totalQty} items sold across ${sales.length} receipt(s).</div>
-    <div class="rfoot">Generated on ${invFmtDate(today)} · School Mentor ERP — POS Sales</div>`;
+    <div style="margin-top:14px;font-size:11px;color:#555">Total sales across the recorded period: <b>Rs ${fmtMoney(totalAmt)}</b> · ${totalQty} items sold across ${sales.length} receipt(s).</div>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -238,15 +233,44 @@ function buildSalesReportHTML(sales, school, opts = {}) {
    ═══════════════════════════════════════════════════════════════════ */
 const INV_MONTHS_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-function reportHeadHTML(title, school, isBW = false) {
-  const esc = (s) => String(s ?? '').replace(/[<>&"']/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[m]));
-  /* The actual palette swap happens via the .inv-bw class injected on
-     <body> in openInvReportWindow (see below). This helper only adds a
-     "Colorless Print" caption so the printed copy makes the variant clear. */
-  return `<div class="rhead"><div class="rlogo">${schoolLogoSVG()}</div><div><div class="rname">${esc(school?.name || 'School')}</div><div class="rtitle">${esc(title)}</div></div><div class="meta">Generated: ${invFmtDate(todayISO())}${isBW ? '<br/><b>Colorless Print</b>' : ''}</div></div>`;
+/* Report body CSS — .kpi-row/.sec-band/.tbl/.rfilters/.secttl, still
+   local since it's genuine report BODY styling (same treatment as
+   every other module's reportKit migration this session). The
+   .rhead/.rlogo/.rname/.rtitle/.meta/.rfoot chrome these used to
+   include is now owned by the shared src/reports/reportKit.js — the
+   same ERP-wide standard Academics, Examination, Attendance, HR,
+   Dashboard and Performance Insights use — so the old .inv-bw
+   class-toggle overrides collapse into this single isColor-aware
+   function instead of being duplicated per print window. */
+function invReportBodyCSS(isColor, accent = '#1E3A8A') {
+  return `
+    .rfilters{display:flex;flex-wrap:wrap;gap:5px 26px;font-size:11px;color:#333;margin-bottom:14px;background:${isColor ? '#F1F5FB' : '#fff'};border:${isColor ? 'none' : '1px solid #D1D5DB'};padding:10px 14px;border-radius:6px}
+    .rfilters b{color:${isColor ? accent : '#0F172A'}}
+    .secttl{font-size:13px;font-weight:800;color:${isColor ? accent : '#0F172A'};margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid ${isColor ? '#cdd7ea' : '#9CA3AF'}}
+    .sec-band{background:${isColor ? accent : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center;${isColor ? '' : 'border:1.5px solid #0F172A'}}
+    .sec-band small{font-weight:700;opacity:${isColor ? '.85' : '1'};font-size:10px;color:${isColor ? 'inherit' : '#4B5563'}}
+    .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px}
+    .tbl thead th{background:${isColor ? accent : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:7px 9px;text-align:left;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;${isColor ? '' : 'border-bottom:1.5px solid #0F172A'}}
+    .tbl th.r,.tbl td.r{text-align:right} .tbl th.c,.tbl td.c{text-align:center}
+    .tbl tbody td{padding:6px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
+    .tbl tbody tr:nth-child(even) td{${isColor ? 'background:#FAFBFE' : ''}}
+    .tbl tbody tr:last-child td{border-bottom:0}
+    .tbl td.mono{font-family:ui-monospace,Menlo,monospace;color:${isColor ? accent : '#0F172A'};font-weight:800;letter-spacing:.3px}
+    .tbl td.items{font-size:10px;color:#475569;line-height:1.5}
+    .tbl td.empty{text-align:center;padding:24px;color:#94A3B8;font-style:italic}
+    .tbl tfoot td{padding:8px 9px;background:${isColor ? '#EAF0FA' : '#FFFFFF'};font-weight:800;border-top:1.5px solid ${isColor ? '#CBD5E1' : '#0F172A'};font-size:11.5px;color:${isColor ? accent : '#0F172A'}}
+    .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px}
+    .kpi{border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:8px;padding:9px 11px;background:${isColor ? '#F8FAFF' : '#FFFFFF'};position:relative;overflow:hidden}
+    .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:${isColor ? accent : '#0F172A'}}
+    .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+    .kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px;font-variant-numeric:tabular-nums}
+    .kpi .m{font-size:9px;color:#64748B;margin-top:1px}
+  `;
 }
-function reportFootHTML() {
-  return `<div class="rfoot">Generated on ${invFmtDate(todayISO())} · School Mentor ERP — Inventory Module</div>`;
+function buildInvReportHtml({ title, isBW, accent, innerHtml, school, format = 'pdf' }) {
+  const isColor = !isBW;
+  const bodyHtml = `<style>${invReportBodyCSS(isColor, accent)}</style>${innerHtml}`;
+  return buildStandardReportHtml({ title, format, isColor, bodyHtml, schoolName: school?.name });
 }
 
 const INV_REPORT_TITLES = {
@@ -511,55 +535,16 @@ function buildInvReportBody(type, opts, ctx) {
   return '';
 }
 
-/* Open the report PDF in a popup window (blue brand, A4) */
-function openInvReportWindow(title, inner, toast, isBW = false) {
+/* Opens a print-ready report window — the same shared choke point for
+   every A4 inventory/sales report now that the header/footer/CSS
+   variation between what used to be two near-duplicate functions
+   collapsed into buildInvReportHtml above. */
+function openInvReportWindow(html, toast, format = 'pdf', filename = 'Report.doc') {
+  if (format === 'word') { downloadReportAsWord(html, filename); toast && toast('Word document downloaded', 'success'); return; }
+  if (format === 'excel') { downloadReportHtmlAsExcel(html, filename.replace(/\.doc$/, '.xls')); toast && toast('Excel report downloaded', 'success'); return; }
   const w = window.open('', '_blank');
   if (!w) { toast && toast('Please allow pop-ups to print', 'error'); return; }
-  const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{background:#F1F3F8}body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.45;padding:18px 0}.page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}.rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:10px;margin-bottom:14px}.rlogo{width:46px;height:46px;flex-shrink:0}.rname{font-size:17px;font-weight:800;color:#0F172A;line-height:1.15}.rtitle{font-size:12px;font-weight:700;color:#1E3A8A;margin-top:3px}.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}.rfilters{display:flex;flex-wrap:wrap;gap:5px 26px;font-size:11px;color:#333;margin-bottom:14px;background:#F1F5FB;padding:10px 14px;border-radius:6px}.rfilters b{color:#1E3A8A}.secttl{font-size:13px;font-weight:800;color:#1E3A8A;margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid #cdd7ea}.tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px}.tbl thead th{background:#1E3A8A;color:#fff;padding:7px 9px;text-align:left;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px}.tbl th.r,.tbl td.r{text-align:right}.tbl th.c,.tbl td.c{text-align:center}.tbl tbody td{padding:6px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}.tbl tbody tr:nth-child(even) td{background:#FAFBFE}.tbl tbody tr:last-child td{border-bottom:0}.tbl td.mono{font-family:ui-monospace,Menlo,monospace;color:#1E3A8A;font-weight:800;letter-spacing:.3px}.tbl td.items{font-size:10px;color:#475569;line-height:1.5}.tbl td.empty{text-align:center;padding:24px;color:#94A3B8;font-style:italic}.tbl tfoot td{padding:8px 9px;background:#EAF0FA;font-weight:800;border-top:1.5px solid #CBD5E1;font-size:11.5px;color:#1E3A8A}.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px}.kpi{border:1px solid #E5E7EB;border-radius:8px;padding:9px 11px;background:#F8FAFF;position:relative;overflow:hidden}.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}.kpi.a::before{background:linear-gradient(180deg,#1E3A8A,#1E40AF)}.kpi.b::before{background:linear-gradient(180deg,#2563EB,#60A5FA)}.kpi.c::before{background:linear-gradient(180deg,#7C3AED,#6D28D9)}.kpi.d::before{background:linear-gradient(180deg,#D97706,#B45309)}.kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}.kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px;font-variant-numeric:tabular-nums}.kpi .m{font-size:9px;color:#64748B;margin-top:1px}.rfoot{margin-top:18px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:9px}.empty-state{text-align:center;padding:30px;color:#94A3B8}@page{size:A4 portrait;margin:0}@media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr{page-break-inside:avoid}}
-/* Colorless Report — strips gradients / colored backgrounds / table-head
-   fills / row striping / colored tag fills to dark-on-white with light
-   gray borders. Activates when .inv-bw is present on the body. */
-.inv-bw .rhead{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
-.inv-bw .rtitle{color:#0F172A !important;}
-.inv-bw .rfilters{background:#FFFFFF !important;border:1px solid #D1D5DB !important;color:#0F172A !important;}
-.inv-bw .rfilters b{color:#0F172A !important;}
-.inv-bw .secttl{color:#0F172A !important;border-bottom-color:#9CA3AF !important;}
-.inv-bw .tbl thead th{background:#FFFFFF !important;color:#0F172A !important;border-bottom:1.5px solid #0F172A !important;}
-.inv-bw .tbl tbody tr:nth-child(even) td{background:transparent !important;}
-.inv-bw .tbl tfoot td{background:#FFFFFF !important;color:#0F172A !important;border-top-color:#0F172A !important;}
-.inv-bw .tbl td.mono{color:#0F172A !important;}
-.inv-bw .kpi{background:#FFFFFF !important;border-color:#D1D5DB !important;}
-.inv-bw .kpi::before{background:#0F172A !important;}
-.inv-bw .kpi .v[style*="color"]{color:#0F172A !important;}
-.inv-bw .sec-band{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important;}
-.inv-bw .sec-band small{color:#4B5563 !important;opacity:1 !important;}
-`;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body${isBW ? ' class="inv-bw"' : ''}><div class="page">${inner}</div></body></html>`);
-  w.document.close();
-  w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-}
-
-/* Print window with extra styles (kpi-row + sec-band) — used by sales report */
-function openReportPrintWindow(title, inner, toast, isBW = false) {
-  const w = window.open('', '_blank');
-  if (!w) { toast && toast('Please allow pop-ups to print', 'error'); return; }
-  const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{background:#F1F3F8}body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.45;padding:18px 0}.page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}.rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #16A34A;padding-bottom:10px;margin-bottom:14px}.rlogo{width:46px;height:46px;flex-shrink:0}.rname{font-size:17px;font-weight:800;color:#0F172A;line-height:1.15}.rtitle{font-size:12px;font-weight:700;color:#15803D;margin-top:3px}.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}.kpi{border:1px solid #E5E7EB;border-radius:8px;padding:9px 11px;background:#F8FAFF;position:relative;overflow:hidden}.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}.kpi.a::before{background:linear-gradient(180deg,#16A34A,#15803D)}.kpi.b::before{background:linear-gradient(180deg,#1E3A8A,#1E40AF)}.kpi.c::before{background:linear-gradient(180deg,#D97706,#B45309)}.kpi.d::before{background:linear-gradient(180deg,#7C3AED,#6D28D9)}.kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}.kpi .v{font-size:13px;font-weight:800;color:#0F172A;margin-top:2px}.kpi .m{font-size:9px;color:#64748B;margin-top:1px}.sec-band{background:linear-gradient(135deg,#16A34A,#15803D);color:#fff;padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center}.sec-band small{font-weight:700;opacity:.85;font-size:10px}.tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px}.tbl thead th{background:#F8FAFF;border-bottom:1.5px solid #E5E7EB;padding:8px 9px;text-align:left;font-weight:800;color:#15803D;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px}.tbl th.r,.tbl td.r{text-align:right}.tbl th.c,.tbl td.c{text-align:center}.tbl tbody td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}.tbl tbody tr:nth-child(even) td{background:#FBFCFF}.tbl tbody tr:last-child td{border-bottom:0}.tbl td.mono{font-family:ui-monospace,Menlo,monospace;color:#1E3A8A;font-weight:800;letter-spacing:.3px}.tbl td.items{font-size:10px;color:#475569;line-height:1.5}.tbl td.empty{text-align:center;padding:24px;color:#94A3B8;font-style:italic}.tbl tfoot td{padding:9px 9px;background:#F1F3F8;font-weight:800;color:#0F172A;border-top:1.5px solid #CBD5E1;font-size:12px}.rfoot{margin-top:14px;padding-top:8px;border-top:1px solid #e5e9f2;text-align:center;font-size:9px;color:#94A3B8}@page{size:A4 portrait;margin:0}@media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr{page-break-inside:avoid}}
-/* Colorless Report — activates only when .inv-bw is on the body. */
-.inv-bw .rhead{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
-.inv-bw .rtitle{color:#0F172A !important;}
-.inv-bw .sec-band{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important;}
-.inv-bw .sec-band small{color:#4B5563 !important;opacity:1 !important;}
-.inv-bw .tbl thead th{background:#FFFFFF !important;color:#0F172A !important;border-bottom:1.5px solid #0F172A !important;}
-.inv-bw .tbl tbody tr:nth-child(even) td{background:transparent !important;}
-.inv-bw .tbl tfoot td{background:#FFFFFF !important;color:#0F172A !important;border-top-color:#0F172A !important;}
-.inv-bw .tbl td.mono{color:#0F172A !important;}
-.inv-bw .kpi{background:#FFFFFF !important;border-color:#D1D5DB !important;}
-.inv-bw .kpi::before{background:#0F172A !important;}
-.inv-bw .kpi .v[style*="color"]{color:#0F172A !important;}
-`;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body${isBW ? ' class="inv-bw"' : ''}><div class="page">${inner}</div></body></html>`);
+  w.document.write(html);
   w.document.close();
   w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
 }
@@ -2497,8 +2482,7 @@ function PosProductConfirmDialog({ cfg, onClose }) {
    ═══════════════════════════════════════════════════════════════════ */
 function PosSalesView({ sales, school, toast }) {
   const [reprint, setReprint] = useState(null);
-  /* Local report-style toggle — applies to the Sales History A4 download. */
-  const [salesStyle, setSalesStyle] = useState('color'); // 'color' | 'bw'
+  const [salesReportOpen, setSalesReportOpen] = useState(false);
 
   const today    = todayISO();
   const todaySales = sales.filter(s => s.date === today);
@@ -2559,52 +2543,12 @@ function PosSalesView({ sales, school, toast }) {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <div
-              className="inv-rep-style-seg"
-              role="radiogroup"
-              aria-label="Sales History report style"
-              style={{ flexShrink: 0 }}
-            >
-              <button
-                type="button"
-                className={`inv-rep-style-btn${salesStyle === 'color' ? ' on' : ''}`}
-                onClick={() => setSalesStyle('color')}
-                role="radio"
-                aria-checked={salesStyle === 'color'}
-                tabIndex={salesStyle === 'color' ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setSalesStyle('color'); }
-                  else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setSalesStyle('bw'); }
-                }}
-              >
-                <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-              </button>
-              <button
-                type="button"
-                className={`inv-rep-style-btn${salesStyle === 'bw' ? ' on' : ''}`}
-                onClick={() => setSalesStyle('bw')}
-                role="radio"
-                aria-checked={salesStyle === 'bw'}
-                tabIndex={salesStyle === 'bw' ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setSalesStyle('color'); }
-                  else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setSalesStyle('bw'); }
-                }}
-              >
-                <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-              </button>
-            </div>
-            <Tooltip text={`Download an A4 ${salesStyle === 'bw' ? 'Colorless' : 'Colorful'} PDF of every sale in this list`}>
+            <Tooltip text="Download the Sales History report — pick style and format">
               <button
                 className="fee-btn fee-btn-ghost fee-btn-sm acc-dlreport-btn"
-                onClick={() => openReportPrintWindow(
-                  'Sales History Report',
-                  buildSalesReportHTML(sorted, school, { title: 'Sales History Report' }),
-                  toast,
-                  salesStyle === 'bw',
-                )}
+                onClick={() => setSalesReportOpen(true)}
               >
-                <i className="fa-solid fa-file-export"></i> Download A4 Report
+                <i className="fa-solid fa-file-export"></i> Download Report
               </button>
             </Tooltip>
           </div>
@@ -2658,6 +2602,26 @@ function PosSalesView({ sales, school, toast }) {
           school={school}
           onClose={() => setReprint(null)}
           toast={toast}
+        />
+      )}
+      {salesReportOpen && (
+        <StandardReportPicker
+          open
+          title="Sales History Report"
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setSalesReportOpen(false)}
+          onGenerate={(style, format) => {
+            const html = buildInvReportHtml({
+              title: 'Sales History Report',
+              isBW: style === 'bw',
+              accent: '#16A34A',
+              innerHtml: buildSalesReportHTML(sorted, school, { title: 'Sales History Report' }),
+              school,
+              format,
+            });
+            openInvReportWindow(html, toast, format, `${reportFileName('Sales-History-Report')}.doc`);
+            setSalesReportOpen(false);
+          }}
         />
       )}
     </>
@@ -2896,32 +2860,43 @@ function InvReports({ toast }) {
   const { data: serverSales    = [] } = useAsync(inventoryService.getInvSales,    []);
   const { data: school         = {} } = useAsync(inventoryService.getInvSchool,   {});
 
-  const [picker, setPicker] = useState(null); // {kind, type}
-  /* Page-level Report Style toggle. Applies to whichever tile the user
-     clicks next — saves us from threading a per-tile picker through 12
-     report flows while still giving the audit-required Colorful /
-     Colorless choice for every report. */
-  const [style, setStyle] = useState('color'); // 'color' | 'bw'
+  const [reportPicker, setReportPicker] = useState(null); // { tile }
+  /* Month/range filter state — only relevant while a tile whose
+     `picker` is 'month'/'range' is open; rendered inline as the
+     StandardReportPicker's `filters` slot instead of a separate
+     two-step modal, so every report (filtered or not) opens the exact
+     same picker. */
+  const nowRef = useMemo(() => new Date(), []);
+  const [pMonth, setPMonth] = useState(nowRef.getMonth());
+  const [pYear, setPYear]   = useState(nowRef.getFullYear());
+  const isoDate = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+  const [pFrom, setPFrom] = useState(isoDate(new Date(nowRef.getFullYear(), nowRef.getMonth(), 1)));
+  const [pTo, setPTo]     = useState(isoDate(nowRef));
+
+  const years = useMemo(() => {
+    const set = new Set(serverSales.map(s => parseInt(s.date.slice(0, 4), 10)));
+    set.add(nowRef.getFullYear());
+    return Array.from(set).sort((a, b) => b - a);
+  }, [serverSales, nowRef]);
 
   const ctx = { items: serverItems, products: serverProducts, sales: serverSales };
 
-  const runReport = (type, opts = {}) => {
-    const title = INV_REPORT_TITLES[type] || 'Report';
-    const isBW = style === 'bw';
-    const inner = reportHeadHTML(title, school, isBW) + buildInvReportBody(type, opts, ctx) + reportFootHTML();
-    openInvReportWindow(title, inner, toast, isBW);
-  };
+  const openTile = (tile) => setReportPicker({ tile });
 
-  const openTile = (tile) => {
-    if (tile.picker === 'month') setPicker({ kind: 'month', type: tile.id });
-    else if (tile.picker === 'range') setPicker({ kind: 'range', type: tile.id });
-    else runReport(tile.id);
-  };
-
-  const onStyleKey = (e, value) => {
-    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
+  const generateTileReport = (style, format) => {
+    const tile = reportPicker.tile;
+    let opts = {};
+    if (tile.picker === 'month') {
+      opts = { month: pMonth, year: pYear };
+    } else if (tile.picker === 'range') {
+      if (!pFrom || !pTo) { toast('Please select both dates', 'error'); return; }
+      if (pFrom > pTo)    { toast('"From" date must be before "To" date', 'error'); return; }
+      opts = { from: pFrom, to: pTo };
+    }
+    const title = INV_REPORT_TITLES[tile.id] || 'Report';
+    const html = buildInvReportHtml({ title, isBW: style === 'bw', accent: '#1E3A8A', innerHtml: buildInvReportBody(tile.id, opts, ctx), school, format });
+    openInvReportWindow(html, toast, format, `${reportFileName(title)}.doc`);
+    setReportPicker(null);
   };
 
   return (
@@ -2941,38 +2916,9 @@ function InvReports({ toast }) {
         </div>
       </div>
 
-      {/* Page-level Report Style toggle (applies to every report below) */}
-      <div className="inv-rep-style-row">
-        <div className="inv-rep-style-lbl" id="inv-rep-style-lbl">Report Style</div>
-        <div className="inv-rep-style-seg" role="radiogroup" aria-labelledby="inv-rep-style-lbl">
-          <button
-            type="button"
-            className={`inv-rep-style-btn${style === 'color' ? ' on' : ''}`}
-            onClick={() => setStyle('color')}
-            role="radio"
-            aria-checked={style === 'color'}
-            tabIndex={style === 'color' ? 0 : -1}
-            onKeyDown={(e) => onStyleKey(e, 'color')}
-          >
-            <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful Report
-          </button>
-          <button
-            type="button"
-            className={`inv-rep-style-btn${style === 'bw' ? ' on' : ''}`}
-            onClick={() => setStyle('bw')}
-            role="radio"
-            aria-checked={style === 'bw'}
-            tabIndex={style === 'bw' ? 0 : -1}
-            onKeyDown={(e) => onStyleKey(e, 'bw')}
-          >
-            <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless Report
-          </button>
-        </div>
-      </div>
-
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span> Every report opens as a clean <strong>A4 page</strong> you can Print or Save as PDF. Use the <strong>Report Style</strong> toggle above to switch between a Colorful brand layout and a low-ink Colorless layout.</span>
+        <span> Every report opens through the same download dialog — pick Colorful or Colorless, then PDF, Word or Excel.</span>
       </div>
 
       <div className="inv-rep-group-title">
@@ -2993,21 +2939,54 @@ function InvReports({ toast }) {
         ))}
       </div>
 
-      {/* Pickers — note: the page-level Style toggle is already applied
-          inside runReport, so these only need to gather the date filters. */}
-      {picker?.kind === 'month' && (
-        <InvMonthPickerModal
-          sales={serverSales}
-          onClose={() => setPicker(null)}
-          onRun={({ month, year }) => { runReport(picker.type, { month, year }); setPicker(null); }}
-        />
-      )}
-      {picker?.kind === 'range' && (
-        <InvRangePickerModal
-          title={picker.type === 'pos_pnl' ? 'Profit & Loss — pick a date range' : 'Overall Sales — pick a date range'}
-          onClose={() => setPicker(null)}
-          onRun={({ from, to }) => { runReport(picker.type, { from, to }); setPicker(null); }}
-          toast={toast}
+      {reportPicker && (
+        <StandardReportPicker
+          open
+          title={INV_REPORT_TITLES[reportPicker.tile.id] || 'Download Report'}
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setReportPicker(null)}
+          onGenerate={generateTileReport}
+          filters={
+            reportPicker.tile.picker === 'month' ? (
+              <>
+                <div className="rp-section-label">Report Period</div>
+                <div className="inv-form-grid" style={{ marginBottom: 18 }}>
+                  <div className="fee-field">
+                    <span className="fee-label">Month</span>
+                    <div className="fee-select-wrap">
+                      <select className="fee-select" value={pMonth} onChange={(e) => setPMonth(Number(e.target.value))}>
+                        {INV_MONTHS_LONG.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                      </select>
+                      <i className="fa-solid fa-chevron-down"></i>
+                    </div>
+                  </div>
+                  <div className="fee-field">
+                    <span className="fee-label">Year</span>
+                    <div className="fee-select-wrap">
+                      <select className="fee-select" value={pYear} onChange={(e) => setPYear(Number(e.target.value))}>
+                        {years.map(y => <option key={y} value={y}>{y}</option>)}
+                      </select>
+                      <i className="fa-solid fa-chevron-down"></i>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : reportPicker.tile.picker === 'range' ? (
+              <>
+                <div className="rp-section-label">Date Range</div>
+                <div className="inv-form-grid" style={{ marginBottom: 18 }}>
+                  <div className="fee-field">
+                    <span className="fee-label">From</span>
+                    <input className="fee-input" type="date" value={pFrom} onChange={(e) => setPFrom(e.target.value)} />
+                  </div>
+                  <div className="fee-field">
+                    <span className="fee-label">To</span>
+                    <input className="fee-input" type="date" value={pTo} onChange={(e) => setPTo(e.target.value)} />
+                  </div>
+                </div>
+              </>
+            ) : null
+          }
         />
       )}
     </>
@@ -3032,153 +3011,6 @@ function InvReportTile({ tile, variant, onClick }) {
   );
 }
 
-/* ─── Month + year picker ─── */
-function InvMonthPickerModal({ sales, onClose, onRun }) {
-  const initialNow = useMemo(() => new Date(), []);
-  const [month, setMonth] = useState(initialNow.getMonth());
-  const [year, setYear]   = useState(initialNow.getFullYear());
-
-  const years = useMemo(() => {
-    const set = new Set(sales.map(s => parseInt(s.date.slice(0, 4), 10)));
-    set.add(initialNow.getFullYear());
-    return Array.from(set).sort((a, b) => b - a);
-  }, [sales, initialNow]);
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="fee-modal sm">
-        <div className="fee-modal-head">
-          <div className="fee-modal-head-title">
-            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }}>
-              <i className="fa-solid fa-calendar-days"></i>
-            </div>
-            <div>
-              <div className="fee-modal-title">Monthly Sales Report</div>
-              <div className="fee-modal-sub">Pick a month to render</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
-          </Tooltip>
-        </div>
-        <div className="fee-modal-body">
-          <div className="inv-form-grid">
-            <div className="fee-field">
-              <span className="fee-label">Month</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={(e) => setMonth(Number(e.target.value))}>
-                  {INV_MONTHS_LONG.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <div className="fee-field">
-              <span className="fee-label">Year</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-                  {years.map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="fee-modal-foot">
-          <Tooltip text="Cancel">
-            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          </Tooltip>
-          <Tooltip text="Generate the monthly report">
-            <button className="fee-btn fee-btn-primary inv-confirm-sale" onClick={() => onRun({ month, year })}>
-              <i className="fa-solid fa-chart-column"></i> Generate Report
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-/* ─── From/To date range picker ─── */
-function InvRangePickerModal({ title, onClose, onRun, toast }) {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  const [from, setFrom] = useState(iso(first));
-  const [to, setTo]     = useState(iso(now));
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
-
-  const handleRun = () => {
-    if (!from || !to) { toast('Please select both dates', 'error'); return; }
-    if (from > to)    { toast('"From" date must be before "To" date', 'error'); return; }
-    onRun({ from, to });
-  };
-
-  return createPortal(
-    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="fee-modal sm">
-        <div className="fee-modal-head">
-          <div className="fee-modal-head-title">
-            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#2563EB)' }}>
-              <i className="fa-solid fa-calendar-week"></i>
-            </div>
-            <div>
-              <div className="fee-modal-title">{title}</div>
-              <div className="fee-modal-sub">Inclusive of both dates</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
-          </Tooltip>
-        </div>
-        <div className="fee-modal-body">
-          <div className="inv-form-grid">
-            <div className="fee-field">
-              <span className="fee-label">From Date</span>
-              <input className="fee-input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-            </div>
-            <div className="fee-field">
-              <span className="fee-label">To Date</span>
-              <input className="fee-input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-            </div>
-          </div>
-        </div>
-        <div className="fee-modal-foot">
-          <Tooltip text="Cancel">
-            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          </Tooltip>
-          <Tooltip text="Generate the report for this date range">
-            <button className="fee-btn fee-btn-primary" onClick={handleRun}>
-              <i className="fa-solid fa-chart-column"></i> Generate Report
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 /* ─── Coming Soon placeholder used for every not-yet-built screen ──── */
 function InvComingSoon({ label, icon }) {

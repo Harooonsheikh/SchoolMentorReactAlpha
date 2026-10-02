@@ -7,6 +7,7 @@ import useAsync from '../hooks/useAsync';
 import { buildUrl, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
+import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel } from '../reports/reportKit';
 
 /* Other modules broadcast this custom event after changing a session key
    (sessionStorage writes don't fire the native 'storage' event in the same tab).
@@ -1858,200 +1859,91 @@ function buildVoucherHTML(x, seg, school) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   DOWNLOAD REPORT MODAL — pick PDF / Excel / CSV. Exports the full
-   audit trail (Head, Date, Details, Amount, Created By, Entry
-   Timestamp, Updated By, Last Updated).
+   DOWNLOAD REPORT MODAL — the shared ERP-wide StandardReportPicker
+   (Colorful/Colorless × PDF/Word/Excel). Exports the full audit trail
+   (Head, Date, Details, Amount, Created By, Entry Timestamp, Updated
+   By, Last Updated) for single-segment reports, or the full A4 report
+   shell for Reports-tab (isMulti) reports. Raw CSV stays available as
+   a secondary link inside the picker.
    ═══════════════════════════════════════════════════════════════════ */
 function AccDownloadReportModal({ cfg, onClose, toast, school, segLabel, month }) {
-  const [fmt, setFmt] = useState('pdf');
-  const [style, setStyle] = useState('color'); // 'color' | 'bw'
-
-  useEffect(() => { if (cfg) { setFmt('pdf'); setStyle('color'); } }, [cfg]);
-  useEffect(() => {
-    if (!cfg) return undefined;
-    const onKey = e => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [cfg, onClose]);
-
-  /* Keyboard nav for the two ARIA radio-groups (matches Modules 2–7). */
-  const onStyleKey = (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
-  };
-
   if (!cfg) return null;
 
-  const total   = cfg.list.reduce((a, x) => a + Number(x.amount || 0), 0);
-  const heads   = new Set(cfg.list.map(x => x.headNo)).size;
   const isMulti = !!cfg.kind; // routed from Reports tab when set
-  const isBW    = style === 'bw';
 
-  const handleDownload = () => {
-    if (fmt === 'pdf') {
+  const downloadCsv = (fmt) => {
+    const csv = isMulti ? buildAccReportCSV(cfg) : buildTxnCSV(cfg.list);
+    const blob = new Blob([csv], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const slug = (segLabel || 'Report').replace(/[^A-Za-z0-9]+/g, '-');
+    a.download = `${slug}-${month || new Date().toISOString().slice(0,10)}.${fmt === 'csv' ? 'csv' : 'xls'}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleGenerate = (style, format) => {
+    const isBW = style === 'bw';
+    if (format === 'excel') {
+      /* These CSV builders are hand-tailored per report kind (correct
+         columns for pl/cash/books/headwise/etc.) — kept as the Excel
+         export rather than a generic HTML-table scrape. */
+      downloadCsv('excel');
+    } else {
       const html = isMulti
         ? buildAccReportHTML(cfg, school, isBW)
         : buildTxnReportHTML(cfg.list, cfg.seg, school, segLabel, month, isBW);
-      const w = window.open('', '_blank');
-      if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
-      w.document.write(html); w.document.close();
-      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    } else if (fmt === 'word') {
-      const html = isMulti
-        ? buildAccReportHTML(cfg, school, isBW)
-        : buildTxnReportHTML(cfg.list, cfg.seg, school, segLabel, month, isBW);
-      const blob = new Blob([html], { type: 'application/msword;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const slug = (segLabel || cfg.which || 'Report').replace(/[^A-Za-z0-9]+/g, '-');
-      a.download = `${slug}-${month || new Date().toISOString().slice(0,10)}.doc`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } else if (fmt === 'csv' || fmt === 'excel') {
-      const csv = isMulti ? buildAccReportCSV(cfg) : buildTxnCSV(cfg.list);
-      const blob = new Blob([csv], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const slug = (segLabel || 'Report').replace(/[^A-Za-z0-9]+/g, '-');
-      a.download = `${slug}-${month || new Date().toISOString().slice(0,10)}.${fmt === 'csv' ? 'csv' : 'xls'}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      if (format === 'word') {
+        const slug = (segLabel || cfg.which || 'Report').replace(/[^A-Za-z0-9]+/g, '-');
+        downloadReportAsWord(html, `${slug}-${month || new Date().toISOString().slice(0,10)}.doc`);
+      } else {
+        const w = window.open('', '_blank');
+        if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
+        w.document.write(html); w.document.close();
+        w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+      }
     }
-    toast(`${cfg.which} report (${fmt.toUpperCase()}) ready.`, 'success');
+    toast(`${cfg.which} report (${format.toUpperCase()}) ready.`, 'success');
     onClose();
   };
 
-  return createPortal(
-    <div
-      className="fee-overlay open"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="acc-dl-title"
-    >
-      <div className="fee-modal">
-        <div className="fee-modal-head">
-          <div className="fee-modal-head-title">
-            <div className="fee-modal-head-icon"><i className="fa-solid fa-file-export"></i></div>
-            <div>
-              <div className="fee-modal-title" id="acc-dl-title">Download <em>{cfg.which}</em> Report</div>
-              <div className="fee-modal-sub">Export the complete entries report with full audit trail</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button className="fee-modal-close" onClick={onClose} aria-label="Close download dialog">
-              <i className="fa-solid fa-xmark"></i>
-            </button>
-          </Tooltip>
-        </div>
-        <div className="fee-modal-body">
-          <div className="fee-info">
-            <i className="fa-solid fa-circle-info"></i>
-            {isMulti
-              ? <span>The exported <strong>{cfg.which}</strong> is laid out on A4 with school header, KPI strip, complete data tables and a closing summary callout — ready to print or share.</span>
-              : <span>The exported report includes Head, Date, Details, Amount and the full audit trail — <strong>Created By</strong>, <strong>Entry Timestamp</strong>, <strong>Updated By</strong> and <strong>Last Updated</strong>.</span>}
-          </div>
-          <div className="fee-dl-label" id="acc-dl-style-lbl">Report Style</div>
-          <div className="fee-dl-grid" role="radiogroup" aria-labelledby="acc-dl-style-lbl">
-            <button
-              type="button"
-              className={`fee-dl-card${style === 'color' ? ' sel' : ''}`}
-              onClick={() => setStyle('color')}
-              role="radio"
-              aria-checked={style === 'color'}
-              tabIndex={style === 'color' ? 0 : -1}
-              onKeyDown={onStyleKey}
-            >
-              <div className="fee-dl-prev fee-dl-prev--color" aria-hidden="true">
-                <span className="fee-dl-orb"></span>
-                <span className="fee-dl-line lg"></span>
-                <span className="fee-dl-line md"></span>
-                <div className="fee-dl-pills">
-                  <span className="fee-dl-pill blue"></span>
-                  <span className="fee-dl-pill amber"></span>
-                </div>
-              </div>
-              <div className="fee-dl-meta">
-                <div className="fee-dl-name"><i className="fa-solid fa-palette" style={{ color: '#1E3A8A', marginRight: 6 }} aria-hidden="true"></i>Colorful Report</div>
-                <div className="fee-dl-desc">Brand-colour header, KPI tints &amp; summary cards</div>
-              </div>
-            </button>
-            <button
-              type="button"
-              className={`fee-dl-card${style === 'bw' ? ' sel' : ''}`}
-              onClick={() => setStyle('bw')}
-              role="radio"
-              aria-checked={style === 'bw'}
-              tabIndex={style === 'bw' ? 0 : -1}
-              onKeyDown={onStyleKey}
-            >
-              <div className="fee-dl-prev fee-dl-prev--bw" aria-hidden="true">
-                <span className="fee-dl-orb bw"></span>
-                <span className="fee-dl-line lg bw"></span>
-                <span className="fee-dl-line md bw"></span>
-                <div className="fee-dl-pills">
-                  <span className="fee-dl-pill bw"></span>
-                  <span className="fee-dl-pill bw"></span>
-                </div>
-              </div>
-              <div className="fee-dl-meta">
-                <div className="fee-dl-name"><i className="fa-solid fa-circle-half-stroke" style={{ color: '#374151', marginRight: 6 }} aria-hidden="true"></i>Colorless Report</div>
-                <div className="fee-dl-desc">Low-ink layout — white bg, light borders only</div>
-              </div>
-            </button>
-          </div>
-          <div className="fee-dl-label" style={{ marginTop: 14 }} id="acc-dl-fmt-lbl">Choose Format</div>
-          <div className="fee-dl-fmt-grid" role="radiogroup" aria-labelledby="acc-dl-fmt-lbl">
-            <button type="button" className={`fee-dl-fmt${fmt === 'pdf' ? ' sel' : ''}`} onClick={() => setFmt('pdf')} role="radio" aria-checked={fmt === 'pdf'} tabIndex={fmt === 'pdf' ? 0 : -1}>
-              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }} aria-hidden="true"><i className="fa-solid fa-file-pdf"></i></div>
-              <div><div className="fee-dl-fmt-name">PDF Document</div><div className="fee-dl-desc">Printable A4 audit report</div></div>
-            </button>
-            <button type="button" className={`fee-dl-fmt${fmt === 'excel' ? ' sel' : ''}`} onClick={() => setFmt('excel')} role="radio" aria-checked={fmt === 'excel'} tabIndex={fmt === 'excel' ? 0 : -1}>
-              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }} aria-hidden="true"><i className="fa-solid fa-file-excel"></i></div>
-              <div><div className="fee-dl-fmt-name">Excel Workbook</div><div className="fee-dl-desc">.xls spreadsheet</div></div>
-            </button>
-            <button type="button" className={`fee-dl-fmt${fmt === 'word' ? ' sel' : ''}`} onClick={() => setFmt('word')} role="radio" aria-checked={fmt === 'word'} tabIndex={fmt === 'word' ? 0 : -1}>
-              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(37,99,235,.1)', color: '#2563EB' }} aria-hidden="true"><i className="fa-solid fa-file-word"></i></div>
-              <div><div className="fee-dl-fmt-name">Word Document</div><div className="fee-dl-desc">.doc report with branch header</div></div>
-            </button>
-            <button type="button" className={`fee-dl-fmt${fmt === 'csv' ? ' sel' : ''}`} onClick={() => setFmt('csv')} role="radio" aria-checked={fmt === 'csv'} tabIndex={fmt === 'csv' ? 0 : -1}>
-              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }} aria-hidden="true"><i className="fa-solid fa-file-csv"></i></div>
-              <div><div className="fee-dl-fmt-name">CSV File</div><div className="fee-dl-desc">Comma-separated data</div></div>
-            </button>
-          </div>
-          <div className="acc-rep-summary">
-            <div className="acc-rep-sumrow">
-              <span><i className="fa-solid fa-file-lines"></i> {cfg.which}</span>
-              <span><i className="fa-solid fa-list"></i> {cfg.list.length} {cfg.list.length === 1 ? 'row' : 'rows'}</span>
-              {!isMulti && <span><i className="fa-solid fa-layer-group"></i> {heads} {heads === 1 ? 'head' : 'heads'}</span>}
-              {!isMulti && <span><i className="fa-solid fa-coins"></i> Total {fmtMoney(total)}</span>}
-              {isMulti && <span><i className="fa-solid fa-calendar-days"></i> {new Date().toLocaleDateString('en-GB')}</span>}
-            </div>
+  const total = cfg.list.reduce((a, x) => a + Number(x.amount || 0), 0);
+  const heads = new Set(cfg.list.map(x => x.headNo)).size;
+
+  return (
+    <StandardReportPicker
+      open
+      title={`Download ${cfg.which} Report`}
+      subtitle={isMulti
+        ? 'A4 report with school header, KPI strip, complete data tables and a closing summary callout.'
+        : 'Includes Head, Date, Details, Amount and the full audit trail — Created By, Entry Timestamp, Updated By and Last Updated.'}
+      formats={['pdf', 'word', 'excel']}
+      onClose={onClose}
+      onGenerate={handleGenerate}
+      filters={
+        <div className="acc-rep-summary" style={{ marginBottom: 18 }}>
+          <div className="acc-rep-sumrow">
+            <span><i className="fa-solid fa-file-lines"></i> {cfg.which}</span>
+            <span><i className="fa-solid fa-list"></i> {cfg.list.length} {cfg.list.length === 1 ? 'row' : 'rows'}</span>
+            {!isMulti && <span><i className="fa-solid fa-layer-group"></i> {heads} {heads === 1 ? 'head' : 'heads'}</span>}
+            {!isMulti && <span><i className="fa-solid fa-coins"></i> Total {fmtMoney(total)}</span>}
+            {isMulti && <span><i className="fa-solid fa-calendar-days"></i> {new Date().toLocaleDateString('en-GB')}</span>}
+            <Tooltip text="Download the raw comma-separated data">
+              <button
+                type="button"
+                className="fee-btn fee-btn-ghost fee-btn-sm"
+                onClick={() => { downloadCsv('csv'); toast(`${cfg.which} report (CSV) ready.`, 'success'); onClose(); }}
+              >
+                <i className="fa-solid fa-file-csv"></i> CSV
+              </button>
+            </Tooltip>
           </div>
         </div>
-        <div className="fee-modal-foot">
-          <Tooltip text="Discard and close">
-            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          </Tooltip>
-          <Tooltip text={`Generate the ${fmt.toUpperCase()} report`}>
-            <button className="fee-btn fee-btn-primary" onClick={handleDownload}>
-              <i className="fa-solid fa-download"></i> Download Report
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>,
-    document.body
+      }
+    />
   );
 }
 
@@ -2722,9 +2614,8 @@ function AccountBooks({ toast, isOtherSession }) {
   const [ledgerSearch, setLedgerSearch]   = useState('');
   const [ledgerFilter, setLedgerFilter]   = useState('all');
   const [ledgerSort, setLedgerSort]       = useState('desc');
-  /* Report style — applies to the per-book Ledger Report PDF download.
-     Local state because the picker only matters for this surface. */
-  const [bookStyle, setBookStyle]         = useState('color'); // 'color' | 'bw'
+  /* Book pending report generation — opens the shared style/format picker. */
+  const [bookReportFor, setBookReportFor] = useState(null);
 
   /* Aggregate stats for the books-list explainer banner */
   let totBooks = list.length, totPayable = 0, totReceivable = 0, totCash = 0;
@@ -2829,24 +2720,36 @@ function AccountBooks({ toast, isOtherSession }) {
 
   /* Generate the per-book A4 ledger report — opens a print window with
      embedded attachment images so receipts print alongside each entry.
-     Reads the local bookStyle ('color' / 'bw') so the user-picked
-     Colorful / Colorless choice is honoured. */
-  const downloadBookReport = async (b) => {
-    const isBW = bookStyle === 'bw';
-    /* Open the window inside the click gesture so it isn't pop-up blocked,
+     openBookReport just opens the shared style/format picker;
+     generateBookReport does the actual build + dispatch once the user
+     picks Colorful/Colorless and PDF/Word/Excel. */
+  const openBookReport = (b) => setBookReportFor(b);
+  const generateBookReport = async (style, format) => {
+    const b = bookReportFor;
+    if (!b) return;
+    const isBW = style === 'bw';
+    setBookReportFor(null);
+    /* PDF: open the window inside the click gesture so it isn't pop-up blocked,
        then load the full ledger (list cards carry only aggregate totals). */
-    const w = window.open('', '_blank');
-    if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
+    const w = format === 'pdf' ? window.open('', '_blank') : null;
+    if (format === 'pdf' && !w) { toast('Please allow pop-ups to download the report', 'error'); return; }
     let full = b;
     if (!b.txns || b.txns.length === 0) {
       try { full = await accountsService.getAccBookDetail(b.bookID); }
-      catch (err) { toast(err?.message || 'Could not load book for report', 'error'); w.close(); return; }
+      catch (err) { toast(err?.message || 'Could not load book for report', 'error'); if (w) w.close(); return; }
     }
     const html = buildBookReportHTML({ book: full, school, isBW });
-    w.document.write(html);
-    w.document.close();
-    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    toast(`${full.name} ledger report ready (${isBW ? 'Colorless' : 'Colorful'}) — Save as PDF.`, 'success');
+    const filename = `${String(full.name || 'Account-Book').replace(/[^A-Za-z0-9]+/g, '-')}-ledger`;
+    if (format === 'word') {
+      downloadReportAsWord(html, `${filename}.doc`);
+    } else if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${filename}.xls`);
+    } else {
+      w.document.write(html);
+      w.document.close();
+      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    }
+    toast(`${full.name} ledger report ready (${isBW ? 'Colorless' : 'Colorful'}) — ${format.toUpperCase()}.`, 'success');
   };
 
   return (
@@ -2932,42 +2835,6 @@ function AccountBooks({ toast, isOtherSession }) {
                     <i className="fa-solid fa-chevron-down"></i>
                   </div>
                 </div>
-                <div
-                  className="fee-field"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexShrink: 0 }}
-                >
-                  <span className="fee-label" id="acc-book-style-lbl">Ledger Style</span>
-                  <div className="inv-rep-style-seg" role="radiogroup" aria-labelledby="acc-book-style-lbl">
-                    <button
-                      type="button"
-                      className={`inv-rep-style-btn${bookStyle === 'color' ? ' on' : ''}`}
-                      onClick={() => setBookStyle('color')}
-                      role="radio"
-                      aria-checked={bookStyle === 'color'}
-                      tabIndex={bookStyle === 'color' ? 0 : -1}
-                      onKeyDown={(e) => {
-                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setBookStyle('color'); }
-                        else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setBookStyle('bw'); }
-                      }}
-                    >
-                      <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-                    </button>
-                    <button
-                      type="button"
-                      className={`inv-rep-style-btn${bookStyle === 'bw' ? ' on' : ''}`}
-                      onClick={() => setBookStyle('bw')}
-                      role="radio"
-                      aria-checked={bookStyle === 'bw'}
-                      tabIndex={bookStyle === 'bw' ? 0 : -1}
-                      onKeyDown={(e) => {
-                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setBookStyle('color'); }
-                        else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setBookStyle('bw'); }
-                      }}
-                    >
-                      <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-                    </button>
-                  </div>
-                </div>
                 <Tooltip text={!canBkCreate ? 'You do not have permission to add account books' : 'Open a new running account with a party'}>
                   <button
                     className="fee-btn fee-btn-primary"
@@ -3037,8 +2904,8 @@ function AccountBooks({ toast, isOtherSession }) {
                             role="button"
                             tabIndex={0}
                             className="acc-book-card-dl"
-                            onClick={e => { e.stopPropagation(); downloadBookReport(b); }}
-                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); downloadBookReport(b); } }}
+                            onClick={e => { e.stopPropagation(); openBookReport(b); }}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); openBookReport(b); } }}
                           >
                             <i className="fa-solid fa-file-arrow-down"></i>
                           </span>
@@ -3069,7 +2936,7 @@ function AccountBooks({ toast, isOtherSession }) {
           onBack={() => { setCurrentBookId(null); setCurrentBook(null); }}
           onEditBook={() => setEditBook({ mode: 'edit', book: currentBook })}
           onDeleteBook={() => requestDeleteBook(currentBook)}
-          onDownloadReport={() => downloadBookReport(currentBook)}
+          onDownloadReport={() => openBookReport(currentBook)}
           onAddTxn={() => setEditTxn({ mode: 'add' })}
           onEditTxn={(t) => setEditTxn({ mode: 'edit', txn: t })}
           onDeleteTxn={requestDeleteTxn}
@@ -3083,6 +2950,16 @@ function AccountBooks({ toast, isOtherSession }) {
       <BookTxnModal  cfg={editTxn}  users={users} currentUser={currentUser} book={currentBook} onClose={() => setEditTxn(null)} onSave={handleSaveBookTxn} toast={toast} />
       <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
       <BooksHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+      {bookReportFor && (
+        <StandardReportPicker
+          open
+          title={`${bookReportFor.name} — Ledger Report`}
+          subtitle="Choose style and format, then generate."
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setBookReportFor(null)}
+          onGenerate={generateBookReport}
+        />
+      )}
     </>
   );
 }

@@ -12,6 +12,7 @@ import { qrSvg } from '../../utils/qr';
 import { code128BSvg } from '../../utils/barcode';
 import { usePermissions } from '../context/PermissionsContext';
 import { rankedMatches } from '../utils/studentSearch';
+import { buildStandardReportHtml, StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel, reportAcademicYear } from '../reports/reportKit';
 
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
@@ -6194,6 +6195,7 @@ function latestReceivingSlipRows(challan) {
 
 function FeeSlipModal({ cfg, onClose, toast }) {
   const [size, setSize] = useState('a4');
+  const [theme, setTheme] = useState('color'); // 'color' | 'bw'
   /* Show Discount on Challan (column choice) — installment slip par manager discount ke liye. */
   const { data: slipSettings } = useAsync(feeService.getFeeSettings, []);
 
@@ -6422,32 +6424,32 @@ function FeeSlipModal({ cfg, onClose, toast }) {
 <style>
   html,body,* { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
   body { margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif; background:#F1F3F8; padding:18px; }
-  .fee-slip-doc { position:relative; background:#fff; color:#111; border:1px solid #ddd; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
+  .fee-slip-doc { position:relative; background:#fff; color:#111; border:1px solid #93C5FD; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
   .fee-slip-doc.fee-slip-small { max-width:302px; padding:14px 12px; font-size:11px; }
   .fee-slip-paid-stamp { position:absolute; top:14px; right:16px; border:3px double #16A34A; color:#16A34A; font-size:15px; font-weight:900; letter-spacing:2px; padding:4px 10px; border-radius:6px; transform:rotate(-12deg); opacity:.85; text-transform:uppercase; }
   .fee-slip-doc.fee-slip-small .fee-slip-paid-stamp { font-size:11px; padding:3px 7px; top:8px; right:8px; letter-spacing:1px; border-width:2px; }
-  .fee-slip-brandhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:1.5px solid #111; padding-bottom:10px; margin-bottom:12px; }
+  .fee-slip-brandhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:2px solid #1E3A8A; background:linear-gradient(135deg,rgba(30,58,138,.06),transparent); padding:10px 8px; margin:-20px -20px 12px; border-radius:12px 12px 0 0; }
   .fee-slip-brand { display:flex; align-items:center; gap:10px; text-align:left; }
   .fee-slip-logo { width:38px; height:38px; border:1px solid #ddd; border-radius:10px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; flex-shrink:0; }
   .fee-slip-logo img { width:100%; height:100%; object-fit:contain; }
-  .fee-slip-school { font-size:15px; font-weight:800; }
-  .fee-slip-tag { font-size:10.5px; color:#555; letter-spacing:1px; text-transform:uppercase; margin-top:2px; }
+  .fee-slip-school { font-size:15px; font-weight:800; color:#1E3A8A; }
+  .fee-slip-tag { font-size:10.5px; color:#1E40AF; letter-spacing:1px; text-transform:uppercase; margin-top:2px; font-weight:600; }
   .fee-slip-addr { font-size:10.5px; color:#666; margin-top:2px; }
   .fee-slip-meta { font-size:10px; color:#666; text-align:right; line-height:1.55; white-space:nowrap; }
   .fee-slip-kv { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px; margin-bottom:12px; }
   .fee-slip-kv .k { color:#666; }
-  .fee-slip-kv .v { text-align:right; font-weight:700; }
+  .fee-slip-kv .v { text-align:right; font-weight:700; color:#111; }
   .fee-slip-tbl { width:100%; border-collapse:collapse; font-size:11.5px; margin-bottom:10px; }
-  .fee-slip-tbl th, .fee-slip-tbl td { border-bottom:1px solid #eee; padding:5px 4px; text-align:right; }
+  .fee-slip-tbl th, .fee-slip-tbl td { border-bottom:1px solid #DBEAFE; padding:5px 4px; text-align:right; }
   .fee-slip-tbl th:first-child, .fee-slip-tbl td:first-child { text-align:left; }
-  .fee-slip-tbl th { border-bottom:1.5px solid #333; color:#333; }
-  .fee-slip-headtot td { border-top:1.5px solid #333; border-bottom:none; font-weight:800; background:#f5f7fb; }
-  .fee-slip-net { display:flex; justify-content:space-between; align-items:center; background:#111; color:#fff; padding:8px 12px; border-radius:4px; font-weight:800; }
+  .fee-slip-tbl th { background:#1E3A8A; color:#fff; border-bottom:none; }
+  .fee-slip-headtot td { border-top:1.5px solid #1E3A8A; border-bottom:none; font-weight:800; background:#EFF6FF; color:#1E3A8A; }
+  .fee-slip-net { display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg,#1E3A8A,#1D4ED8); color:#fff; padding:8px 12px; border-radius:4px; font-weight:800; }
   .fee-slip-foot { margin-top:14px; text-align:center; font-size:9px; color:#999; border-top:1px solid #eee; padding-top:8px; }
 
   /* Small Receipt — 80mm par header side-by-side nahi samaata, is liye sab
      center me ek ke neeche ek (bilkul wahi jo preview me dikhta hai). */
-  .fee-slip-small .fee-slip-brandhead { flex-direction:column; align-items:center; text-align:center; gap:6px; padding-bottom:8px; margin-bottom:10px; }
+  .fee-slip-small .fee-slip-brandhead { flex-direction:column; align-items:center; text-align:center; gap:6px; padding:8px 6px; margin:-14px -12px 10px; border-radius:8px 8px 0 0; }
   .fee-slip-small .fee-slip-brand { flex-direction:column; align-items:center; text-align:center; gap:6px; }
   .fee-slip-small .fee-slip-logo { width:34px; height:34px; border-radius:8px; }
   .fee-slip-small .fee-slip-school { font-size:13.5px; line-height:1.25; }
@@ -6462,12 +6464,25 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   .fee-slip-small .fee-slip-net { padding:7px 10px; font-size:11.5px; }
   .fee-slip-small .fee-slip-foot { font-size:8px; margin-top:10px; padding-top:6px; }
 
+  /* Colorless — genuine low-ink redesign, same convention as the fee
+     challan (FEE_CHALLAN_CSS_SCOPED) and every report across the ERP. */
+  body.fee-bw .fee-slip-doc { border-color:#ddd; }
+  body.fee-bw .fee-slip-paid-stamp { border-color:#000; color:#000; }
+  body.fee-bw .fee-slip-brandhead { border-bottom:1.5px solid #111; background:none; margin:0 0 12px; padding:0 0 10px; border-radius:0; }
+  body.fee-bw .fee-slip-small .fee-slip-brandhead { margin:0 0 10px; padding:0 0 8px; }
+  body.fee-bw .fee-slip-school { color:#111; }
+  body.fee-bw .fee-slip-tag { color:#555; font-weight:500; }
+  body.fee-bw .fee-slip-tbl th, body.fee-bw .fee-slip-tbl td { border-bottom-color:#eee; }
+  body.fee-bw .fee-slip-tbl th { background:none; color:#333; border-bottom:1.5px solid #333; }
+  body.fee-bw .fee-slip-headtot td { border-top-color:#333; background:#f5f7fb; color:#111; }
+  body.fee-bw .fee-slip-net { background:#111; color:#fff; }
+
   /* Thermal roll par A4 page size receipt ko beech me chhota sa chhaap kar
      baaki safha zaya kar deta tha — 80mm par page bhi 80mm ka. */
   ${size === 'small'
-        ? '@page { size:80mm auto; margin:0; }\n  @media print { body { background:#fff; padding:0; } .fee-slip-doc.fee-slip-small { max-width:none; width:80mm; border:0; border-radius:0; margin:0; padding:4mm 3mm; } }'
+        ? '@page { size:80mm auto; margin:0; }\n  @media print { body { background:#fff; padding:0; } .fee-slip-doc.fee-slip-small { max-width:none; width:80mm; border:0; border-radius:0; margin:0; padding:4mm 3mm; } body:not(.fee-bw) .fee-slip-doc.fee-slip-small .fee-slip-brandhead { margin:-4mm -3mm 10px; border-radius:0; } }'
         : '@page { size:A4; margin:14mm; }\n  @media print { body { background:#fff; padding:0; } }'}
-</style></head><body>${slipHtml}</body></html>`);
+</style></head><body${theme === 'bw' ? ' class="fee-bw"' : ''}>${slipHtml}</body></html>`);
     w.document.close();
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     toast('Slip ready — use your browser\'s Save as PDF.', 'success');
@@ -6516,8 +6531,30 @@ function FeeSlipModal({ cfg, onClose, toast }) {
             </button>
           </div>
 
+          <div className="fee-dl-label" style={{ marginTop: 16 }}>Slip Theme</div>
+          <div className="fee-dl-fmt-grid">
+            <button type="button" className={`fee-dl-fmt${theme === 'color' ? ' sel' : ''}`} onClick={() => setTheme('color')}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }}>
+                <i className="fa-solid fa-palette"></i>
+              </div>
+              <div>
+                <div className="fee-dl-fmt-name">Colorful</div>
+                <div className="fee-dl-desc">Brand-colour receipt</div>
+              </div>
+            </button>
+            <button type="button" className={`fee-dl-fmt${theme === 'bw' ? ' sel' : ''}`} onClick={() => setTheme('bw')}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(55,65,81,.1)', color: '#374151' }}>
+                <i className="fa-solid fa-circle-half-stroke"></i>
+              </div>
+              <div>
+                <div className="fee-dl-fmt-name">Colorless</div>
+                <div className="fee-dl-desc">Low-ink printing</div>
+              </div>
+            </button>
+          </div>
+
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
-          <div className={`fee-slip-doc fee-slip-${size}`}>
+          <div className={`fee-slip-doc fee-slip-${size}${theme === 'bw' ? ' fee-bw' : ''}`}>
             <span className="fee-slip-paid-stamp">Paid</span>
             <div className="fee-slip-brandhead">
               <div className="fee-slip-brand">
@@ -12518,17 +12555,17 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null, pa
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${mo.monthName} Slip — ${s.name}`)}</title>
 <style>
   body{margin:0;font-family:'Plus Jakarta Sans','Segoe UI',sans-serif;background:#F1F3F8;padding:18px;color:#111;}
-  .fee-slip-doc{background:#fff;color:#111;border:1px solid #ddd;border-radius:10px;padding:20px;max-width:420px;margin:0 auto;}
-  .fee-slip-head{text-align:center;border-bottom:1.5px solid #111;padding-bottom:10px;margin-bottom:12px;}
-  .fee-slip-school{font-size:16px;font-weight:800;}
-  .fee-slip-tag{font-size:11px;color:#555;letter-spacing:1px;text-transform:uppercase;margin-top:3px;}
+  .fee-slip-doc{background:#fff;color:#111;border:1px solid #93C5FD;border-radius:10px;padding:20px;max-width:420px;margin:0 auto;}
+  .fee-slip-head{text-align:center;border-bottom:2px solid #1E3A8A;background:linear-gradient(135deg,rgba(30,58,138,.06),transparent);padding:10px 8px;margin:-20px -20px 12px;border-radius:10px 10px 0 0;}
+  .fee-slip-school{font-size:16px;font-weight:800;color:#1E3A8A;}
+  .fee-slip-tag{font-size:11px;color:#1E40AF;letter-spacing:1px;text-transform:uppercase;margin-top:3px;font-weight:600;}
   .fee-slip-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;margin-bottom:12px;}
   .fee-slip-kv .k{color:#666;}
   .fee-slip-kv .v{text-align:right;font-weight:700;}
   .fee-slip-tbl{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:10px;}
-  .fee-slip-tbl td{border-bottom:1px solid #eee;padding:5px 4px;text-align:right;}
+  .fee-slip-tbl td{border-bottom:1px solid #DBEAFE;padding:5px 4px;text-align:right;}
   .fee-slip-tbl td:first-child{text-align:left;}
-  .fee-slip-net{display:flex;justify-content:space-between;background:#111;color:#fff;padding:8px 12px;border-radius:4px;font-weight:800;}
+  .fee-slip-net{display:flex;justify-content:space-between;background:linear-gradient(135deg,#1E3A8A,#1D4ED8);color:#fff;padding:8px 12px;border-radius:4px;font-weight:800;}
   @page{size:A4;margin:14mm;}
 </style></head><body>
 <div class="fee-slip-doc">
@@ -12688,24 +12725,17 @@ function repPayModesFromReceipts(receiptsList) {
   return Object.keys(map).map(k => ({ name: k, amt: map[k], ic: icons[k] || 'fa-money-bill', col: cols[k] || '#1E3A8A' }));
 }
 
-/* React context that lets every report panel read the page-level
-   Colorful / Colorless style choice without prop-drilling. */
-const FeeReportStyleContext = React.createContext('color');
+/* React context that lets every report panel read the live branch
+   header (report-header API) without prop-drilling. Colorful / Colorless
+   is now chosen per report in the StandardReportPicker (RepActions). */
 const FeeReportBranchContext = React.createContext(null);
 
 function FeeReportsTab({ toast }) {
   const [current, setCurrent] = useState('defaulter');
-  const [style, setStyle] = useState('color'); // 'color' | 'bw'
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
-  const onStyleKey = (e, value) => {
-    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
-  };
-
   return (
-    <FeeReportStyleContext.Provider value={style}>
+    <>
       <FeeReportBranchContext.Provider value={branchHeader}>
         <div className="fee-rep-chips">
           {FEE_REPORT_CATS.map(r => (
@@ -12738,38 +12768,6 @@ function FeeReportsTab({ toast }) {
           ))}
         </div>
 
-        <div
-          className="fee-rep-style-row"
-          role="radiogroup"
-          aria-label="Report Style"
-        >
-          <span className="fee-rep-style-lbl">Report Style</span>
-          <div className="fee-rep-style-seg">
-            <button
-              type="button"
-              className={`fee-rep-style-btn${style === 'color' ? ' on' : ''}`}
-              onClick={() => setStyle('color')}
-              role="radio"
-              aria-checked={style === 'color'}
-              tabIndex={style === 'color' ? 0 : -1}
-              onKeyDown={(e) => onStyleKey(e, 'color')}
-            >
-              <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-            </button>
-            <button
-              type="button"
-              className={`fee-rep-style-btn${style === 'bw' ? ' on' : ''}`}
-              onClick={() => setStyle('bw')}
-              role="radio"
-              aria-checked={style === 'bw'}
-              tabIndex={style === 'bw' ? 0 : -1}
-              onKeyDown={(e) => onStyleKey(e, 'bw')}
-            >
-              <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-            </button>
-          </div>
-        </div>
-
         {current === 'defaulter' && <ReportPanelDefaulter toast={toast} />}
         {current === 'collection' && <ReportPanelCollection toast={toast} />}
         {current === 'headwise' && <ReportPanelHeadwise toast={toast} />}
@@ -12787,7 +12785,7 @@ function FeeReportsTab({ toast }) {
         {/* {current === 'partialonelink' && <ReportPanelPartialOneLink toast={toast} />} */}
         {current === 'preenrolled' && <ReportPanelPreEnrolled toast={toast} />}
       </FeeReportBranchContext.Provider>
-    </FeeReportStyleContext.Provider>
+    </>
   );
 }
 /* Sample-data hook (getReceipts mock, May fixed) — ab koi report is par nahi; rakha hua. */
@@ -12861,23 +12859,38 @@ function repKpiStrip(items) {
 }
 const fmtRs = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 
-/* ─── Common Preview / PDF button group ─── */
-function RepActions({ onPreview, onPdf }) {
+/* ─── Common report button — opens the shared StandardReportPicker
+   (Colorful / Colorless style + PDF / Word / Excel format). Users
+   without the Fee › Reports › Download permission keep the read-only
+   Preview (Colorful, no print/download) they had before. ─── */
+function RepActions({ title, onGenerate, previewFallback = true }) {
   const { can } = usePermissions();
   const canRepDownload = can('Fee', 'Reports', 'Download');
+  const [open, setOpen] = useState(false);
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-      <Tooltip text="Open A4 preview of this report">
-        <button className="fee-btn fee-btn-primary" onClick={onPreview}>
-          <i className="fa-solid fa-eye"></i> Preview
-        </button>
-      </Tooltip>
-      {canRepDownload && (
-        <Tooltip text="Generate the A4 PDF (Save as PDF from the print window)">
-          <button className="fee-btn fee-btn-ghost" onClick={onPdf}>
-            <i className="fa-solid fa-file-pdf"></i> PDF
+      {canRepDownload ? (
+        <Tooltip text={`Generate ${title}`}>
+          <button className="fee-btn fee-btn-primary" onClick={() => setOpen(true)}>
+            <i className="fa-solid fa-file-lines"></i> Download Report
           </button>
         </Tooltip>
+      ) : previewFallback && (
+        <Tooltip text="Open A4 preview of this report">
+          <button className="fee-btn fee-btn-primary" onClick={() => onGenerate('color', 'preview')}>
+            <i className="fa-solid fa-eye"></i> Preview
+          </button>
+        </Tooltip>
+      )}
+      {open && (
+        <StandardReportPicker
+          open
+          title={title}
+          subtitle="Choose style and format, then generate."
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setOpen(false)}
+          onGenerate={(style, format) => { onGenerate(style, format); setOpen(false); }}
+        />
       )}
     </div>
   );
@@ -13360,9 +13373,10 @@ function ReportPanelVehicle({ toast }) {
     return { v, count: list.length, fee: list.reduce((a, s) => a + (+s.transport || 0), 0) };
   }), [vehicles, withVeh]);
 
-  const downloadReport = (mode) => {
-    const html = buildVehicleReportHTML({ vehicles, students, school });
-    openPrintReport(html, 'Vehicle-Wise Transport', toast, mode);
+  const reportTitle = 'Vehicle-Wise Transport';
+  const downloadReport = (style, format) => {
+    const html = buildVehicleReportHTML({ vehicles, students, school, isBW: style === 'bw' });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -13392,7 +13406,7 @@ function ReportPanelVehicle({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -13448,7 +13462,6 @@ function ReportPanelVehicle({ toast }) {
 }
 
 function ReportPanelDefaulter({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [seg, setSeg] = useState('all');
   const [openKey, setOpenKey] = useState(null);
@@ -13467,9 +13480,10 @@ function ReportPanelDefaulter({ toast }) {
 
   const { classes, studentsMap, allStudents, totals, loading, error } = useLedgerReportData(periods);
 
-  const downloadReport = (mode) => {
-    const html = buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope: seg, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`, toast, mode);
+  const reportTitle = `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`;
+  const downloadReport = (style, format) => {
+    const html = buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope: seg, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -13529,7 +13543,7 @@ function ReportPanelDefaulter({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -13614,7 +13628,6 @@ function ReportPanelDefaulter({ toast }) {
 
 /* ════════════ 2. GENERAL FEE COLLECTIONS ════════════ */
 function ReportPanelCollection({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [seg, setSeg] = useState('daily');
   const [openKey, setOpenKey] = useState(null);
@@ -13711,13 +13724,14 @@ function ReportPanelCollection({ toast }) {
   const rangeLabel = seg === 'daily' ? range.start : seg === 'month' ? `${month} ${year}` : `${range.start} – ${range.end}`;
   const voucherOf = (x) => `CH-${x.rec.id}${seg === 'paid' ? '' : `/${x.last.no}`}`;
 
-  const downloadReport = (mode) => {
+  const reportTitle = `Collection Report — ${rangeLabel}`;
+  const downloadReport = (style, format) => {
     if (loading) { toast('Ledger is still loading — try again in a moment', 'warning'); return; }
     const html = buildRepCollectionHTML({
       groups: groups.map(g => ({ ...g, list: g.list.map(x => ({ ...x, voucher: voucherOf(x), byName: byName(x) })) })),
-      seg, rangeLabel, kpi, isBW: repStyle === 'bw', school,
+      seg, rangeLabel, kpi, isBW: style === 'bw', school,
     });
-    openPrintReport(html, `Collection Report — ${rangeLabel}`, toast, mode);
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   const dateCell = (x) => (
@@ -13790,7 +13804,7 @@ function ReportPanelCollection({ toast }) {
                 </div>
               </>
             )}
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -13901,7 +13915,6 @@ function ReportPanelCollection({ toast }) {
 
 /* ════════════ 3. HEAD-WISE COLLECTION ════════════ */
 function ReportPanelHeadwise({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [seg, setSeg] = useState('student');
   const today = new Date().toISOString().slice(0, 10);
@@ -13957,14 +13970,17 @@ function ReportPanelHeadwise({ toast }) {
   };
 
   const [preview, setPreview] = useState(null);
-  const downloadReport = (mode) => {
+  const [lastStyle, setLastStyle] = useState('color');
+  const reportTitle = `Head-Wise Collection — ${head}`;
+  const openPreview = () => {
     if (!result) { toast('Fetch the data first', 'warning'); return; }
-    if (mode === 'preview') {
-      setPreview({ ...result, head });
-      return;
-    }
-    const html = buildRepHeadwiseHTML({ ...result, head, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `Head-Wise Collection — ${head}`, toast, 'pdf');
+    setPreview({ ...result, head });
+  };
+  const downloadReport = (style, format) => {
+    if (!result) { toast('Fetch the data first', 'warning'); return; }
+    setLastStyle(style);
+    const html = buildRepHeadwiseHTML({ ...result, head, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -14047,7 +14063,12 @@ function ReportPanelHeadwise({ toast }) {
                 <i className="fa-solid fa-magnifying-glass"></i> Fetch
               </button>
             </Tooltip>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <Tooltip text="Open an in-app data preview before downloading">
+              <button className="fee-btn fee-btn-ghost" onClick={openPreview}>
+                <i className="fa-solid fa-eye"></i> Preview
+              </button>
+            </Tooltip>
+            <RepActions title={reportTitle} onGenerate={downloadReport} previewFallback={false} />
           </div>
         </div>
       </div>
@@ -14141,7 +14162,7 @@ function ReportPanelHeadwise({ toast }) {
         cfg={preview}
         onClose={() => setPreview(null)}
         onDownload={() => {
-          const html = buildRepHeadwiseHTML({ ...preview, isBW: repStyle === 'bw', school });
+          const html = buildRepHeadwiseHTML({ ...preview, isBW: lastStyle === 'bw', school });
           setPreview(null);
           openPrintReport(html, `Head-Wise Collection — ${preview.head}`, toast, 'pdf');
         }}
@@ -14317,7 +14338,6 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
 
 /* ════════════ 4. AGING / OUTSTANDING ════════════ */
 function ReportPanelAging({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   /* REAL ledger (sample data nahi): As-of date tak ka baqaya, challan ki due date se kitne din
      purana — ledgerAgingAsOf. As-of se 12 mahine pehle tak ke challans load. */
@@ -14339,9 +14359,10 @@ function ReportPanelAging({ toast }) {
     .filter(x => x.a.total > 0), [allStudents, asOf, clsFilter]);
   const tot = list.reduce((o, x) => ({ cur: o.cur + x.a.cur, d30: o.d30 + x.a.d30, d60: o.d60 + x.a.d60, d90: o.d90 + x.a.d90 }), { cur: 0, d30: 0, d60: 0, d90: 0 });
 
-  const downloadReport = (mode) => {
-    const html = buildRepAgingHTML({ list, tot, asOf, isBW: repStyle === 'bw', school });
-    openPrintReport(html, 'Aging / Outstanding Analysis', toast, mode);
+  const reportTitle = 'Aging / Outstanding Analysis';
+  const downloadReport = (style, format) => {
+    const html = buildRepAgingHTML({ list, tot, asOf, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -14377,7 +14398,7 @@ function ReportPanelAging({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -14470,7 +14491,6 @@ function ReportPanelAging({ toast }) {
 
 /* ════════════ 5. COLLECTION vs EXPECTED ════════════ */
 function ReportPanelSummary({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   /* REAL ledger (sample data nahi) — chune hue mahine ke liye:
        Expected    = us mahine BANE challans ka bill (discount ke baad)
@@ -14535,14 +14555,16 @@ function ReportPanelSummary({ toast }) {
   const sectionsData = data.sectionsData;
   const maxE = Math.max(...sectionsData.map(s => s.e), 1);
 
-  const downloadReport = (mode) => {
-    const html = buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW: repStyle === 'bw', school });
-    openPrintReport(html, 'Collection vs Expected', toast, mode);
+  const reportTitle = 'Collection vs Expected';
+  const downloadReport = (style, format) => {
+    const html = buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
-  const downloadByMode = (mode, fmt) => {
+  const [modePicker, setModePicker] = useState(null); // { mode: string } | null
+  const downloadByMode = (mode, style, format) => {
     const rows = data.receipts.filter(x => (x.method || 'Cash') === mode);
-    const html = buildRepPayModeHTML({ method: mode, rows, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `${mode} Collections`, toast, fmt);
+    const html = buildRepPayModeHTML({ method: mode, rows, isBW: style === 'bw', school });
+    openPrintReport(html, `${mode} Collections`, toast, format);
   };
 
   return (
@@ -14577,7 +14599,7 @@ function ReportPanelSummary({ toast }) {
               <span className="fee-label">Year</span>
               <input className="fee-input" type="number" value={selYear} onChange={e => setSelYear(e.target.value)} style={{ width: 110 }} />
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -14643,13 +14665,8 @@ function ReportPanelSummary({ toast }) {
                     <div className="mode-ic" style={{ background: m.col }}><i className={`fa-solid ${m.ic}`}></i></div>
                     <div className="mode-name">{m.name}</div>
                     <div className="mode-actions">
-                      <Tooltip text={`Preview ${m.name} report`}>
-                        <button className="mode-act-btn" onClick={() => downloadByMode(m.name, 'preview')}>
-                          <i className="fa-solid fa-eye"></i>
-                        </button>
-                      </Tooltip>
                       <Tooltip text={`Download ${m.name} report`}>
-                        <button className="mode-act-btn" onClick={() => downloadByMode(m.name, 'pdf')}>
+                        <button className="mode-act-btn" onClick={() => setModePicker({ mode: m.name })}>
                           <i className="fa-solid fa-download"></i>
                         </button>
                       </Tooltip>
@@ -14664,6 +14681,17 @@ function ReportPanelSummary({ toast }) {
           </div>
         </div>
       </div>
+
+      {modePicker && (
+        <StandardReportPicker
+          open
+          title={`${modePicker.mode} Collections`}
+          subtitle="Choose style and format, then generate."
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setModePicker(null)}
+          onGenerate={(style, format) => { downloadByMode(modePicker.mode, style, format); setModePicker(null); }}
+        />
+      )}
     </>
   );
 }
@@ -14672,7 +14700,7 @@ function ReportPanelSummary({ toast }) {
    PORTED FEE REPORTS (read-only) — wired to the ERP's real fee data
    (BranchLedger challans via useLedgerReportData/ledgerModel, the
    transport roster via useReportData, and preEnrollmentService).
-   Each report reuses the shared repStyle / FeeReportBranchContext /
+   Each report reuses the shared FeeReportBranchContext /
    repWrap / repKpiStrip / RepActions machinery so it matches the six
    original reports. Where the ERP genuinely has no data source yet
    (advance ledger history, partial-challan store, pre-enroll payment
@@ -14837,7 +14865,6 @@ function buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, s
 
 /* ════════════ PENDING DUES REPORT ════════════ */
 function ReportPanelPendingDues({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -14870,9 +14897,10 @@ function ReportPanelPendingDues({ toast }) {
   );
   const asOfLabel = `${month} ${year}`;
 
-  const downloadReport = (mode) => {
-    const html = buildRepPendingDuesHTML({ groups, summary, asOfDate: asOfLabel, headMode, selectedHeads, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `Pending Dues — ${asOfLabel}`, toast, mode);
+  const reportTitle = `Pending Dues — ${asOfLabel}`;
+  const downloadReport = (style, format) => {
+    const html = buildRepPendingDuesHTML({ groups, summary, asOfDate: asOfLabel, headMode, selectedHeads, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -14921,7 +14949,7 @@ function ReportPanelPendingDues({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
 
           {headMode === 'selected' && (
@@ -14996,7 +15024,6 @@ function ReportPanelPendingDues({ toast }) {
    paymentMethod resolves to OneLink / 1Link / Bank and that has a
    received amount, within the selected period. */
 function ReportPanelOneLink({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [seg, setSeg] = useState('month');
   const [openKey, setOpenKey] = useState(null);
@@ -15052,9 +15079,10 @@ function ReportPanelOneLink({ toast }) {
   }, [allTx]);
   const periodLabel = seg === 'daily' ? date : seg === 'range' ? `${from} – ${to}` : `${month} ${year}`;
 
-  const downloadReport = (mode) => {
-    const html = buildRepOneLinkHTML({ classes, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `OneLink Payment Report — ${periodLabel}`, toast, mode);
+  const reportTitle = `OneLink Payment Report — ${periodLabel}`;
+  const downloadReport = (style, format) => {
+    const html = buildRepOneLinkHTML({ classes, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15128,7 +15156,7 @@ function ReportPanelOneLink({ toast }) {
                 <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ minWidth: 200 }} />
               </div>
             )}
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -15194,7 +15222,6 @@ function ReportPanelOneLink({ toast }) {
 /* ════════════ FREE STUDENTS REPORT ════════════
    Students whose ledger challan is fully covered by discount (net 0). */
 function ReportPanelFreeStudents({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -15224,9 +15251,10 @@ function ReportPanelFreeStudents({ toast }) {
   const freePct = total ? (freeCount / total * 100) : 0;
   const normalCount = total - freeCount;
 
-  const downloadReport = (mode) => {
-    const html = buildRepFreeStudentsHTML({ classes, freeRows, total, freeCount, freePct, isBW: repStyle === 'bw', school });
-    openPrintReport(html, 'Free Students Report', toast, mode);
+  const reportTitle = 'Free Students Report';
+  const downloadReport = (style, format) => {
+    const html = buildRepFreeStudentsHTML({ classes, freeRows, total, freeCount, freePct, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15266,7 +15294,7 @@ function ReportPanelFreeStudents({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -15337,7 +15365,6 @@ function ReportPanelFreeStudents({ toast }) {
 /* ════════════ DISCOUNT GIVEN REPORT ════════════
    Per-head discount from the selected month's ledger challans. */
 function ReportPanelDiscountGiven({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -15368,9 +15395,10 @@ function ReportPanelDiscountGiven({ toast }) {
   const discPct = totalStudents ? (discCount / totalStudents * 100) : 0;
   const totalDiscount = rows.reduce((a, r) => a + r.disc, 0);
 
-  const downloadReport = (mode) => {
-    const html = buildRepDiscountHTML({ classes, rows, totalStudents, discCount, discPct, totalDiscount, isBW: repStyle === 'bw', school });
-    openPrintReport(html, 'Discount Given Report', toast, mode);
+  const reportTitle = 'Discount Given Report';
+  const downloadReport = (style, format) => {
+    const html = buildRepDiscountHTML({ classes, rows, totalStudents, discCount, discPct, totalDiscount, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15410,7 +15438,7 @@ function ReportPanelDiscountGiven({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -15500,7 +15528,6 @@ function ReportPanelAdvanceFee({ toast }) {
   }, []);
   const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [openKey, setOpenKey] = useState(null);
 
@@ -15526,9 +15553,10 @@ function ReportPanelAdvanceFee({ toast }) {
   const totalAdvance = rows.reduce((a, r) => a + r.advance, 0);
   const totalMonths = rows.reduce((a, r) => a + r.monthsCovered, 0);
 
-  const downloadReport = (mode) => {
-    const html = buildRepAdvanceHTML({ classes, rows, totalStudents, advCount, totalAdvance, totalMonths, isBW: repStyle === 'bw', school });
-    openPrintReport(html, 'Advance Fee Payment Report', toast, mode);
+  const reportTitle = 'Advance Fee Payment Report';
+  const downloadReport = (style, format) => {
+    const html = buildRepAdvanceHTML({ classes, rows, totalStudents, advCount, totalAdvance, totalMonths, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15550,7 +15578,7 @@ function ReportPanelAdvanceFee({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -15626,7 +15654,6 @@ function ReportPanelAdvanceFee({ toast }) {
    this renders its full UI with an explicit empty state rather than
    fabricated movement. */
 function ReportPanelAdvanceAdjustment({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [from, setFrom] = useState(localTodayISO().slice(0, 8) + '01');
   const [to, setTo] = useState(localTodayISO());
@@ -15699,10 +15726,11 @@ function ReportPanelAdvanceAdjustment({ toast }) {
     totalStudents: rows.length,
   }), [rows]);
 
-  const downloadReport = (mode) => {
+  const reportTitle = `Advance Fee Adjustment — ${from} to ${to}`;
+  const downloadReport = (style, format) => {
     if (loading) { toast('Ledger is still loading — try again in a moment', 'warning'); return; }
-    const html = buildRepAdvanceAdjustmentHTML({ rows, summary, from, to, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `Advance Fee Adjustment — ${from} to ${to}`, toast, mode);
+    const html = buildRepAdvanceAdjustmentHTML({ rows, summary, from, to, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15752,7 +15780,7 @@ function ReportPanelAdvanceAdjustment({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -15817,14 +15845,14 @@ function ReportPanelAdvanceAdjustment({ toast }) {
    which the ERP does not implement. Renders the UI with an explicit
    empty state. */
 function ReportPanelPartialOneLink({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const rows = [];
   const totals = { original: 0, generated: 0, received: 0, remaining: 0 };
 
-  const downloadReport = (mode) => {
-    const html = buildRepPartialOneLinkHTML({ rows, totals, isBW: repStyle === 'bw', school });
-    openPrintReport(html, 'Partial OneLink Challan Report', toast, mode);
+  const reportTitle = 'Partial OneLink Challan Report';
+  const downloadReport = (style, format) => {
+    const html = buildRepPartialOneLinkHTML({ rows, totals, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15849,7 +15877,7 @@ function ReportPanelPartialOneLink({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -15869,7 +15897,6 @@ function ReportPanelPartialOneLink({ toast }) {
    yet API-wired (payments arrive empty), so the report renders empty
    until that ledger is available — never merged with regular fee data. */
 function ReportPanelPreEnrolled({ toast }) {
-  const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const { data: preEnrollStudents = [], loading, error } = useAsync(preEnrollmentService.getPreEnrollStudents, []);
   const today = localTodayISO();
@@ -15892,9 +15919,10 @@ function ReportPanelPreEnrolled({ toast }) {
   const studentsCount = new Set(rows.map(r => r.preId)).size;
   const periodLabel = `${from} – ${to}`;
 
-  const downloadReport = (mode) => {
-    const html = buildRepPreEnrolledHTML({ rows, total, studentsCount, from, to, isBW: repStyle === 'bw', school });
-    openPrintReport(html, `Received Amount from Pre-Enrolled Students — ${periodLabel}`, toast, mode);
+  const reportTitle = `Received Amount from Pre-Enrolled Students — ${periodLabel}`;
+  const downloadReport = (style, format) => {
+    const html = buildRepPreEnrolledHTML({ rows, total, studentsCount, from, to, isBW: style === 'bw', school });
+    openPrintReport(html, reportTitle, toast, format);
   };
 
   return (
@@ -15924,7 +15952,7 @@ function ReportPanelPreEnrolled({ toast }) {
               <span className="fee-label">Date Till</span>
               <input className="fee-input" type="date" value={to} min={from} max={today} onChange={e => setTo(e.target.value)} style={{ minWidth: 160 }} />
             </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+            <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
       </div>
@@ -16184,6 +16212,16 @@ function buildRepPreEnrolledHTML({ rows, total, studentsCount, from, to, isBW = 
 
 /* ─── Print window helper ─── */
 function openPrintReport(html, title, toast, mode = 'preview') {
+  if (mode === 'excel') {
+    downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`);
+    toast(`${title} — downloaded as Excel.`, 'success');
+    return;
+  }
+  if (mode === 'word') {
+    downloadReportAsWord(html, `${reportFileName(title)}.doc`);
+    toast(`${title} — downloaded as Word.`, 'success');
+    return;
+  }
   const w = window.open('', '_blank');
   if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
   w.document.write(html);
@@ -16194,53 +16232,35 @@ function openPrintReport(html, title, toast, mode = 'preview') {
   toast(`${title} — ${mode === 'pdf' ? 'sent to print' : 'preview opened'}.`, 'success');
 }
 
-/* ═══════════ A4 PDF builders for every report ═══════════ */
-const REP_A4_CSS = `
+/* ═══════════ A4 PDF builders for every report ═══════════
+   Every buildRep*HTML function below funnels through repWrap, which
+   delegates its header/logo/footer chrome to the shared
+   src/erp/reports/reportKit.js (live branch name / logo / session) —
+   the same ERP-wide standard every other module uses — instead of its
+   own bespoke .rep-head/.rep-logo/.rep-foot markup. REP_A4_CSS keeps
+   only report BODY styling (.rep-filters/.rep-secttl/.rep-tbl/.kpi-row
+   etc.), with Colorful and Colorless (low-ink) palettes. */
+const REP_A4_CSS = (isColor) => `
 /* Colorful report ka background/color PDF/print me bhi aaye. */
 html,body,*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{background:#fff}
-body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4}
-.rep-page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff}
-.rep-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:10px;margin-bottom:10px}
-.rep-logo{width:42px;height:42px;border:2px solid #1E3A8A;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#1E3A8A;font-weight:800}
-.rep-logo img{width:100%;height:100%;object-fit:contain;border-radius:50%;background:#fff}
-.rep-name{font-size:18px;font-weight:800;color:#1E3A8A;line-height:1.1}
-.rep-title{font-size:12px;font-weight:600;color:#444;margin-top:3px}
-.rep-addr,.rep-session{font-size:9.5px;color:#64748B;margin-top:2px;max-width:420px}
-.rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F1F5FB;padding:9px 13px;border-radius:6px}
-.rep-secttl{font-size:12px;font-weight:800;color:#1E3A8A;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #cdd7ea}
+.rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:${isColor ? '#F1F5FB' : '#fff'};border:${isColor ? 'none' : '1px solid #D1D5DB'};padding:9px 13px;border-radius:6px}
+.rep-secttl{font-size:12px;font-weight:800;color:${isColor ? '#1E3A8A' : '#0F172A'};margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid ${isColor ? '#cdd7ea' : '#9CA3AF'}}
 .rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px}
-.rep-tbl th{background:#1E3A8A;color:#fff;padding:6px 7px;text-align:left;font-size:10px;font-weight:700}
+.rep-tbl th{background:${isColor ? '#1E3A8A' : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:6px 7px;text-align:left;font-size:10px;font-weight:700;${isColor ? '' : 'border-bottom:1.5px solid #0F172A'}}
 .rep-tbl th.r,.rep-tbl td.r{text-align:right}
 .rep-tbl th.c,.rep-tbl td.c{text-align:center}
 .rep-tbl td{padding:5px 7px;border-bottom:1px solid #e5e9f2;vertical-align:top}
 .rep-tbl small{color:#777;font-size:9px}
-.rep-tot td{background:#EAF0FA;font-weight:800;border-top:2px solid #1E3A8A}
-.rep-grandtot td{background:#1E3A8A;color:#fff;font-weight:800}
-.neg{color:#DC2626;font-weight:700}
-.pos{color:#16A34A;font-weight:700}
-.amb{color:#D97706;font-weight:700}
-.rep-foot{margin-top:16px;text-align:center;font-size:9px;color:#999;border-top:1px solid #e5e9f2;padding-top:8px}
+.rep-tot td{background:${isColor ? '#EAF0FA' : '#FFFFFF'};font-weight:800;border-top:2px solid ${isColor ? '#1E3A8A' : '#0F172A'}}
+.rep-grandtot td{background:${isColor ? '#1E3A8A' : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};font-weight:800;${isColor ? '' : 'border-top:1.5px solid #0F172A'}}
+.neg{color:${isColor ? '#DC2626' : '#0F172A'};font-weight:700}
+.pos{color:${isColor ? '#16A34A' : '#0F172A'};font-weight:700}
+.amb{color:${isColor ? '#D97706' : '#0F172A'};font-weight:700}
 .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;}
-.kpi{border:1px solid #E5E7EB;border-radius:6px;padding:9px 11px;background:#F8FAFF;}
+.kpi{border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:6px;padding:9px 11px;background:${isColor ? '#F8FAFF' : '#FFFFFF'};}
 .kpi .l{font-size:9.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px;}
 .kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px;}
-@page{size:A4 portrait;margin:14mm}
-@media print{.rep-page{width:auto;min-height:0;margin:0;padding:0}body{font-size:10px}}
-/* Colorless Report — flattens gradient borders, colored table heads
-   and KPI fills to dark-on-white with thin gray borders. Activates
-   only when .fee-rep-bw is present on the body. */
-.fee-rep-bw .rep-head{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
-.fee-rep-bw .rep-logo{border-color:#0F172A !important;color:#0F172A !important;}
-.fee-rep-bw .rep-name{color:#0F172A !important;}
-.fee-rep-bw .rep-filters{background:#FFFFFF !important;border:1px solid #D1D5DB;color:#0F172A !important;}
-.fee-rep-bw .rep-secttl{color:#0F172A !important;border-bottom-color:#9CA3AF !important;}
-.fee-rep-bw .rep-tbl th{background:#FFFFFF !important;color:#0F172A !important;border-bottom:1.5px solid #0F172A !important;}
-.fee-rep-bw .rep-tot td{background:#FFFFFF !important;color:#0F172A !important;border-top-color:#0F172A !important;}
-.fee-rep-bw .rep-grandtot td{background:#FFFFFF !important;color:#0F172A !important;border-top:1.5px solid #0F172A !important;}
-.fee-rep-bw .kpi{background:#FFFFFF !important;border-color:#D1D5DB !important;}
-.fee-rep-bw .neg, .fee-rep-bw .pos, .fee-rep-bw .amb{color:#0F172A !important;}
+.rep-genby{margin-top:14px;text-align:right;font-size:9.5px;color:#64748B}
 `;
 
 /* Filesystem-safe report file name — strips punctuation, collapses spaces. */
@@ -16461,24 +16481,19 @@ function feeReportLogoHtml(school) {
     : escHtml(school.monogram);
 }
 
+/* Live school name for the kit header — the report-header API's branch
+   name when loaded; otherwise undefined so reportKit falls back to the
+   live current branch (never the hard-coded FEE_SCHOOL constant). */
+const feeKitSchoolName = (school) => (school && (school.branchName || school.name)) || undefined;
+
 function repWrap(title, filters, body, isBW = false, school = null) {
   const meta = feeReportSchool(school);
-  const today = feeReportDate(meta);
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(meta.name)} — ${escHtml(title)}</title>
-<style>${REP_A4_CSS}</style></head><body${isBW ? ' class="fee-rep-bw"' : ''}><div class="rep-page">
-  <div class="rep-head">
-    <div class="rep-logo">${feeReportLogoHtml(meta)}</div>
-    <div>
-      <div class="rep-name">${escHtml(meta.name)}</div>
-      <div class="rep-title">${escHtml(title)}${isBW ? ' · <b>Colorless Print</b>' : ''}</div>
-      ${meta.address ? `<div class="rep-addr">${escHtml(meta.address)}</div>` : ''}
-      ${meta.session ? `<div class="rep-session">Academic Session: ${escHtml(meta.session)}</div>` : ''}
-    </div>
-  </div>
-  <div class="rep-filters">${filters}</div>
-  ${body}
-  <div class="rep-foot">Computer generated report — ${escHtml(meta.name)} · ${escHtml(title)} · ${escHtml(today)} · By: ${escHtml(meta.generatedBy)}</div>
-</div></body></html>`;
+  const isColor = !isBW;
+  const bodyHtml = `<style>${REP_A4_CSS(isColor)}</style>
+    <div class="rep-filters">${filters}</div>
+    ${body}
+    <div class="rep-genby">Computer generated report · By: ${escHtml(meta.generatedBy)}</div>`;
+  return buildStandardReportHtml({ title: escHtml(title), format: 'pdf', isColor, bodyHtml, schoolName: feeKitSchoolName(school) && escHtml(feeKitSchoolName(school)) });
 }
 
 function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope = 'all', isBW = false, school = null }) {
@@ -16660,13 +16675,18 @@ function buildRepPayModeHTML({ method, rows, isBW = false, school = null }) {
     </table>`, isBW, school);
 }
 
+/* Kit subtitle for the standalone Fee Heads / Transport Fee reports —
+   keeps the live academic session (previously in the bespoke header)
+   alongside the report's own count line. */
+const feeKitSubtitle = (meta, extra) => [
+  meta.session ? `Academic Session: ${escHtml(meta.session)}` : reportAcademicYear(),
+  extra,
+].filter(Boolean).join(' · ');
+
 function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null }) {
   const meta = feeReportSchool(school);
   const charged = rows.filter(r => +r.transport > 0);
   const subtotal = rows.reduce((s, r) => s + (+r.transport || 0), 0);
-  const today = meta.generatedDate
-    ? feeReportDate(meta)
-    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const trs = rows.map((s, i) => `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${i + 1}</td>
@@ -16675,38 +16695,15 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null 
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${escHtml(s.father)}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums">${+s.transport > 0 ? `Rs. ${(+s.transport).toLocaleString('en-PK')}` : '<span style="color:#94A3B8">—</span>'}</td>
     </tr>`).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Transport Fee — ${cls} (${sec})`)}</title>
-<style>
-  body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
-  .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
-  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:18px; }
-  .brand { display:flex; align-items:center; gap:12px; }
-  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
-  .logo img { width:100%; height:100%; object-fit:contain; }
-  .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
-  .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
-  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
-  .meta   { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
-  table { width:100%; border-collapse:collapse; margin-top:8px; }
-  thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
-  thead th.right { text-align:right; }
-  tfoot td { padding:10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
-  tfoot td.right { text-align:right; }
-  @media print { @page { size:A4; margin:14mm; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-</style></head><body>
-<div class="page">
-  <div class="header">
-    <div class="brand">
-      <div class="logo">${feeReportLogoHtml(meta)}</div>
-      <div>
-        <div class="school">${escHtml(meta.name)}</div>
-        <div class="title">Transport Fee — ${escHtml(cls)} (${escHtml(sec)})</div>
-        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
-        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
-      </div>
-    </div>
-    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${charged.length} of ${rows.length} student${rows.length === 1 ? '' : 's'} using transport</div>
-  </div>
+
+  const bodyHtml = `<style>
+    table { width:100%; border-collapse:collapse; margin-top:8px; }
+    thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+    thead th.right { text-align:right; }
+    tfoot td { padding:10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
+    tfoot td.right { text-align:right; }
+    .rep-genby { margin-top:14px; text-align:right; font-size:11px; color:#64748B; }
+  </style>
   <table>
     <thead>
       <tr>
@@ -16720,8 +16717,16 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null 
     <tbody>${trs || `<tr><td colspan="5" style="text-align:center;padding:18px;color:#64748B">No students enrolled.</td></tr>`}</tbody>
     ${rows.length > 0 ? `<tfoot><tr><td colspan="4">Monthly transport collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
   </table>
-</div>
-</body></html>`;
+  <div class="rep-genby">By: ${escHtml(meta.generatedBy)}</div>`;
+
+  return buildStandardReportHtml({
+    title: escHtml(`Transport Fee — ${cls} (${sec})`),
+    format: 'pdf',
+    isColor: !isBW,
+    bodyHtml,
+    subtitleLine: feeKitSubtitle(meta, `${charged.length} of ${rows.length} student${rows.length === 1 ? '' : 's'} using transport`),
+    schoolName: feeKitSchoolName(school) && escHtml(feeKitSchoolName(school)),
+  });
 }
 
 /* Vehicle-wise transport report — shared repWrap header/footer (report-header API). */
@@ -16812,69 +16817,79 @@ html,body,.fee-challan-doc,.fee-challan-doc *{-webkit-print-color-adjust:exact !
 .fee-challan-doc{font-family:'DM Sans','Plus Jakarta Sans','Segoe UI',sans-serif;color:#111;background:transparent;}
 .fee-challan-doc .challan-page{background:#fff;padding:8mm;margin:0 auto 14px;max-width:1100px;box-shadow:0 4px 18px rgba(15,23,42,.08);border:1px solid #E5E7EB;}
 .fee-challan-doc .challan-page + .challan-page{margin-top:14px;}
-.fee-challan-doc .challan-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid #000;}
-.fee-challan-doc .slip{background:#fff;border-right:1px dashed #aaa;display:flex;flex-direction:column;}
+.fee-challan-doc .challan-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid #1E3A8A;}
+.fee-challan-doc .slip{background:#fff;border-right:1px dashed #93C5FD;display:flex;flex-direction:column;}
 .fee-challan-doc .slip:last-child{border-right:none;}
-.fee-challan-doc .slip-header{border-bottom:1px solid #bbb;padding:8px 10px;display:flex;align-items:center;gap:8px;}
-.fee-challan-doc .logo-circle{width:28px;height:28px;border:1.5px solid #333;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.fee-challan-doc .slip-header{border-bottom:2px solid #1E3A8A;background:linear-gradient(135deg,rgba(30,58,138,.07),transparent);padding:8px 10px;display:flex;align-items:center;gap:8px;}
+.fee-challan-doc .logo-circle{width:28px;height:28px;border:1.5px solid #1E3A8A;background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .fee-challan-doc .logo-circle svg{width:14px;height:14px;}
-.fee-challan-doc .school-name{font-size:12px;font-weight:600;color:#111;line-height:1.2;}
-.fee-challan-doc .copy-tag{font-size:8px;font-weight:500;color:#555;letter-spacing:0.8px;text-transform:uppercase;border:0.5px solid #aaa;padding:1px 5px;border-radius:2px;display:inline-block;margin-top:2px;}
-.fee-challan-doc .info-grid{display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:0;padding:7px 10px;border-bottom:1px solid #ddd;}
+.fee-challan-doc .school-name{font-size:12px;font-weight:700;color:#1E3A8A;line-height:1.2;}
+.fee-challan-doc .copy-tag{font-size:8px;font-weight:600;color:#1E40AF;letter-spacing:0.8px;text-transform:uppercase;background:#DBEAFE;border:0.5px solid #93C5FD;padding:1px 5px;border-radius:2px;display:inline-block;margin-top:2px;}
+.fee-challan-doc .info-grid{display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:0;padding:7px 10px;background:#F8FAFF;border-bottom:1px solid #DBEAFE;}
 .fee-challan-doc .ig-lbl{font-size:9px;color:#777;font-weight:800;padding:2.5px 0;white-space:nowrap;}
 .fee-challan-doc .ig-val{font-size:9px;color:#111;font-weight:600;padding:2.5px 0;text-align:right;}
 .fee-challan-doc .fee-wrap{padding:7px 10px 0;}
 .fee-challan-doc .fee-table{width:100%;border-collapse:collapse;font-size:8.5px;}
-.fee-challan-doc .fee-table thead tr{border-bottom:0.5px solid #333;}
-.fee-challan-doc .fee-table th{font-weight:600;color:#333;padding:2px 0;text-align:left;}
+.fee-challan-doc .fee-table thead tr{background:#1E3A8A;}
+.fee-challan-doc .fee-table th{font-weight:600;color:#fff;padding:3px 4px;text-align:left;}
 .fee-challan-doc .fee-table th:nth-child(n+2),.fee-challan-doc .fee-table td:nth-child(n+2){text-align:right;}
-.fee-challan-doc .fee-table td{padding:2px 0;color:#222;border-bottom:0.5px dashed #ddd;}
-.fee-challan-doc .fee-table .tr-total td{border-top:0.5px solid #333;border-bottom:none;font-weight:600;padding-top:3px;font-size:9px;}
+.fee-challan-doc .fee-table td{padding:2px 4px;color:#222;border-bottom:0.5px dashed #DBEAFE;}
+.fee-challan-doc .fee-table .tr-total td{border-top:1px solid #1E3A8A;border-bottom:none;font-weight:700;padding-top:3px;font-size:9px;background:#EFF6FF;color:#1E3A8A;}
 .fee-challan-doc .bottom-section{padding:7px 10px;margin-top:auto;}
 .fee-challan-doc .two-col{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;}
-.fee-challan-doc .outline-box{border:0.5px solid #999;padding:4px 6px;border-radius:2px;}
+.fee-challan-doc .outline-box{border:0.5px solid #93C5FD;background:#F8FAFF;padding:4px 6px;border-radius:2px;}
 .fee-challan-doc .ob-lbl{font-size:8px;color:#666;margin-bottom:1px;}
 .fee-challan-doc .ob-val{font-size:11px;font-weight:600;color:#111;font-variant-numeric:tabular-nums;}
-.fee-challan-doc .net-box{border:1px solid #111;padding:5px 7px;border-radius:2px;display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
-.fee-challan-doc .net-box .nb-lbl{font-size:8px;color:#333;font-weight:500;max-width:62px;line-height:1.3;}
-.fee-challan-doc .net-box .nb-val{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:#111;}
+.fee-challan-doc .net-box{border:1px solid #1E3A8A;background:linear-gradient(135deg,#1E3A8A,#1D4ED8);padding:5px 7px;border-radius:2px;display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
+.fee-challan-doc .net-box .nb-lbl{font-size:8px;color:rgba(255,255,255,.85);font-weight:500;max-width:62px;line-height:1.3;}
+.fee-challan-doc .net-box .nb-val{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:#fff;}
 .fee-challan-doc .fine-line{font-size:7.5px;color:#777;margin-bottom:6px;}
-.fee-challan-doc .psid-block{border:1px dashed #555;border-radius:2px;padding:5px 7px;margin-bottom:5px;}
+.fee-challan-doc .psid-block{border:1px dashed #1E40AF;background:#F8FAFF;border-radius:2px;padding:5px 7px;margin-bottom:5px;}
 .fee-challan-doc .psid-top{display:flex;align-items:center;gap:4px;margin-bottom:3px;}
-.fee-challan-doc .psid-dot{width:5px;height:5px;border-radius:50%;border:1px solid #333;flex-shrink:0;}
-.fee-challan-doc .psid-tag{font-size:7.5px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#333;}
-.fee-challan-doc .psid-num{font-variant-numeric:tabular-nums;font-size:11px;font-weight:600;color:#111;letter-spacing:0.5px;margin-bottom:4px;}
+.fee-challan-doc .psid-dot{width:5px;height:5px;border-radius:50%;background:#1E3A8A;border:1px solid #1E3A8A;flex-shrink:0;}
+.fee-challan-doc .psid-tag{font-size:7.5px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#1E40AF;}
+.fee-challan-doc .psid-num{font-variant-numeric:tabular-nums;font-size:11px;font-weight:700;color:#1E3A8A;letter-spacing:0.5px;margin-bottom:4px;}
 .fee-challan-doc .psid-row{display:flex;align-items:flex-start;gap:6px;}
 .fee-challan-doc .qr-wrap{flex-shrink:0;}
 .fee-challan-doc .qr-hint{font-size:7.5px;color:#555;line-height:1.6;padding-top:2px;}
 .fee-challan-doc .qr-hint strong{color:#222;font-weight:600;}
-.fee-challan-doc .steps-block{border-top:0.5px solid #ddd;padding-top:5px;margin-top:1px;}
+.fee-challan-doc .steps-block{border-top:0.5px solid #DBEAFE;padding-top:5px;margin-top:1px;}
 .fee-challan-doc .steps-title{font-size:7.5px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;color:#555;margin-bottom:3px;}
 .fee-challan-doc .step-row{display:flex;gap:4px;align-items:flex-start;margin-bottom:2.5px;}
-.fee-challan-doc .sn{width:12px;height:12px;border:0.5px solid #555;border-radius:50%;font-size:6.5px;font-weight:600;color:#333;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.fee-challan-doc .sn{width:12px;height:12px;border:0.5px solid #1E40AF;color:#1E40AF;border-radius:50%;font-size:6.5px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .fee-challan-doc .st{font-size:7.5px;color:#444;line-height:1.5;}
 .fee-challan-doc .st strong{font-weight:600;color:#111;}
-.fee-challan-doc .barcode-area{text-align:center;padding:5px 0 4px;border-top:0.5px solid #ddd;margin-top:5px;opacity:0.55;}
+.fee-challan-doc .barcode-area{text-align:center;padding:5px 0 4px;border-top:0.5px solid #DBEAFE;margin-top:5px;opacity:0.55;}
 .fee-challan-doc .psid-tiny{font-variant-numeric:tabular-nums;font-size:6px;color:#888;letter-spacing:0.5px;margin-top:2px;}
-/* Colorless Report — strips remaining colors to dark-on-white for low-ink printing */
-.fee-challan-doc.fee-bw .school-name,
-.fee-challan-doc.fee-bw .ig-val,
-.fee-challan-doc.fee-bw .ob-val,
-.fee-challan-doc.fee-bw .net-box .nb-val,
-.fee-challan-doc.fee-bw .psid-num,
-.fee-challan-doc.fee-bw .st strong{color:#000;}
-.fee-challan-doc.fee-bw .fee-table th,
-.fee-challan-doc.fee-bw .ig-lbl,
-.fee-challan-doc.fee-bw .ob-lbl,
-.fee-challan-doc.fee-bw .qr-hint,
-.fee-challan-doc.fee-bw .st,
-.fee-challan-doc.fee-bw .fine-line,
-.fee-challan-doc.fee-bw .copy-tag,
-.fee-challan-doc.fee-bw .psid-tag,
-.fee-challan-doc.fee-bw .steps-title{color:#333;}
-.fee-challan-doc.fee-bw .logo-circle{border-color:#000;}
+/* Colorless Report — a genuine low-ink REDESIGN (not a filter): every
+   brand-blue fill/border above collapses to white/black/gray so almost
+   no ink is used, mirroring the Colorful/Colorless convention used
+   everywhere else in this ERP (see reportKit.js's reportPalette). */
 .fee-challan-doc.fee-bw .challan-row{border-color:#000;}
-.fee-challan-doc.fee-bw .net-box{border-color:#000;}
+.fee-challan-doc.fee-bw .slip{border-right-color:#aaa;}
+.fee-challan-doc.fee-bw .slip-header{border-bottom-color:#000;background:none;}
+.fee-challan-doc.fee-bw .logo-circle{border-color:#000;background:#fff;color:#000;}
+.fee-challan-doc.fee-bw .school-name{color:#000;}
+.fee-challan-doc.fee-bw .copy-tag{color:#333;background:none;border-color:#999;}
+.fee-challan-doc.fee-bw .info-grid{background:none;border-bottom-color:#ddd;}
+.fee-challan-doc.fee-bw .ig-val{color:#000;}
+.fee-challan-doc.fee-bw .fee-table thead tr{background:none;border-bottom:1px solid #000;}
+.fee-challan-doc.fee-bw .fee-table th{color:#000;}
+.fee-challan-doc.fee-bw .fee-table td{border-bottom-color:#ddd;}
+.fee-challan-doc.fee-bw .fee-table .tr-total td{border-top-color:#000;background:none;color:#000;}
+.fee-challan-doc.fee-bw .outline-box{border-color:#999;background:none;}
+.fee-challan-doc.fee-bw .ob-val{color:#000;}
+.fee-challan-doc.fee-bw .net-box{border-color:#000;background:none;}
+.fee-challan-doc.fee-bw .net-box .nb-lbl{color:#333;}
+.fee-challan-doc.fee-bw .net-box .nb-val{color:#000;}
+.fee-challan-doc.fee-bw .psid-block{border-color:#555;background:none;}
+.fee-challan-doc.fee-bw .psid-dot{background:#000;border-color:#333;}
+.fee-challan-doc.fee-bw .psid-tag{color:#333;}
+.fee-challan-doc.fee-bw .psid-num{color:#000;}
+.fee-challan-doc.fee-bw .steps-block{border-top-color:#ddd;}
+.fee-challan-doc.fee-bw .sn{border-color:#555;color:#333;}
+.fee-challan-doc.fee-bw .st strong{color:#000;}
+.fee-challan-doc.fee-bw .barcode-area{border-top-color:#ddd;}
 `;
 
 /* Same rules without the .fee-challan-doc prefix — used when we open a
@@ -17181,8 +17196,14 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
 function buildChallanHTML(opts) {
   const size = opts.size || 'a4';
   const css = size === 'thermal' ? FEE_THERMAL_CHALLAN_CSS : FEE_CHALLAN_CSS_PRINT;
+  /* The print CSS is derived from FEE_CHALLAN_CSS_SCOPED by stripping the
+     `.fee-challan-doc` prefix (see FEE_CHALLAN_CSS_PRINT) — a compound
+     `.fee-challan-doc.fee-bw ...` selector becomes `body.fee-bw ...`, which
+     only matches if <body> itself carries `fee-bw` (buildChallanInner puts
+     it on the inner div), so Colorless never applied here without this. */
+  const bwClass = opts.bw ? ' class="fee-bw"' : '';
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Fee Challan — ${opts.classMeta.cls} (${opts.classMeta.sec})`)}</title>
-<style>${css}</style></head><body>${buildChallanInner(opts)}</body></html>`;
+<style>${css}</style></head><body${bwClass}>${buildChallanInner(opts)}</body></html>`;
 }
 
 /* ─── Thermal (80mm) challan slip — single column, same data as A4
@@ -17502,8 +17523,11 @@ function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4', sc
 function buildFamilyChallanHTML(opts) {
   const size = opts.size || 'a4';
   const css = size === 'thermal' ? FEE_THERMAL_CHALLAN_CSS : FEE_CHALLAN_CSS_PRINT;
+  /* Same fix as buildChallanHTML — the derived .fee-bw print selectors
+     expect the class on <body>, not on the inner .fee-challan-doc div. */
+  const bwClass = opts.bw ? ' class="fee-bw"' : '';
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Family Challan — ${opts.family.name}`)}</title>
-<style>${css}</style></head><body>${buildFamilyChallanInner(opts)}</body></html>`;
+<style>${css}</style></head><body${bwClass}>${buildFamilyChallanInner(opts)}</body></html>`;
 }
 
 function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school = null }) {
@@ -18370,47 +18394,21 @@ function FeeReportPreview({ open, title, html, onClose }) {
 function buildStudentFeeReportHTML({ cls, sec, heads, school = null }) {
   const meta = feeReportSchool(school);
   const total = heads.reduce((s, h) => s + (+h.amt || 0), 0);
-  const today = meta.generatedDate
-    ? feeReportDate(meta)
-    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const rows = heads.map((h, i) => `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${i + 1}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB"><b>${escHtml(headLabel(h.name))}</b></td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums">Rs. ${(+h.amt || 0).toLocaleString('en-PK')}</td>
     </tr>`).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Fee Heads — ${cls} (${sec})`)}</title>
-<style>
-  body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
-  .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
-  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:18px; }
-  .brand { display:flex; align-items:center; gap:12px; }
-  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
-  .logo img { width:100%; height:100%; object-fit:contain; }
-  .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
-  .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
-  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
-  .meta { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
-  table { width:100%; border-collapse:collapse; margin-top:8px; }
-  thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:10px; border-bottom:2px solid #BFDBFE; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; }
-  thead th.right { text-align:right; }
-  tfoot td { padding:10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
-  tfoot td.right { text-align:right; }
-  @media print { @page { size:A4; margin:14mm; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-</style></head><body>
-<div class="page">
-  <div class="header">
-    <div class="brand">
-      <div class="logo">${feeReportLogoHtml(meta)}</div>
-      <div>
-        <div class="school">${escHtml(meta.name)}</div>
-        <div class="title">Fee Heads — ${escHtml(cls)} (${escHtml(sec)})</div>
-        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
-        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
-      </div>
-    </div>
-    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${escHtml(heads.length)} fee head${heads.length === 1 ? '' : 's'}</div>
-  </div>
+
+  const bodyHtml = `<style>
+    table { width:100%; border-collapse:collapse; margin-top:8px; }
+    thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:10px; border-bottom:2px solid #BFDBFE; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; }
+    thead th.right { text-align:right; }
+    tfoot td { padding:10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
+    tfoot td.right { text-align:right; }
+    .rep-genby { margin-top:14px; text-align:right; font-size:11px; color:#64748B; }
+  </style>
   <table>
     <thead>
       <tr><th style="width:60px">#</th><th>Fee Head</th><th class="right" style="width:160px">Amount (Rs.)</th></tr>
@@ -18418,8 +18416,16 @@ function buildStudentFeeReportHTML({ cls, sec, heads, school = null }) {
     <tbody>${rows || `<tr><td colspan="3" style="text-align:center;padding:18px;color:#64748B">No fee heads.</td></tr>`}</tbody>
     ${heads.length > 0 ? `<tfoot><tr><td colspan="2">Total per student</td><td class="right">Rs. ${total.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
   </table>
-</div>
-</body></html>`;
+  <div class="rep-genby">By: ${escHtml(meta.generatedBy)}</div>`;
+
+  return buildStandardReportHtml({
+    title: escHtml(`Fee Heads — ${cls} (${sec})`),
+    format: 'pdf',
+    isColor: true,
+    bodyHtml,
+    subtitleLine: feeKitSubtitle(meta, `${heads.length} fee head${heads.length === 1 ? '' : 's'}`),
+    schoolName: feeKitSchoolName(school) && escHtml(feeKitSchoolName(school)),
+  });
 }
 
 /* ─── Coming Soon placeholder used for every not-yet-built screen ──── */
@@ -21343,23 +21349,24 @@ const FEE_CSS = `
   position: relative;
   background: #fff;
   color: #111;
-  border: 1px solid #ddd;
+  border: 1px solid #93C5FD;
   border-radius: 10px;
   padding: 20px;
   font-family: 'Plus Jakarta Sans', sans-serif;
   max-width: 420px;
   margin: 0 auto;
 }
-.fee-slip-head { text-align: center; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
-.fee-slip-brandhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
+.fee-slip-head { text-align: center; border-bottom: 2px solid #1E3A8A; background: linear-gradient(135deg,rgba(30,58,138,.06),transparent); padding: 10px 8px; margin: -20px -20px 12px; border-radius: 10px 10px 0 0; }
+.fee-slip-doc.fee-slip-small .fee-slip-head { margin: -14px -14px 10px; padding: 8px 6px; border-radius: 8px 8px 0 0; }
+.fee-slip-brandhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; border-bottom: 2px solid #1E3A8A; background: linear-gradient(135deg,rgba(30,58,138,.06),transparent); padding: 10px 8px; margin: -20px -20px 12px; border-radius: 10px 10px 0 0; }
 .fee-slip-brand { display: flex; align-items: center; gap: 10px; text-align: left; }
 .fee-slip-logo { width: 38px; height: 38px; border: 1px solid #ddd; border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #1E3A8A; font-weight: 800; background: #fff; flex-shrink: 0; }
 .fee-slip-logo img { width: 100%; height: 100%; object-fit: contain; }
 .fee-slip-meta { font-size: 10px; color: #666; text-align: right; line-height: 1.55; white-space: nowrap; }
 .fee-slip-foot { margin-top: 14px; text-align: center; font-size: 9px; color: #999; border-top: 1px solid #eee; padding-top: 8px; }
 .fee-slip-addr { font-size: 10.5px; color: #666; margin-top: 2px; }
-.fee-slip-school { font-size: 16px; font-weight: 800; color: #111; }
-.fee-slip-tag { font-size: 11px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-top: 3px; }
+.fee-slip-school { font-size: 16px; font-weight: 800; color: #1E3A8A; }
+.fee-slip-tag { font-size: 11px; color: #1E40AF; letter-spacing: 1px; text-transform: uppercase; margin-top: 3px; font-weight: 600; }
 .fee-slip-paid-stamp { position: absolute; top: 14px; right: 16px; border: 3px double #16A34A; color: #16A34A; font-size: 15px; font-weight: 900; letter-spacing: 2px; padding: 4px 10px; border-radius: 6px; transform: rotate(-12deg); opacity: .85; text-transform: uppercase; }
 .fee-slip-doc.fee-slip-small .fee-slip-paid-stamp { font-size: 11px; padding: 3px 7px; top: 8px; right: 8px; letter-spacing: 1px; border-width: 2px; }
 .fee-slip-kv {
@@ -21374,16 +21381,16 @@ const FEE_CSS = `
 .fee-slip-kv .v { text-align: right; font-weight: 700; }
 .fee-slip-tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-bottom: 10px; color: #111; }
 .fee-slip-tbl th,
-.fee-slip-tbl td { border-bottom: 1px solid #eee; padding: 5px 4px; text-align: right; }
+.fee-slip-tbl td { border-bottom: 1px solid #DBEAFE; padding: 5px 4px; text-align: right; }
 .fee-slip-tbl th:first-child,
 .fee-slip-tbl td:first-child { text-align: left; }
-.fee-slip-tbl th { border-bottom: 1.5px solid #333; color: #333; }
-.fee-slip-headtot td { border-top: 1.5px solid #333; border-bottom: none; font-weight: 800; background: #f5f7fb; }
+.fee-slip-tbl th { background: #1E3A8A; color: #fff; border-bottom: none; }
+.fee-slip-headtot td { border-top: 1.5px solid #1E3A8A; border-bottom: none; font-weight: 800; background: #EFF6FF; color: #1E3A8A; }
 .fee-slip-net {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #111;
+  background: linear-gradient(135deg,#1E3A8A,#1D4ED8);
   color: #fff;
   padding: 8px 12px;
   border-radius: 4px;
@@ -21399,7 +21406,7 @@ const FEE_CSS = `
 .fee-slip-doc.fee-slip-small { max-width: 302px; padding: 14px 12px; font-size: 11px; }
 .fee-slip-small .fee-slip-brandhead {
   flex-direction: column; align-items: center; text-align: center;
-  gap: 6px; padding-bottom: 8px; margin-bottom: 10px;
+  gap: 6px; padding: 8px 6px; margin: -14px -12px 10px; border-radius: 8px 8px 0 0;
 }
 .fee-slip-small .fee-slip-brand { flex-direction: column; align-items: center; text-align: center; gap: 6px; }
 .fee-slip-small .fee-slip-logo { width: 34px; height: 34px; border-radius: 8px; }
@@ -21416,6 +21423,21 @@ const FEE_CSS = `
 .fee-slip-small .fee-slip-tbl td:first-child { word-break: break-word; }
 .fee-slip-small .fee-slip-net { padding: 7px 10px; font-size: 11.5px; }
 .fee-slip-small .fee-slip-foot { font-size: 8px; margin-top: 10px; padding-top: 6px; }
+/* Colorless — same low-ink redesign as the print version (FeeSlipModal
+   doPrint / FEE_CHALLAN_CSS_SCOPED) applied live to the in-modal preview
+   too, since this preview sits right next to the Slip Theme picker. */
+.fee-slip-doc.fee-bw { border-color: #ddd; }
+.fee-slip-doc.fee-bw .fee-slip-paid-stamp { border-color: #000; color: #000; }
+.fee-slip-doc.fee-bw .fee-slip-head,
+.fee-slip-doc.fee-bw .fee-slip-brandhead { border-bottom: 1.5px solid #111; background: none; margin: 0 0 12px; padding: 0 0 10px; border-radius: 0; }
+.fee-slip-doc.fee-bw.fee-slip-small .fee-slip-brandhead { margin: 0 0 10px; padding: 0 0 8px; }
+.fee-slip-doc.fee-bw .fee-slip-school { color: #111; }
+.fee-slip-doc.fee-bw .fee-slip-tag { color: #555; font-weight: 500; }
+.fee-slip-doc.fee-bw .fee-slip-tbl th,
+.fee-slip-doc.fee-bw .fee-slip-tbl td { border-bottom-color: #eee; }
+.fee-slip-doc.fee-bw .fee-slip-tbl th { background: none; color: #333; border-bottom: 1.5px solid #333; }
+.fee-slip-doc.fee-bw .fee-slip-headtot td { border-top-color: #333; background: #f5f7fb; color: #111; }
+.fee-slip-doc.fee-bw .fee-slip-net { background: #111; color: #fff; }
 
 /* Multi-select + progress — dark */
 [data-theme="dark"] .fee-ms-toggle {

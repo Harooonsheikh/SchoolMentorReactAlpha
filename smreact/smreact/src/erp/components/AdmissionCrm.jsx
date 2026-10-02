@@ -4,6 +4,10 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as crmService from '../services/admissionCrmService';
 import useAsync from '../hooks/useAsync';
+import {
+  StandardReportPicker, buildStandardReportHtml,
+  downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName,
+} from '../reports/reportKit';
 
 /* ─── Module-wide helpers ─── */
 const STATUS_TO_CLS = {
@@ -70,46 +74,86 @@ const addDaysCrm = (iso, days) => {
 const escHtml = (s) => String(s ?? '').replace(/[<>&"']/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[m]));
 
 /* ─── A4 print helpers ─── */
-function crmSchoolLogoSVG() {
-  return `<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg"><rect width="36" height="36" rx="6" fill="#1E3A8A"/><path d="M18 10 C14 10 10 11.5 10 11.5 L10 26 C10 26 14 24.5 18 24.5 C22 24.5 26 26 26 26 L26 11.5 C26 11.5 22 10 18 10Z" fill="rgba(255,255,255,0.2)" stroke="rgba(255,255,255,0.6)" stroke-width="0.8"/><path d="M18 10 L18 24.5" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/></svg>`;
+/* Report body CSS — .profile-card/.sec-band/.kvgrid/.tbl/.note/.tag/
+   .callout, still local since it's genuine report BODY styling (same
+   treatment as every other module's reportKit migration this
+   session). The .rhead/.rlogo/.rname/.rtitle/.meta/.rfoot/.page
+   chrome these used to render (via crmReportHead/crmReportFoot below)
+   is now owned by the shared src/reports/reportKit.js. */
+function crmReportBodyCSS(isColor, accent = '#1E3A8A') {
+  const c = isColor ? accent : '#0F172A';
+  return `
+.profile-card{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1.5px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:12px;background:${isColor ? `linear-gradient(135deg,${accent}10,transparent 70%)` : '#FFFFFF'};margin-bottom:14px}
+.profile-av{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex-shrink:0;background:${isColor ? accent + '20' : '#FFFFFF'};color:${c};${isColor ? '' : 'border:1px solid #0F172A'}}
+.profile-name{font-size:18px;font-weight:800;color:#0F172A;letter-spacing:-.01em}
+.profile-sub{font-size:11.5px;color:#475569;margin-top:3px;display:flex;flex-wrap:wrap;gap:6px 16px}
+.profile-sub i{color:${isColor ? accent : '#374151'};margin-right:4px}
+.tag{display:inline-block;padding:3px 12px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.3px;border:1px solid}
+.tag.s-interested{background:${isColor ? 'rgba(2,132,199,.10)' : 'transparent'};color:${isColor ? '#0284C7' : '#0F172A'};border-color:${isColor ? 'rgba(2,132,199,.28)' : '#9CA3AF'}}
+.tag.s-callback{background:${isColor ? 'rgba(217,119,6,.10)' : 'transparent'};color:${isColor ? '#D97706' : '#0F172A'};border-color:${isColor ? 'rgba(217,119,6,.28)' : '#9CA3AF'}}
+.tag.s-visit{background:${isColor ? 'rgba(124,58,237,.10)' : 'transparent'};color:${isColor ? '#7C3AED' : '#0F172A'};border-color:${isColor ? 'rgba(124,58,237,.28)' : '#9CA3AF'}}
+.tag.s-waiting{background:${isColor ? 'rgba(100,116,139,.10)' : 'transparent'};color:${isColor ? '#475569' : '#0F172A'};border-color:${isColor ? 'rgba(100,116,139,.28)' : '#9CA3AF'}}
+.tag.s-confirmed{background:${isColor ? 'rgba(22,163,74,.12)' : 'transparent'};color:${isColor ? '#15803D' : '#0F172A'};border-color:${isColor ? 'rgba(22,163,74,.28)' : '#9CA3AF'}}
+.tag.s-notinterested{background:${isColor ? 'rgba(220,38,38,.10)' : 'transparent'};color:${isColor ? '#B91C1C' : '#0F172A'};border-color:${isColor ? 'rgba(220,38,38,.28)' : '#9CA3AF'}}
+.sec-band{background:${isColor ? accent : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center;${isColor ? '' : 'border:1.5px solid #0F172A'}}
+.sec-band small{font-weight:700;opacity:${isColor ? '.85' : '1'};font-size:10px;color:${isColor ? 'inherit' : '#4B5563'}}
+.kvgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;padding:12px 14px;border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:8px;background:${isColor ? '#F8FAFF' : '#FFFFFF'};margin-bottom:12px}
+.kv-l{font-size:9.5px;font-weight:800;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+.kv-v{font-size:12px;color:#0F172A;font-weight:700;margin-top:2px}
+.kv-full{grid-column:1/-1}
+.tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px}
+.tbl thead th{background:${isColor ? accent : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:7px 9px;text-align:left;font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;${isColor ? '' : 'border-bottom:1.5px solid #0F172A'}}
+.tbl th.r,.tbl td.r{text-align:right} .tbl th.c,.tbl td.c{text-align:center}
+.tbl tbody td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
+.tbl tbody tr:nth-child(even) td{${isColor ? 'background:#FAFBFE' : ''}}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl td.mono{font-family:ui-monospace,Menlo,monospace;color:${c};font-weight:800}
+.note{padding:11px 14px;border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-left:3px solid ${c};border-radius:7px;background:${isColor ? '#FAFBFE' : '#FFFFFF'};margin-bottom:8px}
+.note-meta{font-size:10px;color:#64748B;font-weight:700}
+.note-meta b{color:${c}}
+.note-text{font-size:11.5px;color:#1F2937;margin-top:6px;line-height:1.55}
+.note-fu{display:inline-block;margin-top:7px;font-size:10px;padding:3px 10px;border-radius:999px;background:${isColor ? accent + '14' : 'transparent'};color:${c};border:1px solid ${isColor ? accent + '33' : '#9CA3AF'};font-weight:700}
+.callout{padding:10px 13px;border-radius:8px;background:${isColor ? accent + '0F' : '#FFFFFF'};border:1px solid ${isColor ? accent + '33' : '#D1D5DB'};color:#1F2937;font-size:11px;margin-top:10px;line-height:1.55}
+.callout b{color:${c}}
+.empty-state{text-align:center;padding:30px;color:#94A3B8;font-style:italic}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px}
+.kpi{border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:8px;padding:9px 11px;background:${isColor ? '#F8FAFF' : '#FFFFFF'};position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:${c}}
+.kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+.kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi .m{font-size:9px;color:#64748B;margin-top:1px}
+`;
 }
 
-/* Opens an A4 popup. `color` switches the brand accent (blue/green/etc.) */
-function openCrmReportWindow(title, inner, toast, color = '#1E3A8A', isBW = false) {
+/* Opens a print-ready CRM report window — delegates its header/logo/
+   footer chrome to the shared reportKit (the same ERP-wide standard
+   every other module migrated this session uses) while keeping
+   crmReportBodyCSS above as report BODY styling. `crmReportHead`/
+   `crmReportFoot` are now no-ops kept only so their many existing
+   call sites (which build `inner` HTML) keep compiling unchanged. */
+function openCrmReportWindow(title, inner, toast, color = '#1E3A8A', isBW = false, format = 'pdf') {
+  const isColor = !isBW;
+  const bodyHtml = `<style>${crmReportBodyCSS(isColor, color)}</style>${inner}`;
+  const html = buildStandardReportHtml({ title, format, isColor, bodyHtml });
+  if (format === 'word') { downloadReportAsWord(html, `${reportFileName(title)}.doc`); toast && toast('Word document downloaded', 'success'); return; }
+  if (format === 'excel') { downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`); toast && toast('Excel report downloaded', 'success'); return; }
   const w = window.open('', '_blank');
   if (!w) { toast && toast('Please allow pop-ups to print', 'error'); return; }
-  const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{background:#F1F3F8}body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;font-size:11px;line-height:1.45;padding:18px 0}.page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}.rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${color};padding-bottom:10px;margin-bottom:14px}.rlogo{width:46px;height:46px;flex-shrink:0}.rname{font-size:17px;font-weight:800;color:#0F172A;line-height:1.15}.rtitle{font-size:12px;font-weight:700;color:${color};margin-top:3px}.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}.profile-card{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1.5px solid #E5E7EB;border-radius:12px;background:linear-gradient(135deg,${color}10,transparent 70%);margin-bottom:14px}.profile-av{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex-shrink:0;background:${color}20;color:${color}}.profile-name{font-size:18px;font-weight:800;color:#0F172A;letter-spacing:-.01em}.profile-sub{font-size:11.5px;color:#475569;margin-top:3px;display:flex;flex-wrap:wrap;gap:6px 16px}.profile-sub i{color:${color};margin-right:4px}.tag{display:inline-block;padding:3px 12px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.3px;border:1px solid}.tag.s-interested{background:rgba(2,132,199,.10);color:#0284C7;border-color:rgba(2,132,199,.28)}.tag.s-callback{background:rgba(217,119,6,.10);color:#D97706;border-color:rgba(217,119,6,.28)}.tag.s-visit{background:rgba(124,58,237,.10);color:#7C3AED;border-color:rgba(124,58,237,.28)}.tag.s-waiting{background:rgba(100,116,139,.10);color:#475569;border-color:rgba(100,116,139,.28)}.tag.s-confirmed{background:rgba(22,163,74,.12);color:#15803D;border-color:rgba(22,163,74,.28)}.tag.s-notinterested{background:rgba(220,38,38,.10);color:#B91C1C;border-color:rgba(220,38,38,.28)}.sec-band{background:${color};color:#fff;padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center}.sec-band small{font-weight:700;opacity:.85;font-size:10px}.kvgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;padding:12px 14px;border:1px solid #E5E7EB;border-radius:8px;background:#F8FAFF;margin-bottom:12px}.kv-l{font-size:9.5px;font-weight:800;color:#64748B;text-transform:uppercase;letter-spacing:.3px}.kv-v{font-size:12px;color:#0F172A;font-weight:700;margin-top:2px}.kv-full{grid-column:1/-1}.tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px}.tbl thead th{background:${color};color:#fff;padding:7px 9px;text-align:left;font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px}.tbl th.r,.tbl td.r{text-align:right}.tbl th.c,.tbl td.c{text-align:center}.tbl tbody td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}.tbl tbody tr:nth-child(even) td{background:#FAFBFE}.tbl tbody tr:last-child td{border-bottom:0}.tbl td.mono{font-family:ui-monospace,Menlo,monospace;color:${color};font-weight:800}.note{padding:11px 14px;border:1px solid #E5E7EB;border-left:3px solid ${color};border-radius:7px;background:#FAFBFE;margin-bottom:8px}.note-meta{font-size:10px;color:#64748B;font-weight:700}.note-meta b{color:${color}}.note-text{font-size:11.5px;color:#1F2937;margin-top:6px;line-height:1.55}.note-fu{display:inline-block;margin-top:7px;font-size:10px;padding:3px 10px;border-radius:999px;background:${color}14;color:${color};border:1px solid ${color}33;font-weight:700}.callout{padding:10px 13px;border-radius:8px;background:${color}0F;border:1px solid ${color}33;color:#1F2937;font-size:11px;margin-top:10px;line-height:1.55}.callout b{color:${color}}.rfoot{margin-top:18px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:9px}.empty-state{text-align:center;padding:30px;color:#94A3B8;font-style:italic}@page{size:A4 portrait;margin:0}@media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr,.note{page-break-inside:avoid}}
-/* Colorless Report — strips gradients / colored backgrounds / colored
-   tag fills / table-head fills / row striping to dark-on-white with
-   light gray borders. Activates only when .crm-bw is on the body. */
-.crm-bw .rhead{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
-.crm-bw .rtitle{color:#0F172A !important;}
-.crm-bw .profile-card{background:#FFFFFF !important;border-color:#D1D5DB !important;}
-.crm-bw .profile-av{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
-.crm-bw .profile-sub i{color:#374151 !important;}
-.crm-bw .sec-band{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important;}
-.crm-bw .sec-band small{color:#4B5563 !important;opacity:1 !important;}
-.crm-bw .kvgrid{background:#FFFFFF !important;border-color:#D1D5DB !important;}
-.crm-bw .tbl thead th{background:#FFFFFF !important;color:#0F172A !important;border-bottom:1.5px solid #0F172A !important;}
-.crm-bw .tbl tbody tr:nth-child(even) td{background:transparent !important;}
-.crm-bw .tbl td.mono{color:#0F172A !important;}
-.crm-bw .tag{background:transparent !important;color:#0F172A !important;border-color:#9CA3AF !important;}
-.crm-bw .note{background:#FFFFFF !important;border-color:#D1D5DB !important;border-left:3px solid #0F172A !important;}
-.crm-bw .note-meta b{color:#0F172A !important;}
-.crm-bw .note-fu{background:transparent !important;color:#0F172A !important;border:1px solid #9CA3AF !important;}
-.crm-bw .callout{background:#FFFFFF !important;border-color:#D1D5DB !important;color:#0F172A !important;}
-.crm-bw .callout b{color:#0F172A !important;}
-`;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body${isBW ? ' class="crm-bw"' : ''}><div class="page">${inner}</div></body></html>`);
+  w.document.write(html);
   w.document.close();
   w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
 }
 
+// eslint-disable-next-line no-unused-vars
 function crmReportHead(title, school, color = '#1E3A8A') {
-  return `<div class="rhead"><div class="rlogo">${crmSchoolLogoSVG()}</div><div><div class="rname">${escHtml(school?.name || 'School')}</div><div class="rtitle">${escHtml(title)}</div></div><div class="meta">Generated: ${fmtFullDate(todayCrmISO())}<br/>${escHtml(school?.session || '')}</div></div>`;
+  return '';
 }
 function crmReportFoot(school) {
+  return '';
+}
+/* Admission FORM footer — the form prints on its own window (not the
+   kit's report chrome), so it keeps the footer line it always had. */
+function crmFormFoot(school) {
   return `<div class="rfoot">Generated on ${fmtFullDate(todayCrmISO())} · ${escHtml(school?.name || 'School')} · Admission CRM</div>`;
 }
 
@@ -392,7 +436,7 @@ function buildAdmissionFormHTML(lead, school, fmt /* 'color' | 'bw' */) {
       </ol>
     </div>
 
-    ${crmReportFoot(school)}`;
+    ${crmFormFoot(school)}`;
 }
 
 /* ─── Fee details share PDF — matches the HTML reference exactly.
@@ -832,9 +876,8 @@ function ActiveLeads({ toast }) {
   const [officerFlt, setOfficerFlt] = useState('');
   const [alertFlt, setAlertFlt]     = useState(null); // 'overdue'|'today'|'tmrw'|null
   const [openId, setOpenId]         = useState(null);
-  /* Report style — applies to the per-lead PDF download. Local so it
-     doesn't interact with other pages. */
-  const [leadStyle, setLeadStyle]   = useState('color'); // 'color' | 'bw'
+  /* Which lead's report picker modal is open, if any. */
+  const [leadReportFor, setLeadReportFor] = useState(null);
 
   /* Search typeahead dropdown */
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1024,15 +1067,11 @@ function ActiveLeads({ toast }) {
     setRejectLead(null);
   };
 
-  /* Download per-lead PDF report — honours the page-level Style toggle. */
-  const downloadLeadReport = (lead) => {
-    openCrmReportWindow(
-      `Lead Report — ${lead.name}`,
-      buildLeadReportHTML(lead, school),
-      toast,
-      '#1E3A8A',
-      leadStyle === 'bw',
-    );
+  /* Opens the shared StandardReportPicker modal for a per-lead report. */
+  const downloadLeadReport = (lead) => setLeadReportFor(lead);
+  const generateLeadReport = (lead, style, format) => {
+    openCrmReportWindow(`Lead Report — ${lead.name}`, buildLeadReportHTML(lead, school), toast, '#1E3A8A', style === 'bw', format);
+    setLeadReportFor(null);
   };
 
   return (
@@ -1196,44 +1235,6 @@ function ActiveLeads({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
-            <div
-              className="rep-style-row"
-              role="radiogroup"
-              aria-label="Lead Report Style"
-              style={{ marginLeft: 0 }}
-            >
-              <span className="rep-style-lbl">Report Style</span>
-              <div className="rep-style-seg">
-                <button
-                  type="button"
-                  className={`rep-style-btn${leadStyle === 'color' ? ' on' : ''}`}
-                  onClick={() => setLeadStyle('color')}
-                  role="radio"
-                  aria-checked={leadStyle === 'color'}
-                  tabIndex={leadStyle === 'color' ? 0 : -1}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setLeadStyle('color'); }
-                    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setLeadStyle('bw'); }
-                  }}
-                >
-                  <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-                </button>
-                <button
-                  type="button"
-                  className={`rep-style-btn${leadStyle === 'bw' ? ' on' : ''}`}
-                  onClick={() => setLeadStyle('bw')}
-                  role="radio"
-                  aria-checked={leadStyle === 'bw'}
-                  tabIndex={leadStyle === 'bw' ? 0 : -1}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setLeadStyle('color'); }
-                    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setLeadStyle('bw'); }
-                  }}
-                >
-                  <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-                </button>
-              </div>
-            </div>
             <Tooltip text="Add a new lead">
               <button className="fee-btn fee-btn-primary" onClick={() => setEditLead({ mode: 'add' })}>
                 <i className="fa-solid fa-plus"></i> New Lead
@@ -1375,6 +1376,15 @@ function ActiveLeads({ toast }) {
           school={school}
           onClose={() => setExportOpen(false)}
           toast={toast}
+        />
+      )}
+      {leadReportFor && (
+        <StandardReportPicker
+          open
+          title={`Lead Report — ${leadReportFor.name}`}
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setLeadReportFor(null)}
+          onGenerate={(style, format) => generateLeadReport(leadReportFor, style, format)}
         />
       )}
     </>
@@ -2032,112 +2042,91 @@ const SHARE_FEE_SECTIONS = [
 ];
 
 function ShareFeeModal({ lead, school, onClose, toast }) {
-  useModalChrome(onClose);
   const [sections, setSections] = useState({ feeStructure: true, uniform: true, books: true, admission: true });
-  const [fmt, setFmt] = useState('color');
-
   const toggle = (id) => setSections(prev => ({ ...prev, [id]: !prev[id] }));
   const anySelected = Object.values(sections).some(Boolean);
 
-  const generate = () => {
+  const generate = (style, format) => {
     if (!anySelected) { toast('Please select at least one section to include', 'error'); return; }
     openCrmReportWindow(
       `Fee Structure — ${lead.name}`,
-      buildShareFeeHTML(lead, school, fmt, sections),
+      buildShareFeeHTML(lead, school, style, sections),
       toast,
-      fmt === 'bw' ? '#1F2937' : '#7C3AED',
-      fmt === 'bw',
+      style === 'bw' ? '#1F2937' : '#7C3AED',
+      style === 'bw',
+      format,
     );
-    toast('Fee report generated', 'success');
     onClose();
   };
 
   return (
-    <CrmModalShell
-      icon="fa-share-from-square"
-      gradient="linear-gradient(135deg,#7C3AED,#6D28D9)"
+    <StandardReportPicker
+      open
       title="Share Fee Details"
-      sub="Select sections to include in the fee report"
-      size="md"
+      subtitle={`${lead.name} — Select sections, style and format`}
+      formats={['pdf', 'word', 'excel']}
+      generateDisabled={!anySelected}
       onClose={onClose}
-      footer={
+      onGenerate={generate}
+      filters={
         <>
-          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          <button
-            className="fee-btn fee-btn-primary"
-            style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(124,58,237,.28)' }}
-            onClick={generate}
-          >
-            <i className="fa-solid fa-download"></i> Generate &amp; Download Report
-          </button>
+          <div className="rp-section-label">Include in Report</div>
+          <div className="share-sections">
+            {SHARE_FEE_SECTIONS.map(s => (
+              <label key={s.id} className={`share-section${sections[s.id] ? ' on' : ''}`}>
+                <input type="checkbox" checked={!!sections[s.id]} onChange={() => toggle(s.id)} />
+                <div className="share-section-body">
+                  <div className="share-section-title">
+                    <i className={`fa-solid ${s.icon}`} style={{ color: s.color }}></i> {s.title}
+                  </div>
+                  <div className="share-section-desc">{s.desc}</div>
+                </div>
+                <div className="share-section-check"><i className="fa-solid fa-check"></i></div>
+              </label>
+            ))}
+          </div>
         </>
       }
-    >
-      <div className="share-section-lbl">Include in Report</div>
-      <div className="share-sections">
-        {SHARE_FEE_SECTIONS.map(s => (
-          <label key={s.id} className={`share-section${sections[s.id] ? ' on' : ''}`}>
-            <input
-              type="checkbox"
-              checked={!!sections[s.id]}
-              onChange={() => toggle(s.id)}
-            />
-            <div className="share-section-body">
-              <div className="share-section-title">
-                <i className={`fa-solid ${s.icon}`} style={{ color: s.color }}></i> {s.title}
-              </div>
-              <div className="share-section-desc">{s.desc}</div>
-            </div>
-            <div className="share-section-check"><i className="fa-solid fa-check"></i></div>
-          </label>
-        ))}
-      </div>
-
-      <div className="share-section-lbl" style={{ marginTop: 22 }} id="share-fee-style-lbl">Download Format</div>
-      <div className="share-fmt-grid" role="radiogroup" aria-labelledby="share-fee-style-lbl">
-        <button
-          type="button"
-          className={`share-fmt${fmt === 'color' ? ' on' : ''}`}
-          onClick={() => setFmt('color')}
-          role="radio"
-          aria-checked={fmt === 'color'}
-          tabIndex={fmt === 'color' ? 0 : -1}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setFmt('color'); }
-            else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setFmt('bw'); }
-          }}
-        >
-          <div className="share-fmt-ic" style={{ background: 'linear-gradient(135deg,#1E40AF,#2563EB)' }} aria-hidden="true">
-            <i className="fa-solid fa-file-pdf"></i>
-          </div>
-          <div>
-            <div className="share-fmt-name">Colorful Report</div>
-            <div className="share-fmt-desc">School branding, summary cards &amp; status badges</div>
-          </div>
-        </button>
-        <button
-          type="button"
-          className={`share-fmt${fmt === 'bw' ? ' on' : ''}`}
-          onClick={() => setFmt('bw')}
-          role="radio"
-          aria-checked={fmt === 'bw'}
-          tabIndex={fmt === 'bw' ? 0 : -1}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setFmt('color'); }
-            else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setFmt('bw'); }
-          }}
-        >
-          <div className="share-fmt-ic" style={{ background: 'linear-gradient(135deg,#475569,#64748B)' }} aria-hidden="true">
-            <i className="fa-regular fa-file-pdf"></i>
-          </div>
-          <div>
-            <div className="share-fmt-name">Colorless Report</div>
-            <div className="share-fmt-desc">Low-ink layout — white bg, light borders only</div>
-          </div>
-        </button>
-      </div>
-    </CrmModalShell>
+    />
   );
+}
+
+/* Opens a blank fillable admission FORM — a different document kind
+   from a report (own header/photo box/signature lines, like a real
+   paper form), so it bypasses openCrmReportWindow/reportKit's report
+   chrome entirely, same as Inventory's invoice/thermal-receipt/label
+   prints stay on their own dedicated windows. */
+function openCrmFormWindow(title, html, toast, color = '#1E3A8A', isBW = false) {
+  const w = window.open('', '_blank');
+  if (!w) { toast && toast('Please allow pop-ups to print', 'error'); return; }
+  const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
+  /* Same base A4/body/.tbl print CSS (and .crm-bw Colorless overrides)
+     the form rendered with before the reportKit migration. */
+  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{background:#F1F3F8}body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;font-size:11px;line-height:1.45;padding:18px 0}.page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}.rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${color};padding-bottom:10px;margin-bottom:14px}.rlogo{width:46px;height:46px;flex-shrink:0}.rname{font-size:17px;font-weight:800;color:#0F172A;line-height:1.15}.rtitle{font-size:12px;font-weight:700;color:${color};margin-top:3px}.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}.profile-card{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1.5px solid #E5E7EB;border-radius:12px;background:linear-gradient(135deg,${color}10,transparent 70%);margin-bottom:14px}.profile-av{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex-shrink:0;background:${color}20;color:${color}}.profile-name{font-size:18px;font-weight:800;color:#0F172A;letter-spacing:-.01em}.profile-sub{font-size:11.5px;color:#475569;margin-top:3px;display:flex;flex-wrap:wrap;gap:6px 16px}.profile-sub i{color:${color};margin-right:4px}.tag{display:inline-block;padding:3px 12px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.3px;border:1px solid}.tag.s-interested{background:rgba(2,132,199,.10);color:#0284C7;border-color:rgba(2,132,199,.28)}.tag.s-callback{background:rgba(217,119,6,.10);color:#D97706;border-color:rgba(217,119,6,.28)}.tag.s-visit{background:rgba(124,58,237,.10);color:#7C3AED;border-color:rgba(124,58,237,.28)}.tag.s-waiting{background:rgba(100,116,139,.10);color:#475569;border-color:rgba(100,116,139,.28)}.tag.s-confirmed{background:rgba(22,163,74,.12);color:#15803D;border-color:rgba(22,163,74,.28)}.tag.s-notinterested{background:rgba(220,38,38,.10);color:#B91C1C;border-color:rgba(220,38,38,.28)}.sec-band{background:${color};color:#fff;padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center}.sec-band small{font-weight:700;opacity:.85;font-size:10px}.kvgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;padding:12px 14px;border:1px solid #E5E7EB;border-radius:8px;background:#F8FAFF;margin-bottom:12px}.kv-l{font-size:9.5px;font-weight:800;color:#64748B;text-transform:uppercase;letter-spacing:.3px}.kv-v{font-size:12px;color:#0F172A;font-weight:700;margin-top:2px}.kv-full{grid-column:1/-1}.tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px}.tbl thead th{background:${color};color:#fff;padding:7px 9px;text-align:left;font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px}.tbl th.r,.tbl td.r{text-align:right}.tbl th.c,.tbl td.c{text-align:center}.tbl tbody td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}.tbl tbody tr:nth-child(even) td{background:#FAFBFE}.tbl tbody tr:last-child td{border-bottom:0}.tbl td.mono{font-family:ui-monospace,Menlo,monospace;color:${color};font-weight:800}.note{padding:11px 14px;border:1px solid #E5E7EB;border-left:3px solid ${color};border-radius:7px;background:#FAFBFE;margin-bottom:8px}.note-meta{font-size:10px;color:#64748B;font-weight:700}.note-meta b{color:${color}}.note-text{font-size:11.5px;color:#1F2937;margin-top:6px;line-height:1.55}.note-fu{display:inline-block;margin-top:7px;font-size:10px;padding:3px 10px;border-radius:999px;background:${color}14;color:${color};border:1px solid ${color}33;font-weight:700}.callout{padding:10px 13px;border-radius:8px;background:${color}0F;border:1px solid ${color}33;color:#1F2937;font-size:11px;margin-top:10px;line-height:1.55}.callout b{color:${color}}.rfoot{margin-top:18px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:9px}.empty-state{text-align:center;padding:30px;color:#94A3B8;font-style:italic}@page{size:A4 portrait;margin:0}@media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr,.note{page-break-inside:avoid}}
+/* Colorless Report — strips gradients / colored backgrounds / colored
+   tag fills / table-head fills / row striping to dark-on-white with
+   light gray borders. Activates only when .crm-bw is on the body. */
+.crm-bw .rhead{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
+.crm-bw .rtitle{color:#0F172A !important;}
+.crm-bw .profile-card{background:#FFFFFF !important;border-color:#D1D5DB !important;}
+.crm-bw .profile-av{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
+.crm-bw .profile-sub i{color:#374151 !important;}
+.crm-bw .sec-band{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important;}
+.crm-bw .sec-band small{color:#4B5563 !important;opacity:1 !important;}
+.crm-bw .kvgrid{background:#FFFFFF !important;border-color:#D1D5DB !important;}
+.crm-bw .tbl thead th{background:#FFFFFF !important;color:#0F172A !important;border-bottom:1.5px solid #0F172A !important;}
+.crm-bw .tbl tbody tr:nth-child(even) td{background:transparent !important;}
+.crm-bw .tbl td.mono{color:#0F172A !important;}
+.crm-bw .tag{background:transparent !important;color:#0F172A !important;border-color:#9CA3AF !important;}
+.crm-bw .note{background:#FFFFFF !important;border-color:#D1D5DB !important;border-left:3px solid #0F172A !important;}
+.crm-bw .note-meta b{color:#0F172A !important;}
+.crm-bw .note-fu{background:transparent !important;color:#0F172A !important;border:1px solid #9CA3AF !important;}
+.crm-bw .callout{background:#FFFFFF !important;border-color:#D1D5DB !important;color:#0F172A !important;}
+.crm-bw .callout b{color:#0F172A !important;}
+`;
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body${isBW ? ' class="crm-bw"' : ''}><div class="page">${html}</div></body></html>`);
+  w.document.close();
+  w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
 }
 
 /* ─── Generate Admission Form modal ─── */
@@ -2145,7 +2134,7 @@ function GenerateFormModal({ lead, school, onClose, toast }) {
   useModalChrome(onClose);
   const [fmt, setFmt] = useState('color');
   const printIt = () => {
-    openCrmReportWindow(`Admission Form — ${lead.name}`, buildAdmissionFormHTML(lead, school, fmt), toast, fmt === 'bw' ? '#1E293B' : '#D97706', fmt === 'bw');
+    openCrmFormWindow(`Admission Form — ${lead.name}`, buildAdmissionFormHTML(lead, school, fmt), toast, fmt === 'bw' ? '#1E293B' : '#D97706', fmt === 'bw');
     onClose();
   };
   return (
@@ -2201,92 +2190,48 @@ function GenerateFormModal({ lead, school, onClose, toast }) {
 
 /* ─── Export Active Leads modal ─── */
 function ExportLeadsModal({ leads, school, onClose, toast }) {
-  useModalChrome(onClose);
-  const [fmt, setFmt] = useState('pdf');
-  const [style, setStyle] = useState('color'); // 'color' | 'bw' — only meaningful for the PDF format
-  const handle = () => {
-    if (fmt === 'pdf') {
-      const isBW = style === 'bw';
-      openCrmReportWindow('Active Leads Export', buildLeadsExportHTML(leads, school), toast, '#1E3A8A', isBW);
-    } else {
-      const csv = buildLeadsCSV(leads);
-      const blob = new Blob([csv], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `active-leads-${todayCrmISO()}.${fmt === 'csv' ? 'csv' : 'xls'}`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+  /* Raw data export ('excel' | 'csv') — same file as before the picker. */
+  const downloadData = (fmt) => {
+    const csv = buildLeadsCSV(leads);
+    const blob = new Blob([csv], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `active-leads-${todayCrmISO()}.${fmt === 'csv' ? 'csv' : 'xls'}`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     toast(`${leads.length} lead(s) exported as ${fmt.toUpperCase()}`, 'success');
+  };
+  const generate = (style, format) => {
+    if (format === 'excel') {
+      downloadData('excel');
+    } else {
+      openCrmReportWindow('Active Leads Export', buildLeadsExportHTML(leads, school), toast, '#1E3A8A', style === 'bw', format);
+    }
     onClose();
   };
   return (
-    <CrmModalShell
-      icon="fa-file-export"
-      gradient="linear-gradient(135deg,#DC2626,#B91C1C)"
+    <StandardReportPicker
+      open
       title="Export Active Leads"
-      sub={`${leads.length} record(s) currently visible`}
-      size="md"
+      subtitle={`${leads.length} record(s) currently visible — choose style and format`}
+      formats={['pdf', 'word', 'excel']}
       onClose={onClose}
-      footer={
-        <>
-          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          <button
-            className="fee-btn fee-btn-primary acc-dlreport-btn"
-            onClick={handle}
-          >
-            <i className="fa-solid fa-download"></i> Download {fmt.toUpperCase()}
-          </button>
-        </>
+      onGenerate={generate}
+      filters={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 18 }}>
+          <Tooltip text="Download the raw comma-separated data">
+            <button
+              type="button"
+              className="fee-btn fee-btn-ghost fee-btn-sm"
+              onClick={() => { downloadData('csv'); onClose(); }}
+            >
+              <i className="fa-solid fa-file-csv"></i> Download CSV
+            </button>
+          </Tooltip>
+        </div>
       }
-    >
-      {fmt === 'pdf' && (
-        <>
-          <div className="fee-label" id="export-leads-style-lbl">Report Style</div>
-          <div className="crm-fmt-grid" role="radiogroup" aria-labelledby="export-leads-style-lbl" style={{ marginBottom: 14 }}>
-            {[
-              { id: 'color', icon: 'fa-palette',            name: 'Colorful Report',  desc: 'School branding, summary cards &amp; status badges' },
-              { id: 'bw',    icon: 'fa-circle-half-stroke', name: 'Colorless Report', desc: 'Low-ink layout — white bg, light borders only' },
-            ].map(o => (
-              <button
-                key={o.id}
-                type="button"
-                className={`crm-fmt-opt${style === o.id ? ' active' : ''}`}
-                onClick={() => setStyle(o.id)}
-                role="radio"
-                aria-checked={style === o.id}
-                tabIndex={style === o.id ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
-                  else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
-                }}
-              >
-                <div className="crm-fmt-ic" aria-hidden="true"><i className={`fa-solid ${o.icon}`}></i></div>
-                <div className="crm-fmt-name">{o.name}</div>
-                <div className="crm-fmt-desc" dangerouslySetInnerHTML={{ __html: o.desc }}></div>
-                <div className="crm-fmt-check" aria-hidden="true"><i className="fa-solid fa-circle-check"></i></div>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-      <div className="fee-label">Format</div>
-      <div className="crm-fmt-grid">
-        {[
-          { id: 'pdf',   icon: 'fa-file-pdf',   name: 'PDF Document',   desc: 'A4-shaped printable report with header + table' },
-          { id: 'excel', icon: 'fa-file-excel', name: 'Excel Workbook', desc: 'XLS spreadsheet for filtering / sorting' },
-          { id: 'csv',   icon: 'fa-file-csv',   name: 'CSV File',       desc: 'Plain comma-separated for import elsewhere' },
-        ].map(o => (
-          <button key={o.id} type="button" className={`crm-fmt-opt${fmt === o.id ? ' active' : ''}`} onClick={() => setFmt(o.id)}>
-            <div className="crm-fmt-ic"><i className={`fa-solid ${o.icon}`}></i></div>
-            <div className="crm-fmt-name">{o.name}</div>
-            <div className="crm-fmt-desc">{o.desc}</div>
-            <div className="crm-fmt-check"><i className="fa-solid fa-circle-check"></i></div>
-          </button>
-        ))}
-      </div>
-    </CrmModalShell>
+    />
   );
 }
 
@@ -3324,26 +3269,18 @@ function InactiveLeads({ toast }) {
   const [sub, setSub] = useState('converted');
   const [reactCfg, setReactCfg]   = useState(null);
   const [deleteCfg, setDeleteCfg] = useState(null);
-  /* Report style — applies to every per-row download on this page. */
-  const [inacStyle, setInacStyle] = useState('color'); // 'color' | 'bw'
+  /* Which row's report picker modal is open, if any: { kind, row }. */
+  const [inacReportFor, setInacReportFor] = useState(null);
 
-  const downloadConverted = (row) => {
-    openCrmReportWindow(
-      `Confirmed Admission — ${row.name}`,
-      buildConvertedReportHTML(row, school),
-      toast,
-      '#15803D',
-      inacStyle === 'bw',
-    );
-  };
-  const downloadNotInterested = (row) => {
-    openCrmReportWindow(
-      `Not Interested — ${row.name}`,
-      buildNotInterestedReportHTML(row, school),
-      toast,
-      '#B91C1C',
-      inacStyle === 'bw',
-    );
+  const downloadConverted = (row) => setInacReportFor({ kind: 'converted', row });
+  const downloadNotInterested = (row) => setInacReportFor({ kind: 'notinterested', row });
+  const generateInacReport = ({ kind, row }, style, format) => {
+    if (kind === 'converted') {
+      openCrmReportWindow(`Confirmed Admission — ${row.name}`, buildConvertedReportHTML(row, school), toast, '#15803D', style === 'bw', format);
+    } else {
+      openCrmReportWindow(`Not Interested — ${row.name}`, buildNotInterestedReportHTML(row, school), toast, '#B91C1C', style === 'bw', format);
+    }
+    setInacReportFor(null);
   };
 
   const reactivate = (kind, row) => {
@@ -3416,44 +3353,6 @@ function InactiveLeads({ toast }) {
           <i className="fa-solid fa-circle-xmark"></i> Not Interested
           <span className={`crm-l2-badge${sub === 'notinterested' ? ' on' : ''}`}>{niList.length}</span>
         </button>
-        <div
-          className="rep-style-row"
-          role="radiogroup"
-          aria-label="Report Style"
-          style={{ marginLeft: 'auto' }}
-        >
-          <span className="rep-style-lbl">Report Style</span>
-          <div className="rep-style-seg">
-            <button
-              type="button"
-              className={`rep-style-btn${inacStyle === 'color' ? ' on' : ''}`}
-              onClick={() => setInacStyle('color')}
-              role="radio"
-              aria-checked={inacStyle === 'color'}
-              tabIndex={inacStyle === 'color' ? 0 : -1}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setInacStyle('color'); }
-                else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setInacStyle('bw'); }
-              }}
-            >
-              <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-            </button>
-            <button
-              type="button"
-              className={`rep-style-btn${inacStyle === 'bw' ? ' on' : ''}`}
-              onClick={() => setInacStyle('bw')}
-              role="radio"
-              aria-checked={inacStyle === 'bw'}
-              tabIndex={inacStyle === 'bw' ? 0 : -1}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setInacStyle('color'); }
-                else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setInacStyle('bw'); }
-              }}
-            >
-              <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-            </button>
-          </div>
-        </div>
       </div>
 
       {sub === 'converted' ? (
@@ -3504,6 +3403,15 @@ function InactiveLeads({ toast }) {
         }}
         onClose={() => setDeleteCfg(null)}
       />
+      {inacReportFor && (
+        <StandardReportPicker
+          open
+          title={inacReportFor.kind === 'converted' ? `Confirmed Admission — ${inacReportFor.row.name}` : `Not Interested — ${inacReportFor.row.name}`}
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setInacReportFor(null)}
+          onGenerate={(style, format) => generateInacReport(inacReportFor, style, format)}
+        />
+      )}
     </>
   );
 }
@@ -3673,10 +3581,8 @@ function CrmReports({ toast }) {
      mock window). The HTML reference seeds 2026-05-01 → 2026-05-26. */
   const [from, setFrom] = useState('2026-05-01');
   const [to, setTo]     = useState('2026-05-26');
-  /* Page-level Report Style toggle (Colorful / Colorless). Applies to
-     every report card click — matches the pattern introduced in the
-     Inventory module so admins get a consistent affordance everywhere. */
-  const [style, setStyle] = useState('color'); // 'color' | 'bw'
+  /* Which report card's picker modal is open, if any (report type id). */
+  const [reportPickerType, setReportPickerType] = useState(null);
 
   const setRange = (days) => {
     const today = new Date();
@@ -3732,8 +3638,9 @@ function CrmReports({ toast }) {
   const teamLeads     = officerStats.reduce((a, o) => a + o.assigned, 0);
   const teamRate      = teamLeads === 0 ? 0 : Math.round(teamConverted / teamLeads * 1000) / 10;
 
-  /* PDF — open a popup with the chosen report. */
-  const openReport = (type) => {
+  /* Opens the shared StandardReportPicker modal for the clicked card. */
+  const openReport = (type) => setReportPickerType(type);
+  const generateReport = (type, style, format) => {
     const meta = REPORT_TYPES.find(r => r.id === type);
     const ctx = {
       from, to, fromLabel: fmtFullDate(from), toLabel: fmtFullDate(to),
@@ -3742,13 +3649,8 @@ function CrmReports({ toast }) {
       officerStats, topPerformer, teamConverted, teamLeads, teamRate,
     };
     const inner = buildCrmReportHTML(type, meta, school, ctx);
-    openCrmReportWindow(meta.title, inner, toast, meta.accent, style === 'bw');
-  };
-
-  const onStyleKey = (e, value) => {
-    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
+    openCrmReportWindow(meta.title, inner, toast, meta.accent, style === 'bw', format);
+    setReportPickerType(null);
   };
 
   return (
@@ -3779,34 +3681,6 @@ function CrmReports({ toast }) {
             ))}
           </div>
           <div className="rep-rangelbl"><i className="fa-solid fa-calendar"></i> {rangeLabel}</div>
-          {/* Page-level Report Style toggle */}
-          <div className="rep-style-row" role="radiogroup" aria-label="Report Style">
-            <span className="rep-style-lbl">Report Style</span>
-            <div className="rep-style-seg">
-              <button
-                type="button"
-                className={`rep-style-btn${style === 'color' ? ' on' : ''}`}
-                onClick={() => setStyle('color')}
-                role="radio"
-                aria-checked={style === 'color'}
-                tabIndex={style === 'color' ? 0 : -1}
-                onKeyDown={(e) => onStyleKey(e, 'color')}
-              >
-                <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-              </button>
-              <button
-                type="button"
-                className={`rep-style-btn${style === 'bw' ? ' on' : ''}`}
-                onClick={() => setStyle('bw')}
-                role="radio"
-                aria-checked={style === 'bw'}
-                tabIndex={style === 'bw' ? 0 : -1}
-                onKeyDown={(e) => onStyleKey(e, 'bw')}
-              >
-                <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -3975,6 +3849,15 @@ function CrmReports({ toast }) {
         </div>
 
       </div>
+      {reportPickerType && (
+        <StandardReportPicker
+          open
+          title={REPORT_TYPES.find(r => r.id === reportPickerType)?.title || 'Download Report'}
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setReportPickerType(null)}
+          onGenerate={(style, format) => generateReport(reportPickerType, style, format)}
+        />
+      )}
     </>
   );
 }
@@ -4030,18 +3913,11 @@ function SummaryBar({ label, pct, gradient }) {
    Uses the existing openCrmReportWindow shell with per-type accent.
    ═══════════════════════════════════════════════════════════════════ */
 function buildCrmReportHTML(type, meta, school, ctx) {
-  const head = `
-    <div class="rhead" style="border-bottom-color:${meta.accent}">
-      <div class="rlogo">${crmSchoolLogoSVG()}</div>
-      <div style="flex:1">
-        <div class="rname">${escHtml(school?.name || 'School')}</div>
-        <div class="rtitle" style="color:${meta.accent}">${escHtml(meta.title)} · ${escHtml(meta.sub)}</div>
-      </div>
-      <div class="meta">
-        <b>Date Range</b><br/>${escHtml(ctx.fromLabel)} – ${escHtml(ctx.toLabel)}<br/>
-        <b>Generated</b> ${escHtml(fmtFullDate(todayCrmISO()))}
-      </div>
-    </div>`;
+  /* The header used to be rendered inline here (school/title/date-range
+     meta) — that chrome now comes from reportKit's own header via
+     openCrmReportWindow, using `meta.title` as the title and the date
+     range folded into a small filters line instead. */
+  const head = `<div class="rfilters" style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#475569;margin-bottom:12px"><span><b>${escHtml(meta.sub)}</b></span><span>Date Range: ${escHtml(ctx.fromLabel)} – ${escHtml(ctx.toLabel)}</span></div>`;
 
   if (type === 'summary') {
     const STATUS_ROWS = [

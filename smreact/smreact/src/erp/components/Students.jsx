@@ -8,6 +8,7 @@ import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
+import { buildStandardReportHtml, StandardReportPicker, downloadReportHtmlAsExcel, reportFileName } from '../reports/reportKit';
 import { qrSVG } from '../utils/qrcode';
 import { rankedMatches, studentMatches } from '../utils/studentSearch';
 import { activeSessionName } from '../../utils/apiConfig';
@@ -71,6 +72,39 @@ function stuOpenPrintWindow(title, css, inner, toast) {
   w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 500);
 }
 
+/* Opens an ALREADY-COMPLETE HTML document (built via reportKit's
+   buildStandardReportHtml) — used only by the report builders below,
+   as opposed to stuOpenPrintWindow above which wraps css+inner itself
+   and stays in use for ID cards/certificates/forms/receipts. */
+function stuOpenReportWindow(html, toast) {
+  const w = window.open('', '_blank');
+  if (!w) { toast && toast('Please allow pop-ups to print', 'error'); return; }
+  w.document.write(html);
+  w.document.close();
+  /* Small delay so the branch logo image has time to load before print. */
+  w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 500);
+}
+
+/* Wraps a bare css+inner (or a self-styled fragment that already embeds its
+   own <style> tag, in which case pass '' for css) into a complete HTML
+   document — needed before handing a fragment to downloadReportHtmlAsExcel,
+   which just Blob-wraps whatever string it gets. */
+function stuWrapForExport(title, css, inner) {
+  const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body>${inner}</body></html>`;
+}
+
+/* Deliver an ALREADY-COMPLETE kit report (buildStandardReportHtml) by format:
+     • 'word'  → shared preview with a "Save as Word" button → real .docx
+     • 'excel' → the same report HTML saved as .xls (build it with format 'excel'
+                 so the print toolbar is left out)
+     • 'pdf'   → auto-print A4 window. */
+function stuDeliverKitReport(title, html, format, toast) {
+  if (format === 'word') deliverReport(title, 'word', html);
+  else if (format === 'excel') downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`);
+  else stuOpenReportWindow(html, toast);
+}
+
 /* Wrap a report's inner HTML into a full A4 document with the SAME toolbar the
    Academics/Exam reports use (a `window.print()` button labelled
    "Print / Save as PDF"). deliverReport() rewrites that button into
@@ -92,10 +126,13 @@ function stuWrapFullDoc(title, css, inner) {
 /* Deliver a Students report by chosen format:
      • 'word' → shared preview with a "Save as Word" button → real .docx download
                 (matches the Academics module exactly).
+     • 'excel' → the same report HTML saved as .xls.
      • 'pdf'  → existing auto-print A4 window (unchanged). */
 function stuDeliverReport(title, css, inner, format, toast) {
   if (format === 'word') {
     deliverReport(title, 'word', stuWrapFullDoc(title, css, inner));
+  } else if (format === 'excel') {
+    downloadReportHtmlAsExcel(stuWrapForExport(title, css || '', inner), `${reportFileName(title)}.xls`);
   } else {
     stuOpenPrintWindow(title, css, inner, toast);
   }
@@ -844,12 +881,6 @@ function buildStuInactiveReportHTML(list, title, school) {
       : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' });
   };
   const campus = school?.campus || 'Main Campus';
-  const addr   = school?.address || '';
-  const phone  = school?.phone || '';
-  const session = school?.session || '';
-  const logoSvg = school?.logo
-    ? `<img src="${school.logo}" alt="logo" width="46" height="46" style="object-fit:contain;border-radius:9px"/>`
-    : `<svg width="46" height="46" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="${brand}"/><path d="M18 9 L26 13 L18 17 L10 13 Z" fill="rgba(255,255,255,.95)"/><path d="M12 15 L12 21 C12 21 15 23 18 23 C21 23 24 21 24 21 L24 15" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.4"/><line x1="26" y1="13" x2="26" y2="19" stroke="rgba(255,255,255,.9)" stroke-width="1.2"/></svg>`;
   const rows = list.map((s, i) => {
     const dueTotal = Number(s.dues?.total || 0);
     const outCell = dueTotal > 0
@@ -867,47 +898,50 @@ function buildStuInactiveReportHTML(list, title, school) {
     </tr>`;
   }).join('') || `<tr><td colspan="8" style="padding:24px;text-align:center;color:#94a3b8;font-style:italic">No inactive students for this selection.</td></tr>`;
 
-  return `
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0}
-      html,body{background:#eef2f9}body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;padding:24px}
-      .page{background:#fff;max-width:840px;margin:0 auto;box-shadow:0 10px 40px rgba(0,0,0,.12)}
-      @page{size:A4 portrait;margin:14mm}
-      @media print{body{background:#fff;padding:0}.page{box-shadow:none;margin:0;max-width:none}}
-    </style>
-    <div class="page">
-      <div style="display:flex;align-items:center;gap:16px;padding:22px 30px;border-bottom:3px solid ${brand};background:linear-gradient(135deg,rgba(30,58,138,.05),transparent)">
-        <div>${logoSvg}</div>
-        <div style="flex:1">
-          <div style="font-family:'Instrument Serif',Georgia,serif;font-size:26px;font-weight:600;color:${brand};line-height:1">${stuEsc(school?.name || 'School')}</div>
-          <div style="font-size:12px;color:#64748B;margin-top:3px">${stuEsc(campus)} · ${stuEsc(addr)} · ${stuEsc(phone)}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:13px;font-weight:800;color:${brand};text-transform:uppercase;letter-spacing:.5px">${stuEsc(title)}</div>
-          <div style="font-size:11px;color:#64748B;margin-top:2px">Session ${stuEsc(session)}</div>
-          <div style="font-size:10.5px;color:#94a3b8;margin-top:1px">Generated: ${new Date().toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-        </div>
-      </div>
-      <div style="padding:22px 30px">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-          <span style="font-size:12px;font-weight:700;color:#fff;background:${brand};border-radius:20px;padding:6px 16px">Total Inactive: ${list.length}</span>
-          <span style="font-size:12px;font-weight:700;color:#B91C1C;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.22);border-radius:20px;padding:6px 16px">With Dues: ${list.filter(s => Number(s.dues?.total || 0) > 0).length}</span>
-          <span style="font-size:12px;font-weight:700;color:#15803D;background:rgba(22,163,74,.08);border:1px solid rgba(22,163,74,.22);border-radius:20px;padding:6px 16px">Cleared: ${list.filter(s => !Number(s.dues?.total || 0)).length}</span>
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-          <thead><tr style="background:#EFF6FF">
-            ${['#', 'Reg No', 'Name', 'Father', 'Last Class/Sec', 'Inactive On', 'Reason', 'Outstanding']
-              .map((h, idx) => `<th style="text-align:${idx === 7 ? 'right' : 'left'};padding:9px 10px;color:#1E40AF;font-size:11px;text-transform:uppercase;letter-spacing:.4px">${h}</th>`).join('')}
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-        <div style="margin-top:24px;font-size:10.5px;color:#94a3b8;text-align:center">System-generated by ${stuEsc(school?.name || 'School')} ERP · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-      </div>
-    </div>`;
+  const bodyHtml = `
+    ${campus && campus !== school?.name ? `<div style="font-size:12px;color:#64748B;margin-bottom:12px">${stuEsc(campus)}</div>` : ''}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      <span style="font-size:12px;font-weight:700;color:#fff;background:${brand};border-radius:20px;padding:6px 16px">Total Inactive: ${list.length}</span>
+      <span style="font-size:12px;font-weight:700;color:#B91C1C;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.22);border-radius:20px;padding:6px 16px">With Dues: ${list.filter(s => Number(s.dues?.total || 0) > 0).length}</span>
+      <span style="font-size:12px;font-weight:700;color:#15803D;background:rgba(22,163,74,.08);border:1px solid rgba(22,163,74,.22);border-radius:20px;padding:6px 16px">Cleared: ${list.filter(s => !Number(s.dues?.total || 0)).length}</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#EFF6FF">
+        ${['#', 'Reg No', 'Name', 'Father', 'Last Class/Sec', 'Inactive On', 'Reason', 'Outstanding']
+          .map((h, idx) => `<th style="text-align:${idx === 7 ? 'right' : 'left'};padding:9px 10px;color:#1E40AF;font-size:11px;text-transform:uppercase;letter-spacing:.4px">${h}</th>`).join('')}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  return buildStandardReportHtml({ title: stuEsc(title), format: 'pdf', isColor: true, bodyHtml, schoolName: stuEsc(school?.name || '') });
 }
 
-function buildStuClassReportHTML(c, school, isBW = false) {
-  const color  = isBW ? '#1F2937' : '#1E3A8A';
+function stuReportTableCSS(isColor, color) {
+  return `
+    .sec-band{background:${isColor ? color : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:7px 13px;border-radius:6px;font-weight:800;font-size:11.5px;margin-bottom:9px;display:flex;justify-content:space-between;align-items:center;${isColor ? '' : 'border:1.5px solid #0F172A'}}
+    .sec-band small{font-size:10px;opacity:${isColor ? '.85' : '1'};font-weight:700;color:${isColor ? 'inherit' : '#4B5563'}}
+    .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
+    .kpi{border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:8px;padding:10px 12px;background:${isColor ? '#F8FAFF' : '#FFFFFF'};position:relative;overflow:hidden}
+    .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:${isColor ? color : '#0F172A'}}
+    .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+    .kpi .v{font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
+    .kvgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px 16px;padding:11px 14px;border:1px solid ${isColor ? '#E5E7EB' : '#D1D5DB'};border-radius:8px;background:${isColor ? '#F8FAFF' : '#FFFFFF'};margin-bottom:9px}
+    .kv-l{font-size:9.5px;font-weight:800;color:${isColor ? color : '#0F172A'};text-transform:uppercase;letter-spacing:.3px}
+    .kv-v{font-size:11.5px;color:#0F172A;font-weight:700;margin-top:1px}
+    .kv-full{grid-column:1/-1}
+    .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px}
+    .tbl thead th{background:${isColor ? color : '#FFFFFF'};color:${isColor ? '#fff' : '#0F172A'};padding:7px 9px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:800;${isColor ? '' : 'border-bottom:1.5px solid #0F172A'}}
+    .tbl th.c,.tbl td.c{text-align:center}
+    .tbl td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
+    .tbl tbody tr:nth-child(even) td{${isColor ? 'background:#FBFCFF' : ''}}
+    .mono{font-family:ui-monospace,Menlo,monospace;color:${isColor ? color : '#0F172A'};font-weight:800}
+    .empty{padding:16px;text-align:center;color:#94A3B8;font-style:italic;border:1px dashed #CBD5E1;border-radius:8px;margin-bottom:6px}
+  `;
+}
+
+function buildStuClassReportHTML(c, school, isBW = false, format = 'pdf') {
+  const isColor = !isBW;
+  const color   = '#1E3A8A';
   const rows = c.students.map((s, i) => `
     <tr>
       <td class="c">${i + 1}</td>
@@ -923,49 +957,28 @@ function buildStuClassReportHTML(c, school, isBW = false) {
       <td class="c">${stuFmtDate(s.admdate)}</td>
       <td class="c">${stuHasDiscount(s) ? '<span style="color:#B91C1C;font-weight:800">✓</span>' : ''}</td>
     </tr>`).join('');
-  return `
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
-      html,body{background:#F1F3F8}body{padding:18px 0;font-size:10.5px}
-      .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
-      .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${color};padding-bottom:10px;margin-bottom:14px}
-      .rlogo{width:46px;height:46px;flex-shrink:0}
-      .rname{font-size:17px;font-weight:800;color:#0F172A}
-      .rtitle{font-size:12px;font-weight:700;color:${color};margin-top:3px}
-      .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}
-      .sec-band{background:${color};color:#fff;padding:7px 13px;border-radius:6px;font-weight:800;font-size:11.5px;margin-bottom:9px;display:flex;justify-content:space-between;align-items:center}
-      .sec-band small{font-size:10px;opacity:.85;font-weight:700}
-      .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px}
-      .tbl thead th{background:${color};color:#fff;padding:7px 9px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
-      .tbl th.c,.tbl td.c{text-align:center}
-      .tbl td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
-      .tbl tbody tr:nth-child(even) td{background:#FBFCFF}
-      .mono{font-family:ui-monospace,Menlo,monospace;color:${color};font-weight:800}
-      .rfoot{margin-top:14px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:8px}
-      @page{size:A4 portrait;margin:0}
-      @media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}}
-    </style>
-    <div class="page">
-      <div class="rhead">
-        <div class="rlogo">${stuLogoImg(school)}</div>
-        <div>
-          <div class="rname">${stuEsc(school?.name || 'School')}</div>
-          <div class="rtitle">Student List — ${stuEsc(c.cls)} (${stuEsc(c.sec)})</div>
-        </div>
-        <div class="meta">Generated: ${stuFmtDate(new Date().toISOString().slice(0, 10))}<br/>${stuEsc(school?.session || '')}</div>
-      </div>
-      <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${c.students.length} student(s)</small></div>
-      <table class="tbl">
-        <thead><tr><th class="c" style="width:24px">#</th><th style="width:72px">Reg No</th><th style="width:72px">Adm No</th><th>Name</th><th>Father Name</th><th class="c" style="width:60px">DOB</th><th class="c" style="width:48px">Gender</th><th style="width:78px">Contact</th><th style="width:84px">B-Form No.</th><th style="width:92px">Father CNIC</th><th class="c" style="width:60px">Admitted</th><th class="c" style="width:52px">Disc.</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="12" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
-      </table>
-      <div class="rfoot">${stuEsc(school?.name || 'School')} · Class Report · Generated ${stuFmtDate(new Date().toISOString().slice(0, 10))}</div>
-    </div>`;
+
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${c.students.length} student(s)</small></div>
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:24px">#</th><th style="width:72px">Reg No</th><th style="width:72px">Adm No</th><th>Name</th><th>Father Name</th><th class="c" style="width:60px">DOB</th><th class="c" style="width:48px">Gender</th><th style="width:78px">Contact</th><th style="width:84px">B-Form No.</th><th style="width:92px">Father CNIC</th><th class="c" style="width:60px">Admitted</th><th class="c" style="width:52px">Disc.</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
+    </table>`;
+
+  return buildStandardReportHtml({
+    title: `Student List — ${stuEsc(c.cls)} (${stuEsc(c.sec)})`,
+    format,
+    isColor,
+    bodyHtml,
+    schoolName: stuEsc(school?.name || ''),
+    includeToolbar: format !== 'excel',
+  });
 }
 
 /* ─── Whole-school roster PDF ─── */
-function buildStuSchoolReportHTML(classes, school, isBW = false) {
-  const color = isBW ? '#1F2937' : '#1E3A8A';
+function buildStuSchoolReportHTML(classes, school, isBW = false, format = 'pdf') {
+  const isColor = !isBW;
+  const color   = '#1E3A8A';
   const total = classes.reduce((a, c) => a + c.students.length, 0);
   const sections = classes.map(c => `
     <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${c.students.length} student(s)</small></div>
@@ -976,50 +989,23 @@ function buildStuSchoolReportHTML(classes, school, isBW = false) {
         : c.students.map((s, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${stuEsc(s.reg)}</td><td><b>${stuEsc(stuFullName(s))}</b></td><td>${stuEsc(s.father || '—')}</td><td class="c">${stuFmtDate(s.dob)}</td><td class="mono">${stuEsc(s.mobile || '—')}</td><td class="mono">${stuEsc(s.bform || '—')}</td><td class="mono">${stuEsc(s.fcnic || '—')}</td><td class="c">${stuFmtDate(s.admdate)}</td></tr>`).join('')}</tbody>
     </table>
   `).join('');
-  return `
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
-      html,body{background:#F1F3F8}body{padding:18px 0;font-size:10.5px}
-      .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
-      .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${color};padding-bottom:10px;margin-bottom:14px}
-      .rlogo{width:46px;height:46px;flex-shrink:0}
-      .rname{font-size:17px;font-weight:800;color:#0F172A}
-      .rtitle{font-size:12px;font-weight:700;color:${color};margin-top:3px}
-      .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}
-      .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
-      .kpi{border:1px solid #E5E7EB;border-radius:8px;padding:10px 12px;background:#F8FAFF;position:relative;overflow:hidden}
-      .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:${color}}
-      .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
-      .kpi .v{font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
-      .sec-band{background:${color};color:#fff;padding:6px 13px;border-radius:6px;font-weight:800;font-size:11px;margin:14px 0 7px;display:flex;justify-content:space-between;align-items:center}
-      .sec-band small{font-size:9.5px;opacity:.85;font-weight:700}
-      .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10px;margin-bottom:8px}
-      .tbl thead th{background:${color};color:#fff;padding:6px 8px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
-      .tbl th.c,.tbl td.c{text-align:center}
-      .tbl td{padding:6px 8px;border-bottom:1px solid #F1F3F8;vertical-align:top}
-      .tbl tbody tr:nth-child(even) td{background:#FBFCFF}
-      .mono{font-family:ui-monospace,Menlo,monospace;color:${color};font-weight:800}
-      .rfoot{margin-top:14px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:8px}
-      @page{size:A4 portrait;margin:0}
-      @media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr{page-break-inside:avoid}}
-    </style>
-    <div class="page">
-      <div class="rhead">
-        <div class="rlogo">${stuLogoImg(school)}</div>
-        <div>
-          <div class="rname">${stuEsc(school?.name || 'School')}</div>
-          <div class="rtitle">Whole-School Student Roster</div>
-        </div>
-        <div class="meta">Generated: ${stuFmtDate(new Date().toISOString().slice(0, 10))}<br/>${stuEsc(school?.session || '')}</div>
-      </div>
-      <div class="kpi-row">
-        <div class="kpi"><div class="l">Active Students</div><div class="v">${total}</div></div>
-        <div class="kpi"><div class="l">Sections</div><div class="v">${classes.length}</div></div>
-        <div class="kpi"><div class="l">Distinct Classes</div><div class="v">${new Set(classes.map(c => c.cls)).size}</div></div>
-      </div>
-      ${sections}
-      <div class="rfoot">${stuEsc(school?.name || 'School')} · School Report · Generated ${stuFmtDate(new Date().toISOString().slice(0, 10))}</div>
-    </div>`;
+
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Active Students</div><div class="v">${total}</div></div>
+      <div class="kpi"><div class="l">Sections</div><div class="v">${classes.length}</div></div>
+      <div class="kpi"><div class="l">Distinct Classes</div><div class="v">${new Set(classes.map(c => c.cls)).size}</div></div>
+    </div>
+    ${sections}`;
+
+  return buildStandardReportHtml({
+    title: 'Whole-School Student Roster',
+    format,
+    isColor,
+    bodyHtml,
+    schoolName: stuEsc(school?.name || ''),
+    includeToolbar: format !== 'excel',
+  });
 }
 
 /* ─── Certificate PDF (A4 portrait) ─── */
@@ -1573,11 +1559,11 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
       stuDeliverReport(`Profile — ${stuFullName(s)}`, '', html, format, toast);
     } else if (rpCfg.kind === 'class') {
       const c = list.find(x => x.key === rpCfg.cKey);
-      const html = buildStuClassReportHTML(c, rptSchool, isBW);
-      stuDeliverReport(`${c.cls} (${c.sec}) — Class Report`, '', html, format, toast);
+      const html = buildStuClassReportHTML(c, rptSchool, isBW, format);
+      stuDeliverKitReport(`${c.cls} (${c.sec}) — Class Report`, html, format, toast);
     } else if (rpCfg.kind === 'school') {
-      const html = buildStuSchoolReportHTML(list, rptSchool, isBW);
-      stuDeliverReport('School Report', '', html, format, toast);
+      const html = buildStuSchoolReportHTML(list, rptSchool, isBW, format);
+      stuDeliverKitReport('School Report', html, format, toast);
     }
     toast(`${rpCfg.title} (${style.toUpperCase()} · ${format.toUpperCase()}) ready`, 'success');
     setRpCfg(null);
@@ -1603,12 +1589,13 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     toast(`${studs.length} ID card(s) generated`, 'success');
     setBulkIdCfg(null);
   };
-  const doCert = (style, opts) => {
+  const doCert = (style, opts, format = 'pdf') => {
     const c = list.find(x => x.key === certCfg.cKey);
     const s = c?.students.find(x => x._id === certCfg.id);
     if (!s) return;
     const { css, html } = buildStuCertHTML(s, c, school, certCfg.type, style, opts);
-    stuOpenPrintWindow(`Certificate — ${stuFullName(s)}`, css, html, toast);
+    /* Word → shared .docx preview; PDF → print window (unchanged). */
+    stuDeliverReport(`Certificate — ${stuFullName(s)}`, css, html, format === 'word' ? 'word' : 'pdf', toast);
     toast(`${STU_CERT_DEFAULTS[certCfg.type].title} generated`, 'success');
     setCertCfg(null);
   };
@@ -3219,7 +3206,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   const openInactiveReport = (list, title) => {
     if (!list || list.length === 0) { toast('No inactive students to download', 'info'); return; }
     const html = buildStuInactiveReportHTML(list, title, school);
-    stuOpenPrintWindow(title, '', html, toast);
+    stuOpenReportWindow(html, toast);
   };
   const downloadAll   = () => openInactiveReport(inactive, 'All Inactive Students');
   const downloadGroup = (g) => openInactiveReport(g.students, `Inactive — ${g.cls} (${g.sec})`);
@@ -3245,12 +3232,13 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
 
   /* Inactive student ka certificate generate + download (Active tab jaisa hi — StuCertModal
      se style/opts leke buildStuCertHTML → print/PDF window). Pehle sirf stub toast tha. */
-  const doCert = (style, opts) => {
+  const doCert = (style, opts, format = 'pdf') => {
     if (!certCfg?.student) return;
     const s = certCfg.student;
     const cls = certCfg.cls || { cls: s.cls || '—', sec: s.sec || '—' };
     const { css, html } = buildStuCertHTML(s, cls, school, certCfg.type, style, opts);
-    stuOpenPrintWindow(`Certificate — ${stuFullName(s)}`, css, html, toast);
+    /* Word → shared .docx preview; PDF → print window (unchanged). */
+    stuDeliverReport(`Certificate — ${stuFullName(s)}`, css, html, format === 'word' ? 'word' : 'pdf', toast);
     toast(`${STU_CERT_DEFAULTS[certCfg.type]?.title || 'Certificate'} generated`, 'success');
     setCertCfg(null);
   };
@@ -4122,142 +4110,15 @@ function StuDuesModal({ student, onClose, onSettle }) {
    the PDF builder chosen via `cfg.kind`.
    ═══════════════════════════════════════════════════════════════════ */
 function StuReportPicker({ cfg, onClose, onConfirm }) {
-  const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
-  }, [onClose]);
-  /* Keyboard nav for the two ARIA radio-groups (matches Modules 2–10). */
-  const onStyleKey = (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
-  };
-  const onFormatKey = (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setFormat('pdf'); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setFormat('word'); }
-  };
-  const label = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format.toUpperCase()}`;
   return (
-    <div
-      className="stu-modal-overlay open"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="stu-rp-title"
-    >
-      <div className="stu-modal" style={{ maxWidth: 580 }}>
-        <div className="stu-modal-head">
-          <div className="stu-modal-head-title">
-            <div className="stu-modal-head-icon"><i className="fa-solid fa-file-arrow-down"></i></div>
-            <div>
-              <div className="stu-modal-title" id="stu-rp-title">{cfg.title}</div>
-              <div className="stu-modal-sub">{cfg.sub}</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button className="stu-modal-close" onClick={onClose} aria-label="Close download dialog"><i className="fa-solid fa-xmark"></i></button>
-          </Tooltip>
-        </div>
-        <div className="stu-modal-body">
-          <div className="stu-rp-label" id="stu-rp-style-lbl">Report Style</div>
-          <div className="stu-rp-grid" role="radiogroup" aria-labelledby="stu-rp-style-lbl">
-            <button
-              type="button"
-              className={`stu-rp-card${style === 'color' ? ' on' : ''}`}
-              onClick={() => setStyle('color')}
-              role="radio"
-              aria-checked={style === 'color'}
-              tabIndex={style === 'color' ? 0 : -1}
-              onKeyDown={onStyleKey}
-            >
-              <div className="stu-rp-preview stu-rp-preview--color" aria-hidden="true">
-                <div className="stu-rp-preview-bar" />
-                <div className="stu-rp-preview-rows">
-                  <div></div><div></div><div></div>
-                </div>
-                <div className="stu-rp-preview-chips">
-                  <span style={{ background: '#1E40AF' }}></span>
-                  <span style={{ background: '#16A34A' }}></span>
-                  <span style={{ background: '#D97706' }}></span>
-                </div>
-              </div>
-              <div className="stu-rp-card-name">Colorful Report</div>
-              <div className="stu-rp-card-desc">School branding, summary cards &amp; status badges</div>
-            </button>
-            <button
-              type="button"
-              className={`stu-rp-card${style === 'bw' ? ' on' : ''}`}
-              onClick={() => setStyle('bw')}
-              role="radio"
-              aria-checked={style === 'bw'}
-              tabIndex={style === 'bw' ? 0 : -1}
-              onKeyDown={onStyleKey}
-            >
-              <div className="stu-rp-preview stu-rp-preview--bw" aria-hidden="true">
-                <div className="stu-rp-preview-bar" />
-                <div className="stu-rp-preview-rows">
-                  <div></div><div></div><div></div>
-                </div>
-                <div className="stu-rp-preview-chips">
-                  <span style={{ background: 'transparent', border: '1px solid #9CA3AF' }}></span>
-                  <span style={{ background: 'transparent', border: '1px solid #9CA3AF' }}></span>
-                  <span style={{ background: 'transparent', border: '1px solid #9CA3AF' }}></span>
-                </div>
-              </div>
-              <div className="stu-rp-card-name">Colorless Report</div>
-              <div className="stu-rp-card-desc">Low-ink layout — white bg, light borders only</div>
-            </button>
-          </div>
-
-          <div className="stu-rp-label" id="stu-rp-fmt-lbl" style={{ marginTop: 18 }}>Format</div>
-          <div className="stu-rp-fmt-grid" role="radiogroup" aria-labelledby="stu-rp-fmt-lbl">
-            <button
-              type="button"
-              className={`stu-rp-fmt${format === 'pdf' ? ' on' : ''}`}
-              onClick={() => setFormat('pdf')}
-              role="radio"
-              aria-checked={format === 'pdf'}
-              tabIndex={format === 'pdf' ? 0 : -1}
-              onKeyDown={onFormatKey}
-            >
-              <div className="stu-rp-fmt-ic" style={{ background: 'rgba(220,38,38,.10)', color: '#DC2626' }} aria-hidden="true">
-                <i className="fa-solid fa-file-pdf"></i>
-              </div>
-              <div>
-                <div className="stu-rp-card-name">PDF</div>
-                <div className="stu-rp-card-desc">Portable, print-ready</div>
-              </div>
-            </button>
-            <button
-              type="button"
-              className={`stu-rp-fmt${format === 'word' ? ' on' : ''}`}
-              onClick={() => setFormat('word')}
-              role="radio"
-              aria-checked={format === 'word'}
-              tabIndex={format === 'word' ? 0 : -1}
-              onKeyDown={onFormatKey}
-            >
-              <div className="stu-rp-fmt-ic" style={{ background: 'rgba(30,58,138,.10)', color: '#1E40AF' }} aria-hidden="true">
-                <i className="fa-brands fa-microsoft"></i>
-              </div>
-              <div>
-                <div className="stu-rp-card-name">Word</div>
-                <div className="stu-rp-card-desc">Editable document</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="stu-modal-foot">
-          <button className="stu-btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="stu-btn-primary" onClick={() => onConfirm({ style, format })}>
-            <i className="fa-solid fa-download"></i> {label}
-          </button>
-        </div>
-      </div>
-    </div>
+    <StandardReportPicker
+      open
+      title={cfg.title}
+      subtitle={cfg.sub}
+      formats={['pdf', 'word', 'excel']}
+      onClose={onClose}
+      onGenerate={(style, format) => onConfirm({ style, format })}
+    />
   );
 }
 
@@ -4819,9 +4680,15 @@ function StuCertModal({ cfg, student, cls, school, onClose, onDownload }) {
         <div className="stu-modal-foot">
           <button className="stu-btn-ghost" onClick={onClose}>Cancel</button>
           <button
+            className="stu-btn-ghost"
+            onClick={() => onDownload(style, opts, 'word')}
+          >
+            <i className="fa-brands fa-microsoft"></i> Download Word
+          </button>
+          <button
             className="stu-btn-primary"
             style={{ background: 'linear-gradient(135deg,#D97706,#B45309)', boxShadow: '0 4px 14px rgba(217,119,6,.28)' }}
-            onClick={() => onDownload(style, opts)}
+            onClick={() => onDownload(style, opts, 'pdf')}
           >
             <i className="fa-solid fa-download"></i> Generate &amp; Download
           </button>
@@ -5173,58 +5040,21 @@ function buildStuFamilyReportHTML(families, classes, school) {
         </table>`}
     `;
   }).join('');
-  return `
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
-      html,body{background:#F1F3F8}body{padding:18px 0;font-size:10.5px}
-      .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
-      .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${color};padding-bottom:10px;margin-bottom:14px}
-      .rlogo{width:46px;height:46px;flex-shrink:0}
-      .rname{font-size:17px;font-weight:800;color:#0F172A}
-      .rtitle{font-size:12px;font-weight:700;color:${color};margin-top:3px}
-      .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}
-      .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
-      .kpi{border:1px solid #E5E7EB;border-radius:8px;padding:10px 12px;background:#F8FAFF;position:relative;overflow:hidden}
-      .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:${color}}
-      .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
-      .kpi .v{font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
-      .sec-band{background:${color};color:#fff;padding:6px 13px;border-radius:6px;font-weight:800;font-size:11.5px;margin:14px 0 8px;display:flex;justify-content:space-between;align-items:center}
-      .sec-band small{font-size:10px;opacity:.85;font-weight:700}
-      .kvgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px 16px;padding:11px 14px;border:1px solid #E5E7EB;border-radius:8px;background:#F8FAFF;margin-bottom:9px}
-      .kv-l{font-size:9.5px;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:.3px}
-      .kv-v{font-size:11.5px;color:#0F172A;font-weight:700;margin-top:1px}
-      .kv-full{grid-column:1/-1}
-      .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:6px}
-      .tbl thead th{background:${color};color:#fff;padding:7px 9px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
-      .tbl th.c,.tbl td.c{text-align:center}
-      .tbl td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
-      .tbl tbody tr:nth-child(even) td{background:#FBFCFF}
-      .mono{font-family:ui-monospace,Menlo,monospace;color:${color};font-weight:800}
-      .empty{padding:16px;text-align:center;color:#94A3B8;font-style:italic;border:1px dashed #CBD5E1;border-radius:8px;margin-bottom:6px}
-      .rfoot{margin-top:14px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:8px}
-      @page{size:A4 portrait;margin:0}
-      @media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr{page-break-inside:avoid}}
-    </style>
-    <div class="page">
-      <div class="rhead">
-        <div class="rlogo">${stuLogoImg(school)}</div>
-        <div>
-          <div class="rname">${stuEsc(school?.name || 'School')}</div>
-          <div class="rtitle">Family Tree Report</div>
-        </div>
-        <div class="meta">Generated: ${stuFmtDate(new Date().toISOString().slice(0, 10))}<br/>${stuEsc(school?.session || '')}</div>
-      </div>
+  const bodyHtml = `<style>${stuReportTableCSS(true, color)}</style>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Total Families</div><div class="v">${totalFams}</div></div>
+      <div class="kpi"><div class="l">Linked Students</div><div class="v">${totalMembers}</div></div>
+      <div class="kpi"><div class="l">Avg. Members per Family</div><div class="v">${totalFams === 0 ? 0 : (totalMembers / totalFams).toFixed(1)}</div></div>
+    </div>
+    ${families.length === 0 ? '<div class="empty">No families exist yet.</div>' : sections}`;
 
-      <div class="kpi-row">
-        <div class="kpi"><div class="l">Total Families</div><div class="v">${totalFams}</div></div>
-        <div class="kpi"><div class="l">Linked Students</div><div class="v">${totalMembers}</div></div>
-        <div class="kpi"><div class="l">Avg. Members per Family</div><div class="v">${totalFams === 0 ? 0 : (totalMembers / totalFams).toFixed(1)}</div></div>
-      </div>
-
-      ${families.length === 0 ? '<div class="empty">No families exist yet.</div>' : sections}
-
-      <div class="rfoot">System-generated by ${stuEsc(school?.name || 'School')} ERP · ${stuFmtDate(new Date().toISOString().slice(0, 10))}</div>
-    </div>`;
+  return buildStandardReportHtml({
+    title: 'Family Tree Report',
+    format: 'pdf',
+    isColor: true,
+    bodyHtml,
+    schoolName: stuEsc(school?.name || ''),
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -5315,7 +5145,7 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   };
 
   const downloadPDF = () => {
-    stuOpenPrintWindow('Family Tree Report', '', buildStuFamilyReportHTML(enriched, classes, school), toast);
+    stuOpenReportWindow(buildStuFamilyReportHTML(enriched, classes, school), toast);
     toast('Family tree report ready', 'success');
   };
 
@@ -6611,58 +6441,31 @@ function PreEnrollActionConfirm({ cfg, onClose, onConfirm }) {
 /* ─── Reporting download — same A4 report convention as the other Students
    reports (rhead/rlogo/kpi-row/tbl/rfoot), school-branded via stuSchoolLogoSVG(). ── */
 function buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school }) {
-  const genDate = stuFmtDate(new Date().toISOString().slice(0, 10));
   const body = rows.length === 0
     ? '<tr><td colspan="6" style="text-align:center;padding:18px;color:#94A3B8">No collections in this period.</td></tr>'
     : rows.map((p, i) => `<tr><td class="c">${i + 1}</td><td>${stuFmtDate(p.date)}</td><td><b>${stuEsc(p.studentName)}</b></td><td class="mono">${stuEsc(p.reg)}</td><td>${stuEsc(p.cls)}${p.sec ? ` (${stuEsc(p.sec)})` : ''}</td><td>${stuEsc(p.method)}</td><td class="r">${stuMoney(p.amount)}</td></tr>`).join('');
-  return {
-    css: `
-      *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
-      html,body{background:#F1F3F8}body{padding:18px 0;font-size:10.5px}
-      .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
-      .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:10px;margin-bottom:14px}
-      .rlogo{width:46px;height:46px;flex-shrink:0}
-      .rname{font-size:17px;font-weight:800;color:#0F172A}
-      .rtitle{font-size:12px;font-weight:700;color:#1E3A8A;margin-top:3px}
-      .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}
-      .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
-      .kpi{border:1px solid #E5E7EB;border-radius:8px;padding:10px 12px;background:#F8FAFF;position:relative;overflow:hidden}
-      .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:#1E3A8A}
-      .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
-      .kpi .v{font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
-      .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px}
-      .tbl thead th{background:#1E3A8A;color:#fff;padding:7px 9px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
-      .tbl th.c,.tbl td.c{text-align:center}
+  const bodyHtml = `<style>${stuReportTableCSS(true, '#1E3A8A')}
       .tbl th.r,.tbl td.r{text-align:right}
-      .tbl td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
-      .tbl tbody tr:nth-child(even) td{background:#FBFCFF}
       .tbl tfoot td{font-weight:800;background:#F8FAFF;border-top:1.5px solid #E5E7EB}
-      .mono{font-family:ui-monospace,Menlo,monospace;color:#1E3A8A;font-weight:800}
-      .rfoot{margin-top:14px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:8px}
-      @page{size:A4 portrait;margin:0}
-      @media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr{page-break-inside:avoid}}
-    `,
-    html: `
-      <div class="page">
-        <div class="rhead">
-          <div class="rlogo">${stuLogoImg(school)}</div>
-          <div><div class="rname">${stuEsc(school?.name || 'School')}</div><div class="rtitle">Pre-Enrollment Report — ${stuEsc(periodLabel)}</div></div>
-          <div class="meta">Generated: ${genDate}<br/>${stuEsc(school?.session || '')}</div>
-        </div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="l">Pre-Enrolled In Period</div><div class="v">${enrolledCount}</div></div>
-          <div class="kpi"><div class="l">Collections</div><div class="v">${rows.length}</div></div>
-          <div class="kpi"><div class="l">Total Revenue</div><div class="v">${stuMoney(total)}</div></div>
-        </div>
-        <table class="tbl">
-          <thead><tr><th class="c" style="width:30px">#</th><th style="width:80px">Date</th><th>Student</th><th style="width:100px">Reg No</th><th>Class</th><th style="width:90px">Method</th><th class="r" style="width:100px">Amount</th></tr></thead>
-          <tbody>${body}</tbody>
-          <tfoot><tr><td colspan="6">Total</td><td class="r">${stuMoney(total)}</td></tr></tfoot>
-        </table>
-        <div class="rfoot">${stuEsc(school?.name || 'School')} · Pre-Enrollment Report · Generated ${genDate}</div>
-      </div>
-    `,
-  };
+    </style>
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">Pre-Enrolled In Period</div><div class="v">${enrolledCount}</div></div>
+      <div class="kpi"><div class="l">Collections</div><div class="v">${rows.length}</div></div>
+      <div class="kpi"><div class="l">Total Revenue</div><div class="v">${stuMoney(total)}</div></div>
+    </div>
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:30px">#</th><th style="width:80px">Date</th><th>Student</th><th style="width:100px">Reg No</th><th>Class</th><th style="width:90px">Method</th><th class="r" style="width:100px">Amount</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td colspan="6">Total</td><td class="r">${stuMoney(total)}</td></tr></tfoot>
+    </table>`;
+
+  return buildStandardReportHtml({
+    title: `Pre-Enrollment Report — ${stuEsc(periodLabel)}`,
+    format: 'pdf',
+    isColor: true,
+    bodyHtml,
+    schoolName: stuEsc(school?.name || ''),
+  });
 }
 
 /* ─── Reporting — pre-enrollment income by month or a custom date range ── */
@@ -6718,8 +6521,8 @@ const handleDownload = async () => {
     address: branch?.address    || school?.address,
     logo:    studentService.stuFileUrl(branch?.branchLogo) || school?.logo,
   };
-  const { css, html } = buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school: rptSchool });
-  stuOpenPrintWindow(`Pre-Enrollment Report — ${periodLabel}`, css, html, toast);
+  const html = buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school: rptSchool });
+  stuOpenReportWindow(html, toast);
 };
   return createPortal(
     <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>

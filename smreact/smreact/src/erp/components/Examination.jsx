@@ -6,11 +6,38 @@ import * as cbrApi from '../services/combinedAssessmentService';
 import { buildUrl, resolveMediaUrl, activeSessionName, storeSwitchedSession } from '../../utils/apiConfig';
 import { formatAcademicYearLabel, resolveAcademicSession } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
+import {
+  StandardReportPicker, buildStandardReportHtml, buildReportTableHtml,
+  downloadReportExcel, downloadReportHtmlAsExcel, reportFileName,
+  reportPalette, reportStatusPill, reportAcademicYear,
+} from '../reports/reportKit';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
 import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
+
+/* ── Shared report-kit glue: header / footer / toolbar come from reportKit.
+   School name + academic year stay LIVE — they come from the /report-header
+   branch (branchSchool) this module already loads; when that is missing the
+   kit falls back to the current branch on its own. ── */
+const examKitEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const examKitSchool = bs => (bs && bs.name ? examKitEsc(bs.name) : undefined);
+const examKitYear = bs => formatAcademicYearLabel(resolveAcademicSession(bs || {})) || reportAcademicYear();
+/* Kit subtitle line — "<Academic Year> · <report context>" (the old in-body headers showed the year). */
+const examKitSub = (bs, ...parts) => [examKitEsc(examKitYear(bs)), ...parts].filter(Boolean).join(' &middot; ');
+/* Table rules the old per-report <head> CSS applied — the kit's page shell has none. */
+const EXAM_KIT_TABLE_CSS = '<style>table{width:100%;table-layout:fixed}td,th{overflow-wrap:anywhere;word-break:break-word}</style>';
+/* PDF / Word keep going through deliverReport (print-safe + MathLive CSS and the
+   real .docx "Save as Word" preview); Excel saves the same report HTML as .xls. */
+function examDeliverReport(name, format, html, opts = {}) {
+  if (format === 'excel') {
+    if (opts.win) { try { opts.win.close(); } catch (e) { /* ignore */ } }
+    downloadReportHtmlAsExcel(html, `${reportFileName(String(name || 'Report').replace(/\s*-\s*/g, ' '))}.xls`);
+    return;
+  }
+  deliverReport(name, format, html, opts);
+}
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -7802,112 +7829,25 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
 /* ═══════════════════════════════════════════════════════════════════
    REPORT STYLE PICKER — opens new tab with the chosen-style PDF
    ═══════════════════════════════════════════════════════════════════ */
-function ExamReportPicker({ req, exams, term, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  // Format default us button se aata hai jisse picker khula (PDF ya Word).
-  const [format, setFormat] = useState(req?.format || 'pdf');
-
+function ExamReportPicker({ req, exams, term, branchSchool, onClose }) {
   const isAll  = req.scope === 'all';
   const target = isAll ? null : exams.find(e => e.id === req.scope);
   const name   = isAll ? `${term} Term — All Exams` : (target?.name || 'Exam Report');
-  const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
 
-  const generate = () => {
-    // PDF ya Word — generate function format ke hisaab se handle karta hai.
-    generateExamReport({ req, exams, term, target, branchSchool }, style === 'color', format);
-    onClose();
-  };
-
+  // Format default us button se aata hai jisse picker khula (PDF ya Word).
   return (
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">Download Report</div>
-              <div className="rp-sub">{name} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button
-              className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`}
-              onClick={() => setFormat('pdf')}
-            >
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button
-              className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`}
-              onClick={() => setFormat('word')}
-            >
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>{dlLabel}</span></button></Tooltip>
-        </div>
-      </div>
-    </div>
+    <StandardReportPicker
+      open
+      title={name}
+      formats={['pdf', 'word', 'excel']}
+      defaultFormat={req?.format || 'pdf'}
+      onClose={onClose}
+      onGenerate={(style, format) => {
+        // PDF / Word / Excel — generate function format ke hisaab se handle karta hai.
+        generateExamReport({ req, exams, term, target, branchSchool }, style === 'color', format);
+        onClose();
+      }}
+    />
   );
 }
 
@@ -8106,104 +8046,23 @@ const save = () => {
 /* ═══════════════════════════════════════════════════════════════════
    DATE SHEET — REPORT PICKER + BUILDER (A4 portrait)
    ═══════════════════════════════════════════════════════════════════ */
-function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  // Format default us button se aata hai jisse picker khula (PDF ya Word).
-  const [format, setFormat] = useState(req?.format || 'pdf');
+function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose }) {
   if (!ex) return null;
 
-  const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
-
-  const generate = async () => {
-    // PDF ya Word — dono generate function ke andar format ke hisaab se handle hote hain.
-    await generateDateSheetReport({ ex, dateSheets, term, classKey: req.classKey, branchSchool }, style === 'color', format);
-    onClose();
-  };
-
+  // Format default us button se aata hai jisse picker khula (PDF ya Word).
   return (
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">Download Report</div>
-              <div className="rp-sub">{req.name} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`} onClick={() => setFormat('pdf')}>
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`} onClick={() => setFormat('word')}>
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>{dlLabel}</span></button></Tooltip>
-        </div>
-      </div>
-    </div>
+    <StandardReportPicker
+      open
+      title={req.name}
+      formats={['pdf', 'word', 'excel']}
+      defaultFormat={req?.format || 'pdf'}
+      onClose={onClose}
+      onGenerate={async (style, format) => {
+        // PDF / Word / Excel — generate function ke andar format ke hisaab se handle hote hain.
+        await generateDateSheetReport({ ex, dateSheets, term, classKey: req.classKey, branchSchool }, style === 'color', format);
+        onClose();
+      }}
+    />
   );
 }
 
@@ -8217,18 +8076,11 @@ if (format === 'pdf') {
   w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
 }
 
-  /* Real branch header (name / logo / address / academic year) from the
-     /report-header/{branchId} API (saved in branchSchool) — same as the exam report. */
+  /* Real branch header (name / academic year) from the /report-header/{branchId}
+     API (saved in branchSchool) — rendered by the shared report-kit header. */
   const bs         = branchSchool || {};
-  const schoolName = bs.name    || 'School Mentor ERP';
-  const schoolLogo = bs.logo    || '';
-  const schoolAddr = bs.address || '';
-  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const dsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const dsFmtDate = dsFmtDateDisplay;
-  const dsLogoHtml = schoolLogo
-    ? `<img src="${dsEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
-    : (isColor ? '🎓' : '');
 
   // Target classes: 'all' → saari; warna classKey (cls_examId_sectionID_i) ki sectionID wali class.
   const keyParts = String(classKey).split('_');
@@ -8270,21 +8122,16 @@ if (format === 'pdf') {
   };
     const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
 
-  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   /* Two coordinated palettes:
      • Colorful: brand blue header, blue-tinted accent rows.
      • Colorless: dedicated LOW-INK layout — white header, light gray
        borders, NO row striping (rowEv = white), no colored accent.
-     The colorless header markup keeps the existing "light text on header"
-     inline styles; we then inject a `.cl-doc-header` override style that
-     recolors them to dark gray + transparent backgrounds, so the result
-     is genuinely printer-friendly without rewriting every nested span. */
+     The header/footer chrome itself comes from the shared report kit. */
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#FFFFFF';
   const aBdr   = isColor ? '#BFDBFE' : '#D1D5DB';
   const tMuted = isColor ? '#64748B' : '#4B5563';
   const rowEv  = isColor ? '#F8FAFF' : '#FFFFFF';
-  const hBg    = isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF';
 
   const classBlocks = blocks.map(({ cls, rows }) => {
     if (!cls) return '';
@@ -8321,104 +8168,39 @@ if (format === 'pdf') {
       </div>`;
   }).join('');
 
-  const reportHTML = `
-    <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
-      <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};${isColor ? '' : 'border-bottom:1px solid ' + aBdr + ';'}border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
-        <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${dsLogoHtml}</div>
-          <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">${dsEsc(schoolName)}</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${dsEsc(schoolYear)}</div>
-          </div>
+  const bodyHtml = `${EXAM_KIT_TABLE_CSS}
+    <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;margin-bottom:16px;overflow:hidden">
+      ${[
+        ['Term', term],
+        ['Exam', ex.name],
+        ['Classes', String(targetClasses.length)],
+        ['Period', `${dsFmtDate(ex.from)} → ${dsFmtDate(ex.to)}`],
+      ].map(([k, v]) => `
+        <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
+          <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
         </div>
-        <div style="text-align:right;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Date Sheet Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${ex.name} · ${term} · Generated: ${today}</div>
-        </div>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
-        ${[
-          ['Term', term],
-          ['Exam', ex.name],
-          ['Classes', String(targetClasses.length)],
-          ['Period', `${dsFmtDate(ex.from)} → ${dsFmtDate(ex.to)}`],
-        ].map(([k, v]) => `
-          <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
-            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
-            <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
-          </div>
-        `).join('')}
-      </div>
-      <div style="padding:16px 16px">${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No date sheets yet.</div>'}</div>
-      <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>${dsEsc(schoolName)}${schoolAddr ? ` · ${dsEsc(schoolAddr)}` : ''}</span>
-        <span>Confidential · ${dsEsc(schoolName)}</span>
-      </div>
-    </div>`;
+      `).join('')}
+    </div>
+    ${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No date sheets yet.</div>'}`;
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Date Sheet — ${ex.name}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;overflow-x:hidden}
-body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;font-size:12px}
-@page{size:A4 portrait;margin:15mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;box-sizing:border-box;overflow:hidden}
-table{width:100%;table-layout:fixed}
-td,th{overflow-wrap:anywhere;word-break:break-word}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-/* Colorless overrides — recolor white text + decorative fills on the header. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid #E5E7EB !important}.print-bar button{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important}'}
-/* Colorless overrides — recolor white text + decorative fills to a printable
-   dark-on-white scheme. Marker class lives on the header div only when isColor=false. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-/* Rich-text syllabus content reset (bullets/bold/headings/math preserve; KaTeX ko chhua nahi) */
-.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;overflow-wrap:break-word;word-break:normal}
-.syl-rep-html p{font-size:11px !important;margin:2px 0 !important;color:#334155 !important}
-.syl-rep-html ul,.syl-rep-html ol{font-size:11px !important;margin:3px 0 !important;padding-left:18px !important;color:#334155 !important}
-.syl-rep-html li{margin:2px 0 !important}
-.syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
-.syl-rep-html img{max-width:100%;height:auto}
-</style>
-<link 
- rel="stylesheet" 
- href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
-/>
-</head><body>
-</style></head><body>
-${reportHTML}
-<div class="print-bar no-print">
-  <button onclick="window.print()">${isColor ? '🖨 ' : ''}Print / Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`;
+  const html = buildStandardReportHtml({
+    title: `Date Sheet — ${ex.name}`,
+    format,
+    isColor,
+    bodyHtml,
+    subtitleLine: examKitSub(bs, dsEsc(term), dsEsc(ex.name)),
+    schoolName: examKitSchool(bs),
+  });
 
-  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
-if (format === 'word') {
-  deliverReport(`Date Sheet - ${ex?.name || ''}`, 'word', html);
-} else {
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-}
+  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport); Excel → .xls.
+  if (format === 'pdf') {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  } else {
+    examDeliverReport(`Date Sheet - ${ex?.name || ''}`, format, html);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -8928,104 +8710,23 @@ const save = () => {
 /* ═══════════════════════════════════════════════════════════════════
    SYLLABUS — REPORT PICKER + BUILDER (A4 portrait)
    ═══════════════════════════════════════════════════════════════════ */
-function SylReportPicker({ req, ex, syllabusData, term, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  // Format default us button se aata hai jisse picker khula (PDF ya Word).
-  const [format, setFormat] = useState(req?.format || 'pdf');
+function SylReportPicker({ req, ex, syllabusData, term, branchSchool, onClose }) {
   if (!ex) return null;
 
-  const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
-
-  const generate = async () => {
-    // PDF ya Word — generate function format ke hisaab se handle karta hai.
-    await generateSyllabusReport({ ex, syllabusData, term, classKey: req.classKey, branchSchool }, style === 'color', format);
-    onClose();
-  };
-
+  // Format default us button se aata hai jisse picker khula (PDF ya Word).
   return (
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">Download Syllabus Report</div>
-              <div className="rp-sub">{req.name} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`} onClick={() => setFormat('pdf')}>
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`} onClick={() => setFormat('word')}>
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>{dlLabel}</span></button></Tooltip>
-        </div>
-      </div>
-    </div>
+    <StandardReportPicker
+      open
+      title={req.name}
+      formats={['pdf', 'word', 'excel']}
+      defaultFormat={req?.format || 'pdf'}
+      onClose={onClose}
+      onGenerate={async (style, format) => {
+        // PDF / Word / Excel — generate function format ke hisaab se handle karta hai.
+        await generateSyllabusReport({ ex, syllabusData, term, classKey: req.classKey, branchSchool }, style === 'color', format);
+        onClose();
+      }}
+    />
   );
 }
 
@@ -9033,20 +8734,16 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
   const isAll = classKey === 'all';
 
   // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch — PDF aur Word dono ke liye.
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (!w) return;
-  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+  // Excel seedha file download hota hai, us ke liye window nahi.
+  const w = format === 'excel' ? null : window.open('', '_blank', 'width=960,height=820');
+  if (format !== 'excel') {
+    if (!w) return;
+    w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+  }
 
-  /* Real branch header (name / logo / address / academic year) from /report-header (branchSchool). */
+  /* Real branch header (name / academic year) from /report-header (branchSchool) — shared report-kit header. */
   const bs         = branchSchool || {};
-  const schoolName = bs.name    || 'School Mentor ERP';
-  const schoolLogo = bs.logo    || '';
-  const schoolAddr = bs.address || '';
-  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const sEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const sLogoHtml = schoolLogo
-    ? `<img src="${sEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
-    : (isColor ? '📚' : '');
 
   // Target classes: 'all' → saari; warna classKey (scls_examId_sectionID_i) ki sectionID wali class.
   const keyParts = String(classKey).split('_');
@@ -9092,13 +8789,11 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
 
   // Report mein asal term name (API se) dikhao; na mile to passed term, warna exam ka term.
   const termLabel = resolvedTermName || term || ex.term || '';
-  const today  = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
   const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
-  const hBg    = isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF';
   const okC    = isColor ? '#16A34A' : '#333';
   const noC    = isColor ? '#D97706' : '#777';
 
@@ -9144,76 +8839,11 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
       </div>`;
   }).join('');
 
-  const reportHTML = `
-    <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
-      <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
-        <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${sLogoHtml}</div>
-          <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">${sEsc(schoolName)}</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${sEsc(schoolYear)}</div>
-          </div>
-        </div>
-        <div style="text-align:right;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Syllabus Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${sEsc(ex.name)} · ${sEsc(termLabel)} · Generated: ${today}</div>
-        </div>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
-        ${[
-          ['Term', termLabel],
-          ['Exam', ex.name],
-          ['Classes', String(targetClasses.length)],
-        ].map(([k, v]) => `
-          <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
-            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
-            <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
-          </div>
-        `).join('')}
-      </div>
-      <div style="padding:16px 16px">${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No syllabus yet.</div>'}</div>
-      <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>${sEsc(schoolName)}${schoolAddr ? ` · ${sEsc(schoolAddr)}` : ''}</span>
-        <span>Confidential · ${sEsc(schoolName)}</span>
-      </div>
-    </div>`;
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Syllabus — ${ex.name}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;overflow-x:hidden}
-body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;font-size:12px}
-@page{size:A4 portrait;margin:15mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;box-sizing:border-box;overflow:hidden}
+  const bodyHtml = `<style>
 table{width:100%;table-layout:fixed}
 /* Break long words only when needed — normal text wraps at word boundaries,
    not mid-word (warna text agli row me ajeeb tarah chala jata hai). */
 td,th{overflow-wrap:break-word;word-break:normal}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-/* Colorless overrides — recolor white text + decorative fills on the header. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid #E5E7EB !important}.print-bar button{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important}'}
-/* Colorless overrides — recolor white text + decorative fills to a printable
-   dark-on-white scheme. Marker class lives on the header div only when isColor=false. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
 /* Rich-text syllabus content reset (bullets/bold/headings/math preserve; KaTeX ko chhua nahi) */
 .syl-rep-html{font-size:11px;line-height:1.5;color:#334155;overflow-wrap:break-word;word-break:normal}
 .syl-rep-html p{font-size:11px !important;margin:2px 0 !important;color:#334155 !important}
@@ -9221,16 +8851,32 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 .syl-rep-html li{margin:2px 0 !important}
 .syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
 .syl-rep-html img{max-width:100%;height:auto}
-</style></head><body>
-${reportHTML}
-<div class="print-bar no-print">
-  <button onclick="window.print()">${isColor ? '🖨 ' : ''}Print / Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`;
+</style>
+    <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;margin-bottom:16px;overflow:hidden">
+      ${[
+        ['Term', termLabel],
+        ['Exam', ex.name],
+        ['Classes', String(targetClasses.length)],
+      ].map(([k, v]) => `
+        <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
+          <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
+        </div>
+      `).join('')}
+    </div>
+    ${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No syllabus yet.</div>'}`;
 
-  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
-  deliverReport(`Syllabus - ${ex?.name || ''}`, format, html, { win: w });
+  const html = buildStandardReportHtml({
+    title: `Syllabus — ${ex.name}`,
+    format,
+    isColor,
+    bodyHtml,
+    subtitleLine: examKitSub(bs, sEsc(termLabel), sEsc(ex.name)),
+    schoolName: examKitSchool(bs),
+  });
+
+  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport); Excel → .xls.
+  examDeliverReport(`Syllabus - ${ex?.name || ''}`, format, html, { win: w });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -11574,122 +11220,32 @@ const save = async () => {
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — CLASS RESULT REPORT PICKER + BUILDER
    ═══════════════════════════════════════════════════════════════════ */
-function ClassReportPicker({ cd, ex, className, term, absentMode, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
-
-  const generate = () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, style === 'color');
-    }
-    onClose();
-  };
-
+function ClassReportPicker({ cd, ex, className, term, absentMode, branchSchool, onClose }) {
   return createPortal(
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">Download Class Result</div>
-              <div className="rp-sub">{className} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`} onClick={() => setFormat('pdf')}>
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`} onClick={() => setFormat('word')}>
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>Download {style === 'color' ? 'Colorful' : 'Colorless'} {format === 'pdf' ? 'PDF' : 'Word'}</span></button></Tooltip>
-        </div>
-      </div>
-    </div>,
+    <StandardReportPicker
+      open
+      title="Download Class Result"
+      subtitle={`${className} — Choose style and format`}
+      formats={['pdf', 'word', 'excel']}
+      onClose={onClose}
+      onGenerate={(style, format) => {
+        generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, style === 'color', format);
+        onClose();
+      }}
+    />,
     document.body
   );
 }
 
-function generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, isColor) {
+function generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, isColor, format = 'pdf') {
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
   const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
-  const hBg    = isColor
-    ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)'
-    : '#FFFFFF';
   const successCol = isColor ? '#16A34A' : '#000';
   const warnCol    = isColor ? '#D97706' : '#000';
-  const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const bs         = branchSchool || {};
-  const schoolName = bs.name || 'School Mentor ERP';
-  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
 
   // Compute each student's totals + ranking
   const useZero = absentMode === 'zero';
@@ -11760,25 +11316,9 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
       </tr>`;
   }).join('');
 
-  const reportHTML = `
-    <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
-      <!-- Header -->
-      <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
-        <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">🎓</div>
-          <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">${schoolName}</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${schoolYear}</div>
-          </div>
-        </div>
-        <div style="text-align:right;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Class Result Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${ex.name} · ${term} Term · ${today}</div>
-        </div>
-      </div>
-
+  const bodyHtml = `${EXAM_KIT_TABLE_CSS}
       <!-- Meta strip -->
-      <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
+      <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
         ${[
           ['Term',     term],
           ['Exam',     ex.name],
@@ -11833,172 +11373,49 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
           </thead>
           <tbody>${rowsHtml || `<tr><td colspan="9" style="padding:18px;text-align:center;color:${tMuted}">No students in this class</td></tr>`}</tbody>
         </table>
-      </div>
+      </div>`;
 
-      <!-- Footer -->
-      <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>School Mentor ERP · Single Assessment</span>
-        <span>Confidential · ${schoolName}</span>
-      </div>
-    </div>`;
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Class Result — ${className} · ${ex.name}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;overflow-x:hidden}
-body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;font-size:12px}
-@page{size:A4 portrait;margin:15mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;overflow:hidden}
-table{width:100%;table-layout:fixed}
-td,th{overflow-wrap:anywhere;word-break:break-word}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-/* Colorless overrides — recolor white text + decorative fills on the header. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-</style></head><body>
-${reportHTML}
-<div class="print-bar no-print">
-  <button onclick="window.print()">🖨 Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`;
-
-  const w = window.open('', '_blank', 'width=1000,height=900');
-  if (w) { w.document.write(html); w.document.close(); }
+  const html = buildStandardReportHtml({
+    title: `Class Result — ${className} · ${ex.name}`,
+    format,
+    isColor,
+    bodyHtml,
+    subtitleLine: examKitSub(bs, `${term} Term`, ex.name),
+    schoolName: examKitSchool(bs),
+  });
+  examDeliverReport(`Class Result - ${className} - ${ex.name}`, format, html, { width: 1000, height: 900 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    COMBINED ASSESSMENT — CLASS REPORT PICKER + BUILDER (A4 landscape)
    ═══════════════════════════════════════════════════════════════════ */
-function CbrClassReportPicker({ cr, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
-
-  const generate = () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      generateCbrClassReport(cr, style === 'color', branchSchool);
-    }
-    onClose();
-  };
-
+function CbrClassReportPicker({ cr, branchSchool, onClose }) {
   return createPortal(
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">Download Combined Result</div>
-              <div className="rp-sub">{cr.cls} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`} onClick={() => setFormat('pdf')}>
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`} onClick={() => setFormat('word')}>
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>Download {style === 'color' ? 'Colorful' : 'Colorless'} {format === 'pdf' ? 'PDF' : 'Word'}</span></button></Tooltip>
-        </div>
-      </div>
-    </div>,
+    <StandardReportPicker
+      open
+      title="Download Combined Result"
+      subtitle={`${cr.cls} — Choose style and format`}
+      formats={['pdf', 'word', 'excel']}
+      onClose={onClose}
+      onGenerate={(style, format) => {
+        generateCbrClassReport(cr, style === 'color', branchSchool, format);
+        onClose();
+      }}
+    />,
     document.body
   );
 }
 
-function generateCbrClassReport(cr, isColor, branchSchool) {
+function generateCbrClassReport(cr, isColor, branchSchool, format = 'pdf') {
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
   const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
-  const hBg    = isColor
-    ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)'
-    : '#FFFFFF';
   const successCol = isColor ? '#16A34A' : '#000';
   const warnCol    = isColor ? '#D97706' : '#000';
   const purCol     = isColor ? '#7C3AED' : '#444';
-  const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const bs         = branchSchool || {};
-  const schoolName = bs.name || 'School Mentor ERP';
-  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
 
   const subs = cr.students[0]?.subs || [];
 
@@ -12060,25 +11477,13 @@ function generateCbrClassReport(cr, isColor, branchSchool) {
       </tr>`;
   }).join('');
 
-  const reportHTML = `
-    <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
-      <!-- Header -->
-      <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
-        <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:44px;height:44px;border-radius:11px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">🎓</div>
-          <div style="min-width:0">
-            <div style="font-size:16px;font-weight:800">${schoolName}</div>
-            <div style="font-size:10px;opacity:.75;margin-top:2px">${schoolYear}</div>
-          </div>
-        </div>
-        <div style="text-align:right;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.95)">Combined Result Report</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.7);margin-top:3px">${cr.name} · Generated: ${today}</div>
-        </div>
-      </div>
-
+  const bodyHtml = `${EXAM_KIT_TABLE_CSS}
+    <style>
+      .page table th, .page table td{padding:5px 6px!important;font-size:9.5px!important}
+      .page table th{font-size:8.5px!important;letter-spacing:.3px!important}
+    </style>
       <!-- Meta strip -->
-      <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
+      <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
         ${[
           ['Main Exam',  cr.mainExam],
           ['Sub Exams',  (cr.subExams || []).join(', ')],
@@ -12137,63 +11542,23 @@ function generateCbrClassReport(cr, isColor, branchSchool) {
           </thead>
           <tbody>${rowsHtml || `<tr><td colspan="${7 + subs.length * 2 + 3}" style="padding:18px;text-align:center;color:${tMuted}">No students in this class</td></tr>`}</tbody>
         </table>
-      </div>
+      </div>`;
 
-      <!-- Footer -->
-      <div style="padding:9px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>School Mentor ERP · Combined Assessment</span>
-        <span>Confidential · ${schoolName}</span>
-      </div>
-    </div>`;
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Combined Result — ${cr.cls} · ${cr.mainExam}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;overflow-x:hidden}
-body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;font-size:11px}
-@page{size:A4 portrait;margin:12mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;overflow:hidden}
-table{width:100%;table-layout:fixed}
-td,th{overflow-wrap:anywhere;word-break:break-word}
-.page-wrap table th,
-.page-wrap table td{padding:5px 6px!important;font-size:9.5px!important}
-.page-wrap table th{font-size:8.5px!important;letter-spacing:.3px!important}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-/* Colorless overrides — recolor white text + decorative fills on the header. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-</style></head><body>
-${reportHTML}
-<div class="print-bar no-print">
-  <button onclick="window.print()">🖨 Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`;
-
-  const w = window.open('', '_blank', 'width=900,height=900');
-  if (w) { w.document.write(html); w.document.close(); }
+  const html = buildStandardReportHtml({
+    title: `Combined Result — ${cr.cls} · ${cr.mainExam}`,
+    format,
+    isColor,
+    bodyHtml,
+    subtitleLine: examKitSub(bs, cr.name),
+    schoolName: examKitSchool(bs),
+  });
+  examDeliverReport(`Combined Result - ${cr.cls} - ${cr.mainExam}`, format, html, { width: 900, height: 900 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    RESULT HISTORY — report picker + 5 builders (single card + 4 reports)
    ═══════════════════════════════════════════════════════════════════ */
 function RhReportPicker({ req, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
-  const [generating, setGenerating] = useState(false);
-
   const titles = {
     card:       'Result Card Report',
     history:    'Full Academic History',
@@ -12202,14 +11567,10 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
     attendance: 'Attendance Summary',
   };
 
-  const generate = async () => {
-    if (generating) return;
-    setGenerating(true);
+  const generate = (style, format) => {
     try {
-      // Let the spinner paint before the (synchronous) report build blocks.
-      await new Promise(r => setTimeout(r, 0));
       const isColor = style === 'color';
-      // PDF ya Word — rhRptOpen is flag ke hisaab se popup ya .doc download karta hai.
+      // PDF / Word / Excel — rhRptOpen is flag ke hisaab se preview ya .xls download karta hai.
       rhExportFormat = format;
       // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
       rhReportSchool = branchSchool || null;
@@ -12218,101 +11579,25 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
       if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
       if (req.type === 'comparison') rhBuildComparisonReport(req.student, isColor);
       if (req.type === 'attendance') rhBuildAttendanceReport(req.student, isColor);
+      // Excel sirf is picker ke liye — baaki (direct) result-card prints pehle jaisa preview kholein.
+      if (format === 'excel') rhExportFormat = 'pdf';
       onClose();
     } catch (e) {
       console.error('Report generation failed:', e);
-      setGenerating(false);
+      if (format === 'excel') rhExportFormat = 'pdf';
       toast('Could not generate report', 'error');
     }
   };
 
   return createPortal(
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">{titles[req.type] || 'Download Report'}</div>
-              <div className="rp-sub">{req.student.name} — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview"><div className="rp-preview-color">
-                <div className="rp-mock-header"></div>
-                <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                <div className="rp-mock-chips">
-                  <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                  <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                  <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                </div>
-              </div></div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview"><div className="rp-preview-bw">
-                <div className="rp-mock-header-bw"></div>
-                <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                <div className="rp-mock-chips-bw">
-                  <div className="rp-mock-chip-bw"></div>
-                  <div className="rp-mock-chip-bw"></div>
-                  <div className="rp-mock-chip-bw"></div>
-                </div>
-              </div></div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`} onClick={() => setFormat('pdf')}>
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`} onClick={() => setFormat('word')}>
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text={generating ? 'Preparing report…' : 'Generate and download the report'}>
-            <button className="rp-btn go" onClick={generate} disabled={generating}
-              style={generating ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
-              {generating
-                ? <><i className="fa-solid fa-spinner fa-spin"></i><span>Preparing…</span></>
-                : <><i className="fa-solid fa-download"></i><span>Download {style === 'color' ? 'Colorful' : 'Colorless'} {format === 'pdf' ? 'PDF' : 'Word'}</span></>}
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>,
+    <StandardReportPicker
+      open
+      title={titles[req.type] || 'Download Report'}
+      subtitle={`${req.student.name} — Choose style and format`}
+      formats={['pdf', 'word', 'excel']}
+      onClose={onClose}
+      onGenerate={generate}
+    />,
     document.body
   );
 }
@@ -12332,79 +11617,26 @@ function rhRptPalette(isColor) {
     pur    : isColor ? '#7C3AED' : '#444',
   };
 }
-function rhRptShell(title, body, school) {
+/* rhRptShell ab header/logo/footer/toolbar shared reportKit se leta hai
+   (ERP-wide standard) — apna .cl-doc-header/.print-bar chrome nahi. */
+function rhRptShell(title, subline, body, isColor, school) {
   const eff = rhReportSchool || school;
-  const fName = (eff && eff.name) || 'The Oxford System, Lahore Campus';
-  const fAddr = (eff && eff.address) || '';
-  const footer = `<div style="max-width:210mm;margin:0 auto;padding:10px 18px;background:#F8FAFF;border-top:1px solid #BFDBFE;display:flex;justify-content:space-between;font-size:10px;color:#64748B;flex-wrap:wrap;gap:6px">
-    <span>${fName}${fAddr ? ` · ${fAddr}` : ''}</span>
-    <span>Confidential · ${fName}</span>
-  </div>`;
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;overflow-x:hidden}
-body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;font-size:11.5px}
-@page{size:A4 portrait;margin:12mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;overflow:hidden}
-table{width:100%;table-layout:fixed}
-td,th{overflow-wrap:anywhere;word-break:break-word}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-/* Colorless overrides — recolor white text + decorative fills on the header. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-</style></head><body>
-${body}
-${footer}
-<div class="print-bar no-print">
-  <button onclick="window.print()">🖨 Print / Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`;
+  return buildStandardReportHtml({
+    title,
+    format: rhExportFormat,
+    isColor,
+    bodyHtml: EXAM_KIT_TABLE_CSS + body,
+    subtitleLine: examKitSub(eff, subline),
+    schoolName: examKitSchool(eff),
+  });
 }
 /* Result History reports ke liye branchSchool (/report-header) — RhReportPicker generate se pehle
    set karta hai, taa-ke saare builders bina signature change ke header/footer mein branch info dikhayein. */
 let rhReportSchool = null;
-function rhRptHeader(p, school, today, title, subline) {
-  // Module-set branchSchool ko tarjeeh; warna jo pass hua (naam string).
-  const eff = rhReportSchool || school;
-  const sName = (eff && eff.name) || (typeof eff === 'string' ? eff : '') || 'School Mentor ERP';
-  const sLogo = (eff && eff.logo) || '';
-  const sYear = formatAcademicYearLabel(resolveAcademicSession(eff)) || 'Academic Session';
-  const logoHtml = sLogo
-    ? `<img src="${sLogo}" width="44" height="44" style="border-radius:11px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
-    : '🎓';
-  return `<div class="${p.isColor ? '' : 'cl-doc-header'}" style="background:${p.hBg};color:${p.isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
-    <div style="display:flex;align-items:center;gap:12px;min-width:0">
-      <div style="width:44px;height:44px;border-radius:11px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${logoHtml}</div>
-      <div style="min-width:0">
-        <div style="font-size:16px;font-weight:800">${sName}</div>
-        <div style="font-size:10px;opacity:.75;margin-top:2px">${sYear}</div>
-      </div>
-    </div>
-    <div style="text-align:right;min-width:0">
-      <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.95)">${title}</div>
-      <div style="font-size:10px;color:rgba(255,255,255,.7);margin-top:3px">${subline} · ${today}</div>
-    </div>
-  </div>`;
-}
-// Picker generate ise set karta hai ('pdf' | 'word') — rhReportSchool jaisा module flag.
+// Picker generate ise set karta hai ('pdf' | 'word' | 'excel') — rhReportSchool jaisा module flag.
 let rhExportFormat = 'pdf';
-function rhRptOpen(html) {
-  // <title> se report ka naam (Word file name + 'Save as Word' ke liye).
-  const m = String(html).match(/<title>([\s\S]*?)<\/title>/i);
-  const name = (m && m[1]) || 'Result Report';
+function rhRptOpen(html, name = 'Result Report') {
+  if (rhExportFormat === 'excel') { examDeliverReport(name, 'excel', html); return; }
   // PDF → print preview; Word → wahi preview "Save as Word" button ke saath.
   const w = window.open('', '_blank', 'width=950,height=900');
   if (!w) return;
@@ -12419,8 +11651,7 @@ function rhGradeColor(g, isColor) {
 /* 1) Single result card report (download icon on each exam history row) */
 function rhBuildSingleCardReport(st, r, isColor, data = null) {
   const p = rhRptPalette(isColor);
-  const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
+  const subline = `${r.exam} · ${st.cls}`;
   // Real data (subjects/totals/obtained/remarks/finalRemark) mile to use karo, warna mock.
   const hasReal     = !!(data && data.subjects && data.subjects.length);
   const subjList    = hasReal ? data.subjects : RES_SUBJECTS;
@@ -12463,9 +11694,8 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
     </tr>`;
   }).join('');
 
-  const body = `<div class="page-wrap" style="font-family:inherit">
-    ${rhRptHeader(p, schoolName, today, 'Result Card', `${r.exam} · ${st.cls}`)}
-    <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${p.accBdr}">
+  const body = `<div style="font-family:inherit">
+    <div style="display:flex;flex-wrap:wrap;border:1px solid ${p.accBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
       ${[
         ['Student',     st.name],
         ['Father',      st.father],
@@ -12516,14 +11746,13 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
     </div>
   </div>`;
 
-  rhRptOpen(rhRptShell(`Result Card — ${st.name}`, body));
+  rhRptOpen(rhRptShell(`Result Card — ${st.name}`, subline, body, isColor), `Result Card — ${st.name}`);
 }
 
 /* 2) Full Academic History */
 function rhBuildHistoryReport(st, isColor) {
   const p = rhRptPalette(isColor);
-  const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
+  const subline = `${st.name} · ${st.cls}`;
   const pcts = st.results.map(r => r.pct);
   const avgPct = pcts.length ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10 : 0;
   const best   = pcts.length ? Math.max(...pcts) : 0;
@@ -12549,9 +11778,8 @@ function rhBuildHistoryReport(st, isColor) {
     </tr>`;
   }).join('');
 
-  const body = `<div class="page-wrap">
-    ${rhRptHeader(p, schoolName, today, 'Full Academic History', `${st.name} · ${st.cls}`)}
-    <div style="display:flex;border-bottom:1px solid ${p.accBdr}">
+  const body = `<div>
+    <div style="display:flex;border:1px solid ${p.accBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
       ${[
         ['Student',  st.name],
         ['Class',    st.cls],
@@ -12592,14 +11820,13 @@ function rhBuildHistoryReport(st, isColor) {
       </table>
     </div>
   </div>`;
-  rhRptOpen(rhRptShell(`Academic History — ${st.name}`, body));
+  rhRptOpen(rhRptShell(`Academic History — ${st.name}`, subline, body, isColor), `Academic History — ${st.name}`);
 }
 
 /* 3) Progress Report — trend + per-subject improvement */
 function rhBuildProgressReport(st, isColor) {
   const p = rhRptPalette(isColor);
-  const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
+  const subline = `${st.name} · ${st.cls}`;
   const pcts = st.results.map(r => r.pct);
   const first = pcts[0] || 0;
   const last  = pcts[pcts.length - 1] || 0;
@@ -12639,8 +11866,7 @@ function rhBuildProgressReport(st, isColor) {
     </tr>`;
   }).join('');
 
-  const body = `<div class="page-wrap">
-    ${rhRptHeader(p, schoolName, today, 'Progress Report', `${st.name} · ${st.cls}`)}
+  const body = `<div>
     <div style="display:flex;border-bottom:1px solid ${p.accBdr};background:${p.accBg}">
       ${[
         ['First',  `${first}%`, p.accent],
@@ -12675,14 +11901,13 @@ function rhBuildProgressReport(st, isColor) {
       </table>
     </div>` : ''}
   </div>`;
-  rhRptOpen(rhRptShell(`Progress Report — ${st.name}`, body));
+  rhRptOpen(rhRptShell(`Progress Report — ${st.name}`, subline, body, isColor), `Progress Report — ${st.name}`);
 }
 
 /* 4) Comparison Report — exam vs exam grade movement */
 function rhBuildComparisonReport(st, isColor) {
   const p = rhRptPalette(isColor);
-  const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
+  const subline = `${st.name} · ${st.cls}`;
 
   const rows = [];
   for (let i = 1; i < st.results.length; i++) {
@@ -12703,8 +11928,7 @@ function rhBuildComparisonReport(st, isColor) {
     </tr>`);
   }
 
-  const body = `<div class="page-wrap">
-    ${rhRptHeader(p, schoolName, today, 'Comparison Report', `${st.name} · ${st.cls}`)}
+  const body = `<div>
     <div style="padding:14px 14px 6px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:${p.tMuted};margin-bottom:8px;display:flex;align-items:center;gap:8px">
         <div style="width:3px;height:13px;border-radius:2px;background:${p.amb}"></div>EXAM TO EXAM COMPARISON
@@ -12723,14 +11947,13 @@ function rhBuildComparisonReport(st, isColor) {
       </table>
     </div>
   </div>`;
-  rhRptOpen(rhRptShell(`Comparison Report — ${st.name}`, body));
+  rhRptOpen(rhRptShell(`Comparison Report — ${st.name}`, subline, body, isColor), `Comparison Report — ${st.name}`);
 }
 
 /* 5) Attendance Summary */
 function rhBuildAttendanceReport(st, isColor) {
   const p = rhRptPalette(isColor);
-  const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
+  const subline = `${st.name} · ${st.cls}`;
   const attCol = st.attendance >= 90 ? p.grn : st.attendance >= 75 ? p.amb : p.red;
   const statusLbl = st.attendance >= 90 ? 'Excellent' : st.attendance >= 75 ? 'Good' : st.attendance >= 60 ? 'Needs Improvement' : 'Critical';
 
@@ -12771,8 +11994,7 @@ function rhBuildAttendanceReport(st, isColor) {
     </tr>`;
   }).join('');
 
-  const body = `<div class="page-wrap">
-    ${rhRptHeader(p, schoolName, today, 'Attendance Summary', `${st.name} · ${st.cls}`)}
+  const body = `<div>
     <div style="display:flex;border-bottom:1px solid ${p.accBdr};background:${p.accBg}">
       ${[
         ['Overall',  `${st.attendance}%`, attCol],
@@ -12803,7 +12025,7 @@ function rhBuildAttendanceReport(st, isColor) {
       </table>
     </div>
   </div>`;
-  rhRptOpen(rhRptShell(`Attendance Summary — ${st.name}`, body));
+  rhRptOpen(rhRptShell(`Attendance Summary — ${st.name}`, subline, body, isColor), `Attendance Summary — ${st.name}`);
 }
 
 /* Ek poori class/section ki REAL attendance (Attendance module se) → { [studentId]: pct }.
@@ -14436,127 +13658,31 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
 /* ═══════════════════════════════════════════════════════════════════
    RESULT SETUP — REPORT PICKER + BUILDER (A4 portrait)
    ═══════════════════════════════════════════════════════════════════ */
-function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, branchSchool, onClose, toast }) {
-  const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
-  const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
-
-  const generate = () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, style === 'color');
-    }
-    onClose();
-  };
-
+function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, branchSchool, onClose }) {
   return (
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="report-picker">
-        <div className="rp-header">
-          <div className="rp-header-left">
-            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
-            <div>
-              <div className="rp-title">Download Report</div>
-              <div className="rp-sub">Result Setup — Choose style and format</div>
-            </div>
-          </div>
-          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-        </div>
-        <div className="rp-body">
-          <div className="rp-section-label">Report Style</div>
-          <div className="rp-options" role="radiogroup" aria-label="Report style">
-            <div className={`rp-option${style === 'color' ? ' selected' : ''}`} onClick={() => setStyle('color')} role="radio" aria-checked={style === 'color'} tabIndex={style === 'color' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-color">
-                  <div className="rp-mock-header"></div>
-                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips">
-                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
-                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
-                </div>
-                <div className="rp-option-desc">Full color with brand palette, highlights &amp; icons</div>
-              </div>
-            </div>
-            <div className={`rp-option${style === 'bw' ? ' selected' : ''}`} onClick={() => setStyle('bw')} role="radio" aria-checked={style === 'bw'} tabIndex={style === 'bw' ? 0 : -1} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle('bw'); } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); } }}>
-              <div className="rp-check"><i className="fa-solid fa-check"></i></div>
-              <div className="rp-preview">
-                <div className="rp-preview-bw">
-                  <div className="rp-mock-header-bw"></div>
-                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
-                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
-                  <div className="rp-mock-chips-bw">
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                    <div className="rp-mock-chip-bw"></div>
-                  </div>
-                </div>
-              </div>
-              <div className="rp-option-text">
-                <div className="rp-option-name">
-                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
-                </div>
-                <div className="rp-option-desc">Printer-friendly grayscale, no background fills</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="rp-section-label">File Format</div>
-          <div className="rp-format-row">
-            <button className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`} onClick={() => setFormat('pdf')}>
-              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
-              <div>
-                <div className="rp-format-name">PDF</div>
-                <div className="rp-format-desc">Best for sharing</div>
-              </div>
-            </button>
-            <button className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`} onClick={() => setFormat('word')}>
-              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
-              <div>
-                <div className="rp-format-name">Word (.docx)</div>
-                <div className="rp-format-desc">Best for editing</div>
-              </div>
-            </button>
-          </div>
-        </div>
-        <div className="rp-footer">
-          <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>{dlLabel}</span></button></Tooltip>
-        </div>
-      </div>
-    </div>
+    <StandardReportPicker
+      open
+      title="Result Setup"
+      formats={['pdf', 'word', 'excel']}
+      onClose={onClose}
+      onGenerate={(style, format) => {
+        generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, style === 'color', format);
+        onClose();
+      }}
+    />
   );
 }
 
-function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, isColor) {
-  /* Real branch header (name / logo / address / academic year) from /report-header (branchSchool). */
+function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, isColor, format = 'pdf') {
+  /* Real branch header (name / academic year) from /report-header (branchSchool) — shared report-kit header. */
   const bs         = branchSchool || {};
-  const schoolName = bs.name    || 'School Mentor ERP';
-  const schoolLogo = bs.logo    || '';
-  const schoolAddr = bs.address || '';
-  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
-  const rsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const rsLogoHtml = schoolLogo
-    ? `<img src="${rsEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
-    : (isColor ? '🏫' : '');
 
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
   const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
-  const hBg    = isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF';
   const accLight = isColor ? '#DBEAFE' : '#E5E5E5';
-  const today  = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
 
   const sectionCard = (icon, title, sub, body) => `
     <div style="margin-bottom:20px;border:1px solid ${aBdr};border-radius:12px;overflow:hidden;page-break-inside:avoid">
@@ -14677,89 +13803,56 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
       <span style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:${isZero ? 'rgba(217,119,6,.1)' : isExclude ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)'};color:${isZero ? '#B45309' : isExclude ? aColor : '#475569'};border:1px solid ${isZero ? 'rgba(217,119,6,.25)' : isExclude ? 'rgba(30,64,175,.25)' : 'rgba(100,116,139,.25)'};white-space:nowrap">${isZero ? 'AB / 0' : isExclude ? 'AB' : 'Hidden'}</span>
     </div>`;
 
-  const reportHTML = `
-    <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
-      <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
-        <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${rsLogoHtml}</div>
-          <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">${rsEsc(schoolName)}</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${rsEsc(schoolYear)}</div>
-          </div>
-        </div>
-        <div style="text-align:right;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Result Setup Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">Generated: ${today}</div>
-        </div>
-      </div>
-      <div style="padding:18px 16px 8px">
-        ${sectionCard('fa-chart-bar', 'Grades Setup', `${grades.length} grade rule${grades.length !== 1 ? 's' : ''} configured`, gradesBody)}
-        ${sectionCard('fa-signature', 'Signatures', `${sigs.length} signature${sigs.length !== 1 ? 's' : ''}`, sigsBody)}
-        ${sectionCard('fa-comment-dots', 'Final Remarks', `${remarks.length} remark${remarks.length !== 1 ? 's' : ''} configured`, remarksBody)}
-        ${sectionCard('fa-user-xmark', 'Absent Subject Handling', isZero ? 'Mode: Count as Zero' : isExclude ? 'Mode: Exclude from Total' : 'Mode: Hide 0-mark subjects', absBody)}
-      </div>
-      <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>${rsEsc(schoolName)}${schoolAddr ? ` · ${rsEsc(schoolAddr)}` : ''}</span>
-        <span>Confidential · ${rsEsc(schoolName)}</span>
-      </div>
-    </div>`;
+  const bodyHtml = `${EXAM_KIT_TABLE_CSS}
+    ${sectionCard('fa-chart-bar', 'Grades Setup', `${grades.length} grade rule${grades.length !== 1 ? 's' : ''} configured`, gradesBody)}
+    ${sectionCard('fa-signature', 'Signatures', `${sigs.length} signature${sigs.length !== 1 ? 's' : ''}`, sigsBody)}
+    ${sectionCard('fa-comment-dots', 'Final Remarks', `${remarks.length} remark${remarks.length !== 1 ? 's' : ''} configured`, remarksBody)}
+    ${sectionCard('fa-user-xmark', 'Absent Subject Handling', isZero ? 'Mode: Count as Zero' : isExclude ? 'Mode: Exclude from Total' : 'Mode: Hide 0-mark subjects', absBody)}`;
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Result Setup Report</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;overflow-x:hidden}
-body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;font-size:12px}
-@page{size:A4 portrait;margin:15mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;overflow:hidden}
-table{width:100%;table-layout:fixed}
-td,th{overflow-wrap:anywhere;word-break:break-word}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-/* Colorless overrides — recolor white text + decorative fills on the header. */
-.cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
-.cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
-.cl-doc-header [style*="opacity:.75"],
-.cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
-.cl-doc-header [style*="color:rgba(255,255,255,.9)"],
-.cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
-</style></head><body>
-${reportHTML}
-<div class="print-bar no-print">
-  <button onclick="window.print()">🖨 Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`;
-
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (w) { w.document.write(html); w.document.close(); }
+  const html = buildStandardReportHtml({
+    title: 'Result Setup Report',
+    format,
+    isColor,
+    bodyHtml,
+    schoolName: examKitSchool(bs),
+  });
+  examDeliverReport('Result Setup Report', format, html, { width: 960, height: 820 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   REPORT BUILDER — A4 portrait
+   EXAM SETUP REPORT — header/footer/logo/toolbar chrome now comes from the
+   shared reportKit (PDF + Word + Excel). Only the row-shaping (exam
+   name/classes/status/dates) stays here, since that part is genuinely
+   Exam-Setup-specific.
    ═══════════════════════════════════════════════════════════════════ */
+function examSetupReportRows(list, isColor, fmtDate) {
+  const p = reportPalette(isColor);
+  return list.map((ex, i) => {
+    const st  = getExamStatus(ex);
+    const dur = calcDuration(ex.from, ex.to);
+    const classLabels = (ex.classes || []).map(c => (typeof c === 'string'
+      ? c
+      : `${c.gradeName || ''}${c.sectionName ? ' - ' + c.sectionName : ''}`.trim() || (c.className || '')));
+    const pillsHtml = classLabels.map(label =>
+      `<span style="display:inline-block;padding:2px 8px;border-radius:99px;background:${isColor ? '#EFF6FF' : '#EEE'};color:${p.accent};font-size:10px;font-weight:600;border:1px solid ${p.border};margin:2px 3px 2px 0">${examKitEsc(label)}</span>`
+    ).join('');
+    const statusTone = st.cls === 'current' ? 'green' : st.cls === 'upcoming' ? 'amber' : 'gray';
+    return {
+      i: i + 1,
+      nameHtml: `<div style="font-weight:800;color:${p.accent};font-size:12px">${ex.name}</div><div style="font-size:10.5px;color:${p.textM};margin-top:3px">${pillsHtml}</div>`,
+      statusHtml: reportStatusPill(st.label, statusTone, p),
+      from: fmtDate(ex.from), to: fmtDate(ex.to), duration: dur,
+      name: ex.name, classes: classLabels.join(', '), status: st.label,
+    };
+  });
+}
+
 function generateExamReport(ctx, isColor, format = 'pdf') {
   const { req, exams, term, target, branchSchool } = ctx;
   /* `exams` already holds only the currently-loaded term's exams (getExamsByTerm
      replaces it on each term switch), and the API gives termName not term — so the
      "all" report uses the full list rather than a (mismatching) e.term filter. */
   const list = req.scope === 'all' ? (exams || []) : [target].filter(Boolean);
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-  /* Real branch header (name / logo / address / academic year) from the
-     /report-header/{branchId} API; fall back to generic labels if unloaded. */
-  const bs          = branchSchool || {};
-  const schoolName  = bs.name    || 'School Mentor ERP';
-  const schoolLogo  = bs.logo    || '';
-  const schoolAddr  = bs.address || '';
-  const schoolYear  = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
-  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   /* Local date formatter (module-level fn can't reach the component-scoped one) —
      strips the time part and renders DD/MM/YYYY. */
   const fmtDate = (s) => {
@@ -14777,164 +13870,45 @@ function generateExamReport(ctx, isColor, format = 'pdf') {
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     return `${dd}/${mm}/${d.getFullYear()}`;
   };
-  const styleLabel = isColor ? 'Colorful' : 'Colorless';
-  const reportTitle = `Examination Report — ${req.scope === 'all' ? term + ' Term' : (target ? target.name : '')}`;
-  /* 64px logo block matching the Academics/Textbooks report header. Real image
-     if available; SVG monogram fallback otherwise. */
-  const logoFallbackSvg = isColor
-    ? `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" rx="16" fill="rgba(255,255,255,.12)"/><path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/><path d="M32 18L32 43.8" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/><text x="32" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="rgba(255,255,255,0.9)">SM</text></svg>`
-    : `<svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="62" height="62" rx="12" fill="#FFFFFF" stroke="#1F2937" stroke-width="1.5"/><path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="none" stroke="#1F2937" stroke-width="1.3"/><path d="M32 18L32 43.8" stroke="#1F2937" stroke-width="1.3"/><text x="32" y="36" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" font-weight="800" fill="#1F2937">SM</text></svg>`;
-  const logoHtml = schoolLogo
-    ? `<img src="${esc(schoolLogo)}" width="64" height="64" style="border-radius:16px;object-fit:cover;display:block;${isColor ? 'box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)' : 'border:1.5px solid #E5E7EB'}" onerror="this.style.display='none'" />`
-    : logoFallbackSvg;
+  const isAll      = req.scope === 'all';
+  const scopeTitle = isAll ? `${term} Term — All Exams` : (target ? target.name : '');
+  const scopeLbl   = isAll ? 'All Exams (' + list.length + ')' : 'Single Exam';
+  const reportName = `Exam Report - ${target?.name || (isAll ? 'All Exams' : '')}`;
+  const rows = examSetupReportRows(list, isColor, fmtDate);
 
-  const brand   = isColor ? '#1E40AF' : '#111';
-  const muted   = isColor ? '#64748B' : '#555';
-  const border  = isColor ? '#BFDBFE' : '#CCC';
-  const tHead   = isColor ? '#EFF6FF' : '#EBEBEB';
-  const rowAlt  = isColor ? '#F8FAFF' : '#F5F5F5';
-
-  /* Header/footer palette mirroring the Academics / Textbooks report. */
-  const headerBg     = isColor ? '#1E3A8A' : '#FFFFFF';
-  const headerFg     = isColor ? '#FFFFFF' : '#111111';
-  const headerSubFg  = isColor ? 'rgba(255,255,255,.75)' : '#4B5563';
-  const headerKick   = isColor ? 'rgba(255,255,255,.55)' : '#6B7280';
-  const headerDivCol = isColor ? 'rgba(255,255,255,.2)'  : '#E5E7EB';
-  const chipBg       = isColor ? 'rgba(255,255,255,.14)' : 'transparent';
-  const chipBorder   = isColor ? 'transparent' : '#D1D5DB';
-
-  const STATUS_COLORS = {
-    upcoming: isColor ? { fg: '#D97706', bg: 'rgba(217,119,6,.1)', bd: 'rgba(217,119,6,.25)' } : { fg: '#555', bg: '#EEE', bd: '#CCC' },
-    current:  isColor ? { fg: '#16A34A', bg: 'rgba(22,163,74,.1)', bd: 'rgba(22,163,74,.25)' } : { fg: '#333', bg: '#EEE', bd: '#CCC' },
-    past:     isColor ? { fg: '#64748B', bg: 'rgba(100,116,139,.1)', bd: 'rgba(100,116,139,.2)' } : { fg: '#777', bg: '#EEE', bd: '#CCC' },
-  };
-
-  const rows = list.map((ex, i) => {
-    const st  = getExamStatus(ex);
-    const sc  = STATUS_COLORS[st.cls];
-    const dur = calcDuration(ex.from, ex.to);
-    const pillsHtml = (ex.classes || []).map(c => {
-      const label = typeof c === 'string'
-        ? c
-        : `${c.gradeName || ''}${c.sectionName ? ' - ' + c.sectionName : ''}`.trim() || (c.className || '');
-      return `<span style="display:inline-block;padding:2px 8px;border-radius:99px;background:${isColor ? '#EFF6FF' : '#EEE'};color:${brand};font-size:10px;font-weight:600;border:1px solid ${border};margin:2px 3px 2px 0">${esc(label)}</span>`;
-    }).join('');
-    return `
-    <tr>
-      <td style="color:${muted};font-weight:700;text-align:center">${i + 1}</td>
-      <td>
-        <div style="font-weight:800;color:${brand};font-size:12px">${ex.name}</div>
-        <div style="font-size:10.5px;color:${muted};margin-top:3px">${pillsHtml}</div>
-      </td>
-      <td style="text-align:center">
-        <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10.5px;font-weight:700;white-space:nowrap;background:${sc.bg};color:${sc.fg};border:1px solid ${sc.bd}">${st.label}</span>
-      </td>
-      <td style="text-align:center;color:${muted};font-size:11px">${fmtDate(ex.from)}</td>
-      <td style="text-align:center;color:${muted};font-size:11px">${fmtDate(ex.to)}</td>
-      <td style="text-align:center;font-weight:700;color:${brand};font-size:11.5px">${dur}</td>
-    </tr>`;
-  }).join('');
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Examination Report — ${req.scope === 'all' ? term + ' Term' : (target ? target.name : '')}</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  html,body{background:#fff;overflow-x:hidden}
-  body{font-family:'Segoe UI',Arial,sans-serif;color:#0F172A;font-size:12px;line-height:1.5}
-  @page{size:A4 portrait;margin:15mm}
-  @media print{
-    body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .no-print{display:none!important}
-    .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
+  if (format === 'excel') {
+    downloadReportExcel({
+      title: 'Examination Report', subtitle: scopeTitle,
+      metaLine: `Scope: ${scopeLbl}  ·  Term: ${term}`,
+      columns: [
+        { key: 'i', label: '#', align: 'center' }, { key: 'name', label: 'Exam Name' }, { key: 'classes', label: 'Classes' },
+        { key: 'status', label: 'Status', align: 'center' }, { key: 'from', label: 'Start', align: 'center' },
+        { key: 'to', label: 'End', align: 'center' }, { key: 'duration', label: 'Duration', align: 'center' },
+      ],
+      rows, filename: `${reportFileName(reportName.replace(/\s*-\s*/g, ' '))}.xlsx`, isColor,
+    });
+    return;
   }
-  .page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0 0 16px;box-sizing:border-box;overflow:hidden}
-  .doc-body{padding:24px 28px 4px}
-  table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px;word-wrap:break-word}
-  thead{background:${tHead};display:table-header-group}
-  tr{page-break-inside:avoid}
-  th{padding:7px 8px;text-align:left;font-size:9.5px;font-weight:800;color:${brand};text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${border}}
-  td{padding:8px 8px;border-bottom:1px solid ${border};vertical-align:top;overflow-wrap:anywhere}
-  tbody tr:nth-child(even) td{background:${rowAlt}}
-  .doc-footer{margin:18px 28px 0;border-top:1px solid ${border};padding:14px 0 0;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${muted};flex-wrap:wrap;gap:6px}
-  .print-bar{text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:14px}
-  .print-bar button{background:${brand};color:#fff;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-  .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-</style></head><body>
-<div class="page-wrap">
-  ${isColor
-    ? `<div style="background:${headerBg};padding:24px 32px 28px;color:${headerFg};position:relative;overflow:hidden">
-        <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-        <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(14,165,233,.15)"></div>
-        <div style="display:flex;align-items:center;gap:18px;position:relative;z-index:2">
-          <div style="width:64px;height:64px;border-radius:16px;overflow:hidden;flex-shrink:0;box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)">${logoHtml}</div>
-          <div>
-            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
-            <div style="font-size:20px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${esc(schoolName)}</div>
-          </div>
-        </div>
-        <div style="height:1px;background:${headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
-        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${esc(reportTitle)}</div>
-        <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">${esc(schoolYear)} · ${styleLabel} Report</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${today}</div>
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Term:</strong> ${esc(term)}</div>
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Scope:</strong> ${req.scope === 'all' ? 'All Exams (' + list.length + ')' : 'Single Exam'}</div>
-        </div>
-      </div>`
-    : `<div style="background:${headerBg};padding:22px 32px 22px;color:${headerFg};border-bottom:1px solid ${border}">
-        <div style="display:flex;align-items:center;gap:16px">
-          <div style="width:56px;height:56px;flex-shrink:0">${logoHtml}</div>
-          <div>
-            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
-            <div style="font-size:19px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2">${esc(schoolName)}</div>
-          </div>
-        </div>
-        <div style="height:1px;background:${headerDivCol};margin:16px 0 14px"></div>
-        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${esc(reportTitle)}</div>
-        <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">${esc(schoolYear)} · ${styleLabel} Report</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${headerFg}"><strong>Generated:</strong> ${today}</div>
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${headerFg}"><strong>Term:</strong> ${esc(term)}</div>
-          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${headerFg}"><strong>Scope:</strong> ${req.scope === 'all' ? 'All Exams (' + list.length + ')' : 'Single Exam'}</div>
-        </div>
-      </div>`}
 
-  <div class="doc-body">
-  <table>
-    <colgroup>
-      <col style="width:38px">
-      <col>
-      <col style="width:110px">
-      <col style="width:76px">
-      <col style="width:76px">
-      <col style="width:62px">
-    </colgroup>
-    <thead><tr>
-      <th style="text-align:center">#</th>
-      <th>Exam Name &amp; Classes</th>
-      <th style="text-align:center">Status</th>
-      <th style="text-align:center">Start</th>
-      <th style="text-align:center">End</th>
-      <th style="text-align:center">Duration</th>
-    </tr></thead>
-    <tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:24px;color:' + muted + '">No exams in this term.</td></tr>'}</tbody>
-  </table>
-  </div>
-
-  <div class="doc-footer">
-    <span>${esc(schoolName)}${schoolAddr ? ` · ${esc(schoolAddr)}` : ''}</span>
-    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>Page 1 of 1</span>
-  </div>
-
-  <div class="print-bar no-print">
-    <button onclick="window.print()">🖨 Print / Save as PDF</button>
-    <button class="close-btn" onclick="window.close()">Close</button>
-  </div>
-</div></body></html>`;
-
+  const bodyHtml = buildReportTableHtml({
+    columns: [
+      { key: 'i', label: '#', align: 'center', width: '38px' },
+      { key: 'nameHtml', label: 'Exam Name & Classes' },
+      { key: 'statusHtml', label: 'Status', align: 'center', width: '110px' },
+      { key: 'from', label: 'Start', align: 'center', width: '76px' },
+      { key: 'to', label: 'End', align: 'center', width: '76px' },
+      { key: 'duration', label: 'Duration', align: 'center', width: '70px' },
+    ],
+    rows, isColor, emptyText: 'No exams in this term.',
+  });
+  const html = buildStandardReportHtml({
+    title: 'Examination Report',
+    subtitleLine: examKitSub(branchSchool, examKitEsc(scopeTitle), `Term: ${examKitEsc(term)}`, `Scope: ${scopeLbl}`),
+    schoolName: examKitSchool(branchSchool),
+    format, isColor, bodyHtml, orientation: 'portrait',
+  });
   // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
-  deliverReport(`Exam Report - ${target?.name || (req?.scope === 'all' ? 'All Exams' : '')}`, format, html);
+  deliverReport(reportName, format, html);
 }
 /* ═══════════════════════════════════════════════════════════════════
    CSS — verbatim from HTML's #module-exam styles

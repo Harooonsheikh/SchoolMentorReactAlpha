@@ -7,7 +7,7 @@ import * as hrService from '../services/hrService';
 import * as attendanceService from '../services/attendanceService';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
-import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
+import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName } from '../reports/reportKit';
 
 import {
   generateSalarySlipHTML,
@@ -981,18 +981,22 @@ const generate = async (
     /* Employee Directory is handled by DirectoryReportModal (column picker →
        Word / Excel / PDF), not this print-only flow. */
     if (type === 'directory') return;
-    /* Window PEHLE — data baad me. Wajah RspModal wale generateReport par likhi
-       hai: await ke baad `window.open` browser ke liye user-click ka jawab nahi
-       rehta, is liye pehli click par popup block ho jata tha. */
-    const w = window.open('', '_blank');
-    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
-    try {
-      w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>'
-        + '<style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;'
-        + 'font:600 14px/1.5 system-ui,Segoe UI,sans-serif;color:#475569;background:#f8fafc}</style>'
-        + '<div>Preparing report… please wait.</div>');
-    } catch { /* noop */ }
-    const failReport = (msg) => { try { w.close(); } catch { /* noop */ } if (msg) toast(msg, 'error'); };
+    /* PDF: window PEHLE — data baad me. Wajah RspModal wale generateReport par
+       likhi hai: await ke baad `window.open` browser ke liye user-click ka jawab
+       nahi rehta, is liye pehli click par popup block ho jata tha. Word / Excel
+       downloads ko window ki zaroorat nahi. */
+    const isPdf = format !== 'word' && format !== 'excel';
+    const w = isPdf ? window.open('', '_blank') : null;
+    if (isPdf && !w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    if (w) {
+      try {
+        w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>'
+          + '<style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;'
+          + 'font:600 14px/1.5 system-ui,Segoe UI,sans-serif;color:#475569;background:#f8fafc}</style>'
+          + '<div>Preparing report… please wait.</div>');
+      } catch { /* noop */ }
+    }
+    const failReport = (msg) => { try { if (w) w.close(); } catch { /* noop */ } if (msg) toast(msg, 'error'); };
     /* Live branch header (name, logo, address, session, generated date) from the
        /report-header API — replaces the old hardcoded school details. */
     const branch = await fetchReportHeader();
@@ -1039,6 +1043,7 @@ const ctx = {
   empLoans,
   branch,
   style,
+  format: isPdf ? 'pdf' : format,
 };
 
 let html = '';
@@ -1059,12 +1064,24 @@ else if (type === 'payroll-summary') {
   html = generateHrPayrollSummary(ctx, monthKey);
 }
     if (!html) { failReport('Could not build this report'); return; }
+    const meta = HR_REPORT_META[type];
+    if (format === 'word') {
+      downloadReportAsWord(html, `${reportFileName(meta.title)}.doc`);
+      toast(`${meta.title} downloaded as Word document`, 'success');
+      setPicker(null);
+      return;
+    }
+    if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${reportFileName(meta.title)}.xls`);
+      toast(`${meta.title} downloaded as Excel spreadsheet`, 'success');
+      setPicker(null);
+      return;
+    }
     /* Placeholder mita kar asal report likh do — window pehle hi khul chuki hai. */
     w.document.open();
     w.document.write(html);
     w.document.close();
     setTimeout(() => { try { w.print(); } catch {} }, 400);
-    const meta = HR_REPORT_META[type];
     toast(`${meta.title} (${style === 'color' ? 'Colorful' : 'B&W'}) ready — Print or Save as PDF`, 'success');
     setPicker(null);
   };
@@ -1116,19 +1133,15 @@ else if (type === 'payroll-summary') {
   />
 )}
 
-<ReportDownloadDialog
-  open={!!picker && picker.type !== 'directory'}
-  reportName={
-    picker
-      ? HR_REPORT_META[picker.type]?.title || "HR Report"
-      : ""
-  }
-  initialFormat="pdf"
-  onClose={() => setPicker(null)}
-  onGenerate={async ({ style, format }) => {
-    await generate(style, reportMonth, format);
-  }}
-/>
+{picker && picker.type !== 'directory' && (
+  <HrRptModal
+    type={picker.type}
+    monthKey={reportMonth}
+    onMonthChange={setReportMonth}
+    onClose={() => setPicker(null)}
+    onGenerate={(style, format, monthKey) => generate(style, monthKey, format)}
+  />
+)}
     </div>
   );
 }
@@ -1155,25 +1168,21 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
   const selectedKeys = useMemo(() => HR_DIRECTORY_FIELDS.filter(f => selected.has(f.key)).map(f => f.key), [selected]);
   const willBeLandscape = selectedKeys.length > 6;
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
-  }, [onClose]);
-
   /* ctx the directory generator needs: live employees + department /
      designation lookups + the /report-header branch (name, logo, address,
-     session, generated date) — same shape the other HR reports build. */
-  const buildCtx = async () => ({
+     session, generated date) — same shape the other HR reports build.
+     `style` / `format` only drive the report's Colorful/Colorless look and
+     its header Format chip. */
+  const buildCtx = async (style = 'color', format = 'pdf') => ({
     emps, depts,
     fmtMoney, fmtDate, getFullName,
     getDeptName, getDesigName,
     branch: await fetchReportHeader(),
-    style: 'color',
+    style,
+    format,
   });
 
-  const downloadPdf = async () => {
+  const downloadPdf = async (style) => {
     if (busy) return;
     setBusy(true);
     /* Window PEHLE (before await) — warna popup block ho jati hai. */
@@ -1181,7 +1190,7 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
     if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); setBusy(false); return; }
     try {
       w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>');
-      const ctx = await buildCtx();
+      const ctx = await buildCtx(style, 'pdf');
       const html = generateHrDirectoryReport(ctx, selectedKeys, true);
       w.document.open(); w.document.write(html); w.document.close();
       setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 400);
@@ -1192,11 +1201,11 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
     } finally { setBusy(false); }
   };
 
-  const downloadWord = async () => {
+  const downloadWord = async (style) => {
     if (busy) return;
     setBusy(true);
     try {
-      const ctx = await buildCtx();
+      const ctx = await buildCtx(style, 'word');
       const html = generateHrDirectoryReport(ctx, selectedKeys, false);
       downloadDocxFromHtml(html, 'Employee-Directory', { landscape: willBeLandscape });
       toast('Employee Directory downloaded as Word document', 'success');
@@ -1242,26 +1251,21 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
     } finally { setBusy(false); }
   };
 
-  const meta = HR_REPORT_META.directory;
-  return createPortal((
-    <div className="ov open" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal modal-lg" style={{ maxWidth: 760 }}>
-        <div className="modal-head">
-          <div className="modal-head-left">
-            <div className="modal-head-icon" style={{ background: `linear-gradient(135deg, ${meta.gradFrom}, ${meta.gradTo})`, color: meta.iconColor }}>
-              <i className={`fa-solid ${meta.icon}`} aria-hidden="true"></i>
-            </div>
-            <div>
-              <div className="modal-title">Employee Directory</div>
-              <div className="modal-sub">Choose which information to include, then export</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button type="button" className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true"></i></button>
-          </Tooltip>
-        </div>
-
-        <div className="modal-body">
+  return (
+    <StandardReportPicker
+      open
+      title="Employee Directory"
+      subtitle="Choose which information to include, then export"
+      formats={['pdf', 'word', 'excel']}
+      generateDisabled={selectedKeys.length === 0 || busy}
+      onClose={onClose}
+      onGenerate={(style, format) => {
+        if (format === 'word') downloadWord(style);
+        else if (format === 'excel') downloadExcel();
+        else downloadPdf(style);
+      }}
+      filters={
+        <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
             <div style={{ fontSize: 12, color: 'var(--tm)', flex: 1, minWidth: 220 }}>
               Every column is selected by default. Uncheck anything you do not need for this export.
@@ -1292,150 +1296,41 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
                 : <>The report will print in <strong>Portrait</strong>. Selecting more than 6 columns switches it to Landscape automatically.</>}
             </span>
           </div>
-        </div>
-
-        <div className="modal-foot">
-          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="btn-secondary" onClick={downloadWord} disabled={busy}><i className="fa-solid fa-file-word" aria-hidden="true"></i> Word</button>
-          <button type="button" className="btn-secondary" onClick={downloadExcel} disabled={busy}><i className="fa-solid fa-file-excel" aria-hidden="true"></i> Excel</button>
-          <button type="button" className="btn-primary" onClick={downloadPdf} disabled={busy}><i className="fa-solid fa-file-pdf" aria-hidden="true"></i> PDF</button>
-        </div>
-      </div>
-    </div>
-  ), document.body);
+        </>
+      }
+    />
+  );
 }
 
-function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {
+function HrRptModal({ type, monthKey, onMonthChange, onClose, onGenerate }) {
   const meta = HR_REPORT_META[type] || HR_REPORT_META.directory;
-  const [monthKey, setMonthKey] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
-  /* Style pehle CHUNI jaati hai, report footer ke button se banti hai — wajah
-     RspModal ke wahi comment me hai (card-click par pehli dafa popup block ho
-     jata tha, is liye user ko dobara click karna parta). */
-  const [style, setStyle] = useState('color');
+  /* Report Month is owned by HrReports (defaults to the current month). */
   const [busy, setBusy] = useState(false);
-  const generate = async () => {
+  const generate = async (style, format) => {
     if (busy) return;
     setBusy(true);
-    try { await onGenerate(style, monthKey); } finally { setBusy(false); }
+    try { await onGenerate(style, format, monthKey); } finally { setBusy(false); }
   };
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
-
-  return createPortal((
-    <div
-      className="ov open"
-      role="dialog" aria-modal="true"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="modal" style={{ maxWidth: 640 }}>
-        <div className="modal-head">
-          <div className="modal-head-left">
-            <div
-              className="modal-head-icon"
-              style={{
-                background: `linear-gradient(135deg, ${meta.gradFrom}, ${meta.gradTo})`,
-                color:       meta.iconColor,
-              }}
-            >
-              <i className={`fa-solid ${meta.icon}`} aria-hidden="true"></i>
-            </div>
-            <div>
-              <div className="modal-title">{meta.title}</div>
-              <div className="modal-sub">
-                <i className={`fa-solid ${meta.icon}`} style={{ marginRight: 5, color: 'var(--brand)' }} aria-hidden="true"></i>
-                {meta.sub}
-              </div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-            </button>
-          </Tooltip>
-        </div>
-
-        <div className="modal-body">
-          {meta.period && (
-            <div className="rsp-range-row" style={{ gridTemplateColumns: '1fr' }}>
-              <div className="rsp-field">
-                <label><i className="fa-solid fa-calendar-check" aria-hidden="true"></i> Report Month</label>
-                <input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value)} />
-              </div>
-            </div>
-          )}
-
-          <div style={{ fontSize: 12, color: 'var(--tm)', marginBottom: 6, lineHeight: 1.5 }}>
-            Pick a report style, then click <strong>Generate Report</strong>. Both versions are A4-formatted and ready to print or save as PDF.
-          </div>
-
-          <div className="style-pick-grid">
-            {canDownload && (
-            <div
-              className={`style-pick-card${style === 'color' ? ' selected' : ''}`}
-              role="radio" aria-checked={style === 'color'} tabIndex={0}
-              onClick={() => setStyle('color')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('color'); } }}
-            >
-              <span className="style-pick-tag">Recommended</span>
-              <div className="style-pick-preview color">
-                <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
-                <div className="ppl-row mid"></div>
-                <div className="ppl-row short"></div>
-                <div className="ppl-tile">PKR 50,000</div>
-                <div className="ppl-pill"></div>
-              </div>
-              <div className="style-pick-info">
-                <div className="style-pick-title"><i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful</div>
-                <div className="style-pick-desc">ERP theme colors, professional header, color-coded badges and highlights.</div>
-              </div>
-            </div>
-            )}
-            {canDownload && (
-            <div
-              className={`style-pick-card bw-card${style === 'bw' ? ' selected' : ''}`}
-              role="radio" aria-checked={style === 'bw'} tabIndex={0}
-              onClick={() => setStyle('bw')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('bw'); } }}
-            >
-              <span className="style-pick-tag">Low Ink</span>
-              <div className="style-pick-preview bw">
-                <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
-                <div className="ppl-row mid"></div>
-                <div className="ppl-row short"></div>
-                <div className="ppl-tile">PKR 50,000</div>
-                <div className="ppl-pill"></div>
-              </div>
-              <div className="style-pick-info">
-                <div className="style-pick-title"><i className="fa-solid fa-print" aria-hidden="true"></i> Colorless / B&amp;W</div>
-                <div className="style-pick-desc">White background, black/gray text, light borders only — saves ink on printing.</div>
-              </div>
-            </div>
-            )}
+  return (
+    <StandardReportPicker
+      open
+      title={meta.title}
+      subtitle={meta.sub}
+      formats={['pdf', 'word', 'excel']}
+      generateDisabled={busy}
+      onClose={onClose}
+      onGenerate={generate}
+      filters={meta.period && (
+        <div className="rsp-range-row" style={{ gridTemplateColumns: '1fr' }}>
+          <div className="rsp-field">
+            <label><i className="fa-solid fa-calendar-check" aria-hidden="true"></i> Report Month</label>
+            <input type="month" value={monthKey} onChange={(e) => onMonthChange(e.target.value)} />
           </div>
         </div>
-
-        <div className="modal-foot">
-          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
-          {/* Download ki ijazat na ho to styles dikhti hi nahi — button bhi band. */}
-          <button type="button" className="btn-primary" onClick={generate} disabled={busy || !canDownload}>
-            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-file-arrow-down'}`} aria-hidden="true"></i>
-            {busy ? ' Generating…' : ' Generate Report'}
-          </button>
-        </div>
-      </div>
-    </div>
-  ), document.body);
+      )}
+    />
+  );
 }
 
 function getEmpTotalGross(e, bonus = 0) {
@@ -1780,9 +1675,10 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   };
 
   /* Open the generated report in a new window. Mirrors generateChosenReport. */
-  const generateReport = async (style, picked) => {
+  const generateReport = async (style, format, picked) => {
     if (!rspFor) return;
     const { emp, type } = rspFor;
+    const isPdf = format !== 'word' && format !== 'excel';
 
     /* ── Window PEHLE kholo, data baad me ──
        Browser `window.open` sirf usi waqt allow karta hai jab wo user ke click
@@ -1790,17 +1686,20 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
        loans, leave settings, attendance) await hota tha aur window uske BAAD
        khulti thi — tab tak click ka "gesture" khatam ho chuka hota, is liye
        pehli click par popup block ho jata aur user ko dobara click karna parta.
-       Ab khali window foran khulti hai aur data aane par usi me likh dete hain. */
-    const w = window.open('', '_blank');
-    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
-    try {
-      w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>'
-        + '<style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;'
-        + 'font:600 14px/1.5 system-ui,Segoe UI,sans-serif;color:#475569;background:#f8fafc}</style>'
-        + '<div>Preparing report… please wait.</div>');
-    } catch { /* about:blank likhne na de to bhi report neeche likh jayegi */ }
+       Ab khali window foran khulti hai aur data aane par usi me likh dete hain.
+       Word / Excel downloads ko window ki zaroorat nahi. */
+    const w = isPdf ? window.open('', '_blank') : null;
+    if (isPdf && !w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    if (w) {
+      try {
+        w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>'
+          + '<style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;'
+          + 'font:600 14px/1.5 system-ui,Segoe UI,sans-serif;color:#475569;background:#f8fafc}</style>'
+          + '<div>Preparing report… please wait.</div>');
+      } catch { /* about:blank likhne na de to bhi report neeche likh jayegi */ }
+    }
     /* Data lete waqt kuch bhi bigde to khali tab peeche na reh jaye. */
-    const failReport = (msg) => { try { w.close(); } catch { /* noop */ } if (msg) toast(msg, 'error'); };
+    const failReport = (msg) => { try { if (w) w.close(); } catch { /* noop */ } if (msg) toast(msg, 'error'); };
 
     /* Live branch header (name, logo, address, session, generated date) from the
        /report-header API — replaces the old hardcoded school details. */
@@ -1867,12 +1766,25 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
     else if (type === 'history')    html = generatePayHistoryReportHTML(emp, picked.fromKey || '2026-01', picked.toKey || '2026-06', style, ctx);
     else if (type === 'loan')       html = generateLoanReportHTML(emp, style, ctx);
     if (!html) { failReport('Could not build this report'); return; }
+    const title = RSP_META[type].title;
+    if (format === 'word') {
+      downloadReportAsWord(html, `${reportFileName(`${title}-${emp.eid || emp.id}`)}.doc`);
+      toast(`${title} downloaded as Word document`, 'success');
+      setRspFor(null);
+      return;
+    }
+    if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${reportFileName(`${title}-${emp.eid || emp.id}`)}.xls`);
+      toast(`${title} downloaded as Excel spreadsheet`, 'success');
+      setRspFor(null);
+      return;
+    }
     /* Placeholder mita kar asal report likh do — window pehle hi khul chuki hai. */
     w.document.open();
     w.document.write(html);
     w.document.close();
     setTimeout(() => { try { w.print(); } catch {} }, 400);
-    toast(`${RSP_META[type].title} ready (${style === 'color' ? 'Colorful' : 'B&W'}) — Print or Save as PDF`, 'success');
+    toast(`${title} ready (${style === 'color' ? 'Colorful' : 'B&W'}) — Print or Save as PDF`, 'success');
     setRspFor(null);
   };
 
@@ -3558,141 +3470,59 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
   const [rspFrom,  setRspFrom]  = useState(`${year}-01`);
   const [rspTo,    setRspTo]    = useState(seedMonthKey);
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
-
-  /* Style ab pehle CHUNI jaati hai aur report footer ke button se banti hai.
-     Pehle card par click seedha report bana deta tha — magar report ka data
-     await hone ki wajah se browser popup block kar deta tha, is liye user ko
-     dobara click karna parta tha (aur usay lagta tha ke double-click chahiye).
-     Ab niyat saaf hai: chuno, phir "Generate Report". */
-  const [style, setStyle] = useState('color');
+  /* Style + format ab shared StandardReportPicker me CHUNE jaate hain aur
+     report uske "Download" button se banti hai (card-click par report banne
+     se pehli dafa popup block ho jata tha). */
   const [busy, setBusy] = useState(false);
 
-  const generate = async () => {
+  const picked = () => {
+    if (meta.range === 'single')      return { monthKey: rspMonth };
+    if (meta.range === 'period')      return { fromKey: rspFrom, toKey: rspTo };
+    return {};
+  };
+
+  const generate = async (style, format) => {
     if (busy) return;
     setBusy(true);
     try {
-      if (meta.range === 'single')      await onGenerate(style, { monthKey: rspMonth });
-      else if (meta.range === 'period') await onGenerate(style, { fromKey: rspFrom, toKey: rspTo });
-      else                              await onGenerate(style, {});
+      await onGenerate(style, format, picked());
     } finally {
       setBusy(false);
     }
   };
 
-  return createPortal((
-    <div
-      className="ov open"
-      role="dialog" aria-modal="true"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="modal" style={{ maxWidth: 640 }}>
-        <div className="modal-head">
-          <div className="modal-head-left">
-            <div
-              className="modal-head-icon"
-              style={{ background: meta.iconBg, color: meta.iconColor }}
-            >
-              <i className={`fa-solid ${meta.icon}`} aria-hidden="true"></i>
+  return (
+    <StandardReportPicker
+      open
+      title={meta.title}
+      subtitle={`For: ${getFullName(emp)} · ${emp.eid}`}
+      formats={['pdf', 'word', 'excel']}
+      generateDisabled={busy}
+      onClose={onClose}
+      onGenerate={generate}
+      filters={(meta.range === 'period' || meta.range === 'single') && (
+        meta.range === 'period' ? (
+          <div className="rsp-range-row">
+            <div className="rsp-field">
+              <label><i className="fa-solid fa-calendar-day" aria-hidden="true"></i> From Month</label>
+              <input type="month" value={rspFrom} onChange={(e) => setRspFrom(e.target.value)} />
             </div>
-            <div>
-              <div className="modal-title">{meta.title}</div>
-              <div className="modal-sub">For: {getFullName(emp)} · {emp.eid}</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
-              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-            </button>
-          </Tooltip>
-        </div>
-
-        <div className="modal-body">
-          {meta.range === 'period' && (
-            <div className="rsp-range-row">
-              <div className="rsp-field">
-                <label><i className="fa-solid fa-calendar-day" aria-hidden="true"></i> From Month</label>
-                <input type="month" value={rspFrom} onChange={(e) => setRspFrom(e.target.value)} />
-              </div>
-              <div className="rsp-field">
-                <label><i className="fa-solid fa-calendar-day" aria-hidden="true"></i> To Month</label>
-                <input type="month" value={rspTo} onChange={(e) => setRspTo(e.target.value)} />
-              </div>
-            </div>
-          )}
-          {meta.range === 'single' && (
-            <div className="rsp-range-row" style={{ gridTemplateColumns: '1fr' }}>
-              <div className="rsp-field">
-                <label><i className="fa-solid fa-calendar-check" aria-hidden="true"></i> Salary Month</label>
-                <input type="month" value={rspMonth} onChange={(e) => setRspMonth(e.target.value)} />
-              </div>
-            </div>
-          )}
-
-          <div style={{ fontSize: 12, color: 'var(--tm)', marginBottom: 6, lineHeight: 1.5 }}>
-            Pick a report style, then click <strong>Generate Report</strong>. Both versions are A4-formatted and ready to print or save as PDF.
-          </div>
-
-          <div className="style-pick-grid">
-            <div
-              className={`style-pick-card${style === 'color' ? ' selected' : ''}`}
-              role="radio" aria-checked={style === 'color'} tabIndex={0}
-              onClick={() => setStyle('color')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('color'); } }}
-            >
-              <span className="style-pick-tag">Recommended</span>
-              <div className="style-pick-preview color">
-                <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
-                <div className="ppl-row mid"></div>
-                <div className="ppl-row short"></div>
-                <div className="ppl-tile">PKR 50,000</div>
-                <div className="ppl-pill"></div>
-              </div>
-              <div className="style-pick-info">
-                <div className="style-pick-title"><i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful</div>
-                <div className="style-pick-desc">ERP theme colors, professional header, color-coded badges and highlights.</div>
-              </div>
-            </div>
-            <div
-              className={`style-pick-card bw-card${style === 'bw' ? ' selected' : ''}`}
-              role="radio" aria-checked={style === 'bw'} tabIndex={0}
-              onClick={() => setStyle('bw')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('bw'); } }}
-            >
-              <span className="style-pick-tag">Low Ink</span>
-              <div className="style-pick-preview bw">
-                <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
-                <div className="ppl-row mid"></div>
-                <div className="ppl-row short"></div>
-                <div className="ppl-tile">PKR 50,000</div>
-                <div className="ppl-pill"></div>
-              </div>
-              <div className="style-pick-info">
-                <div className="style-pick-title"><i className="fa-solid fa-print" aria-hidden="true"></i> Colorless / B&amp;W</div>
-                <div className="style-pick-desc">White background, black/gray text, light borders only — saves ink on printing.</div>
-              </div>
+            <div className="rsp-field">
+              <label><i className="fa-solid fa-calendar-day" aria-hidden="true"></i> To Month</label>
+              <input type="month" value={rspTo} onChange={(e) => setRspTo(e.target.value)} />
             </div>
           </div>
-        </div>
-
-        <div className="modal-foot">
-          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="btn-primary" onClick={generate} disabled={busy}>
-            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-file-arrow-down'}`} aria-hidden="true"></i>
-            {busy ? ' Generating…' : ' Generate Report'}
-          </button>
-        </div>
-      </div>
-    </div>
-  ), document.body);
+        ) : (
+          <div className="rsp-range-row" style={{ gridTemplateColumns: '1fr' }}>
+            <div className="rsp-field">
+              <label><i className="fa-solid fa-calendar-check" aria-hidden="true"></i> Salary Month</label>
+              <input type="month" value={rspMonth} onChange={(e) => setRspMonth(e.target.value)} />
+            </div>
+          </div>
+        )
+      )}
+    />
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -4145,6 +3975,7 @@ const markActiveAgain = async (emp) => {
           deptName={getDeptName(profileFor.dId)}
           desigName={getDesigName(profileFor.desId)}
           onClose={() => setProfileFor(null)}
+          toast={toast}
         />
       )}
       {viewLetterFor && (
@@ -6690,7 +6521,7 @@ function fmtDate(d) {
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function ProfileReportModal({ emp, deptName, desigName, onClose }) {
+function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
   const [style, setStyle] = useState('color');     // 'color' | 'bw'
   const [branch, setBranch] = useState(null);       // live /report-header data
 
@@ -6760,6 +6591,25 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
 
   const num = (n) => Number(n || 0).toLocaleString('en-US');
 
+  /* Word / Excel — the exact rendered report sheet (same live content as the
+     Print / Save PDF output), saved via the shared reportKit helpers. */
+  const buildProfileReportHtml = () => {
+    const root = document.getElementById('report-print-root');
+    return root ? `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Employee Profile Report — ${fullName}</title><style>${HR_CSS}</style></head><body>${root.outerHTML}</body></html>` : '';
+  };
+  const downloadProfileWord = () => {
+    const html = buildProfileReportHtml();
+    if (!html) return;
+    downloadReportAsWord(html, `${reportFileName(`Employee-Profile-Report-${fullName}`)}.doc`);
+    if (toast) toast('Employee Profile Report downloaded as Word document', 'success');
+  };
+  const downloadProfileExcel = () => {
+    const html = buildProfileReportHtml();
+    if (!html) return;
+    downloadReportHtmlAsExcel(html, `${reportFileName(`Employee-Profile-Report-${fullName}`)}.xls`);
+    if (toast) toast('Employee Profile Report downloaded as Excel spreadsheet', 'success');
+  };
+
   return createPortal((
     <div className="report-ov open" role="dialog" aria-modal="true">
       {/* Top toolbar */}
@@ -6795,6 +6645,12 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
               : { borderColor: '#BFDBFE' }}
           >
             <i className="fa-solid fa-print" aria-hidden="true"></i> Colorless
+          </button>
+          <button type="button" className="btn-edit" onClick={downloadProfileWord}>
+            <i className="fa-solid fa-file-word" aria-hidden="true"></i> Word
+          </button>
+          <button type="button" className="btn-edit" onClick={downloadProfileExcel}>
+            <i className="fa-solid fa-file-excel" aria-hidden="true"></i> Excel
           </button>
           <button type="button" className="btn-primary" onClick={() => window.print()}>
             <i className="fa-solid fa-print" aria-hidden="true"></i> Print / Save PDF

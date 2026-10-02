@@ -445,13 +445,13 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const todaysAtt   = D.TodaysAttendance || { Students: {}, Staff: {} };
   const liveStuAtt  = todaysAtt.Students || {};
   const liveStaffAtt = todaysAtt.Staff || {};
-  const liveLessonPlans  = Array.isArray(D.LessonPlanAnalytics) ? D.LessonPlanAnalytics : [];
-  const livePaperStats   = Array.isArray(D.PaperGeneratorStats) ? D.PaperGeneratorStats : [];
-  const liveStuBdays     = Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : [];
-  const liveStaffBdays   = Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : [];
+  const liveLessonPlans  = useMemo(() => (Array.isArray(D.LessonPlanAnalytics) ? D.LessonPlanAnalytics : []), [D.LessonPlanAnalytics]);
+  const livePaperStats   = useMemo(() => (Array.isArray(D.PaperGeneratorStats) ? D.PaperGeneratorStats : []), [D.PaperGeneratorStats]);
+  const liveStuBdays     = useMemo(() => (Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : []), [D.StudentBirthdays]);
+  const liveStaffBdays   = useMemo(() => (Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : []), [D.StaffBirthdays]);
   const liveUpActivities = Array.isArray(D.UpcomingActivities) ? D.UpcomingActivities : [];
-  const liveRevenueStreams = Array.isArray(D.RevenueStreams) ? D.RevenueStreams : [];
-  const liveFinOverview  = D.FinancialOverview || {};
+  const liveRevenueStreams = useMemo(() => (Array.isArray(D.RevenueStreams) ? D.RevenueStreams : []), [D.RevenueStreams]);
+  const liveFinOverview  = useMemo(() => (D.FinancialOverview || {}), [D.FinancialOverview]);
   const dPctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
 
   /* Live Teachers / Parents mobile-app adoption (get-dashboard AppAdoption =
@@ -503,14 +503,16 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      "Advance Payments Received" (after Pending Fee) deliberately isn't. */
   const [feeMonthIdx, setFeeMonthIdx] = useState(() => new Date().getMonth()); // default: current month (live)
   const feeYear = new Date().getFullYear();
-  const { data: faClasses = [] }        = useAsync(feeService.getFeeClasses, []);
-  const { data: faStudentsMap = {} }    = useAsync(feeService.getTransportFee, []);
-  const { data: faHeadsMap = {} }       = useAsync(feeService.getFeeHeads, []);
-  const { data: faDiscountRows = [] }   = useAsync(feeService.getFeeDiscounts, []);
-  const { data: faGeneratedSet }        = useAsync(feeService.getGeneratedChallans, [], new Set());
-  const { data: faReceipts = [] }       = useAsync(feeService.getReceipts, []);
-  const { data: faAdvanceLedger = [] }  = useAsync(feeService.getAdvanceLedger, []);
-  const faDiscMap = useMemo(() => buildDiscountMap(faDiscountRows), [faDiscountRows]);
+  /* Daily Receiving drill-down popups — forked MOCK hata diya (koi fake data
+     nahi). Live getReceipts stub [] deta hai, is liye ye popups ab empty state
+     dikhate hain jab tak inka proper live-ledger wiring nahi hota. */
+  const faClasses = [];
+  const faStudentsMap = {};
+  const faHeadsMap = {};
+  const faGeneratedSet = new Set();
+  const faReceipts = [];
+  const faAdvanceLedger = [];
+  const faDiscMap = {};
   /* LIVE Fee Analytics — same BranchLedger source + formulas as Fee → Reports
      (useLedgerReportData → ledgerModel), so every dashboard figure equals its
      Fee report. The forked reads above remain only for the Daily Receiving
@@ -713,28 +715,21 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      Net P&L here always match what that module reports. Supports the
      same three period filters as the OneLink Payments card below —
      Month / From–To / Single Date. */
-  const { data: financeTxns } = useAsync(accountsService.getAccTxns, [], { rev: [], exp: [] });
+  /* Monthly Financial Summary — LIVE from get-dashboard FinancialOverview
+     (current month). Period toggle UI retained, but the live API returns the
+     current month's totals; no data → 0. */
   const [financeSeg, setFinanceSeg]     = useState('month'); // 'month' | 'range' | 'single'
-  const [financeMonth, setFinanceMonth] = useState('2026-05');
-  const [financeFrom, setFinanceFrom]   = useState('2026-05-01');
-  const [financeTo, setFinanceTo]       = useState('2026-05-31');
+  const [financeMonth, setFinanceMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [financeFrom, setFinanceFrom]   = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
+  const [financeTo, setFinanceTo]       = useState(() => new Date().toISOString().slice(0, 10));
   const [financeSingle, setFinanceSingle] = useState(() => new Date().toISOString().slice(0, 10));
   const financeSummary = useMemo(() => {
-    const inPeriod = (x) => {
-      const d = x.date;
-      if (!d) return false;
-      return financeSeg === 'month' ? x.month === financeMonth
-        : financeSeg === 'range' ? (d >= financeFrom && d <= financeTo)
-        : d === financeSingle;
-    };
-    const rev = (financeTxns.rev || []).filter(inPeriod).reduce((a, x) => a + Number(x.amount || 0), 0);
-    const exp = (financeTxns.exp || []).filter(inPeriod).reduce((a, x) => a + Number(x.amount || 0), 0);
-    const [yy, mm] = financeMonth.split('-');
-    const label = financeSeg === 'month' ? `${FIN_MONTH_NAMES[Number(mm) - 1]} ${yy}`
-      : financeSeg === 'range' ? `${financeFrom} to ${financeTo}`
-      : financeSingle;
-    return { label, income: rev, expense: exp, pl: rev - exp };
-  }, [financeTxns, financeSeg, financeMonth, financeFrom, financeTo, financeSingle]);
+    const now = new Date();
+    const income  = Number(liveFinOverview.OverallIncome)   || 0;
+    const expense = Number(liveFinOverview.OverallExpenses) || 0;
+    const pl = (liveFinOverview.NetProfitLoss != null) ? Number(liveFinOverview.NetProfitLoss) : (income - expense);
+    return { label: `${FIN_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`, income, expense, pl };
+  }, [liveFinOverview]);
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
@@ -743,15 +738,46 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const [showDailyAdvancePayment, setShowDailyAdvancePayment] = useState(false);
   const [showDailyAdvanceAdjustment, setShowDailyAdvanceAdjustment] = useState(false);
 
-  const lpData    = LP_DATA_BY_CLASS[lpClass]    || LP_DATA_BY_CLASS['II-Pre'];
-  const paperData = PAPER_DATA_BY_CLASS[paperClass] || PAPER_DATA_BY_CLASS['IV'];
-  const profitData  = PROFIT_LOSS_BY_YEAR[revenueYear]  || PROFIT_LOSS_BY_YEAR[2026];
+  /* LIVE lesson-plan + paper-generator analytics (get-dashboard, subject-wise).
+     Class pickers ab data ko affect nahi karte (live API school-level subject
+     totals deta hai); koi data na ho to khaali. */
+  const lpData = useMemo(
+    () => liveLessonPlans.map((l) => ({ subject: l.SubjectName || '—', classwork: Number(l.ClassworkCount) || 0, notebook: Number(l.NotebookCount) || 0 })),
+    [liveLessonPlans],
+  );
+  const paperData = useMemo(
+    () => livePaperStats.map((p) => ({ subject: p.SubjectName || '—', count: Number(p.TotalGenerated) || 0 })),
+    [livePaperStats],
+  );
+  /* P&L — monthly revenue from RevenueStreams (lakh scale). Monthly expense
+     get-dashboard me nahi aata → expense 0 (pl = revenue). */
+  const profitData = useMemo(() => {
+    const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const byMonth = {};
+    liveRevenueStreams.forEach((r) => { const m = Number(r.Month); if (m >= 1 && m <= 12) byMonth[m] = (byMonth[m] || 0) + (Number(r.Amount) || 0); });
+    return MONTH_ABBR.map((m, i) => { const rev = (byMonth[i + 1] || 0) / 100000; return { m, revenue: rev, expense: 0, pl: rev }; });
+  }, [liveRevenueStreams]);
   const plTotal = useMemo(() => profitData.reduce((s, d) => s + d.pl, 0), [profitData]);
-  const lpMaxCw = useMemo(() => Math.max(...lpData.map(d => d.classwork)), [lpData]);
+  const lpMaxCw = useMemo(() => (lpData.length ? Math.max(...lpData.map((d) => d.classwork)) : 0), [lpData]);
   const paperTotal = useMemo(() => paperData.reduce((s, p) => s + p.count, 0), [paperData]);
 
-  const studentBdays = isActive('students') ? STUDENT_BIRTHDAYS : [];
-  const teacherBdays = isActive('hr') ? TEACHER_BIRTHDAYS : [];
+  /* LIVE birthdays (get-dashboard StudentBirthdays / StaffBirthdays). */
+  const studentBdays = useMemo(() => (isActive('students') ? liveStuBdays.map((b, i) => ({
+    name: b.StudentName || b.Name || '—',
+    grade: [b.ClassName, b.SectionName].filter(Boolean).join(' — ') || '—',
+    date: b.BirthDate ? new Date(b.BirthDate).toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }) : '',
+    dob: b.BirthDate ? new Date(b.BirthDate).getDate() : i,
+  })) : []), [isActive, liveStuBdays]);
+  const teacherBdays = useMemo(() => (isActive('hr') ? liveStaffBdays.map((b, i) => ({
+    name: b.StaffName || b.Name || b.StudentName || '—',
+    role: b.Designation || b.Role || 'Staff',
+    date: b.BirthDate ? new Date(b.BirthDate).toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }) : '',
+    dob: b.BirthDate ? new Date(b.BirthDate).getDate() : i,
+  })) : []), [isActive, liveStaffBdays]);
+
+  /* LIVE today's attendance (get-dashboard TodaysAttendance). No data → 0. */
+  const studentAttLive = { total: Number(liveStuAtt.StudentTotal) || 0, present: Number(liveStuAtt.StudentPresent) || 0, absent: Number(liveStuAtt.StudentAbsent) || 0, leave: Number(liveStuAtt.StudentLeave) || 0, percentage: dPctOf(liveStuAtt.StudentPresent, liveStuAtt.StudentTotal) };
+  const staffAttLive   = { total: Number(liveStaffAtt.StaffTotal) || 0, present: Number(liveStaffAtt.StaffPresent) || 0, absent: Number(liveStaffAtt.StaffAbsent) || 0, leave: Number(liveStaffAtt.StaffLeave) || 0, percentage: dPctOf(liveStaffAtt.StaffPresent, liveStaffAtt.StaffTotal) };
   const showStudents = birthdayTab === 'all' || birthdayTab === 'students';
   const showTeachers = birthdayTab === 'all' || birthdayTab === 'teachers';
 
@@ -905,6 +931,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       {/* ─── Modals (rendered on demand) ─── */}
       {showAnnouncements && (
         <AnnouncementsModal
+          items={liveAnnouncements}
           onClose={() => setShowAnnouncements(false)}
           toast={toast}
         />
@@ -1708,7 +1735,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
        */}
       {moduleActive('attendance') && (
         canSeeCard('attendance')
-          ? <AttendanceSection openModule={openModule} />
+          ? <AttendanceSection openModule={openModule} studentAtt={studentAttLive} staffAtt={staffAttLive} />
           : <LockedCard title="Today's Attendance" icon="fa-clipboard-check" />
       )}
 
@@ -2034,7 +2061,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
    Renders the 2-card row with the same `.fee-card` chrome used by
    the Fee Analytics section. Field names match the Attendance
    module schema (present / absent / leave / total / percentage). */
-function AttendanceSection({ openModule }) {
+function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
   /* Period filter — same three modes as Financial Overview / OneLink
      Payments below (Day / Month / Custom Range). The underlying present /
      absent / leave figures are a single daily snapshot (mock/attendance.js
@@ -2120,7 +2147,7 @@ function AttendanceSection({ openModule }) {
           icon="fa-user-graduate"
           tone="brand"
           title={`Student Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
-          data={STUDENT_ATTENDANCE_TODAY}
+          data={studentAtt}
           unitSingular="student"
           unitPlural="students"
           unitSuffix="enrolled"
@@ -2132,7 +2159,7 @@ function AttendanceSection({ openModule }) {
           icon="fa-chalkboard-user"
           tone="purple"
           title={`Staff Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
-          data={STAFF_ATTENDANCE_TODAY}
+          data={staffAtt}
           unitSingular="staff member"
           unitPlural="staff members"
           unitSuffix=""

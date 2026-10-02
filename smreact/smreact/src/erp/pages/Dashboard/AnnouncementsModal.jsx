@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
-import { SCHOOL_MENTOR_ANNOUNCEMENTS } from './dashboardData';
 import { DASH_MODAL_CSS } from './dashModalCss';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -11,8 +10,8 @@ import { DASH_MODAL_CSS } from './dashModalCss';
    read" toggle that mutates the in-memory list (would be persisted
    to backend in production).
    ═══════════════════════════════════════════════════════════════════ */
-export default function AnnouncementsModal({ onClose, toast = () => {} }) {
-  const [items, setItems] = useState(SCHOOL_MENTOR_ANNOUNCEMENTS);
+export default function AnnouncementsModal({ items: initialItems = [], onClose, toast = () => {} }) {
+  const [items, setItems] = useState(initialItems);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };

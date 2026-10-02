@@ -16,6 +16,7 @@
 /* Local fallbacks — used only when the live /report-header API data is missing.
    The real branch name / logo / session come from ctx.branch (see resolveBranch). */
 import { resolveMediaUrl } from '../../utils/apiConfig';
+import { buildStandardReportHtml } from '../reports/reportKit';
 
 const SCHOOL = { name: 'School Mentor', tagline: 'Academic Session', monogram: 'SM' };
 
@@ -843,8 +844,6 @@ export function generateLoanReportHTML(e, style, ctx) {
      • generateHrPayrollSummary      — needs month / year
    ═══════════════════════════════════════════════════════════════════ */
 
-const HR_LOGO_SVG = `<svg viewBox="0 0 16 16" fill="none"><path d="M8 1L1 5l7 3.5L15 5 8 1z" stroke="#1E3A8A" stroke-width="1" stroke-linejoin="round"/><path d="M1 9l7 3.5L15 9" stroke="#1E3A8A" stroke-width="0.8" stroke-linecap="round"/><path d="M1 12l7 3.5L15 12" stroke="#1E3A8A" stroke-width="0.5" stroke-linecap="round" opacity="0.5"/></svg>`;
-
 const hrFmtMoney = (n) => (Math.round(+n || 0)).toLocaleString('en-PK');
 const hrFmtDate  = (d) => {
   if (!d) return '—';
@@ -860,598 +859,58 @@ const hrGenLabel = (ctx) => {
   return isNaN(dt) ? hrToday() : dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 };
 
-/* Shared popup shell — Accounts-module style. Returns a full HTML document.
-   Honors ctx.style: 'bw' renders a true colorless / low-ink version (white
-   backgrounds, black/gray text, light borders) while the default keeps the
-   ERP-blue theme.
-
-   FIX (landscape fit):
-     • @page margin reduced to 8mm, and in print .rep-page now uses width:auto
-       so it follows the printable area instead of a hard 297mm (which was
-       wider than the paper and clipped the right-hand columns).
-     • Removed the stray "}" that pushed the print-only rules outside @media print.
-     • Added the `.rep-tbl.fit` table mode (fixed layout + wrapping + size
-       variables) used by the Employee Directory so every column fits. */
-function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orientation = 'landscape', includePrintScript = true) {
-  const b = resolveBranch(ctx);
-  const bw = ctx?.style === 'bw';
-  const isLandscape = orientation === 'landscape';
-
-  const schoolName = b.name || 'School Mentor ERP';
-  const schoolAddress = b.address || '';
-  const session = b.session || '';
-  const generatedDate = hrGenLabel(ctx);
-
-  const logoInner = b.logo
-    ? `
-      <img
-        src="${b.logo}"
-        alt="School logo"
-        style="
-          width:100%;
-          height:100%;
-          object-fit:cover;
-          display:block;
-        "
-      />
-    `
-    : `
-      <div style="
-        width:100%;
-        height:100%;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-weight:900;
-        font-size:14px;
-      ">
-        SM
-      </div>
-    `;
-
-  const C = bw
-    ? {
-        headerBg: '#FFFFFF',
-        headerText: '#111111',
-        headerMuted: '#4B5563',
-        headerKick: '#6B7280',
-        divider: '#E5E7EB',
-
-        brand: '#374151',
-
-        filtersBg: '#FFFFFF',
-        filtersBorder: '1px solid #D1D5DB',
-        filtersText: '#111111',
-
-        secTitle: '#111111',
-        secBorder: '#D1D5DB',
-
-        thBg: '#FFFFFF',
-        thText: '#111111',
-        thBorder: '#D1D5DB',
-
-        tdBorder: '#D1D5DB',
-        evenBg: '#FFFFFF',
-
-        totalBg: '#FFFFFF',
-        totalBorder: '#111111',
-
-        grandBg: '#FFFFFF',
-        grandText: '#111111',
-
-        footerText: '#4B5563',
-        footerBorder: '#D1D5DB',
-      }
-    : {
-        headerBg: '#1E3A8A',
-        headerText: '#FFFFFF',
-        headerMuted: 'rgba(255,255,255,.75)',
-        headerKick: 'rgba(255,255,255,.55)',
-        divider: 'rgba(255,255,255,.20)',
-
-        brand: '#1E40AF',
-
-        filtersBg: '#EFF6FF',
-        filtersBorder: '1px solid #BFDBFE',
-        filtersText: '#0F172A',
-
-        secTitle: '#1E40AF',
-        secBorder: '#BFDBFE',
-
-        thBg: '#EFF6FF',
-        thText: '#0F172A',
-        thBorder: '#BFDBFE',
-
-        tdBorder: '#DBEAFE',
-        evenBg: '#F8FAFF',
-
-        totalBg: '#EFF6FF',
-        totalBorder: '#1E40AF',
-
-        grandBg: '#1E3A8A',
-        grandText: '#FFFFFF',
-
-        footerText: '#64748B',
-        footerBorder: '#BFDBFE',
-      };
-
+/* Report-body-only table styling (.rep-tbl/.rep-secttl/.rep-filters/etc.)
+   that every one of the generators below still builds `innerHtml`
+   with — kept local since it's genuine report BODY content, same as
+   Academics' own section styling. The header/logo/footer chrome that
+   used to live here now comes from the shared reportKit instead.
+   `.rep-tbl.fit` (Employee Directory — every selected column fits the
+   page width) is kept from the live ERP's own table layout. */
+function hrReportBodyCSS(isColor) {
+  const brand = isColor ? '#1E3A8A' : '#000';
   return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8" />
-
-      <title>${fileTitle}</title>
-
-      <style>
-        * {
-          box-sizing:border-box;
-          margin:0;
-          padding:0;
-        }
-
-        html,
-        body {
-          background:#FFFFFF;
-        }
-
-        body {
-          font-family:'Segoe UI', Arial, sans-serif;
-          color:#0F172A;
-          font-size:10.5px;
-          line-height:1.45;
-        }
-
-        .rep-page {
-          width:100%;
-          min-width:${isLandscape ? '297mm' : '210mm'};
-          min-height:${isLandscape ? '210mm' : '297mm'};
-          margin:0 auto;
-          background:#FFFFFF;
-        }
-
-        /* ==========================
-           ACADEMICS STYLE HEADER
-           ========================== */
-
-        .rep-header {
-          background:${C.headerBg};
-          color:${C.headerText};
-          padding:${bw ? '22px 32px' : '24px 32px 28px'};
-          position:relative;
-          overflow:hidden;
-          ${bw ? 'border-bottom:1px solid #D1D5DB;' : ''}
-        }
-
-        .rep-header-circle-one {
-          display:${bw ? 'none' : 'block'};
-          position:absolute;
-          top:-30px;
-          right:-30px;
-          width:140px;
-          height:140px;
-          border-radius:50%;
-          background:rgba(255,255,255,.06);
-        }
-
-        .rep-header-circle-two {
-          display:${bw ? 'none' : 'block'};
-          position:absolute;
-          bottom:-20px;
-          left:120px;
-          width:80px;
-          height:80px;
-          border-radius:50%;
-          background:rgba(14,165,233,.15);
-        }
-
-        .rep-brand-row {
-          display:flex;
-          align-items:center;
-          gap:${bw ? '16px' : '18px'};
-          position:relative;
-          z-index:2;
-        }
-
-        .rep-logo {
-          width:${bw ? '56px' : '64px'};
-          height:${bw ? '56px' : '64px'};
-          border-radius:${bw ? '12px' : '16px'};
-          overflow:hidden;
-          flex-shrink:0;
-          background:#FFFFFF;
-
-          ${
-            bw
-              ? 'border:1.5px solid #E5E7EB;'
-              : `
-                box-shadow:
-                  0 4px 18px rgba(0,0,0,.35),
-                  0 0 0 2px rgba(255,255,255,.15);
-              `
-          }
-        }
-
-        .rep-kicker {
-          font-size:9px;
-          letter-spacing:2.5px;
-          text-transform:uppercase;
-          color:${C.headerKick};
-          font-weight:700;
-          margin-bottom:3px;
-        }
-
-        .rep-school-name {
-          font-size:${bw ? '19px' : '20px'};
-          font-weight:800;
-          color:${C.headerText};
-          line-height:1.2;
-          letter-spacing:-.02em;
-        }
-
-        .rep-address {
-          font-size:10px;
-          color:${C.headerMuted};
-          margin-top:4px;
-        }
-
-        .rep-header-divider {
-          height:1px;
-          background:${C.divider};
-          margin:${bw ? '16px 0 14px' : '18px 0 16px'};
-          position:relative;
-          z-index:2;
-        }
-
-        .rep-report-title {
-          font-size:${bw ? '21px' : '22px'};
-          font-weight:800;
-          color:${C.headerText};
-          letter-spacing:-.02em;
-          margin-bottom:4px;
-          position:relative;
-          z-index:2;
-        }
-
-        .rep-report-subtitle {
-          font-size:${bw ? '12.5px' : '13px'};
-          color:${C.headerMuted};
-          margin-bottom:14px;
-          position:relative;
-          z-index:2;
-        }
-
-        .rep-header-meta {
-          display:flex;
-          flex-wrap:wrap;
-          gap:10px;
-          position:relative;
-          z-index:2;
-        }
-
-        .rep-header-chip {
-          padding:${bw ? '5px 12px' : '6px 14px'};
-          border-radius:20px;
-          font-size:${bw ? '11px' : '11.5px'};
-
-          ${
-            bw
-              ? `
-                background:#FFFFFF;
-                border:1px solid #D1D5DB;
-                color:#111111;
-              `
-              : `
-                background:rgba(255,255,255,.14);
-                border:1px solid transparent;
-                color:#FFFFFF;
-              `
-          }
-        }
-
-        /* ==========================
-           REPORT CONTENT
-           ========================== */
-
-        .rep-body {
-          padding:28px 32px;
-        }
-
-        .rep-filters {
-          display:flex;
-          flex-wrap:wrap;
-          gap:7px 20px;
-
-          font-size:10.5px;
-
-          color:${C.filtersText};
-          background:${C.filtersBg};
-          border:${C.filtersBorder};
-
-          padding:10px 13px;
-          border-radius:${bw ? '4px' : '7px'};
-
-          margin-bottom:18px;
-        }
-
-        .rep-filters b {
-          color:${bw ? '#111111' : '#1E40AF'};
-        }
-
-        .rep-secttl {
-          font-size:13px;
-          font-weight:800;
-          color:${C.secTitle};
-
-          margin:16px 0 8px;
-          padding-bottom:6px;
-
-          ${
-            bw
-              ? `border-bottom:1px solid ${C.secBorder};`
-              : `
-                border-left:3px solid #1E40AF;
-                padding-left:10px;
-                border-bottom:none;
-              `
-          }
-        }
-
-        .rep-tbl {
-          width:100%;
-          border-collapse:collapse;
-          font-size:10px;
-          margin-bottom:8px;
-        }
-
-        .rep-tbl thead {
-          display:table-header-group;
-        }
-
-        .rep-tbl th {
-          background:${C.thBg};
-          color:${C.thText};
-
-          border:1px solid ${C.thBorder};
-
-          padding:8px 9px;
-          text-align:left;
-
-          font-size:9.5px;
-          font-weight:800;
-        }
-
-        .rep-tbl th.r,
-        .rep-tbl td.r {
-          text-align:right;
-        }
-
-        .rep-tbl td {
-          padding:7px 9px;
-          border:1px solid ${C.tdBorder};
-          vertical-align:middle;
-          background:#FFFFFF;
-        }
-
-        ${
-          bw
-            ? ''
-            : `
-              .rep-tbl tbody tr:nth-child(even) td {
-                background:${C.evenBg};
-              }
-            `
-        }
-
-        .rep-tot td {
-          background:${C.totalBg} !important;
-          font-weight:800;
-          border-top:2px solid ${C.totalBorder};
-        }
-
-        .rep-grandtot td {
-          background:${C.grandBg} !important;
-          color:${C.grandText};
-          font-weight:800;
-          padding:8px 9px;
-        }
-
-        /* ==========================
-           FIT-TO-PAGE TABLE
-           (Employee Directory — every column fits the page width)
-           ========================== */
-
-        .rep-tbl.fit {
-          table-layout:fixed;
-          width:100%;
-          font-size:var(--fs, 10px);
-        }
-
-        .rep-tbl.fit th,
-        .rep-tbl.fit td {
-          padding:var(--pad, 7px 9px);
-          white-space:normal;
-          word-break:break-word;
-          overflow-wrap:anywhere;
-          line-height:1.3;
-        }
-
-        .rep-tbl.fit th {
-          font-size:var(--fs, 9.5px);
-        }
-
-        /* ==========================
-           FOOTER
-           ========================== */
-
-        .rep-foot {
-          border-top:1px solid ${C.footerBorder};
-          padding:14px 32px;
-          margin-top:8px;
-
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-          gap:20px;
-
-          font-size:10px;
-          color:${C.footerText};
-        }
-
-        .rep-foot strong {
-          color:${bw ? '#111111' : '#1E40AF'};
-        }
-
-        /* ==========================
-           PRINT
-           ========================== */
-
-        @page {
-          size:A4 ${isLandscape ? 'landscape' : 'portrait'};
-          margin:6mm;
-        }
-
-        @media print {
-          * {
-            -webkit-print-color-adjust:exact !important;
-            print-color-adjust:exact !important;
-          }
-
-          html,
-          body {
-            margin:0;
-            padding:0;
-          }
-
-          /* Follow the printable area instead of a hard 297mm/210mm width */
-          .rep-page {
-            width:auto;
-            min-width:0;
-            min-height:0;
-            margin:0;
-            padding:0;
-            box-shadow:none;
-          }
-
-          .rep-header {
-            margin-left:0;
-            margin-right:0;
-          }
-
-          .rep-body {
-            padding:14px 0 0;
-          }
-
-          .rep-foot {
-            padding-left:0;
-            padding-right:0;
-          }
-
-          .rep-tbl tr {
-            page-break-inside:avoid;
-            break-inside:avoid;
-          }
-        }
-      </style>
-    </head>
-
-    <body>
-
-      <div class="rep-page">
-
-        <div class="rep-header">
-
-          <div class="rep-header-circle-one"></div>
-          <div class="rep-header-circle-two"></div>
-
-          <div class="rep-brand-row">
-
-            <div class="rep-logo">
-              ${logoInner}
-            </div>
-
-            <div>
-
-              <div class="rep-kicker">
-                School Mentor ERP
-              </div>
-
-              <div class="rep-school-name">
-                ${schoolName}
-              </div>
-
-              ${
-                schoolAddress
-                  ? `
-                    <div class="rep-address">
-                      ${schoolAddress}
-                    </div>
-                  `
-                  : ''
-              }
-
-            </div>
-
-          </div>
-
-          <div class="rep-header-divider"></div>
-
-          <div class="rep-report-title">
-            ${title}
-          </div>
-
-          <div class="rep-report-subtitle">
-            ${session || 'Academic Year'}
-            ·
-            ${bw ? 'Colorless Report' : 'Colorful Report'}
-          </div>
-
-          <div class="rep-header-meta">
-
-            <div class="rep-header-chip">
-              <strong>Generated:</strong>
-              ${generatedDate}
-            </div>
-
-            <div class="rep-header-chip">
-              <strong>Module:</strong>
-              Human Resource
-            </div>
-
-          </div>
-
-        </div>
-
-        <div class="rep-body">
-
-          <div class="rep-filters">
-            ${filtersHtml}
-          </div>
-
-          ${innerHtml}
-
-        </div>
-
-        <div class="rep-foot">
-
-          <div>
-            <strong>${schoolName}</strong>
-            ${schoolAddress ? ` · ${schoolAddress}` : ''}
-          </div>
-
-          <div>
-            Powered by <strong>School Mentor ERP</strong>
-          </div>
-
-        </div>
-
-      </div>
-
-      ${includePrintScript ? CLOSE_SCRIPT_AFTER_PRINT : ''}
-
-    </body>
-    </html>
+    .rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:${isColor ? '#F1F5FB' : '#fff'};border:${isColor ? 'none' : '1px solid #D1D5DB'};padding:9px 13px;border-radius:6px}
+    .rep-secttl{font-size:12px;font-weight:800;color:${brand};margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid ${isColor ? '#cdd7ea' : '#9CA3AF'}}
+    .rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px;table-layout:auto}
+    .rep-tbl thead{display:table-header-group}
+    .rep-tbl th{background:${brand};color:${isColor ? '#fff' : '#000'};padding:6px 7px;text-align:left;font-size:10px;font-weight:700;white-space:nowrap;${isColor ? '' : 'border-bottom:1.5px solid #000'}}
+    .rep-tbl th.r,.rep-tbl td.r{text-align:right}
+    .rep-tbl td{padding:5px 7px;border-bottom:1px solid #e5e9f2;vertical-align:top}
+    .rep-tbl tr:nth-child(even) td{${isColor ? 'background:#F8FAFF' : ''}}
+    .rep-tot td{background:${isColor ? '#EAF0FA' : '#fff'};font-weight:800;border-top:2px solid ${brand}}
+    .rep-grandtot td{background:${isColor ? brand : '#fff'};color:${isColor ? '#fff' : '#000'};font-weight:800;padding:7px 7px;${isColor ? '' : 'border:1.5px solid #000'}}
+    .rep-tbl.fit{table-layout:fixed;width:100%;font-size:var(--fs, 10px)}
+    .rep-tbl.fit th,.rep-tbl.fit td{padding:var(--pad, 7px 9px);white-space:normal;word-break:break-word;overflow-wrap:anywhere;line-height:1.3}
+    .rep-tbl.fit th{font-size:var(--fs, 9.5px)}
+    @media print{.rep-tbl tr{page-break-inside:avoid;break-inside:avoid}}
   `;
+}
+
+/* Shared popup shell for the "Reports tab" generators — delegates its
+   header/logo/footer chrome to the shared reportKit (same standard
+   Academics/Examination/Attendance use) instead of the bespoke chrome
+   this used to build locally. Honors ctx.style ('bw' = Colorless /
+   low-ink) and ctx.format (shown on the header's Format chip). The
+   school name stays LIVE: the /report-header branch on ctx.branch when
+   present, otherwise the kit's own live branch. `fileTitle` is kept as
+   a param for call-site compatibility; `includePrintScript` now decides
+   whether the kit's manual Print/Close toolbar is included (it replaces
+   the old auto-print script). */
+function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orientation = 'landscape', includePrintScript = true) {
+  const isColor = ctx?.style !== 'bw';
+  const format = ctx?.format || 'pdf';
+  const bodyHtml = `<style>${hrReportBodyCSS(isColor)}</style>
+    ${filtersHtml ? `<div class="rep-filters">${filtersHtml}</div>` : ''}
+    ${innerHtml}`;
+  return buildStandardReportHtml({
+    title,
+    format,
+    isColor,
+    bodyHtml,
+    orientation,
+    schoolName: ctx?.branch?.branchName || undefined,
+    includeToolbar: includePrintScript && format === 'pdf',
+  });
 }
 /* ════════ 1. Employee Directory ════════
    Column set is user-selectable (see DirectoryReportModal in

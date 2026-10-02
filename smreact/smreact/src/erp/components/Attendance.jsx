@@ -8,8 +8,7 @@
   import { usePermissions } from "../context/PermissionsContext";
 import { rankedMatches } from "../utils/studentSearch";
 import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
-import ReportHeader from '../../reports/ReportHeader';
-import ReportFooter from '../../reports/ReportFooter';
+import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName, StandardReportPicker, reportAcademicYear } from '../reports/reportKit';
   /* ============================================================================
     SchoolMentor ERP — Attendance Module (React / JSX)
     ----------------------------------------------------------------------------
@@ -763,7 +762,6 @@ import ReportFooter from '../../reports/ReportFooter';
     const todayStr = new Date().toISOString().split("T")[0];
     const currMonth = CURRENT_MONTH_LABEL;
 
-    const [style, setStyle]   = useState("color");
     /* The school's own session, never a guessed year: the caller's default,
        else the first real session option, else '' (rendered as "—"). */
     const [fYear, setFYear]   = useState(defaultYear  || sessionOpts[0] || "");
@@ -774,17 +772,9 @@ import ReportFooter from '../../reports/ReportFooter';
     const [fDept, setFDept]   = useState(forStaff ? forStaff.dept : "All Departments");
     const [generating, setGenerating] = useState(false);
 
+    /* Reset filter selections each time the modal re-opens */
     useEffect(() => {
       if (!open) return;
-      const onKey = (e) => { if (e.key === "Escape") onClose(); };
-      document.addEventListener("keydown", onKey);
-      return () => document.removeEventListener("keydown", onKey);
-    }, [open, onClose]);
-
-    /* Reset selections each time the modal re-opens */
-    useEffect(() => {
-      if (!open) return;
-      setStyle("color");
       setFYear(defaultYear  || sessionOpts[0] || "");
       setFMonth(defaultMonth || currMonth);
       setFDate(defaultDate  || todayStr);
@@ -808,13 +798,14 @@ import ReportFooter from '../../reports/ReportFooter';
     const lockedClass = !!forClass;
     const lockedStaff = !!forStaff;
 
-    const submit = async () => {
+    const submit = async (style, format) => {
       if (generating) return;
       try {
         setGenerating(true);
         await onGenerate({
           effective: ctx,
           style,
+          format,
           filters: { year: fYear, month: fMonth, date: fDate, class: fClass, section: fSection, dept: fDept },
         });
       } finally {
@@ -822,25 +813,17 @@ import ReportFooter from '../../reports/ReportFooter';
       }
     };
 
-    return createPortal(
-      <div
-        className="att-overlay open"
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="att-rpt-title"
-      >
-        <div className="att-rpt-picker" style={{ maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }}>
-          <div className="att-rpt-header">
-            <div>
-              <div className="att-rpt-title" id="att-rpt-title">{title || "Download Report"}</div>
-              <div className="att-rpt-sub">Choose filters and print style, then generate.</div>
-            </div>
-            <Tooltip text="Close"><button className="att-rpt-close" onClick={onClose} aria-label="Close report dialog"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-          </div>
-
-          <div className="att-rpt-body">
-            {/* Filters */}
+    return (
+      <StandardReportPicker
+        open={open}
+        title={title || "Download Report"}
+        subtitle="Choose filters, style and format, then generate."
+        formats={["pdf", "word", "excel"]}
+        onClose={onClose}
+        onGenerate={submit}
+        generateDisabled={generating}
+        filters={
+          <>
             <div className="att-rpt-section-lbl">Filters</div>
             <div className="att-rpt-filter-row">
               {isHolYearly && (
@@ -888,72 +871,9 @@ import ReportFooter from '../../reports/ReportFooter';
                 </>
               )}
             </div>
-
-            {/* Print Style */}
-            <div className="att-rpt-section-lbl" id="att-rpt-style-lbl">Print Style</div>
-            <div className="att-rpt-grid" style={{ marginBottom: 4 }} role="radiogroup" aria-labelledby="att-rpt-style-lbl">
-              <div
-                className={`att-rpt-card${style === "color" ? " selected" : ""}`}
-                onClick={() => setStyle("color")}
-                role="radio"
-                aria-checked={style === "color"}
-                tabIndex={style === "color" ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === " " || e.key === "Enter") { e.preventDefault(); setStyle("color"); }
-                  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); setStyle("color"); }
-                  else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); setStyle("bw"); }
-                }}
-              >
-                <div className="att-rpt-preview-color" aria-hidden="true">
-                  <div className="att-rpt-mock-line"  style={{ width: "60%" }}></div>
-                  <div className="att-rpt-mock-line2" style={{ width: "40%" }}></div>
-                  <div className="att-rpt-mock-line2" style={{ width: "70%" }}></div>
-                </div>
-                <div className="att-rpt-card-text">
-                  <div className="att-rpt-card-name"><i className="fa-solid fa-palette" style={{ color: "#1E40AF", marginRight: 6 }} aria-hidden="true"></i>Colorful Report</div>
-                  <div className="att-rpt-card-desc">School branding, summary cards &amp; status badges</div>
-                </div>
-              </div>
-              <div
-                className={`att-rpt-card${style === "bw" ? " selected" : ""}`}
-                onClick={() => setStyle("bw")}
-                role="radio"
-                aria-checked={style === "bw"}
-                tabIndex={style === "bw" ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === " " || e.key === "Enter") { e.preventDefault(); setStyle("bw"); }
-                  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); setStyle("color"); }
-                  else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); setStyle("bw"); }
-                }}
-              >
-                <div className="att-rpt-preview-bw" aria-hidden="true">
-                  <div className="att-rpt-mock-line"  style={{ width: "60%" }}></div>
-                  <div className="att-rpt-mock-line2" style={{ width: "40%" }}></div>
-                  <div className="att-rpt-mock-line2" style={{ width: "70%" }}></div>
-                </div>
-                <div className="att-rpt-card-text">
-                  <div className="att-rpt-card-name"><i className="fa-solid fa-circle-half-stroke" style={{ color: "#374151", marginRight: 6 }} aria-hidden="true"></i>Colorless Report</div>
-                  <div className="att-rpt-card-desc">Low-ink layout — white background, light borders only</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="att-rpt-footer">
-            <Tooltip text="Cancel and close">
-              <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
-            </Tooltip>
-            <Tooltip text="Generate the report and open print preview">
-              <button className="att-btn-primary" onClick={submit} disabled={generating} style={generating ? { opacity: .7, cursor: "wait" } : undefined}>
-                {generating
-                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
-                  : <><i className="fa-solid fa-file-pdf"></i> Generate &amp; Print</>}
-              </button>
-            </Tooltip>
-          </div>
-        </div>
-      </div>,
-      document.body
+          </>
+        }
+      />
     );
   }
 
@@ -1008,6 +928,10 @@ import ReportFooter from '../../reports/ReportFooter';
       }
     };
 
+    const doExportWord = () => {
+      downloadReportAsWord(html, `${reportFileName(title || "Attendance-Report")}.doc`);
+    };
+
     if (!open) return null;
 
     return createPortal(
@@ -1034,6 +958,14 @@ import ReportFooter from '../../reports/ReportFooter';
                 <i className="fa-solid fa-print"></i> Print / Save PDF
               </button>
             </Tooltip>
+            <Tooltip text="Download this report as an editable Word document">
+              <button
+                onClick={doExportWord}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "rgba(255,255,255,.12)", color: "#fff", border: "1.5px solid rgba(255,255,255,.2)", borderRadius: 8, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="fa-brands fa-microsoft"></i> Export Word
+              </button>
+            </Tooltip>
             <Tooltip text="Close report preview">
               <button
                 onClick={onClose}
@@ -1055,211 +987,24 @@ import ReportFooter from '../../reports/ReportFooter';
     );
   }
 
-  /* ─── Report HTML builders ───────────────────────────────────────────────── */
- function rptPageWrap({
-  rptLabel,
-  period,
-  isColor,
-  content,
-  school,
-}) {
-  const isBW = !isColor;
-
-  const schoolName =
-    school?.name ||
-    "School Mentor";
-
-  const schoolAddress =
-    school?.address ||
-    "";
-
-  const academicSession =
-    school?.session ||
-    "";
-
-  const now = new Date();
-
-  const generatedDate =
-    now.toLocaleDateString(
-      "en-GB",
-      {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }
-    );
-
-  const generatedTime =
-    now.toLocaleTimeString(
-      "en-US",
-      {
-        hour: "2-digit",
-        minute: "2-digit",
-      }
-    );
-
-  const headerHTML = ReportHeader({
-    schoolName,
-    reportTitle: rptLabel,
-    branch: {
-      branchName: schoolName,
-      branchLogo: school?.logo || "",
-      address: schoolAddress,
-    },
-    academicSession,
-    generatedDate,
-    generatedTime,
-    isBW,
+  /* ─── Report HTML builders ─────────────────────────────────────────────────
+     Every Attendance report renders its own body content below (tables, info
+     grids, stat strips — unchanged), then wraps it in the shared ERP-wide
+     header/footer chrome from src/erp/reports/reportKit.js instead of a
+     bespoke header. `includeToolbar:false` keeps ReportPreviewOverlay (above)
+     as the single Print/Close control. School name stays live (branch header
+     from the API); the period moves into the kit subtitle line. */
+ function rptPageWrap({ rptLabel, period, isColor, content, school }) {
+  const yearLine = reportAcademicYear() || school?.session || "";
+  return buildStandardReportHtml({
+    title: rptLabel,
+    format: "pdf",
+    isColor,
+    bodyHtml: content,
+    subtitleLine: `${yearLine ? yearLine + " · " : ""}${isColor ? "Colorful" : "Colorless"} Report${period ? " · " + period : ""}`,
+    schoolName: school?.name || undefined,
+    includeToolbar: false,
   });
-
-  const footerHTML = ReportFooter({
-    schoolName,
-    address: schoolAddress,
-    isBW,
-  });
-
-  const bdr =
-    isColor
-      ? "#BFDBFE"
-      : "#D1D5DB";
-
-  return `
-    <!DOCTYPE html>
-
-    <html>
-
-      <head>
-
-        <meta charset="UTF-8" />
-
-        <title>
-          ${rptLabel}
-        </title>
-
-        <link
-          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap"
-          rel="stylesheet"
-        />
-
-        <style>
-
-          * {
-            box-sizing:border-box;
-            margin:0;
-            padding:0;
-          }
-
-          body {
-            font-family:
-              'Plus Jakarta Sans',
-              Arial,
-              sans-serif;
-
-            background:#FFFFFF;
-
-            color:#0F172A;
-
-            -webkit-print-color-adjust:exact;
-            print-color-adjust:exact;
-          }
-
-          .attendance-report-content {
-            padding:22px 26px;
-          }
-
-          .attendance-period {
-            display:flex;
-
-            align-items:center;
-
-            gap:8px;
-
-            margin-bottom:18px;
-
-            padding:9px 13px;
-
-            background:${
-              isColor
-                ? "#EFF6FF"
-                : "#FFFFFF"
-            };
-
-            border:
-              1px solid
-              ${bdr};
-
-            border-radius:${
-              isColor
-                ? "7px"
-                : "4px"
-            };
-
-            font-size:10.5px;
-
-            color:#475569;
-          }
-
-          .attendance-period strong {
-            color:${
-              isColor
-                ? "#1E40AF"
-                : "#111111"
-            };
-          }
-
-          @page {
-            size:A4 portrait;
-            margin:12mm 10mm;
-          }
-
-          @media print {
-
-            * {
-              -webkit-print-color-adjust:
-                exact !important;
-
-              print-color-adjust:
-                exact !important;
-            }
-
-          }
-
-        </style>
-
-      </head>
-
-      <body>
-
-        ${headerHTML}
-
-        <div class="attendance-report-content">
-
-          ${
-            period
-              ? `
-                <div class="attendance-period">
-
-                  <strong>
-                    Period:
-                  </strong>
-
-                  ${period}
-
-                </div>
-              `
-              : ""
-          }
-
-          ${content}
-
-        </div>
-
-        ${footerHTML}
-
-      </body>
-
-    </html>
-  `;
 }
 
   function buildYearlyHolidayReportHTML({ holidays, weeklyOff, year, classFilter, isColor, branchSchool }) {
@@ -3603,7 +3348,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const setVal = (field, v) => setVals((p) => ({ ...p, [field]: v }));
 
     const [generating, setGenerating] = useState(false);
-    const submit = async () => {
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const submit = () => {
       if (generating) return;
       /* Validate that all required filters are filled */
       for (const f of rpt.filters) {
@@ -3612,9 +3358,16 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
           return;
         }
       }
+      setPickerOpen(true);
+    };
+
+    /* Style/format chosen in the shared StandardReportPicker modal */
+    const runPicked = async (style, format) => {
+      if (generating) return;
+      setPickerOpen(false);
       try {
         setGenerating(true);
-        await onGenerate(vals);
+        await onGenerate({ ...vals, __style: style, __format: format });
       } finally {
         setGenerating(false);
       }
@@ -3636,6 +3389,16 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
           </Tooltip>
           )}
         </div>
+        {pickerOpen && (
+          <StandardReportPicker
+            open
+            title={rpt.label}
+            subtitle="Choose style and format, then generate."
+            formats={["pdf", "word", "excel"]}
+            onClose={() => setPickerOpen(false)}
+            onGenerate={runPicked}
+          />
+        )}
         {rpt.filters.length > 0 && (
           <div className="grp-rpt-row-filters">
             {rpt.filters.map((f) => (
@@ -3677,24 +3440,17 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
     const [fromDate, setFromDate] = useState(firstOfMonth);
     const [toDate, setToDate]     = useState(todayStr);
-    const [style, setStyle]       = useState("color");
     const [generating, setGenerating] = useState(false);
-
-    useEffect(() => {
-      const onKey = (e) => { if (e.key === "Escape") onClose(); };
-      document.addEventListener("keydown", onKey);
-      return () => document.removeEventListener("keydown", onKey);
-    }, [onClose]);
 
     if (!target) return null;
 
-    const submit = async () => {
+    const submit = async (style, format) => {
       if (!fromDate || !toDate) return onGenerate({ __error: "Please select both From and To dates" });
       if (fromDate > toDate)    return onGenerate({ __error: "From Date cannot be after To Date" });
       if (generating) return;
       try {
         setGenerating(true);
-        await onGenerate({ fromDate, toDate, isColor: style === "color" });
+        await onGenerate({ fromDate, toDate, isColor: style === "color", format });
       } finally {
         setGenerating(false);
       }
@@ -3702,96 +3458,28 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
     const titlePrefix = target.type === "student" ? "Student" : "Staff";
 
-    return createPortal(
-      <div
-        className="att-overlay open"
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="att-indiv-title"
-      >
-        <div className="att-rpt-picker" style={{ maxWidth: 440 }}>
-          <div className="att-rpt-header">
+    return (
+      <StandardReportPicker
+        open={!!target}
+        title={`${titlePrefix} Attendance Report`}
+        subtitle={`${target.name} — ${target.detail}`}
+        formats={["pdf", "word", "excel"]}
+        onClose={onClose}
+        onGenerate={submit}
+        generateDisabled={!canIRDownload || generating}
+        filters={
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
             <div>
-              <div className="att-rpt-title" id="att-indiv-title">{titlePrefix} Attendance Report</div>
-              <div className="att-rpt-sub">{target.name} — {target.detail}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>From Date</div>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
             </div>
-            <Tooltip text="Close"><button className="att-rpt-close" onClick={onClose} aria-label="Close report dialog"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-          </div>
-          <div className="att-rpt-body" style={{ padding: "18px 22px" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>From Date</div>
-                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>To Date</div>
-                <input type="date" min={fromDate || undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
-              </div>
-            </div>
-            <div className="att-rpt-section-lbl" id="att-indiv-style-lbl">Print Style</div>
-            <div className="att-rpt-grid" role="radiogroup" aria-labelledby="att-indiv-style-lbl">
-              <div
-                className={`att-rpt-card${style === "color" ? " selected" : ""}`}
-                onClick={() => setStyle("color")}
-                role="radio"
-                aria-checked={style === "color"}
-                tabIndex={style === "color" ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === " " || e.key === "Enter") { e.preventDefault(); setStyle("color"); }
-                  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); setStyle("color"); }
-                  else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); setStyle("bw"); }
-                }}
-              >
-                <div className="att-rpt-preview-color" aria-hidden="true">
-                  <div className="att-rpt-mock-line"  style={{ width: "60%" }}></div>
-                  <div className="att-rpt-mock-line2" style={{ width: "40%" }}></div>
-                </div>
-                <div className="att-rpt-card-text">
-                  <div className="att-rpt-card-name"><i className="fa-solid fa-palette" style={{ color: "#1E40AF", marginRight: 6 }} aria-hidden="true"></i>Colorful Report</div>
-                  <div className="att-rpt-card-desc">School branding, summary cards &amp; status badges</div>
-                </div>
-              </div>
-              <div
-                className={`att-rpt-card${style === "bw" ? " selected" : ""}`}
-                onClick={() => setStyle("bw")}
-                role="radio"
-                aria-checked={style === "bw"}
-                tabIndex={style === "bw" ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (e.key === " " || e.key === "Enter") { e.preventDefault(); setStyle("bw"); }
-                  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); setStyle("color"); }
-                  else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); setStyle("bw"); }
-                }}
-              >
-                <div className="att-rpt-preview-bw" aria-hidden="true">
-                  <div className="att-rpt-mock-line"  style={{ width: "60%" }}></div>
-                  <div className="att-rpt-mock-line2" style={{ width: "40%" }}></div>
-                </div>
-                <div className="att-rpt-card-text">
-                  <div className="att-rpt-card-name"><i className="fa-solid fa-circle-half-stroke" style={{ color: "#374151", marginRight: 6 }} aria-hidden="true"></i>Colorless Report</div>
-                  <div className="att-rpt-card-desc">Low-ink layout — white background, light borders only</div>
-                </div>
-              </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>To Date</div>
+              <input type="date" min={fromDate || undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
             </div>
           </div>
-          <div className="att-rpt-footer">
-            <Tooltip text="Cancel and close">
-              <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
-            </Tooltip>
-            {canIRDownload && (
-            <Tooltip text="Generate the individual attendance report">
-              <button className="att-btn-primary" onClick={submit} disabled={generating} style={generating ? { opacity: .7, cursor: "wait" } : undefined}>
-                {generating
-                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
-                  : <><i className="fa-solid fa-file-lines"></i> Generate Report</>}
-              </button>
-            </Tooltip>
-            )}
-          </div>
-        </div>
-      </div>,
-      document.body
+        }
+      />
     );
   }
 
@@ -4097,15 +3785,30 @@ useEffect(() => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const runIndivReport = useCallback(async ({ fromDate, toDate, isColor, __error }) => {
+    /* PDF → in-app preview overlay; Word / Excel → direct download (same HTML). */
+    const deliverAttReport = useCallback((title, html, format) => {
+      if (format === "word") {
+        downloadReportAsWord(html, `${reportFileName(title)}.doc`);
+        toast("Word document downloaded", "success");
+        return;
+      }
+      if (format === "excel") {
+        downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`);
+        toast("Excel report downloaded", "success");
+        return;
+      }
+      setReportPreview({ title, html });
+    }, [toast]);
+
+    const runIndivReport = useCallback(async ({ fromDate, toDate, isColor, format = "pdf", __error }) => {
       if (__error) { toast(__error, "error"); return; }
       const target = indivTarget;
       // Modal ko generation ke baad band karo taake button par spinner dikhe.
       const records = await fetchIndividualAttendance(target, fromDate, toDate);
       const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool });
       setIndivTarget(null);
-      setReportPreview({ title: `${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html });
-    }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool]);
+      deliverAttReport(`${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html, format);
+    }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool, deliverAttReport]);
 
     const openMarkSf = useCallback(async (dateStr) => {
       if (blockIfReadOnly()) return;
@@ -4194,7 +3897,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
   // loadStaffAttendance / loadStaffDateAttendance closure se resolve hote hain (baad mein defined).
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [staffData, toast, blockIfReadOnly]);
-    const generateReport = useCallback(async ({ effective, style, filters }) => {
+    const generateReport = useCallback(async ({ effective, style, format = "pdf", filters }) => {
       const isColor = style === "color";
       let html, title;
       if (effective === "holidayYearly") {
@@ -4224,7 +3927,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         html  = buildYearlyHolidayReportHTML({ holidays: hols, weeklyOff, year: yearName, classFilter: filters.class, isColor, branchSchool });
         title = "Yearly Holiday Report";
         setReportPicker(null);
-        setReportPreview({ title, html });
+        deliverAttReport(title, html, format);
         return;
       } else if (effective === "studentDaily" || effective === "studentDailyClass") {
         const date = filters.date || reportPicker?.defaultDate || new Date().toISOString().slice(0, 10);
@@ -4340,17 +4043,18 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         title = "Report Preview";
       }
       setReportPicker(null);
-      setReportPreview({ title, html });
+      deliverAttReport(title, html, format);
       // ensureClasses/ensureSessionID are defined later; referenced via closure at call time.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool, activeSessionName]);
+    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool, activeSessionName, deliverAttReport]);
 
-    /* General Reports tab → trigger generateReport with the inline filters
-      (always Color print style for one-click generation). */
+    /* General Reports tab → trigger generateReport with the style/format chosen
+      in the shared StandardReportPicker modal (see ReportRow). */
     const runGeneralReport = useCallback((rpt, filters) => {
       if (filters.__error) { toast(filters.__error, "error"); return; }
+      const { __style, __format, ...rest } = filters;
       // Promise return karo taake Generate button spinner report banne tak chale.
-      return generateReport({ effective: rpt.key, style: "color", filters });
+      return generateReport({ effective: rpt.key, style: __style || "color", format: __format || "pdf", filters: rest });
     }, [generateReport, toast]);
 
   const requestToggleDay = useCallback((i) => {

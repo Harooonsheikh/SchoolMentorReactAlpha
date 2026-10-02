@@ -5,6 +5,7 @@ import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from
 import { useActiveSessionName } from '../hooks/useActiveSession';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
+import { buildStandardReportHtml } from '../reports/reportKit';
 import { useModuleReadOnly, useSettings, validateSessionDate } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import 'mathlive';   // registers the <math-field> visual math editor custom element
@@ -6673,53 +6674,21 @@ function _subPdfPalette(isColor, reportHeader = null) {
   };
 }
 
-function _subPdfBase(C, title, isUrdu = false) {
+/* Body-content-only CSS — the .doc-header/.doc-logo/.doc-school/.print-bar
+   chrome this used to build locally is now owned by the shared
+   src/erp/reports/reportKit.js (live branch header/footer/toolbar). The
+   meta-bar (Teacher/Class/Section/Subject/Session) still renders, just as
+   body content via subPdfMetaBar below instead of inside a colored header
+   band. Urdu reports keep their RTL + Nastaliq body via .lp-urdu. */
+function _subPdfBase(C, isUrdu = false) {
   const URDU_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif";
-  /* A4-portrait safe base.
-     Key rules:
-     - @page reserves a 15mm margin so the printer leaves a uniform gutter.
-     - .page-wrap NEVER exceeds the printable area (~180mm).
-       In print it stretches to 100% of the printable area; on screen it caps
-       at 210mm but uses 15mm side padding so the preview matches the print.
-     - All tables are table-layout:fixed so column widths obey % rules
-       and never push the page wider than A4.
-     - long text in cells wraps with overflow-wrap:anywhere so a 10–11 col
-       table (Teacher-wise, Class-wise) stays inside the page. */
-  return `<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><title>${title}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;width:100%;overflow-x:hidden}
-body{font-family:${isUrdu ? URDU_FONT : "'Segoe UI',Arial,sans-serif"};color:#0F172A;font-size:12px;line-height:${isUrdu ? '2' : '1.5'};padding:0;${isUrdu ? 'direction:rtl;' : ''}}${isUrdu ? 'th,td{text-align:right}.sec-title{text-align:right}.doc-header,.doc-header *{direction:ltr;text-align:left;font-family:\'Segoe UI\',Arial,sans-serif}' : ''}
-
-@page{size:A4 portrait;margin:15mm}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-  html,body{width:auto;}
-  .no-print{display:none!important}
-  .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
-}
-.page,.page-wrap{
-  width:100%;max-width:210mm;margin:0 auto;
-  padding:14mm 15mm 18mm;
-  box-sizing:border-box;
-  overflow:hidden;
-}
-
-/* Header: gradient blue + white text in Colorful, white + dark gray in
-   Colorless. The strip / logo / divider colors switch with the palette
-   so the colorless variant is genuinely low-ink (no large fills). */
-.doc-header{background:${C.hdrBg};color:${C.isColor ? '#fff' : C.text};padding:0;border-radius:0 0 16px 16px;margin-bottom:18px;overflow:hidden;page-break-inside:avoid;width:100%;${C.isColor ? '' : `border:1px solid ${C.border};border-top:none;`}}
-.doc-header-top{display:flex;align-items:center;gap:14px;padding:18px 22px 14px;flex-wrap:wrap}
-.doc-logo{width:48px;height:48px;border-radius:12px;background:${C.isColor ? 'rgba(255,255,255,.18)' : '#FFFFFF'};display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid ${C.isColor ? 'rgba(255,255,255,.25)' : C.border};color:${C.isColor ? '#fff' : C.text}}
-.doc-school{font-size:17px;font-weight:800;letter-spacing:-.3px;line-height:1.1;color:${C.isColor ? '#fff' : C.text}}
-.doc-year{font-size:10.5px;${C.isColor ? 'opacity:.7' : `color:${C.muted}`};margin-top:2px}
-.doc-report-name{font-size:12.5px;font-weight:700;${C.isColor ? 'opacity:.9' : `color:${C.text}`};margin-top:4px}
-.doc-meta-bar{display:flex;flex-wrap:wrap;gap:0;background:${C.isColor ? 'rgba(0,0,0,.15)' : '#F8FAFC'};border-top:1px solid ${C.isColor ? 'rgba(255,255,255,.1)' : C.border}}
-.doc-meta-cell{flex:1;min-width:0;padding:8px 14px;border-right:1px solid ${C.isColor ? 'rgba(255,255,255,.1)' : C.border};font-size:10.5px;overflow-wrap:anywhere;color:${C.isColor ? '#fff' : C.text}}
+  return `<style>
+${isUrdu ? `.lp-urdu{font-family:${URDU_FONT};line-height:2;direction:rtl}.lp-urdu th,.lp-urdu td{text-align:right}.lp-urdu .sec-title{text-align:right}` : ''}
+.doc-meta-bar{display:flex;flex-wrap:wrap;gap:0;background:${C.tHead};border:1px solid ${C.border};border-radius:8px;margin-bottom:16px;overflow:hidden}
+.doc-meta-cell{flex:1;min-width:0;padding:8px 14px;border-right:1px solid ${C.border};font-size:10.5px;overflow-wrap:anywhere}
 .doc-meta-cell:last-child{border-right:none}
-.doc-meta-key{${C.isColor ? 'opacity:.65' : `color:${C.muted}`};font-weight:600;margin-bottom:2px;letter-spacing:.3px;text-transform:uppercase;font-size:9px}
-.doc-meta-val{font-weight:700;font-size:11.5px;overflow-wrap:anywhere;color:${C.isColor ? '#fff' : C.text}}
+.doc-meta-key{color:${C.muted};font-weight:600;margin-bottom:2px;letter-spacing:.3px;text-transform:uppercase;font-size:9px}
+.doc-meta-val{font-weight:700;font-size:11.5px;overflow-wrap:anywhere;color:${C.text}}
 
 .stat-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:16px}
 .stat-card{border-radius:12px;padding:11px 13px;border:1.5px solid ${C.border};background:${C.cardBg};page-break-inside:avoid;min-width:0;overflow:hidden}
@@ -6752,44 +6721,54 @@ tbody tr:nth-child(even) td{background:${C.rowAlt}}
 .pbar-track{width:54px;max-width:100%;height:5px;border-radius:99px;background:${C.isColor ? 'rgba(30,58,138,.1)' : '#E0E0E0'};overflow:hidden;display:inline-block;vertical-align:middle;flex-shrink:1}
 .pbar-fill{display:block;height:100%;border-radius:99px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .pbar-pct{font-weight:800;font-size:10px;min-width:28px}
-
-.doc-footer{margin-top:20px;padding-top:10px;border-top:1.5px solid ${C.border};display:flex;justify-content:space-between;align-items:center;font-size:10px;color:${C.muted};flex-wrap:wrap;gap:6px}
-.doc-footer-logo{font-weight:800;color:${C.brand};font-size:10.5px}
-
-.print-bar{text-align:center;padding:16px;background:${C.isColor ? '#F8FAFC' : '#FFFFFF'};border-top:1px solid #E2E8F0;margin-top:14px;border-radius:10px}
-/* Print button: brand-blue fill in Colorful; bordered outline in Colorless. */
-.print-bar button{${C.isColor ? `background:${C.brand};color:#fff;border:none;` : `background:#FFFFFF;color:${C.text};border:1.5px solid ${C.text};`}padding:10px 22px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-</style></head><body><div class="page-wrap">`;
+</style>`;
 }
 
-function _subPdfHeader(C, reportName, metaCells, today, isUrdu = false) {
-  const rh = C.reportHeader || {};
-  const isColor = C.isColor;
+function subPdfMetaBar(metaCells, today, isUrdu = false) {
   const T = s => nbTr(s, isUrdu);
-  const schoolName      = rh.branchName || getSchoolName();
-  const academicSession = rh.academicSession || sessionStorage.getItem('sessionName') || 'Academic Session';
-  const initials = schoolName.split(/[\s,]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
-  const logoInner = rh.branchLogo
-    ? `<img src="${lpEscapeHtml(rh.branchLogo)}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'" />`
-    : lpEscapeHtml(initials);
-
   const cells = metaCells.map(m => `<div class="doc-meta-cell"><div class="doc-meta-key">${m.k}</div><div class="doc-meta-val">${m.v}</div></div>`).join('');
-  return `<div class="doc-header">
-    <div class="doc-header-top" style="display:block">
-      <div style="display:flex;align-items:center;gap:14px">
-        <div class="doc-logo" style="overflow:hidden;font-size:15px;font-weight:800">${logoInner}</div>
-        <div>
-          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;${isColor?'opacity:.6':`color:${C.muted}`};font-weight:700;margin-bottom:2px">School Mentor ERP</div>
-          <div class="doc-school">${lpEscapeHtml(schoolName)}</div>
-        </div>
-      </div>
-      <div style="height:1px;background:${isColor?'rgba(255,255,255,.2)':C.border};margin:14px 0 12px"></div>
-      <div style="font-size:18px;font-weight:800;text-align:center;${isColor?'':`color:${C.text}`}">${reportName}</div>
-      <div class="doc-year" style="margin-top:3px;text-align:center">${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor?'Colorful':'Colorless')} ${T('Report')}</div>
-    </div>
-    <div class="doc-meta-bar">${cells}<div class="doc-meta-cell"><div class="doc-meta-key">${T('Generated')}</div><div class="doc-meta-val">${today}</div></div></div>
-  </div>`;
+  return `<div class="doc-meta-bar">${cells}<div class="doc-meta-cell"><div class="doc-meta-key">${T('Generated')}</div><div class="doc-meta-val">${today}</div></div></div>`;
+}
+
+/* Live school name for the shared kit header — the /report-header branch
+   name when present; otherwise undefined so the kit falls back to the
+   live current branch. Escaped because the kit inserts it as HTML. */
+function lpKitSchoolName(reportHeader) {
+  const n = reportHeader?.branchName;
+  return n ? lpEscapeHtml(n) : undefined;
+}
+
+/* Kit subtitle line — same "<Academic Year> · <Colorful|Colorless> Report"
+   convention as the kit default, but with this module's live
+   /report-header session (and Urdu labels where the report is Urdu). */
+function lpKitSubtitle(reportHeader, isColor, T = s => s, extra = '') {
+  const academicSession = reportHeader?.academicSession
+    || sessionStorage.getItem('sessionName') || 'Academic Session';
+  return `${extra ? `${extra} · ` : ''}${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor ? 'Colorful' : 'Colorless')} ${T('Report')}${isColor ? '' : ' (low-ink)'}`;
+}
+
+/* Wraps Urdu report body content in an RTL / Nastaliq block — the kit
+   header/footer stay LTR, same as the old forced-LTR .doc-header. */
+function lpUrduWrap(html, isUrdu) {
+  const URDU_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif";
+  return isUrdu ? `<div class="lp-urdu" dir="rtl" style="direction:rtl;font-family:${URDU_FONT};line-height:2">${html}</div>` : html;
+}
+
+/* Combines a report's sections with the shared reportKit header/logo/
+   footer chrome into one full, print-ready document — the single
+   choke point all 6 submission/admin reports below go through. */
+function buildLpReportHtml({ title, metaCells, today, bodyHtml, isColor, reportHeader = null, isUrdu = false }) {
+  const C = _subPdfPalette(isColor, reportHeader);
+  const T = s => nbTr(s, isUrdu);
+  const inner = _subPdfBase(C, isUrdu) + lpUrduWrap(subPdfMetaBar(metaCells, today, isUrdu) + bodyHtml, isUrdu);
+  return buildStandardReportHtml({
+    title,
+    format: 'pdf',
+    isColor,
+    bodyHtml: inner,
+    schoolName: lpKitSchoolName(reportHeader),
+    subtitleLine: lpKitSubtitle(reportHeader, isColor, T),
+  });
 }
 
 function _subPdfStatStrip(stats) {
@@ -6846,23 +6825,6 @@ function _subNbItemContent(C, item) {
 }
 
 
-function _subPdfFooter(C) {
-  const rh = C.reportHeader || {};
-  const schoolName    = rh.branchName || getSchoolName();
-  const schoolAddress = rh.address || '';
-  const stamp = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-  return `<div class="doc-footer">
-    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
-    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>Generated: ${stamp}</span>
-  </div>
-  <div class="print-bar no-print">
-    <button onclick="window.print()">🖨 Print / Save as PDF</button>
-    <button class="close-btn" onclick="window.close()">Close</button>
-  </div>
-  </div></body></html>`;
-}
-
 /* Format submitted timestamp as "12 May 2026 — 10:45 AM".
    If only date exists, synthesise a deterministic time so reports never show "—". */
 function _subFmtSubmitted(it, fallbackSeed) {
@@ -6909,16 +6871,15 @@ function buildLpSubReport(ctx, isColor, reportHeader = null) {
     unitMap[p.unit].push(p);
   });
 
-  let html = _subPdfBase(C, 'Lesson Plan Submission Report');
-  html += _subPdfHeader(C, 'Lesson Plan Submission Report', [
+  const metaCells = [
     { k:'Teacher', v:'Ms. Fatima Noor' },
     { k:'Class',   v:(ctx.cls || '—').replace('-', ' ') },
     { k:'Section', v:`Section ${ctx.section || '—'}` },
     { k:'Subject', v:ctx.subject || '—' },
     { k:'Session', v:(reportHeader?.academicSession || sessionStorage.getItem('sessionName') || '—') },
-  ], today);
+  ];
 
-  html += _subPdfStatStrip([
+  let html = _subPdfStatStrip([
     { lbl:'Total Plans', val:total,        color:C.brand,  pct:100 },
     { lbl:'Submitted',   val:sub,          color:C.green,  pct },
     { lbl:'Pending',     val:pend,         color:C.amber,  pct:total ? Math.round(pend / total * 100) : 0 },
@@ -6973,9 +6934,8 @@ function buildLpSubReport(ctx, isColor, reportHeader = null) {
     </tr>`;
   });
   html += `</tbody></table>`;
-  html += _subPdfFooter(C);
 
-  _openSubPdfWindow(html);
+  _openSubPdfWindow(buildLpReportHtml({ title: 'Lesson Plan Submission Report', metaCells, today, bodyHtml: html, isColor, reportHeader }));
 }
 
 /* 2. Notebook Plan submission report — full */
@@ -6989,16 +6949,15 @@ function buildNbSubReport(ctx, isColor, reportHeader = null) {
   const pend  = total - sub;
   const pct   = total ? Math.round(sub / total * 100) : 0;
 
-  let html = _subPdfBase(C, 'Notebook Plan Submission Report');
-  html += _subPdfHeader(C, 'Notebook Plan Submission Report', [
+  const metaCells = [
     { k:'Teacher', v:'Ms. Fatima Noor' },
     { k:'Class',   v:(ctx.cls || '—').replace('-', ' ') },
     { k:'Section', v:`Section ${ctx.section || '—'}` },
     { k:'Subject', v:ctx.subject || '—' },
     { k:'Units',   v:data.length },
-  ], today);
+  ];
 
-  html += _subPdfStatStrip([
+  let html = _subPdfStatStrip([
     { lbl:'Total Items', val:total,     color:C.brand,  pct:100 },
     { lbl:'Submitted',   val:sub,       color:C.green,  pct },
     { lbl:'Pending',     val:pend,      color:C.amber,  pct:total ? Math.round(pend / total * 100) : 0 },
@@ -7068,8 +7027,7 @@ function buildNbSubReport(ctx, isColor, reportHeader = null) {
     });
   });
 
-  html += _subPdfFooter(C);
-  _openSubPdfWindow(html);
+  _openSubPdfWindow(buildLpReportHtml({ title: 'Notebook Plan Submission Report', metaCells, today, bodyHtml: html, isColor, reportHeader }));
 }
 
 /* 3. Notebook Plan submission report — single unit */
@@ -7091,16 +7049,15 @@ function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
   const isUrdu = LP_URDU_RE.test(JSON.stringify(unit));
   const T = s => nbTr(s, isUrdu);
 
-  let html = _subPdfBase(C, `${T('Unit Report')} — ${unit.unitName}`, isUrdu);
-  html += _subPdfHeader(C, `${T('Notebook Plan Report')} — ${T('Unit')} ${unit.unitNo}: ${unit.unitName}`, [
+  const metaCells = [
     { k:T('Unit No'),     v:unit.unitNo },
     { k:T('Unit Name'),   v:unit.unitName },
     { k:T('Q. Types'),    v:unit.questionTypes.length },
     { k:T('Total Items'), v:total },
     { k:T('Submitted'),   v:sub },
-  ], today, isUrdu);
+  ];
 
-  html += _subPdfStatStrip([
+  let html = _subPdfStatStrip([
     { lbl:T('Total Items'), val:total,     color:C.brand,  pct:100 },
     { lbl:T('Submitted'),   val:sub,       color:C.green,  pct },
     { lbl:T('Pending'),     val:pend,      color:C.amber,  pct:total ? Math.round(pend / total * 100) : 0 },
@@ -7150,8 +7107,7 @@ function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
     html += `</tbody></table>`;
   });
 
-  html += _subPdfFooter(C);
-  _openSubPdfWindow(html);
+  _openSubPdfWindow(buildLpReportHtml({ title: `${T('Notebook Plan Report')} — ${T('Unit')} ${unit.unitNo}: ${unit.unitName}`, metaCells, today, bodyHtml: html, isColor, reportHeader, isUrdu }));
 }
 
 /* Date+time stamp helper for admin reports (e.g. "May 27, 2026 — 7:01 PM") */
@@ -7161,10 +7117,6 @@ function _adminGeneratedStamp() {
   const time = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
   return `${date} — ${time}`;
 }
-
-/* A4 rules are now baked into _subPdfBase for ALL submission reports —
-   keep this as an empty string so existing call-sites still concatenate cleanly. */
-const _ADMIN_A4_CSS = '';
 
 /* 4. Admin — Teacher-wise report (live: one row per teacher × class × subject) */
 function buildAdminTeacherReport(isColor, reportHeader = null, rows = []) {
@@ -7177,16 +7129,14 @@ function buildAdminTeacherReport(isColor, reportHeader = null, rows = []) {
   const overall = pctOf(sub, total);
   const teacherCount = new Set(teachers.map(t => t.name)).size;
 
-  let html = _subPdfBase(C, 'Teacher-wise Submission Report');
-  html += _ADMIN_A4_CSS;
-  html += _subPdfHeader(C, 'Teacher-wise Submission Report — Admin Overview', [
+  const metaCells = [
     { k:'Teachers',         v:teacherCount },
     { k:'Submitted',        v:`${sub}/${total}` },
     { k:'Pending',          v:`${total - sub}` },
     { k:'Overall Progress', v:`${overall}%` },
-  ], today);
+  ];
 
-  html += _subPdfStatStrip([
+  let html = _subPdfStatStrip([
     { lbl:'Teachers',       val:teacherCount,    color:C.brand,  pct:100 },
     { lbl:'Submitted',      val:sub,             color:C.green,  pct:overall },
     { lbl:'Pending',        val:total - sub,     color:C.amber,  pct:100 - overall },
@@ -7220,8 +7170,7 @@ function buildAdminTeacherReport(isColor, reportHeader = null, rows = []) {
     <td>${_subPdfPbar(C, overall)}</td>
   </tr></tbody></table>`;
 
-  html += _subPdfFooter(C);
-  _openSubPdfWindow(html);
+  _openSubPdfWindow(buildLpReportHtml({ title: 'Teacher-wise Submission Report — Admin Overview', metaCells, today, bodyHtml: html, isColor, reportHeader }));
 }
 
 /* 5. Admin — Class-wise report (live: per-grade breakdown of the selected subject) */
@@ -7235,16 +7184,14 @@ function buildAdminClassReport(isColor, reportHeader = null, rows = [], subjectN
   const tAll = classes.reduce((a, c) => a + c.total,     0);
   const sAll = classes.reduce((a, c) => a + c.submitted, 0);
 
-  let html = _subPdfBase(C, 'Class-wise Submission Report');
-  html += _ADMIN_A4_CSS;
-  html += _subPdfHeader(C, 'Class-wise Submission Report — Admin Overview', [
+  const metaCells = [
     { k:'Subject',    v: subjectName || '—' },
     { k:'Classes',    v:classes.length },
     { k:'Submitted',  v:`${sAll}/${tAll}` },
     { k:'Completion', v:`${pctOf(sAll, tAll)}%` },
-  ], today);
+  ];
 
-  html += _subPdfStatStrip([
+  let html = _subPdfStatStrip([
     { lbl:'Classes',    val:classes.length,        color:C.brand,  pct:100 },
     { lbl:'Submitted',  val:sAll,                   color:C.green,  pct:pctOf(sAll, tAll) },
     { lbl:'Pending',    val:tAll - sAll,            color:C.amber,  pct:pctOf(tAll - sAll, tAll) },
@@ -7276,8 +7223,7 @@ function buildAdminClassReport(isColor, reportHeader = null, rows = [], subjectN
     <td>${_subPdfPbar(C, pctOf(sAll, tAll))}</td>
   </tr></tbody></table>`;
 
-  html += _subPdfFooter(C);
-  _openSubPdfWindow(html);
+  _openSubPdfWindow(buildLpReportHtml({ title: 'Class-wise Submission Report — Admin Overview', metaCells, today, bodyHtml: html, isColor, reportHeader }));
 }
 
 /* 6. Admin — Subject-wise report (live: per class+section subjects) */
@@ -7293,15 +7239,14 @@ function buildAdminSubjectReport(isColor, reportHeader = null, rows = []) {
   const tTotal = subjects.reduce((a, s) => a + s.total,     0);
   const tSub   = subjects.reduce((a, s) => a + s.submitted, 0);
 
-  let html = _subPdfBase(C, 'Subject-wise Submission Report');
-  html += _subPdfHeader(C, 'Subject-wise Submission Report — Admin Overview', [
+  const metaCells = [
     { k:'Subjects',    v:subjects.length },
     { k:'Total Items', v:tTotal },
     { k:'Submitted',   v:tSub },
     { k:'Completion',  v:`${pctOf(tSub, tTotal)}%` },
-  ], today);
+  ];
 
-  html += _subPdfStatStrip([
+  let html = _subPdfStatStrip([
     { lbl:'Total Subjects',  val:subjects.length,        color:C.brand,  pct:100 },
     { lbl:'Submitted',       val:tSub,                   color:C.green,  pct:pctOf(tSub, tTotal) },
     { lbl:'Pending',         val:tTotal - tSub,          color:C.amber,  pct:pctOf(tTotal - tSub, tTotal) },
@@ -7336,8 +7281,7 @@ function buildAdminSubjectReport(isColor, reportHeader = null, rows = []) {
     <td colspan="2">${_subPdfPbar(C, pctOf(tSub, tTotal))}</td>
   </tr></tbody></table>`;
 
-  html += _subPdfFooter(C);
-  _openSubPdfWindow(html);
+  _openSubPdfWindow(buildLpReportHtml({ title: 'Subject-wise Submission Report — Admin Overview', metaCells, today, bodyHtml: html, isColor, reportHeader }));
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -9605,19 +9549,7 @@ function getReportLogo(style, reportHeader = null) {
 function tbGenerateReport(cls, style, reportHeader = null, format = null, data = null) {
   const isColor = style === 'color' || style === 'word-color';
   const isWord  = format ? (format === 'word') : (style === 'word-color' || style === 'word-bw');
-  const styleLabel = isColor ? 'Colorful' : 'Colorless';
-  const typeLabel  = isWord  ? 'Word'  : 'PDF';
 
-  /* Header (logo, school name, session, address) from /report-header/{branchID}. */
-  const schoolName      = reportHeader?.branchName || getSchoolName();
-  const schoolAddress   = reportHeader?.address || '';
-  const academicSession = reportHeader?.academicSession
-    || sessionStorage.getItem('sessionName') || 'Academic Session';
-  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-  const hdrBg = isColor
-    ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 55%,#1D4ED8 100%)'
-    : 'linear-gradient(135deg,#2C2C2C 0%,#3D3D3D 55%,#555 100%)';
   const textD   = isColor ? '#0F172A' : '#111';
   const textM   = isColor ? '#64748B' : '#555';
   const border  = isColor ? '#BFDBFE' : '#CCC';
@@ -9781,34 +9713,18 @@ function tbGenerateReport(cls, style, reportHeader = null, format = null, data =
         </div>`).join('')}
     </div>`;
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Term Breakup — ${cls} · ${lpEscapeHtml(schoolName)}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.np{display:none}@page{size:A4;margin:15mm}}</style>
-</head><body><div class="page">
-  <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
-    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-    <div style="position:absolute;bottom:-20px;left:180px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style, reportHeader)}
-    <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">Term Breakup — ${cls}</div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${styleLabel} ${typeLabel} Report</div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Class:</strong> ${cls}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${typeLabel} · ${styleLabel}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${generated}</div>
-    </div>
-  </div>
-  <div style="padding:0 8px">
+  const bodyHtml = `
     ${summaryStrip}
-    ${subjectsHtml || `<p style="color:${textM};text-align:center;padding:40px">No breakup data available.</p>`}
-  </div>
-  <div style="margin-top:24px;border-top:1px solid ${border};padding:12px 8px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span><span>School Mentor ERP © ${new Date().getFullYear()}</span><span>${cls} · Term Breakup</span>
-  </div>
-  <div class="np" style="text-align:center;padding:20px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:16px">
-    <button onclick="window.print()" style="background:${isColor?'#1E3A8A':'#333'};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
-    <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
-  </div>
-</div></body></html>`;
+    ${subjectsHtml || `<p style="color:${textM};text-align:center;padding:40px">No breakup data available.</p>`}`;
+
+  const html = buildStandardReportHtml({
+    title: `Term Breakup — ${cls}`,
+    format: isWord ? 'word' : 'pdf',
+    isColor,
+    bodyHtml,
+    schoolName: lpKitSchoolName(reportHeader),
+    subtitleLine: lpKitSubtitle(reportHeader, isColor, undefined, `Class: ${cls}`),
+  });
 
   deliverReport(`${cls} — Term Breakup`, isWord ? 'word' : 'pdf', html, { width: 980, height: 800 });
 }
@@ -9822,16 +9738,12 @@ async function generateCardReport(card, style, ctx = {}, reportHeader = null, fo
   const reportSession = ctx.session || {};
   const reportVacations = Array.isArray(ctx.vacations) ? ctx.vacations : [];
   const isColor = style === 'color';
-  const hdrBg  = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#2C2C2C,#555)';
   const accent  = isColor ? '#1E40AF' : '#444';
   const textD   = isColor ? '#0F172A' : '#111';
   const textM   = isColor ? '#64748B' : '#555';
   const border  = isColor ? '#BFDBFE' : '#DDD';
   const rowAlt  = isColor ? '#F0F6FF' : '#F5F5F5';
   const tHead   = isColor ? '#EFF6FF' : '#EAEAEA';
-  const generated = new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
-  const schoolName = reportHeader.branchName || getSchoolName();
-  const schoolAddress = reportHeader.address || '';
   const academicSession = reportHeader.academicSession || reportSession.year || sessionStorage.getItem('sessionName') || 'Academic Session';
   const sessionStart = reportSession.start || '—';
   const sessionEnd = reportSession.end || '—';
@@ -10079,37 +9991,14 @@ async function generateCardReport(card, style, ctx = {}, reportHeader = null, fo
         </div>
       </div>`;
   }
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>${title} — ${lpEscapeHtml(schoolName)}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.np{display:none}@page{size:A4;margin:15mm}}</style>
-</head><body>
-<div style="width:210mm;margin:0 auto">
-  <!-- Header -->
-  <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
-    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-    <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style, reportHeader)}
-    <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${title}</div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap">
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${generated}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Style:</strong> ${isColor?'Colorful':'Colorless'}</div>
-    </div>
-  </div>
-  <div style="padding:0 8px">${body}</div>
-  <!-- Footer -->
-  <div style="margin-top:32px;border-top:1px solid ${border};padding:14px 8px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
-    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>Academic Year ${lpEscapeHtml(academicSession)}</span>
-  </div>
-  <!-- Print toolbar -->
-  <div class="np" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:20px">
-    <button onclick="window.print()" style="background:${isColor?'#1E3A8A':'#333'};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
-    <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
-  </div>
-</div>
-</body></html>`;
+  const html = buildStandardReportHtml({
+    title,
+    format: format === 'word' ? 'word' : 'pdf',
+    isColor,
+    bodyHtml: body,
+    schoolName: lpKitSchoolName(reportHeader),
+    subtitleLine: lpKitSubtitle({ academicSession }, isColor),
+  });
 
   const cardTitle = card === 'vacations' ? 'Vacations'
     : card === 'summary' ? 'Session Summary' : 'Academic Session';
@@ -10123,17 +10012,10 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
   /* Header (logo, school name, session, address) from /report-header/{branchID}.
      Use the one passed in by the dispatcher; only fetch if absent. */
   if (!reportHeader) reportHeader = await fetchLpReportHeader();
-  const schoolName      = reportHeader?.branchName || getSchoolName();
-  const schoolAddress   = reportHeader?.address || '';
   const academicSession = reportHeader?.academicSession
     || sessionStorage.getItem('sessionName') || 'Academic Session';
-  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
   const isColor = style === 'color';
-  const bg     = isColor ? '#1E3A8A' : '#2C2C2C';
-  // eslint-disable-next-line no-unused-vars
-  const accent = isColor ? '#1E40AF' : '#555';
-  const hdrBg  = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#2C2C2C,#555)';
   const textD  = isColor ? '#0F172A' : '#111';
   const textM  = isColor ? '#64748B' : '#555';
   const border = isColor ? '#BFDBFE' : '#CCC';
@@ -10247,48 +10129,15 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
     </div>`;
 
   /* Final HTML */
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>${title}</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}
-  .page{width:210mm;margin:0 auto}
-  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.np{display:none}@page{size:A4;margin:15mm}}
-</style></head><body>
-<div class="page">
-
-  <!-- Report header -->
-  <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
-    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-    <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style, reportHeader)}
-    <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${title}</div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap">
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${generated}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Style:</strong> ${isColor?'Colorful':'Colorless'}</div>
-    </div>
-  </div>
-
-  <div style="padding:0 8px">
-    ${summaryBlock}
-    ${classTables}
-  </div>
-
-  <!-- Footer -->
-  <div style="margin-top:32px;border-top:1px solid ${border};padding:14px 8px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
-    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>${reportClasses.length} classes</span>
-  </div>
-
-  <!-- Print toolbar -->
-  <div class="np" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:20px">
-    <button onclick="window.print()" style="background:${bg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
-    <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
-  </div>
-</div>
-</body></html>`;
+  const bodyHtml = `${summaryBlock}${classTables}`;
+  const html = buildStandardReportHtml({
+    title,
+    format: format === 'word' ? 'word' : 'pdf',
+    isColor,
+    bodyHtml,
+    schoolName: lpKitSchoolName(reportHeader),
+    subtitleLine: lpKitSubtitle(reportHeader, isColor, undefined, `Per Week Lesson Plan Breakdown · ${reportClasses.length} classes`),
+  });
 
   deliverReport(title, format === 'word' ? 'word' : 'pdf', html, { width: 960, height: 750 });
 }
@@ -10305,7 +10154,6 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
   /* Unit ka medium Urdu ho to report Urdu (RTL + Noori font + headings translate). */
   const isUrdu = String(unit?.medium || '').toLowerCase() === 'urdu';
   const T = s => nbTr(s, isUrdu);
-  const URDU_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif";
 
   /* Lesson content (SLO / Intro / Development / Recap) is NOT in the units list —
      it loads per lesson from the detail API (same one the Edit modal uses). Fetch
@@ -10352,16 +10200,8 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
     unit = { ...unit, lessons };
   }
 
-  /* Header (logo, school name, session, address) from /report-header/{branchID}.
-     Uses the shared getReportLogo block so it matches every other report. */
-  const schoolName      = reportHeader?.branchName || getSchoolName();
-  const schoolAddress   = reportHeader?.address || '';
-  const academicSession = reportHeader?.academicSession
-    || sessionStorage.getItem('sessionName') || 'Academic Session';
-  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-  const bg           = isColor ? '#1E3A8A'  : '#2C2C2C';
-  const hdrBg        = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#2C2C2C,#555)';
+  /* Header (logo, school name, session, address) — shared reportKit chrome,
+     fed by the live /report-header branch name + session. */
   const textD        = isColor ? '#0F172A'  : '#000';
   const textM        = isColor ? '#64748B'  : '#444';
   const border       = isColor ? '#BFDBFE'  : '#999';
@@ -10480,64 +10320,28 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
       ${sectionTitles.map((t,si)=>`<span style="font-size:11px;font-weight:700;color:#000;margin-left:12px">${sectionIcons[si]} ${T(t)}</span>`).join('')}
     </div>`;
 
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<title>Unit ${unit.unitNo} — ${unit.unitName} · Full Lesson Plan</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:${isUrdu ? URDU_FONT : "'Segoe UI',Arial,sans-serif"};background:#fff;color:${textD};font-size:13px;line-height:${isUrdu ? '2' : '1.6'};${isUrdu ? 'direction:rtl;' : ''}}
-  .page{width:210mm;margin:0 auto;padding-bottom:40px}
-  table{border-collapse:collapse;width:100%}
-  td,th{border:1px solid ${border};padding:7px 11px;font-size:12.5px}
-  th{background:${isColor?'#EFF6FF':'#fff'};font-weight:700;color:${textD};text-align:left;${isColor?'':'border-bottom:2px solid #000;'}}
-  ol,ul{padding-left:22px;margin:8px 0}
-  li{margin-bottom:3px}
-  blockquote{border-left:${isColor?'3px solid #1E40AF':'3px solid #000'};padding-left:12px;color:${textM};margin:10px 0;font-style:italic}
-  strong{color:${textD}}
-  p{margin-bottom:6px}
-  @media print{
-    body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .np{display:none}
-    @page{size:A4;margin:15mm}
-    ${isColor?'':'* { color:#000 !important; background:#fff !important; background-color:#fff !important; background-image:none !important; box-shadow:none !important; text-shadow:none !important; }'}
-  }
-</style>
-</head><body><div class="page">
+  const bodyStyle = `<style>
+  .clp-body table{border-collapse:collapse;width:100%}
+  .clp-body td,.clp-body th{border:1px solid ${border};padding:7px 11px;font-size:12.5px}
+  .clp-body th{background:${isColor?'#EFF6FF':'#fff'};font-weight:700;color:${textD};text-align:left;${isColor?'':'border-bottom:2px solid #000;'}}
+  .clp-body ol,.clp-body ul{padding-left:22px;margin:8px 0}
+  .clp-body li{margin-bottom:3px}
+  .clp-body blockquote{border-left:${isColor?'3px solid #1E40AF':'3px solid #000'};padding-left:12px;color:${textM};margin:10px 0;font-style:italic}
+  .clp-body strong{color:${textD}}
+  .clp-body p{margin-bottom:6px}
+</style>`;
 
-  <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
-    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-    <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style, reportHeader)}
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:4px">
-      <div style="font-size:22px;font-weight:800;letter-spacing:-.02em">${lpEscapeHtml(cls)} · ${T('Unit')} ${unit.unitNo} — ${unit.unitName}</div>
-      <div style="font-size:13px;font-weight:700;opacity:.85;white-space:nowrap;padding-top:6px;color:#fff">${lpEscapeHtml(subj)} · ${totalLessons} ${T(totalLessons!==1?'Lessons':'Lesson')}</div>
-    </div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor?'Colorful':'Colorless')} ${T('Report')}</div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">${T('Generated')}:</strong> ${generated}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">${T('Style')}:</strong> ${T(isColor?'Colorful':'Colorless')}</div>
-    </div>
-  </div>
-
-  <div style="padding:0 12px">
-    ${statsRow}
-    ${legendBlock}
-    ${lessonCards}
-  </div>
-
-  <div style="margin-top:30px;border-top:${isColor?'2px solid '+border:'2px solid #000'};padding:12px 12px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${textM}">
-    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
-    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>${T('Academic Year')} ${lpEscapeHtml(academicSession)}</span>
-  </div>
-
-  <div class="np" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:18px">
-    <div style="margin-bottom:10px;font-size:12px;color:#64748B">${isColor?'Full color document — optimised for color printing.':'Ink-saver — no backgrounds or colors will print.'}</div>
-    <button onclick="window.print()" style="background:${bg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
-    <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
-  </div>
-
-</div></body></html>`;
+  /* Body CSS is scoped to .clp-body so it never leaks into the kit header
+     (e.g. the white Generated/Format chips on the Colorful blue band). */
+  const bodyHtml = `${bodyStyle}<div class="clp-body">${lpUrduWrap(`${statsRow}${legendBlock}${lessonCards}`, isUrdu)}</div>`;
+  const html = buildStandardReportHtml({
+    title: `${lpEscapeHtml(cls)} · ${T('Unit')} ${unit.unitNo} — ${unit.unitName}`,
+    format: format === 'word' ? 'word' : 'pdf',
+    isColor,
+    bodyHtml,
+    schoolName: lpKitSchoolName(reportHeader),
+    subtitleLine: lpKitSubtitle(reportHeader, isColor, T, `${lpEscapeHtml(subj)} · ${totalLessons} ${T(totalLessons!==1?'Lessons':'Lesson')}`),
+  });
 
   deliverReport(`${cls} Unit ${unit.unitNo} ${unit.unitName}`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
 }
@@ -10815,35 +10619,20 @@ async function generateLessonPlanReport(name, style, format, ctx) {
 
   /* Fallback — minimal report for any other name (e.g. "Unit …") */
   const isColor = style === 'color';
-  const bg     = isColor ? '#1E3A8A' : '#2C2C2C';
   const textD  = isColor ? '#0F172A' : '#111';
   const textM  = isColor ? '#64748B' : '#555';
-  const border = isColor ? '#BFDBFE' : '#CCC';
 
   /* Fallback bhi REAL header/footer use kare (dummy "The Oxford System" nahi). */
   const fbYear = academicSession || sessionStorage.getItem('sessionName') || 'Academic Session';
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${name} — Report</title>
-    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4;margin:15mm}}</style>
-  </head><body><div class="page">
-    <div style="background:${bg};padding:24px 32px 28px;color:#fff">
-      ${getReportLogo(style, reportHeader)}
-      <div style="font-size:14px;font-weight:700;opacity:.9">${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</div>
-      <div style="font-size:22px;font-weight:800;margin-top:6px">${name}</div>
-      <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(fbYear)} · ${isColor ? 'Colorful' : 'Colorless'} Report</div>
-      <div style="display:flex;gap:10px">
-        <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
-        <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${(format||'pdf').toUpperCase()}</div>
-      </div>
-    </div>
-    <div style="padding:28px 32px"><p style="font-size:13px;color:${textM};line-height:1.7">No content found for <strong style="color:${textD}">${name}</strong>. Please make sure this section has saved questions.</p></div>
-    <div style="border-top:1px solid ${border};padding:14px 32px;font-size:11px;color:${textM};display:flex;justify-content:space-between">
-      <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span><span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    </div>
-    <div class="no-print" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0">
-      <button onclick="window.print()" style="background:${bg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
-      <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
-    </div>
-  </div></body></html>`;
+  const html = buildStandardReportHtml({
+    title: name,
+    format: format === 'word' ? 'word' : 'pdf',
+    isColor,
+    bodyHtml: `<p style="font-size:13px;color:${textM};line-height:1.7">No content found for <strong style="color:${textD}">${name}</strong>. Please make sure this section has saved questions.</p>`,
+    /* only the live /report-header name — on a failed fetch the kit falls back to the live branch */
+    schoolName: schoolName !== 'School Mentor ERP' ? lpEscapeHtml(schoolName) : undefined,
+    subtitleLine: lpKitSubtitle({ academicSession: fbYear }, isColor),
+  });
 
   deliverReport(name, format === 'word' ? 'word' : 'pdf', html);
 }
