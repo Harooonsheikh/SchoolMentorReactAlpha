@@ -5553,7 +5553,6 @@ const preToday = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, school, toast }) {
-  const { data: feeHeads = [] }        = useAsync(preEnrollmentService.getPreEnrollFeeHeads, []);
   const { data: classListLookup = [] } = useAsync(studentService.getStuClassList, []);
   const { data: sectionList = [] }     = useAsync(studentService.getStuSectionList, []);
   const { data: serverNextReg = 25101 } = useAsync(studentService.getStuNextReg, 25101);
@@ -5935,8 +5934,7 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
 
       {challanCfg && (
         <PreEnrollChallanModal
-          student={challanCfg.student}
-          feeHeads={feeHeads}
+              student={challanCfg.student}
           onClose={() => setChallanCfg(null)}
           onSave={handleChallanSave}
           toast={toast}
@@ -6078,9 +6076,11 @@ function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject,
 }
 
 /* ─── Challan — copy of Fee.jsx's BulkGenerateModal, minus Issue/Due Date ── */
-function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
+function PreEnrollChallanModal({ student, onClose, onSave, toast }) {
   const month = STU_PRE_MONTHS[new Date().getMonth()];
   const type = '1';
+  const [feeHeads, setFeeHeads] = useState([]);
+  const [headsLoading, setHeadsLoading] = useState(true);
   const [picked, setPicked] = useState(() => (student.challan?.heads || []).map(h => h.name));
   const [msOpen, setMsOpen] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -6099,8 +6099,31 @@ function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
     return () => document.removeEventListener('mousedown', onDown);
   }, [msOpen]);
 
-  const toggleHead = (name) => setPicked(prev => (prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]));
-  const headsLabel = picked.length === 0 ? 'Select Heads' : `${picked.length} head${picked.length === 1 ? '' : 's'} selected`;
+  /* Student ki class (grade) ke mapped fee heads — static list nahi */
+  useEffect(() => {
+    let alive = true;
+    setHeadsLoading(true);
+    studentService.getStuFeeHeads(student._gradeId)
+      .then(rows => {
+        if (!alive) return;
+        setFeeHeads(
+          (rows || [])
+            .filter(h => h.name)
+            .map(h => ({
+              name:    h.name,
+              amt:     Number(h.amount) || 0,
+                  head:    'Account Payable',
+              subHead: h.name,
+              feeStructureID: h.feeStructureID,
+            }))
+        );
+      })
+      .catch(err => { if (alive) { setFeeHeads([]); toast(err.message || 'Could not load class fee heads', 'error'); } })
+      .finally(() => { if (alive) setHeadsLoading(false); });
+    return () => { alive = false; };
+  }, [student._gradeId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleHead = (name) => setPicked(prev => (prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]));  const headsLabel = picked.length === 0 ? 'Select Heads' : `${picked.length} head${picked.length === 1 ? '' : 's'} selected`;
   const pickedHeads = feeHeads.filter(h => picked.includes(h.name));
   const total = pickedHeads.reduce((a, h) => a + Number(h.amt || 0), 0);
 
@@ -6155,8 +6178,7 @@ function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
                 </button>
                 {msOpen && (
                   <div className="fee-ms-menu">
-                    {feeHeads.length === 0 ? <div className="fee-ms-empty">No fee heads configured.</div> : feeHeads.map(h => (
-                      <button type="button" key={h.name} className={`fee-ms-opt${picked.includes(h.name) ? ' sel' : ''}`} onClick={() => toggleHead(h.name)}>
+{headsLoading ? <div className="fee-ms-empty">Loading class fee heads…</div> : feeHeads.length === 0 ? <div className="fee-ms-empty">No fee heads configured for {student.cls}.</div> : feeHeads.map(h => (                      <button type="button" key={h.name} className={`fee-ms-opt${picked.includes(h.name) ? ' sel' : ''}`} onClick={() => toggleHead(h.name)}>
                         <span className="fee-ms-check"><i className="fa-solid fa-check"></i></span>
                         <span className="fee-ms-name">{h.name}</span>
                         <span className="fee-ms-amt">{stuMoney(h.amt)}</span>
