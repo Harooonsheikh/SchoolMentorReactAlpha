@@ -26,7 +26,7 @@ import { ledgerPendingAsOf, ledgerAdvanceEvents } from '../../components/Fee';
 
 const round = (n) => Math.round(Number(n) || 0);
 
-export function computeFeeExtrasFromLedger(allStudents, { month, year } = {}) {
+export function computeFeeExtrasFromLedger(allStudents, { month, year, previousMonthOutstanding = null } = {}) {
   const rows = Array.isArray(allStudents) ? allStudents : [];
   const mm = String(month).padStart(2, '0');
   const monthStartISO = `${year}-${mm}-01`;
@@ -107,18 +107,36 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year } = {}) {
   });
 
   const totalStudents = rows.length;
-  const receivedPct = netReceivableTotal > 0 ? Math.round((receivedTotal / netReceivableTotal) * 100) : 0;
-  const pendingPct  = netReceivableTotal > 0 ? Math.round((pendingTotal / netReceivableTotal) * 100) : 0;
+  /* Previous Dues override — when a previous-month outstanding is supplied
+     (dashboard spec: Previous Dues = Monthly Fee Defaulter Total Outstanding
+     of current month − 1), use it and recompute Net Receivable = Current Month
+     + Previous Dues so the Overview chart identity still holds. */
+  const prevDuesFinal = (previousMonthOutstanding != null)
+    ? Math.max(0, round(previousMonthOutstanding))
+    : round(previousDuesTotal);
+  const netFinal = (previousMonthOutstanding != null)
+    ? (round(currentMonthTotal) + prevDuesFinal)
+    : round(netReceivableTotal);
+  /* Pending Fee — derived from the card's own formula so the card always
+     reconciles with the numbers it shows:
+       Pending = Net Receivable − Fee Received − Receiving Discount − Advance Adjustments
+     (same definition as feeDashboardExtra.js's source model). */
+  const pendingFinal = Math.max(
+    0,
+    round(netFinal) - round(receivedTotal) - round(discountTotal) - round(advanceAdjustmentTotal),
+  );
+  const receivedPct = netFinal > 0 ? Math.round((receivedTotal / netFinal) * 100) : 0;
+  const pendingPct  = netFinal > 0 ? Math.round((pendingFinal / netFinal) * 100) : 0;
   const discountStudentCount = new Set(discountRows.map((r) => r.reg)).size;
 
   return {
     currentMonthTotal: round(currentMonthTotal), challansGenerated, totalStudents,
-    previousDuesTotal: round(previousDuesTotal), studentsWithDues,
-    netReceivableTotal: round(netReceivableTotal),
+    previousDuesTotal: prevDuesFinal, studentsWithDues,
+    netReceivableTotal: netFinal,
     receivedRows, receivedTotal: round(receivedTotal), receivedStudentCount, receivedPct,
     discountRows, discountTotal: round(discountTotal), discountStudentCount,
     advanceRows, advanceTotal: round(advanceTotal), advanceStudentCount,
     advanceAdjustmentRows, advanceAdjustmentTotal: round(advanceAdjustmentTotal), advanceAdjustmentStudentCount,
-    pendingTotal: round(pendingTotal), pendingPct,
+    pendingTotal: pendingFinal, pendingPct,
   };
 }

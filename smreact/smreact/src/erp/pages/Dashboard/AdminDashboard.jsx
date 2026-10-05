@@ -519,9 +519,21 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      popups (secondary, behind buttons) until those are ported too. */
   const faLedgerPeriods = useMemo(() => [{ month: feeMonthIdx + 1, year: feeYear }], [feeMonthIdx, feeYear]);
   const { allStudents: faLedger = [] } = useLedgerReportData(faLedgerPeriods);
+  /* Previous Dues = Monthly Fee Defaulter "Total Outstanding" of the PREVIOUS
+     month (current month − 1), exactly like Fee → Reports → Monthly Fee
+     Defaulters. Fetch that month's ledger separately and use its outstanding
+     (totals.pend) as the dashboard's Previous Dues. */
+  const faPrevPeriod = useMemo(() => {
+    const curM = feeMonthIdx + 1;              // 1-12 current
+    const pm = curM === 1 ? 12 : curM - 1;
+    const py = curM === 1 ? feeYear - 1 : feeYear;
+    return [{ month: pm, year: py }];
+  }, [feeMonthIdx, feeYear]);
+  const { totals: faPrevTotals } = useLedgerReportData(faPrevPeriod);
+  const prevMonthOutstanding = Number(faPrevTotals?.pend) || 0;
   const feeExtras = useMemo(
-    () => computeFeeExtrasFromLedger(faLedger, { month: feeMonthIdx + 1, year: feeYear }),
-    [faLedger, feeMonthIdx, feeYear],
+    () => computeFeeExtrasFromLedger(faLedger, { month: feeMonthIdx + 1, year: feeYear, previousMonthOutstanding: prevMonthOutstanding }),
+    [faLedger, feeMonthIdx, feeYear, prevMonthOutstanding],
   );
   const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} ${feeYear}`;
 

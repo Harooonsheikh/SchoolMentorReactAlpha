@@ -1,0 +1,591 @@
+USE [SchoolMentor]
+GO
+/****** Object:  StoredProcedure [dbo].[usp_AHM_Branch_Ledger_Get]    Script Date: 9/23/2026 3:58:54 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER   PROCEDURE [dbo].[usp_AHM_Branch_Ledger_Get]
+(
+    @Id        NUMERIC(18,0) = 0,
+    @BranchID  BIGINT        = NULL,
+    @StudentID INT           = NULL,
+    @Month     INT           = NULL,
+    @Year      INT           = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- RESULT SET 1: Master row(s)
+    SELECT
+        Id, DateofCreattion, DueDate, StudentID, BranchID, GradeID, SectionID,
+        RegistrationNumber, TranType, PaymentMethod, Month, Year,
+        PLApplicantID, PLPSID, ReceivedDate, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+    FROM AHM_Branch_Ledger
+    WHERE (@Id = 0 OR Id = @Id)
+      AND (@BranchID IS NULL OR BranchID = @BranchID)
+      AND (@StudentID IS NULL OR StudentID = @StudentID) AND (@Month IS NULL OR Month = @Month)
+      AND (@Year IS NULL OR Year = @Year)
+    ORDER BY Id DESC;
+
+       -- RESULT SET 2: Detail rows
+    SELECT
+        dt.Id, dt.BLID, dt.BranchId, dt.Head, dt.SubHead, dt.ChallanAmount, dt.Discount,
+        dt.RecvDiscount,                                    -- NEW
+        dt.ReceivedAmount, dt.PendingorAdv,
+
+        PreviousPendingorAdv = ISNULL(prev.PreviousPendingorAdv, 0),
+
+        dt.CreatedAt, dt.CreatedBy, dt.ModifiedAt, dt.ModifiedBy, dt.IsActive
+    FROM AHM_Branch_Ledger_Detail dt
+    INNER JOIN AHM_Branch_Ledger m ON m.Id = dt.BLID
+    OUTER APPLY dbo.fn_PreviousPendingorAdv(
+                    m.StudentID,
+                    dt.Head,
+                    dt.SubHead,
+                    ISNULL(@Month, m.[Month]),
+                    ISNULL(@Year,  m.[Year])) prev
+    WHERE (@Id = 0 OR dt.BLID = @Id)
+      AND (@BranchID IS NULL OR m.BranchID = @BranchID)
+      AND (@StudentID IS NULL OR m.StudentID = @StudentID)  AND (@Month IS NULL OR m.Month = @Month)
+      AND (@Year IS NULL OR m.Year = @Year)
+    ORDER BY dt.BLID DESC, dt.Id ASC;
+END
+
+
+USE [SchoolMentor]
+GO
+/****** Object:  StoredProcedure [dbo].[usp_AHM_Branch_Ledger_GetByMonthRange]    Script Date: 9/23/2026 3:58:36 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER   PROCEDURE [dbo].[usp_AHM_Branch_Ledger_GetByMonthRange]
+    @BranchID   BIGINT,
+    @FromMonth  INT,
+    @FromYear   INT,
+    @ToMonth    INT,
+    @ToYear     INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Convert Month+Year into a comparable sequential index (e.g. 2026-07 -> 2026*12+7)
+    DECLARE @FromIdx INT = (@FromYear * 12) + @FromMonth;
+    DECLARE @ToIdx   INT = (@ToYear   * 12) + @ToMonth;
+
+    -- ===== Result Set 1: Master rows =====
+    SELECT *
+    FROM AHM_Branch_Ledger
+    WHERE BranchID = @BranchID
+      AND IsActive = 1
+      AND ((Year * 12) + Month) BETWEEN @FromIdx AND @ToIdx
+    ORDER BY Year, Month, Id;
+
+    -- ===== Result Set 2: Detail rows for those masters =====
+    SELECT
+        D.*,
+
+        /* Appended after D.* rather than replacing it, so the existing column
+           list stays exactly as it was and nothing downstream shifts. */
+        PreviousPendingorAdv = ISNULL(prev.PreviousPendingorAdv, 0)
+
+    FROM AHM_Branch_Ledger_Detail D
+    INNER JOIN AHM_Branch_Ledger L ON L.Id = D.BLID
+
+    /* L.[Month] / L.[Year] here, NOT @FromMonth / @ToMonth.
+
+       This result set spans the whole range at once. A single parameter would
+       be applied to every row in it: ask for January to June and @FromMonth
+       would have the June rows counting back from January - they would show
+       December's balance instead of May's.
+
+       Each row counts back from its own month. June looks at May, January
+       looks at December. */
+    OUTER APPLY dbo.fn_PreviousPendingorAdv(
+                    L.StudentID, D.Head, D.SubHead, L.[Month], L.[Year]) prev
+
+    WHERE L.BranchID = @BranchID
+      AND L.IsActive = 1
+      AND ((L.Year * 12) + L.Month) BETWEEN @FromIdx AND @ToIdx
+    ORDER BY D.BLID, D.Id;
+END
+
+
+USE [SchoolMentor]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER PROCEDURE [dbo].[usp_AHM_Branch_Ledger_InsertUpdate]
+(
+    @Id                  NUMERIC(18,0)   = NULL,
+    @DateOfCreation      DATETIME        = NULL,
+    @DueDate             DATETIME        = NULL,
+    @StudentID           INT             = NULL,
+    @BranchID            BIGINT          = NULL,
+    @GradeID             INT             = NULL,
+    @SectionID           INT             = NULL,
+    @RegistrationNumber  NVARCHAR(50)    = NULL,
+    @TranType            NVARCHAR(50)    = NULL,
+    @PaymentMethod       NVARCHAR(50)    = N'Cash',
+    @Month               INT             = NULL,
+    @Year                INT             = NULL,
+    @PLApplicantID       NVARCHAR(MAX)   = NULL,
+    @PLPSID              NVARCHAR(MAX)   = NULL,
+    @ReceivedDate        NVARCHAR(50)    = NULL,
+    @ModifiedBy          BIGINT          = NULL,
+    @CreatedBy           BIGINT          = NULL,
+    @IsActive            BIT             = 1,
+    @IsReceiving         BIT             = 0,        -- 1 = receiving, 0 = challan create/edit
+    @DetailRows          dbo.TVP_BranchLedgerDetail READONLY,
+
+    @OutputId            NUMERIC(18,0)   OUTPUT,
+    @OutputMessage       NVARCHAR(500)   OUTPUT
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE @Now DATETIME = GETDATE();
+        DECLARE @MasterId NUMERIC(18,0);
+        DECLARE @IsNewMaster BIT = 0;
+
+        IF (@Id IS NULL OR @Id = 0)
+        BEGIN
+            INSERT INTO AHM_Branch_Ledger
+            (
+                DateofCreattion, DueDate, StudentID, BranchID, GradeID, SectionID,
+                RegistrationNumber, TranType, PaymentMethod, Month, Year,
+                PLApplicantID, PLPSID, ReceivedDate, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+            )
+            VALUES
+            (
+                ISNULL(@DateOfCreation, @Now), @DueDate, @StudentID, @BranchID, @GradeID, @SectionID,
+                @RegistrationNumber, @TranType, ISNULL(@PaymentMethod, N'Cash'), @Month, @Year,
+                @PLApplicantID, @PLPSID, @ReceivedDate, @Now, @CreatedBy, @Now, @ModifiedBy, @IsActive
+            );
+
+            SET @MasterId = SCOPE_IDENTITY();
+            SET @IsNewMaster = 1;
+        END
+        ELSE
+        BEGIN
+            SET @MasterId = @Id;
+
+            UPDATE AHM_Branch_Ledger
+            SET
+                DateofCreattion    = ISNULL(@DateOfCreation, DateofCreattion),
+                DueDate            = @DueDate,
+                StudentID          = @StudentID,
+                BranchID           = @BranchID,
+                GradeID            = @GradeID,
+                SectionID          = @SectionID,
+                RegistrationNumber = @RegistrationNumber,
+                TranType           = @TranType,
+                PaymentMethod      = ISNULL(@PaymentMethod, PaymentMethod),
+                Month              = @Month,
+                Year               = @Year,
+                PLApplicantID      = @PLApplicantID,
+                PLPSID             = @PLPSID,
+                ReceivedDate       = ISNULL(@ReceivedDate, ReceivedDate),
+                ModifiedAt         = @Now,
+                ModifiedBy         = @ModifiedBy,
+                IsActive           = @IsActive
+            WHERE Id = @MasterId;
+
+            IF @@ROWCOUNT = 0
+            BEGIN
+                ROLLBACK TRANSACTION;
+                SET @OutputId = 0;
+                SET @OutputMessage = 'Master record not found for given Id';
+                RETURN;
+            END
+        END
+
+        /* DETAIL: INSERT rows where Id = 0 (challan generate)
+           CHANGED: negative PendingorAdv -> AdvanceAmount (positive), PendingorAdv = 0
+                    positive PendingorAdv -> stays in PendingorAdv, AdvanceAmount = 0 */
+        INSERT INTO AHM_Branch_Ledger_Detail
+        (
+            BLID, BranchId, Head, SubHead, ChallanAmount, Discount,
+            ReceivedAmount, PendingorAdv, AdvanceAmount,
+            CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+        )
+        SELECT
+            @MasterId, @BranchID, t.Head, t.SubHead, t.ChallanAmount, t.Discount,
+            t.ReceivedAmount,
+            CASE WHEN t.PendingorAdv < 0 THEN 0 ELSE t.PendingorAdv END,
+            CASE WHEN t.PendingorAdv < 0 THEN ABS(t.PendingorAdv)
+                 WHEN t.PendingorAdv IS NOT NULL THEN 0
+            END,
+            @Now, @CreatedBy, @Now, @ModifiedBy, 1
+        FROM @DetailRows t
+        WHERE t.Id = 0;
+
+        /* DETAIL: UPDATE rows where Id > 0
+           RecvDiscount is only set when @IsReceiving = 1.
+           CHANGED: same PendingorAdv / AdvanceAmount split as the insert */
+        UPDATE d
+        SET
+            d.ReceivedAmount = t.ReceivedAmount,
+            d.PendingorAdv   = CASE WHEN t.PendingorAdv < 0 THEN 0 ELSE t.PendingorAdv END,
+            d.AdvanceAmount  = CASE WHEN t.PendingorAdv < 0 THEN ABS(t.PendingorAdv)
+                                    WHEN t.PendingorAdv IS NOT NULL THEN 0
+                               END,
+            d.RecvDiscount   = CASE WHEN @IsReceiving = 1 THEN t.Discount ELSE d.RecvDiscount END,
+            d.ModifiedAt     = @Now,
+            d.ModifiedBy     = @ModifiedBy
+        FROM AHM_Branch_Ledger_Detail d
+        INNER JOIN @DetailRows t ON t.Id = d.Id
+        WHERE t.Id > 0
+          AND d.BLID = @MasterId;
+
+        /* =====================================================
+           BLOCK 2.5: OLD DUES / ADVANCE (unchanged)
+           ===================================================== */
+        IF (@IsNewMaster = 1 AND @StudentID IS NOT NULL)
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM AHM_Branch_Ledger_Detail d
+                INNER JOIN AHM_Branch_Ledger m ON m.Id = d.BLID
+                WHERE m.StudentID = @StudentID
+                  AND m.BranchID  = @BranchID
+                  AND d.Head IN (N'OldDues', N'Advance')
+            )
+            BEGIN
+                DECLARE @OldDuesCutoff INT = 202608;
+                DECLARE @NetAmount DECIMAL(18,2);
+
+                SELECT @NetAmount = SUM(ISNULL(Dr, 0) - ISNULL(Cr, 0))
+                FROM OldBranchLedger
+                WHERE ApplicantsID = @StudentID
+                  AND (
+                        (Year * 100) +
+                        MONTH(TRY_CONVERT(DATE, '01 ' + LTRIM(RTRIM(Month)) + ' ' + CAST(Year AS VARCHAR(4))))
+                      ) <= @OldDuesCutoff;
+
+                IF (@NetAmount IS NOT NULL AND @NetAmount <> 0)
+                BEGIN
+                    IF (@NetAmount > 0)
+                    BEGIN
+                        INSERT INTO AHM_Branch_Ledger_Detail
+                        (
+                            BLID, BranchId, Head, SubHead, ChallanAmount, Discount,
+                            ReceivedAmount, PendingorAdv, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+                        )
+                        VALUES
+                        (
+                            @MasterId, @BranchID, N'Advance', N'Old Advance Till Date', (-1 * @NetAmount), 0,
+                            NULL, NULL, @Now, @CreatedBy, @Now, @ModifiedBy, 1
+                        );
+                    END
+                    ELSE
+                    BEGIN
+                        INSERT INTO AHM_Branch_Ledger_Detail
+                        (
+                            BLID, BranchId, Head, SubHead, ChallanAmount, Discount,
+                            ReceivedAmount, PendingorAdv, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+                        )
+                        VALUES
+                        (
+                            @MasterId, @BranchID, N'OldDues', N'Old Dues Till Date', ABS(@NetAmount), 0,
+                            NULL, NULL, @Now, @CreatedBy, @Now, @ModifiedBy, 1
+                        );
+                    END
+                END
+            END
+        END
+
+        /* =====================================================
+           BLOCK 2.6: PREVIOUS DUE head (unchanged)
+           ===================================================== */
+        IF (@IsNewMaster = 1 AND @StudentID IS NOT NULL)
+        BEGIN
+            DECLARE @PrevDuesTbl TABLE (Amt DECIMAL(18,2));
+            DECLARE @TotalPreviousDues DECIMAL(18,2);
+
+            UPDATE AHM_Branch_Students
+            SET TotalPreviousDues = 0
+            OUTPUT deleted.TotalPreviousDues INTO @PrevDuesTbl(Amt)
+            WHERE ID = @StudentID
+              AND ISNULL(TotalPreviousDues, 0) > 0;
+
+            SET @TotalPreviousDues = (SELECT TOP 1 Amt FROM @PrevDuesTbl);
+
+            IF (ISNULL(@TotalPreviousDues, 0) > 0)
+            BEGIN
+                INSERT INTO AHM_Branch_Ledger_Detail
+                (
+                    BLID, BranchId, Head, SubHead, ChallanAmount, Discount,
+                    ReceivedAmount, PendingorAdv, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+                )
+                VALUES
+                (
+                    @MasterId, @BranchID, N'Account Payable', N'Previous Due', @TotalPreviousDues, 0,
+                    NULL, NULL, @Now, @CreatedBy, @Now, @ModifiedBy, 1
+                );
+            END
+            ELSE
+            BEGIN
+                DECLARE @LastBLID NUMERIC(18,0);
+                DECLARE @PrevDuePending DECIMAL(18,2);
+
+                SELECT TOP 1 @LastBLID = m.Id
+                FROM AHM_Branch_Ledger m
+                WHERE m.StudentID = @StudentID
+                  AND m.BranchID  = @BranchID
+                  AND m.Id       <> @MasterId
+                  AND m.IsActive  = 1
+                ORDER BY (ISNULL(m.Year, 0) * 100 + ISNULL(m.Month, 0)) DESC, m.Id DESC;
+
+                IF (@LastBLID IS NOT NULL)
+                BEGIN
+                    SELECT @PrevDuePending = ISNULL(SUM(
+                        CASE
+                            WHEN d.PendingorAdv IS NOT NULL THEN d.PendingorAdv
+                            ELSE ISNULL(d.ChallanAmount, 0) - ISNULL(d.ReceivedAmount, 0)
+                        END
+                    ), 0)
+                    FROM AHM_Branch_Ledger_Detail d
+                    WHERE d.BLID = @LastBLID
+                      AND d.IsActive = 1
+                      AND d.Head    = N'Account Payable'
+                      AND d.SubHead = N'Previous Due';
+
+                    IF (@PrevDuePending > 0)
+                    BEGIN
+                        INSERT INTO AHM_Branch_Ledger_Detail
+                        (
+                            BLID, BranchId, Head, SubHead, ChallanAmount, Discount,
+                            ReceivedAmount, PendingorAdv, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+                        )
+                        VALUES
+                        (
+                            @MasterId, @BranchID, N'Account Payable', N'Previous Due', NULL, NULL,
+                            NULL, NULL, @Now, @CreatedBy, @Now, @ModifiedBy, 1
+                        );
+                    END
+                END
+            END
+        END
+
+        /* =====================================================
+           BLOCK 3: FEE PAYMENT ledger entry - UPSERT (unchanged)
+           ===================================================== */
+        DECLARE @TotalReceived      DECIMAL(18,2);
+        DECLARE @TotalRecvDiscount  DECIMAL(18,2);
+        DECLARE @TotalChallanAmount DECIMAL(18,2);
+        DECLARE @TotalDiscount      DECIMAL(18,2);
+        DECLARE @NetReceivedAmount  DECIMAL(18,2);
+
+        SELECT
+            @TotalReceived      = ISNULL(SUM(CASE WHEN ReceivedAmount IS NOT NULL AND ReceivedAmount <> 0 THEN ReceivedAmount ELSE 0 END), 0),
+            @TotalRecvDiscount  = ISNULL(SUM(ISNULL(RecvDiscount, 0)), 0),
+            @TotalChallanAmount = ISNULL(SUM(ChallanAmount), 0),
+            @TotalDiscount      = ISNULL(SUM(Discount), 0)
+        FROM AHM_Branch_Ledger_Detail
+        WHERE BLID = @MasterId AND IsActive = 1;
+
+        SET @NetReceivedAmount = @TotalReceived - @TotalRecvDiscount;
+
+        IF (@NetReceivedAmount > 0)
+        BEGIN
+            DECLARE @StudentName VARCHAR(500);
+            DECLARE @StudentGender VARCHAR(20);
+            DECLARE @ClassName VARCHAR(200);
+
+            SELECT
+                @StudentName   = LTRIM(RTRIM(ISNULL(S.FirstName, '') + ' ' + ISNULL(S.LastName, ''))),
+                @StudentGender = S.Gander
+            FROM AHM_Branch_Students S
+            WHERE S.ID = @StudentID;
+
+            SELECT @ClassName = G.Name
+            FROM AHM_Branch_Grades G
+            WHERE G.ID = @GradeID;
+
+            DECLARE @FeePaymentAccountID       BIGINT;
+            DECLARE @FeePaymentAccountTypeID   BIGINT = 1;   -- Revenue
+            DECLARE @FeePaymentBranchAccountID BIGINT;
+
+            DECLARE @lockResult INT;
+            EXEC @lockResult = sp_getapplock
+                 @Resource     = 'AHM_Accounts_FeePayment',
+                 @LockMode     = 'Exclusive',
+                 @LockOwner    = 'Transaction',
+                 @LockTimeout  = 15000;
+
+            IF @lockResult < 0
+            BEGIN
+                ROLLBACK TRANSACTION;
+                SET @OutputId = 0;
+                SET @OutputMessage = 'Could not acquire lock to set up the Fee Payment account. Please try again.';
+                RETURN;
+            END
+
+            SELECT @FeePaymentAccountID = a.ID
+            FROM AHM_Accounts a
+            WHERE a.AccountHead = 'Fee Payment';
+
+            IF @FeePaymentAccountID IS NULL
+            BEGIN
+                INSERT INTO AHM_Accounts (AccountHead, AccountTypeID)
+                VALUES ('Fee Payment', @FeePaymentAccountTypeID);
+
+                SET @FeePaymentAccountID = SCOPE_IDENTITY();
+            END
+
+            SELECT @FeePaymentBranchAccountID = ba.ID
+            FROM AHM_Branch_Accounts ba
+            WHERE ba.BranchID  = @BranchID
+              AND ba.AccountID = @FeePaymentAccountID
+              AND ba.IsActive  = 1;
+
+            IF @FeePaymentBranchAccountID IS NULL
+            BEGIN
+                INSERT INTO AHM_Branch_Accounts
+                (
+                    BranchID, AccountID, AccountTypeID,
+                    CreatedAt, CreatedBy, IsActive
+                )
+                VALUES
+                (
+                    @BranchID, @FeePaymentAccountID, @FeePaymentAccountTypeID,
+                    @Now, @CreatedBy, 1
+                );
+
+                SET @FeePaymentBranchAccountID = SCOPE_IDENTITY();
+            END
+
+            DECLARE @EntryDate DATETIME = ISNULL(TRY_CONVERT(DATETIME, @ReceivedDate), @Now);
+            DECLARE @Details NVARCHAR(1000) =
+                N'Fee Paid of Amount: ' + CAST(@TotalReceived AS NVARCHAR(50))
+                    + N' out of ' + CAST(@TotalChallanAmount AS NVARCHAR(50))
+                    + N' with Recv Discount of ' + CAST(@TotalRecvDiscount AS NVARCHAR(50))
+                    + N' (Net: ' + CAST(@NetReceivedAmount AS NVARCHAR(50)) + N')'
+                    + N' by ' + ISNULL(@StudentName, '') + N' ' + ISNULL(@StudentGender, '')
+                    + N' Class: ' + ISNULL(@ClassName, '');
+
+            DECLARE @ExistingEntryId BIGINT;
+
+            SELECT @ExistingEntryId = ID
+            FROM AHM_Branch_Account_Entries
+            WHERE RefID = @MasterId;
+
+            IF (@ExistingEntryId IS NOT NULL)
+            BEGIN
+                UPDATE AHM_Branch_Account_Entries
+                SET
+                    BranchAccountID = @FeePaymentBranchAccountID,
+                    AccountID       = @FeePaymentAccountID,
+                    AccountTypeID   = @FeePaymentAccountTypeID,
+                    EntryDate       = @EntryDate,
+                    Details         = @Details,
+                    Amount          = @NetReceivedAmount,
+                    ModifiedAt      = @Now,
+                    ModifiedBy      = ISNULL(@ModifiedBy, @CreatedBy)
+                WHERE ID = @ExistingEntryId;
+            END
+            ELSE
+            BEGIN
+                INSERT INTO AHM_Branch_Account_Entries
+                (
+                    BranchID, BranchAccountID, AccountID, AccountTypeID,
+                    EntryDate, Details, Amount,
+                    EnteredBy, CreatedAt, CreatedBy, IsActive,
+                    RefID
+                )
+                VALUES
+                (
+                    @BranchID, @FeePaymentBranchAccountID, @FeePaymentAccountID, @FeePaymentAccountTypeID,
+                    @EntryDate, @Details, @NetReceivedAmount,
+                    ISNULL(@ModifiedBy, @CreatedBy), @Now, @CreatedBy, 1,
+                    @MasterId
+                );
+            END
+        END
+
+        COMMIT TRANSACTION;
+
+        SET @OutputId = @MasterId;
+        SET @OutputMessage = 'Success';
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+
+        SET @OutputId = 0;
+        SET @OutputMessage = 'Error: ' + ERROR_MESSAGE();
+    END CATCH
+END
+GO
+
+
+USE [SchoolMentor]
+GO
+/****** Object:  StoredProcedure [dbo].[usp_AHM_Branch_Ledger_GetByMonthYear]    Script Date: 9/23/2026 4:04:21 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER   PROCEDURE [dbo].[usp_AHM_Branch_Ledger_GetByMonthYear]
+(
+    @BranchID BIGINT,
+    @Month    INT,
+    @Year     INT
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- RESULT SET 1: Master challans (Branch + Month + Year)
+    SELECT
+        Id, DateofCreattion, DueDate, StudentID, BranchID, GradeID, SectionID,
+        RegistrationNumber, TranType, PaymentMethod, Month, Year,
+        PLApplicantID, PLPSID, ReceivedDate, CreatedAt, CreatedBy, ModifiedAt, ModifiedBy, IsActive
+    FROM AHM_Branch_Ledger
+    WHERE BranchID = @BranchID
+      AND Month    = @Month
+      AND Year     = @Year
+      AND IsActive = 1
+    ORDER BY Id DESC;
+
+    -- RESULT SET 2: In challans ki detail rows
+    SELECT
+        dt.Id, dt.BLID, dt.BranchId, dt.Head, dt.SubHead, dt.ChallanAmount, dt.Discount,
+        dt.ReceivedAmount, dt.PendingorAdv,
+
+        /* Note this deliberately does NOT filter on BranchID. A student who
+           moved from one branch to another still owes what they owed; matching
+           on StudentID alone carries the balance across with them. */
+        PreviousPendingorAdv = ISNULL(prev.PreviousPendingorAdv, 0),
+
+        dt.CreatedAt, dt.CreatedBy, dt.ModifiedAt, dt.ModifiedBy, dt.IsActive
+    FROM AHM_Branch_Ledger_Detail dt
+    INNER JOIN AHM_Branch_Ledger m ON m.Id = dt.BLID
+
+    /* @Month / @Year - the month the API asked for. The WHERE clause below
+       restricts every row to that same month anyway, so m.[Month] would give
+       an identical result; the parameter is used because that is the intent
+       being expressed. */
+    OUTER APPLY dbo.fn_PreviousPendingorAdv(
+                    m.StudentID, dt.Head, dt.SubHead, @Month, @Year) prev
+
+    WHERE m.BranchID = @BranchID
+      AND m.Month    = @Month
+      AND m.Year     = @Year
+      AND m.IsActive = 1
+    ORDER BY dt.BLID DESC, dt.Id ASC;
+END
