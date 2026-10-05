@@ -196,6 +196,9 @@ export default function LoginScreen({ onLogin, onSignup }) {
         email:         data?.email || '',
         role:          data?.accountType || 'Network Head Office',
         accountType:   data?.accountType ?? 'network',
+        /* Staff users ka designation (sidebar me naam ke neeche dikhta hai).
+           Head Office account ke liye ye nahi aata. */
+        designationName: data?.designationName ?? data?.designation ?? null,
         /* Per-user menu permissions ke liye (chain portal sidebar gating):
            Head Office account ka koi employeeID nahi hota → chain use poora
            access deta hai. Baqi (staff) users ka employeeID aata hai →
