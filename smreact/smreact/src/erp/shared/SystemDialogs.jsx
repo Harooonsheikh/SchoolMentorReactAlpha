@@ -31,11 +31,13 @@ export default function SystemDialogs({ toast = () => {} }) {
   /* Banner / dialog visibility — sirf REAL conditions: offline / slow API / 500.
      (Session-timeout aur "Are you sure" demo surfaces hata diye gaye.) */
   const [showSlow,   setShowSlow]   = useState(false);
+  const [showWait,   setShowWait]   = useState(false);   // API 15 sec se slow (internet theek)
   const [showNoNet,  setShowNoNet]  = useState(typeof navigator !== 'undefined' && navigator.onLine === false);
   const slowTimerRef       = useRef(null);
   const offlineShownRef    = useRef(false);   // offline toast ek hi baar (transition par)
   const lastServerToastRef = useRef(0);       // 500 toast debounce (spam se bachne ke liye)
-  const lastWaitToastRef   = useRef(0);       // "Please wait" toast debounce
+  const noNetRef           = useRef(false);   // listeners ke andar offline banner ki taaza halat
+  const slowShownRef       = useRef(false);   // listeners ke andar slow banner ki taaza halat
 
   /* Push <main> down while a banner is open so the page content
      never sits behind the fixed strip. The HTML reference does the
@@ -43,9 +45,13 @@ export default function SystemDialogs({ toast = () => {} }) {
   useEffect(() => {
     const main = document.querySelector('.main-content');
     if (!main) return undefined;
-    main.style.paddingTop = (showSlow || showNoNet) ? '60px' : '';
+    main.style.paddingTop = (showSlow || showNoNet || showWait) ? '60px' : '';
     return () => { if (main) main.style.paddingTop = ''; };
-  }, [showSlow, showNoNet]);
+  }, [showSlow, showNoNet, showWait]);
+
+  /* Refs ko state ke saath mila kar rakho (listeners [] deps wale effect me hain). */
+  useEffect(() => { noNetRef.current = showNoNet; }, [showNoNet]);
+  useEffect(() => { slowShownRef.current = showSlow; }, [showSlow]);
 
   /* REAL network conditions — browser offline/online + slow API + server 500.
      `sm:slow` / `sm:server-error` events apiConfig ke fetch-wrapper se aate hain
@@ -56,6 +62,7 @@ export default function SystemDialogs({ toast = () => {} }) {
        toast bhi (sirf online→offline transition par), taake feedback saaf nazar aaye. */
     const goOffline = () => {
       setShowSlow(false);
+      setShowWait(false);
       setShowNoNet(true);
       if (!offlineShownRef.current) {
         offlineShownRef.current = true;
@@ -69,28 +76,37 @@ export default function SystemDialogs({ toast = () => {} }) {
         toast('Back online — connection restored.', 'success');
       }
     };
-    /* Do alag cheezen:
-       1. API 15 sec tak jawab na de (sm:slow) → sirf "Please wait…" toast (speed chahe kuch bhi ho).
-          Kai calls ek saath slow hon to 8s debounce, taake spam na ho. Offline ho to Offline dikhao.
-       2. Internet speed (navigator.connection.downlink, Mbps) SLOW_MIN_MBPS se kam ho →
-          "Slow Connection" banner (3 sec). Ye API se alag hai: page khulte waqt aur jab bhi
-          browser speed badalne ki khabar de, tab check hota hai. Jis browser me ye value
-          nahi (Firefox / Safari) wahan speed wala banner nahi aata. */
-    const onSlow = () => {
-      if (isOffline()) { goOffline(); return; }
-      const now = Date.now();
-      if (now - lastWaitToastRef.current < 8000) return;
-      lastWaitToastRef.current = now;
-      toast('Taking longer than usual. Please wait…', 'info');
-    };
+    /* Upar ek waqt me SIRF EK banner (priority: Offline > Slow Internet > Please wait):
+       1. Internet speed (navigator.connection.downlink, Mbps) SLOW_MIN_MBPS se kam →
+          "Slow Connection" banner (3 sec). Page khulte waqt aur jab browser speed badalne
+          ki khabar de tab check hota hai. Firefox / Safari ye value nahi dete — wahan nahi aata.
+       2. API 15 sec tak jawab na de (sm:slow) aur internet theek ho → "Please wait" banner,
+          jo slow API ka jawab aate hi (sm:slow-end, koi slow call baqi na rahe) band hota hai.
+          Us waqt speed kam ho to Please wait ke bajaye Slow Connection banner. */
     const conn = typeof navigator !== 'undefined' ? navigator.connection : undefined;
-    const checkSpeed = () => {
-      if (isOffline()) return;
+    const isSlowNet = () => {
       const downlink = conn && conn.downlink;
-      if (typeof downlink !== 'number' || downlink >= SLOW_MIN_MBPS) return;
+      return typeof downlink === 'number' && downlink < SLOW_MIN_MBPS;
+    };
+    const showSlowBanner = () => {
+      setShowWait(false);
       setShowSlow(true);
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
       slowTimerRef.current = setTimeout(() => setShowSlow(false), 3000);   // 3 sec baad khud band
+    };
+    const checkSpeed = () => {
+      if (isOffline() || noNetRef.current) return;
+      if (isSlowNet()) showSlowBanner();
+    };
+    const onSlow = () => {
+      if (isOffline()) { goOffline(); return; }
+      if (noNetRef.current) return;
+      if (isSlowNet()) { showSlowBanner(); return; }
+      if (slowShownRef.current) return;
+      setShowWait(true);
+    };
+    const onSlowEnd = (e) => {
+      if (!e || !e.detail || !e.detail.pending) setShowWait(false);
     };
     checkSpeed();
     if (conn && conn.addEventListener) conn.addEventListener('change', checkSpeed);
@@ -105,6 +121,7 @@ export default function SystemDialogs({ toast = () => {} }) {
     window.addEventListener('offline', goOffline);
     window.addEventListener('online',  goOnline);
     window.addEventListener('sm:slow', onSlow);
+    window.addEventListener('sm:slow-end', onSlowEnd);
     window.addEventListener('sm:offline', goOffline);
     window.addEventListener('sm:online', goOnline);
     window.addEventListener('sm:server-error', onServerError);
@@ -112,6 +129,7 @@ export default function SystemDialogs({ toast = () => {} }) {
       window.removeEventListener('offline', goOffline);
       window.removeEventListener('online',  goOnline);
       window.removeEventListener('sm:slow', onSlow);
+      window.removeEventListener('sm:slow-end', onSlowEnd);
       window.removeEventListener('sm:offline', goOffline);
       window.removeEventListener('sm:online', goOnline);
       window.removeEventListener('sm:server-error', onServerError);
@@ -137,7 +155,7 @@ export default function SystemDialogs({ toast = () => {} }) {
   return (
     <>
       {/* 1. Slow Internet banner */}
-      {showSlow && createPortal(
+      {showSlow && !showNoNet && createPortal(
         <div className="sys-banner">
           <div className="sys-banner-inner">
             <div className="sys-banner-icon sys-amber">
@@ -152,6 +170,29 @@ export default function SystemDialogs({ toast = () => {} }) {
             </div>
             <Tooltip text="Dismiss" placement="bottom">
               <button className="sys-banner-close" onClick={() => setShowSlow(false)} aria-label="Dismiss banner">
+                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+            </Tooltip>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* 1b. Please wait banner — API 15 sec se jawab nahi de rahi, internet theek hai */}
+      {showWait && !showSlow && !showNoNet && createPortal(
+        <div className="sys-banner">
+          <div className="sys-banner-inner">
+            <div className="sys-banner-icon sys-amber">
+              <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i>
+            </div>
+            <div className="sys-banner-text">
+              <strong>Please wait, Taking Longer Than Usual</strong>
+            </div>
+            <div className="sys-banner-pulse">
+              <span></span><span></span><span></span>
+            </div>
+            <Tooltip text="Dismiss" placement="bottom">
+              <button className="sys-banner-close" onClick={() => setShowWait(false)} aria-label="Dismiss banner">
                 <i className="fa-solid fa-xmark" aria-hidden="true"></i>
               </button>
             </Tooltip>

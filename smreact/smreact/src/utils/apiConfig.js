@@ -461,8 +461,19 @@ function ensureFetchWrapper() {
     const monitored = isApiUrl(url) && !quiet;
     const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
     let slowTimer = null;
+    let flaggedSlow = false;
+    /* Jo call slow mark hui thi wo khatam ho (jawab / error) to sm:slow-end — detail.pending
+       = abhi kitni slow calls baqi; 0 par "Please wait" banner band hota hai. */
+    const endSlow = () => {
+      if (!flaggedSlow) return;
+      flaggedSlow = false;
+      window.__smSlowPending = Math.max(0, (window.__smSlowPending || 0) - 1);
+      try { window.dispatchEvent(new CustomEvent('sm:slow-end', { detail: { pending: window.__smSlowPending } })); } catch (e) { /* ignore */ }
+    };
     if (monitored) {
       slowTimer = setTimeout(() => {
+        flaggedSlow = true;
+        window.__smSlowPending = (window.__smSlowPending || 0) + 1;
         try {
           /* Offline par fetch der tak hang karta hai — is soorat me Slow ke bajaye
              Offline event bhejo (warna galti se "Slow internet" dikh jata hai). */
@@ -473,6 +484,7 @@ function ensureFetchWrapper() {
     try {
       const res = await origFetch(input, init);
       if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      endSlow();
       try {
         if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url) && !quiet) trigger();
         if (monitored && res && res.status >= 500) {
@@ -490,6 +502,7 @@ function ensureFetchWrapper() {
       return res;
     } catch (err) {
       if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      endSlow();
       /* Fetch reject = API tak request pahunchi hi nahi (network down / server band).
          navigator.onLine bharosemand nahi, is liye kisi bhi monitored API ki
          network-failure par Offline surface dikhao (abort ko chhod kar). */

@@ -1551,6 +1551,7 @@ function FamilyTreeChallansList({ toast }) {
   /* Expanded row */
   const [openKey, setOpenKey] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [busyMsg, setBusyMsg] = useState('');    // delete chal raha ho to center loader + screen lock
   const [bulkGen, setBulkGen] = useState(null);
   const [challanPreview, setChallanPreview] = useState(null);
   const [downloadCtx, setDownloadCtx] = useState(null);
@@ -1787,6 +1788,7 @@ function FamilyTreeChallansList({ toast }) {
         /* Real API: delete the BranchLedger challan record by its id. */
         const id = idMap[keyOf(f.key, ch.reg)] ?? rec?.id;
         if (id == null) { toast('No challan found to delete', 'warning'); return; }
+        setBusyMsg('Deleting challan…');
         try {
           await feeService.deleteChallanById(id);
           toast(`Challan removed for ${ch.name}`, 'success');
@@ -1794,6 +1796,7 @@ function FamilyTreeChallansList({ toast }) {
           toast(e.message || 'Could not delete challan', 'error');
         } finally {
           await loadLedgers();
+          setBusyMsg('');
         }
       },
     });
@@ -2152,6 +2155,7 @@ function FamilyTreeChallansList({ toast }) {
       </div>
 
       <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <FeeBusyOverlay message={busyMsg} />
 
       <BulkGenerateModal
         open={!!bulkGen}
@@ -2487,6 +2491,7 @@ function FeeChallansList({ toast }) {
   /* Expanded row */
   const [openKey, setOpenKey] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [busyMsg, setBusyMsg] = useState('');    // delete chal raha ho to center loader + screen lock
   const [bulkGen, setBulkGen] = useState(null);          // { classMeta, students, heads }
   const [challanPreview, setChallanPreview] = useState(null); // { title, sub, ctx, innerHtml }
   const [downloadCtx, setDownloadCtx] = useState(null);  // { type, classKey, reg?, sub }
@@ -3044,6 +3049,7 @@ function FeeChallansList({ toast }) {
         ? 'Warning: one or more challans already have received amounts. Deleting will remove those payments from the ledger. This cannot be undone.'
         : 'This action cannot be undone.',
       onConfirm: async () => {
+        setBusyMsg('Deleting challans…');
         try {
           /* EK call me poori class/section ke is mahine ke challans — bulk-delete-by-class
              (pehle har challan ki alag DELETE call jaati thi). */
@@ -3055,6 +3061,7 @@ function FeeChallansList({ toast }) {
           toast(e.message || 'Could not delete challans', 'error');
         } finally {
           await loadChallans();
+          setBusyMsg('');
         }
       },
     });
@@ -3072,6 +3079,7 @@ function FeeChallansList({ toast }) {
         : 'This action cannot be undone.',
       onConfirm: async () => {
         if (!rec?.id) { toast('No challan found to delete', 'warning'); return; }
+        setBusyMsg('Deleting challan…');
         try {
           await feeService.deleteChallanById(rec.id);
           toast(`Challan removed for ${s.name}`, 'success');
@@ -3079,6 +3087,7 @@ function FeeChallansList({ toast }) {
           toast(e.message || 'Could not delete challan', 'error');
         } finally {
           await loadChallans();
+          setBusyMsg('');
         }
       },
     });
@@ -3522,6 +3531,7 @@ function FeeChallansList({ toast }) {
       </div>
 
       <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <FeeBusyOverlay message={busyMsg} />
 
       <BulkGenerateModal
         open={!!bulkGen}
@@ -18370,6 +18380,47 @@ function StructEditModal({ open, cls, onClose, onChanged, toast }) {
        onConfirm,                     // called before onClose
      }
    ═══════════════════════════════════════════════════════════════════ */
+/* Delete jaise lambe kaam ke dauran screen ke beech loader — poori screen par overlay
+   jo clicks / keyboard rok deta hai, taake kaam khatam hone tak koi aur action na ho. */
+function FeeBusyOverlay({ message }) {
+  useEffect(() => {
+    if (!message) return undefined;
+    const block = (e) => { e.preventDefault(); e.stopPropagation(); };
+    window.addEventListener('keydown', block, true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', block, true);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [message]);
+  if (!message) return null;
+  return createPortal(
+    <div
+      role="alert"
+      aria-busy="true"
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10000, display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(15,23,42,.35)', cursor: 'wait',
+      }}
+    >
+      <div
+        style={{
+          background: '#fff', borderRadius: 14, padding: '22px 30px', minWidth: 220,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+          boxShadow: '0 20px 50px rgba(15,23,42,.25)', color: '#1E3A8A', fontWeight: 600,
+        }}
+      >
+        <i className="fa-solid fa-circle-notch fa-spin" style={{ fontSize: 30, color: '#1E40AF' }}></i>
+        <span>{message}</span>
+        <span style={{ fontSize: 12, fontWeight: 400, color: '#64748B' }}>Please wait, do not close or refresh.</span>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function FeeConfirmDialog({ cfg, onClose }) {
   useEffect(() => {
     if (!cfg) return undefined;
