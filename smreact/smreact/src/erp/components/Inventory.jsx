@@ -1318,7 +1318,15 @@ function InvItemModal({ cfg, categories, existingItems, onClose, onSave, toast }
     reader.readAsDataURL(f);
   };
 
-  const handleSubmit = () => onSave({ name, cat, code, qty, date, cond, status, loc, desc, img });
+  const handleSubmit = () => {
+    /* Required fields (design ke hisaab se) — backend required na bhi kare to
+       yahan check hota hai. */
+    if (!name.trim()) { toast('Please enter an item name', 'error'); return; }
+    if (!cat) { toast('Please select a category', 'error'); return; }
+    const qtyN = parseInt(qty, 10);
+    if (String(qty).trim() === '' || isNaN(qtyN) || qtyN < 1) { toast('Please enter a valid quantity', 'error'); return; }
+    onSave({ name, cat, code, qty, date, cond, status, loc, desc, img });
+  };
 
   return createPortal(
     <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -1355,9 +1363,11 @@ function InvItemModal({ cfg, categories, existingItems, onClose, onSave, toast }
 
             <div className="fee-field">
               <span className="fee-label">Inventory Number</span>
-              <input className="fee-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Auto-generated if left empty" />
+              {/* Auto-assigned — disabled, user edit nahi kar sakta. */}
+              <input className="fee-input" value={code} disabled readOnly placeholder="Auto-generated"
+                style={{ background: 'var(--bg-muted, #f1f5f9)', cursor: 'not-allowed', opacity: .7 }} />
               <div className="fee-hint">
-                <i className="fa-solid fa-wand-magic-sparkles"></i> Leave empty to auto-generate (e.g. INV-CHAIR-001)
+                <i className="fa-solid fa-wand-magic-sparkles"></i> Automatically assigned (e.g. INV-CHAIR-001)
               </div>
             </div>
 
@@ -2268,8 +2278,8 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
   const [name, setName]       = useState(base?.name || '');
   const [cat, setCat]         = useState(base?.cat  || 'Books');
   const [barcode, setBarcode] = useState(base?.barcode || '');
-  const [stock, setStock]     = useState(base?.stock != null ? String(base.stock) : '0');
-  const [low, setLow]         = useState(base?.low   != null ? String(base.low)   : '10');
+  const [stock, setStock]     = useState(base?.stock != null ? String(base.stock) : '');
+  const [low, setLow]         = useState(base?.low   != null ? String(base.low)   : '');
   const [cost, setCost]       = useState(base?.cost  != null ? String(base.cost)  : '0');
   const [price, setPrice]     = useState(base?.price != null ? String(base.price) : '0');
   const [img, setImg]         = useState(base?.img   || null);
@@ -2295,6 +2305,12 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
 
   const handleSubmit = () => {
     if (!name.trim()) { toast('Please enter a product name', 'error'); return; }
+    /* Stock Quantity required — skip/empty par save nahi hoga. */
+    const stockN = parseInt(stock, 10);
+    if (String(stock).trim() === '' || isNaN(stockN) || stockN < 0) { toast('Please enter stock quantity', 'error'); return; }
+    /* Low stock threshold stock quantity se kam hona chahiye. */
+    const lowN = parseInt(low, 10) || 0;
+    if (lowN >= stockN) { toast('Low stock must be less than stock quantity', 'error'); return; }
     const priceN = parseFloat(price) || 0;
     if (priceN <= 0) { toast('Please enter a selling price', 'error'); return; }
     /* Auto-barcode if blank */
@@ -2355,8 +2371,9 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
             </div>
 
             <div className="fee-field">
-              <span className="fee-label">Barcode (optional)</span>
-              <input className="fee-input" value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Auto if empty" />
+              <span className="fee-label">Barcode</span>
+              <input className="fee-input" value={barcode} disabled readOnly placeholder="Auto if empty"
+                style={{ background: 'var(--bg-muted, #f1f5f9)', cursor: 'not-allowed', opacity: .7 }} />
             </div>
 
             <div className="fee-field">
