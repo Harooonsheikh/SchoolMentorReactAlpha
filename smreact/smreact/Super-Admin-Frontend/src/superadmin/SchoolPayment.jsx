@@ -1076,17 +1076,31 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
         </div>
       </div>
       ) : (
-        <OneTimeChallansTab otChallans={otChallans} onAdd={onAddOt} onDownload={onDownloadOt} onDelete={onDeleteOt} />
+        <OneTimeChallansTab otChallans={otChallans} onAdd={onAddOt} onDownload={onDownloadOt} onDelete={onDeleteOt} period={period} onPeriod={onPeriod} />
       )}
     </div>
   );
 }
-function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete }) {
+function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, onPeriod }) {
   const [q, setQ] = useState('');
-  const list = otChallans.filter((c) => c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase()));
+  /* Monthly tab ki tarah yahan bhi mahina + saal: list us period ke
+     one-time challans (challanDate se) par filter hoti hai. */
+  const list = otChallans.filter((c) =>
+    dateInPeriod(c.challanDate, period) &&
+    (c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase())));
   return (
     <div className="section-card">
       <CardHeader icon="fa-star" title="One-Time Challans" sub="Generate a one-time payment challan for a newly registered school / signup.">
+        <select className="f-input" style={{ width: 132, height: 38 }}
+          value={period.month}
+          onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
+          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+        </select>
+        <select className="f-input" style={{ width: 92, height: 38 }}
+          value={period.year}
+          onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
+          {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
         <Search value={q} onChange={setQ} placeholder="Search school or challan #…" />
         <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={onAdd}><i className="fa-solid fa-plus" /> Add New Challan</button>
       </CardHeader>

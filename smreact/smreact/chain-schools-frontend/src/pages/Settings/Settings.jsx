@@ -21,20 +21,21 @@ import ClassesSubjects from './ClassesSubjects'
    Chain profile abhi bhi localStorage par hai (dekhein config/chainProfile).
    ═══════════════════════════════════════════════════════════════════ */
 
+/* Khali defaults — koi static/dummy data nahi. Form khali shuru hota hai aur
+   jo user add/save karega wahi dikhega (dynamic). */
 const INITIAL_PROFILE = {
-  chainName: 'Mentor Education Group',
-  regId: 'REG-2024-MEG-001',
-  address: 'Plot 12, Bahria Town Phase 4, Rawalpindi, Punjab, Pakistan',
-  contact: '+92 300 1234567',
-  email: 'admin@mentoredu.pk',
-  website: 'https://www.mentoredu.pk',
-  bankName: 'HBL – Habib Bank Limited',
-  accTitle: 'Mentor Education Group',
-  iban: 'PK36HABB0000001234567890',
-  branchName: 'Bahria Town Branch',
-  branchCode: '0441',
-  instructions:
-    'Please mention your School Name and Invoice Number in the payment reference. Send proof of payment to accounts@mentoredu.pk within 24 hours of transfer.',
+  chainName: '',
+  regId: '',
+  address: '',
+  contact: '',
+  email: '',
+  website: '',
+  bankName: '',
+  accTitle: '',
+  iban: '',
+  branchName: '',
+  branchCode: '',
+  instructions: '',
 }
 
 const CONFIRM_CFG = {
@@ -130,7 +131,7 @@ export default function Settings() {
     setEditing(false)
     setToast({ type: 'success', icon: 'fa-floppy-disk', text: 'Profile saved successfully.' })
   }
-  const resetProfile = () => setProfile(INITIAL_PROFILE)
+  const resetProfile = () => { setProfile({ ...INITIAL_PROFILE, ...loadChainProfile() }); setLogoSrc(loadChainProfile().logo || null) }
 
   /* Open confirm dialog (also closes the invite modal if open). */
   const askConfirm = (action, id) => { setInvite(null); setConfirm({ action, id }) }
@@ -188,7 +189,9 @@ export default function Settings() {
 
       {/* Main tabs */}
       <div className="stg-tabs">
-        <button className={`stg-tab${mainTab === 'profile' ? ' active' : ''}`} onClick={() => setMainTab('profile')}><i className="fa-solid fa-building" /> Chain / Franchise Profile</button>
+        {/* Chain / Franchise Profile — abhi hidden (backend API aane tak). Wapas
+            on karne ke liye is button ko uncomment kar dein. */}
+        {/* <button className={`stg-tab${mainTab === 'profile' ? ' active' : ''}`} onClick={() => setMainTab('profile')}><i className="fa-solid fa-building" /> Chain / Franchise Profile</button> */}
         <button className={`stg-tab${mainTab === 'schools' ? ' active' : ''}`} onClick={() => setMainTab('schools')}><i className="fa-solid fa-link" /> Connected Schools</button>
         <button className={`stg-tab${mainTab === 'classes' ? ' active' : ''}`} onClick={() => setMainTab('classes')}><i className="fa-solid fa-chalkboard" /> Classes &amp; Subjects</button>
       </div>
@@ -203,10 +206,16 @@ export default function Settings() {
                 {logoSrc ? <img src={logoSrc} alt="Logo" /> : <i className="fa-solid fa-school" />}
               </div>
               <div className="stg-preview-info">
-                <div className="stg-preview-name">{profile.chainName}</div>
-                <div className="stg-preview-meta"><i className="fa-solid fa-location-dot" /> {profile.address}</div>
-                <div className="stg-preview-meta"><i className="fa-solid fa-phone" /> {profile.contact} &nbsp;·&nbsp; <i className="fa-solid fa-envelope" /> {profile.email}</div>
-                <div className="stg-preview-meta"><i className="fa-solid fa-globe" /> {profile.website}</div>
+                <div className="stg-preview-name">{profile.chainName || '—'}</div>
+                {profile.address && <div className="stg-preview-meta"><i className="fa-solid fa-location-dot" /> {profile.address}</div>}
+                {(profile.contact || profile.email) && (
+                  <div className="stg-preview-meta">
+                    {profile.contact && <><i className="fa-solid fa-phone" /> {profile.contact}</>}
+                    {profile.contact && profile.email && <>&nbsp;·&nbsp;</>}
+                    {profile.email && <><i className="fa-solid fa-envelope" /> {profile.email}</>}
+                  </div>
+                )}
+                {profile.website && <div className="stg-preview-meta"><i className="fa-solid fa-globe" /> {profile.website}</div>}
               </div>
               {!editing && (
                 <div className="stg-preview-actions">
