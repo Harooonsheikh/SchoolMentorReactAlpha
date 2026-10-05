@@ -1769,6 +1769,7 @@ function FamilyTreeChallansList({ toast }) {
   /* ── Confirm-driven actions ── */
   const requestDeleteChildChallan = (f, ch) => {
     const rec = recMap[keyOf(f.key, ch.reg)];
+    if (challanHasReceiving(rec)) { toast(DEL_LOCKED_TIP, 'warning'); return; }
     const hasReceived = (rec?.detailRows || []).some(r => (Number(r.receivedAmount) || 0) > 0);
     setConfirm({
       title: 'Delete child challan?',
@@ -2076,8 +2077,13 @@ function FamilyTreeChallansList({ toast }) {
                               </td>
                               <td className="fee-center fee-st-actions">
                                 {generated ? (
-                                  <Tooltip text={`Delete ${appliedMonth} challan for ${ch.name}`}>
-                                    <button className="fee-iconbtn danger" onClick={() => requestDeleteChildChallan(f, ch)}>
+                                  <Tooltip text={challanHasReceiving(chRec) ? DEL_LOCKED_TIP : `Delete ${appliedMonth} challan for ${ch.name}`}>
+                                    <button
+                                      className="fee-iconbtn danger"
+                                      aria-disabled={challanHasReceiving(chRec)}
+                                      style={challanHasReceiving(chRec) ? { opacity: .4, cursor: 'not-allowed' } : undefined}
+                                      onClick={() => { if (!challanHasReceiving(chRec)) requestDeleteChildChallan(f, ch); }}
+                                    >
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </Tooltip>
@@ -3041,6 +3047,7 @@ function FeeChallansList({ toast }) {
 
   const requestDeleteStudentChallan = (c, s) => {
     const rec = challanMap[keyOf(c.key, s.reg)];
+    if (challanHasReceiving(rec)) { toast(DEL_LOCKED_TIP, 'warning'); return; }
     const hasReceived = (rec?.detailRows || []).some(r => (Number(r.receivedAmount) || 0) > 0);
     setConfirm({
       title: 'Delete this challan?',
@@ -3433,8 +3440,13 @@ function FeeChallansList({ toast }) {
                                   </Tooltip>
                                 )}
                                 {generated ? (
-                                  <Tooltip text={`Delete ${appliedMonth} challan for ${s.name}`}>
-                                    <button className="fee-iconbtn danger" onClick={() => requestDeleteStudentChallan(c, s)}>
+                                  <Tooltip text={challanHasReceiving(rec) ? DEL_LOCKED_TIP : `Delete ${appliedMonth} challan for ${s.name}`}>
+                                    <button
+                                      className="fee-iconbtn danger"
+                                      aria-disabled={challanHasReceiving(rec)}
+                                      style={challanHasReceiving(rec) ? { opacity: .4, cursor: 'not-allowed' } : undefined}
+                                      onClick={() => { if (!challanHasReceiving(rec)) requestDeleteStudentChallan(c, s); }}
+                                    >
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </Tooltip>
@@ -6723,6 +6735,14 @@ function isMultiMonthNonStartView(rec, month, year) {
 
 /* Regenerate button (multi-month challan ke covered mahine) — YELLOW, taake alag pehchana jaye. */
 const REGEN_BTN_STYLE = { color: '#A16207', background: '#FEF3C7', borderColor: '#FACC15' };
+
+/* Challan par koi RECEIVING hai? (wasooli ya receiving-time discount) — hai to challan delete
+   band; pehle Fee Receiving se receiving delete karein, phir delete khulta hai. */
+function challanHasReceiving(rec) {
+  return (rec?.detailRows || []).some(r =>
+    Math.abs(Number(r.receivedAmount) || 0) > 0 || Math.max(0, Number(r.recvDiscount) || 0) > 0);
+}
+const DEL_LOCKED_TIP = 'Delete disabled — this challan already has a receiving against it (partial or full). Delete the receiving in Fee Receiving first, then you can delete this challan.';
 
 /* Challan Type dropdown — 1 se 12 mahine. */
 const CHALLAN_TYPE_LABELS = [
