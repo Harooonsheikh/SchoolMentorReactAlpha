@@ -269,6 +269,8 @@ export default function UsersTab({
                     </button>
                   </Tooltip>
                 )}
+                {/* Assign Role abhi k liye band (comment) — filhaal User Permissions
+                    sirf menu-permissions se chalti hai. Dobara chahiye to ye block uncomment karein.
                 {canAssign && (
                   <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first to assign a role' : 'Assign role'}>
                     <button className="up-act" onClick={() => setAssignFor(u)} disabled={u.roleLabel === 'Principal' || u.status !== 'Active'} aria-label="Assign role">
@@ -276,6 +278,7 @@ export default function UsersTab({
                     </button>
                   </Tooltip>
                 )}
+                */}
               {/*  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Set Dashboard type (Admin / Teacher)'}>
                   <button className="up-act" onClick={() => setDashFor(u)} disabled={u.roleLabel === 'Principal'} aria-label="Set dashboard type">
                     <i className="fa-solid fa-gauge-high" aria-hidden="true"></i>
@@ -324,7 +327,7 @@ export default function UsersTab({
           toast={toast}
         />
       )}
-      {assignFor && (
+      {canAssign && assignFor && (
         <AssignRoleModal
           user={assignFor}
           roles={roles}

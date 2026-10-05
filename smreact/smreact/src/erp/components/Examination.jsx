@@ -872,6 +872,12 @@ const [subjects, setSubjects] = useState([]);
   const [resCardCtx, setResCardCtx]     = useState(null); // { examId, key, studentId }
   const [resCardMarks, setResCardMarks] = useState(null); // real per-subject marks for the single card
   const [resConfirmPublish, setResConfirmPublish] = useState(null); // { key, className, released }
+  /* Date Sheet / Syllabus publish — abhi UI-only (frontend state). Backend
+     publish/visibility endpoint milne par in toggles ko wahan wire kar dena
+     (Result ke handleConfirmPublish ki tarah). Key = row key. */
+  const [dsReleased, setDsReleased]   = useState({}); // { [dsRowKey]: true }
+  const [sylReleased, setSylReleased] = useState({}); // { [sylRowKey]: true }
+  const [dsSylConfirmPublish, setDsSylConfirmPublish] = useState(null); // { kind:'datesheet'|'syllabus', key, className, released }
   const [resTotalMarksCtx, setResTotalMarksCtx]   = useState(null); // { examId, key, className }
   const [resConfirmDelete, setResConfirmDelete]   = useState(null); // { examId, key, className }
   const [resRemarksCtx, setResRemarksCtx]         = useState(null); // { examId, key, studentId }
@@ -2208,6 +2214,32 @@ const branchID = sessionStorage.getItem('branchID');
   }
 };
 
+/* Date Sheet / Syllabus publish toggle — backend release API call karta hai
+   (query params, isRelease true/false), phir local badge state update. */
+const handleDsSylConfirmPublish = async () => {
+  if (!dsSylConfirmPublish) return;
+  if (isOtherSession) { toast('Method not allowed', 'error'); setDsSylConfirmPublish(null); return; }
+  const { kind, key, released, classID, sectionID, selectExam, term } = dsSylConfirmPublish;
+  const next = !released;   // true = publish, false = unpublish
+  const noun = kind === 'syllabus' ? 'Syllabus' : 'Date sheet';
+  try {
+    if (kind === 'syllabus') {
+      await postSylRelease(classID, sectionID, selectExam, term, next);
+    } else {
+      await postDsRelease(classID, sectionID, selectExam, term, next);
+    }
+  } catch (err) {
+    console.error('Publish update failed:', err);
+    toast(`Could not update ${noun.toLowerCase()} publish status. Please try again.`, 'error');
+    setDsSylConfirmPublish(null);
+    return;
+  }
+  const setReleased = kind === 'syllabus' ? setSylReleased : setDsReleased;
+  setReleased(prev => ({ ...prev, [key]: next }));
+  toast(released ? `${noun} unpublished` : `${noun} published!`, 'success');
+  setDsSylConfirmPublish(null);
+};
+
 // Update fetchSignatureSetup function
 async function fetchSignatureSetup() {
   try {
@@ -2672,6 +2704,14 @@ const dsPickExam = async (id) => {
       ...prev,
       [id]: { ...(prev[id] || {}), ...dateSheetsMap },
     }));
+
+    // Publish (release) state — har class ke liye forStudent GET se (data = published)
+    const dsRelEntries = await Promise.all(classes.map(async (cls, idx) => {
+      const key = `cls_${id}_${cls.sectionID}_${idx}`;
+      const released = await fetchDsReleaseState(cls.classID, cls.sectionID, selectExamId, termID);
+      return [key, released];
+    }));
+    setDsReleased(prev => ({ ...prev, ...Object.fromEntries(dsRelEntries) }));
   }
 };
 const sylPickExam = async (id) => {
@@ -2737,7 +2777,15 @@ const sylPickExam = async (id) => {
         ...prev,
         [id]: { ...(prev[id] || {}), ...syllabusMap },
       }));
-      
+
+      // Publish (release) state — har class ke liye forStudent GET se (data = published)
+      const sylRelEntries = await Promise.all(classes.map(async (cls, idx) => {
+        const key = `scls_${id}_${cls.sectionID}_${idx}`;
+        const released = await fetchSylReleaseState(cls.classID, cls.sectionID, selectExamId, termID);
+        return [key, released];
+      }));
+      setSylReleased(prev => ({ ...prev, ...Object.fromEntries(sylRelEntries) }));
+
       console.log(`Loaded syllabus for ${classes.length} classes`);
     }
   }
@@ -2989,6 +3037,77 @@ return [];
     return [];
   }
 }
+/* ═══════════════════════════════════════════════════════════════════
+   Date Sheet / Syllabus — PUBLISH (release) wiring.
+
+   Publish state GET se pata chalta hai: "forStudent" API me data aaya →
+   published (released), khali → unpublished. (Student/parent ko wahi dikhta
+   hai jo release ho.)
+     GET  /api/getdatesheetbybranchclassidtermidforStudent   → array
+     GET  /api/getexamsyllabusbybranchclassandtermsforStudent → paged {data}
+   Publish/unpublish POST (query params, koi body nahi):
+     POST /api/updateexamdatesheetrelease?...&isRelease=true|false
+     POST /api/updateexamsyllabusrelease?...&isRelease=true|false
+   Params existing (non-student) GET calls jaise hi: datesheet→termID,
+   syllabus→Terms (dono ke liye exam ka termID bhejte hain, ExamID=selectExam). */
+async function fetchDsReleaseState(classID, sectionID, selectExam, termID) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const params = new URLSearchParams({
+      branchID: String(branchID), classID: String(classID), termID: String(termID),
+      ExamID: String(selectExam), sectionID: String(sectionID),
+    });
+    const res = await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermidforStudent?${params.toString()}`),
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    const data = await res.json().catch(() => null);
+    const rows = Array.isArray(data) ? data : (data?.data || data?.result || []);
+    return (rows || []).length > 0;   // data hai → published
+  } catch (e) { return false; }
+}
+
+async function fetchSylReleaseState(classID, sectionID, selectExam, termName) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const params = new URLSearchParams({
+      branchID: String(branchID), classID: String(classID), Terms: String(termName),
+      ExamID: String(selectExam), sectionID: String(sectionID), pageNo: '1',
+    });
+    const res = await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandtermsforStudent?${params.toString()}`),
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    const data = await res.json().catch(() => null);
+    const rows = data?.data || data?.result || (Array.isArray(data) ? data : []);
+    return (rows || []).length > 0;   // data hai → published
+  } catch (e) { return false; }
+}
+
+async function postDsRelease(classID, sectionID, selectExam, termID, isRelease) {
+  const branchID = sessionStorage.getItem('branchID');
+  const token = sessionStorage.getItem('token');
+  const params = new URLSearchParams({
+    branchID: String(branchID), classID: String(classID), termID: String(termID),
+    ExamID: String(selectExam), sectionID: String(sectionID), isRelease: String(!!isRelease),
+  });
+  const res = await fetch(buildUrl(`/api/updateexamdatesheetrelease?${params.toString()}`),
+    { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (!res.ok) throw new Error('Could not update date sheet publish status');
+  return res.json().catch(() => null);
+}
+
+async function postSylRelease(classID, sectionID, selectExam, termName, isRelease) {
+  const branchID = sessionStorage.getItem('branchID');
+  const token = sessionStorage.getItem('token');
+  const params = new URLSearchParams({
+    branchID: String(branchID), classID: String(classID), Terms: String(termName),
+    ExamID: String(selectExam), sectionID: String(sectionID), isRelease: String(!!isRelease),
+  });
+  const res = await fetch(buildUrl(`/api/updateexamsyllabusrelease?${params.toString()}`),
+    { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (!res.ok) throw new Error('Could not update syllabus publish status');
+  return res.json().catch(() => null);
+}
+
 const dsOpenEdit = async (classKey, className, classID, sectionID) => {
   // Fetch existing date sheet data from API
   const existingRows = await getDateSheetData(classID, sectionID, dsExamId, selectedTermId);
@@ -4423,6 +4542,7 @@ useEffect(() => {
             <div className="ds-th">Class Name</div>
             <div className="ds-th">Section</div>
             <div className="ds-th">Status</div>
+            <div className="ds-th">Publish</div>
             <div className="ds-th">Edit</div>
             <div className="ds-th">Reports</div>
             <div className="ds-th" style={{ textAlign: 'right' }}>Actions</div>
@@ -4456,6 +4576,28 @@ useEffect(() => {
                     {hasDates
                       ? <span className="ds-has-badge"><i className="fa-solid fa-circle-check"></i> {dsRows.length} Subject{dsRows.length !== 1 ? 's' : ''}</span>
                       : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
+                  </div>
+                  <div className="ds-td" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {(() => {
+                      const isRel = !!dsReleased[key];
+                      return (<>
+                        <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
+                          <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+                          {isRel ? 'Released' : 'Not Released'}
+                        </span>
+                        <Tooltip text={!canDsEdit ? 'You do not have permission to publish date sheets' : (isRel ? 'Unpublish this date sheet' : 'Publish this date sheet')}>
+                          <button
+                            className={`res-publish-btn${isRel ? ' released' : ''}`}
+                            disabled={isOtherSession || !canDsEdit}
+                            style={(isOtherSession || !canDsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                            onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (!isRel && !hasDates) { toast('No datesheet found, please add datesheet', 'warning'); return; } setDsSylConfirmPublish({ kind: 'datesheet', key, className, released: isRel, classID: cls.classID, sectionID: cls.sectionID, selectExam: dsCurrentExam?.selectExam, term: dsCurrentExam?.termID }); }}
+                          >
+                            <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                            {isRel ? 'Unpublish' : 'Publish'}
+                          </button>
+                        </Tooltip>
+                      </>);
+                    })()}
                   </div>
                   <div className="ds-td" onClick={e => e.stopPropagation()}>
                    <Tooltip text={!canDsEdit ? 'You do not have permission to edit date sheets' : `Edit date sheet for ${className}`}>
@@ -4654,6 +4796,7 @@ useEffect(() => {
         <div className="syl-th">Class Name</div>
         <div className="syl-th">Section</div>
         <div className="syl-th">Status</div>
+        <div className="syl-th">Publish</div>
         <div className="syl-th">Edit</div>
         <div className="syl-th">Report</div>
         <div className="syl-th" style={{ textAlign: 'right' }}>Actions</div>
@@ -4688,6 +4831,28 @@ useEffect(() => {
                 <span className={`syl-status-badge ${ovSt.cls}`}>
                   <i className={`fa-solid ${ovSt.icon}`}></i> {ovSt.label}
                 </span>
+              </div>
+              <div className="syl-td" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {(() => {
+                  const isRel = !!sylReleased[key];
+                  return (<>
+                    <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
+                      <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+                      {isRel ? 'Released' : 'Not Released'}
+                    </span>
+                    <Tooltip text={!canSylEdit ? 'You do not have permission to publish syllabus' : (isRel ? 'Unpublish this syllabus' : 'Publish this syllabus')}>
+                      <button
+                        className={`res-publish-btn${isRel ? ' released' : ''}`}
+                        disabled={isOtherSession || !canSylEdit}
+                        style={(isOtherSession || !canSylEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                        onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (!isRel && !hasSyl) { toast('No syllabus found, please add syllabus', 'warning'); return; } setDsSylConfirmPublish({ kind: 'syllabus', key, className, released: isRel, classID: cls.classID, sectionID: cls.sectionID, selectExam: sylCurrentExam?.selectExam, term: sylCurrentExam?.termID }); }}
+                      >
+                        <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                        {isRel ? 'Unpublish' : 'Publish'}
+                      </button>
+                    </Tooltip>
+                  </>);
+                })()}
               </div>
               <div className="syl-td" onClick={e => e.stopPropagation()}>
                 <Tooltip text={!canSylEdit ? 'You do not have permission to edit syllabus' : `Edit syllabus for ${className}`}>
@@ -7027,6 +7192,58 @@ onClick={async () => {
           </div>
         </div>
       )}
+
+      {/* ── Date Sheet / Syllabus — Publish confirm ── */}
+      {dsSylConfirmPublish && (() => {
+        const { kind, className, released } = dsSylConfirmPublish;
+        const noun = kind === 'syllabus' ? 'syllabus' : 'date sheet';
+        const Noun = kind === 'syllabus' ? 'Syllabus' : 'Date Sheet';
+        return (
+        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsSylConfirmPublish(null); }}>
+          <div className="confirm-dialog">
+            <div className="confirm-glow" style={{ background: released
+              ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+              : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+            <div className="confirm-hero">
+              <div className="confirm-ring">
+                <div className="confirm-icon-wrap" style={{
+                  background: released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
+                  color: released ? '#DC2626' : '#1E40AF',
+                }}>
+                  <i className={`fa-solid ${released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                </div>
+              </div>
+            </div>
+            <div className="confirm-body">
+              <div className="confirm-title">{released ? `Unpublish ${Noun}?` : `Publish ${Noun}?`}</div>
+              <div className="confirm-msg" dangerouslySetInnerHTML={{
+                __html: released
+                  ? `Hide the ${noun} for <strong>${className}</strong> from students and parents?`
+                  : `Release the ${noun} for <strong>${className}</strong> to students and parents?`,
+              }} />
+              <div className="confirm-hint">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>{released
+                  ? `Students and parents will lose access to this ${noun}.`
+                  : `Once published, this ${noun} will be visible on the student portal.`}
+                </span>
+              </div>
+            </div>
+            <div className="confirm-footer">
+              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setDsSylConfirmPublish(null)}>Cancel</button></Tooltip>
+              <Tooltip text={released ? 'Confirm unpublish' : 'Confirm publish'}>
+                <button
+                  className={`confirm-btn confirm-btn--confirm${released ? '' : ' primary-style'}`}
+                  onClick={handleDsSylConfirmPublish}
+                >
+                  {released ? 'Yes, Unpublish' : 'Yes, Publish'}
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* ── Combined Assessment — Delete confirm ── */}
       {cbrConfirmDelete && (
@@ -14533,7 +14750,7 @@ const EXAM_CSS = `
 
 .ds-table-head {
   display:grid;
-  grid-template-columns: 60px 1.4fr 60px 120px 110px 220px 90px;
+  grid-template-columns: 60px 1.4fr 60px 120px 215px 110px 220px 90px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -14547,7 +14764,7 @@ const EXAM_CSS = `
 .ds-row-wrap:last-child .ds-detail.open { border-radius:0 0 10px 10px; }
 .ds-row {
   display:grid;
-  grid-template-columns: 60px 1.4fr 60px 120px 110px 220px 90px;
+  grid-template-columns: 60px 1.4fr 60px 120px 215px 110px 220px 90px;
   align-items:center; gap:10px;
   padding:13px 14px;
   background:var(--bg-card);
@@ -14770,7 +14987,7 @@ const EXAM_CSS = `
   .ds-edit-field-wide { grid-column: 1 / -1; }
 }
 @media (max-width: 820px) {
-  .ds-table-head, .ds-row { grid-template-columns: 50px 1.4fr 60px 110px 100px 200px 80px; }
+  .ds-table-head, .ds-row { grid-template-columns: 50px 1.4fr 60px 110px 200px 100px 200px 80px; }
   .ds-subj-table-head, .ds-subj-row { grid-template-columns: 38px 1.4fr 1fr 1fr 1fr; }
 }
 @media (max-width: 640px) {
@@ -14801,7 +15018,7 @@ body.dark .ds-exam-btn:hover { background:rgba(30,64,175,.15); border-color:#1E4
    ═══════════════════════════════════════════════════════════════════ */
 .syl-table-head {
   display:grid;
-  grid-template-columns: 60px 1.4fr 60px 130px 90px 100px 90px;
+  grid-template-columns: 60px 1.4fr 60px 130px 215px 90px 100px 90px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -14815,7 +15032,7 @@ body.dark .ds-exam-btn:hover { background:rgba(30,64,175,.15); border-color:#1E4
 .syl-row-wrap:last-child .syl-detail.open { border-radius:0 0 10px 10px; }
 .syl-row {
   display:grid;
-  grid-template-columns: 60px 1.4fr 60px 130px 90px 100px 90px;
+  grid-template-columns: 60px 1.4fr 60px 130px 215px 90px 100px 90px;
   align-items:center; gap:10px;
   padding:13px 14px;
   background:var(--bg-card);
