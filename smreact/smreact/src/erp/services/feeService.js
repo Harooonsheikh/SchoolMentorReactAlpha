@@ -2569,6 +2569,31 @@ export async function deleteChallanById(id) {
   return deleteChallanInstallment(id);
 }
 
+/* Ek class/section ke us mahine ke SAARE challans ek call me delete (challans + account
+   entries + installments + detail rows, server khud).
+   DELETE /api/BranchLedger/bulk-delete-by-class?branchId&gradeId&sectionId&month&year
+   Response: { success, message: "Bulk delete done: 5 challans, …", data: null } */
+export async function bulkDeleteChallansByClass({ gradeId, sectionId, month, year } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const qs = new URLSearchParams({
+    branchId: String(branchID),
+    gradeId: String(Number(gradeId) || 0),
+    sectionId: String(Number(sectionId) || 0),
+    month: String(Number(month) || 0),
+    year: String(Number(year) || 0),
+  });
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/bulk-delete-by-class?${qs}`),
+    { method: 'DELETE', headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not delete challans');
+  }
+  invalidateMonthChallans();
+  return json;
+}
+
 export async function deleteChallanInstallment(ledgerId) {
   const res = await fetch(
     buildUrl(`/api/BranchLedger/delete-challan-installment/${ledgerId}`),

@@ -41,6 +41,10 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
   let advanceTotal = 0, advanceStudentCount = 0;
   let advanceAdjustmentTotal = 0, advanceAdjustmentStudentCount = 0;
   const receivedRows = [], discountRows = [], advanceRows = [], advanceAdjustmentRows = [];
+  /* Discount Given During Receiving REPORT — sirf receiving ke waqt di gayi discount
+     (installment ka recvDiscount), Discount Manager wala challan discount nahi. Card ki
+     raqam get-dashboard ke ReceivedDiscount se aati hai; report isi ke students dikhati hai. */
+  const receivingDiscountRows = [];
 
   rows.forEach(({ c = {}, s = {}, m }) => {
     if (!m || !m.billed) return; // billed students only — same as report totals
@@ -70,6 +74,23 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
         });
       }
     });
+
+    (m.recs || []).forEach((rec) => (rec.detailRows || []).forEach((r) => {
+      const give = (row) => Math.max(0, round(row.recvDiscount));
+      const insts = Array.isArray(r.installments) ? r.installments.filter((i) => give(i) > 0) : [];
+      const head = r.subHead || r.head || '—';
+      const original = round(r.challanAmount);
+      const finalPayable = Math.max(0, round((Number(r.challanAmount) || 0) - (Number(r.discount) || 0)));
+      const push = (amt, inst) => receivingDiscountRows.push({
+        reg: s.reg, studentName: s.name, cls: c.cls, sec: c.sec,
+        head, original, discountGiven: amt, finalPayable,
+        givenBy: '—',
+        date: String((inst && inst.receivedDate) || rec.receivedDate || '').slice(0, 10),
+        time: String((inst && (inst.modifiedAt || inst.createdAt)) || '').slice(11, 16),
+      });
+      if (insts.length) insts.forEach((i) => push(give(i), i));
+      else if (give(r) > 0) push(give(r), null);
+    }));
 
     /* Advance Payments Received — mirror ReportPanelAdvanceFee: negative net
        across all heads = carried-forward credit. */
@@ -128,6 +149,8 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
   const receivedPct = netFinal > 0 ? Math.round((receivedTotal / netFinal) * 100) : 0;
   const pendingPct  = netFinal > 0 ? Math.round((pendingFinal / netFinal) * 100) : 0;
   const discountStudentCount = new Set(discountRows.map((r) => r.reg)).size;
+  const receivingDiscountTotal = receivingDiscountRows.reduce((a, r) => a + r.discountGiven, 0);
+  const receivingDiscountStudentCount = new Set(receivingDiscountRows.map((r) => r.reg)).size;
 
   return {
     currentMonthTotal: round(currentMonthTotal), challansGenerated, totalStudents,
@@ -135,6 +158,7 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
     netReceivableTotal: netFinal,
     receivedRows, receivedTotal: round(receivedTotal), receivedStudentCount, receivedPct,
     discountRows, discountTotal: round(discountTotal), discountStudentCount,
+    receivingDiscountRows, receivingDiscountTotal: round(receivingDiscountTotal), receivingDiscountStudentCount,
     advanceRows, advanceTotal: round(advanceTotal), advanceStudentCount,
     advanceAdjustmentRows, advanceAdjustmentTotal: round(advanceAdjustmentTotal), advanceAdjustmentStudentCount,
     pendingTotal: pendingFinal, pendingPct,

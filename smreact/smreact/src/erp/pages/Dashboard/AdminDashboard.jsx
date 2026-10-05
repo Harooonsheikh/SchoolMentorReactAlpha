@@ -537,6 +537,21 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   );
   const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} ${feeYear}`;
 
+  /* get-dashboard ka FeeAnalytics — CHUNE HUE fee mahine ke liye (upar wala `dash` sirf
+     current month ka hai, month badalne par ghalat hota). Do values yahin se:
+       ReceivedDiscount → "Discount Given During Receiving" card (receiving-time discount)
+       DiscountGiven    → "Current Month Fee Position" ki line "with discounted amount …" */
+  const [feeApi, setFeeApi] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    dashboardService.getDashboard(feeMonthIdx + 1, feeYear)
+      .then((d) => { if (alive) setFeeApi((d && d.FeeAnalytics) || {}); })
+      .catch(() => { if (alive) setFeeApi({}); });
+    return () => { alive = false; };
+  }, [feeMonthIdx, feeYear]);
+  const apiReceivedDiscount = Number(feeApi?.ReceivedDiscount) || 0;
+  const apiDiscountGiven = Number(feeApi?.DiscountGiven) || 0;
+
   /* ─── Fee Analytics Overview — graphical summary above the cards.
      Same feeExtras object the 8 cards below already read from (no
      second data-fetch, no duplicate calc) — this just reshapes those
@@ -618,7 +633,13 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     toast('Fee Received Report — sent to print.', 'success');
   };
   const downloadFeeDiscountReport = () => {
-    const html = buildDiscountGivenDashboardReportHTML(feeExtras, feeMonthLabel);
+    /* Sirf RECEIVING-time discount wale students (card ka ReceivedDiscount) — Discount
+       Manager wala challan discount is report me nahi. */
+    const html = buildDiscountGivenDashboardReportHTML({
+      discountRows: feeExtras.receivingDiscountRows || [],
+      discountTotal: feeExtras.receivingDiscountTotal || 0,
+      discountStudentCount: feeExtras.receivingDiscountStudentCount || 0,
+    }, feeMonthLabel);
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
     w.document.write(html);
@@ -1187,7 +1208,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <div className="fc-amount fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.currentMonthTotal} duration={CHART_ANIM_MS} /></div>
               <div className="fa-formula">
                 <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-                <span>Generated challans for {feeMonthLabel}</span>
+                {/* DiscountGiven = get-dashboard FeeAnalytics (challan banate waqt ka discount). */}
+                <span>Generated challans for {feeMonthLabel} with discounted amount PKR {apiDiscountGiven.toLocaleString('en-PK')}</span>
               </div>
               <div className="fc-divider" />
               <div className="fa-meta-rows">
@@ -1322,19 +1344,17 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 <div className="fc-title">Discount Given During Receiving</div>
                 <FeeAnalyticsInfoButton cardKey="discountGiven" />
               </div>
-              <div className="fc-amount fc-amount--amber fa-amount--lg"><AnimatedNumber prefix="PKR " value={feeExtras.discountTotal} duration={CHART_ANIM_MS} /></div>
+              {/* ReceivedDiscount = get-dashboard FeeAnalytics (sirf receiving ke waqt di gayi discount);
+                  pehle yahan challan wala discount (feeExtras.discountTotal) dikh raha tha. */}
+              <div className="fc-amount fc-amount--amber fa-amount--lg"><AnimatedNumber prefix="PKR " value={apiReceivedDiscount} duration={CHART_ANIM_MS} /></div>
               <div className="fa-formula">
                 <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
                 <span>Additional discounts provided during payment receiving</span>
               </div>
               <div className="fc-divider" />
               <div className="fa-meta-rows">
-                <div className="fa-meta-row">
-                  <span className="fa-meta-lbl">
-                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students Given Discount
-                  </span>
-                  <span className="fa-meta-val fa-meta-val--amber">{feeExtras.discountStudentCount}</span>
-                </div>
+                {/* "Students Given Discount" line hata di (user request) — card ka amount ab
+                    API ka ReceivedDiscount hai, jab ke ye count purane challan-discount se tha. */}
                 <div className="fa-meta-row fa-meta-row--muted">
                   <i className="fa-solid fa-arrow-down" aria-hidden="true"></i>
                   <span>Reduces outstanding receivable</span>

@@ -1411,9 +1411,13 @@ function FamilyTreeChallansList({ toast }) {
   /* Pichhle mahino ka baqaya / advance — { [studentID]: { dues, advance } }.
      Isse naya challan banane se PEHLE hi bachche ke dues nazar aa jaate hain. */
   const [prevOutMap, setPrevOutMap] = useState({});
+  /* Is mahine ka challan data load ho chuka? Na ho to list ki jagah LOADER (class/row ke
+     0 / khali figures nahi). Save/delete ke baad refresh par list chhupti nahi. */
+  const [loadedKey, setLoadedKey] = useState('');
+  const viewKey = `${appliedMonth}|${appliedYear}`;
   const loadLedgers = useCallback(async () => {
     const fams = families;
-    if (!fams || !fams.length) { setFigMap({}); setIdMap({}); setRecMap({}); setGenSet(new Set()); return; }
+    if (!fams || !fams.length) { setFigMap({}); setIdMap({}); setRecMap({}); setGenSet(new Set()); setLoadedKey(`${appliedMonth}|${appliedYear}`); return; }
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     const pairs = fams
       .flatMap(f => (f.children || []).map(ch => ({ f, ch })))
@@ -1474,6 +1478,8 @@ function FamilyTreeChallansList({ toast }) {
       setRecMap({});
       setGenSet(new Set());
       setPrevOutMap({});
+    } finally {
+      setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
   }, [families, appliedMonth, appliedYear, toast]);
   useEffect(() => { loadLedgers(); }, [loadLedgers]);
@@ -1950,6 +1956,8 @@ function FamilyTreeChallansList({ toast }) {
 
         {famsLoading ? (
           <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading families…</div>
+        ) : (list.length > 0 && loadedKey !== viewKey) ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading challans…</div>
         ) : list.length === 0 ? (
           <div className="fee-empty">No families configured.</div>
         ) : list.map((f, i) => {
@@ -2394,6 +2402,10 @@ function FeeChallansList({ toast }) {
   /* Pull the month's challans and index them onto the class|reg keys. Matches
      each challan to a student by studentID (falling back to the challan's own
      grade/section/registration), so the list reflects real generated data. */
+  /* Is mahine ka challan data load ho chuka? Na ho to list ki jagah LOADER (class/row ke
+     0 / khali figures nahi). Save/delete ke baad refresh par list chhupti nahi. */
+  const [loadedKey, setLoadedKey] = useState('');
+  const viewKey = `${appliedMonth}|${appliedYear}`;
   const loadChallans = useCallback(async () => {
     if (!studentsMap || Object.keys(studentsMap).length === 0) return;
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
@@ -2464,6 +2476,8 @@ function FeeChallansList({ toast }) {
       setChallanMap({});
       setCoverMap({});
       setPrevOutMap({});
+    } finally {
+      setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
   }, [studentsMap, appliedMonth, appliedYear, toast]);
 
@@ -3030,12 +3044,13 @@ function FeeChallansList({ toast }) {
         ? 'Warning: one or more challans already have received amounts. Deleting will remove those payments from the ledger. This cannot be undone.'
         : 'This action cannot be undone.',
       onConfirm: async () => {
-        const ids = recs.map(r => r.id).filter(id => id != null);
         try {
-          for (const id of ids) {
-            await feeService.deleteChallanById(id);
-          }
-          toast('Generated challans removed', 'success');
+          /* EK call me poori class/section ke is mahine ke challans — bulk-delete-by-class
+             (pehle har challan ki alag DELETE call jaati thi). */
+          const res = await feeService.bulkDeleteChallansByClass({
+            gradeId: c._gradeId, sectionId: c._sectionId, month: monthIdx + 1, year: Number(appliedYear),
+          });
+          toast(res?.message || 'Generated challans removed', 'success');
         } catch (e) {
           toast(e.message || 'Could not delete challans', 'error');
         } finally {
@@ -3239,6 +3254,8 @@ function FeeChallansList({ toast }) {
 
         {classesLoading ? (
           <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+        ) : (Object.keys(studentsMap || {}).length > 0 && loadedKey !== viewKey) ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading challans…</div>
         ) : classes.length === 0 ? (
           <div className="fee-empty">No classes available.</div>
         ) : classes.map((c, i) => {
@@ -3613,16 +3630,16 @@ function BulkGenerateModal({
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
   }, [typeOpen]);
 
-  /* Reset state every time the modal opens. Heads are pre-selected (all of
-     them) so the challan is ready to generate without the user having to open
-     the "Select Fee Heads" dropdown first — they can still deselect any head. */
+  /* Reset state every time the modal opens. Heads ab KOI pre-selected nahi (user request) —
+     user "Select Fee Heads" se khud chune kaunse heads challan me jayen; khali par validate()
+     "Select at least one fee head" rok deta hai. */
   useEffect(() => {
     if (!open) return;
     cancelRef.current = false;
     setMonth(defaultMonth || FEE_MONTHS[0]);
     setType('1');
     setTypeOpen(false);
-    setPicked((heads || []).map(h => h.name));
+    setPicked([]);   // koi head pehle se tick nahi — user khud chune
     setMsOpen(false);
     setIssueDate(todayISO());
     setDueDate(plusDays(10));
@@ -3968,7 +3985,7 @@ function BulkGenerateModal({
             <span>
               {familyMode
                 ? <>Combined family challan pulls each child's <strong>fee + transport − discount</strong> from the family roster automatically.</>
-                : <>Fee heads are loaded from the class fee structure. Leaving heads unselected will include <strong>all standard heads</strong>.</>}
+                : <>Fee heads are loaded from the class fee structure. <strong>Select the fee heads</strong> to include in this challan — at least one is required.</>}
             </span>
           </div>
 
@@ -7185,6 +7202,10 @@ function FeeReceivingIndividual({ toast }) {
      current view me Pending se wasool hota hai). */
   const isPastView = (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
 
+  /* Is mahine ka challan data load ho chuka? Na ho to list ki jagah LOADER (class/row ke
+     0 / khali figures nahi). Save/delete ke baad refresh par list chhupti nahi. */
+  const [loadedKey, setLoadedKey] = useState('');
+  const viewKey = `${appliedMonth}|${appliedYear}`;
   const loadChallans = useCallback(async () => {
     if (!studentsMap || Object.keys(studentsMap).length === 0) return;
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
@@ -7289,6 +7310,8 @@ function FeeReceivingIndividual({ toast }) {
       setChallanMap({});
       setPrevOutMap({});
       setPriorByStudent({});
+    } finally {
+      setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
   }, [studentsMap, appliedMonth, appliedYear, toast]);
 
@@ -7977,6 +8000,8 @@ function FeeReceivingIndividual({ toast }) {
 
         {classesLoading ? (
           <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+        ) : (Object.keys(studentsMap || {}).length > 0 && loadedKey !== viewKey) ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading challans…</div>
         ) : classes.length === 0 ? (
           <div className="fee-empty">No classes available.</div>
         ) : classes.map((c, i) => {
@@ -8509,6 +8534,10 @@ function FamilyTreeReceiving({ toast }) {
     return payments;
   }, [receiptsList, monthIdx, challanByStudent]);
 
+  /* Is mahine ka challan data load ho chuka? Na ho to list ki jagah LOADER (class/row ke
+     0 / khali figures nahi). Save/delete ke baad refresh par list chhupti nahi. */
+  const [loadedKey, setLoadedKey] = useState('');
+  const viewKey = `${appliedMonth}|${appliedYear}`;
   const loadFamilyChallans = useCallback(async () => {
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     try {
@@ -8551,7 +8580,9 @@ function FamilyTreeReceiving({ toast }) {
         if (dropped) setChallanByStudent(map2);
       } catch (e) { /* optional */ }
       setPrevOutMap(prevOut);
-    } catch { setChallanByStudent({}); setPrevOutMap({}); setPriorByStudent({}); }
+    } catch { setChallanByStudent({}); setPrevOutMap({}); setPriorByStudent({}); } finally {
+      setLoadedKey(`${appliedMonth}|${appliedYear}`);
+    }
   }, [appliedMonth, appliedYear]);
   useEffect(() => { loadFamilyChallans(); }, [loadFamilyChallans]);
 
@@ -9317,6 +9348,8 @@ function FamilyTreeReceiving({ toast }) {
 
         {famsLoading ? (
           <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading families…</div>
+        ) : (list.length > 0 && loadedKey !== viewKey) ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading challans…</div>
         ) : list.length === 0 ? (
           <div className="fee-empty">No families configured.</div>
         ) : list.map((f, i) => {
