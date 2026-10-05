@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   PAY_SCHOOLS, INITIAL_PAY_SETUP, RECEIVING_METHODS,
   monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, todayISO, deriveRow, trialInfo,
+  SCHOOL_MENTOR_BANK, INITIAL_OT_CHALLANS, INITIAL_OT_RECEIVING,
 } from './paymentData';
 import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
 
@@ -101,6 +102,14 @@ export default function SchoolPayment({ toast }) {
   const [modal, setModal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  /* ── One-Time Payments (new school signups) ──────────────────────────
+     Alag workflow, frontend-only (koi backend nahi): naye signup ka ek
+     dafa ka challan, uski receiving aur report. Monthly system (upar wali
+     live API) se bilkul juda — state yahin component me rehti hai. */
+  const [otChallans, setOtChallans] = useState(INITIAL_OT_CHALLANS);
+  const [otRecvStore, setOtRecvStore] = useState(INITIAL_OT_RECEIVING);
+  const [otSeq, setOtSeq] = useState(INITIAL_OT_CHALLANS.length + 1);
 
   /* toast prop har render par naya function ho sakta hai — loader ko dobara
      chalane se rokne ke liye ref me rakha hai (wahi tareeqa SchoolStatus ka). */
@@ -583,6 +592,48 @@ export default function SchoolPayment({ toast }) {
     }
   };
 
+  /* ── One-Time Challans (new school signups) — frontend-only ── */
+  const addOtChallan = (data) => {
+    const year = new Date().getFullYear();
+    const challanNumber = `OT-${year}-${String(otSeq).padStart(4, '0')}`;
+    const netPayable = data.formula === 'lumpsum' ? data.lumpAmount : data.totalStudents * data.perStudentPrice;
+    const rec = {
+      id: `ot-${Date.now()}`, challanNumber,
+      schoolName: data.schoolName, invoiceDate: data.invoiceDate, challanDate: data.challanDate,
+      formula: data.formula,
+      totalStudents: data.formula === 'perstudent' ? data.totalStudents : 0,
+      perStudentPrice: data.formula === 'perstudent' ? data.perStudentPrice : 0,
+      lumpAmount: data.formula === 'lumpsum' ? data.lumpAmount : 0,
+      netPayable,
+    };
+    setOtChallans((prev) => [rec, ...prev]);
+    setOtSeq((n) => n + 1);
+    setModal(null);
+    toast?.(`One-time challan ${challanNumber} generated for ${data.schoolName}`, 'success');
+  };
+  const deleteOtChallan = (id) => {
+    setOtChallans((prev) => prev.filter((c) => c.id !== id));
+    setOtRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setModal(null); toast?.('One-time challan deleted', 'info');
+  };
+
+  /* ── One-Time Receiving ── */
+  const saveOtReceiving = (id, rec) => {
+    setOtRecvStore((prev) => {
+      const existing = prev[id];
+      const history = existing && existing.history ? [...existing.history] : [];
+      history.push({ amount: rec.receivedAmount, via: rec.via, date: rec.date });
+      return { ...prev, [id]: { ...rec, history } };
+    });
+    setModal(null);
+    const c = otChallans.find((x) => x.id === id);
+    toast?.(`Payment recorded for ${c ? c.schoolName : 'challan'}`, 'success');
+  };
+  const deleteOtReceiving = (id) => {
+    setOtRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setModal(null); toast?.('Receiving record deleted', 'info');
+  };
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -615,16 +666,23 @@ export default function SchoolPayment({ toast }) {
           onGenerate={(s) => setModal({ type: 'genChallan', school: s })}
           onDownload={(s) => { ensureBanks(); setModal({ type: 'slip', school: s }); }}
           onDelete={(s) => setModal({ type: 'delChallan', school: s })}
-          onBulk={() => setModal({ type: 'bulk' })} />
+          onBulk={() => setModal({ type: 'bulk' })}
+          otChallans={otChallans}
+          onAddOt={() => setModal({ type: 'addOtChallan' })}
+          onDownloadOt={(c) => setModal({ type: 'otSlip', challan: c })}
+          onDeleteOt={(c) => setModal({ type: 'delOtChallan', challan: c })} />
       )}
       {tab === 'receiving' && (
         <ReceivingTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} prevDuesStore={prevDuesStore} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving}
           period={period} onPeriod={setPeriod}
           onReceive={(s) => setModal({ type: 'receive', school: s })}
           onDelete={(s) => setModal({ type: 'delRecv', school: s })}
-          toast={toast} />
+          toast={toast}
+          otChallans={otChallans} otRecvStore={otRecvStore}
+          onReceiveOt={(c) => setModal({ type: 'otReceive', challan: c })}
+          onDeleteOt={(c) => setModal({ type: 'delOtRecv', challan: c })} />
       )}
-      {tab === 'report' && <ReportTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} period={period} onPeriod={setPeriod} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving} />}
+      {tab === 'report' && <ReportTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} period={period} onPeriod={setPeriod} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving} otChallans={otChallans} otRecvStore={otRecvStore} />}
 
       {/* ── MODALS ── */}
       {modal?.type === 'setup' && <SetupModal school={modal.school} setup={payStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onSave={saveSetup} toast={toast} />}
@@ -634,6 +692,13 @@ export default function SchoolPayment({ toast }) {
       {modal?.type === 'delChallan' && <ConfirmDel title="Delete Challan?" sub="This will permanently delete the generated challan for this school. If a payment receiving is recorded against it, delete that receiving record first." confirmText="Delete Challan" onConfirm={() => deleteChallan(modal.school.id)} onClose={() => setModal(null)} />}
       {modal?.type === 'receive' && <ReceiveModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} prevRecv={recvStore[modal.school.id]} period={period} saving={saving} onClose={() => setModal(null)} onSave={saveReceiving} toast={toast} />}
       {modal?.type === 'delRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the payment receiving record for "${modal.school.name}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteReceiving(modal.school.id)} onClose={() => setModal(null)} />}
+
+      {/* ── One-Time Payment modals ── */}
+      {modal?.type === 'addOtChallan' && <AddOtChallanModal onClose={() => setModal(null)} onSave={addOtChallan} toast={toast} />}
+      {modal?.type === 'otSlip' && <OtSlipModal challan={modal.challan} onClose={() => setModal(null)} />}
+      {modal?.type === 'delOtChallan' && <ConfirmDel title="Delete One-Time Challan?" sub={`This will permanently delete the one-time challan "${modal.challan.challanNumber}" for ${modal.challan.schoolName}.`} confirmText="Delete Challan" onConfirm={() => deleteOtChallan(modal.challan.id)} onClose={() => setModal(null)} />}
+      {modal?.type === 'otReceive' && <OtReceiveModal challan={modal.challan} prevRecv={otRecvStore[modal.challan.id]} onClose={() => setModal(null)} onSave={saveOtReceiving} toast={toast} />}
+      {modal?.type === 'delOtRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the one-time payment receiving record for "${modal.challan.schoolName}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteOtReceiving(modal.challan.id)} onClose={() => setModal(null)} />}
     </div>
   );
 }
@@ -933,7 +998,8 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
 }
 
 /* ═══════════════════════ CHALLANS TAB ═══════════════════════ */
-function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownload, onDelete, onBulk, period, onPeriod }) {
+function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownload, onDelete, onBulk, period, onPeriod, otChallans, onAddOt, onDownloadOt, onDeleteOt }) {
+  const [mode, setMode] = useState('monthly');
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('');
   const list = schools.filter((s) => {
@@ -945,6 +1011,8 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
   });
   return (
     <div className="ss-panel">
+      <PaySubmodeTabs mode={mode} setMode={setMode} otCount={otChallans.length} monthlyLabel="Monthly Payments" otLabel="One-Time Payments (New Signups)" />
+      {mode === 'monthly' ? (
       <div className="section-card">
         <CardHeader icon="fa-file-invoice" title="Challans" sub="Generate, download, and delete fee challans for each school.">
           {/* Sab ek hi lakeer me: mahina + saal (poori tab isi par chalti
@@ -1007,18 +1075,61 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
           </table>
         </div>
       </div>
+      ) : (
+        <OneTimeChallansTab otChallans={otChallans} onAdd={onAddOt} onDownload={onDownloadOt} onDelete={onDeleteOt} />
+      )}
+    </div>
+  );
+}
+function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete }) {
+  const [q, setQ] = useState('');
+  const list = otChallans.filter((c) => c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="section-card">
+      <CardHeader icon="fa-star" title="One-Time Challans" sub="Generate a one-time payment challan for a newly registered school / signup.">
+        <Search value={q} onChange={setQ} placeholder="Search school or challan #…" />
+        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={onAdd}><i className="fa-solid fa-plus" /> Add New Challan</button>
+      </CardHeader>
+      <div className="tbl-wrap">
+        <table className="ch-table">
+          <thead><tr><th style={{ width: 44 }}>#</th><th style={{ width: 130 }}>Challan #</th><th>School Name</th><th style={{ width: 100 }}>Invoice Date</th><th style={{ width: 100 }}>Challan Date</th><th style={{ width: 105 }}>Formula</th><th style={{ width: 80, textAlign: 'center' }}>Students</th><th style={{ width: 130, textAlign: 'center' }}>Net Payable</th><th style={{ width: 170, textAlign: 'center' }}>Actions</th></tr></thead>
+          <tbody>
+            {list.length === 0 ? <NoResults cols={9} msg="No one-time challans generated yet" /> : list.map((c, i) => (
+              <tr key={c.id}>
+                <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                <td><span className="badge b-purple">{c.challanNumber}</span></td>
+                <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
+                <td>{fmtDateLong(c.invoiceDate)}</td>
+                <td>{fmtDateLong(c.challanDate)}</td>
+                <td><FormulaBadge setup={{ formula: c.formula }} /></td>
+                <td style={{ textAlign: 'center' }}>{c.formula === 'lumpsum' ? <span style={{ color: 'var(--tm)' }}>—</span> : c.totalStudents}</td>
+                <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--t1)' }}>{pkr(c.netPayable)}</td>
+                <td style={{ textAlign: 'center' }}>
+                  <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                    <button className="ch-btn ch-btn-dl" onClick={() => onDownload(c)}><i className="fa-solid fa-download" /> Download</button>
+                    <button className="ch-btn ch-btn-del" data-tip="Delete challan" data-tip-pos="left" onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
 /* ═══════════════════════ RECEIVING TAB ═══════════════════════ */
-function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {}, loading, onReceive, onDelete, toast, period, onPeriod }) {
+function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {}, loading, onReceive, onDelete, toast, period, onPeriod, otChallans, otRecvStore, onReceiveOt, onDeleteOt }) {
+  const [mode, setMode] = useState('monthly');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState({});
   const list = schools.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase()));
   const Dues = ({ v }) => v === 0 ? <span className="dues-zero">0</span> : v > 0 ? <span className="dues-pos">{v.toLocaleString()}</span> : <span className="dues-neg">{v.toLocaleString()}</span>;
   return (
     <div className="ss-panel">
+      <PaySubmodeTabs mode={mode} setMode={setMode} otCount={otChallans.length} monthlyLabel="Monthly Receiving" otLabel="One-Time Receiving" />
+      {mode === 'monthly' ? (
       <div className="section-card">
         <CardHeader icon="fa-hand-holding-dollar" title="Receiving" sub={`Fee receiving for ${periodLabel(period)} — discounts, remaining dues and payment history.`}>
           {/* Wahi mahina jo Challans tab par chuna hua hai: receiving usi
@@ -1160,6 +1271,53 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
           </table>
         </div>
       </div>
+      ) : (
+        <OneTimeReceivingTab otChallans={otChallans} otRecvStore={otRecvStore} onReceive={onReceiveOt} onDelete={onDeleteOt} />
+      )}
+    </div>
+  );
+}
+function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete }) {
+  const [q, setQ] = useState('');
+  const list = otChallans.filter((c) => c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="section-card">
+      <CardHeader icon="fa-hand-holding-dollar" title="One-Time Receiving" sub="Record payments received against one-time signup challans and track pending balances.">
+        <Search value={q} onChange={setQ} placeholder="Search school or challan #…" width={220} />
+      </CardHeader>
+      <div className="tbl-wrap">
+        <table className="recv-table">
+          <thead><tr><th style={{ width: 44 }}>#</th><th style={{ width: 120 }}>Challan #</th><th>School Name</th><th style={{ width: 110, textAlign: 'center' }}>Net Payable</th><th style={{ width: 100, textAlign: 'center' }}>Received</th><th style={{ width: 150 }}>Method</th><th style={{ width: 100 }}>Payment Date</th><th style={{ width: 100, textAlign: 'center' }}>Remaining</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 190, textAlign: 'center' }}>Actions</th></tr></thead>
+          <tbody>
+            {list.length === 0 ? <NoResults cols={10} msg="No one-time challans generated yet" /> : list.map((c, i) => {
+              const recv = otRecvStore[c.id];
+              const received = recv ? (recv.receivedAmount || 0) : 0;
+              const remaining = recv ? (recv.remainingAmount || 0) : c.netPayable;
+              const status = !recv ? 'pending' : remaining <= 0 ? 'paid' : 'partial';
+              return (
+                <tr key={c.id}>
+                  <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                  <td><span className="badge b-purple">{c.challanNumber}</span></td>
+                  <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
+                  <td style={{ textAlign: 'center', fontWeight: 800 }}>{pkr(c.netPayable)}</td>
+                  <td style={{ textAlign: 'center' }}>{recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{received.toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
+                  <td style={{ fontSize: 11.5, color: 'var(--t2)' }}>{recv ? recv.via : '—'}</td>
+                  <td>{recv ? recv.date : '—'}</td>
+                  <td style={{ textAlign: 'center' }}>{remaining === 0 ? <span className="dues-zero">0</span> : <span className="dues-pos">{remaining.toLocaleString()}</span>}</td>
+                  <td style={{ textAlign: 'center' }}>{status === 'paid' ? <span className="rpt-paid">Received</span> : status === 'partial' ? <span className="rpt-partial">Partial</span> : <span className="rpt-pending">Pending</span>}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                      <button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
+                      <button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
+                      <button className="recv-btn-recv" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }} onClick={() => onReceive(c)}><i className="fa-solid fa-hand-holding-dollar" /> Receiving</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1211,7 +1369,8 @@ function RptStatusBadge({ status }) {
   const [cls, lbl] = map[status] || ['rpt-pending', 'No Setup'];
   return <span className={cls}>{lbl}</span>;
 }
-function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onPeriod }) {
+function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onPeriod, otChallans, otRecvStore }) {
+  const [mode, setMode] = useState('monthly');
   const [sub, setSub] = useState('summary');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
@@ -1238,21 +1397,20 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onP
   /* Reports ka apna endpoint nahi — yeh teeno stores (setup / challan /
      receiving) par banti hai. Un me se koi abhi aa raha ho to zero-bhare
      tiles dikhana jhoot hoga, is liye tab tak spinner. */
-  if (loading) {
-    return (
-      <div className="ss-panel">
+  return (
+    <div className="ss-panel">
+      <PaySubmodeTabs mode={mode} setMode={setMode} otCount={otChallans.length} monthlyLabel="Monthly Reports" otLabel="One-Time Reports" />
+      {mode !== 'monthly' ? (
+        <OneTimeReportTab otChallans={otChallans} otRecvStore={otRecvStore} />
+      ) : loading ? (
         <div className="section-card">
           <div className="rpt-loading">
             <i className="fa-solid fa-circle-notch fa-spin" />
             <div>Loading reports…</div>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="ss-panel sa-print-area">
+      ) : (
+      <div className="sa-print-area">
       <div className="rpt-stat-grid">
         <div className="rpt-stat"><div className="rpt-stat-val">{overview.total}</div><div className="rpt-stat-lbl">Total Schools</div></div>
         <div className="rpt-stat s-info"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.payable)}</div><div className="rpt-stat-lbl">Total Payable</div></div>
@@ -1289,6 +1447,74 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onP
         {sub === 'outstanding' && <OutstandingReport rows={filtered.filter((r) => r.outstanding > 0 || r.status === 'unpaid' || r.status === 'partial')} />}
         {sub === 'received' && <ReceivedReport rows={filtered.filter((r) => r.received > 0)} />}
         {sub === 'challan' && <ChallanReport rows={filtered.filter((r) => r.challan)} />}
+      </div>
+      </div>
+      )}
+    </div>
+  );
+}
+function OneTimeReportTab({ otChallans, otRecvStore }) {
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('');
+
+  const rows = useMemo(() => otChallans.map((c) => {
+    const recv = otRecvStore[c.id];
+    const received = recv ? (recv.receivedAmount || 0) : 0;
+    const pending = recv ? (recv.remainingAmount || 0) : c.netPayable;
+    const st = !recv ? 'unpaid' : pending <= 0 ? 'paid' : 'partial';
+    return { c, recv, received, pending, status: st };
+  }), [otChallans, otRecvStore]);
+
+  const overview = useMemo(() => {
+    let generated = 0, received = 0, pending = 0, paid = 0, unpaidOrPartial = 0;
+    rows.forEach((r) => { generated += r.c.netPayable; received += r.received; pending += r.pending; if (r.status === 'paid') paid++; else unpaidOrPartial++; });
+    return { total: rows.length, generated, received, pending, paid, unpaidOrPartial };
+  }, [rows]);
+
+  const filtered = rows.filter(({ c, status: st }) => {
+    const m = c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase());
+    if (!m) return false;
+    if (status && st !== status) return false;
+    return true;
+  });
+
+  const tot = filtered.reduce((a, r) => ({ generated: a.generated + r.c.netPayable, received: a.received + r.received, pending: a.pending + r.pending }), { generated: 0, received: 0, pending: 0 });
+
+  return (
+    <div className="sa-print-area">
+      <div className="rpt-stat-grid">
+        <div className="rpt-stat"><div className="rpt-stat-val">{overview.total}</div><div className="rpt-stat-lbl">One-Time Challans</div></div>
+        <div className="rpt-stat s-info"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.generated)}</div><div className="rpt-stat-lbl">Total Generated</div></div>
+        <div className="rpt-stat s-green"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.received)}</div><div className="rpt-stat-lbl">Total Received</div></div>
+        <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.pending)}</div><div className="rpt-stat-lbl">Total Pending</div></div>
+        <div className="rpt-stat s-green"><div className="rpt-stat-val">{overview.paid}</div><div className="rpt-stat-lbl">Fully Received</div></div>
+        <div className="rpt-stat s-warn"><div className="rpt-stat-val">{overview.unpaidOrPartial}</div><div className="rpt-stat-lbl">Pending / Partial</div></div>
+      </div>
+
+      <div className="section-card">
+        <div className="rpt-filter-bar sa-no-print">
+          <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school or challan #…" width="100%" /></div>
+          <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Received</option><option value="partial">Partial</option><option value="unpaid">Pending</option></select></div>
+          <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
+          <button className="rpt-pdf-btn" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 2px 8px rgba(109,40,217,.25)' }} onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
+        </div>
+        <ReportTable
+          head={<><th style={{ width: 40 }}>#</th><th style={{ width: 120 }}>Challan #</th><th>School Name</th><th style={{ width: 100 }}>Invoice Date</th><th style={{ width: 120, textAlign: 'right' }}>Generated Amount</th><th style={{ width: 100, textAlign: 'center' }}>Payment Status</th><th style={{ width: 100 }}>Receiving Date</th><th style={{ width: 120, textAlign: 'right' }}>Received Amount</th><th style={{ width: 120, textAlign: 'right' }}>Pending Amount</th></>}
+          foot={filtered.length ? <tr className="rpt-totals-row"><td colSpan={4} style={{ fontWeight: 800, color: 'var(--brand)', padding: '10px 13px' }}>TOTALS</td><td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(tot.generated)}</td><td colSpan={2} /><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--success)' }}>{pkr(tot.received)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--err)' }}>{pkr(tot.pending)}</td></tr> : null}>
+          {filtered.length === 0 ? <EmptyReport cols={9} msg="No one-time challans found" /> : filtered.map(({ c, recv, received, pending, status: st }, i) => (
+            <tr key={c.id}>
+              <td>{i + 1}</td>
+              <td><span className="badge b-purple">{c.challanNumber}</span></td>
+              <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
+              <td>{fmtDateLong(c.invoiceDate)}</td>
+              <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr(c.netPayable)}</td>
+              <td style={{ textAlign: 'center' }}>{st === 'paid' ? <span className="rpt-paid">Received</span> : st === 'partial' ? <span className="rpt-partial">Partial</span> : <span className="rpt-unpaid">Pending</span>}</td>
+              <td>{recv ? recv.date : '—'}</td>
+              <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>{pkr(received)}</td>
+              <td style={{ textAlign: 'right', fontWeight: 700, color: pending > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(pending)}</td>
+            </tr>
+          ))}
+        </ReportTable>
       </div>
     </div>
   );
@@ -1936,6 +2162,211 @@ function downloadRecvSlip(s, recv) {
   <div class="row"><span class="lbl">Payment Paid</span><span class="val-green">${(recv.receivedAmount || 0).toLocaleString()}</span></div>
   <div class="row"><span class="lbl">Remaining Amount</span><span class="val" style="color:${(recv.remainingAmount || 0) > 0 ? '#DC2626' : '#16A34A'}">${(recv.remainingAmount || 0).toLocaleString()}</span></div>
   <div class="row"><span class="lbl">Payment Via</span><span class="val-blue">${recv.via || '—'}</span></div>
+  <div class="row"><span class="lbl">Payment Receiving Date</span><span class="val-blue">${recv.date || '—'}</span></div>
+  </div><div class="bottom-band"></div><div class="footer">© 2026 School Mentor App Pvt Ltd · schoolmentor.app</div></div></body></html>`);
+  w.document.close();
+  setTimeout(() => w.print(), 400);
+}
+
+/* ═══════════════════════ ONE-TIME PAYMENTS ═══════════════════════
+   New school signup billing — a separate, frontend-only workflow shown
+   as a sub-mode (Monthly / One-Time) inside the Challans, Receiving and
+   Reports tabs. No backend: all state lives in SchoolPayment's component
+   state (seeded from paymentData's INITIAL_OT_* demo rows).
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Monthly / One-Time toggle shown at the top of each payment tab. */
+function PaySubmodeTabs({ mode, setMode, otCount, monthlyLabel, otLabel }) {
+  return (
+    <div className="pay-submode-tabs">
+      <button className={`pay-submode-tab${mode === 'monthly' ? ' active' : ''}`} onClick={() => setMode('monthly')}><i className="fa-solid fa-rotate" /> {monthlyLabel}</button>
+      <button className={`pay-submode-tab${mode === 'onetime' ? ' active' : ''}`} onClick={() => setMode('onetime')}><i className="fa-solid fa-star" /> {otLabel}<span className="badge-count">{otCount}</span></button>
+    </div>
+  );
+}
+
+function AddOtChallanModal({ onClose, onSave, toast }) {
+  const [schoolName, setSchoolName] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(todayISO());
+  const [challanDate, setChallanDate] = useState(todayISO());
+  const [formula, setFormula] = useState('perstudent');
+  const [totalStudents, setTotalStudents] = useState('');
+  const [perStudentPrice, setPerStudentPrice] = useState('');
+  const [lumpAmount, setLumpAmount] = useState('');
+  const students = parseInt(totalStudents, 10) || 0;
+  const price = parseFloat(perStudentPrice) || 0;
+  const lump = parseFloat(lumpAmount) || 0;
+  const net = formula === 'lumpsum' ? lump : students * price;
+  const save = () => {
+    if (!schoolName.trim()) { toast?.('Please enter the school name', 'warn'); return; }
+    if (!invoiceDate || !challanDate) { toast?.('Please select the invoice and challan dates', 'warn'); return; }
+    if (formula === 'perstudent' && (!students || !price)) { toast?.('Please enter total students and price per student', 'warn'); return; }
+    if (formula === 'lumpsum' && !lump) { toast?.('Please enter the lump sum amount', 'warn'); return; }
+    onSave({ schoolName: schoolName.trim(), invoiceDate, challanDate, formula, totalStudents: students, perStudentPrice: price, lumpAmount: lump });
+  };
+  return (
+    <Ov cls="ch-gen-ov" onClose={onClose} wrap="ch-gen-modal" wrapStyle={{ maxWidth: 480 }}>
+      <div className="ch-gen-hdr" style={{ background: 'linear-gradient(135deg,rgba(124,58,237,.07),transparent)' }}>
+        <div className="ch-gen-hdr-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 3px 10px rgba(109,40,217,.28)' }}><i className="fa-solid fa-star" /></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div className="ch-gen-title">Add New Challan</div><div className="ch-gen-sub">One-Time Payment — New School Signup</div></div>
+        <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="ch-gen-body">
+        <div style={{ fontSize: 11, fontWeight: 800, color: '#7C3AED', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-school" /> School Information</div>
+        <div className="ch-gen-field"><label><i className="fa-solid fa-building" style={{ color: '#7C3AED', marginRight: 4 }} /> School Name</label><input className="ch-gen-input" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} placeholder="e.g. Greenfield Academy" /></div>
+        <div className="pay-input-row" style={{ marginBottom: 16 }}>
+          <div className="ch-gen-field" style={{ marginBottom: 0 }}><label><i className="fa-regular fa-calendar" style={{ color: '#7C3AED', marginRight: 4 }} /> Invoice Date</label><input className="ch-gen-input" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} /></div>
+          <div className="ch-gen-field" style={{ marginBottom: 0 }}><label><i className="fa-regular fa-calendar-check" style={{ color: '#7C3AED', marginRight: 4 }} /> Challan Date</label><input className="ch-gen-input" type="date" value={challanDate} onChange={(e) => setChallanDate(e.target.value)} /></div>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 800, color: '#7C3AED', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-calculator" /> Payment Formula</div>
+        <div className="pay-formula-grid">
+          <div className={`pay-formula-card${formula === 'lumpsum' ? ' selected' : ''}`} onClick={() => setFormula('lumpsum')}>
+            <div className="pay-fc-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}><i className="fa-solid fa-money-bill-wave" /></div>
+            <div className="pay-fc-title">Lump Sum</div><div className="pay-fc-desc">Charge one fixed one-time amount, regardless of student count.</div>
+          </div>
+          <div className={`pay-formula-card${formula === 'perstudent' ? ' selected' : ''}`} onClick={() => setFormula('perstudent')}>
+            <div className="pay-fc-icon" style={{ background: 'linear-gradient(135deg,#6D28D9,#4C1D95)' }}><i className="fa-solid fa-user-graduate" /></div>
+            <div className="pay-fc-title">Per Student</div><div className="pay-fc-desc">Charge a rate multiplied by the school's total student count.</div>
+          </div>
+        </div>
+        {formula === 'lumpsum' ? (
+          <div className="ch-gen-field"><label><i className="fa-solid fa-money-bill" style={{ color: '#7C3AED', marginRight: 4 }} /> Lump Sum Amount (PKR)</label><input className="ch-gen-input" type="number" value={lumpAmount} onChange={(e) => setLumpAmount(e.target.value)} placeholder="e.g. 10000" /></div>
+        ) : (
+          <div className="pay-input-row" style={{ marginBottom: 16 }}>
+            <div className="ch-gen-field" style={{ marginBottom: 0 }}><label><i className="fa-solid fa-users" style={{ color: '#7C3AED', marginRight: 4 }} /> Total Students</label><input className="ch-gen-input" type="number" value={totalStudents} onChange={(e) => setTotalStudents(e.target.value)} placeholder="e.g. 400" /></div>
+            <div className="ch-gen-field" style={{ marginBottom: 0 }}><label><i className="fa-solid fa-tag" style={{ color: '#7C3AED', marginRight: 4 }} /> Price per Student (PKR)</label><input className="ch-gen-input" type="number" value={perStudentPrice} onChange={(e) => setPerStudentPrice(e.target.value)} placeholder="e.g. 20" /></div>
+          </div>
+        )}
+        <div style={{ background: 'linear-gradient(135deg,rgba(124,58,237,.08),rgba(109,40,217,.04))', border: '1.5px solid rgba(124,58,237,.25)', borderRadius: 'var(--r-md)', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Net Payable Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>{formula === 'lumpsum' ? 'Fixed lump sum amount' : `${students || 0} students × PKR ${price || 0}`}</div></div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#7C3AED' }}>{pkr(net)}</div>
+        </div>
+      </div>
+      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-file-invoice-dollar" /> Generate Challan</button></div>
+    </Ov>
+  );
+}
+
+function OtSlipModal({ challan: c, onClose }) {
+  if (!c) return null;
+  const initials = c.schoolName.replace(/[^A-Za-z ]/g, '').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() || 'SM';
+  return (
+    <Ov cls="ch-slip-ov" onClose={onClose} wrap="ch-slip-wrap">
+      <div className="ch-slip-toolbar sa-no-print">
+        <div className="ch-slip-toolbar-title"><i className="fa-solid fa-star" /> One-Time Challan Preview</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-primary" style={{ height: 34, fontSize: 12, background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }} onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Download PDF</button>
+          <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+        </div>
+      </div>
+      <div className="ch-slip-paper sa-print-area">
+        <div className="ch-slip-band" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }} />
+        <div className="ch-slip-header">
+          <div className="ch-slip-logo-area"><div className="ch-slip-logo-circle" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}>{initials}</div><div><div className="ch-slip-school-name">{c.schoolName}</div><div className="ch-slip-school-city">New School Signup</div><div className="ch-slip-school-addr">School Mentor App Pvt Ltd</div></div></div>
+          <div className="ch-slip-title-area"><div className="ch-slip-doc-title" style={{ color: '#7C3AED' }}>One-Time Challan</div><div className="ch-slip-doc-sub">Challan #: {c.challanNumber}</div><span className="ch-slip-ot-badge">One-Time Signup Payment</span></div>
+        </div>
+        <div className="ch-slip-info">
+          <div className="ch-slip-info-row"><div className="ch-slip-info-key" style={{ background: '#6D28D9' }}>School Name</div><div className="ch-slip-info-val">{c.schoolName}</div></div>
+          <div className="ch-slip-info-row"><div className="ch-slip-info-key" style={{ background: '#6D28D9' }}>Invoice Date</div><div className="ch-slip-info-val">{fmtDateLong(c.invoiceDate)}</div></div>
+          <div className="ch-slip-info-row"><div className="ch-slip-info-key" style={{ background: '#6D28D9' }}>Challan Date</div><div className="ch-slip-info-val">{fmtDateLong(c.challanDate)}</div></div>
+        </div>
+        <div className="ch-slip-calc">
+          <div className="ch-slip-calc-left">
+            <div className="ch-slip-calc-title" style={{ color: '#7C3AED' }}><i className="fa-solid fa-calculator" /> {c.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'} Calculation</div>
+            {c.formula === 'lumpsum' ? (
+              <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Lump Sum Amount</div><div className="ch-slip-calc-val highlight" style={{ color: '#7C3AED' }}>PKR {c.netPayable.toLocaleString()}</div></div>
+            ) : (
+              <>
+                <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Total Students</div><div className="ch-slip-calc-val">{c.totalStudents}</div></div>
+                <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Price / Student</div><div className="ch-slip-calc-val">PKR {c.perStudentPrice.toLocaleString()}</div></div>
+                <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">{c.totalStudents} × {c.perStudentPrice}</div><div className="ch-slip-calc-val highlight" style={{ color: '#7C3AED' }}>PKR {c.netPayable.toLocaleString()}</div></div>
+              </>
+            )}
+          </div>
+          <div className="ch-slip-calc-right">
+            <div className="ch-slip-calc-title" style={{ color: '#7C3AED' }}><i className="fa-solid fa-wallet" /> Net Payable</div>
+            <div className="ch-slip-calc-row" style={{ borderBottom: 'none' }}><div className="ch-slip-net-key" style={{ background: '#6D28D9' }}>Net Payable Amount</div><div className="ch-slip-net-val" style={{ fontSize: 20, fontWeight: 800, color: '#7C3AED' }}>{c.netPayable.toLocaleString()}</div></div>
+          </div>
+        </div>
+        <div className="ch-slip-bank">
+          <div className="ch-slip-bank-title" style={{ color: '#7C3AED' }}><i className="fa-solid fa-building-columns" /> Payment Method — Bank Transfer</div>
+          <div className="ch-slip-bank-grid">
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Bank Name</div><div className="ch-slip-bank-val">{SCHOOL_MENTOR_BANK.bankName}</div></div>
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C Title</div><div className="ch-slip-bank-val">{SCHOOL_MENTOR_BANK.acTitle}</div></div>
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C No</div><div className="ch-slip-bank-val">{SCHOOL_MENTOR_BANK.acNo}</div></div>
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Branch Code</div><div className="ch-slip-bank-val">{SCHOOL_MENTOR_BANK.branchCode}</div></div>
+            <div className="ch-slip-bank-row" style={{ gridColumn: 'span 2' }}><div className="ch-slip-bank-key">IBAN</div><div className="ch-slip-bank-val">{SCHOOL_MENTOR_BANK.iban}</div></div>
+          </div>
+        </div>
+        <div className="ch-slip-instructions"><div className="ch-slip-instr-title" style={{ color: '#7C3AED' }}><i className="fa-solid fa-circle-info" /> Payment Instructions</div><div className="ch-slip-instr-text">This is a one-time signup payment challan for onboarding onto School Mentor. Please complete payment using the bank details above and share the payment receipt with our onboarding team to activate the account.</div></div>
+        <div className="ch-slip-bottom-band" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }} />
+      </div>
+    </Ov>
+  );
+}
+
+function OtReceiveModal({ challan: c, prevRecv, onClose, onSave, toast }) {
+  const netPayable = c.netPayable;
+  const alreadyReceived = prevRecv ? (prevRecv.receivedAmount || 0) : 0;
+  const [received, setReceived] = useState(prevRecv ? String(prevRecv.receivedAmount) : '');
+  const [via, setVia] = useState(prevRecv ? prevRecv.via : RECEIVING_METHODS[0]);
+  const [date, setDate] = useState(todayISO());
+  const remaining = Math.max(0, netPayable - (parseFloat(received) || 0));
+  const save = () => {
+    if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
+    if (!date) { toast?.('Please select a payment date', 'warn'); return; }
+    onSave(c.id, { receivedAmount: parseFloat(received) || 0, remainingAmount: remaining, via, date: fmtDateShort(date) });
+  };
+  return (
+    <Ov cls="recv-ov" onClose={onClose} wrap="recv-modal">
+      <div className="recv-modal-hdr" style={{ background: 'linear-gradient(135deg,rgba(124,58,237,.07),transparent)' }}>
+        <div className="recv-modal-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 3px 10px rgba(109,40,217,.28)' }}><i className="fa-solid fa-hand-holding-dollar" /></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)' }}>One-Time Payment Receiving</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}>{c.schoolName} · {c.challanNumber}</div></div>
+        <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="recv-modal-body">
+        <div className="recv-summary-card">
+          <div className="recv-summary-row"><span className="recv-summary-lbl">Net Payable (Challan Amount)</span><span className="recv-summary-val">{pkr(netPayable)}</span></div>
+          {prevRecv && <div className="recv-summary-row"><span className="recv-summary-lbl">Previously Received</span><span className="recv-summary-val">{pkr(alreadyReceived)}</span></div>}
+        </div>
+        <div className="recv-input-2col">
+          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#7C3AED', marginRight: 4 }} /> Amount Received</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder="0" /></div>
+          <div className="recv-field"><label><i className="fa-solid fa-building-columns" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Method</label><select className="recv-input" style={{ cursor: 'pointer' }} value={via} onChange={(e) => setVia(e.target.value)}>{RECEIVING_METHODS.map((m) => <option key={m}>{m}</option>)}</select></div>
+        </div>
+        <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Amount Received</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
+      </div>
+      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
+    </Ov>
+  );
+}
+
+/* Open a printable one-time receiving slip in a new window. */
+function downloadOtRecvSlip(c, recv) {
+  const w = window.open('', '_blank');
+  if (!w) return;
+  const isPaid = (recv.remainingAmount || 0) <= 0 && (recv.receivedAmount || 0) > 0;
+  w.document.write(`<!DOCTYPE html><html><head><title>One-Time Receiving Slip - ${c.schoolName}</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,sans-serif}body{background:#f5f5f5;padding:24px}
+  .slip{position:relative;background:#fff;border-radius:12px;max-width:600px;margin:0 auto;overflow:hidden;box-shadow:0 2px 20px rgba(0,0,0,.1)}
+  .band{background:linear-gradient(135deg,#7C3AED,#6D28D9);height:8px}
+  .hdr{padding:22px 28px 18px;border-bottom:2px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
+  .school-name{font-size:18px;font-weight:800;color:#0F172A}.slip-title{font-size:20px;font-weight:800;color:#7C3AED;text-align:right}
+  .body{padding:22px 28px}.row{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-radius:8px;margin-bottom:8px;background:#f8fafc;border:1px solid #e5e7eb}
+  .lbl{font-size:12.5px;color:#64748B;font-weight:600}.val{font-size:13px;font-weight:800;color:#0F172A}
+  .val-blue{background:#7C3AED;color:#fff;border-radius:99px;padding:3px 12px;font-size:12px;font-weight:700}.val-green{background:#15803d;color:#fff;border-radius:99px;padding:3px 12px;font-size:12px;font-weight:700}
+  .bottom-band{background:#7C3AED;height:6px}.footer{text-align:center;padding:14px;font-size:11px;color:#94a3b8}
+  .paid-stamp{position:absolute;top:100px;right:36px;border:4px double #16A34A;color:#16A34A;font-size:26px;font-weight:900;letter-spacing:4px;padding:8px 20px;border-radius:8px;transform:rotate(-16deg);opacity:.82;text-transform:uppercase}
+  </style></head><body>
+  <div class="slip"><div class="band"></div>
+  ${isPaid ? '<div class="paid-stamp">Paid</div>' : ''}
+  <div class="hdr"><div><div class="school-name">${c.schoolName}</div><div style="font-size:11px;color:#64748B;margin-top:2px">Challan #: ${c.challanNumber}</div></div>
+  <div><div class="slip-title">One-Time Receiving</div><div style="font-size:11px;color:#64748B;text-align:right;margin-top:3px">School Mentor App Pvt Ltd</div></div></div>
+  <div class="body">
+  <div class="row"><span class="lbl">Net Payable (Challan Amount)</span><span class="val-blue">${(c.netPayable || 0).toLocaleString()}</span></div>
+  <div class="row"><span class="lbl">Amount Received</span><span class="val-green">${(recv.receivedAmount || 0).toLocaleString()}</span></div>
+  <div class="row"><span class="lbl">Remaining Balance</span><span class="val" style="color:${(recv.remainingAmount || 0) > 0 ? '#DC2626' : '#16A34A'}">${(recv.remainingAmount || 0).toLocaleString()}</span></div>
+  <div class="row"><span class="lbl">Payment Method</span><span class="val-blue">${recv.via || '—'}</span></div>
   <div class="row"><span class="lbl">Payment Receiving Date</span><span class="val-blue">${recv.date || '—'}</span></div>
   </div><div class="bottom-band"></div><div class="footer">© 2026 School Mentor App Pvt Ltd · schoolmentor.app</div></div></body></html>`);
   w.document.close();

@@ -148,3 +148,47 @@ export function deriveRow(school, setup, challan, recv) {
   else status = 'no-challan';
   return { monthly, payable, received, outstanding, status };
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   ONE-TIME PAYMENTS — new school signup billing (a separate workflow
+   from the recurring monthly system above). A one-time challan is a
+   free-standing, frontend-only record (not tied to a branch id, since a
+   brand-new signup may not exist in the system as a school yet): School
+   Name, Invoice/Challan Date, Total Students × Price/Student or Lump Sum.
+   No backend — these live in component state (see SchoolPayment.jsx).
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* School Mentor's bank details — used on the one-time signup challan slip
+   (monthly challans pull per-branch bank details from the branch profile). */
+export const SCHOOL_MENTOR_BANK = {
+  bankName: 'Soneri Bank',
+  acTitle: 'School Mentor App (Private) Limited',
+  acNo: '20014183265',
+  branchCode: '0387',
+  iban: 'PK15SONE0038720014183265',
+};
+
+/* Seeded so the One-Time Challans / Receiving / Reports views have data
+   to demo out of the box: one fully received, one still pending. */
+export const INITIAL_OT_CHALLANS = [
+  {
+    id: 'ot-seed-1', challanNumber: 'OT-2026-0001',
+    schoolName: 'Greenfield Academy (New Signup)',
+    invoiceDate: '2026-09-01', challanDate: '2026-09-01',
+    formula: 'perstudent', totalStudents: 400, perStudentPrice: 20, lumpAmount: 0, netPayable: 8000,
+  },
+  {
+    id: 'ot-seed-2', challanNumber: 'OT-2026-0002',
+    schoolName: 'Bright Future School (New Signup)',
+    invoiceDate: '2026-09-05', challanDate: '2026-09-05',
+    formula: 'lumpsum', totalStudents: 0, perStudentPrice: 0, lumpAmount: 6250, netPayable: 6250,
+  },
+];
+
+export const INITIAL_OT_RECEIVING = {
+  'ot-seed-1': {
+    receivedAmount: 8000, remainingAmount: 0,
+    via: 'Bank Account (School Mentor App-Private Limited)', date: fmtDateShort('2026-09-03'),
+    history: [{ amount: 8000, via: 'Bank Account (School Mentor App-Private Limited)', date: fmtDateShort('2026-09-03') }],
+  },
+};

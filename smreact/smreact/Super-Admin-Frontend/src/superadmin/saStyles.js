@@ -223,6 +223,15 @@ export const SA_CSS = `
 .sa-root .b-red{background:rgba(220,38,38,.1);color:#DC2626;border:1px solid rgba(220,38,38,.25)}
 .sa-root .b-purple{background:rgba(124,58,237,.1);color:#7C3AED;border:1px solid rgba(124,58,237,.25)}
 
+/* ── Monthly / One-Time sub-mode toggle (Schools Payment) ── */
+.sa-root .pay-submode-tabs{display:inline-flex;background:var(--muted);border:1.5px solid var(--bl);border-radius:var(--r-lg);padding:4px;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+.sa-root .pay-submode-tab{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border:none;background:transparent;border-radius:var(--r-md);font-family:var(--font);font-size:12.5px;font-weight:700;color:var(--tm);cursor:pointer;transition:var(--tr);white-space:nowrap}
+.sa-root .pay-submode-tab:hover:not(.active){color:var(--t1);background:rgba(124,58,237,.06)}
+.sa-root .pay-submode-tab.active{background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;box-shadow:0 2px 8px rgba(109,40,217,.28)}
+.sa-root .pay-submode-tab .badge-count{background:rgba(100,116,139,.15);color:var(--tm);border-radius:99px;padding:1px 8px;font-size:10.5px;font-weight:800;margin-left:2px}
+.sa-root .pay-submode-tab.active .badge-count{background:rgba(255,255,255,.25);color:#fff}
+.sa-root .ch-slip-ot-badge{display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:4px 10px;border-radius:99px;margin-top:6px}
+
 /* ACTION MENU */
 .sa-root .action-wrap{position:relative}
 .sa-root .action-trigger{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border-radius:var(--r-md);border:1.5px solid var(--bl);background:var(--card);color:var(--t2);font-size:11.5px;font-weight:700;transition:var(--tr)}
