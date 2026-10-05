@@ -5,7 +5,7 @@
    into the school ERP shell. The Super Admin app is a self-contained
    full-screen surface (mounted at #superadmin) that hosts two modules:
      • Mentor AI  — frontend-only screens (Plan Management + Payments)
-     • Support    — the existing agent console (Overview + Agent Inbox)
+     • Support    — the existing agent console (Overview + Aent Inbox)
    Light/dark theming is driven by the `data-theme` attribute on the
    `.sa-root` wrapper.
    ═══════════════════════════════════════════════════════════════════ */
@@ -176,7 +176,15 @@ export const SA_CSS = `
     max-width:none !important;animation:none !important}
   /* chhapte waqt scroll ka koi matlab nahi — poori table dikhni chahiye */
   .sa-root .tbl-wrap{overflow:visible !important}
+    /* ↓↓↓ NAYA CODE ↓↓↓ */
+  .sa-root :not(:has(.sa-print-area)):not(.sa-print-area):not(.sa-print-area *){display:none !important}
+  html,body{height:auto !important;min-height:0 !important;overflow:visible !important;background:#fff !important}
+  .sa-root,.sa-root .app-layout,.sa-root .main-content,.sa-root .page-content{
+    height:auto !important;min-height:0 !important;overflow:visible !important}
+  .sa-root .ch-slip-paper{break-inside:avoid;page-break-inside:avoid}
+  @page{margin:10mm}
 }
+
 
 /* TABLE */
 /* overflow-x:auto akela likha jaye to CSS doosre axis ko bhi khud 'auto' kar
