@@ -6,8 +6,8 @@
    ki rows branchID se bandhi hoti hain aur chain ki rows networkID se — is
    liye har row me branchID: null aur networkID = logged-in network jata hai.
 
-     POST   /api/Inventory/manage  action:get               items (active/inactive)
-     GET    /api/Inventory/list?networkId=&isPos=true        POS products
+     POST   /api/Inventory/manage  action:get isPOS:false   items (active/inactive)
+     POST   /api/Inventory/manage  action:get isPOS:true    POS products (active)
      GET    /api/Inventory/list-sales?networkId=             POS sales
      POST   /api/Inventory/manage   (MdlAHM_Branch_Inventory)  add/edit/delete
      POST   /api/Inventory/save     (MdlInventorySale)         record a sale
@@ -112,13 +112,20 @@ function fetchItems(isActive, networkId) {
   return call('/manage', { method: 'POST', body: inventoryBody({ active: isActive }, { action: 'get', isPOS: false, networkId }) })
 }
 
+/* POS products (isPOS true) ab /manage action:get se aate hain — sirf active
+   (isActive:true). Pehle GET /list?isPos=true use hoti thi; usay hata diya
+   (items ki tarah ab sab kuch manage/get par unified hai). */
+function fetchProducts(networkId) {
+  return call('/manage', { method: 'POST', body: inventoryBody({ active: true }, { action: 'get', isPOS: true, networkId }) })
+}
+
 /* Load the whole inventory store the page needs in one go. */
 export async function fetchInventory(networkId = currentNetworkId()) {
   if (!networkId) return { items: [], products: [], sales: [], categories: DEFAULT_CATS }
   const [activeJson, inactiveJson, prodJson, salesJson] = await Promise.all([
     fetchItems(true, networkId),
     fetchItems(false, networkId),
-    call(`/list?networkId=${networkId}&isPos=true`),
+    fetchProducts(networkId),
     call(`/list-sales?networkId=${networkId}`).catch(() => ({ data: [] })),
   ])
   const byId = new Map()

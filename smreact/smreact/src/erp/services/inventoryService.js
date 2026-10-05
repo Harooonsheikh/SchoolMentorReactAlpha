@@ -7,8 +7,8 @@ import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
    service; prod proxies through IIS → alphaapi). Verified live against
    the Inventory controller:
 
-     POST   /api/Inventory/manage  action:get              → items (active/inactive)
-     GET    /api/Inventory/list?branchId=&isPos=true        → POS products
+     POST   /api/Inventory/manage  action:get isPOS:false  → items (active/inactive)
+     POST   /api/Inventory/manage  action:get isPOS:true isActive:true → POS products
      GET    /api/Inventory/list-sales?branchId=&from&to     → POS sales
      POST   /api/Inventory/manage   (MdlAHM_Branch_Inventory)  add/edit/delete
      POST   /api/Inventory/save     (MdlInventorySale)         record a sale
@@ -24,8 +24,10 @@ import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
    Quirk: the server [Required]s these strings as NON-EMPTY on manage —
    itemName, itemCategory, inventoryNumber, condition, status, location,
-   description, image, barcode — so fields irrelevant to a product vs an
-   item are sent as "-". discountType on save must be Amount / Percentage.
+   description, image — so fields irrelevant to a product vs an item are
+   sent as "-". EXCEPTION barcode: POS product (isPOS true) ka asli barcode;
+   inventory item (isPOS false) ke liye "" (empty) — yahan "-" error deta hai.
+   discountType on save must be Amount / Percentage.
    ═══════════════════════════════════════════════════════════════════ */
 
 const BASE = '/api/Inventory';
@@ -150,8 +152,17 @@ export async function getInvItems() {
   return [...byId.values()].map(mapItem);
 }
 
+/* Products (isPOS true) ab /manage action:get se aate hain — sirf active
+   (isActive:true). Pehle GET /list?isPos=true use hoti thi; usay hata diya
+   (items ki tarah ab sab kuch manage/get par unified hai). */
 export async function getInvProducts() {
-  const json = await readJson(`${BASE}/list?branchId=${branchId()}&isPos=true`);
+  /* Products bhi items jaise branch-level: branchID = branch, networkID = null,
+     action:get isPOS:true, sirf active. */
+  const json = await postJson(
+    'manage',
+    inventoryBody({ active: true }, { action: 'get', isPOS: true }),
+    'Could not load products',
+  );
   return (json.data || []).map(mapProduct);
 }
 
@@ -209,7 +220,10 @@ function inventoryBody(p, { action, isPOS }) {
   return {
     action,
     id:              p.id || 0,
+    /* ERP me sab kuch branch-level: branchID = logged-in branch, networkID = null
+       (items aur products dono). Network-level scoping chain frontend me hoti hai. */
     branchID:        branchId(),
+    networkID:       null,
     itemName:        nz(p.name, 'Unnamed'),
     itemCategory:    nz(p.cat, 'Other'),
     inventoryNumber: nz(p.code),
@@ -220,7 +234,9 @@ function inventoryBody(p, { action, isPOS }) {
     location:        nz(p.loc),
     description:     nz(p.desc),
     image:           nz(typeof p.img === 'string' ? p.img : ''),
-    barcode:         nz(p.barcode),
+    /* Barcode: POS product (isPOS true) ka asli barcode jata hai; inventory
+       item (isPOS false) ke liye "" (empty) — "-" server par error deta hai. */
+    barcode:         isPOS ? String(p.barcode || '').trim() : '',
     lowStock:        Number(p.low) || 0,
     stockQuantity:   isPOS ? (Number(p.stock) || 0) : 0,
     purchasePrice:   isPOS ? (Number(p.cost)  || 0) : 0,
@@ -244,7 +260,8 @@ export async function deleteInvItem(item) {
   return postJson('manage', body, 'Could not delete item');
 }
 
-/* Shop product — add / edit. */
+/* Shop product — add / edit. Branch-level (items jaisa): branchID = branch,
+   networkID = null. Barcode asli value jata hai (isPOS true). */
 export async function saveInvProduct(product) {
   const action = product.id ? 'update' : 'insert';
   return postJson('manage', inventoryBody(product, { action, isPOS: true }), 'Could not save product');
