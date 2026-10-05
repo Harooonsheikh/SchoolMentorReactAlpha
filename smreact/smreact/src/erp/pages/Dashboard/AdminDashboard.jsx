@@ -531,11 +531,6 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   }, [feeMonthIdx, feeYear]);
   const { totals: faPrevTotals } = useLedgerReportData(faPrevPeriod);
   const prevMonthOutstanding = Number(faPrevTotals?.pend) || 0;
-  const feeExtras = useMemo(
-    () => computeFeeExtrasFromLedger(faLedger, { month: feeMonthIdx + 1, year: feeYear, previousMonthOutstanding: prevMonthOutstanding }),
-    [faLedger, feeMonthIdx, feeYear, prevMonthOutstanding],
-  );
-  const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} ${feeYear}`;
 
   /* get-dashboard ka FeeAnalytics — CHUNE HUE fee mahine ke liye (upar wala `dash` sirf
      current month ka hai, month badalne par ghalat hota). Do values yahin se:
@@ -551,6 +546,14 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   }, [feeMonthIdx, feeYear]);
   const apiReceivedDiscount = Number(feeApi?.ReceivedDiscount) || 0;
   const apiDiscountGiven = Number(feeApi?.DiscountGiven) || 0;
+  /* Pending Fee card ki "Receiving Discount" = API ReceivedDiscount (receiving-time discount),
+     challan wala discountTotal nahi. API na aaye to ledger ki recvDiscount use hoti hai. */
+  const apiRecvDiscOrNull = (feeApi && feeApi.ReceivedDiscount != null) ? apiReceivedDiscount : null;
+  const feeExtras = useMemo(
+    () => computeFeeExtrasFromLedger(faLedger, { month: feeMonthIdx + 1, year: feeYear, previousMonthOutstanding: prevMonthOutstanding, receivingDiscount: apiRecvDiscOrNull }),
+    [faLedger, feeMonthIdx, feeYear, prevMonthOutstanding, apiRecvDiscOrNull],
+  );
+  const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} ${feeYear}`;
 
   /* ─── Fee Analytics Overview — graphical summary above the cards.
      Same feeExtras object the 8 cards below already read from (no
@@ -1458,7 +1461,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <span className="fa-bd-op">−</span>
               <div>
                 <span className="fa-bd-lbl">Receiving Discount</span>
-                <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.discountTotal} duration={CHART_ANIM_MS} /></span>
+                <span className="fa-bd-val"><AnimatedNumber prefix="PKR " value={feeExtras.receivingDiscountApplied} duration={CHART_ANIM_MS} /></span>
               </div>
               <span className="fa-bd-op">−</span>
               <div>
