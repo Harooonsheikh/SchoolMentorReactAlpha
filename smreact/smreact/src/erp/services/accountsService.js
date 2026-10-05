@@ -280,3 +280,104 @@ export async function getAccUsers() {
   const me = await getAccCurrentUser();
   return me ? [me] : [];
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   WALLETS (Financial Accounts) + account-to-account TRANSFERS.
+   Ported from the reference project as MOCK / LOCAL — there is no live
+   backend endpoint for these yet. Data lives in-memory for the session
+   (resets on reload). When the backend lands, swap these readers/writers
+   for real API calls; the Wallets tab UI needs no change.
+   ═══════════════════════════════════════════════════════════════════ */
+const _finDelay = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+const _finClone = (x) => JSON.parse(JSON.stringify(x));
+
+const mockFinAccounts = [
+  {
+    id: 'ac_cash', name: 'Cash In Hand', type: 'cash', opening: 1000000,
+    bankName: '', accountNo: '',
+    description: 'Default receiving account. All fee collections and expenses map here unless another account is chosen.',
+    status: 'active', isDefault: true, createdBy: 'Sana Malik', createdAt: '2026-01-01T09:00:00',
+  },
+  {
+    id: 'ac_bop', name: 'Bank of Punjab', type: 'bank', opening: 0,
+    bankName: 'Bank of Punjab', accountNo: 'PK36-BPUN-0000-1122-3344',
+    description: 'Primary operational bank account for salaries and vendor payments.',
+    status: 'active', isDefault: false, createdBy: 'Sana Malik', createdAt: '2026-01-10T10:00:00',
+  },
+  {
+    id: 'ac_alfa', name: 'Bank Alfalah', type: 'bank', opening: 0,
+    bankName: 'Bank Alfalah', accountNo: 'PK21-ALFH-0000-5566-7788',
+    description: 'Secondary bank account used for online and OneLink fee collections.',
+    status: 'active', isDefault: false, createdBy: 'Ali Khan', createdAt: '2026-01-10T10:05:00',
+  },
+  {
+    id: 'ac_owner', name: 'Owner Account', type: 'owner', opening: 0,
+    bankName: '', accountNo: '',
+    description: 'Owner and investor funding wallet.',
+    status: 'active', isDefault: false, createdBy: 'Sana Malik', createdAt: '2026-01-12T09:30:00',
+  },
+];
+
+const mockTransfers = [
+  {
+    id: 'tr1', fromId: 'ac_cash', toId: 'ac_bop', amount: 300000, date: '2026-01-15',
+    note: 'Opening float moved to Bank of Punjab', by: 'Sana Malik', at: '2026-01-15T11:00:00',
+  },
+  {
+    id: 'tr2', fromId: 'ac_cash', toId: 'ac_alfa', amount: 200000, date: '2026-01-16',
+    note: 'Float moved to Bank Alfalah for online collections', by: 'Sana Malik', at: '2026-01-16T12:30:00',
+  },
+];
+
+export async function getFinAccounts() { await _finDelay(); return _finClone(mockFinAccounts); }
+
+export async function saveFinAccount(payload, id) {
+  await _finDelay();
+  const idx = id ? mockFinAccounts.findIndex((a) => a.id === id) : -1;
+  if (idx >= 0) {
+    const isDefault = mockFinAccounts[idx].isDefault;
+    mockFinAccounts[idx] = { ...mockFinAccounts[idx], ...payload, status: isDefault ? 'active' : payload.status };
+    return _finClone(mockFinAccounts[idx]);
+  }
+  const record = { id: `ac_${Date.now()}`, isDefault: false, status: 'active', bankName: '', accountNo: '', description: '', ...payload };
+  mockFinAccounts.push(record);
+  return _finClone(record);
+}
+
+export async function setFinAccountStatus({ id, status }) {
+  await _finDelay();
+  const acct = mockFinAccounts.find((a) => a.id === id);
+  if (!acct) return { id, ok: false };
+  if (acct.isDefault) return { id, ok: false, reason: 'default-account' };
+  acct.status = status;
+  return _finClone(acct);
+}
+
+export async function getTransfers() { await _finDelay(); return _finClone(mockTransfers); }
+
+export async function saveTransfer(payload) {
+  await _finDelay();
+  const record = { id: `tr_${Date.now()}`, at: new Date().toISOString(), ...payload };
+  mockTransfers.push(record);
+  return _finClone(record);
+}
+
+export async function deleteTransfer({ id }) {
+  await _finDelay();
+  const idx = mockTransfers.findIndex((t) => t.id === id);
+  if (idx >= 0) mockTransfers.splice(idx, 1);
+  return { id, deleted: true };
+}
+
+/* balance = opening + revenue(acctId||default) − expense(acctId||default)
+            + transfers-in − transfers-out. */
+export function computeFinAccountBalance(account, txns, transfers, defaultId) {
+  let bal = Number(account.opening) || 0;
+  (txns?.rev || []).forEach((t) => { if ((t.acctId || defaultId) === account.id) bal += Number(t.amount) || 0; });
+  (txns?.exp || []).forEach((t) => { if ((t.acctId || defaultId) === account.id) bal -= Number(t.amount) || 0; });
+  (transfers || []).forEach((tr) => {
+    if (tr.toId === account.id) bal += Number(tr.amount) || 0;
+    if (tr.fromId === account.id) bal -= Number(tr.amount) || 0;
+  });
+  return bal;
+}

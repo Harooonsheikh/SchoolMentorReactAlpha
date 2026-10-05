@@ -63,11 +63,16 @@ function useBranchSchool() {
    ═══════════════════════════════════════════════════════════════════ */
 
 const ACC_TABS = [
-  { id: 'coa',     icon: 'fa-sitemap',       label: 'Chart of Accounts' },
-  { id: 'txn',     icon: 'fa-right-left',    label: 'Transactions' },
-  { id: 'books',   icon: 'fa-book-open',     label: 'Account Books' },
-  { id: 'reports', icon: 'fa-chart-column',  label: 'Reports' },
+  { id: 'coa',      icon: 'fa-sitemap',       label: 'Chart of Accounts' },
+  { id: 'txn',      icon: 'fa-right-left',    label: 'Transactions' },
+  { id: 'accounts', icon: 'fa-wallet',        label: 'Wallets' },
+  { id: 'books',    icon: 'fa-book-open',     label: 'Account Books' },
+  { id: 'reports',  icon: 'fa-chart-column',  label: 'Reports' },
 ];
+
+/* Default empty transactions shape ({rev,exp}) — used by the ported Wallets
+   tab + statement as the useAsync fallback for accountsService.getAccTxns. */
+const ACC_EMPTY_TXNS = { rev: [], exp: [] };
 
 export default function Accounts({ toast }) {
   const [tab, setTab] = useState('coa');
@@ -244,6 +249,8 @@ export default function Accounts({ toast }) {
         <ChartOfAccounts toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'txn' ? (
         <Transactions toast={toast} isOtherSession={isOtherSession} />
+      ) : tab === 'accounts' ? (
+        <AccountsManagementTab toast={toast} />
       ) : tab === 'books' ? (
         <AccountBooks toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'reports' ? (
@@ -2635,6 +2642,845 @@ function bookCalc(b) {
     lastDate: sorted.length ? sorted[sorted.length - 1].date : b.openDate,
   };
 }
+
+/* ═══ WALLETS (Financial Accounts) + Transfers — ported from reference; service layer MOCK until backend. ═══ */
+const ACC_FIN_TYPES = [
+  { key: 'cash',  label: 'Cash',  icon: 'fa-money-bill-wave' },
+  { key: 'bank',  label: 'Bank',  icon: 'fa-building-columns' },
+  { key: 'owner', label: 'Owner', icon: 'fa-user-tie' },
+  { key: 'other', label: 'Other', icon: 'fa-wallet' },
+];
+const finTypeMeta = (key) => ACC_FIN_TYPES.find(t => t.key === key) || ACC_FIN_TYPES[3];
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+function AccountsManagementTab({ toast }) {
+  const { data: serverAccounts = [] } = useAsync(accountsService.getFinAccounts, []);
+  const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
+  const { data: serverTransfers = [], loading: transfersLoading } = useAsync(accountsService.getTransfers, []);
+
+  const [accounts, setAccounts] = useState(null);
+  useEffect(() => { if (serverAccounts.length && accounts == null) setAccounts(serverAccounts); }, [serverAccounts, accounts]);
+  const list = accounts || [];
+
+  const [transfers, setTransfers] = useState(null);
+  useEffect(() => { if (!transfersLoading && transfers == null) setTransfers(serverTransfers); }, [transfersLoading, serverTransfers, transfers]);
+  const transferList = transfers || [];
+
+  const defaultId = (list.find(a => a.isDefault) || list[0] || {}).id;
+  const activeAccounts = list.filter(a => a.status === 'active');
+  const balanceOf = (a) => accountsService.computeFinAccountBalance(a, serverTxns, transferList, defaultId);
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [editAccount, setEditAccount] = useState(null); // { mode:'add'|'edit', account? }
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [statementFor, setStatementFor] = useState(null); // account
+  const [confirm, setConfirm] = useState(null);
+
+  const filtered = list.filter(a => {
+    const q = search.trim().toLowerCase();
+    const matchQ = !q || a.name.toLowerCase().includes(q) || (a.bankName || '').toLowerCase().includes(q) || (a.accountNo || '').includes(q) || finTypeMeta(a.type).label.toLowerCase().includes(q);
+    if (!matchQ) return false;
+    if (statusFilter !== 'all' && a.status !== statusFilter) return false;
+    return true;
+  });
+
+  const totalOpening = list.reduce((a, x) => a + (Number(x.opening) || 0), 0);
+  const totalCurrent = list.reduce((a, x) => a + balanceOf(x), 0);
+  const activeCount = list.filter(a => a.status === 'active').length;
+
+  const saveAccount = async (payload) => {
+    const isEdit = editAccount?.mode === 'edit';
+    const id = isEdit ? editAccount.account.id : undefined;
+    const saved = await accountsService.saveFinAccount(payload, id).catch(() => null);
+    if (!saved) { toast('Could not save this account. Please try again.', 'error'); return; }
+    setAccounts(prev => {
+      const arr = prev || [];
+      return isEdit ? arr.map(a => (a.id === id ? saved : a)) : [...arr, saved];
+    });
+    toast(isEdit ? 'Account updated' : 'Account created', 'success');
+    setEditAccount(null);
+  };
+
+  const requestToggleStatus = (a) => {
+    if (a.isDefault) return; // no control is ever rendered for the default account, but guard here too
+    const next = a.status === 'active' ? 'inactive' : 'active';
+    if (next === 'active') {
+      accountsService.setFinAccountStatus({ id: a.id, status: 'active' });
+      setAccounts(prev => prev.map(x => (x.id === a.id ? { ...x, status: 'active' } : x)));
+      toast(`${a.name} re-enabled`, 'success');
+      return;
+    }
+    setConfirm({
+      title: 'Disable this account?',
+      message: <span><strong>{a.name}</strong> will be hidden from account pickers. Its balance and history are kept, and it can be re-enabled any time.</span>,
+      confirmLabel: 'Yes, Disable',
+      onConfirm: async () => {
+        await accountsService.setFinAccountStatus({ id: a.id, status: 'inactive' }).catch(() => {});
+        setAccounts(prev => prev.map(x => (x.id === a.id ? { ...x, status: 'inactive' } : x)));
+        toast(`${a.name} disabled`, 'info');
+      },
+    });
+  };
+
+  const saveTransfer = async (payload) => {
+    const saved = await accountsService.saveTransfer(payload).catch(() => null);
+    if (!saved) { toast('Could not save this transfer. Please try again.', 'error'); return; }
+    setTransfers(prev => [...(prev || []), saved]);
+    const fromName = list.find(a => a.id === payload.fromId)?.name || 'account';
+    const toName = list.find(a => a.id === payload.toId)?.name || 'account';
+    toast(`Transferred ${fmtMoney(payload.amount)} from ${fromName} to ${toName}`, 'success');
+    setTransferOpen(false);
+  };
+
+  const requestDeleteTransfer = (t) => {
+    const fromName = list.find(a => a.id === t.fromId)?.name || 'account';
+    const toName = list.find(a => a.id === t.toId)?.name || 'account';
+    setConfirm({
+      title: 'Delete this transfer?',
+      message: <span>The transfer of <strong>{fmtMoney(t.amount)}</strong> from <strong>{fromName}</strong> to <strong>{toName}</strong> will be removed. Both balances will recalculate.</span>,
+      hint: 'This action cannot be undone.',
+      onConfirm: async () => {
+        await accountsService.deleteTransfer({ id: t.id }).catch(() => {});
+        setTransfers(prev => (prev || []).filter(x => x.id !== t.id));
+        toast('Transfer deleted', 'success');
+      },
+    });
+  };
+
+  return (
+    <>
+      <div className="acc-overview">
+        <div className="acc-overview-main">
+          <div className="acc-overview-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-wallet"></i></div>
+          <div className="acc-overview-text">
+            <div className="acc-overview-title">Wallets <span className="acc-books-tagchip" style={{ background: 'rgba(8,145,178,.1)', color: '#0E7490', borderColor: 'rgba(8,145,178,.25)' }}>Cash, Bank &amp; Owner Accounts</span></div>
+            <div className="acc-overview-sub">Manage every place the school holds money. This includes <strong>Cash In Hand, bank accounts, and owner or custom wallets</strong>. Move balances between accounts, choose where each income lands and each expense is paid from, and view a full bank-style statement per account. <strong>Transfers move balances only. They never affect Profit &amp; Loss.</strong></div>
+          </div>
+        </div>
+        <div className="acc-overview-stats">
+          <div className="acc-ov-stat"><div className="acc-ov-stat-ic all"><i className="fa-solid fa-layer-group"></i></div><div><div className="acc-ov-stat-val">{list.length}</div><div className="acc-ov-stat-lbl">Accounts &middot; {activeCount} active</div></div></div>
+          <div className="acc-ov-stat"><div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}><i className="fa-solid fa-flag"></i></div><div><div className="acc-ov-stat-val">{fmtMoney(totalOpening)}</div><div className="acc-ov-stat-lbl">Total Opening</div></div></div>
+          <div className="acc-ov-stat"><div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-wallet"></i></div><div><div className="acc-ov-stat-val">{fmtMoney(totalCurrent)}</div><div className="acc-ov-stat-lbl">Total Available</div></div></div>
+        </div>
+      </div>
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field fee-field--grow">
+              <span className="fee-label">Search Accounts</span>
+              <div className="fee-search-box">
+                <i className="fa-solid fa-magnifying-glass"></i>
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by account name, bank or type" />
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Status</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                  <option value="all">All Accounts</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Disabled</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <Tooltip text="Move money between two of your own accounts">
+              <button className="fee-btn fee-btn-ghost" onClick={() => setTransferOpen(true)} disabled={activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}>
+                <i className="fa-solid fa-right-left"></i> Transfer Money
+              </button>
+            </Tooltip>
+            <Tooltip text="Add a new cash, bank, owner or other account">
+              <button className="fee-btn fee-btn-primary" onClick={() => setEditAccount({ mode: 'add' })}>
+                <i className="fa-solid fa-plus"></i> Create Account
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="acc-ledger-empty">
+          <i className="fa-solid fa-wallet"></i>
+          No accounts found.<br/>
+          Use <strong>Create Account</strong> to add one.
+        </div>
+      ) : (
+        <div className="acc-books-grid">
+          {filtered.map(a => {
+            const tm = finTypeMeta(a.type);
+            const bal = balanceOf(a);
+            const sub = a.type === 'bank' && (a.bankName || a.accountNo)
+              ? `${a.bankName || 'Bank'}${a.accountNo ? ` · ${a.accountNo}` : ''}`
+              : (a.description || `${tm.label} account`);
+            return (
+              <div className={`acc-wallet-card${a.status === 'inactive' ? ' inactive' : ''}`} key={a.id}>
+                <div className="acc-wallet-card-top">
+                  <div className={`acc-wallet-ic ${a.type}`}><i className={`fa-solid ${tm.icon}`}></i></div>
+                  <div className="acc-wallet-tt">
+                    <div className="acc-wallet-name">
+                      {a.name}
+                      {a.isDefault && <span className="acc-default-chip"><i className="fa-solid fa-star"></i> Default</span>}
+                    </div>
+                    <div className="acc-wallet-sub">
+                      <span className={`acc-type-badge ${a.type}`}><i className={`fa-solid ${tm.icon}`}></i> {tm.label}</span>
+                      <span className={`acc-book-status ${a.status === 'active' ? 'active' : 'closed'}`}>{a.status === 'active' ? 'Active' : 'Disabled'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="acc-wallet-body">
+                  <div className="acc-wallet-balrow">
+                    <div className="acc-wallet-bal">
+                      <div className="acc-wallet-bal-lbl">Opening</div>
+                      <div className="acc-wallet-bal-val">{fmtMoney(a.opening)}</div>
+                    </div>
+                    <div className="acc-wallet-bal current">
+                      <div className="acc-wallet-bal-lbl">Current Balance</div>
+                      <div className="acc-wallet-bal-val">{fmtMoney(bal)}</div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 11, fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>{sub}</div>
+                </div>
+
+                <div className="acc-wallet-foot">
+                  <Tooltip text={`View ${a.name}'s statement`}>
+                    <button className="fee-iconbtn acc-wallet-stmtbtn" onClick={() => setStatementFor(a)}>
+                      <i className="fa-solid fa-file-invoice-dollar"></i> View Statement
+                    </button>
+                  </Tooltip>
+                  <Tooltip text="Edit this account">
+                    <button className="fee-iconbtn" onClick={() => setEditAccount({ mode: 'edit', account: a })}>
+                      <i className="fa-solid fa-pen"></i>
+                    </button>
+                  </Tooltip>
+                  {!a.isDefault && (
+                    <Tooltip text={a.status === 'active' ? 'Disable this account' : 'Re-enable this account'}>
+                      <button
+                        className={`fee-iconbtn${a.status === 'active' ? ' danger' : ''}`}
+                        onClick={() => requestToggleStatus(a)}
+                      >
+                        <i className={`fa-solid ${a.status === 'active' ? 'fa-ban' : 'fa-circle-check'}`}></i>
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="fee-section fee-section--overflow" style={{ marginTop: 20 }}>
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-right-left"></i></div>
+            <div>
+              <div className="fee-section-name">Transfer History</div>
+              <div className="fee-section-sub">Money moved between accounts. Balance movement only, not income or expense.</div>
+            </div>
+          </div>
+          <span className="fee-chip fee-chip-active"><i className="fa-solid fa-list"></i> {transferList.length}</span>
+        </div>
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table">
+            {transferList.length === 0 ? (
+              <tbody>
+                <tr><td><div className="acc-txn-empty"><i className="fa-solid fa-right-left"></i>No transfers yet.<br/>Use <strong>Transfer Money</strong> to move a balance between accounts.</div></td></tr>
+              </tbody>
+            ) : (
+              <>
+                <thead>
+                  <tr>
+                    <th>Date</th><th>From Account</th><th>To Account</th><th>Note</th><th className="r">Amount</th><th>Entered By</th><th className="c">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...transferList].sort((a, b) => (b.date + b.at).localeCompare(a.date + a.at)).map(t => (
+                    <tr key={t.id}>
+                      <td><span className="acc-txn-date">{accFmtDate(t.date)}</span></td>
+                      <td><span className="acc-stmt-tag debit"><i className="fa-solid fa-arrow-up-long"></i> {list.find(a => a.id === t.fromId)?.name || '—'}</span></td>
+                      <td><span className="acc-stmt-tag credit"><i className="fa-solid fa-arrow-down-long"></i> {list.find(a => a.id === t.toId)?.name || '—'}</span></td>
+                      <td>
+                        <div className="acc-txn-detail">{t.note || '—'}</div>
+                        <div className="acc-txn-meta"><span><i className="fa-regular fa-clock"></i> {accFmtStamp(t.at)}</span></div>
+                      </td>
+                      <td className="r"><span className="acc-txn-amt">{fmtMoney(t.amount)}</span></td>
+                      <td><span className="acc-rep-user"><i className="fa-solid fa-user-pen"></i> {t.by || '—'}</span></td>
+                      <td className="c">
+                        <Tooltip text="Delete this transfer">
+                          <button className="fee-iconbtn danger" onClick={() => requestDeleteTransfer(t)}>
+                            <i className="fa-solid fa-trash-can"></i>
+                          </button>
+                        </Tooltip>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </>
+            )}
+          </table>
+        </div>
+      </div>
+
+      <FinAccountModal cfg={editAccount} onClose={() => setEditAccount(null)} onSave={saveAccount} toast={toast} />
+      <TransferModal
+        open={transferOpen}
+        accounts={activeAccounts}
+        balanceOf={balanceOf}
+        onClose={() => setTransferOpen(false)}
+        onSave={saveTransfer}
+        toast={toast}
+      />
+      <FinAccountStatementModal
+        account={statementFor}
+        accounts={list}
+        txns={serverTxns}
+        transfers={transferList}
+        defaultId={defaultId}
+        onClose={() => setStatementFor(null)}
+      />
+      <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+    </>
+  );
+}
+
+/* ── Create / Edit Financial Account modal ── */
+function FinAccountModal({ cfg, onClose, onSave, toast }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState('cash');
+  const [opening, setOpening] = useState('');
+  const [status, setStatus] = useState('active');
+  const [bankName, setBankName] = useState('');
+  const [accountNo, setAccountNo] = useState('');
+  const [description, setDescription] = useState('');
+
+  const isEdit = cfg?.mode === 'edit';
+  const isDefault = !!cfg?.account?.isDefault;
+
+  useEffect(() => {
+    if (!cfg) return;
+    if (isEdit && cfg.account) {
+      const a = cfg.account;
+      setName(a.name); setType(a.type); setOpening(String(a.opening ?? ''));
+      setStatus(a.status); setBankName(a.bankName || ''); setAccountNo(a.accountNo || '');
+      setDescription(a.description || '');
+    } else {
+      setName(''); setType('cash'); setOpening('0'); setStatus('active');
+      setBankName(''); setAccountNo(''); setDescription('');
+    }
+  }, [cfg, isEdit]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+
+  const showBank = type === 'bank';
+  const showAccountNo = type === 'bank' || type === 'other';
+
+  const handleSubmit = () => {
+    if (!name.trim()) { toast('Please enter an account name', 'error'); return; }
+    onSave({
+      name: name.trim(), type, opening: Number(opening) || 0,
+      status: isDefault ? 'active' : status,
+      bankName: showBank ? bankName.trim() : '',
+      accountNo: showAccountNo ? accountNo.trim() : '',
+      description: description.trim(),
+    });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className={`fa-solid ${isEdit ? 'fa-pen-to-square' : 'fa-wallet'}`}></i></div>
+            <div>
+              <div className="fee-modal-title">{isEdit ? 'Edit Account' : 'Create Account'}</div>
+              <div className="fee-modal-sub">{isEdit ? cfg?.account?.name : 'Add a cash, bank, owner or custom financial account'}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-info" style={{ background: 'rgba(8,145,178,.06)', borderColor: 'rgba(8,145,178,.2)' }}>
+            <i className="fa-solid fa-circle-info" style={{ color: '#0E7490' }}></i>
+            <span>An account is a wallet where the school holds money. This includes <strong>Cash In Hand, a bank account, the owner&apos;s account</strong> or any custom location. Income can be received into it and expenses paid from it.</span>
+          </div>
+          <div className="acc-form-grid">
+            <div className="fee-field">
+              <span className="fee-label">Account Name <span className="acc-req">*</span></span>
+              <input className="fee-input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Bank of Punjab" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Account Type <span className="acc-req">*</span></span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={type} onChange={e => setType(e.target.value)}>
+                  {ACC_FIN_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Opening Balance</span>
+              <input className="fee-input" type="number" value={opening} onChange={e => setOpening(e.target.value)} placeholder="0" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Status</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={status} onChange={e => setStatus(e.target.value)} disabled={isDefault}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Disabled</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            {showBank && (
+              <div className="fee-field">
+                <span className="fee-label">Bank Name <span className="acc-opt">(optional)</span></span>
+                <input className="fee-input" value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Bank Alfalah" />
+              </div>
+            )}
+            {showAccountNo && (
+              <div className="fee-field">
+                <span className="fee-label">Account Number <span className="acc-opt">(optional)</span></span>
+                <input className="fee-input" value={accountNo} onChange={e => setAccountNo(e.target.value)} placeholder="e.g. PK00-XXXX-0000-0000" />
+              </div>
+            )}
+            <div className="fee-field" style={{ gridColumn: '1/-1' }}>
+              <span className="fee-label">Description</span>
+              <textarea className="fee-input fee-textarea" value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description of this account" />
+            </div>
+          </div>
+
+          {isDefault && (
+            <div className="acc-audit-note" style={{ marginTop: 14 }}>
+              <i className="fa-solid fa-star"></i>
+              <div>This is the <b>default receiving account</b>. It always stays active and receives income unless another account is chosen.</div>
+            </div>
+          )}
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard changes and close"><button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Save this account">
+            <button className="fee-btn fee-btn-primary" onClick={handleSubmit}><i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Save Changes' : 'Save Account'}</button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ── Transfer Money modal ── */
+function TransferModal({ open, accounts, balanceOf, onClose, onSave, toast }) {
+  const [fromId, setFromId] = useState('');
+  const [toId, setToId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(todayISO());
+  const [note, setNote] = useState('');
+  const [by, setBy] = useState('');
+  const { data: users = [] } = useAsync(accountsService.getAccUsers, []);
+  const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
+
+  useEffect(() => {
+    if (!open) return;
+    setFromId(accounts[0]?.id || '');
+    setToId(accounts[1]?.id || accounts[0]?.id || '');
+    setAmount(''); setDate(todayISO()); setNote(''); setBy(currentUser || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentUser]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const fromAcct = accounts.find(a => a.id === fromId);
+  const toAcct = accounts.find(a => a.id === toId);
+  const fromBal = fromAcct ? balanceOf(fromAcct) : 0;
+  const toBal = toAcct ? balanceOf(toAcct) : 0;
+  const amt = Number(amount) || 0;
+  const sameAccount = !!fromId && fromId === toId;
+  const overdraft = amt > 0 && fromBal - amt < 0;
+
+  const handleSubmit = () => {
+    if (!fromId || !toId) { toast('Please choose both accounts', 'error'); return; }
+    if (fromId === toId) { toast('Source and destination must be different', 'error'); return; }
+    if (!amt || amt <= 0) { toast('Please enter a valid amount', 'error'); return; }
+    onSave({ fromId, toId, amount: amt, date, note: note.trim(), by: by || currentUser || 'You' });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-right-left"></i></div>
+            <div>
+              <div className="fee-modal-title">Transfer Money</div>
+              <div className="fee-modal-sub">Move a balance from one account to another</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-info" style={{ background: 'rgba(8,145,178,.06)', borderColor: 'rgba(8,145,178,.2)' }}>
+            <i className="fa-solid fa-circle-info" style={{ color: '#0E7490' }}></i>
+            <span>A transfer moves a balance between two accounts only. The source account decreases and the destination increases. <strong>This is not income or an expense and does not affect Profit &amp; Loss.</strong></span>
+          </div>
+
+          <div className="acc-xfer-flow">
+            <div className="fee-field acc-xfer-side">
+              <span className="fee-label">From Account <span className="acc-req">*</span></span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={fromId} onChange={e => setFromId(e.target.value)}>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name} — {finTypeMeta(a.type).label}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+              <div className="acc-xfer-bal"><i className="fa-solid fa-wallet"></i> Available: {fmtMoney(fromBal)}</div>
+            </div>
+            <div className="acc-xfer-arrow"><i className="fa-solid fa-arrow-right-long"></i></div>
+            <div className="fee-field acc-xfer-side">
+              <span className="fee-label">To Account <span className="acc-req">*</span></span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={toId} onChange={e => setToId(e.target.value)}>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name} — {finTypeMeta(a.type).label}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+              <div className="acc-xfer-bal"><i className="fa-solid fa-wallet"></i> Available: {fmtMoney(toBal)}</div>
+            </div>
+          </div>
+
+          <div className="acc-form-grid" style={{ marginTop: 16 }}>
+            <div className="fee-field">
+              <span className="fee-label">Amount <span className="acc-req">*</span></span>
+              <input className="fee-input" type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter amount" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Date</span>
+              <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Entered By</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={by} onChange={e => setBy(e.target.value)}>
+                  {users.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Note</span>
+              <input className="fee-input" value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. Deposit cash to bank" />
+            </div>
+          </div>
+
+          {amt > 0 && fromId && toId && (
+            <div className={`acc-xfer-preview${sameAccount || overdraft ? ' err' : ''}`}>
+              {sameAccount ? (
+                <>
+                  <div className="acc-xfer-preview-h"><i className="fa-solid fa-triangle-exclamation"></i> Invalid transfer</div>
+                  <div className="acc-xfer-preview-row"><span className="l">Source and destination are the same account.</span></div>
+                </>
+              ) : (
+                <>
+                  <div className="acc-xfer-preview-h"><i className="fa-solid fa-eye"></i> After Transfer{overdraft ? ' · insufficient balance warning' : ''}</div>
+                  <div className="acc-xfer-preview-row"><span className="l">{fromAcct?.name}</span><span className="v down">{fmtMoney(fromBal)} <i className="fa-solid fa-arrow-right"></i> {fmtMoney(fromBal - amt)}</span></div>
+                  <div className="acc-xfer-preview-row"><span className="l">{toAcct?.name}</span><span className="v up">{fmtMoney(toBal)} <i className="fa-solid fa-arrow-right"></i> {fmtMoney(toBal + amt)}</span></div>
+                  {overdraft && (
+                    <div className="acc-xfer-preview-row"><span className="l" style={{ color: 'var(--error)' }}><i className="fa-solid fa-triangle-exclamation"></i> This exceeds the available balance. The source account will go negative.</span></div>
+                  )}
+                  <div className="acc-xfer-preview-row" style={{ borderTop: '1px dashed var(--border-med)', marginTop: 6, paddingTop: 8 }}><span className="l"><i className="fa-solid fa-circle-info"></i> Balance movement only. It is not counted in Profit &amp; Loss.</span></div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard and close"><button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Move the money now">
+            <button className="fee-btn fee-btn-primary" onClick={handleSubmit} disabled={sameAccount}>
+              <i className="fa-solid fa-right-left"></i> Transfer
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ── Per-account bank-style Statement, with a From/To Date filter ── */
+function FinAccountStatementModal({ account, accounts, txns, transfers, defaultId, onClose }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!account) return;
+    setFrom(''); setTo(''); setFilter('all');
+  }, [account]);
+
+  useEffect(() => {
+    if (!account) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [account, onClose]);
+
+  if (!account) return null;
+
+  const tm = finTypeMeta(account.type);
+  const current = accountsService.computeFinAccountBalance(account, txns, transfers, defaultId);
+  const income = (txns?.rev || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const expense = (txns?.exp || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const transfersIn = (transfers || []).filter(t => t.toId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const transfersOut = (transfers || []).filter(t => t.fromId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+  /* Every move (revenue/expense/transfer) that touches this account,
+     chronologically ordered — the same shape the reference prototype's
+     statement math uses: fold the whole list for a running balance,
+     then read off Brought Forward / Closing at the date boundaries. */
+  const moves = [];
+  (txns?.rev || []).forEach(t => {
+    if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Revenue · ${t.head}`, cat: 'revenue', amount: Number(t.amount) || 0, kind: 'credit' });
+  });
+  (txns?.exp || []).forEach(t => {
+    if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Expense · ${t.head}`, cat: 'expense', amount: Number(t.amount) || 0, kind: 'debit' });
+  });
+  (transfers || []).forEach(tr => {
+    if (tr.toId === account.id) {
+      const fromName = accounts.find(a => a.id === tr.fromId)?.name || 'another account';
+      moves.push({ date: tr.date, desc: tr.note || `Transfer from ${fromName}`, ref: `Transfer from ${fromName}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'credit' });
+    }
+    if (tr.fromId === account.id) {
+      const toName = accounts.find(a => a.id === tr.toId)?.name || 'another account';
+      moves.push({ date: tr.date, desc: tr.note || `Transfer to ${toName}`, ref: `Transfer to ${toName}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'debit' });
+    }
+  });
+  moves.sort((a, b) => a.date.localeCompare(b.date));
+
+  const broughtForward = (Number(account.opening) || 0)
+    + moves.filter(m => !from || m.date < from).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+  let rangeMoves = moves.filter(m => (!from || m.date >= from) && (!to || m.date <= to));
+  if (filter !== 'all') rangeMoves = rangeMoves.filter(m => m.kind === filter);
+  let running = broughtForward;
+  const rows = rangeMoves.map(m => {
+    running += m.kind === 'credit' ? m.amount : -m.amount;
+    return { ...m, balance: running };
+  });
+  const closing = (Number(account.opening) || 0)
+    + moves.filter(m => !to || m.date <= to).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+  const totalDebit = rangeMoves.filter(m => m.kind === 'debit').reduce((a, m) => a + m.amount, 0);
+  const totalCredit = rangeMoves.filter(m => m.kind === 'credit').reduce((a, m) => a + m.amount, 0);
+  const openLabel = from ? 'Balance Brought Forward' : 'Opening Balance';
+  const openDate = from || account.createdAt?.slice(0, 10) || '';
+
+  const catLabel = (m) => (m.cat === 'transfer' ? 'Transfer' : (m.kind === 'credit' ? 'Credit' : 'Debit'));
+  const tagFor = (m) => (m.cat === 'transfer' ? 'xfer' : (m.kind === 'credit' ? 'credit' : 'debit'));
+
+  const buildRows = () => rows.map(r => `<tr><td>${accFmtDate(r.date)}</td><td>${escHtmlAcc(r.desc)}</td><td>${catLabel(r)}</td><td class="r">${r.kind === 'debit' ? r.amount.toLocaleString('en-PK') : ''}</td><td class="r">${r.kind === 'credit' ? r.amount.toLocaleString('en-PK') : ''}</td><td class="r">${r.balance.toLocaleString('en-PK')}</td></tr>`).join('');
+
+  const statementFilename = `${account.name.replace(/[^A-Za-z0-9]+/g, '-')}-statement-${from || 'all'}-to-${to || 'all'}`;
+
+  const doGenerate = (style, format) => {
+    const isBW = style === 'bw';
+    if (format === 'excel') {
+      const csv = buildFinStatementCSV({ account, from, to, openLabel, openDate, broughtForward, rows, closing });
+      const blob = new Blob([csv], { type: 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${statementFilename}.xls`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setPickerOpen(false);
+      return;
+    }
+    const html = buildFinStatementHTML({ account, from, to, openLabel, openDate, broughtForward, rows, closing, totalDebit, totalCredit, buildRows, isBW });
+    if (format === 'word') {
+      downloadReportAsWord(html, `${statementFilename}.doc`);
+      setPickerOpen(false);
+      return;
+    }
+    const w = window.open('', '_blank');
+    if (w) {
+      w.document.write(html); w.document.close();
+      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    }
+    setPickerOpen(false);
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal lg">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className={`fa-solid ${tm.icon}`}></i></div>
+            <div>
+              <div className="fee-modal-title">{account.name}</div>
+              <div className="fee-modal-sub">Bank-style statement with running balance</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="acc-book-summary">
+            <div className="acc-bsum b-opening"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Opening Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-flag"></i></span></div><div className="acc-bsum-val">{fmtMoney(account.opening)}</div><div className="acc-bsum-meta">{account.type === 'bank' && account.bankName ? account.bankName : `${tm.label} account`}</div></div>
+            <div className="acc-bsum b-balance"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Current Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-scale-balanced"></i></span></div><div className="acc-bsum-val">{fmtMoney(current)}</div><div className="acc-bsum-meta">available now</div></div>
+            <div className="acc-bsum b-in"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Income Received</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-down"></i></span></div><div className="acc-bsum-val">{fmtMoney(income)}</div><div className="acc-bsum-meta">into this account</div></div>
+            <div className="acc-bsum b-out"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Expenses Paid</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-up"></i></span></div><div className="acc-bsum-val">{fmtMoney(expense)}</div><div className="acc-bsum-meta">from this account</div></div>
+            <div className="acc-bsum b-cash"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Transfers In</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-right-to-bracket"></i></span></div><div className="acc-bsum-val sm">{fmtMoney(transfersIn)}</div><div className="acc-bsum-meta">received via transfer</div></div>
+            <div className="acc-bsum b-date"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Transfers Out</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-right-from-bracket"></i></span></div><div className="acc-bsum-val sm">{fmtMoney(transfersOut)}</div><div className="acc-bsum-meta">sent via transfer</div></div>
+          </div>
+
+          <div className="acc-ledger-toolbar">
+            <div className="acc-ledger-toolbar-l">
+              <div className="fee-field"><span className="fee-label" style={{ fontSize: 10 }}>From Date</span>
+                <input className="fee-input fee-input-sm" type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
+              <div className="fee-field"><span className="fee-label" style={{ fontSize: 10 }}>To Date</span>
+                <input className="fee-input fee-input-sm" type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+              <div className="fee-select-wrap" style={{ alignSelf: 'flex-end' }}>
+                <select className="fee-select" value={filter} onChange={e => setFilter(e.target.value)} style={{ minWidth: 150 }}>
+                  <option value="all">All Movements</option>
+                  <option value="credit">Credit (In)</option>
+                  <option value="debit">Debit (Out)</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignSelf: 'flex-end' }}>
+              <Tooltip text="Download this statement as PDF, Word or Excel">
+                <button className="fee-btn fee-btn-ghost fee-btn-sm" onClick={() => setPickerOpen(true)}><i className="fa-solid fa-file-lines"></i> Download Report</button>
+              </Tooltip>
+            </div>
+          </div>
+
+          <div className="acc-txn-tablewrap">
+            <table className="acc-txn-table acc-stmt-table">
+              <thead>
+                <tr><th>Date</th><th>Description</th><th>Type</th><th className="r">Debit (Out)</th><th className="r">Credit (In)</th><th className="r">Balance</th></tr>
+              </thead>
+              <tbody>
+                <tr style={{ background: 'var(--bg-muted)' }}>
+                  <td><span className="acc-txn-date">{openDate ? accFmtDate(openDate) : '—'}</span></td>
+                  <td className="acc-txn-headname">{openLabel}</td>
+                  <td><span className="acc-stmt-tag opening"><i className="fa-solid fa-flag"></i> Opening</span></td>
+                  <td className="r">—</td><td className="r">—</td>
+                  <td className="r acc-stmt-bal">{fmtMoney(broughtForward)}</td>
+                </tr>
+                {rows.length === 0 ? (
+                  <tr><td colSpan={6}><div className="acc-txn-empty"><i className="fa-solid fa-inbox"></i>No movements in this period.</div></td></tr>
+                ) : rows.map((r, i) => (
+                  <tr key={i}>
+                    <td><span className="acc-txn-date">{accFmtDate(r.date)}</span></td>
+                    <td><div className="acc-txn-detail">{r.desc || '—'}</div><div className="acc-txn-meta"><span>{r.ref}</span></div></td>
+                    <td><span className={`acc-stmt-tag ${tagFor(r)}`}><i className={`fa-solid ${r.cat === 'transfer' ? 'fa-right-left' : (r.kind === 'credit' ? 'fa-arrow-down-long' : 'fa-arrow-up-long')}`}></i> {catLabel(r)}</span></td>
+                    <td className={`r${r.kind === 'debit' ? ' acc-stmt-debit' : ''}`}>{r.kind === 'debit' ? fmtMoney(r.amount) : '—'}</td>
+                    <td className={`r${r.kind === 'credit' ? ' acc-stmt-credit' : ''}`}>{r.kind === 'credit' ? fmtMoney(r.amount) : '—'}</td>
+                    <td className="r acc-stmt-bal">{fmtMoney(r.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} className="acc-txn-totlbl">Period Totals:</td>
+                  <td className="r acc-stmt-debit">{fmtMoney(totalDebit)}</td>
+                  <td className="r acc-stmt-credit">{fmtMoney(totalCredit)}</td>
+                  <td className="r acc-stmt-bal">{fmtMoney(closing)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Close"><button className="fee-btn fee-btn-ghost" onClick={onClose}>Close</button></Tooltip>
+        </div>
+      </div>
+      {pickerOpen && (
+        <StandardReportPicker
+          open
+          title={`${account.name} — Statement`}
+          subtitle="Choose style and format, then generate."
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setPickerOpen(false)}
+          onGenerate={doGenerate}
+        />
+      )}
+    </div>,
+    document.body
+  );
+}
+
+const escHtmlAcc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
+
+function buildFinStatementHTML({ account, from, to, openLabel, openDate, broughtForward, rows, closing, totalDebit, totalCredit, buildRows, isBW = false }) {
+  /* Same Colorful/Colorless convention as buildTxnReportHTML above:
+     Colorless = paper-white, dark text, thin gray borders, no fills. */
+  const thBg    = isBW ? '#FFFFFF' : '#1E3A8A';
+  const thFg    = isBW ? '#0F172A' : '#FFFFFF';
+  const thBdr   = isBW ? 'border-bottom:1.5px solid #0F172A;' : '';
+  const openBg  = isBW ? '#FFFFFF' : '#F1F5F9';
+  const tfBdr   = isBW ? '#0F172A' : '#111';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtmlAcc(account.name)} Statement</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0} body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;padding:24px}
+    h1{font-size:18px;margin-bottom:2px} .sub{font-size:12px;color:#555;margin-bottom:16px}
+    table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left}
+    th{background:${thBg};color:${thFg};font-size:10.5px;text-transform:uppercase;${thBdr}} td.r,th.r{text-align:right}
+    .open td{background:${openBg};font-weight:700} tfoot td{font-weight:800;border-top:2px solid ${tfBdr}}
+  </style></head><body>
+  <h1>${escHtmlAcc(account.name)}</h1>
+  <div class="sub">${from ? accFmtDate(from) : 'All time'} to ${to ? accFmtDate(to) : 'today'}</div>
+  <table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead>
+  <tbody>
+    <tr class="open"><td>${openDate ? accFmtDate(openDate) : '—'}</td><td>${escHtmlAcc(openLabel)}</td><td>Opening</td><td class="r">—</td><td class="r">—</td><td class="r">${broughtForward.toLocaleString('en-PK')}</td></tr>
+    ${buildRows()}
+  </tbody>
+  <tfoot><tr><td colspan="3">Period Totals</td><td class="r">${totalDebit.toLocaleString('en-PK')}</td><td class="r">${totalCredit.toLocaleString('en-PK')}</td><td class="r">${closing.toLocaleString('en-PK')}</td></tr></tfoot>
+  </table>
+  </body></html>`;
+}
+
+function buildFinStatementCSV({ account, from, to, openLabel, openDate, broughtForward, rows, closing }) {
+  const esc = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+  const lines = [
+    `${account.name} Statement`,
+    `${from || 'All time'} to ${to || 'today'}`,
+    '',
+    ['Date', 'Description', 'Type', 'Debit', 'Credit', 'Balance'].join(','),
+    [openDate, esc(openLabel), 'Opening', '', '', broughtForward].join(','),
+    ...rows.map(r => [accFmtDate(r.date), esc(r.desc), r.cat === 'transfer' ? 'Transfer' : (r.kind === 'credit' ? 'Credit' : 'Debit'), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
+    ['', 'Closing Balance', '', '', '', closing].join(','),
+  ];
+  return lines.join('\n');
+}
+
 
 function AccountBooks({ toast, isOtherSession }) {
   const { can } = usePermissions();
@@ -5926,6 +6772,51 @@ const ACC_CSS = `
   background: rgba(8,145,178,.08);
   border-color: rgba(8,145,178,.25);
 }
+
+/* ═══ Wallets (Financial Accounts) + Transfers — ported CSS ═══ */
+.acc-opt { color: var(--text-muted); font-weight: 600; font-size: 11px; }
+.acc-wallet-card-top { padding: 16px 18px; display: flex; align-items: flex-start; gap: 13px; border-bottom: 1px solid var(--border-light); }
+.acc-wallet-tt { flex: 1; min-width: 0; }
+.acc-wallet-name { font-size: 15px; font-weight: 800; color: var(--text-primary); line-height: 1.3; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.acc-wallet-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; display: flex; align-items: center; gap: 5px; }
+.acc-default-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-full); background: rgba(217,119,6,.12); color: #D97706; border: 1px solid rgba(217,119,6,.3); }
+.acc-wallet-body { padding: 16px 18px; flex: 1; }
+.acc-wallet-balrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.acc-wallet-bal { padding: 11px 13px; border-radius: var(--radius-md); background: var(--bg-muted); border: 1px solid var(--border-light); }
+.acc-wallet-bal-lbl { font-size: 10px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--text-muted); }
+.acc-wallet-bal-val { font-size: 16px; font-weight: 800; color: var(--text-primary); margin-top: 4px; }
+.acc-wallet-bal.current { background: linear-gradient(135deg,rgba(8,145,178,.08),rgba(14,116,144,.05)); border-color: rgba(8,145,178,.25); }
+.acc-wallet-bal.current .acc-wallet-bal-val { color: #0E7490; }
+[data-theme="dark"] .acc-wallet-bal.current .acc-wallet-bal-val { color: #22D3EE; }
+.acc-wallet-foot { padding: 11px 14px; border-top: 1px solid var(--border-light); display: flex; align-items: center; gap: 8px; background: var(--bg-muted); flex-wrap: wrap; }
+.acc-wallet-foot .fee-iconbtn { width: auto; padding: 6px 11px; gap: 6px; font-size: 11.5px; font-weight: 700; border-radius: var(--radius-md); }
+.acc-wallet-stmtbtn { flex: 1; justify-content: center; min-width: 120px; }
+[data-theme="dark"] .acc-wallet-card, [data-theme="dark"] .acc-wallet-bal { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .acc-wallet-name, [data-theme="dark"] .acc-wallet-bal-val { color: #E2E8F8; }
+[data-theme="dark"] .acc-wallet-foot, [data-theme="dark"] .acc-wallet-bal { background: var(--bg-muted); }
+.acc-stmt-table td.acc-stmt-credit { color: #16A34A; font-weight: 700; }
+.acc-stmt-table td.acc-stmt-debit { color: #DC2626; font-weight: 700; }
+.acc-stmt-table td.acc-stmt-bal { font-weight: 800; color: var(--text-primary); }
+[data-theme="dark"] .acc-stmt-table td.acc-stmt-bal { color: #E2E8F8; }
+.acc-stmt-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; padding: 2px 9px; border-radius: var(--radius-full); }
+.acc-stmt-tag.credit  { background: rgba(22,163,74,.1); color: #16A34A; border: 1px solid rgba(22,163,74,.22); }
+.acc-stmt-tag.debit   { background: rgba(220,38,38,.1); color: #DC2626; border: 1px solid rgba(220,38,38,.22); }
+.acc-stmt-tag.opening { background: rgba(37,99,235,.1); color: #2563EB; border: 1px solid rgba(37,99,235,.22); }
+.acc-stmt-tag.xfer     { background: rgba(8,145,178,.1); color: #0E7490; border: 1px solid rgba(8,145,178,.22); }
+.acc-xfer-flow { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: start; margin-top: 16px; }
+.acc-xfer-arrow { align-self: center; padding-top: 18px; color: #0891B2; font-size: 18px; }
+.acc-xfer-bal { margin-top: 7px; font-size: 11.5px; font-weight: 700; color: var(--text-muted); padding: 6px 10px; background: var(--bg-muted); border-radius: var(--radius-sm, 8px); border: 1px solid var(--border-light); }
+.acc-xfer-preview-h { font-size: 12px; font-weight: 800; color: #0E7490; letter-spacing: .3px; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+.acc-xfer-preview.err .acc-xfer-preview-h { color: #DC2626; }
+.acc-xfer-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 13px; }
+.acc-xfer-preview-row .l { color: var(--text-secondary); font-weight: 600; }
+.acc-xfer-preview-row .v { font-weight: 800; color: var(--text-primary); }
+[data-theme="dark"] .acc-xfer-preview-row .v { color: #E2E8F8; }
+.acc-xfer-preview-row .v.down { color: #DC2626; }
+.acc-xfer-preview-row .v.up { color: #16A34A; }
+  .acc-xfer-flow { grid-template-columns: 1fr; }
+  .acc-xfer-arrow { transform: rotate(90deg); padding: 4px 0; }
+  .acc-wallet-balrow { grid-template-columns: 1fr; }
 
 /* Smart-search dropdown (mirrors Fee module's design) */
 .fee-search-anchor { position: relative; width: 100%; }
