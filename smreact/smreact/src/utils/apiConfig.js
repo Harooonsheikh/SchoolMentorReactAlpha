@@ -297,7 +297,7 @@ export const SESSION_KEYS = ['token', 'branchID'];
 
 // Kitni der (ms) baad kisi ERP API call ko "slow" samjha jaye — is par window
 // par `sm:slow` event fire hota hai (SystemDialogs use kar ke slow banner dikhata).
-const SM_SLOW_MS = 12000;
+const SM_SLOW_MS = 15000;
 
 /** True only when every required session key is present. */
 export function hasValidSession() {

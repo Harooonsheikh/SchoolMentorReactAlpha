@@ -26,7 +26,7 @@ import { ledgerPendingAsOf, ledgerAdvanceEvents } from '../../components/Fee';
 
 const round = (n) => Math.round(Number(n) || 0);
 
-export function computeFeeExtrasFromLedger(allStudents, { month, year, previousMonthOutstanding = null } = {}) {
+export function computeFeeExtrasFromLedger(allStudents, { month, year, previousMonthOutstanding = null, receivingDiscount = null } = {}) {
   const rows = Array.isArray(allStudents) ? allStudents : [];
   const mm = String(month).padStart(2, '0');
   const monthStartISO = `${year}-${mm}-01`;
@@ -132,19 +132,29 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
      (dashboard spec: Previous Dues = Monthly Fee Defaulter Total Outstanding
      of current month − 1), use it and recompute Net Receivable = Current Month
      + Previous Dues so the Overview chart identity still holds. */
+  /* RECEIVING-time discount (Give Discount) — dashboard card 5 jaisi value (API ReceivedDiscount
+     di gayi ho to wahi, warna ledger ki recvDiscount). Ledger ka payable/currBilled is discount ko
+     PEHLE hi ghata chuka hota hai (Fee normalize: recvDiscount → discount); Current Month /
+     Net Receivable "challan discount ke baad, receiving discount se PEHLE" hone chahiye, is liye
+     wapas jodte hain — aur Pending me ek hi dafa (yahi value) minus hoti hai. Pehle Pending me
+     CHALLAN discount (discountTotal) dobara minus ho raha tha (Net me pehle hi minus tha). */
+  const ledgerRecvDisc = receivingDiscountRows.reduce((a, r) => a + r.discountGiven, 0);
+  const recvDiscApplied = Math.max(0, round(receivingDiscount != null ? receivingDiscount : ledgerRecvDisc));
+  /* Wapas wahi jodo jo ledger ne ghataya tha (ledger ki apni recvDiscount). */
+  const currentMonthFinal = round(currentMonthTotal) + round(ledgerRecvDisc);
   const prevDuesFinal = (previousMonthOutstanding != null)
     ? Math.max(0, round(previousMonthOutstanding))
     : round(previousDuesTotal);
   const netFinal = (previousMonthOutstanding != null)
-    ? (round(currentMonthTotal) + prevDuesFinal)
-    : round(netReceivableTotal);
+    ? (currentMonthFinal + prevDuesFinal)
+    : round(netReceivableTotal) + round(ledgerRecvDisc);
   /* Pending Fee — derived from the card's own formula so the card always
      reconciles with the numbers it shows:
        Pending = Net Receivable − Fee Received − Receiving Discount − Advance Adjustments
      (same definition as feeDashboardExtra.js's source model). */
   const pendingFinal = Math.max(
     0,
-    round(netFinal) - round(receivedTotal) - round(discountTotal) - round(advanceAdjustmentTotal),
+    round(netFinal) - round(receivedTotal) - recvDiscApplied - round(advanceAdjustmentTotal),
   );
   const receivedPct = netFinal > 0 ? Math.round((receivedTotal / netFinal) * 100) : 0;
   const pendingPct  = netFinal > 0 ? Math.round((pendingFinal / netFinal) * 100) : 0;
@@ -153,7 +163,8 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
   const receivingDiscountStudentCount = new Set(receivingDiscountRows.map((r) => r.reg)).size;
 
   return {
-    currentMonthTotal: round(currentMonthTotal), challansGenerated, totalStudents,
+    currentMonthTotal: currentMonthFinal, challansGenerated, totalStudents,
+    receivingDiscountApplied: recvDiscApplied,
     previousDuesTotal: prevDuesFinal, studentsWithDues,
     netReceivableTotal: netFinal,
     receivedRows, receivedTotal: round(receivedTotal), receivedStudentCount, receivedPct,

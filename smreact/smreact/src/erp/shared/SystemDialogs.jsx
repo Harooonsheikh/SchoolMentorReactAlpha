@@ -24,6 +24,9 @@ import Tooltip from './Tooltip';
    - Inputs all kept simple — no business logic, mirrors the HTML demo.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* Is speed (Mbps, navigator.connection.downlink) ya zyada par "Slow Internet" banner nahi. */
+const SLOW_MIN_MBPS = 3;
+
 export default function SystemDialogs({ toast = () => {} }) {
   /* Banner / dialog visibility — sirf REAL conditions: offline / slow API / 500.
      (Session-timeout aur "Are you sure" demo surfaces hata diye gaye.) */
@@ -32,6 +35,7 @@ export default function SystemDialogs({ toast = () => {} }) {
   const slowTimerRef       = useRef(null);
   const offlineShownRef    = useRef(false);   // offline toast ek hi baar (transition par)
   const lastServerToastRef = useRef(0);       // 500 toast debounce (spam se bachne ke liye)
+  const lastWaitToastRef   = useRef(0);       // "Please wait" toast debounce
 
   /* Push <main> down while a banner is open so the page content
      never sits behind the fixed strip. The HTML reference does the
@@ -65,14 +69,31 @@ export default function SystemDialogs({ toast = () => {} }) {
         toast('Back online — connection restored.', 'success');
       }
     };
-    /* Slow event tabhi maano jab internet chal raha ho. Agar offline hai to
-       (kyunki offline par fetch pehle hang hota hai) Slow ke bajaye Offline dikhao. */
+    /* Do alag cheezen:
+       1. API 15 sec tak jawab na de (sm:slow) → sirf "Please wait…" toast (speed chahe kuch bhi ho).
+          Kai calls ek saath slow hon to 8s debounce, taake spam na ho. Offline ho to Offline dikhao.
+       2. Internet speed (navigator.connection.downlink, Mbps) SLOW_MIN_MBPS se kam ho →
+          "Slow Connection" banner (3 sec). Ye API se alag hai: page khulte waqt aur jab bhi
+          browser speed badalne ki khabar de, tab check hota hai. Jis browser me ye value
+          nahi (Firefox / Safari) wahan speed wala banner nahi aata. */
     const onSlow = () => {
       if (isOffline()) { goOffline(); return; }
+      const now = Date.now();
+      if (now - lastWaitToastRef.current < 8000) return;
+      lastWaitToastRef.current = now;
+      toast('Taking longer than usual. Please wait…', 'info');
+    };
+    const conn = typeof navigator !== 'undefined' ? navigator.connection : undefined;
+    const checkSpeed = () => {
+      if (isOffline()) return;
+      const downlink = conn && conn.downlink;
+      if (typeof downlink !== 'number' || downlink >= SLOW_MIN_MBPS) return;
       setShowSlow(true);
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
-      slowTimerRef.current = setTimeout(() => setShowSlow(false), 4000);
+      slowTimerRef.current = setTimeout(() => setShowSlow(false), 3000);   // 3 sec baad khud band
     };
+    checkSpeed();
+    if (conn && conn.addEventListener) conn.addEventListener('change', checkSpeed);
     /* 500 ab BLOCKING modal nahi — sirf ek non-blocking toast (app chalti rahe).
        Baar-baar 500 par spam na ho, is liye 8s ka debounce. */
     const onServerError = () => {
@@ -94,6 +115,7 @@ export default function SystemDialogs({ toast = () => {} }) {
       window.removeEventListener('sm:offline', goOffline);
       window.removeEventListener('sm:online', goOnline);
       window.removeEventListener('sm:server-error', onServerError);
+      if (conn && conn.removeEventListener) conn.removeEventListener('change', checkSpeed);
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
     };
   }, []);
