@@ -35,7 +35,9 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
    School SOPs (sops) bhi ab yahan nahi — har branch par live hai; baqi
    modules ki tarah school ki module activation (Super Admin → School
    Permissions → School SOPs) aur user permission se chalta hai. */
-const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'trainings', 'etube', 'notifications', 'approvals']);
+/* Inventory ab branch-1-only nahi raha — har branch par live hai. Normal module
+   activation (ALWAYS_ON_MODULES, moduleConfig) + user permission se chalta hai. */
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'audit', 'appraisal', 'trainings', 'etube', 'notifications', 'approvals']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
@@ -146,7 +148,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'fee',       name: 'Fee',       icon: 'fa-money-bill-wave' },
       { id: 'accounts',  name: 'Accounts',  icon: 'fa-landmark' },
-      { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },   /* branchID 1 only */
+      { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },   /* har branch par live */
     ],
   },
   {

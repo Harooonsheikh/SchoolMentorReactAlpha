@@ -49,6 +49,13 @@ export const MODULE_REGISTRY = [
   { id: 'user_permissions', label: 'User Permissions',  icon: 'fa-shield-halved',    group: 'BASICS',         route: '/user-permissions',   coreLocked: true  },
 ];
 
+/* ─── ALWAYS-ON modules — API chahe `false` hi kyun na bheje, ye har branch
+       par hamesha visible rehte hain. coreLocked se farq: ye apne group me
+       normal rehte hain aur permission-matrix me bhi dikhte hain, bas sidebar
+       se kabhi gayab nahi hote. Inventory ko har branch ke liye kholne ke liye
+       yahan rakha gaya hai. */
+export const ALWAYS_ON_MODULES = ['inventory'];
+
 /* ─── Default activation state — every module enabled. */
 export const DEFAULT_MODULE_STATE = Object.fromEntries(
   MODULE_REGISTRY.map(m => [m.id, true])
@@ -59,7 +66,7 @@ export const DEFAULT_MODULE_STATE = Object.fromEntries(
        response aane tak ek pal ke liye sidebar me flash kar jata hai. Isi
        liye default "kuch nahi" hai — API batayegi kya on karna hai. */
 export const EMPTY_MODULE_STATE = Object.fromEntries(
-  MODULE_REGISTRY.map(m => [m.id, !!m.coreLocked])
+  MODULE_REGISTRY.map(m => [m.id, !!m.coreLocked || ALWAYS_ON_MODULES.includes(m.id)])
 );
 
 /* ─── Mapping: backend `module-permission` response field → MODULE_REGISTRY.id.
@@ -113,6 +120,9 @@ export function mapApiPermissionsToModuleState(payload) {
 
   /* coreLocked hamesha on. */
   for (const m of MODULE_REGISTRY) if (m.coreLocked) state[m.id] = true;
+
+  /* ALWAYS-ON module (inventory) har branch par on — API `false` bheje to bhi. */
+  for (const id of ALWAYS_ON_MODULES) state[id] = true;
 
   return state;
 }
