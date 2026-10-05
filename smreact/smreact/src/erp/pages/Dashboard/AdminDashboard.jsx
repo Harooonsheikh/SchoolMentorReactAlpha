@@ -166,33 +166,6 @@ const TEACHER_BIRTHDAYS = [
 
 const TODAY_DAY = 31;        /* Mock "today" — matches CURRENT_SESSION's daysLeft pivot */
 
-const ACTIVITIES = [
-  { id: 1, date: '01 Jun 2026', title: 'Final Term Exams Begin',
-    desc: 'Final term examinations start for all classes Grade 1–10.',
-    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 1 },
-  { id: 2, date: '03 Jun 2026', title: 'PTM — All Classes',
-    desc: 'Parent-Teacher Meeting for Q3 result discussion.',
-    category: 'School Event',  type: 'event',    module: 'students', daysAway: 3 },
-  { id: 3, date: '05 Jun 2026', title: 'World Environment Day Activity',
-    desc: 'Tree plantation drive and environment awareness program.',
-    category: 'School Event',  type: 'event',    module: null,        daysAway: 5 },
-  { id: 4, date: '10 Jun 2026', title: 'Sports Day',
-    desc: 'Annual sports day with inter-house competitions.',
-    category: 'School Event',  type: 'event',    module: null,        daysAway: 10 },
-  { id: 5, date: '15 Jun 2026', title: 'Result Cards Distribution',
-    desc: 'Final term result cards distributed to parents.',
-    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 15 },
-  { id: 6, date: '20 Jun 2026', title: 'Summer Vacation Begins',
-    desc: 'School closes for summer vacation until August 2026.',
-    category: 'Holiday',       type: 'holiday',  module: null,        daysAway: 20 },
-  { id: 7, date: '25 Jun 2026', title: 'Staff Training Day',
-    desc: 'Professional development session for all teaching staff.',
-    category: 'HR',            type: 'event',    module: 'hr',       daysAway: 25 },
-  { id: 8, date: '30 Jun 2026', title: 'Monthly Fee Deadline',
-    desc: 'Last date for submission of July 2026 fee challans.',
-    category: 'Fee',           type: 'deadline', module: 'fee',      daysAway: 30 },
-];
-
 const TYPE_COLOR = {
   exam:     { bg: 'rgba(220, 38, 38, .12)', fg: '#DC2626' },
   event:    { bg: 'rgba(30, 58, 138, .12)', fg: '#1E40AF' },
@@ -450,6 +423,52 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const liveStuBdays     = useMemo(() => (Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : []), [D.StudentBirthdays]);
   const liveStaffBdays   = useMemo(() => (Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : []), [D.StaffBirthdays]);
   const liveUpActivities = Array.isArray(D.UpcomingActivities) ? D.UpcomingActivities : [];
+
+  /* Upcoming Activities section — CURRENT mahine ki Activity Calendar activities
+     (pehle yahan May 2026 ka mock data tha). Source: getactivitycalendarbymonth;
+     wo khali/fail ho to get-dashboard ka UpcomingActivities. Field names dono
+     shapes (camel / Pascal) se uthaye jate hain. */
+  const [monthActs, setMonthActs] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    dashboardService.getActivitiesByMonth(dashboardService.currentMonthYear().month)
+      .then((rows) => { if (alive) setMonthActs(rows); })
+      .catch(() => { if (alive) setMonthActs([]); });
+    return () => { alive = false; };
+  }, []);
+  const actMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const monthActivities = useMemo(() => {
+    const src = (monthActs && monthActs.length) ? monthActs : liveUpActivities;
+    const pick = (o, keys) => { for (const k of keys) { if (o[k] != null && o[k] !== '') return o[k]; } return ''; };
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const mEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const dayOf = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
+    return (src || []).map((x, i) => {
+      const o = x || {};
+      const start = dayOf(pick(o, ['startAt', 'StartAt', 'startDate', 'StartDate', 'start', 'fromDate', 'FromDate', 'activityDate', 'ActivityDate', 'date', 'Date']));
+      const end = dayOf(pick(o, ['endAt', 'EndAt', 'endDate', 'EndDate', 'end', 'toDate', 'ToDate'])) || start;
+      return {
+        id: pick(o, ['id', 'ID', 'Id', 'activityID', 'ActivityID', 'activityCalendarID', 'ActivityCalendarID']) || ('act-' + i),
+        title: pick(o, ['name', 'Name', 'activityName', 'ActivityName', 'title', 'Title']) || 'Activity',
+        desc: pick(o, ['activityPurpose', 'ActivityPurpose', 'description', 'Description', 'details', 'Details']),
+        start, end,
+      };
+    })
+      .filter((a) => a.start && a.start <= mEnd && a.end >= mStart)
+      .sort((p, q) => p.start - q.start)
+      .map((a) => {
+        const days = Math.round((a.start - today) / 86400000);
+        let status, label;
+        if (a.end < today) { status = 'done'; label = 'Completed'; }
+        else if (a.start <= today) { status = 'today'; label = (a.end > today) ? 'Ongoing' : 'Today'; }
+        else { status = 'upcoming'; label = days === 1 ? 'Tomorrow' : ('In ' + days + ' days'); }
+        const fmt = (d) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const date = (a.end > a.start) ? (fmt(a.start) + ' – ' + fmt(a.end)) : fmt(a.start);
+        return { ...a, date, status, label, days };
+      });
+  }, [monthActs, liveUpActivities]);
   const liveRevenueStreams = useMemo(() => (Array.isArray(D.RevenueStreams) ? D.RevenueStreams : []), [D.RevenueStreams]);
   const liveFinOverview  = useMemo(() => (D.FinancialOverview || {}), [D.FinancialOverview]);
   const dPctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
@@ -2035,18 +2054,23 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             <span className="adm-h-ic adm-h-ic--star"><i className="fa-solid fa-calendar-day" aria-hidden="true"></i></span>
             Upcoming Activities
           </div>
-          <span className="adm-h-meta">May 2026</span>
+          <span className="adm-h-meta">{actMonthLabel}</span>
         </div>
         <div className="adm-info-banner">
           <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
           <span>School events, exams, and important dates for this month.</span>
         </div>
 
+        {monthActs === null ? (
+          <div className="adm-info-banner"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>Loading activities…</span></div>
+        ) : monthActivities.length === 0 ? (
+          <div className="adm-info-banner"><i className="fa-solid fa-calendar-xmark" aria-hidden="true"></i><span>No activities scheduled for {actMonthLabel}.</span></div>
+        ) : (
         <div className="adm-act-grid">
-          {ACTIVITIES.map(a => {
-            const c = TYPE_COLOR[a.type] || TYPE_COLOR.event;
-            const daysLabel = a.daysAway === 1 ? 'Tomorrow' : `In ${a.daysAway} days`;
-            const daysTone = a.daysAway === 1 ? 'amber' : (a.daysAway <= 7 ? 'brand' : 'muted');
+          {monthActivities.map(a => {
+            const c = a.status === 'done' ? TYPE_COLOR.holiday : (a.status === 'today' ? TYPE_COLOR.deadline : TYPE_COLOR.event);
+            const daysLabel = a.label;
+            const daysTone = (a.status === 'today' || a.days === 1) ? 'amber' : (a.status === 'upcoming' && a.days <= 7 ? 'brand' : 'muted');
             /* Every card now lands on Academics → Scheme of Studies →
                Calendar → Activity Calendar via the openActivityCalendar
                callback hoisted from App.js. */
@@ -2074,7 +2098,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                   <div className="adm-act-title">{a.title}</div>
                   <div className="adm-act-desc">{a.desc}</div>
                   <div className="adm-act-foot">
-                    <span className="adm-act-cat" style={{ background: c.bg, color: c.fg }}>{a.category}</span>
+                    <span className="adm-act-cat" style={{ background: c.bg, color: c.fg }}>{a.status === 'done' ? 'Completed' : 'Activity'}</span>
                     <span className="adm-act-mod">
                       <i className="fa-solid fa-calendar-plus" aria-hidden="true"></i>
                       Activity Calendar
@@ -2085,6 +2109,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             );
           })}
         </div>
+        )}
       </div>
       )}
     </>

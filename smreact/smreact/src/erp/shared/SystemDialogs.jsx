@@ -24,8 +24,49 @@ import Tooltip from './Tooltip';
    - Inputs all kept simple — no business logic, mirrors the HTML demo.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Is speed (Mbps, navigator.connection.downlink) ya zyada par "Slow Internet" banner nahi. */
+/* Is speed (Mbps) ya zyada par "Slow Internet" banner nahi. */
 const SLOW_MIN_MBPS = 3;
+
+/* ── Asli speed test (probe) ──────────────────────────────────────
+   Chrome ka navigator.connection.downlink sirf andaza hai (hamari slow APIs dekh
+   kar khud kam ho jata hai, 10 Mbps par capped) — is liye "Slow Internet" ke liye
+   us par bharosa NAHI. Jab koi API 15 sec tak atak jaye, tab ek chhoti STATIC file
+   (public/ ki icon PNG, ~300 KB, pehle se compressed) cache ke baghair download kar
+   ke asli speed naapi jati hai. Static file IIS seedha deta hai — API/DB ki
+   susti is par asar nahi karti, is liye:
+     probe tez (>= 3 Mbps)  → internet theek, server slow → "Please wait"
+     probe dheema / atka    → internet hi slow           → "Slow Connection"
+   Natija 60 sec cache — kai slow APIs par baar-baar download nahi. */
+const PROBE_URL = `${process.env.PUBLIC_URL || ''}/android-chrome-512x512.png`;
+const PROBE_TIMEOUT_MS = 10000;
+const PROBE_CACHE_MS = 60000;
+let probeCache = { at: 0, mbps: null };
+let probeInFlight = null;
+function measureMbps() {
+  if (probeCache.mbps != null && Date.now() - probeCache.at < PROBE_CACHE_MS) {
+    return Promise.resolve(probeCache.mbps);
+  }
+  if (probeInFlight) return probeInFlight;
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = setTimeout(() => { if (ctrl) ctrl.abort(); }, PROBE_TIMEOUT_MS);
+  const t0 = performance.now();
+  probeInFlight = fetch(`${PROBE_URL}?probe=${Date.now()}`, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+    .then((res) => { if (!res.ok) throw new Error('probe ' + res.status); return res.arrayBuffer(); })
+    .then((buf) => {
+      const secs = Math.max(0.001, (performance.now() - t0) / 1000);
+      const mbps = (buf.byteLength * 8) / secs / 1e6;
+      probeCache = { at: Date.now(), mbps };
+      return mbps;
+    })
+    /* 10 sec me ~300 KB bhi na aaye = bohat dheema internet (0 Mbps maano).
+       Doosri ghalti (file na mile waghera) par null — tab "Please wait" hi. */
+    .catch((err) => {
+      if (err && err.name === 'AbortError') { probeCache = { at: Date.now(), mbps: 0 }; return 0; }
+      return null;
+    })
+    .finally(() => { clearTimeout(timer); probeInFlight = null; });
+  return probeInFlight;
+}
 
 export default function SystemDialogs({ toast = () => {} }) {
   /* Banner / dialog visibility — sirf REAL conditions: offline / slow API / 500.
@@ -38,6 +79,7 @@ export default function SystemDialogs({ toast = () => {} }) {
   const lastServerToastRef = useRef(0);       // 500 toast debounce (spam se bachne ke liye)
   const noNetRef           = useRef(false);   // listeners ke andar offline banner ki taaza halat
   const slowShownRef       = useRef(false);   // listeners ke andar slow banner ki taaza halat
+  const lastSlowAtRef      = useRef(0);       // Slow banner 30 sec me ek hi dafa (kai slow APIs par baar-baar nahi)
 
   /* Push <main> down while a banner is open so the page content
      never sits behind the fixed strip. The HTML reference does the
@@ -76,40 +118,38 @@ export default function SystemDialogs({ toast = () => {} }) {
         toast('Back online — connection restored.', 'success');
       }
     };
-    /* Upar ek waqt me SIRF EK banner (priority: Offline > Slow Internet > Please wait):
-       1. Internet speed (navigator.connection.downlink, Mbps) SLOW_MIN_MBPS se kam →
-          "Slow Connection" banner (3 sec). Page khulte waqt aur jab browser speed badalne
-          ki khabar de tab check hota hai. Firefox / Safari ye value nahi dete — wahan nahi aata.
-       2. API 15 sec tak jawab na de (sm:slow) aur internet theek ho → "Please wait" banner,
-          jo slow API ka jawab aate hi (sm:slow-end, koi slow call baqi na rahe) band hota hai.
-          Us waqt speed kam ho to Please wait ke bajaye Slow Connection banner. */
-    const conn = typeof navigator !== 'undefined' ? navigator.connection : undefined;
-    const isSlowNet = () => {
-      const downlink = conn && conn.downlink;
-      return typeof downlink === 'number' && downlink < SLOW_MIN_MBPS;
-    };
+    /* Upar ek waqt me SIRF EK banner (priority: Offline > Slow Internet > Please wait).
+       Koi bhi banner TABHI jab koi API 15 sec tak jawab na de (sm:slow) — page khulte /
+       refresh par speed check NAHI hota (browser ka shuru ka andaza ghalat/kam hota hai aur
+       banner baar-baar aa jata tha). 15 sec par:
+         - asli speed test (measureMbps, upar) SLOW_MIN_MBPS se kam → "Slow Connection"
+           banner (3 sec). Har browser me ek jaisa chalta hai.
+         - warna → "Please wait" banner, jo slow API ka jawab aate hi (sm:slow-end, koi slow
+           call baqi na rahe) band hota hai. */
     const showSlowBanner = () => {
       setShowWait(false);
+      const now = Date.now();
+      if (now - lastSlowAtRef.current < 30000) return;
+      lastSlowAtRef.current = now;
       setShowSlow(true);
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
       slowTimerRef.current = setTimeout(() => setShowSlow(false), 3000);   // 3 sec baad khud band
     };
-    const checkSpeed = () => {
-      if (isOffline() || noNetRef.current) return;
-      if (isSlowNet()) showSlowBanner();
-    };
-    const onSlow = () => {
+    let alive = true;
+    const onSlow = async () => {
       if (isOffline()) { goOffline(); return; }
       if (noNetRef.current) return;
-      if (isSlowNet()) { showSlowBanner(); return; }
+      const mbps = await measureMbps();
+      if (!alive || isOffline() || noNetRef.current) return;
+      if (mbps != null && mbps < SLOW_MIN_MBPS) { showSlowBanner(); return; }
       if (slowShownRef.current) return;
+      /* Probe ke dauran slow API ka jawab aa gaya ho to "Please wait" ki zaroorat nahi. */
+      if (!(window.__smSlowPending > 0)) return;
       setShowWait(true);
     };
     const onSlowEnd = (e) => {
       if (!e || !e.detail || !e.detail.pending) setShowWait(false);
     };
-    checkSpeed();
-    if (conn && conn.addEventListener) conn.addEventListener('change', checkSpeed);
     /* 500 ab BLOCKING modal nahi — sirf ek non-blocking toast (app chalti rahe).
        Baar-baar 500 par spam na ho, is liye 8s ka debounce. */
     const onServerError = () => {
@@ -126,6 +166,7 @@ export default function SystemDialogs({ toast = () => {} }) {
     window.addEventListener('sm:online', goOnline);
     window.addEventListener('sm:server-error', onServerError);
     return () => {
+      alive = false;
       window.removeEventListener('offline', goOffline);
       window.removeEventListener('online',  goOnline);
       window.removeEventListener('sm:slow', onSlow);
@@ -133,7 +174,6 @@ export default function SystemDialogs({ toast = () => {} }) {
       window.removeEventListener('sm:offline', goOffline);
       window.removeEventListener('sm:online', goOnline);
       window.removeEventListener('sm:server-error', onServerError);
-      if (conn && conn.removeEventListener) conn.removeEventListener('change', checkSpeed);
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
     };
   }, []);

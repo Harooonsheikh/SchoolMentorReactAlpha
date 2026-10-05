@@ -74,3 +74,23 @@ export async function getBranchStaff() {
     department:  e.departmentName || e.department || '',
   }));
 }
+
+/* Activity Calendar — ek mahine ki activities (Academics → Activity Calendar ka hi source).
+     GET /api/getactivitycalendarbymonth?BranchID&month&SessionYearID&pageNo=1
+   Dashboard ke "Upcoming Activities" section ke liye. Fail par error throw. */
+export async function getActivitiesByMonth(month) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const sessionYearID = sessionStorage.getItem('changeSessionId')
+    || sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
+  const token = sessionStorage.getItem('token');
+  const m = Number(month) || currentMonthYear().month;
+  const res = await fetch(
+    buildUrl(`/api/getactivitycalendarbymonth?BranchID=${branchID}&month=${m}&SessionYearID=${sessionYearID}&pageNo=1`),
+    { headers: { Accept: '*/*', ...(token ? { Authorization: `bearer ${token}` } : {}) } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load activities');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
