@@ -64,6 +64,7 @@ export const MODULE_SECTIONS = [
     { key: 'fee', name: 'Fee', icon: 'fa-money-bill-wave' },
     { key: 'accounts', name: 'Accounts', icon: 'fa-calculator' },
     { key: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacking' },
+    { key: '1linkintegration', name: '1Link Integration', icon: 'fa-money-check-dollar' },
   ] },
   { label: '🏫 Administration', items: [
     { key: 'admissioncrm', name: 'Admission CRM', icon: 'fa-user-plus' },

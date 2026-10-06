@@ -179,7 +179,9 @@ export default function AdminLayout() {
             <div className="sf-avatar">{initials(userName)}</div>
             <div className="sf-meta">
               <div className="sf-name" title={userName}>{userName}</div>
-              <div className="sf-role">{user?.role || 'Super Administrator'}</div>
+              {/* Staff (employeeID wale) ko login response ka designationName; Head
+                  Office account (koi employeeID nahi) ko uska role. */}
+              <div className="sf-role">{user?.employeeID ? (user?.designationName || user?.role || 'Staff') : (user?.role || 'Network Head Office')}</div>
             </div>
           </div>
           <button className="sf-logout" onClick={() => setLogoutOpen(true)} title="Sign out">
