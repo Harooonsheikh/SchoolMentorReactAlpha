@@ -1409,18 +1409,17 @@ function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete, per
                     <div className="ch-actions" style={{ justifyContent: 'center' }}>
                       <button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
                       <button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
-                      {/* Poori payment ho chuki to button band (monthly wali
-                          tarah). Aadhi hui ho to baqi raqam ke liye "Receive
-                          More". */}
+                      {/* One-time payment EK hi dafa, POORI — "Receive More"
+                          nahi. Jaise hi koi receiving record ban jaye, button
+                          band. Adhuri payment modal me hi rok di jati hai. */}
                       <button
                         className="recv-btn-recv"
                         style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
-                        disabled={status === 'paid'}
-                        data-tip={status === 'paid' ? 'Payment already received in full' : status === 'partial' ? 'Receive the remaining balance' : ''}
+                        disabled={!!recv}
+                        data-tip={recv ? 'Payment already received — delete to re-enter' : ''}
                         onClick={() => onReceive(c)}
                       >
-                        <i className={`fa-solid ${status === 'partial' ? 'fa-plus' : 'fa-hand-holding-dollar'}`} />
-                        {status === 'partial' ? ' Receive More' : ' Receiving'}
+                        <i className="fa-solid fa-hand-holding-dollar" /> Receiving
                       </button>
                     </div>
                   </td>
@@ -2417,25 +2416,26 @@ function OtSlipModal({ challan: c, onClose }) {
   );
 }
 
-function OtReceiveModal({ challan: c, prevRecv, onClose, onSave, toast }) {
+function OtReceiveModal({ challan: c, onClose, onSave, toast }) {
   const netPayable = c.netPayable;
-  const alreadyReceived = prevRecv ? (prevRecv.receivedAmount || 0) : 0;
-  /* Amount Received = IS BAAR ki wasooli (increment), kul nahi. Is liye input
-     hamesha khali shuru hota hai — pehle yahan pehle se jama raqam bhar aati
-     thi, is wajah se bacha hua 1000 lena mushkil hota tha. Pehle jo mil chuka
-     wo "Previously Received" me alag dikhta hai. */
-  const [received, setReceived] = useState('');
-  const [via, setVia] = useState(prevRecv ? prevRecv.via : RECEIVING_METHODS[0]);
+  /* One-time payment EK hi dafa aur POORI hoti hai — koi partial / "Receive
+     More" nahi. Is liye input default poori raqam par bhara aata hai, aur
+     chalan se kam raqam qubool nahi (neeche toast). */
+  const [received, setReceived] = useState(String(netPayable));
+  const [via, setVia] = useState(RECEIVING_METHODS[0]);
   const [date, setDate] = useState(todayISO());
   const thisAmount = parseFloat(received) || 0;
-  /* Remaining = Net Payable − (pehle mila + ab mila). */
-  const remaining = Math.max(0, netPayable - alreadyReceived - thisAmount);
+  const remaining = Math.max(0, netPayable - thisAmount);
   const save = () => {
     if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
     if (!date) { toast?.('Please select a payment date', 'warn'); return; }
-    /* receivedAmount = sirf is baar ki raqam; server ise pehle wali me jama
-       karta hai (one_time_chalan_receive-payment). */
-    onSave(c.id, { receivedAmount: thisAmount, remainingAmount: remaining, via, date: fmtDateShort(date), dateRaw: date });
+    /* Sirf POORI payment — chalan ki poori raqam se kam par receive nahi hoti. */
+    if (thisAmount < netPayable) {
+      toast?.(`Please receive the full payment of ${pkr(netPayable)} — partial payments are not allowed for one-time challans.`, 'warn');
+      return;
+    }
+    /* Record hamesha poori raqam par (overpay bhi cap). */
+    onSave(c.id, { receivedAmount: netPayable, remainingAmount: 0, via, date: fmtDateShort(date), dateRaw: date });
   };
   return (
     <Ov cls="recv-ov" onClose={onClose} wrap="recv-modal">
@@ -2447,14 +2447,14 @@ function OtReceiveModal({ challan: c, prevRecv, onClose, onSave, toast }) {
       <div className="recv-modal-body">
         <div className="recv-summary-card">
           <div className="recv-summary-row"><span className="recv-summary-lbl">Net Payable (Challan Amount)</span><span className="recv-summary-val">{pkr(netPayable)}</span></div>
-          {prevRecv && <div className="recv-summary-row"><span className="recv-summary-lbl">Previously Received</span><span className="recv-summary-val">{pkr(alreadyReceived)}</span></div>}
+          <div className="recv-summary-row"><span className="recv-summary-lbl" style={{ color: '#7C3AED' }}>Full payment required</span><span className="recv-summary-val" style={{ color: '#7C3AED' }}>one-time, no partial</span></div>
         </div>
         <div className="recv-input-2col">
-          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#7C3AED', marginRight: 4 }} /> Amount Received{alreadyReceived > 0 ? ' (this payment)' : ''}</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder={alreadyReceived > 0 ? `Remaining ${pkr(Math.max(0, netPayable - alreadyReceived))}` : '0'} autoFocus /></div>
+          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#7C3AED', marginRight: 4 }} /> Amount Received (full)</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder={String(netPayable)} autoFocus /></div>
           <div className="recv-field"><label><i className="fa-solid fa-building-columns" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Method</label><select className="recv-input" style={{ cursor: 'pointer' }} value={via} onChange={(e) => setVia(e.target.value)}>{RECEIVING_METHODS.map((m) => <option key={m}>{m}</option>)}</select></div>
         </div>
         <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>{alreadyReceived > 0 ? 'Net Payable − Previously Received − Amount Received' : 'Net Payable − Amount Received'}</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
+        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Amount Received</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
       </div>
       <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
     </Ov>

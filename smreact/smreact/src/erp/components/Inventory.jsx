@@ -501,7 +501,7 @@ function buildInvReportBody(type, opts, ctx) {
         <div class="kpi b"><div class="l">Total Sales</div><div class="v">Rs ${fmtMoney(tSale)}</div><div class="m">gross revenue</div></div>
         <div class="kpi a"><div class="l">Discount</div><div class="v" style="color:#B45309">Rs ${fmtMoney(tDisc)}</div><div class="m">given on sales</div></div>
         <div class="kpi a"><div class="l">Total Cost</div><div class="v">Rs ${fmtMoney(tCost)}</div><div class="m">purchase cost</div></div>
-        <div class="kpi c"><div class="l">Profit</div><div class="v" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</div><div class="m">sale − discount − cost</div></div>
+        <div class="kpi c"><div class="l">Profit</div><div class="v" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</div><div class="m">${tProfit >= 0 ? 'surplus' : 'deficit'}</div></div>
       </div>
       <table class="tbl">
         <thead><tr><th>Product</th><th class="c">Units</th><th class="r">Sale Amount</th><th class="r">Discount</th><th class="r">Purchase Cost</th><th class="r">Profit</th></tr></thead>
@@ -515,16 +515,17 @@ function buildInvReportBody(type, opts, ctx) {
     const to   = o.to   || todayISO();
     const list = sales.filter(s => s.date >= from && s.date <= to);
     const agg = invAggregateSales(list, products);
-    const keys = Object.keys(agg).sort((a, b) => agg[b].net - agg[a].net);
-    let tRev = 0, tCost = 0;
+    const keys = Object.keys(agg).sort((a, b) => agg[b].gross - agg[a].gross);
+    let tSale = 0, tDisc = 0, tCost = 0;
     const rows = keys.map(k => {
-      const cost = agg[k].cost;
-      const rev = agg[k].net;      // Sale Amount — discount ke baad (net), Sales History jaisa
-      tRev += rev; tCost += cost;
-      const profit = rev - cost;
-      return `<tr><td>${esc(k)}</td><td class="c">${fmtMoney(agg[k].qty)}</td><td class="r">Rs ${fmtMoney(rev)}</td><td class="r">Rs ${fmtMoney(cost)}</td><td class="r" style="color:${profit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(profit)}</td></tr>`;
+      const gross = agg[k].gross;           // Sale Amount — poora daam
+      const disc  = gross - agg[k].net;     // is par diya gaya discount
+      const cost  = agg[k].cost;            // purchase cost
+      const profit = agg[k].net - cost;     // Sale − Discount − Cost
+      tSale += gross; tDisc += disc; tCost += cost;
+      return `<tr><td>${esc(k)}</td><td class="c">${fmtMoney(agg[k].qty)}</td><td class="r">Rs ${fmtMoney(gross)}</td><td class="r" style="color:#B45309">Rs ${fmtMoney(disc)}</td><td class="r">Rs ${fmtMoney(cost)}</td><td class="r" style="color:${profit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(profit)}</td></tr>`;
     }).join('');
-    const tProfit = tRev - tCost;
+    const tProfit = tSale - tDisc - tCost;   // = net − cost
     return `
       <div class="rfilters">
         <span><b>From:</b> ${invFmtDate(from)}</span>
@@ -532,12 +533,13 @@ function buildInvReportBody(type, opts, ctx) {
         <span><b>Receipts:</b> ${list.length}</span>
       </div>
       <table class="tbl">
-        <thead><tr><th>Product</th><th class="c">Units</th><th class="r">Sale Amount</th><th class="r">Purchase Cost</th><th class="r">Profit</th></tr></thead>
-        <tbody>${keys.length ? rows : '<tr><td colspan="5" class="empty">No sales in this date range.</td></tr>'}</tbody>
-        <tfoot><tr class="tot"><td colspan="2">Total</td><td class="r">Rs ${fmtMoney(tRev)}</td><td class="r">Rs ${fmtMoney(tCost)}</td><td class="r" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</td></tr></tfoot>
+        <thead><tr><th>Product</th><th class="c">Units</th><th class="r">Sale Amount</th><th class="r">Discount</th><th class="r">Purchase Cost</th><th class="r">Profit</th></tr></thead>
+        <tbody>${keys.length ? rows : '<tr><td colspan="6" class="empty">No sales in this date range.</td></tr>'}</tbody>
+        <tfoot><tr class="tot"><td colspan="2">Total</td><td class="r">Rs ${fmtMoney(tSale)}</td><td class="r" style="color:#B45309">Rs ${fmtMoney(tDisc)}</td><td class="r">Rs ${fmtMoney(tCost)}</td><td class="r" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</td></tr></tfoot>
       </table>
       <div class="kpi-row" style="margin-top:14px">
-        <div class="kpi a"><div class="l">Total Sales</div><div class="v">Rs ${fmtMoney(tRev)}</div><div class="m">over period</div></div>
+        <div class="kpi a"><div class="l">Total Sales</div><div class="v">Rs ${fmtMoney(tSale)}</div><div class="m">sale price</div></div>
+        <div class="kpi a"><div class="l">Discount</div><div class="v" style="color:#B45309">Rs ${fmtMoney(tDisc)}</div><div class="m">given on sales</div></div>
         <div class="kpi b"><div class="l">Total Cost</div><div class="v">Rs ${fmtMoney(tCost)}</div><div class="m">at purchase price</div></div>
         <div class="kpi c"><div class="l">Profit</div><div class="v" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</div><div class="m">${tProfit >= 0 ? 'surplus' : 'deficit'}</div></div>
       </div>`;
