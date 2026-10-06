@@ -327,10 +327,16 @@ export default function App() {
   /* Logged-in user for the sidebar footer. */
 /* Logged-in user for the sidebar footer. */
 const userName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'User';
+/* Role line under the name: a School Head keeps showing "School Head";
+   any other account type shows its designation (e.g. "Admin",
+   "Accountant") so the person's actual job title is visible — falling
+   back to the account type, then "User", when a designation is missing. */
+const accountType = sessionStorage.getItem('accountType') || '';
+const designationName = sessionStorage.getItem('designationName') || '';
 const userRole =
-  sessionStorage.getItem('designationName') ||
-  sessionStorage.getItem('accountType') ||
-  'User';
+  accountType === 'School Head'
+    ? (accountType || 'User')
+    : (designationName || accountType || 'User');
 const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'U';
 
   /* The user's profile photo (empImage) for the sidebar avatar — same source as

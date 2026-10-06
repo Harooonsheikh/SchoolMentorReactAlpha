@@ -53,7 +53,7 @@ function isOneLinkPreview() {
     if (p && p.token && p.branchID) {
       /* Pichhle school-login ka bacha session pehle saaf — warna nayi branch ke
          sath purani keys mix ho jati hain. */
-      ['token', 'branchID', 'UserID', 'employee_ID', 'accountType', 'displayName',
+      ['token', 'branchID', 'UserID', 'employee_ID', 'accountType', 'designationName', 'displayName',
         'userName', 'launchSetup', 'sm_chain_branch', 'moduleState',
       ].forEach((k) => { try { sessionStorage.removeItem(k); } catch (e) { /* noop */ } });
 
@@ -63,6 +63,7 @@ function isOneLinkPreview() {
       sessionStorage.setItem('net_accountType', 'network');   // → View-Only
       sessionStorage.setItem('sm_from_chain', '1');           // → Back to Chain button
       if (p.accountType) sessionStorage.setItem('accountType', p.accountType);
+      if (p.designationName) sessionStorage.setItem('designationName', p.designationName);
       if (p.displayName) sessionStorage.setItem('displayName', p.displayName);
       if (p.userName)    sessionStorage.setItem('userName', p.userName);
       if (p.id != null)  sessionStorage.setItem('UserID', String(p.id));

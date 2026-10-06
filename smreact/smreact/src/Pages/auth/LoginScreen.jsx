@@ -270,6 +270,11 @@ export default function LoginScreen({ onLogin, onSignup }) {
     if (data?.accountType) {
       sessionStorage.setItem("accountType", data.accountType);
     }
+    /* Designation (job title) — shown under the name in the ERP sidebar
+       for non-"School Head" accounts, so store it alongside accountType. */
+    if (data?.designationName) {
+      sessionStorage.setItem("designationName", data.designationName);
+    }
     if (data?.displayName) {
       sessionStorage.setItem("displayName", data.displayName);
     }

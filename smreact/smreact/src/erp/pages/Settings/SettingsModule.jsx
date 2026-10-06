@@ -6,7 +6,7 @@ import SignatureManagement from './SignatureManagement';
 import Networks from '../../components/Networks.jsx';
 import MobileAppSettings from './MobileAppSettings';
 // TODO: Re-enable once the Approvals API is ready.
-// import ApprovalSettings from './ApprovalSettings';
+import ApprovalSettings from './ApprovalSettings';
 import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -36,10 +36,11 @@ const SETTINGS_SUBTABS = [
     desc: 'Join school networks and manage your memberships & requests.' },
   { id: 'mobileapp',  label: 'Parents App Settings', icon: 'fa-mobile-screen-button',
     desc: 'Control which features the Parents mobile app shows for this school.' },
-  /* TODO: Re-enable once the Approvals API is ready (hidden for all branches for now).
+  /* Approvals settings — enabled for the master branch (branchID 1) only;
+     stays hidden on every other branch until the Approvals API is ready.
+     Still respects the user's Settings → Approvals View permission below. */
   { id: 'approvals',  label: 'Approvals',            icon: 'fa-square-check',
-    desc: 'Require Super Admin sign-off before certain sensitive changes take effect.' },
-  */
+    desc: 'Require Super Admin sign-off before certain sensitive changes take effect.', branch1Only: true },
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
@@ -49,7 +50,9 @@ export default function SettingsModule({ toast = () => {} }) {
 
   /* Layer 1 — only show sub-tabs the user can View. Tab labels map 1:1
      to the `can()` submenu strings ('Academic Sessions' / 'Signature Management'). */
-  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => can('Settings', t.label, 'View'));
+  /* Branch-1-only tabs (e.g. Approvals) stay hidden on other branches. */
+  const isBranch1 = String(sessionStorage.getItem('branchID') || '') === '1';
+  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => (!t.branch1Only || isBranch1) && can('Settings', t.label, 'View'));
 
   /* Snap to first visible tab if the active one is now hidden. */
   useEffect(() => {
@@ -109,8 +112,7 @@ export default function SettingsModule({ toast = () => {} }) {
         {sub === 'signatures' && <SignatureManagement toast={toast} />}
         {sub === 'networks'   && <Networks            toast={toast} embedded />}
         {sub === 'mobileapp'  && <MobileAppSettings   toast={toast} />}
-        {/* TODO: Re-enable once the Approvals API is ready.
-        {sub === 'approvals'  && <ApprovalSettings    toast={toast} />} */}
+        {sub === 'approvals'  && <ApprovalSettings    toast={toast} />}
       </div>
 
       <TutorialModal
