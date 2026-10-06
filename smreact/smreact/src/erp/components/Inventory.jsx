@@ -288,6 +288,45 @@ const INV_REPORT_TITLES = {
   pos_invvalue: 'Current Inventory Value Report',
 };
 
+/* Per-product aggregation for the Profit & Loss / Purchase-vs-Sale reports.
+   `net` tay karta hai revenue discount ke baad hai ya pehle:
+
+     net:false (Purchase vs Sale)  → Sale Value = GROSS, qty × full price
+                                      (discount minus NAHI hota — poori list
+                                      ka asal daam dikhta hai, aap ne 300 hi
+                                      rakhna kaha).
+     net:true  (Profit & Loss)     → Sale Amount = NET, har sale ka asal
+                                      `s.total` (jo Sales History dikhati hai,
+                                      discount ke baad) lines par unke gross
+                                      hisse ke mutaabiq baant kar. Is tarah
+                                      P&L ka Total hamesha Sales History se
+                                      match karta hai (aap wali misaal: 280).
+
+   Dono surat me cost = qty × product cost (purchasePrice); product na mile
+   to 0. profit = rev − cost. */
+function invAggregateSales(saleList, products) {
+  const agg = {};   // { name: { qty, gross, net, cost } }
+  (saleList || []).forEach((s) => {
+    /* Gross subtotal LINES se (itemAmount × qty) — poora daam, discount se pehle. */
+    const saleSub = (s.lines || []).reduce((a, l) => a + l.qty * l.price, 0);
+    /* Net total = Sales History wala totalAmount (discount ke baad); na mile
+       to gross hi. */
+    const totalN = Number(s.total);
+    const effTotal = Number.isFinite(totalN) && totalN > 0 ? totalN : saleSub;
+    (s.lines || []).forEach((l) => {
+      const lineSub = l.qty * l.price;                                   // gross
+      const lineNet = saleSub > 0 ? (effTotal * lineSub) / saleSub : lineSub; // net
+      const p = products.find((x) => x.name === l.name);
+      const a = agg[l.name] = agg[l.name] || { qty: 0, gross: 0, net: 0, cost: 0 };
+      a.qty   += l.qty;
+      a.gross += lineSub;
+      a.net   += lineNet;
+      a.cost  += (p ? p.cost : 0) * l.qty;
+    });
+  });
+  return agg;
+}
+
 function buildInvReportBody(type, opts, ctx) {
   const esc = (s) => String(s ?? '').replace(/[<>&"']/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[m]));
   const items    = ctx.items    || [];
@@ -445,27 +484,29 @@ function buildInvReportBody(type, opts, ctx) {
   }
 
   if (type === 'pos_pvs') {
-    const agg = {};
-    sales.forEach(s => s.lines.forEach(l => { const a = agg[l.name] = agg[l.name] || { qty: 0, rev: 0 }; a.qty += l.qty; a.rev += l.qty * l.price; }));
-    let tRev = 0, tCost = 0;
-    const rows = Object.keys(agg).sort().map(k => {
-      const p = products.find(x => x.name === k);
-      const cost = (p ? p.cost : 0) * agg[k].qty;
-      const rev = agg[k].rev;
-      tRev += rev; tCost += cost;
-      const profit = rev - cost;
-      return `<tr><td>${esc(k)}</td><td class="c">${fmtMoney(agg[k].qty)}</td><td class="r">Rs ${fmtMoney(cost)}</td><td class="r">Rs ${fmtMoney(rev)}</td><td class="r" style="color:${profit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(profit)}</td></tr>`;
+    const agg = invAggregateSales(sales, products);
+    const keys = Object.keys(agg).sort((a, b) => agg[b].gross - agg[a].gross);
+    let tSale = 0, tDisc = 0, tCost = 0;
+    const rows = keys.map(k => {
+      const gross = agg[k].gross;           // Sale Value — poora daam (300)
+      const disc  = gross - agg[k].net;     // is par diya gaya discount (20)
+      const cost  = agg[k].cost;            // purchase cost (240)
+      const profit = agg[k].net - cost;     // Sale − Discount − Cost (40)
+      tSale += gross; tDisc += disc; tCost += cost;
+      return `<tr><td>${esc(k)}</td><td class="c">${fmtMoney(agg[k].qty)}</td><td class="r">Rs ${fmtMoney(gross)}</td><td class="r" style="color:#B45309">Rs ${fmtMoney(disc)}</td><td class="r">Rs ${fmtMoney(cost)}</td><td class="r" style="color:${profit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(profit)}</td></tr>`;
     }).join('');
+    const tProfit = tSale - tDisc - tCost;  // = net − cost
     return `
       <div class="kpi-row">
+        <div class="kpi b"><div class="l">Total Sales</div><div class="v">Rs ${fmtMoney(tSale)}</div><div class="m">gross revenue</div></div>
+        <div class="kpi a"><div class="l">Discount</div><div class="v" style="color:#B45309">Rs ${fmtMoney(tDisc)}</div><div class="m">given on sales</div></div>
         <div class="kpi a"><div class="l">Total Cost</div><div class="v">Rs ${fmtMoney(tCost)}</div><div class="m">purchase cost</div></div>
-        <div class="kpi b"><div class="l">Total Sales</div><div class="v">Rs ${fmtMoney(tRev)}</div><div class="m">gross revenue</div></div>
-        <div class="kpi c"><div class="l">Gross Profit</div><div class="v" style="color:${tRev - tCost >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tRev - tCost)}</div><div class="m">revenue − cost</div></div>
+        <div class="kpi c"><div class="l">Profit</div><div class="v" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</div><div class="m">sale − discount − cost</div></div>
       </div>
       <table class="tbl">
-        <thead><tr><th>Product</th><th class="c">Units</th><th class="r">Purchase Cost</th><th class="r">Sale Value</th><th class="r">Profit</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="5" class="empty">No sales recorded yet.</td></tr>'}</tbody>
-        <tfoot><tr class="tot"><td colspan="2">Total</td><td class="r">Rs ${fmtMoney(tCost)}</td><td class="r">Rs ${fmtMoney(tRev)}</td><td class="r" style="color:${tRev - tCost >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tRev - tCost)}</td></tr></tfoot>
+        <thead><tr><th>Product</th><th class="c">Units</th><th class="r">Sale Amount</th><th class="r">Discount</th><th class="r">Purchase Cost</th><th class="r">Profit</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6" class="empty">No sales recorded yet.</td></tr>'}</tbody>
+        <tfoot><tr class="tot"><td colspan="2">Total</td><td class="r">Rs ${fmtMoney(tSale)}</td><td class="r" style="color:#B45309">Rs ${fmtMoney(tDisc)}</td><td class="r">Rs ${fmtMoney(tCost)}</td><td class="r" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</td></tr></tfoot>
       </table>`;
   }
 
@@ -473,14 +514,12 @@ function buildInvReportBody(type, opts, ctx) {
     const from = o.from || todayISO();
     const to   = o.to   || todayISO();
     const list = sales.filter(s => s.date >= from && s.date <= to);
-    const agg = {};
-    list.forEach(s => s.lines.forEach(l => { const a = agg[l.name] = agg[l.name] || { qty: 0, rev: 0 }; a.qty += l.qty; a.rev += l.qty * l.price; }));
-    const keys = Object.keys(agg).sort((a, b) => agg[b].rev - agg[a].rev);
+    const agg = invAggregateSales(list, products);
+    const keys = Object.keys(agg).sort((a, b) => agg[b].net - agg[a].net);
     let tRev = 0, tCost = 0;
     const rows = keys.map(k => {
-      const p = products.find(x => x.name === k);
-      const cost = (p ? p.cost : 0) * agg[k].qty;
-      const rev = agg[k].rev;
+      const cost = agg[k].cost;
+      const rev = agg[k].net;      // Sale Amount — discount ke baad (net), Sales History jaisa
       tRev += rev; tCost += cost;
       const profit = rev - cost;
       return `<tr><td>${esc(k)}</td><td class="c">${fmtMoney(agg[k].qty)}</td><td class="r">Rs ${fmtMoney(rev)}</td><td class="r">Rs ${fmtMoney(cost)}</td><td class="r" style="color:${profit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(profit)}</td></tr>`;
@@ -493,14 +532,14 @@ function buildInvReportBody(type, opts, ctx) {
         <span><b>Receipts:</b> ${list.length}</span>
       </div>
       <table class="tbl">
-        <thead><tr><th>Product</th><th class="c">Sold Qty</th><th class="r">Sale Amount</th><th class="r">Purchase Cost</th><th class="r">Profit</th></tr></thead>
+        <thead><tr><th>Product</th><th class="c">Units</th><th class="r">Sale Amount</th><th class="r">Purchase Cost</th><th class="r">Profit</th></tr></thead>
         <tbody>${keys.length ? rows : '<tr><td colspan="5" class="empty">No sales in this date range.</td></tr>'}</tbody>
         <tfoot><tr class="tot"><td colspan="2">Total</td><td class="r">Rs ${fmtMoney(tRev)}</td><td class="r">Rs ${fmtMoney(tCost)}</td><td class="r" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</td></tr></tfoot>
       </table>
       <div class="kpi-row" style="margin-top:14px">
         <div class="kpi a"><div class="l">Total Sales</div><div class="v">Rs ${fmtMoney(tRev)}</div><div class="m">over period</div></div>
-        <div class="kpi b"><div class="l">Total Costing</div><div class="v">Rs ${fmtMoney(tCost)}</div><div class="m">at purchase price</div></div>
-        <div class="kpi c"><div class="l">Total Profit</div><div class="v" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</div><div class="m">${tProfit >= 0 ? 'surplus' : 'deficit'}</div></div>
+        <div class="kpi b"><div class="l">Total Cost</div><div class="v">Rs ${fmtMoney(tCost)}</div><div class="m">at purchase price</div></div>
+        <div class="kpi c"><div class="l">Profit</div><div class="v" style="color:${tProfit >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tProfit)}</div><div class="m">${tProfit >= 0 ? 'surplus' : 'deficit'}</div></div>
       </div>`;
   }
 

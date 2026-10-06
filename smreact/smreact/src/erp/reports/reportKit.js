@@ -143,8 +143,8 @@ export const REPORT_KIT_CSS = `
 }
 .report-picker-overlay.open { display:flex; }
 .report-picker {
-  background:var(--bg-card); border-radius:24px;
-  width:100%; max-width:460px;
+  background:var(--bg-card); border-radius:22px;
+  width:100%; max-width:420px;
   border:1px solid var(--border-light);
   box-shadow:var(--shadow-xl);
   animation:modalIn .28s cubic-bezier(.34,1.26,.64,1) both;
@@ -152,7 +152,7 @@ export const REPORT_KIT_CSS = `
 }
 .rp-header {
   display:flex; align-items:flex-start; justify-content:space-between;
-  padding:22px 24px 18px; border-bottom:1px solid var(--border-light);
+  padding:14px 20px 12px; border-bottom:1px solid var(--border-light);
   background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
 }
 .rp-header-left { display:flex; align-items:center; gap:12px; }
@@ -171,14 +171,14 @@ export const REPORT_KIT_CSS = `
   cursor:pointer; font-size:12px; transition:var(--tr); flex-shrink:0;
 }
 .rp-close:hover { background:rgba(220,38,38,.1); color:var(--error); }
-.rp-body { padding:22px 24px 20px; }
+.rp-body { padding:14px 20px 12px; }
 .rp-section-label {
   font-size:10px; font-weight:800; letter-spacing:1.2px;
   text-transform:uppercase; color:var(--text-muted);
-  margin-bottom:14px; display:flex; align-items:center; gap:8px;
+  margin-bottom:8px; display:flex; align-items:center; gap:8px;
 }
 .rp-section-label::after { content:''; flex:1; height:1px; background:var(--border-light); }
-.rp-options { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px; }
+.rp-options { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
 .rp-option {
   border:2px solid var(--border-light); border-radius:16px;
   cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1);
@@ -199,12 +199,12 @@ export const REPORT_KIT_CSS = `
   box-shadow:0 3px 8px rgba(30,58,138,.4); z-index:2;
 }
 .rp-option.selected .rp-check { display:flex; }
-.rp-preview { height:110px; position:relative; overflow:hidden; }
+.rp-preview { height:58px; position:relative; overflow:hidden; }
 .rp-preview-color {
   width:100%; height:100%;
   background:linear-gradient(145deg,#1E3A8A 0%,#1E40AF 45%,#2563EB 100%);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:6px; padding:14px; position:relative; overflow:hidden;
+  gap:4px; padding:10px; position:relative; overflow:hidden;
 }
 .rp-preview-color::before { content:''; position:absolute; top:-20px; right:-20px; width:80px; height:80px; border-radius:50%; background:rgba(255,255,255,.06); }
 .rp-preview-color::after  { content:''; position:absolute; bottom:-15px; left:-10px; width:60px; height:60px; border-radius:50%; background:rgba(14,165,233,.15); }
@@ -216,7 +216,7 @@ export const REPORT_KIT_CSS = `
   width:100%; height:100%;
   background:#FFFFFF;
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:6px; padding:14px;
+  gap:4px; padding:10px;
   border-bottom:1px solid #E5E7EB;
 }
 .rp-mock-header-bw { width:80%; height:7px; border-radius:2px; background:#1F2937; }
@@ -236,13 +236,13 @@ export const REPORT_KIT_CSS = `
   box-shadow:0 0 0 3px rgba(59,130,246,.32), var(--shadow-md);
   border-color:#3B82F6;
 }
-.rp-option-text { padding:12px 14px; }
+.rp-option-text { padding:8px 11px; }
 .rp-option-name { font-size:13px; font-weight:800; color:var(--text-primary); margin-bottom:3px; }
 .rp-option-desc { font-size:11px; color:var(--text-muted); line-height:1.45; }
 .rp-format-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:6px; }
 .rp-format-pill {
   display:flex; align-items:center; gap:10px;
-  padding:12px 14px; border-radius:12px;
+  padding:8px 11px; border-radius:12px;
   border:2px solid var(--border-light); background:var(--bg-muted);
   cursor:pointer; transition:var(--tr);
   font-family:var(--font-body); text-align:left;
@@ -263,7 +263,7 @@ export const REPORT_KIT_CSS = `
 .rp-format-pill.selected-excel .rp-format-name { color:#16A34A; }
 .rp-footer {
   display:grid; grid-template-columns:1fr 1.6fr; gap:10px;
-  padding:16px 24px 24px; border-top:1px solid var(--border-light);
+  padding:12px 20px 14px; border-top:1px solid var(--border-light);
 }
 .rp-btn {
   display:flex; align-items:center; justify-content:center; gap:8px;

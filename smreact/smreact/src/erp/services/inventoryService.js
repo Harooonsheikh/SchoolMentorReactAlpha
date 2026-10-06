@@ -127,7 +127,13 @@ function mapSale(r) {
     lines:    (r.saleItems || []).map((li) => ({
       name:  li.itemName || '',
       qty:   Number(li.quantity) || 0,
-      price: Number(li.currentSalePrice ?? li.itemAmount) || 0,
+      /* Jo daam US waqt liya gaya (itemAmount) — product ka ABHI wala daam
+         (currentSalePrice) nahi. currentSalePrice product table se juda hota
+         hai aur baad me daam badalne par purani sale bhi naye daam par ginti
+         thi: ek hi Pencil 100 par bika aur 90 par, magar dono 90 (current)
+         par gin kar P&L 180 dikhata tha, 190 nahi. itemAmount sale ke waqt ka
+         mehfooz unit daam hai — receipt aur reports dono wahi dikhaayein. */
+      price: Number(li.itemAmount ?? li.currentSalePrice) || 0,
     })),
     subtotal: Number(r.subTotal) || 0,
     discount: Number(r.discountAmount) || 0,
