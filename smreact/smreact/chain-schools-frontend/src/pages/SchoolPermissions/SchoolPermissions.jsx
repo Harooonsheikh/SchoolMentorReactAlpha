@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom'
 import {
   toPermissionRows, getSchoolPerms,
   CORE_PERMS, CHAT_MODES, normalizeChatMode, MODULE_SECTIONS, MODULE_KEYS,
+  MODULE_ADVANCED_PERMISSIONS, PERMISSION_ACTIONS, getDefaultSubPermissions,
+  loadAdvancedPerms, saveAdvancedPerms,
 } from './data'
 import { useView } from '../../config/viewContext'
 import {
@@ -336,6 +338,12 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
   const emptyMob = emptyMobileAppPerms()
   const [erpAccess, setErpAccess] = useState(perms.erpAccess)
   const [modules, setModules] = useState({ ...perms.modules })
+  /* Advanced (View/Add/Edit/Delete) content permissions, keyed by
+     module key → { [sectionKey]: { view, add, edit, delete } }. Frontend-only:
+     localStorage se aati hain, aur sirf "Save Permissions" par wapas wahin
+     likhti hain — Academics settings modal in ki local copy stage karta hai. */
+  const [modulePermissions, setModulePermissions] = useState(() => loadAdvancedPerms(school.id))
+  const [settingsModuleKey, setSettingsModuleKey] = useState(null)
   const [chatMode, setChatMode] = useState(emptyMob.chatMode)
   const [mentorAi, setMentorAiState] = useState({ ...emptyMob.mentorAi })
   const [etube, setEtubeState] = useState({ ...emptyMob.etube })
@@ -384,6 +392,8 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
 
   const core = { erpAccess: [erpAccess, setErpAccess] }
 
+  const settingsModuleCfg = settingsModuleKey ? MODULE_ADVANCED_PERMISSIONS[settingsModuleKey] : null
+
   const saveMobileAndClose = async () => {
     if (mobileSaving || mobileLoading) return
     setMobileSaving(true)
@@ -401,14 +411,19 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
     }
   }
 
-  const saveDraft = () => onSave(school, {
-    erpAccess,
-    modules,
-    chatMode,
-    mentorAi,
-    etube,
-    mobileAppId,
-  })
+  const saveDraft = () => {
+    /* Frontend-only: advanced content permissions localStorage me isi waqt
+       persist hoti hain — modules/ERP/mobile ke sath aik hi action me. */
+    saveAdvancedPerms(school.id, modulePermissions)
+    onSave(school, {
+      erpAccess,
+      modules,
+      chatMode,
+      mentorAi,
+      etube,
+      mobileAppId,
+    })
+  }
 
   return createPortal(
     <div className="perm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -484,13 +499,28 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
               <div key={sec.label}>
                 <div className="pm-section-label">{sec.label}</div>
                 <div className="pm-mod-grid">
-                  {sec.items.map((m) => (
-                    <div className={`pm-mod-card${modules[m.key] ? ' enabled' : ''}`} key={m.key}>
-                      <div className="pm-mod-icon"><i className={`fa-solid ${m.icon}`} /></div>
-                      <div className="pm-mod-name">{m.name}</div>
-                      <Switch checked={!!modules[m.key]} onChange={(v) => setModule(m.key, v)} />
-                    </div>
-                  ))}
+                  {sec.items.map((m) => {
+                    const hasAdvanced = !!MODULE_ADVANCED_PERMISSIONS[m.key]
+                    const moduleOn = !!modules[m.key]
+                    return (
+                      <div className={`pm-mod-card${moduleOn ? ' enabled' : ''}`} key={m.key}>
+                        <div className="pm-mod-icon"><i className={`fa-solid ${m.icon}`} /></div>
+                        <div className="pm-mod-name">{m.name}</div>
+                        {hasAdvanced && (
+                          <button
+                            type="button"
+                            className="pm-settings-btn"
+                            disabled={!moduleOn}
+                            title={moduleOn ? `Configure ${m.name} content permissions` : `Turn ${m.name} on first to configure permissions`}
+                            onClick={() => setSettingsModuleKey(m.key)}
+                          >
+                            <i className="fa-solid fa-gear" />
+                          </button>
+                        )}
+                        <Switch checked={moduleOn} onChange={(v) => setModule(m.key, v)} />
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             ))}
@@ -522,6 +552,126 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
           onDone={saveMobileAndClose}
         />
       )}
+
+      {settingsModuleCfg && (
+        <AdvancedPermissionsModal
+          school={school}
+          config={settingsModuleCfg}
+          value={modulePermissions[settingsModuleKey] || getDefaultSubPermissions(settingsModuleKey)}
+          onClose={() => setSettingsModuleKey(null)}
+          onSave={(next) => {
+            setModulePermissions((mp) => ({ ...mp, [settingsModuleKey]: next }))
+            setSettingsModuleKey(null)
+          }}
+        />
+      )}
+    </div>,
+    document.body,
+  )
+}
+
+/* ── Advanced content permissions modal (Academics today; the same
+   component drives any future module listed in MODULE_ADVANCED_PERMISSIONS
+   — it only ever reads `config`/`value`, never a module-specific prop). ── */
+function AdvancedPermissionsModal({ school, config, value, onClose, onSave }) {
+  const [perms, setPerms] = useState(() => {
+    const seeded = { ...value }
+    config.sections.forEach((sec) => {
+      seeded[sec.key] = { view: true, add: false, edit: false, delete: false, ...seeded[sec.key] }
+    })
+    return seeded
+  })
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  /* Add/Edit/Delete always force View on; View can't be switched off while
+     any of Add/Edit/Delete is still on — the chip just goes disabled instead
+     of silently cascading the others off. */
+  const toggleAction = (sectionKey, actionKey, checked) => {
+    setPerms((prev) => {
+      const sec = { ...prev[sectionKey] }
+      if (actionKey === 'view') {
+        if (!checked && (sec.add || sec.edit || sec.delete)) return prev
+        sec.view = checked
+      } else {
+        sec[actionKey] = checked
+        if (checked) sec.view = true
+      }
+      return { ...prev, [sectionKey]: sec }
+    })
+  }
+
+  return createPortal(
+    <div className="perm-ov apm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="perm-modal apm-modal">
+        <div className="pm-hdr">
+          <div className="pm-av apm-av"><i className="fa-solid fa-sliders" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pm-school-name">{config.title}</div>
+            <div className="apm-subtitle">{config.subtitle}</div>
+          </div>
+          <button className="pm-close" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+        </div>
+
+        <div className="pm-body">
+          {/* Plain-language consequence, up front — a Chain Admin sees the
+              chips below as abstract checkboxes otherwise; this ties them
+              back to what the associate school actually experiences. */}
+          <div className="apm-impact-note">
+            <i className="fa-solid fa-circle-info" />
+            <div>
+              <strong>{school?.name || 'This school'}</strong> will follow exactly what you set below — it's not
+              a suggestion, it's an on/off switch for this branch. For each content type, <strong>View Only</strong> means
+              they can only see what Head Office shares; turning on <strong>Add</strong>, <strong>Edit</strong>, or <strong>Delete</strong> is
+              what actually lets them create, change, or remove their own {school?.name ? 'branch’s' : ''} Lesson Plans,
+              Activity Planner entries, and Notebook Lesson Plans. Leave an action off and that action stays blocked for them.
+            </div>
+          </div>
+
+          {config.sections.map((sec) => {
+            const sp = perms[sec.key] || { view: true, add: false, edit: false, delete: false }
+            return (
+              <div className="apm-section" key={sec.key}>
+                <div className="apm-section-head">
+                  <div className="apm-section-icon"><i className={`fa-solid ${sec.icon}`} /></div>
+                  <div className="apm-section-name">{sec.label}</div>
+                </div>
+                <div className="apm-chip-row">
+                  {PERMISSION_ACTIONS.map((a) => {
+                    const on = !!sp[a.key]
+                    const locked = a.key === 'view' && on && (sp.add || sp.edit || sp.delete)
+                    return (
+                      <label
+                        key={a.key}
+                        className={`apm-chip${on ? ' on' : ''}${locked ? ' locked' : ''}`}
+                        title={locked ? 'Turn off Add / Edit / Delete first to remove View access' : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={locked}
+                          onChange={(e) => toggleAction(sec.key, a.key, e.target.checked)}
+                        />
+                        <span className="apm-chip-dot"><i className="fa-solid fa-check" /></span>
+                        <i className={`fa-solid ${a.icon} apm-chip-icon`} aria-hidden="true" />
+                        {a.label}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="pm-foot">
+          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" onClick={() => onSave(perms)}><i className="fa-solid fa-floppy-disk" /> Save</button>
+        </div>
+      </div>
     </div>,
     document.body,
   )

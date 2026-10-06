@@ -58,6 +58,46 @@
 .pm-mod-card.enabled .pm-mod-icon { background: linear-gradient(135deg,#15803d,#16a34a); }
 .pm-mod-name { font-size: 12px; font-weight: 700; color: var(--t1); flex: 1; min-width: 0; line-height: 1.3; }
 
+/* Settings/gear icon — only on modules with advanced (content-level)
+   permissions, e.g. Academics. Disabled whenever the module itself is off. */
+.pm-settings-btn { width: 26px; height: 26px; border-radius: 7px; border: 1.5px solid var(--bl); background: var(--card); color: var(--tm); display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; transition: var(--tr); flex-shrink: 0; }
+.pm-settings-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); background: rgba(30,58,138,.06); }
+.pm-settings-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ── Advanced content permissions modal (Academics settings etc.) ──
+   Sits on top of the main School Permissions modal, so it reuses
+   .perm-ov / .perm-modal / .pm-hdr / .pm-body / .pm-foot as-is and just
+   raises the stacking context + narrows the width a touch. */
+.apm-ov { z-index: 1200; }
+.apm-modal { max-width: 620px; }
+.apm-av { background: linear-gradient(135deg,#1E3A8A,#1E40AF); font-size: 16px; }
+.apm-subtitle { font-size: 12px; color: var(--tm); margin-top: 3px; }
+
+/* Plain-language "here's what this actually does" banner, top of the modal body. */
+.apm-impact-note { display: flex; align-items: flex-start; gap: 10px; background: var(--brand-light); border: 1.5px solid var(--bm); border-left: 4px solid var(--brand); border-radius: var(--r-md); padding: 12px 14px; margin-bottom: 16px; font-size: 12px; line-height: 1.55; color: var(--t2); }
+.apm-impact-note i { color: var(--brand); font-size: 14px; margin-top: 1px; flex-shrink: 0; }
+.apm-impact-note strong { color: var(--t1); }
+
+.apm-section { background: var(--muted); border: 1.5px solid var(--bl); border-radius: var(--r-lg); padding: 15px 16px; margin-bottom: 12px; }
+.apm-section:last-child { margin-bottom: 0; }
+.apm-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.apm-section-icon { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+.apm-section-name { font-size: 13px; font-weight: 800; color: var(--t1); }
+
+.apm-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.apm-chip { position: relative; display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px 7px 8px; border-radius: var(--r-f); border: 1.5px solid var(--bl); background: var(--card); font-size: 12px; font-weight: 700; color: var(--t2); cursor: pointer; transition: var(--tr); user-select: none; }
+.apm-chip input { position: absolute; opacity: 0; width: 0; height: 0; }
+.apm-chip-dot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--bl); background: var(--card); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: var(--tr); color: transparent; font-size: 8px; }
+/* Per-action icon (eye / plus / pen / trash) — lets a Chain Admin tell
+   the four chips apart at a glance instead of reading every label. */
+.apm-chip-icon { font-size: 11px; color: var(--tm); transition: var(--tr); }
+.apm-chip.on .apm-chip-icon { color: var(--brand); }
+.apm-chip:hover { border-color: var(--bm); }
+.apm-chip.on { border-color: rgba(30,58,138,.35); background: rgba(30,58,138,.08); color: var(--brand); }
+.apm-chip.on .apm-chip-dot { background: linear-gradient(135deg,#1E3A8A,#1E40AF); border-color: transparent; color: #fff; }
+.apm-chip.locked { opacity: .55; cursor: not-allowed; }
+.apm-chip.locked:hover { border-color: rgba(30,58,138,.35); }
+
 /* Toggle switch */
 .sw { position: relative; display: inline-flex; width: 38px; height: 22px; flex-shrink: 0; }
 .sw input { opacity: 0; width: 0; height: 0; position: absolute; }

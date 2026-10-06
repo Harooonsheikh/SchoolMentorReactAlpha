@@ -84,6 +84,90 @@ export const MODULE_SECTIONS = [
 
 export const MODULE_KEYS = MODULE_SECTIONS.flatMap((s) => s.items.map((i) => i.key))
 
+/* ── Advanced (content-access) permissions ──────────────────────────
+   A module only gets a settings/gear icon in the Module Permissions
+   grid if it has an entry here. Each entry lists the content sections
+   that support granular View / Add / Edit / Delete access for a
+   Network Associate School's own Head Office content.
+
+   Frontend-only for now: koi backend endpoint nahi, isliye localStorage
+   me branchID ke against stage hoti hain (dekhein loadAdvancedPerms /
+   saveAdvancedPerms). Scalable by design — koi aur module (Fee, HR,
+   Examination…) add karna sirf is map me aik entry hai; modal, save flow
+   aur data shape waise ke waise rehte hain. */
+export const PERMISSION_ACTIONS = [
+  { key: 'view', label: 'View Only', icon: 'fa-eye' },
+  { key: 'add', label: 'Add', icon: 'fa-plus' },
+  { key: 'edit', label: 'Edit', icon: 'fa-pen' },
+  { key: 'delete', label: 'Delete', icon: 'fa-trash-can' },
+]
+
+export const MODULE_ADVANCED_PERMISSIONS = {
+  academics: {
+    title: 'Academics Permissions',
+    subtitle: 'Manage content access permissions for this associate school.',
+    sections: [
+      { key: 'activityPlanner', label: 'Activity Planner', icon: 'fa-calendar-check' },
+      { key: 'lessonPlan', label: 'Lesson Plan', icon: 'fa-book-open' },
+      { key: 'notebookLessonPlan', label: 'Notebook Lesson Plan', icon: 'fa-book' },
+    ],
+  },
+}
+
+/* Default sub-permission state for one content section — View Only,
+   nothing else, until a Chain Admin grants more. */
+const defaultSectionPerm = () => ({ view: true, add: false, edit: false, delete: false })
+
+export function getDefaultSubPermissions(moduleKey) {
+  const cfg = MODULE_ADVANCED_PERMISSIONS[moduleKey]
+  if (!cfg) return null
+  const perms = {}
+  cfg.sections.forEach((sec) => { perms[sec.key] = defaultSectionPerm() })
+  return perms
+}
+
+function defaultModulePermissions() {
+  const out = {}
+  Object.keys(MODULE_ADVANCED_PERMISSIONS).forEach((key) => { out[key] = getDefaultSubPermissions(key) })
+  return out
+}
+
+/* ── localStorage-backed advanced-permission store (frontend-only) ──
+   branchID → { [moduleKey]: { [sectionKey]: { view, add, edit, delete } } }.
+   Jab backend endpoint ban jaye to in do helpers ko API calls se swap
+   kar dena — modal aur save flow ko haath lagaye baghair. */
+const ADV_STORE_KEY = 'csp_advanced_permissions'
+
+function loadAdvStore() {
+  try { return JSON.parse(localStorage.getItem(ADV_STORE_KEY)) || {} } catch { return {} }
+}
+
+/* Aik school ki advanced permissions — saved na hon to defaults, aur kisi
+   bhi missing module/section ko default se backfill kar dete hain taake
+   purane records naye modal ko crash na karein. */
+export function loadAdvancedPerms(schoolId) {
+  const saved = loadAdvStore()[schoolId]
+  const base = defaultModulePermissions()
+  if (!saved) return base
+  const out = {}
+  Object.keys(MODULE_ADVANCED_PERMISSIONS).forEach((modKey) => {
+    const cfg = MODULE_ADVANCED_PERMISSIONS[modKey]
+    const savedMod = saved[modKey] || {}
+    const mod = {}
+    cfg.sections.forEach((sec) => {
+      mod[sec.key] = { ...defaultSectionPerm(), ...(savedMod[sec.key] || {}) }
+    })
+    out[modKey] = mod
+  })
+  return out
+}
+
+export function saveAdvancedPerms(schoolId, perms) {
+  const store = loadAdvStore()
+  store[schoolId] = perms
+  try { localStorage.setItem(ADV_STORE_KEY, JSON.stringify(store)) } catch { /* ignore quota */ }
+}
+
 /* Aik school ki poori permissions — dono Super-Admin API se:
    erpAccess launch-setup se aata hai, modules module-permission se. */
 export function getSchoolPerms(moduleStore, school, erpAccess) {
