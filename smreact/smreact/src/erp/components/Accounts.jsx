@@ -918,7 +918,9 @@ function Transactions({ toast, isOtherSession }) {
       createdAt: e.createdAt ?? e.CreatedAt ?? '',
       updatedBy: e.modifiedBy ?? e.ModifiedBy ?? null,
       updatedByName: e.modifiedByName ?? e.ModifiedByName ?? e.modifiedByUser ?? e.ModifiedByUser ?? '',
-      updatedAt: e.modifiedAt ?? e.ModifiedAt ?? null,
+         updatedAt: e.modifiedAt ?? e.ModifiedAt ?? null,
+      walletId:  String(e.wallatID ?? e.WallatID ?? e.walletID ?? e.walletId ?? e.WalletID ?? ''),
+      acctId:    String(e.wallatID ?? e.WallatID ?? e.walletID ?? e.walletId ?? e.WalletID ?? ''),
     };
   };
 
@@ -1052,9 +1054,8 @@ function Transactions({ toast, isOtherSession }) {
           /* "Received In / Paid From" account book. Best-guess field name —
              backend must add support for this to actually persist / move the
              book balance (currently ignored server-side). */
-          receivedInAccountID: form.acctId ? Number(form.acctId) : null,
-          enteredBy: userID,
-          createdBy: userID,
+          wallatID: Number(form.acctId) || Number(form.prevAcctId) || 0,
+          enteredBy: userID,          createdBy: userID,
           modifiedBy: userID,
         }),
       });
@@ -1511,8 +1512,12 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
      backend /save-account-entry needs a matching field to actually persist it
      (sent as receivedInAccountID as a best-guess until the backend adds it). */
   const [acctId, setAcctId]   = useState('');
-  const [books, setBooks]     = useState([]);
-
+  const [wallets, setWallets] = useState([]);
+  const [walletBal, setWalletBal] = useState(null);   // selected wallet ka available balance  /* Only wallets of the current branch (or with no branch info at all). */
+  const branchWallets = useMemo(
+     () => wallets.filter(w => w.branchID == null || Number(w.branchID) === Number(branchID)),
+    [wallets, branchID]
+  );
   /* Load the account heads for this branch + account type when the modal opens. */
   useEffect(() => {
     if (!cfg) return;
@@ -1529,14 +1534,32 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
   }, [cfg, branchID, accountTypeID]);
 
   /* Load Account Books (wallets) for the Received-In / Paid-From dropdown. */
+  /* Load Wallets for the Received-In / Paid-From dropdown. */
   useEffect(() => {
     if (!cfg) return undefined;
     let cancelled = false;
-    accountsService.getAccBooks()
-      .then(list => { if (!cancelled) setBooks(Array.isArray(list) ? list : []); })
-      .catch(() => { if (!cancelled) setBooks([]); });
+    accountsService.getFinAccounts()
+      .then(list => { if (!cancelled) setWallets(Array.isArray(list) ? list : []); })
+      .catch(() => { if (!cancelled) setWallets([]); });
     return () => { cancelled = true; };
   }, [cfg]);
+
+  /* Selected wallet ka current balance (server balance, warna opening + ledger). */
+  useEffect(() => {
+    if (!cfg || !acctId) { setWalletBal(null); return undefined; }
+    const w = wallets.find(x => String(x.id) === String(acctId));
+    if (!w) { setWalletBal(null); return undefined; }
+    if (w.serverBalance != null && Number.isFinite(w.serverBalance)) { setWalletBal(w.serverBalance); return undefined; }
+    let cancelled = false;
+    accountsService.getWalletTransactions(acctId)
+      .then(rows => {
+        if (cancelled) return;
+        const net = (rows || []).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+        setWalletBal((Number(w.opening) || 0) + net);
+      })
+      .catch(() => { if (!cancelled) setWalletBal(null); });
+    return () => { cancelled = true; };
+  }, [cfg, acctId, wallets]);
 
   useEffect(() => {
     if (!cfg) return;
@@ -1549,9 +1572,9 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
       setChqDate(x.chqDate || '');
       setChqNo(x.chqNo || '');
       setEnteredBy(x.createdBy || currentUser);
-      setAcctId(String(x.receivedInAccountID ?? x.bookID ?? ''));
-    } else {
-      const today = new Date();
+      const savedWallet = String(x.acctId ?? x.walletId ?? '');
+      setAcctId(savedWallet && savedWallet !== '0' ? savedWallet : '');
+    } else {      const today = new Date();
       const day = String(today.getDate()).padStart(2, '0');
       setDate(`${defaultMonth || new Date().toISOString().slice(0,7)}-${day}`);
       setHeadId('');
@@ -1560,7 +1583,18 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
       setAcctId('');
     }
   }, [cfg, currentUser, defaultMonth]);
-
+  /* New entry: preselect the default active wallet so wallatID is always sent. */
+  useEffect(() => {
+    if (!cfg || !branchWallets.length) return;
+        const isMine = w => w.branchID != null && Number(w.branchID) === Number(branchID);
+    const active = branchWallets.filter(w => w.status === 'active');
+    /* Prefer wallets that explicitly belong to THIS branch, default first. */
+    const def = active.find(w => isMine(w) && w.isDefault)
+             || active.find(isMine)
+             || active.find(w => w.isDefault)
+             || active[0];
+    setAcctId(prev => prev || def?.id || '');
+  }, [cfg, branchWallets]);
   useEffect(() => {
     if (!cfg) return undefined;
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -1578,11 +1612,21 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
     if (!headId) { toast('Please select an account head', 'error'); return; }
     if (!date)   { toast('Please select a date', 'error'); return; }
     if (!Number(amount)) { toast('Please enter an amount', 'error'); return; }
+    if (!isRev) {
+      /* Edit me purani amount isi wallet me wapas add hoti hai, phir check hota hai. */
+      const sameWallet = cfg.mode === 'edit' && String(cfg.txn?.acctId || '') === String(acctId);
+      const available = (walletBal ?? 0) + (sameWallet ? Number(cfg.txn?.amount || 0) : 0);
+      if (walletBal != null && Number(amount) > available) {
+        toast(`Insufficient balance. Available in this wallet: Rs. ${available.toLocaleString('en-PK')}`, 'error');
+        return;
+      }
+    }
     onSave({
       id: cfg.mode === 'edit' ? (cfg.txn?.recordId || cfg.txn?.id || 0) : 0,
       branchAccountID: headId,
-      date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy,
+         date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy,
       acctId,
+      prevAcctId: cfg.mode === 'edit' ? (cfg.txn?.acctId || '') : '',
     });
   };
 
@@ -1665,19 +1709,23 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
             </div>
           </div>
 
-          {books.length > 0 && (
-            <div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
+{branchWallets.length > 0 && (        
+      <div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
               <div className="fee-field">
-                <span className="fee-label"><i className="fa-solid fa-wallet"></i> {isRev ? 'Received In Account' : 'Paid From Account'}</span>
+                <span className="fee-label"><i className="fa-solid fa-wallet"></i> {isRev ? 'Received In Wallet' : 'Paid From Wallet'}</span>
                 <div className="fee-select-wrap">
                   <select className="fee-select" value={acctId} onChange={e => setAcctId(e.target.value)}>
-                    <option value="">{isRev ? 'Select account to receive into' : 'Select account to pay from'}</option>
-                    {books.map(b => (
-                      <option key={b.bookID} value={b.bookID}>{b.name}{b.includeInCash ? ' — Cash' : ''}</option>
+                    <option value="">{isRev ? 'Select wallet to receive into' : 'Select wallet to pay from'}</option>
+{branchWallets.filter(w => w.status === 'active' || w.id === acctId).map(w => (                      <option key={w.id} value={w.id}>{w.name} — {finTypeMeta(w.type).label}</option>
                     ))}
                   </select>
-                  <i className="fa-solid fa-chevron-down"></i>
+                            <i className="fa-solid fa-chevron-down"></i>
                 </div>
+                {acctId && walletBal != null && (
+                  <div className="fee-hint" style={{ fontWeight: 700, color: walletBal <= 0 && !isRev ? '#DC2626' : '#0E7490' }}>
+                    <i className="fa-solid fa-wallet"></i> Available Balance: Rs. {Number(walletBal).toLocaleString('en-PK')}
+                  </div>
+                )}
                 <div className="fee-hint">
                   <i className="fa-solid fa-circle-info"></i>
                   {isRev
@@ -2654,16 +2702,40 @@ const finTypeMeta = (key) => ACC_FIN_TYPES.find(t => t.key === key) || ACC_FIN_T
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function AccountsManagementTab({ toast }) {
-  const { data: serverAccounts = [] } = useAsync(accountsService.getFinAccounts, []);
+  // const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
-  const { data: serverTransfers = [], loading: transfersLoading } = useAsync(accountsService.getTransfers, []);
-
+  const school = useBranchSchool();
+  /* Wallets + transfers come from the Chain-Management API (networkID null,
+     current branch). null = still loading; [] = loaded, nothing there. */
   const [accounts, setAccounts] = useState(null);
-  useEffect(() => { if (serverAccounts.length && accounts == null) setAccounts(serverAccounts); }, [serverAccounts, accounts]);
-  const list = accounts || [];
-
   const [transfers, setTransfers] = useState(null);
-  useEffect(() => { if (!transfersLoading && transfers == null) setTransfers(serverTransfers); }, [transfersLoading, serverTransfers, transfers]);
+  const [loadError, setLoadError] = useState('');
+
+  const reloadAccounts = useCallback(async () => {
+    const rows = await accountsService.getFinAccounts();
+    setAccounts(rows);
+    return rows;
+  }, []);
+  const reloadTransfers = useCallback(async () => {
+    const rows = await accountsService.getTransfers();
+    setTransfers(rows);
+    return rows;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadError('');
+    Promise.all([accountsService.getFinAccounts(), accountsService.getTransfers()])
+      .then(([accs, trs]) => { if (!cancelled) { setAccounts(accs); setTransfers(trs); } })
+      .catch((e) => {
+        if (cancelled) return;
+        setAccounts([]); setTransfers([]);
+        setLoadError(e?.message || 'Could not load wallets');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const list = accounts || [];
   const transferList = transfers || [];
 
   const defaultId = (list.find(a => a.isDefault) || list[0] || {}).id;
@@ -2681,23 +2753,28 @@ function AccountsManagementTab({ toast }) {
     const q = search.trim().toLowerCase();
     const matchQ = !q || a.name.toLowerCase().includes(q) || (a.bankName || '').toLowerCase().includes(q) || (a.accountNo || '').includes(q) || finTypeMeta(a.type).label.toLowerCase().includes(q);
     if (!matchQ) return false;
-    if (statusFilter !== 'all' && a.status !== statusFilter) return false;
+   if (statusFilter !== 'all' && a.status !== statusFilter) return false;
     return true;
+  }).sort((a, b) => {
+    if (!!a.isDefault !== !!b.isDefault) return a.isDefault ? -1 : 1;
+    if ((a.status === 'inactive') !== (b.status === 'inactive')) return a.status === 'inactive' ? 1 : -1;
+    return 0;
   });
 
-  const totalOpening = list.reduce((a, x) => a + (Number(x.opening) || 0), 0);
+  const totalOpening= list.reduce((a, x) => a + (Number(x.opening) || 0), 0);
   const totalCurrent = list.reduce((a, x) => a + balanceOf(x), 0);
   const activeCount = list.filter(a => a.status === 'active').length;
 
   const saveAccount = async (payload) => {
     const isEdit = editAccount?.mode === 'edit';
     const id = isEdit ? editAccount.account.id : undefined;
-    const saved = await accountsService.saveFinAccount(payload, id).catch(() => null);
-    if (!saved) { toast('Could not save this account. Please try again.', 'error'); return; }
-    setAccounts(prev => {
-      const arr = prev || [];
-      return isEdit ? arr.map(a => (a.id === id ? saved : a)) : [...arr, saved];
-    });
+    try {
+      await accountsService.saveFinAccount(payload, id);
+    } catch (e) {
+      toast(e?.message || 'Could not save this account. Please try again.', 'error');
+      return;
+    }
+    await reloadAccounts().catch(() => {});
     toast(isEdit ? 'Account updated' : 'Account created', 'success');
     setEditAccount(null);
   };
@@ -2706,9 +2783,12 @@ function AccountsManagementTab({ toast }) {
     if (a.isDefault) return; // no control is ever rendered for the default account, but guard here too
     const next = a.status === 'active' ? 'inactive' : 'active';
     if (next === 'active') {
-      accountsService.setFinAccountStatus({ id: a.id, status: 'active' });
-      setAccounts(prev => prev.map(x => (x.id === a.id ? { ...x, status: 'active' } : x)));
-      toast(`${a.name} re-enabled`, 'success');
+      accountsService.setFinAccountStatus({ id: a.id, status: 'active' })
+        .then(() => {
+          setAccounts(prev => (prev || []).map(x => (x.id === a.id ? { ...x, status: 'active' } : x)));
+          toast(`${a.name} re-enabled`, 'success');
+        })
+        .catch((e) => toast(e?.message || 'Could not re-enable this account', 'error'));
       return;
     }
     setConfirm({
@@ -2716,17 +2796,32 @@ function AccountsManagementTab({ toast }) {
       message: <span><strong>{a.name}</strong> will be hidden from account pickers. Its balance and history are kept, and it can be re-enabled any time.</span>,
       confirmLabel: 'Yes, Disable',
       onConfirm: async () => {
-        await accountsService.setFinAccountStatus({ id: a.id, status: 'inactive' }).catch(() => {});
-        setAccounts(prev => prev.map(x => (x.id === a.id ? { ...x, status: 'inactive' } : x)));
+        try {
+          await accountsService.setFinAccountStatus({ id: a.id, status: 'inactive' });
+        } catch (e) {
+          toast(e?.message || 'Could not disable this account', 'error');
+          return;
+        }
+        setAccounts(prev => (prev || []).map(x => (x.id === a.id ? { ...x, status: 'inactive' } : x)));
         toast(`${a.name} disabled`, 'info');
       },
     });
   };
 
   const saveTransfer = async (payload) => {
-    const saved = await accountsService.saveTransfer(payload).catch(() => null);
-    if (!saved) { toast('Could not save this transfer. Please try again.', 'error'); return; }
-    setTransfers(prev => [...(prev || []), saved]);
+    const src = list.find(a => a.id === payload.fromId);
+    if (src && payload.amount > balanceOf(src)) {
+      toast('Insufficient balance in the source account', 'error');
+      return;
+    }
+    try {
+      await accountsService.saveTransfer(payload);
+    } catch (e) {
+      toast(e?.message || 'Could not save this transfer. Please try again.', 'error');
+      return;
+    }
+    /* Balances can change server-side, so refresh both lists. */
+    await Promise.all([reloadTransfers(), reloadAccounts()]).catch(() => {});
     const fromName = list.find(a => a.id === payload.fromId)?.name || 'account';
     const toName = list.find(a => a.id === payload.toId)?.name || 'account';
     toast(`Transferred ${fmtMoney(payload.amount)} from ${fromName} to ${toName}`, 'success');
@@ -2741,8 +2836,13 @@ function AccountsManagementTab({ toast }) {
       message: <span>The transfer of <strong>{fmtMoney(t.amount)}</strong> from <strong>{fromName}</strong> to <strong>{toName}</strong> will be removed. Both balances will recalculate.</span>,
       hint: 'This action cannot be undone.',
       onConfirm: async () => {
-        await accountsService.deleteTransfer({ id: t.id }).catch(() => {});
-        setTransfers(prev => (prev || []).filter(x => x.id !== t.id));
+        try {
+          await accountsService.deleteTransfer({ id: t.id });
+        } catch (e) {
+          toast(e?.message || 'Could not delete this transfer', 'error');
+          return;
+        }
+        await Promise.all([reloadTransfers(), reloadAccounts()]).catch(() => {});
         toast('Transfer deleted', 'success');
       },
     });
@@ -2800,7 +2900,18 @@ function AccountsManagementTab({ toast }) {
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {loadError && (
+        <div className="acc-ledger-empty" style={{ color: 'var(--error)' }}>
+          <i className="fa-solid fa-triangle-exclamation"></i>
+          {loadError}
+        </div>
+      )}
+      {accounts == null ? (
+        <div className="acc-ledger-empty">
+          <i className="fa-solid fa-spinner fa-spin"></i>
+          Loading accounts…
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="acc-ledger-empty">
           <i className="fa-solid fa-wallet"></i>
           No accounts found.<br/>
@@ -2934,6 +3045,7 @@ function AccountsManagementTab({ toast }) {
         toast={toast}
       />
       <FinAccountStatementModal
+        school={school}
         account={statementFor}
         accounts={list}
         txns={serverTxns}
@@ -3123,7 +3235,8 @@ function TransferModal({ open, accounts, balanceOf, onClose, onSave, toast }) {
   const handleSubmit = () => {
     if (!fromId || !toId) { toast('Please choose both accounts', 'error'); return; }
     if (fromId === toId) { toast('Source and destination must be different', 'error'); return; }
-    if (!amt || amt <= 0) { toast('Please enter a valid amount', 'error'); return; }
+     if (!amt || amt <= 0) { toast('Please enter a valid amount', 'error'); return; }
+    if (amt > fromBal) { toast(`Insufficient balance. ${fromAcct?.name} has only ${fmtMoney(fromBal)} available.`, 'error'); return; }
     onSave({ fromId, toId, amount: amt, date, note: note.trim(), by: by || currentUser || 'You' });
   };
 
@@ -3232,15 +3345,26 @@ function TransferModal({ open, accounts, balanceOf, onClose, onSave, toast }) {
 }
 
 /* ── Per-account bank-style Statement, with a From/To Date filter ── */
-function FinAccountStatementModal({ account, accounts, txns, transfers, defaultId, onClose }) {
-  const [from, setFrom] = useState('');
+function FinAccountStatementModal({ account, accounts, txns, transfers, defaultId, onClose, school }) {  const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [filter, setFilter] = useState('all');
   const [pickerOpen, setPickerOpen] = useState(false);
+  /* Ledger from manage-transactions; null = loading / not available. */
+  const [walletTxns, setWalletTxns] = useState(null);
 
   useEffect(() => {
     if (!account) return;
     setFrom(''); setTo(''); setFilter('all');
+  }, [account]);
+
+  useEffect(() => {
+    if (!account) { setWalletTxns(null); return undefined; }
+    let cancelled = false;
+    setWalletTxns(null);
+    accountsService.getWalletTransactions(account.id)
+      .then((rows) => { if (!cancelled) setWalletTxns(rows); })
+      .catch(() => { if (!cancelled) setWalletTxns(null); });
+    return () => { cancelled = true; };
   }, [account]);
 
   useEffect(() => {
@@ -3255,23 +3379,28 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
 
   const tm = finTypeMeta(account.type);
   const current = accountsService.computeFinAccountBalance(account, txns, transfers, defaultId);
-  const income = (txns?.rev || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const expense = (txns?.exp || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const transfersIn = (transfers || []).filter(t => t.toId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const transfersOut = (transfers || []).filter(t => t.fromId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  let income = (txns?.rev || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  let expense = (txns?.exp || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  let transfersIn = (transfers || []).filter(t => t.toId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  let transfersOut = (transfers || []).filter(t => t.fromId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
   /* Every move (revenue/expense/transfer) that touches this account,
      chronologically ordered — the same shape the reference prototype's
      statement math uses: fold the whole list for a running balance,
      then read off Brought Forward / Closing at the date boundaries. */
   const moves = [];
-  (txns?.rev || []).forEach(t => {
+  /* The wallet ledger from the API is authoritative (it already includes
+     transfers). Only when it has nothing do we derive moves from the day-book
+     + transfers, so a transfer is never counted twice. */
+  const useLedger = Array.isArray(walletTxns) && walletTxns.length > 0;
+  if (useLedger) walletTxns.forEach(m => moves.push({ ...m }));
+  if (!useLedger) (txns?.rev || []).forEach(t => {
     if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Revenue · ${t.head}`, cat: 'revenue', amount: Number(t.amount) || 0, kind: 'credit' });
   });
-  (txns?.exp || []).forEach(t => {
+  if (!useLedger) (txns?.exp || []).forEach(t => {
     if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Expense · ${t.head}`, cat: 'expense', amount: Number(t.amount) || 0, kind: 'debit' });
   });
-  (transfers || []).forEach(tr => {
+  if (!useLedger) (transfers || []).forEach(tr => {
     if (tr.toId === account.id) {
       const fromName = accounts.find(a => a.id === tr.fromId)?.name || 'another account';
       moves.push({ date: tr.date, desc: tr.note || `Transfer from ${fromName}`, ref: `Transfer from ${fromName}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'credit' });
@@ -3282,10 +3411,20 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
     }
   });
   moves.sort((a, b) => a.date.localeCompare(b.date));
+  if (useLedger) {
+    const sum = (fn) => moves.filter(fn).reduce((a, m) => a + m.amount, 0);
+    income       = sum(m => m.cat === 'revenue');
+    expense      = sum(m => m.cat === 'expense');
+    transfersIn  = sum(m => m.cat === 'transfer' && m.kind === 'credit');
+    transfersOut = sum(m => m.cat === 'transfer' && m.kind === 'debit');
+  }
 
-  const broughtForward = (Number(account.opening) || 0)
-    + moves.filter(m => !from || m.date < from).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+   const broughtForward = from
+    ? (Number(account.opening) || 0)
+      + moves.filter(m => m.date < from).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0)
+    : (Number(account.opening) || 0);
   let rangeMoves = moves.filter(m => (!from || m.date >= from) && (!to || m.date <= to));
+  if (filter !== 'all') rangeMoves = rangeMoves.filter(m => m.kind === filter);
   if (filter !== 'all') rangeMoves = rangeMoves.filter(m => m.kind === filter);
   let running = broughtForward;
   const rows = rangeMoves.map(m => {
@@ -3297,8 +3436,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
   const totalDebit = rangeMoves.filter(m => m.kind === 'debit').reduce((a, m) => a + m.amount, 0);
   const totalCredit = rangeMoves.filter(m => m.kind === 'credit').reduce((a, m) => a + m.amount, 0);
   const openLabel = from ? 'Balance Brought Forward' : 'Opening Balance';
-  const openDate = from || account.createdAt?.slice(0, 10) || '';
-
+  const openDate = from || String(account.createdAt || '').slice(0, 10) || '';
   const catLabel = (m) => (m.cat === 'transfer' ? 'Transfer' : (m.kind === 'credit' ? 'Credit' : 'Debit'));
   const tagFor = (m) => (m.cat === 'transfer' ? 'xfer' : (m.kind === 'credit' ? 'credit' : 'debit'));
 
@@ -3320,7 +3458,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
       setPickerOpen(false);
       return;
     }
-    const html = buildFinStatementHTML({ account, from, to, openLabel, openDate, broughtForward, rows, closing, totalDebit, totalCredit, buildRows, isBW });
+    const html = buildFinStatementHTML({ account, from, to, openLabel, openDate, broughtForward, rows, closing, totalDebit, totalCredit, buildRows, isBW, school });
     if (format === 'word') {
       downloadReportAsWord(html, `${statementFilename}.doc`);
       setPickerOpen(false);
@@ -3380,7 +3518,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
             </div>
           </div>
 
-          <div className="acc-txn-tablewrap">
+<div className="acc-txn-tablewrap acc-stmt-wrap">
             <table className="acc-txn-table acc-stmt-table">
               <thead>
                 <tr><th>Date</th><th>Description</th><th>Type</th><th className="r">Debit (Out)</th><th className="r">Credit (In)</th><th className="r">Balance</th></tr>
@@ -3439,7 +3577,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
 
 const escHtmlAcc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
 
-function buildFinStatementHTML({ account, from, to, openLabel, openDate, broughtForward, rows, closing, totalDebit, totalCredit, buildRows, isBW = false }) {
+function buildFinStatementHTML({ account, from, to, openLabel, openDate, broughtForward, rows, closing, totalDebit,totalCredit, buildRows, isBW = false, school }) {
   /* Same Colorful/Colorless convention as buildTxnReportHTML above:
      Colorless = paper-white, dark text, thin gray borders, no fills. */
   const thBg    = isBW ? '#FFFFFF' : '#1E3A8A';
@@ -3447,16 +3585,32 @@ function buildFinStatementHTML({ account, from, to, openLabel, openDate, brought
   const thBdr   = isBW ? 'border-bottom:1.5px solid #0F172A;' : '';
   const openBg  = isBW ? '#FFFFFF' : '#F1F5F9';
   const tfBdr   = isBW ? '#0F172A' : '#111';
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtmlAcc(account.name)} Statement</title>
+  const brand   = isBW ? '#0F172A' : '#1E3A8A';
+  const logoHtml = school?.logo
+    ? `<img src="${escHtmlAcc(school.logo)}" alt="logo" onerror="this.style.display='none'" />`
+    : escHtmlAcc(school?.monogram || 'SM');  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtmlAcc(account.name)} Statement</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0} body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;padding:24px}
-    h1{font-size:18px;margin-bottom:2px} .sub{font-size:12px;color:#555;margin-bottom:16px}
-    table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left}
+    h1{font-size:16px;margin-bottom:2px} .sub{font-size:12px;color:#555;margin-bottom:16px}
+    .head{display:flex;align-items:center;gap:12px;border-bottom:2px solid ${brand};padding-bottom:10px;margin-bottom:14px}
+    .logo{width:46px;height:46px;border-radius:12px;background:${isBW ? '#fff' : 'linear-gradient(135deg,#1E3A8A,#1E40AF)'};color:${isBW ? '#111' : '#fff'};font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid #E5E7EB;flex-shrink:0}
+    .logo img{width:100%;height:100%;object-fit:contain;background:#fff}
+    .school{font-size:17px;font-weight:800;color:${brand}}
+    .addr,.session{font-size:10px;color:#64748B;margin-top:2px;font-weight:600}
+    .meta{margin-left:auto;font-size:10px;color:#64748B;text-align:right;line-height:1.55}    table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left}
     th{background:${thBg};color:${thFg};font-size:10.5px;text-transform:uppercase;${thBdr}} td.r,th.r{text-align:right}
     .open td{background:${openBg};font-weight:700} tfoot td{font-weight:800;border-top:2px solid ${tfBdr}}
   </style></head><body>
-  <h1>${escHtmlAcc(account.name)}</h1>
-  <div class="sub">${from ? accFmtDate(from) : 'All time'} to ${to ? accFmtDate(to) : 'today'}</div>
+  <div class="head">
+    <div class="logo">${logoHtml}</div>
+    <div>
+      <div class="school">${escHtmlAcc(school?.name || 'School')}</div>
+      ${school?.address ? `<div class="addr">${escHtmlAcc(school.address)}</div>` : ''}
+      ${school?.session ? `<div class="session">Academic Session: ${escHtmlAcc(school.session)}</div>` : ''}
+    </div>
+    <div class="meta">Generated: ${new Date().toLocaleDateString('en-GB')}<br/>By: ${escHtmlAcc(school?.generatedBy || 'Accounts')}</div>
+  </div>
+  <h1>${escHtmlAcc(account.name)} — Account Statement</h1>  <div class="sub">${from ? accFmtDate(from) : 'All time'} to ${to ? accFmtDate(to) : 'today'}</div>
   <table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead>
   <tbody>
     <tr class="open"><td>${openDate ? accFmtDate(openDate) : '—'}</td><td>${escHtmlAcc(openLabel)}</td><td>Opening</td><td class="r">—</td><td class="r">—</td><td class="r">${broughtForward.toLocaleString('en-PK')}</td></tr>
@@ -3474,8 +3628,7 @@ function buildFinStatementCSV({ account, from, to, openLabel, openDate, broughtF
     `${from || 'All time'} to ${to || 'today'}`,
     '',
     ['Date', 'Description', 'Type', 'Debit', 'Credit', 'Balance'].join(','),
-    [openDate, esc(openLabel), 'Opening', '', '', broughtForward].join(','),
-    ...rows.map(r => [accFmtDate(r.date), esc(r.desc), r.cat === 'transfer' ? 'Transfer' : (r.kind === 'credit' ? 'Credit' : 'Debit'), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
+    [accFmtDate(openDate), esc(openLabel), 'Opening', '', '', broughtForward].join(','),    ...rows.map(r => [accFmtDate(r.date), esc(r.desc), r.cat === 'transfer' ? 'Transfer' : (r.kind === 'credit' ? 'Credit' : 'Debit'), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
     ['', 'Closing Balance', '', '', '', closing].join(','),
   ];
   return lines.join('\n');
@@ -4555,7 +4708,7 @@ function BookEditModal({ cfg, currentUser, onClose, onSave, toast }) {
             </div>
           </div>
 
-          <button type="button" className="acc-cash-toggle" onClick={() => setInclude(v => !v)}>
+          {/* <button type="button" className="acc-cash-toggle" onClick={() => setInclude(v => !v)}>
             <div className={`acc-cash-toggle-sw${includeInCash ? ' on' : ''}`}><span /></div>
             <div className="acc-cash-toggle-text">
               <div className="acc-cash-toggle-title"><i className="fa-solid fa-wallet"></i> Include in Cash In Hand</div>
@@ -4564,7 +4717,7 @@ function BookEditModal({ cfg, currentUser, onClose, onSave, toast }) {
                 <strong>This only affects Cash In Hand calculations — it will not impact Profit &amp; Loss or appear as revenue.</strong>
               </div>
             </div>
-          </button>
+          </button> */}
         </div>
         <div className="fee-modal-foot">
           <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
@@ -4902,7 +5055,7 @@ const REPORT_TYPES = [
   { id: 'revenue',  ic: 'fa-arrow-trend-up',   label: 'Revenue Report' },
   { id: 'expense',  ic: 'fa-arrow-trend-down', label: 'Expense Report' },
   { id: 'pl',       ic: 'fa-scale-balanced',   label: 'Profit & Loss' },
-  { id: 'cash',     ic: 'fa-wallet',           label: 'Cash In Hand' },
+  // { id: 'cash',     ic: 'fa-wallet',           label: 'Cash In Hand' },
   { id: 'books',    ic: 'fa-book-open',        label: 'Account Books' },
   { id: 'headwise', ic: 'fa-layer-group',      label: 'Head-wise Summary' },
   { id: 'overview', ic: 'fa-chart-pie',        label: 'Financial Overview' },
@@ -6794,8 +6947,16 @@ const ACC_CSS = `
 [data-theme="dark"] .acc-wallet-card, [data-theme="dark"] .acc-wallet-bal { background: var(--bg-card); border-color: var(--border-light); }
 [data-theme="dark"] .acc-wallet-name, [data-theme="dark"] .acc-wallet-bal-val { color: #E2E8F8; }
 [data-theme="dark"] .acc-wallet-foot, [data-theme="dark"] .acc-wallet-bal { background: var(--bg-muted); }
-.acc-stmt-table td.acc-stmt-credit { color: #16A34A; font-weight: 700; }
-.acc-stmt-table td.acc-stmt-debit { color: #DC2626; font-weight: 700; }
+.fee-modal.acc-stmt-modal { max-width: 1100px; }
+.acc-stmt-wrap { border: 1px solid var(--border-light); border-radius: 12px; overflow-x: auto; }
+.acc-stmt-table { min-width: 720px; table-layout: auto; }
+.acc-stmt-table thead th { padding: 12px 14px; }
+.acc-stmt-table tbody td, .acc-stmt-table tfoot td { padding: 11px 14px; }
+.acc-stmt-table th:nth-child(1), .acc-stmt-table td:nth-child(1) { white-space: nowrap; width: 110px; }
+.acc-stmt-table th:nth-child(3), .acc-stmt-table td:nth-child(3) { white-space: nowrap; width: 110px; }
+.acc-stmt-table th:nth-child(n+4), .acc-stmt-table td:nth-child(n+4) { white-space: nowrap; text-align: right; width: 120px; }
+.acc-stmt-table .acc-txn-detail { max-width: none; word-break: break-word; }
+.acc-stmt-table td.acc-stmt-credit { color: #16A34A; font-weight: 700; }.acc-stmt-table td.acc-stmt-debit { color: #DC2626; font-weight: 700; }
 .acc-stmt-table td.acc-stmt-bal { font-weight: 800; color: var(--text-primary); }
 [data-theme="dark"] .acc-stmt-table td.acc-stmt-bal { color: #E2E8F8; }
 .acc-stmt-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; padding: 2px 9px; border-radius: var(--radius-full); }

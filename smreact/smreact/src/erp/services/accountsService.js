@@ -1,5 +1,5 @@
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, buildChainApiUrl, apiMessage } from '../../utils/apiConfig';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
@@ -22,6 +22,8 @@ function mapAccEntry(e = {}) {
     createdAt: pick(e, 'createdAt', 'CreatedAt') || '',
     updatedBy: pick(e, 'modifiedByName', 'ModifiedByName', 'modifiedBy', 'ModifiedBy') || null,
     updatedAt: pick(e, 'modifiedAt', 'ModifiedAt') || null,
+    walletId:  String(pick(e, 'wallatID', 'WallatID', 'walletID', 'walletId', 'WalletID') ?? ''),
+    acctId:    String(pick(e, 'wallatID', 'WallatID', 'walletID', 'walletId', 'WalletID') ?? ''),
   };
 }
 
@@ -282,96 +284,269 @@ export async function getAccUsers() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   WALLETS (Financial Accounts) + account-to-account TRANSFERS.
-   Ported from the reference project as MOCK / LOCAL — there is no live
-   backend endpoint for these yet. Data lives in-memory for the session
-   (resets on reload). When the backend lands, swap these readers/writers
-   for real API calls; the Wallets tab UI needs no change.
+   WALLETS (Financial Accounts) + account-to-account TRANSFERS — real API.
+
+   Chain-Management service (not the ERP host), so URLs are built with
+   buildChainApiUrl():
+     POST /api/accounts/manage-wallat        { action: get | add | update … }
+     POST /api/accounts/manage-transactions  { action: get, accountID }
+     POST /api/accounts/manage-transfers     { action: get | add | delete … }
+     POST /api/accounts/update-wallat-status { id, status, modifiedBy }
+
+   Per product decision: networkID is always null (a wallet belongs to a
+   branch, not a network) and branchID is the CURRENT branch (sessionStorage).
+
+   IDs: the API uses numbers, the UI compares/keeps them as strings (select
+   values), so rows are mapped to String ids and converted back with Number()
+   on the way out.
+
+   The `action` strings for write calls are the only guesses in this file —
+   Swagger only documents "get". They are all in WALLET_ACTIONS below so a
+   mismatch is a one-line fix.
    ═══════════════════════════════════════════════════════════════════ */
-const _finDelay = (ms = 120) => new Promise((r) => setTimeout(r, ms));
-const _finClone = (x) => JSON.parse(JSON.stringify(x));
+const WALLET_ACTIONS = {
+  list: 'GET',
+  add: 'INSERT',
+  update: 'UPDATE',
+  transfersList: 'GET',
+  transferAdd: 'INSERT',
+  transferDelete: 'DELETE',
+  txnList: 'GET',
+};
 
-const mockFinAccounts = [
-  {
-    id: 'ac_cash', name: 'Cash In Hand', type: 'cash', opening: 1000000,
-    bankName: '', accountNo: '',
-    description: 'Default receiving account. All fee collections and expenses map here unless another account is chosen.',
-    status: 'active', isDefault: true, createdBy: 'Sana Malik', createdAt: '2026-01-01T09:00:00',
-  },
-  {
-    id: 'ac_bop', name: 'Bank of Punjab', type: 'bank', opening: 0,
-    bankName: 'Bank of Punjab', accountNo: 'PK36-BPUN-0000-1122-3344',
-    description: 'Primary operational bank account for salaries and vendor payments.',
-    status: 'active', isDefault: false, createdBy: 'Sana Malik', createdAt: '2026-01-10T10:00:00',
-  },
-  {
-    id: 'ac_alfa', name: 'Bank Alfalah', type: 'bank', opening: 0,
-    bankName: 'Bank Alfalah', accountNo: 'PK21-ALFH-0000-5566-7788',
-    description: 'Secondary bank account used for online and OneLink fee collections.',
-    status: 'active', isDefault: false, createdBy: 'Ali Khan', createdAt: '2026-01-10T10:05:00',
-  },
-  {
-    id: 'ac_owner', name: 'Owner Account', type: 'owner', opening: 0,
-    bankName: '', accountNo: '',
-    description: 'Owner and investor funding wallet.',
-    status: 'active', isDefault: false, createdBy: 'Sana Malik', createdAt: '2026-01-12T09:30:00',
-  },
-];
+/* Wire value for the status endpoints, and the words we accept back. */
+const WALLET_STATUS_WIRE = { active: 'Active', inactive: 'Inactive' };
 
-const mockTransfers = [
-  {
-    id: 'tr1', fromId: 'ac_cash', toId: 'ac_bop', amount: 300000, date: '2026-01-15',
-    note: 'Opening float moved to Bank of Punjab', by: 'Sana Malik', at: '2026-01-15T11:00:00',
-  },
-  {
-    id: 'tr2', fromId: 'ac_cash', toId: 'ac_alfa', amount: 200000, date: '2026-01-16',
-    note: 'Float moved to Bank Alfalah for online collections', by: 'Sana Malik', at: '2026-01-16T12:30:00',
-  },
-];
+const sessNum = (key) => Number(sessionStorage.getItem(key)) || 0;
 
-export async function getFinAccounts() { await _finDelay(); return _finClone(mockFinAccounts); }
-
-export async function saveFinAccount(payload, id) {
-  await _finDelay();
-  const idx = id ? mockFinAccounts.findIndex((a) => a.id === id) : -1;
-  if (idx >= 0) {
-    const isDefault = mockFinAccounts[idx].isDefault;
-    mockFinAccounts[idx] = { ...mockFinAccounts[idx], ...payload, status: isDefault ? 'active' : payload.status };
-    return _finClone(mockFinAccounts[idx]);
+/* One POST helper for all four endpoints. Throws on HTTP / success:false. */
+async function chainPost(path, body) {
+  const res = await fetch(buildChainApiUrl(path), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false || json?.isSuccess === false) {
+    /* ASP.NET validation errors: show the real field messages, not just the generic title. */
+    const detail = json?.errors && typeof json.errors === 'object'
+      ? Object.values(json.errors).flat().join(' ')
+      : '';
+    throw new Error(detail || apiMessage(json) || json?.message || json?.title || 'Request failed');
   }
-  const record = { id: `ac_${Date.now()}`, isDefault: false, status: 'active', bankName: '', accountNo: '', description: '', ...payload };
-  mockFinAccounts.push(record);
-  return _finClone(record);
+  return json;
+}
+
+/* Rows can come back bare, or wrapped as { data | result | items | records }. */
+function unwrapRows(json) {
+  if (Array.isArray(json)) return json;
+  for (const k of ['data', 'result', 'results', 'items', 'records']) {
+    const v = json?.[k];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object') return [v];
+  }
+  return [];
+}
+
+/* Common envelope — networkID is ALWAYS null, branchID is the current branch. */
+/* Backend model declares networkID as a non-nullable Int32, so JSON null is rejected
+   (400 "could not be converted to System.Int32"). 0 = "no network" — the wallet
+   belongs to the current branch only. */
+const scope = () => ({ networkID: null, branchID: sessNum('branchID') });/* DateTime is non-nullable too — list/delete calls send "now" instead of null. */
+const nowISO = () => new Date().toISOString();
+
+const toDateOnly = (v) => (v ? String(v).slice(0, 10) : '');
+
+/* ── Wallets ── */
+function normalizeWalletType(raw) {
+  const t = String(raw || '').trim().toLowerCase();
+  if (!t) return 'other';
+  if (t.includes('cash')) return 'cash';
+  if (t.includes('bank')) return 'bank';
+  if (t.includes('owner') || t.includes('investor')) return 'owner';
+  return 'other';
+}
+const WALLET_TYPE_WIRE = { cash: 'Cash', bank: 'Bank', owner: 'Owner', other: 'Other' };
+
+function normalizeWalletStatus(raw) {
+  if (raw === true || raw === 1) return 'active';
+  if (raw === false || raw === 0) return 'inactive';
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (['inactive', 'disabled', 'disable', 'closed', 'false', '0', 'blocked'].includes(s)) return 'inactive';
+  return 'active';
+}
+
+function mapWallet(w = {}) {
+  const bal = pick(w, 'currentBalance', 'CurrentBalance', 'balance', 'Balance', 'availableBalance', 'AvailableBalance', 'closingBalance');
+  return {
+    id:          String(pick(w, 'id', 'ID', 'accountID', 'AccountID')),
+    name:        pick(w, 'accountName', 'AccountName', 'name') || '',
+    type:        normalizeWalletType(pick(w, 'accountType', 'AccountType', 'type')),
+    opening:     Number(pick(w, 'openingBalance', 'OpeningBalance', 'opening') || 0),
+    bankName:    pick(w, 'bankName', 'BankName') || '',
+    accountNo:   pick(w, 'accountNo', 'AccountNo', 'accountNumber', 'AccountNumber') || '',
+    description: pick(w, 'description', 'Description') || '',
+    status:      normalizeWalletStatus(pick(w, 'status', 'Status', 'isActive', 'IsActive')),
+    isDefault:   pick(w, 'isDefault', 'IsDefault') === true,
+    createdBy:   pick(w, 'createdByName', 'CreatedByName', 'createdBy', 'CreatedBy') || '',
+    createdAt:   pick(w, 'createdAt', 'CreatedAt', 'createdDate') || '',
+    /* Server-calculated balance when the API sends one; null → computed locally. */
+    serverBalance: bal === undefined ? null : Number(bal),
+  };
+}
+
+export async function getFinAccounts() {
+  const json = await chainPost('/api/accounts/manage-wallat', {
+    action: WALLET_ACTIONS.list,
+    id: 0,
+    ...scope(),
+    accountName: '',
+    accountType: '',
+    openingBalance: 0,
+    status: '',
+    description: '',
+    createdBy: 0,
+    modifiedBy: 0,
+  });
+  return unwrapRows(json).map(mapWallet).filter((w) => w.id && w.id !== 'undefined');
+}
+
+/* Add (no id) or update (id) a wallet. Callers reload the list afterwards —
+   the write response is not relied upon to carry the saved row. */
+export async function saveFinAccount(payload, id) {
+  const userID = sessNum('UserID');
+  const isEdit = !!id;
+  return chainPost('/api/accounts/manage-wallat', {
+    action: isEdit ? WALLET_ACTIONS.update : WALLET_ACTIONS.add,
+    id: isEdit ? Number(id) : 0,
+    ...scope(),
+    accountName: payload.name || '',
+    accountType: WALLET_TYPE_WIRE[payload.type] || 'Other',
+    openingBalance: Number(payload.opening) || 0,
+    status: WALLET_STATUS_WIRE[payload.status] || WALLET_STATUS_WIRE.active,
+    description: payload.description || '',
+    /* Not part of the documented contract (ignored by the server today);
+       sent so bank details persist the moment the backend accepts them. */
+    bankName: payload.bankName || '',
+    accountNo: payload.accountNo || '',
+    createdBy: userID,
+    modifiedBy: userID,
+  });
 }
 
 export async function setFinAccountStatus({ id, status }) {
-  await _finDelay();
-  const acct = mockFinAccounts.find((a) => a.id === id);
-  if (!acct) return { id, ok: false };
-  if (acct.isDefault) return { id, ok: false, reason: 'default-account' };
-  acct.status = status;
-  return _finClone(acct);
+  return chainPost('/api/accounts/update-wallat-status', {
+    id: Number(id),
+    status: WALLET_STATUS_WIRE[status] || WALLET_STATUS_WIRE.active,
+    modifiedBy: sessNum('UserID'),
+  });
 }
 
-export async function getTransfers() { await _finDelay(); return _finClone(mockTransfers); }
+/* ── Transfers ── */
+function mapTransfer(t = {}) {
+  const date = toDateOnly(pick(t, 'date', 'Date', 'transferDate', 'TransferDate'));
+  const at   = pick(t, 'createdAt', 'CreatedAt', 'enteredAt', 'date', 'Date') || date;
+  return {
+    id:     String(pick(t, 'id', 'ID')),
+    fromId: String(pick(t, 'fromAccountID', 'FromAccountID', 'fromAccountId')),
+    toId:   String(pick(t, 'toAccountID', 'ToAccountID', 'toAccountId')),
+    amount: Number(pick(t, 'amount', 'Amount') || 0),
+    date,
+    note:   pick(t, 'note', 'Note', 'remark', 'Remark') || '',
+    by:     pick(t, 'enteredByName', 'EnteredByName', 'enteredBy', 'EnteredBy') || '',
+    at:     String(at),
+  };
+}
+
+export async function getTransfers() {
+  const json = await chainPost('/api/accounts/manage-transfers', {
+    action: WALLET_ACTIONS.transfersList,
+    id: 0,
+    ...scope(),
+    fromAccountID: 0,
+    toAccountID: 0,
+    amount: 0,
+    date: nowISO(),
+    enteredBy: 0,
+    note: '',
+  });
+  return unwrapRows(json).map(mapTransfer).filter((t) => t.id && t.id !== 'undefined');
+}
 
 export async function saveTransfer(payload) {
-  await _finDelay();
-  const record = { id: `tr_${Date.now()}`, at: new Date().toISOString(), ...payload };
-  mockTransfers.push(record);
-  return _finClone(record);
+  return chainPost('/api/accounts/manage-transfers', {
+    action: WALLET_ACTIONS.transferAdd,
+    id: 0,
+    ...scope(),
+    fromAccountID: Number(payload.fromId),
+    toAccountID: Number(payload.toId),
+    amount: Number(payload.amount) || 0,
+    date: payload.date ? new Date(payload.date).toISOString() : new Date().toISOString(),
+    enteredBy: sessNum('UserID'),
+    note: payload.note || '',
+  });
 }
 
 export async function deleteTransfer({ id }) {
-  await _finDelay();
-  const idx = mockTransfers.findIndex((t) => t.id === id);
-  if (idx >= 0) mockTransfers.splice(idx, 1);
+  await chainPost('/api/accounts/manage-transfers', {
+    action: WALLET_ACTIONS.transferDelete,
+    id: Number(id),
+    ...scope(),
+    fromAccountID: 0,
+    toAccountID: 0,
+    amount: 0,
+    date: nowISO(),
+    enteredBy: sessNum('UserID'),
+    note: '',
+  });
   return { id, deleted: true };
 }
 
-/* balance = opening + revenue(acctId||default) − expense(acctId||default)
+/* ── Wallet transactions (statement ledger) ──
+   Each row is projected onto the statement's move shape:
+   { date, desc, ref, cat: 'revenue'|'expense'|'transfer', kind: 'credit'|'debit', amount } */
+function mapWalletTxn(t = {}) {
+  const rawAmt = Number(pick(t, 'amount', 'Amount') || 0);
+  const credit = Number(pick(t, 'credit', 'Credit', 'creditAmount', 'CreditAmount') || 0);
+  const debit  = Number(pick(t, 'debit', 'Debit', 'debitAmount', 'DebitAmount') || 0);
+  const typeStr = String(pick(t, 'transactionType', 'TransactionType', 'type', 'Type', 'entryType', 'drCr', 'direction') || '').toLowerCase();
+  const refStr  = String(pick(t, 'referenceType', 'ReferenceType', 'source', 'Source', 'category', 'Category') || '');
+
+  let kind;
+  let amount = Math.abs(rawAmt);
+  if (credit || debit) { kind = credit >= debit ? 'credit' : 'debit'; amount = credit || debit; }
+  else if (/credit|\bcr\b|\bin\b|receiv|deposit|income|revenue/.test(typeStr)) kind = 'credit';
+  else if (/debit|\bdr\b|\bout\b|paid|withdraw|expense|payment/.test(typeStr)) kind = 'debit';
+  else kind = rawAmt < 0 ? 'debit' : 'credit';
+
+  const isTransfer = /transfer/.test(typeStr) || /transfer/i.test(refStr);
+  /* Wallet create hone par server ek ACCOUNT_OPENING row bhi bhejta hai; statement
+     apni Opening Balance row khud banata hai, is liye isay skip karna hai. */
+  const isOpening = /opening/i.test(refStr) || /opening/.test(typeStr);  const desc = pick(t, 'description', 'Description', 'details', 'Details', 'note', 'Note', 'remark', 'Remark') || '';
+  return {
+    date:   toDateOnly(pick(t, 'date', 'Date', 'transactionDate', 'TransactionDate', 'entryDate', 'createdAt')),
+    desc,
+    ref:    refStr || (isTransfer ? 'Transfer' : (kind === 'credit' ? 'Revenue' : 'Expense')),
+    cat:    isTransfer ? 'transfer' : (kind === 'credit' ? 'revenue' : 'expense'),
+      kind,
+    amount,
+    isOpening,
+  };
+}
+export async function getWalletTransactions(accountId) {
+  const json = await chainPost('/api/accounts/manage-transactions', {
+    action: WALLET_ACTIONS.txnList,
+    id: 0,
+    ...scope(),
+    accountID: Number(accountId),
+  });
+  return unwrapRows(json).map(mapWalletTxn).filter((m) => m.date && !m.isOpening);}
+
+/* Server balance when the wallet API sends one; otherwise
+   balance = opening + revenue(acctId||default) − expense(acctId||default)
             + transfers-in − transfers-out. */
 export function computeFinAccountBalance(account, txns, transfers, defaultId) {
+  if (account && account.serverBalance != null && Number.isFinite(account.serverBalance)) return account.serverBalance;
   let bal = Number(account.opening) || 0;
   (txns?.rev || []).forEach((t) => { if ((t.acctId || defaultId) === account.id) bal += Number(t.amount) || 0; });
   (txns?.exp || []).forEach((t) => { if ((t.acctId || defaultId) === account.id) bal -= Number(t.amount) || 0; });
