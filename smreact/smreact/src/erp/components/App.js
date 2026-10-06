@@ -325,9 +325,13 @@ export default function App() {
   }, []);
 
   /* Logged-in user for the sidebar footer. */
-  const userName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'User';
-  const userRole = sessionStorage.getItem('accountType') || 'User';
-  const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'U';
+/* Logged-in user for the sidebar footer. */
+const userName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'User';
+const userRole =
+  sessionStorage.getItem('designationName') ||
+  sessionStorage.getItem('accountType') ||
+  'User';
+const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'U';
 
   /* The user's profile photo (empImage) for the sidebar avatar — same source as
      the My Profile dialog. Empty / failed → the initials fallback shows. */
@@ -373,8 +377,10 @@ export default function App() {
            (get-user-menu-permissions → "Mentor AI" menu).
        Misal: branch 1 par MentorAI flag false hai, phir bhi School Head aur
        Qasim TEST (jise Mentor AI di gayi) dono ko dikhta hai. */
-    if (navId === 'mentorai') return fullAccess || canModule('Mentor AI');
-    if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
+if (navId === 'mentorai') {
+  if (!isModuleActive('mentor_ai')) return false;
+  return fullAccess || canModule('Mentor AI');
+}    if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
       /* Flag tab tak na maano jab tak jawab na aa jaye — warna 'off' wali
          branch par Chat ek pal ke liye dikh kar ghayab hoti hai. */
       if (navId === 'chat' && !mobilePerms.ready) return false;
