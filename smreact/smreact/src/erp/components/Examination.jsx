@@ -400,6 +400,12 @@ const RC_GRADE_SETUP = [
   { min:50, grade:'D',  comment:'Needs Improvement' },
   { min:0,  grade:'F',  comment:'Unsatisfactory' },
 ];
+/* Branch ke apne grade bands — /api/gradingcrud se (fetchGradeSetup bharta hai).
+   Module-level cache taake rcGetGrade (jise component state nahi milti) bhi inhi
+   par chale — yani result card ka HAR grade (overall, per-subject, history,
+   trends) ek hi scale par ho, wahi jo API deti hai. Load na ho to neeche wala
+   hardcoded scale fallback hai. */
+let RC_API_GRADES = null;
 const RC_FINAL_REMARKS_SETUP = [
   { min:90, remark:'Outstanding performance. Keep it up. Wishing you continued success.' },
   { min:80, remark:'Very Good Work Done. Keep Working Hard to Maintain Your Position.' },
@@ -411,6 +417,11 @@ const RC_FINAL_REMARKS_SETUP = [
 function rcGetGrade(obt, tot) {
   if (!tot || !obt) return null;
   const pct = (obt / tot) * 100;
+  /* API ke bands maujood hon to wahi (percentage ke hisaab se) — result card ka
+     grade us gradingcrud response se aata hai, hardcoded scale se nahi. */
+  if (RC_API_GRADES && RC_API_GRADES.length) {
+    return rcGradeByScale(pct, RC_API_GRADES) || RC_GRADE_SETUP[RC_GRADE_SETUP.length - 1];
+  }
   return RC_GRADE_SETUP.find(g => pct >= g.min) || RC_GRADE_SETUP[RC_GRADE_SETUP.length - 1];
 }
 /* Grade from the branch's configured scale (Result Setup → Grade) by percentage.
@@ -2089,45 +2100,42 @@ async function fetchGradeSetup() {
 
     const data = await response.json();
     console.log("Grade Setup API Response:", data);
-    
-    // Transform API response to match the expected format
+
+    // Response bare array hota hai; kuch environments { data:[…] } / { Data:[…] }
+    // me lapet kar deti hain — dono surat me rows nikaal lo.
+    const rows = Array.isArray(data) ? data
+      : Array.isArray(data?.data) ? data.data
+      : Array.isArray(data?.Data) ? data.Data : [];
+
     // API returns: { id, branchID, percentage: "≥90", grade: "A+", remarks: "good" }
-    const transformedGrades = (data || []).map(item => {
-      // Extract the condition and percentage value from "≥90" format
+    const transformedGrades = rows.map(item => {
+      // "≥90" / ">=90" / "<40" / "=50" → cond + numeric pct.
+      // AHEM: pehle ">=90" galat parse hota tha ('>' branch chalta aur pct
+      // "=90" reh jaata jo NaN ban jaata) — ab ≤/<= pehle, phir ≥/>=, phir
+      // akele < > =, aur number raw string se seedha nikaal liya jaata hai.
+      const rawPct = String(item.percentage ?? '').trim();
       let cond = 'gte';
-      let pct = '';
-      
-      if (item.percentage) {
-        if (item.percentage.includes('≥')) {
-          cond = 'gte';
-          pct = item.percentage.replace('≥', '').trim();
-        } else if (item.percentage.includes('>')) {
-          cond = 'gt';
-          pct = item.percentage.replace('>', '').trim();
-        } else if (item.percentage.includes('≤')) {
-          cond = 'lte';
-          pct = item.percentage.replace('≤', '').trim();
-        } else if (item.percentage.includes('<')) {
-          cond = 'lt';
-          pct = item.percentage.replace('<', '').trim();
-        } else if (item.percentage.includes('=')) {
-          cond = 'eq';
-          pct = item.percentage.replace('=', '').trim();
-        } else {
-          pct = item.percentage;
-        }
-      }
-      
+      if (/≤|<=/.test(rawPct))      cond = 'lte';
+      else if (/</.test(rawPct))    cond = 'lt';
+      else if (/≥|>=/.test(rawPct)) cond = 'gte';
+      else if (/>/.test(rawPct))    cond = 'gt';
+      else if (/=/.test(rawPct))    cond = 'eq';
+      const m = rawPct.match(/-?\d+(?:\.\d+)?/);
+      const pct = m ? m[0] : (item.percentageNo != null && item.percentageNo !== '' ? String(item.percentageNo) : '');
+
       return {
         id: item.id,
         grade: item.grade || '',
-        cond: cond,
-        pct: pct,
+        cond,
+        pct,
         comment: item.remarks || ''
       };
-    });
-    
+    }).filter(g => g.grade && g.pct !== '');
+
     setRsGrades(transformedGrades);
+    /* Module cache bhi set — rcGetGrade (per-subject / history / trends) isi se
+       chalta hai, taake poore result card par ek hi scale ho. */
+    RC_API_GRADES = transformedGrades;
     return transformedGrades;
   } catch (error) {
     console.log("Could not load grade setup", error);
@@ -9391,7 +9399,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                 const tot = rd.totalMarks[s] ?? 0;
                 const obt = isAbs ? 0 : (st.obtained[s] || 0);
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
-                const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
+                const g   = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
                 // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
                 // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
 // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
@@ -9635,7 +9643,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
-    const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
+    const g   = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
     const col = barPalette[i % barPalette.length];
     const pctCol = isAbs ? textMut : pct >= 80 ? grn : pct >= 60 ? amb : red;
     return { s, tot, obt, pct, g, isAbs, col, pctCol };
@@ -9886,7 +9894,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
-    const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
+    const g   = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
     // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
     // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
 // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
