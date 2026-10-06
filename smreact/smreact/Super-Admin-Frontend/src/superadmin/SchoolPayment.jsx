@@ -104,12 +104,14 @@ export default function SchoolPayment({ toast }) {
   const [saving, setSaving] = useState(false);
 
   /* ── One-Time Payments (new school signups) ──────────────────────────
-     Alag workflow, frontend-only (koi backend nahi): naye signup ka ek
-     dafa ka challan, uski receiving aur report. Monthly system (upar wali
-     live API) se bilkul juda — state yahin component me rehti hai. */
-  const [otChallans, setOtChallans] = useState(INITIAL_OT_CHALLANS);
-  const [otRecvStore, setOtRecvStore] = useState(INITIAL_OT_RECEIVING);
-  const [otSeq, setOtSeq] = useState(INITIAL_OT_CHALLANS.length + 1);
+     Ab LIVE — AHM_School_Invoice (api/services/payments → oneTime*). Naye
+     signup ka ek-dafa challan, uski receiving aur report. Monthly system se
+     bilkul juda controller. Challan aur receiving ek hi row hain, is liye ek
+     list call se dono store bharte hain (us MAHINE ke, Challans tab wale period
+     par). API fail ho to bundled demo rows (INITIAL_OT_*). */
+  const [otChallans, setOtChallans] = useState([]);
+  const [otRecvStore, setOtRecvStore] = useState({});
+  const [otBusy, setOtBusy] = useState(false);
 
   /* toast prop har render par naya function ho sakta hai — loader ko dobara
      chalane se rokne ke liye ref me rakha hai (wahi tareeqa SchoolStatus ka). */
@@ -279,6 +281,40 @@ export default function SchoolPayment({ toast }) {
     setBankStore(bankData);
   }, 'Could not load bank details'), [runOnce, schools]);
 
+  /* ── One-Time invoices (challan + receiving ek saath) ────────────────
+     AHM_School_Invoice schools directory se juda nahi — apni invoice table
+     hai, is liye alag loader. Ek list call us MAHINE ke saare one-time
+     challans aur unka receiving dono de deti hai (period Challans/Receiving
+     tab wala hi). Mahina badla to dobara. API fail ho to demo rows. */
+  const otPeriodRef = useRef(null);
+  const otLoadedRef = useRef(false);
+  const ensureOneTime = useCallback(async () => {
+    const key = `${period.year}-${period.month}`;
+    if (otPeriodRef.current !== key) {
+      otPeriodRef.current = key;
+      otLoadedRef.current = false;
+    }
+    if (otLoadedRef.current) return;
+    otLoadedRef.current = true;
+    setOtBusy(true);
+    try {
+      const { challans, receiving } = await paymentsApi.listOneTimeInvoices(period);
+      /* Jawab aate aate mahina badal gaya ho to ye us naye mahine ka nahi. */
+      if (otPeriodRef.current !== key) return;
+      setOtChallans(challans);
+      setOtRecvStore(receiving);
+    } catch (err) {
+      if (otPeriodRef.current === key) {
+        otLoadedRef.current = false;
+        setOtChallans(INITIAL_OT_CHALLANS);
+        setOtRecvStore(INITIAL_OT_RECEIVING);
+        toastRef.current?.(err?.message || 'Could not load one-time challans — showing sample data', 'warn');
+      }
+    } finally {
+      if (otPeriodRef.current === key) setOtBusy(false);
+    }
+  }, [period]);
+
   /* Mount par sirf branch directory — koi payment API nahi. */
   const load = useCallback(async () => {
     setLoading(true);
@@ -341,6 +377,13 @@ export default function SchoolPayment({ toast }) {
     else if (tab === 'receiving') ensureReceivings(schools);
     else if (tab === 'report') { ensureChallans(schools); ensureReceivings(schools); }
   }, [tab, schools, ensureSetups, ensureChallans, ensureReceivings]);
+
+  /* One-Time invoices — schools se juda nahi, is liye apna effect (schools.length
+     ka intezar nahi). Challans / Receiving / Reports teeno isi data ko dikhate
+     hain; mahina badla to ensureOneTime (naya period) dobara load karta hai. */
+  useEffect(() => {
+    if (tab === 'challans' || tab === 'receiving' || tab === 'report') ensureOneTime();
+  }, [tab, ensureOneTime]);
 
   /* Tab badalte hi mahina wapas CHALTE mahine par.
 
@@ -592,46 +635,71 @@ export default function SchoolPayment({ toast }) {
     }
   };
 
-  /* ── One-Time Challans (new school signups) — frontend-only ── */
-  const addOtChallan = (data) => {
-    const year = new Date().getFullYear();
-    const challanNumber = `OT-${year}-${String(otSeq).padStart(4, '0')}`;
-    const netPayable = data.formula === 'lumpsum' ? data.lumpAmount : data.totalStudents * data.perStudentPrice;
-    const rec = {
-      id: `ot-${Date.now()}`, challanNumber,
-      schoolName: data.schoolName, invoiceDate: data.invoiceDate, challanDate: data.challanDate,
-      formula: data.formula,
-      totalStudents: data.formula === 'perstudent' ? data.totalStudents : 0,
-      perStudentPrice: data.formula === 'perstudent' ? data.perStudentPrice : 0,
-      lumpAmount: data.formula === 'lumpsum' ? data.lumpAmount : 0,
-      netPayable,
-    };
-    setOtChallans((prev) => [rec, ...prev]);
-    setOtSeq((n) => n + 1);
-    setModal(null);
-    toast?.(`One-time challan ${challanNumber} generated for ${data.schoolName}`, 'success');
+  /* Mutation ke baad usi mahine ka taaza data — otLoadedRef khol kar reload. */
+  const reloadOneTime = async () => { otLoadedRef.current = false; await ensureOneTime(); };
+
+  /* ── One-Time Challans (new school signups) — LIVE one_time_chalan_manage ── */
+  const addOtChallan = async (data) => {
+    setSaving(true);
+    try {
+      await paymentsApi.saveOneTimeChallan({ data });
+      /* Naye challan ke mahine par le jao taake wo foran nazar aaye — period
+         badalte hi ensureOneTime us mahine ka data khud le aati hai (same
+         mahina ho to otLoadedRef khol kar). */
+      const d = String(data.challanDate || '');
+      const np = d.length >= 7
+        ? { month: Number(d.slice(5, 7)), year: Number(d.slice(0, 4)) }
+        : { ...period };
+      otLoadedRef.current = false;
+      setPeriod(np);
+      setModal(null);
+      toast?.(`One-time challan generated for ${data.schoolName}`, 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not generate one-time challan', 'error');
+    } finally { setSaving(false); }
   };
-  const deleteOtChallan = (id) => {
-    setOtChallans((prev) => prev.filter((c) => c.id !== id));
-    setOtRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    setModal(null); toast?.('One-time challan deleted', 'info');
+  const deleteOtChallan = async (challan) => {
+    /* Monthly challan wali hifazat yahan bhi: is challan ke khilaf receiving
+       ho chuki ho to challan delete band. One-time me challan aur receiving EK
+       hi row hain, is liye seedha DELETE dono (payment samet) chup-chaap uda
+       deta — pehle receiving (Reset) hatani zaroori hai. */
+    if (otRecvStore[challan?.id]) {
+      setModal(null);
+      toast?.('This challan has a receiving record. Delete the receiving record first (One-Time Receiving → Delete), then delete the challan.', 'warn');
+      return;
+    }
+    setSaving(true);
+    try {
+      await paymentsApi.deleteOneTimeChallan(challan);
+      await reloadOneTime();
+      setModal(null); toast?.('One-time challan deleted', 'info');
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete one-time challan', 'error');
+    } finally { setSaving(false); }
   };
 
-  /* ── One-Time Receiving ── */
-  const saveOtReceiving = (id, rec) => {
-    setOtRecvStore((prev) => {
-      const existing = prev[id];
-      const history = existing && existing.history ? [...existing.history] : [];
-      history.push({ amount: rec.receivedAmount, via: rec.via, date: rec.date });
-      return { ...prev, [id]: { ...rec, history } };
-    });
-    setModal(null);
-    const c = otChallans.find((x) => x.id === id);
-    toast?.(`Payment recorded for ${c ? c.schoolName : 'challan'}`, 'success');
+  /* ── One-Time Receiving — LIVE receive-payment / reset-payment ── */
+  const saveOtReceiving = async (id, rec) => {
+    setSaving(true);
+    try {
+      await paymentsApi.receiveOneTimePayment({ id, rec });
+      await reloadOneTime();
+      setModal(null);
+      const c = otChallans.find((x) => x.id === id);
+      toast?.(`Payment recorded for ${c ? c.schoolName : 'challan'}`, 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not record payment', 'error');
+    } finally { setSaving(false); }
   };
-  const deleteOtReceiving = (id) => {
-    setOtRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    setModal(null); toast?.('Receiving record deleted', 'info');
+  const deleteOtReceiving = async (id) => {
+    setSaving(true);
+    try {
+      await paymentsApi.resetOneTimePayment(id);
+      await reloadOneTime();
+      setModal(null); toast?.('Receiving record deleted', 'info');
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete receiving record', 'error');
+    } finally { setSaving(false); }
   };
 
   return (
@@ -670,7 +738,8 @@ export default function SchoolPayment({ toast }) {
           otChallans={otChallans}
           onAddOt={() => setModal({ type: 'addOtChallan' })}
           onDownloadOt={(c) => setModal({ type: 'otSlip', challan: c })}
-          onDeleteOt={(c) => setModal({ type: 'delOtChallan', challan: c })} />
+          onDeleteOt={(c) => setModal({ type: 'delOtChallan', challan: c })}
+          otLoading={otBusy} />
       )}
       {tab === 'receiving' && (
         <ReceivingTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} prevDuesStore={prevDuesStore} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving}
@@ -680,7 +749,8 @@ export default function SchoolPayment({ toast }) {
           toast={toast}
           otChallans={otChallans} otRecvStore={otRecvStore}
           onReceiveOt={(c) => setModal({ type: 'otReceive', challan: c })}
-          onDeleteOt={(c) => setModal({ type: 'delOtRecv', challan: c })} />
+          onDeleteOt={(c) => setModal({ type: 'delOtRecv', challan: c })}
+          otLoading={otBusy} />
       )}
       {tab === 'report' && <ReportTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} period={period} onPeriod={setPeriod} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving} otChallans={otChallans} otRecvStore={otRecvStore} />}
 
@@ -696,7 +766,7 @@ export default function SchoolPayment({ toast }) {
       {/* ── One-Time Payment modals ── */}
       {modal?.type === 'addOtChallan' && <AddOtChallanModal onClose={() => setModal(null)} onSave={addOtChallan} toast={toast} />}
       {modal?.type === 'otSlip' && <OtSlipModal challan={modal.challan} onClose={() => setModal(null)} />}
-      {modal?.type === 'delOtChallan' && <ConfirmDel title="Delete One-Time Challan?" sub={`This will permanently delete the one-time challan "${modal.challan.challanNumber}" for ${modal.challan.schoolName}.`} confirmText="Delete Challan" onConfirm={() => deleteOtChallan(modal.challan.id)} onClose={() => setModal(null)} />}
+      {modal?.type === 'delOtChallan' && <ConfirmDel title="Delete One-Time Challan?" sub={`This will permanently delete the one-time challan "${modal.challan.challanNumber}" for ${modal.challan.schoolName}. If a payment receiving is recorded against it, delete that receiving record first.`} confirmText="Delete Challan" onConfirm={() => deleteOtChallan(modal.challan)} onClose={() => setModal(null)} />}
       {modal?.type === 'otReceive' && <OtReceiveModal challan={modal.challan} prevRecv={otRecvStore[modal.challan.id]} onClose={() => setModal(null)} onSave={saveOtReceiving} toast={toast} />}
       {modal?.type === 'delOtRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the one-time payment receiving record for "${modal.challan.schoolName}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteOtReceiving(modal.challan.id)} onClose={() => setModal(null)} />}
     </div>
@@ -998,7 +1068,7 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
 }
 
 /* ═══════════════════════ CHALLANS TAB ═══════════════════════ */
-function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownload, onDelete, onBulk, period, onPeriod, otChallans, onAddOt, onDownloadOt, onDeleteOt }) {
+function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownload, onDelete, onBulk, period, onPeriod, otChallans, onAddOt, onDownloadOt, onDeleteOt, otLoading }) {
   const [mode, setMode] = useState('monthly');
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('');
@@ -1076,18 +1146,18 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
         </div>
       </div>
       ) : (
-        <OneTimeChallansTab otChallans={otChallans} onAdd={onAddOt} onDownload={onDownloadOt} onDelete={onDeleteOt} period={period} onPeriod={onPeriod} />
+        <OneTimeChallansTab otChallans={otChallans} onAdd={onAddOt} onDownload={onDownloadOt} onDelete={onDeleteOt} period={period} onPeriod={onPeriod} loading={otLoading} />
       )}
     </div>
   );
 }
-function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, onPeriod }) {
+function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, onPeriod, loading }) {
   const [q, setQ] = useState('');
-  /* Monthly tab ki tarah yahan bhi mahina + saal: list us period ke
-     one-time challans (challanDate se) par filter hoti hai. */
+  /* Mahina + saal selects se list us period ki aati hai — ye data pehle hi
+     API se usi month/year par maanga gaya hai (one_time_chalan_list), is liye
+     yahan sirf search filter lagta hai. */
   const list = otChallans.filter((c) =>
-    dateInPeriod(c.challanDate, period) &&
-    (c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase())));
+    c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="section-card">
       <CardHeader icon="fa-star" title="One-Time Challans" sub="Generate a one-time payment challan for a newly registered school / signup.">
@@ -1108,7 +1178,8 @@ function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, o
         <table className="ch-table">
           <thead><tr><th style={{ width: 44 }}>#</th><th style={{ width: 130 }}>Challan #</th><th>School Name</th><th style={{ width: 100 }}>Invoice Date</th><th style={{ width: 100 }}>Challan Date</th><th style={{ width: 105 }}>Formula</th><th style={{ width: 80, textAlign: 'center' }}>Students</th><th style={{ width: 130, textAlign: 'center' }}>Net Payable</th><th style={{ width: 170, textAlign: 'center' }}>Actions</th></tr></thead>
           <tbody>
-            {list.length === 0 ? <NoResults cols={9} msg="No one-time challans generated yet" /> : list.map((c, i) => (
+            {loading ? <LoadingRow cols={9} msg="Loading challans…" />
+              : list.length === 0 ? <NoResults cols={9} msg="No one-time challans generated yet" /> : list.map((c, i) => (
               <tr key={c.id}>
                 <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                 <td><span className="badge b-purple">{c.challanNumber}</span></td>
@@ -1134,7 +1205,7 @@ function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, o
 }
 
 /* ═══════════════════════ RECEIVING TAB ═══════════════════════ */
-function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {}, loading, onReceive, onDelete, toast, period, onPeriod, otChallans, otRecvStore, onReceiveOt, onDeleteOt }) {
+function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {}, loading, onReceive, onDelete, toast, period, onPeriod, otChallans, otRecvStore, onReceiveOt, onDeleteOt, otLoading }) {
   const [mode, setMode] = useState('monthly');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState({});
@@ -1286,24 +1357,39 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
         </div>
       </div>
       ) : (
-        <OneTimeReceivingTab otChallans={otChallans} otRecvStore={otRecvStore} onReceive={onReceiveOt} onDelete={onDeleteOt} />
+        <OneTimeReceivingTab otChallans={otChallans} otRecvStore={otRecvStore} onReceive={onReceiveOt} onDelete={onDeleteOt} period={period} onPeriod={onPeriod} loading={otLoading} />
       )}
     </div>
   );
 }
-function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete }) {
+function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete, period, onPeriod, loading }) {
   const [q, setQ] = useState('');
-  const list = otChallans.filter((c) => c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase()));
+  /* One-Time Challans tab ki tarah yahan bhi mahina + saal selects. Data pehle
+     hi API se usi period par aata hai (one_time_chalan_list) — challan aur uski
+     receiving ek hi row — is liye yahan sirf search filter. */
+  const list = otChallans.filter((c) =>
+    c.schoolName.toLowerCase().includes(q.toLowerCase()) || c.challanNumber.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="section-card">
       <CardHeader icon="fa-hand-holding-dollar" title="One-Time Receiving" sub="Record payments received against one-time signup challans and track pending balances.">
+        <select className="f-input" style={{ width: 132, height: 38 }}
+          value={period.month}
+          onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
+          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+        </select>
+        <select className="f-input" style={{ width: 92, height: 38 }}
+          value={period.year}
+          onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
+          {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
         <Search value={q} onChange={setQ} placeholder="Search school or challan #…" width={220} />
       </CardHeader>
       <div className="tbl-wrap">
         <table className="recv-table">
           <thead><tr><th style={{ width: 44 }}>#</th><th style={{ width: 120 }}>Challan #</th><th>School Name</th><th style={{ width: 110, textAlign: 'center' }}>Net Payable</th><th style={{ width: 100, textAlign: 'center' }}>Received</th><th style={{ width: 150 }}>Method</th><th style={{ width: 100 }}>Payment Date</th><th style={{ width: 100, textAlign: 'center' }}>Remaining</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 190, textAlign: 'center' }}>Actions</th></tr></thead>
           <tbody>
-            {list.length === 0 ? <NoResults cols={10} msg="No one-time challans generated yet" /> : list.map((c, i) => {
+            {loading ? <LoadingRow cols={10} msg="Loading receiving records…" />
+              : list.length === 0 ? <NoResults cols={10} msg="No one-time challans generated yet" /> : list.map((c, i) => {
               const recv = otRecvStore[c.id];
               const received = recv ? (recv.receivedAmount || 0) : 0;
               const remaining = recv ? (recv.remainingAmount || 0) : c.netPayable;
@@ -1323,7 +1409,19 @@ function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete }) {
                     <div className="ch-actions" style={{ justifyContent: 'center' }}>
                       <button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
                       <button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
-                      <button className="recv-btn-recv" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }} onClick={() => onReceive(c)}><i className="fa-solid fa-hand-holding-dollar" /> Receiving</button>
+                      {/* Poori payment ho chuki to button band (monthly wali
+                          tarah). Aadhi hui ho to baqi raqam ke liye "Receive
+                          More". */}
+                      <button
+                        className="recv-btn-recv"
+                        style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
+                        disabled={status === 'paid'}
+                        data-tip={status === 'paid' ? 'Payment already received in full' : status === 'partial' ? 'Receive the remaining balance' : ''}
+                        onClick={() => onReceive(c)}
+                      >
+                        <i className={`fa-solid ${status === 'partial' ? 'fa-plus' : 'fa-hand-holding-dollar'}`} />
+                        {status === 'partial' ? ' Receive More' : ' Receiving'}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -2322,14 +2420,22 @@ function OtSlipModal({ challan: c, onClose }) {
 function OtReceiveModal({ challan: c, prevRecv, onClose, onSave, toast }) {
   const netPayable = c.netPayable;
   const alreadyReceived = prevRecv ? (prevRecv.receivedAmount || 0) : 0;
-  const [received, setReceived] = useState(prevRecv ? String(prevRecv.receivedAmount) : '');
+  /* Amount Received = IS BAAR ki wasooli (increment), kul nahi. Is liye input
+     hamesha khali shuru hota hai — pehle yahan pehle se jama raqam bhar aati
+     thi, is wajah se bacha hua 1000 lena mushkil hota tha. Pehle jo mil chuka
+     wo "Previously Received" me alag dikhta hai. */
+  const [received, setReceived] = useState('');
   const [via, setVia] = useState(prevRecv ? prevRecv.via : RECEIVING_METHODS[0]);
   const [date, setDate] = useState(todayISO());
-  const remaining = Math.max(0, netPayable - (parseFloat(received) || 0));
+  const thisAmount = parseFloat(received) || 0;
+  /* Remaining = Net Payable − (pehle mila + ab mila). */
+  const remaining = Math.max(0, netPayable - alreadyReceived - thisAmount);
   const save = () => {
     if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
     if (!date) { toast?.('Please select a payment date', 'warn'); return; }
-    onSave(c.id, { receivedAmount: parseFloat(received) || 0, remainingAmount: remaining, via, date: fmtDateShort(date) });
+    /* receivedAmount = sirf is baar ki raqam; server ise pehle wali me jama
+       karta hai (one_time_chalan_receive-payment). */
+    onSave(c.id, { receivedAmount: thisAmount, remainingAmount: remaining, via, date: fmtDateShort(date), dateRaw: date });
   };
   return (
     <Ov cls="recv-ov" onClose={onClose} wrap="recv-modal">
@@ -2344,11 +2450,11 @@ function OtReceiveModal({ challan: c, prevRecv, onClose, onSave, toast }) {
           {prevRecv && <div className="recv-summary-row"><span className="recv-summary-lbl">Previously Received</span><span className="recv-summary-val">{pkr(alreadyReceived)}</span></div>}
         </div>
         <div className="recv-input-2col">
-          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#7C3AED', marginRight: 4 }} /> Amount Received</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder="0" /></div>
+          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#7C3AED', marginRight: 4 }} /> Amount Received{alreadyReceived > 0 ? ' (this payment)' : ''}</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder={alreadyReceived > 0 ? `Remaining ${pkr(Math.max(0, netPayable - alreadyReceived))}` : '0'} autoFocus /></div>
           <div className="recv-field"><label><i className="fa-solid fa-building-columns" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Method</label><select className="recv-input" style={{ cursor: 'pointer' }} value={via} onChange={(e) => setVia(e.target.value)}>{RECEIVING_METHODS.map((m) => <option key={m}>{m}</option>)}</select></div>
         </div>
         <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Amount Received</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
+        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>{alreadyReceived > 0 ? 'Net Payable − Previously Received − Amount Received' : 'Net Payable − Amount Received'}</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
       </div>
       <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
     </Ov>

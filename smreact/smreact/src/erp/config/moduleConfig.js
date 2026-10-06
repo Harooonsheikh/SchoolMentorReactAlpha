@@ -92,6 +92,11 @@ export const API_FIELD_TO_MODULE_MAP = {
   auditLogs:         'audit_logs',
   settings:          'settings',
   userPermissions:   'user_permissions',
+  /* Sub-feature flag — JAAN BOOJH kar MODULE_REGISTRY se bahar (sidebar nav
+     nahi banta). Fee ke 1Link / PSID payment controls isi par chhupte/dikhte
+     hain: Fee.jsx → useModules().isActive('one_link_integration').
+     API false bheje ya na bheje → flag off (isActive default false). */
+  '1LinkIntegration': 'one_link_integration',
 };
 
 /**

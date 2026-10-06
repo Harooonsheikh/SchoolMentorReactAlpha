@@ -11,6 +11,7 @@ import { downloadDocxFromHtml } from '../../utils/docx';
 import { qrSvg } from '../../utils/qr';
 import { code128BSvg } from '../../utils/barcode';
 import { usePermissions } from '../context/PermissionsContext';
+import { useModules } from '../context/ModuleContext';
 import { rankedMatches } from '../utils/studentSearch';
 import { buildStandardReportHtml, StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel, reportAcademicYear } from '../reports/reportKit';
 
@@ -17732,6 +17733,11 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 function FeeChallanSettings({ toast }) {
   const { can } = usePermissions();
   const canFcsEdit = can('Fee', 'Fee Challan Settings', 'Edit');
+  /* 1Link / PSID payment features sirf tab dikhte hain jab is branch ki
+     module-permission me "1LinkIntegration": true ho (Super-Admin se set hota
+     hai). Off/missing → ye saare PSID controls hide. */
+  const { isActive } = useModules();
+  const oneLinkOn = isActive('one_link_integration');
   const {
     data: serverSettings,
     loading,
@@ -17869,7 +17875,9 @@ function FeeChallanSettings({ toast }) {
               info="Controls the two advance-balance flows in Fee Receiving: (1) receiving MORE than what's owed, which is recorded as a new advance balance, and (2) 'Adjust From Advance Balance', which spends an existing advance balance against the current challan as its own transaction. ON: both are available and Fee Receiving shows Advance / Additional and Adjust From Advance Balance where applicable. OFF: Pay Now is capped at exactly what's owed (no new advance can be created), the Adjust From Advance Balance option is hidden, and an already-fully-paid challan can't receive anything further. The Available Advance Balance figure itself stays visible either way — this only turns off receiving/adjusting it."
             />
 
-            {/* PSID Installment Payments — default ON (OneLink/PSID partial challan available). */}
+            {/* PSID Installment Payments — default ON (OneLink/PSID partial challan available).
+                Sirf tab dikhta hai jab branch par 1Link integration on ho. */}
+            {oneLinkOn && (
             <SettingCard
               name="PSID Installment Payments"
               desc="Allow installments to be created through PSID / OneLink partial-payment challans."
@@ -17877,6 +17885,7 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ psidInstallments: value.psidInstallments === false })}
               info="Controls the 'Generate Partial Payment Challan' (OneLink / PSID) feature in Fee Challans, which lets a parent pay a portion of their challan via a temporary PSID-bearing challan. ON: the OneLink action button on each student's challan row is available. OFF: that button is disabled everywhere in Fee Challans, with an explanation, and generating a new partial challan is blocked even if attempted directly."
             />
+            )}
 
             {/* NOTE — "Future Month Challan Printing" (sibling) is intentionally NOT
                 ported here. The ERP already gates future/adjacent months through the
@@ -17942,13 +17951,15 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ showDiscount: !value.showDiscount })}
             />
 
-            {/* Show PSID */}
+            {/* Show PSID — sirf tab jab branch par 1Link integration on ho. */}
+            {oneLinkOn && (
             <SettingCard
               name="Show PSID Code on Challan"
               desc="Print the PSID / bank payment code so parents can pay via bank or app."
               on={value.showPsd}
               onToggle={() => set({ showPsd: !value.showPsd })}
             />
+            )}
 
             {/* Show Bank Details */}
             <SettingCard
@@ -18066,12 +18077,14 @@ function FeeChallanSettings({ toast }) {
                   {value.showDiscount ? 'Visible' : 'Hidden'}
                 </strong>
               </li>
+              {oneLinkOn && (
               <li>
                 PSD / bank code on challan: {' '}
                 <strong className={value.showPsd ? 'fee-pos' : 'fee-neg'}>
                   {value.showPsd ? 'Printed' : 'Not printed'}
                 </strong>
               </li>
+              )}
               <li>
                 Late-payment fine: {' '}
                 <strong className={value.fineEnabled ? 'fee-pos' : 'fee-neg'}>

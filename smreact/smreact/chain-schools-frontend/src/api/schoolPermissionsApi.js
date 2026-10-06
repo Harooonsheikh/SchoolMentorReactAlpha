@@ -3,26 +3,25 @@ import { SUPERADMIN_API_BASE, ERP_API_BASE } from '@/config/env'
 
 const BASE = `${SUPERADMIN_API_BASE}/api/SchoolPermissions`
 
-/* UI ki module key → API ka field. Tarteeb screen jaisi hai (18 modules). */
+/* UI ki module key → API ka field. Tarteeb screen jaisi hai (17 modules). */
 export const MODULE_FIELDS = {
-  academics:          'academics',
-  examination:        'examination',
-  papergenerator:     'paperGenerator',
-  attendance:         'attendance',
-  timetable:          'timeTable',
-  fee:                'fee',
-  accounts:           'accounts',
-  inventory:          'inventory',
-  '1linkintegration': '1LinkIntegration',
-  admissioncrm:       'admissionCRM',
-  students:           'students',
-  hr:                 'humanResource',
-  staffappraisals:    'staffAppraisals',
-  schoolsops:         'schoolSOPs',
-  teachertrainings:   'teacherTrainings',
-  auditlogs:          'auditLogs',
-  settings:           'settings',
-  userpermissions:    'userPermissions',
+  academics:        'academics',
+  examination:      'examination',
+  papergenerator:   'paperGenerator',
+  attendance:       'attendance',
+  timetable:        'timeTable',
+  fee:              'fee',
+  accounts:         'accounts',
+  inventory:        'inventory',
+  admissioncrm:     'admissionCRM',
+  students:         'students',
+  hr:               'humanResource',
+  staffappraisals:  'staffAppraisals',
+  schoolsops:       'schoolSOPs',
+  teachertrainings: 'teacherTrainings',
+  auditlogs:        'auditLogs',
+  settings:         'settings',
+  userpermissions:  'userPermissions',
 }
 
 const UI_KEYS = Object.keys(MODULE_FIELDS)

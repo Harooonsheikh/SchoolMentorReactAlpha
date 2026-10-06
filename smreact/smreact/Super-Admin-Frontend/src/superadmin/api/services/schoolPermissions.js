@@ -74,6 +74,9 @@ const MODULE_ALIAS = {
   auditlog: 'auditlogs',
   userpermission: 'userpermissions',
   timetables: 'timetable',
+  /* API field `1LinkIntegration` (norm → '1linkintegration') → modal ka
+     '1 Link Integration' toggle. */
+  '1linkintegration': 'onelink', onelinkintegration: 'onelink', '1link': 'onelink',
 };
 
 const MODULE_BY_NORM = new Map(ALL_MODULE_KEYS.map((k) => [norm(k), k]));
@@ -276,6 +279,7 @@ const MODULE_API_FIELD = {
   fee: 'fee',
   accounts: 'accounts',
   inventory: 'inventory',
+  onelink: '1LinkIntegration',
   admissioncrm: 'admissionCRM',
   students: 'students',
   hr: 'humanResource',

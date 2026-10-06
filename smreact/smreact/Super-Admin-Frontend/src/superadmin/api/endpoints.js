@@ -92,6 +92,24 @@ export const EP = {
     ledgerAction: () => `${SA_ROOT}/api/AHM_School_Payments/manage_payment_ledger`,
     /* POST — fee receiving: wahi paanch actions, GET currentBranchID par. */
     receivingAction: () => `${SA_ROOT}/api/AHM_School_Payments/manage_payment_receiving`,
+
+    /* ── One-Time Challans / Receiving — naye school signups ka ek dafa ka
+       challan (AHM_School_Invoice). Monthly system se bilkul juda, apna
+       controller set:
+         • manage        POST — INSERT | UPDATE | DELETE | GET
+                          body: MdlAHM_School_Invoice (ek hi row me challan +
+                          receiving dono: school_Name, invoiceDate, challanDate,
+                          isLumpSum, lumpSumAmount | totalStudent+pricePerStudent,
+                          totalAmount, receivedAmount, method, receivedDate,
+                          month, year, isActive). Method/ReceivedDate/ChallanDate/
+                          InvoiceDate/School_Name [Required] — null kabhi nahi.
+         • list          GET  ?month=&year= → { success, count, data:[ …rows ] }
+         • receivePayment POST — { id, receivedAmount, receivedDate, method, modifiedBy }
+         • resetPayment   POST /{id}?modifiedBy= — us row ki receiving saaf. */
+    oneTimeManage: () => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_manage`,
+    oneTimeList: () => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_list`,
+    oneTimeReceive: () => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_receive-payment`,
+    oneTimeReset: (id) => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_reset-payment/${id}`,
   },
 
   /* ── School Permissions — LIVE SchoolMentorSuperAdminAPI (see SA_ROOT).

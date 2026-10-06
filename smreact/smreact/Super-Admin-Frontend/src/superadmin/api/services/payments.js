@@ -723,6 +723,217 @@ export function deleteReceiving({ branchId, id }) {
   );
 }
 
+/* ═══════════════════ ONE-TIME CHALLANS / RECEIVING (live) ═══════════════════
+   Naye school signups ka ek-dafa challan — AHM_School_Invoice. Monthly system
+   se bilkul juda controller set (endpoints.js → payments.oneTime*):
+
+     POST .../one_time_chalan_manage        INSERT | UPDATE | DELETE | GET
+     GET  .../one_time_chalan_list?month=&year=
+     POST .../one_time_chalan_receive-payment  { id, receivedAmount, receivedDate, method, modifiedBy }
+     POST .../one_time_chalan_reset-payment/{id}?modifiedBy=
+
+   Live check se (read-only probes):
+     • Actions sirf INSERT | UPDATE | DELETE | GET hain:
+       "Invalid action. Use INSERT, UPDATE, DELETE or GET".
+     • manage ka model (MdlAHM_School_Invoice) par ye [Required] hain —
+       School_Name, InvoiceDate, ChallanDate, Method, ReceivedDate — in me se
+       koi null ho to 400. Is liye nayi (bina payment) challan par bhi Method
+       khali string aur ReceivedDate = challan date bhej dete hain; asal
+       receiving baad me receive-payment se aati hai.
+     • CHALLAN aur RECEIVING ek hi row hain: receivedAmount / method /
+       receivedDate usi invoice row par rehte hain (payment se pehle null).
+       Is liye ek list call se dono views (challans + receiving) ban jate hain.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const oneTimeManagePost = actionPoster(() => EP.payments.oneTimeManage(), 'manage this one-time challan');
+
+/* receive / reset routes "action" wale nahi — seedhe POST. manage/ledger
+   wali friendlyError yahan bhi chalti hai taake paighaam ek jaisa rahe. */
+async function simplePost(url, body, label) {
+  const token = getSuperAdminToken();
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body != null ? JSON.stringify(body) : undefined,
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError(friendlyError(json && (json.message || json.title || json.Message), label), res.status);
+  }
+  return json;
+}
+
+/** Ek invoice row → wohi challan shape jo One-Time Challans/Receiving/Report
+ *  aur dono slips padhte hain. API par challanNumber column nahi hai, is liye
+ *  dikhaane ka number id + saal se banta hai (OT-2026-0007). */
+export function oneTimeRowToChallan(r) {
+  const id = num(r?.id);
+  const isLump = bool(r?.isLumpSum);
+  const inv = isoDay(r?.invoiceDate);
+  const chal = isoDay(r?.challanDate);
+  const total = num(r?.totalAmount);
+  const p = periodOf(chal);
+  const year = num(r?.year) || p.year;
+  return {
+    id,
+    challanNumber: `OT-${year}-${String(id).padStart(4, '0')}`,
+    schoolName: r?.school_Name || '',
+    invoiceDate: inv,
+    challanDate: chal,
+    formula: isLump ? 'lumpsum' : 'perstudent',
+    totalStudents: num(r?.totalStudent),
+    perStudentPrice: num(r?.pricePerStudent),
+    lumpAmount: num(r?.lumpSumAmount),
+    netPayable: total,
+    month: num(r?.month) || p.month,
+    year,
+    raw: r,
+  };
+}
+
+/** Usi invoice row ka receiving hissa (ya null jab abhi koi payment na aayi ho).
+ *  API ek hi receivedAmount rakhti hai (history nahi), is liye history ki ek
+ *  line usi se banti hai — bilkul monthly receiving ki tarah. */
+export function oneTimeRowToReceiving(r) {
+  const received = num(r?.receivedAmount);
+  if (!(received > 0)) return null;
+  const total = num(r?.totalAmount);
+  const day = isoDay(r?.receivedDate);
+  const via = r?.method || '';
+  const date = day ? fmtDateShort(day) : '';
+  return {
+    receivedAmount: received,
+    remainingAmount: Math.max(0, total - received),
+    via,
+    date,
+    dateRaw: day,
+    history: [{ amount: received, via, date }],
+  };
+}
+
+/* Screen ka data → manage ka request body. `data` wahi hai jo AddOtChallanModal
+   deti hai (ya mapped challan, delete ke liye). */
+function oneTimeToBody({ action, id = 0, data }) {
+  const me = currentUserId();
+  const isLump = data?.formula === 'lumpsum';
+  const net = isLump
+    ? num(data?.lumpAmount)
+    : num(data?.totalStudents) * num(data?.perStudentPrice);
+  const inv = isoDay(data?.invoiceDate) || todayISO();
+  const chal = isoDay(data?.challanDate) || todayISO();
+  const p = periodOf(chal);
+  return {
+    action,
+    id: num(id),
+    school_Name: data?.schoolName || '',   // [Required]
+    invoiceDate: `${inv}T00:00:00`,         // [Required]
+    challanDate: `${chal}T00:00:00`,        // [Required]
+    isLumpSum: isLump,
+    lumpSumAmount: isLump ? net : 0,
+    totalStudent: isLump ? 0 : num(data?.totalStudents),
+    pricePerStudent: isLump ? 0 : num(data?.perStudentPrice),
+    totalAmount: net,
+    /* Nayi challan par receiving nahi — magar ye [Required] hain, is liye
+       khali method aur receivedDate = challan date. Payment receive-payment se. */
+    receivedAmount: 0,
+    method: '',                             // [Required]
+    receivedDate: `${chal}T00:00:00`,       // [Required]
+    month: p.month,
+    year: p.year,
+    isActive: true,
+    createdBy: me,
+    modifiedBy: me,
+  };
+}
+
+/**
+ * Ek period (month/year) ke one-time challans — aur unka receiving — ek call me.
+ * @returns {Promise<{ challans: Array, receiving: Object }>}
+ */
+export async function listOneTimeInvoices(period) {
+  const now = periodOf(null);
+  const month = Number(period?.month) || now.month;
+  const year = Number(period?.year) || now.year;
+  const url = `${SA_ADMIN_API_BASE}${EP.payments.oneTimeList()}` + buildQuery({ month, year });
+  const body = await getJson(url, 'one-time challans');
+  const rows = Array.isArray(body?.data) ? body.data : [];
+  const challans = [];
+  const receiving = {};
+  rows.filter((r) => num(r?.id)).forEach((r) => {
+    const c = oneTimeRowToChallan(r);
+    challans.push(c);
+    const recv = oneTimeRowToReceiving(r);
+    if (recv) receiving[c.id] = recv;
+  });
+  /* Nayi se purani — bilkul monthly list ki tartib. */
+  challans.sort((a, b) => b.id - a.id);
+  return { challans, receiving };
+}
+
+/** Add New Challan — pehli baar INSERT, id ho to UPDATE. */
+export async function saveOneTimeChallan({ id = 0, data } = {}) {
+  const rowId = num(id);
+  await oneTimeManagePost(
+    oneTimeToBody({ action: rowId > 0 ? 'UPDATE' : 'INSERT', id: rowId, data }),
+    rowId > 0 ? 'update this one-time challan' : 'generate this one-time challan',
+  );
+}
+
+/** Challan hatao. Model ke [Required] fields DELETE par bhi chahiye, is liye
+ *  mapped challan ki apni values body me jati hain. */
+export function deleteOneTimeChallan(challan) {
+  return oneTimeManagePost(
+    oneTimeToBody({
+      action: 'DELETE',
+      id: challan?.id,
+      data: {
+        schoolName: challan?.schoolName,
+        invoiceDate: challan?.invoiceDate,
+        challanDate: challan?.challanDate,
+        formula: challan?.formula,
+        totalStudents: challan?.totalStudents,
+        perStudentPrice: challan?.perStudentPrice,
+        lumpAmount: challan?.lumpAmount,
+      },
+    }),
+    'delete this one-time challan',
+  );
+}
+
+/** Receive payment against a one-time challan. `rec` wahi hai jo OtReceiveModal
+ *  deta hai ({ receivedAmount, via, date, dateRaw }). receivedAmount = NAYA kul
+ *  wasool (modal usi tarah pre-fill karta hai), incremental nahi. */
+export function receiveOneTimePayment({ id, rec } = {}) {
+  const day = isoDay(rec?.dateRaw || rec?.date) || todayISO();
+  return simplePost(
+    `${SA_ADMIN_API_BASE}${EP.payments.oneTimeReceive()}`,
+    {
+      id: num(id),
+      receivedAmount: num(rec?.receivedAmount),
+      receivedDate: `${day}T00:00:00`,
+      method: rec?.via || '',
+      modifiedBy: currentUserId(),
+    },
+    'record this one-time payment',
+  );
+}
+
+/** Us challan ki receiving saaf (reset) — row phir "pending" ho jata hai. */
+export function resetOneTimePayment(id) {
+  const url = `${SA_ADMIN_API_BASE}${EP.payments.oneTimeReset(num(id))}`
+    + buildQuery({ modifiedBy: currentUserId() });
+  return simplePost(url, null, 'reset this one-time receiving');
+}
+
 /* ═══════════════════ Reports ═══════════════════
    Reports tab ka apna koi endpoint nahi — wo teeno live stores (setup /
    challan / receiving) se hi bante hain, is liye yahan kuch wire karna nahi.

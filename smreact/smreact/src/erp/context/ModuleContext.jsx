@@ -78,6 +78,9 @@ export function ModuleProvider({ children }) {
        to poora block nikaal do. */
     if (String(branchID) === '220941') {
       const allOn = Object.fromEntries(MODULE_REGISTRY.map(m => [m.id, true]));
+      /* one_link_integration registry se bahar hai (sub-feature flag) — demo
+         branch par 1Link/PSID features bhi dikhane ke liye alag se on. */
+      allOn.one_link_integration = true;
       setModuleState(allOn);
       writeCache(allOn);
       setReady(true);
