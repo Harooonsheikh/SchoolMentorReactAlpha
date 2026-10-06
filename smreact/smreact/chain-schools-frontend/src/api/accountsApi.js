@@ -59,9 +59,16 @@ const rowsOf = (json) => (Array.isArray(json?.data) ? json.data : Array.isArray(
    error mana jata hai (message user tak jata hai). Read-lists isay use
    NAHI karti: wahan khaali natija aik jaayaz haalat hai, error nahi. */
 async function callJson(path, { method = 'GET', body } = {}) {
+  const u = getStoredUser() || {}
+  const token = u.token || u.accessToken || u.access_token || u.jwt
+  const headers = {
+    Accept: '*/*',
+    ...(body ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { Accept: '*/*', 'Content-Type': 'application/json' } : { Accept: '*/*' },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   })
   const json = await res.json().catch(() => null)
@@ -229,7 +236,8 @@ function mapEntry(e = {}) {
        Expense) — chain ki list me ye nahi aani chahiye. */
     branchID:  pick(e, 'branchID', 'BranchID') ?? null,
     headNo:    pick(e, 'branchAccountID', 'BranchAccountID', 'accountID', 'AccountID', 'accountHeadID', 'AccountHeadID') || '',
-    head:      pick(e, 'accountHead', 'AccountHead', 'headName', 'HeadName') || '',
+    /* Entry kis wallet se judi hai — edit par wahi wallet wapas select hona chahiye */
+    acctId:    String(pick(e, 'wallatID', 'WallatID', 'walletID', 'WalletID', 'wallatId', 'walletId') ?? ''),    head:      pick(e, 'accountHead', 'AccountHead', 'headName', 'HeadName') || '',
     date,
     month:     date.slice(0, 7),
     detail:    pick(e, 'details', 'Details', 'description', 'Description', 'detail', 'Detail') || '',
@@ -238,11 +246,11 @@ function mapEntry(e = {}) {
     chqDate:   dateOnly(pick(e, 'chequeDate', 'ChequeDate')),
     createdBy: pick(e, 'createdByName', 'CreatedByName', 'createdBy', 'CreatedBy', 'enteredByName', 'EnteredByName') || '',
     createdAt: pick(e, 'createdAt', 'CreatedAt') || '',
-    updatedBy: pick(e, 'modifiedByName', 'ModifiedByName', 'modifiedBy', 'ModifiedBy') || null,
+  updatedBy: pick(e, 'modifiedByName', 'ModifiedByName', 'modifiedBy', 'ModifiedBy') || null,
     updatedAt: pick(e, 'modifiedAt', 'ModifiedAt') || null,
+    walletId:  String(pick(e, 'walletID', 'WalletID', 'walletId', 'WalletId', 'finAccountID', 'FinAccountID') || ''),
   }
 }
-
 /* Account types with their heads (each type: { key, id, name, icon, heads }).
    key: 'rev' (type 1 / Revenue) | 'exp' (type 2 / Expense). */
 export async function fetchAccountTypes(networkId = currentNetworkId()) {
@@ -309,7 +317,9 @@ export async function saveAccountEntry(seg, payload, networkId = currentNetworkI
       accountTypeID:   segTypeId(seg),
       entryDate:       payload.date ? new Date(payload.date).toISOString() : nowISO(),
       details:         payload.detail || '',
-      amount:          Number(payload.amount) || 0,
+       amount:          Number(payload.amount) || 0,
+      wallatID:        Number(payload.walletId) || 0,
+      walletID:        Number(payload.walletId) || 0,
       chequeNo:        payload.chqNo || '',
       chequeDate:      payload.chqDate ? new Date(payload.chqDate).toISOString() : null,
       enteredBy:       uid,

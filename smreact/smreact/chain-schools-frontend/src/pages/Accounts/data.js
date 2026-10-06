@@ -71,53 +71,19 @@ const SEED = {
     ] },
   ],
   booksNextId: 6, booksTxnNextId: 60,
-  /* Wallets (Financial Accounts) — where the school physically holds
-     money (cash till, bank accounts, owner wallet). Balance = opening
-     + income txns mapped here − expense txns mapped here + transfers in
-     − transfers out. Demo/localStorage-backed for now; wire to the API
-     when backend wallet endpoints exist. */
-  finAccounts: [
-    {
-      id: 'ac_cash', name: 'Cash In Hand', type: 'cash', opening: 1000000,
-      bankName: '', accountNo: '',
-      description: 'Default receiving account. All fee collections and expenses map here unless another account is chosen.',
-      status: 'active', isDefault: true, createdBy: 'Sana Malik', createdAt: '2026-01-01T09:00:00',
-    },
-    {
-      id: 'ac_bop', name: 'Bank of Punjab', type: 'bank', opening: 0,
-      bankName: 'Bank of Punjab', accountNo: 'PK36-BPUN-0000-1122-3344',
-      description: 'Primary operational bank account for salaries and vendor payments.',
-      status: 'active', isDefault: false, createdBy: 'Sana Malik', createdAt: '2026-01-10T10:00:00',
-    },
-    {
-      id: 'ac_alfa', name: 'Bank Alfalah', type: 'bank', opening: 0,
-      bankName: 'Bank Alfalah', accountNo: 'PK21-ALFH-0000-5566-7788',
-      description: 'Secondary bank account used for online and card fee collections.',
-      status: 'active', isDefault: false, createdBy: 'Ali Khan', createdAt: '2026-01-10T10:05:00',
-    },
-    {
-      id: 'ac_owner', name: 'Owner Account', type: 'owner', opening: 0,
-      bankName: '', accountNo: '',
-      description: 'Owner and investor funding wallet.',
-      status: 'active', isDefault: false, createdBy: 'Sana Malik', createdAt: '2026-01-12T09:30:00',
-    },
-  ],
-  /* Transfers — money moved between two wallets. Kept in their own array,
-     never merged into txns.rev/exp, so plForMonth() (which only sums
-     those two buckets) never counts a transfer. */
-  transfers: [
-    { id: 'tr1', fromId: 'ac_cash', toId: 'ac_bop', amount: 300000, date: '2026-01-15', note: 'Opening float moved to Bank of Punjab', by: 'Sana Malik', at: '2026-01-15T11:00:00' },
-    { id: 'tr2', fromId: 'ac_cash', toId: 'ac_alfa', amount: 200000, date: '2026-01-16', note: 'Float moved to Bank Alfalah for online collections', by: 'Sana Malik', at: '2026-01-16T12:30:00' },
-  ],
+  /* Wallets & transfers ab backend se aate hain (api/walletsApi.js);
+     yahan sirf khaali placeholders hain, koi demo data nahi. */
+  finAccounts: [],
+  transfers: [],
 }
 
 export function loadAcc() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY))
     if (d?.types) {
-      // Backfill wallets for stores saved before the Wallets tab existed.
-      if (!d.finAccounts) d.finAccounts = JSON.parse(JSON.stringify(SEED.finAccounts))
-      if (!d.transfers) d.transfers = []
+      // Wallets/transfers server se aate hain — purane localStorage ka demo data ignore.
+      d.finAccounts = []
+      d.transfers = []
       return d
     }
   } catch { /* reseed */ }
@@ -129,7 +95,8 @@ export const saveAcc = (d) => localStorage.setItem(KEY, JSON.stringify(d))
 /* ── formatting ── */
 export const rs = (n) => 'Rs ' + Number(n || 0).toLocaleString()
 export const num = (n) => Number(n || 0).toLocaleString()
-export function fmtDate(d) { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) } catch { return d } }
+// export function fmtDate(d) { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) } catch { return d } }
+export function fmtDate(d) { if (!d) return '—'; try { const dt = new Date(d); const dd = String(dt.getDate()).padStart(2, '0'); const mm = String(dt.getMonth() + 1).padStart(2, '0'); const yyyy = dt.getFullYear(); return `${dd}/${mm}/${yyyy}` } catch { return d } }
 export function fmtStamp(s) { if (!s) return '—'; try { return new Date(s).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return s } }
 export function periodLabel(m) { if (!m) return '—'; const [y, mo] = m.split('-'); return `${MONTHS[Number(mo) - 1]} ${y}` }
 
@@ -169,51 +136,4 @@ export function plForMonth(acc, m) {
   const rev = acc.txns.rev.filter((x) => x.month === m).reduce((a, x) => a + Number(x.amount || 0), 0)
   const exp = acc.txns.exp.filter((x) => x.month === m).reduce((a, x) => a + Number(x.amount || 0), 0)
   return { rev, exp, pl: rev - exp }
-}
-
-/* ── Wallets (Financial Accounts) helpers ───────────────────────────
-   Single source of truth for a wallet's balance — cards, the per-wallet
-   statement, and totals all call finAccountBalance() instead of each
-   re-deriving the formula:
-     balance = opening
-       + revenue txns where (txn.acctId || defaultId) === account.id
-       − expense txns where (txn.acctId || defaultId) === account.id
-       + transfers.amount where transfer.toId === account.id
-       − transfers.amount where transfer.fromId === account.id
-   The `txn.acctId || defaultId` fallback makes every existing txn (none
-   have an acctId yet) count toward the default wallet automatically. */
-export function defaultFinAccountId(acc) {
-  return (acc.finAccounts.find((a) => a.isDefault) || acc.finAccounts[0] || {}).id
-}
-export function finAccountBalance(acc, account) {
-  const defId = defaultFinAccountId(acc)
-  let bal = Number(account.opening) || 0
-  acc.txns.rev.forEach((t) => { if ((t.acctId || defId) === account.id) bal += Number(t.amount) || 0 })
-  acc.txns.exp.forEach((t) => { if ((t.acctId || defId) === account.id) bal -= Number(t.amount) || 0 })
-  acc.transfers.forEach((tr) => {
-    if (tr.toId === account.id) bal += Number(tr.amount) || 0
-    if (tr.fromId === account.id) bal -= Number(tr.amount) || 0
-  })
-  return bal
-}
-export function saveFinAccount(acc, payload, id) {
-  const next = { ...acc, finAccounts: [...acc.finAccounts] }
-  const idx = id ? next.finAccounts.findIndex((a) => a.id === id) : -1
-  if (idx >= 0) {
-    const isDefault = next.finAccounts[idx].isDefault
-    next.finAccounts[idx] = { ...next.finAccounts[idx], ...payload, status: isDefault ? 'active' : payload.status }
-  } else {
-    next.finAccounts.push({ id: `ac_${Date.now()}`, isDefault: false, status: 'active', bankName: '', accountNo: '', description: '', ...payload })
-  }
-  return next
-}
-export function setFinAccountStatus(acc, id, status) {
-  return { ...acc, finAccounts: acc.finAccounts.map((a) => (a.id === id && !a.isDefault ? { ...a, status } : a)) }
-}
-export function saveTransfer(acc, payload) {
-  const record = { id: `tr_${Date.now()}`, at: new Date().toISOString(), ...payload }
-  return { ...acc, transfers: [...acc.transfers, record] }
-}
-export function deleteTransfer(acc, id) {
-  return { ...acc, transfers: acc.transfers.filter((t) => t.id !== id) }
 }

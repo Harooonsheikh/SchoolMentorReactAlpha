@@ -5,8 +5,10 @@ import { createPortal } from 'react-dom'
 import {
   loadAcc, saveAcc, rs, num, fmtDate, fmtStamp, periodLabel,
   bookCalc, monthsBetween, plForMonth,
-  defaultFinAccountId, finAccountBalance, saveFinAccount, setFinAccountStatus, saveTransfer, deleteTransfer,
 } from './data'
+import {
+  fetchWallets, fetchTransfers, saveWallet, setWalletStatus,
+  saveTransfer as apiSaveTransfer, deleteTransfer as apiDeleteTransfer, fetchWalletTransactions, fetchWalletNet,} from '../../api/walletsApi'
 import {
   fetchAccountTypes, fetchAccountEntriesByMonth, fetchAllAccountEntries,
   saveAccountEntry, deleteAccountEntry,
@@ -118,6 +120,24 @@ const [accountTypes, setAccountTypes] = useState([])
   // aur error par fire→re-render→refetch→error ka infinite loop (screen crash).
   const fire = useCallback((text, type = 'success') => setToast({ text, type }), [])
   const commit = useCallback((next) => { setAcc(next); saveAcc(next) }, [])
+
+  // Wallets + transfers — backend se (api/walletsApi.js). setAcc seedha (commit nahi)
+  // taake server data localStorage me persist na ho.
+  const [walletsLoading, setWalletsLoading] = useState(true)
+  const reloadWallets = useCallback(async () => {
+    try {
+          const [wallets, transfers] = await Promise.all([fetchWallets(), fetchTransfers()])
+      // Har wallet ki credits − debits (salaries, revenue, expense) — opening alag rehta hai
+      const nets = await Promise.all(wallets.map((w) => (w.serverBalance != null ? 0 : fetchWalletNet(w.walletID).catch(() => 0))))
+      const withNet = wallets.map((w, i) => ({ ...w, txnNet: nets[i] }))
+      setAcc((prev) => prev && ({ ...prev, finAccounts: withNet, transfers }))
+    } catch (e) {
+      fire(e?.message || 'Could not load wallets', 'error')
+    } finally {
+      setWalletsLoading(false)
+    }
+  }, [fire])
+  useEffect(() => { if (acc) reloadWallets() }, [!!acc]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!acc) return null
 
   return (
@@ -139,8 +159,8 @@ const [accountTypes, setAccountTypes] = useState([])
         ))}
       </div>
 
-{tab === 'coa' && <ChartOfAccounts acc={acc} commit={commit} fire={fire} accountTypes={accountTypes} reloadHeads={loadHeads} loading={headsLoading} />}      {tab === 'txn' && <Transactions fire={fire} />}
-      {tab === 'accounts' && <AccountsManagementTab acc={acc} commit={commit} fire={fire} />}
+{tab === 'coa' && <ChartOfAccounts acc={acc} commit={commit} fire={fire} accountTypes={accountTypes} reloadHeads={loadHeads} loading={headsLoading} />}    {tab === 'txn' && <Transactions fire={fire} reloadWallets={reloadWallets} />}
+      {tab === 'accounts' && <AccountsManagementTab acc={acc} fire={fire} reload={reloadWallets} loading={walletsLoading} />}
       {tab === 'books' && <AccountBooks fire={fire} />}
       {tab === 'reports' && <Reports fire={fire} />}
 
@@ -267,8 +287,7 @@ function HeadModal({ modal, onClose, onSave, onToast }) {
 }
 
 /* ════════ TRANSACTIONS ════════ */
-function Transactions({ fire }) {
-  const [seg, setSeg] = useState('rev')
+function Transactions({ fire, reloadWallets }) {  const [seg, setSeg] = useState('rev')
   const [month, setMonth] = useState(thisMonthISO())
   const [search, setSearch] = useState('')
   const [entryModal, setEntryModal] = useState(null)
@@ -280,14 +299,26 @@ function Transactions({ fire }) {
   const [busy, setBusy] = useState(false)
 
   // Wallets (Financial Accounts) for the "Received In / Paid From Account"
-  // picker — same localStorage store the Wallets tab manages.
+  // picker — same wallets the Wallets tab manages (API).
   const [finAccounts, setFinAccounts] = useState([])
   const [defaultAcctId, setDefaultAcctId] = useState('')
-  useEffect(() => {
-    const a = loadAcc()
-    setFinAccounts(a.finAccounts.filter((x) => x.status === 'active'))
-    setDefaultAcctId(defaultFinAccountId(a))
+    // Har wallet ke saath uska current balance bhi (insufficient-balance check ke liye)
+  const loadFinAccounts = useCallback(async () => {
+    try {
+      const [w, transfers] = await Promise.all([fetchWallets(), fetchTransfers().catch(() => [])])
+      const active = w.filter((x) => x.status === 'active')
+      const withBal = await Promise.all(active.map(async (a) => {
+        const base = a.serverBalance != null
+          ? a.serverBalance
+          : (Number(a.opening) || 0) + (await fetchWalletNet(a.walletID).catch(() => 0))
+            + transfers.reduce((s, t) => s + (t.toId === a.id ? Number(t.amount) || 0 : 0) - (t.fromId === a.id ? Number(t.amount) || 0 : 0), 0)
+        return { ...a, balance: Number(base) || 0 }
+      }))
+      setFinAccounts(withBal)
+      setDefaultAcctId(defaultFinAccountId({ finAccounts: withBal }))
+    } catch { setFinAccounts([]) }
   }, [])
+  useEffect(() => { loadFinAccounts() }, [loadFinAccounts])
 
   // Heads (Chart of Accounts) — read-only, taake entry ka head dropdown bhare.
   useEffect(() => {
@@ -322,18 +353,20 @@ function Transactions({ fire }) {
   }, [entries, search])
   const total = list.reduce((a, x) => a + Number(x.amount || 0), 0)
 
-  const saveEntry = async (payload, id) => {
+    const saveEntry = async (payload, id) => {
     setBusy(true)
     try {
-      await saveAccountEntry(seg, { ...payload, id: id || 0 })
+ const walletId = Number(payload.acctId) || 0
+      console.log('[saveEntry] acctId:', payload.acctId, 'walletId:', walletId, 'full payload:', payload)
+      await saveAccountEntry(seg, { ...payload, id: id || 0, walletId })
+      await Promise.all([reloadWallets?.(), loadFinAccounts()])
       setEntryModal(null); fire(id ? 'Entry updated' : 'Entry recorded')
       loadEntries()
     } catch (e) { fire(e?.message || 'Could not save entry', 'error') }
     finally { setBusy(false) }
   }
   const doDel = async () => {
-    try { await deleteAccountEntry(del.id); fire('Entry deleted', 'info'); loadEntries() }
-    catch (e) { fire(e?.message || 'Could not delete entry', 'error') }
+    try { await deleteAccountEntry(del.id); fire('Entry deleted', 'info'); loadEntries(); reloadWallets?.(); loadFinAccounts() }    catch (e) { fire(e?.message || 'Could not delete entry', 'error') }
     finally { setDel(null) }
   }
 
@@ -408,12 +441,27 @@ function Transactions({ fire }) {
 
 function TxnModal({ modal, seg, heads, finAccounts, defaultAcctId, onClose, onSave, onToast }) {
   const x = modal.txn || {}
-  const [v, setV] = useState({ headNo: x.headNo || '', date: x.date || todayISO(), detail: x.detail || '', amount: x.amount || '', chqNo: x.chqNo || '', chqDate: x.chqDate || '', acctId: x.acctId || defaultAcctId || '' })
+  // const [v, setV] = useState({ headNo: x.headNo || '', date: x.date || todayISO(), detail: x.detail || '', amount: x.amount || '', chqNo: x.chqNo || '', chqDate: x.chqDate || '', acctId: x.walletId || x.acctId || defaultAcctId || '' })
+   const firstAcctId = String(finAccounts?.[0]?.id || '')
+  const [v, setV] = useState({ headNo: x.headNo || '', date: x.date || todayISO(), detail: x.detail || '', amount: x.amount || '', chqNo: x.chqNo || '', chqDate: x.chqDate || '', acctId: String(x.walletId || x.acctId || defaultAcctId || firstAcctId || '') })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
+  // const selectedWallet = finAccounts?.find((a) => String(a.id) === String(v.acctId))
+  //  const selectedWallet = finAccounts?.find((a) => String(a.id) === String(v.acctId)) || finAccounts?.[0]
+   const selectedWallet = finAccounts?.find((a) => String(a.id) === String(v.acctId))
+  const walletBal = selectedWallet?.serverBalance ?? ((Number(selectedWallet?.opening) || 0) + (Number(selectedWallet?.txnNet) || 0))
+  const amt = Number(v.amount) || 0
+  const insufficientBal = seg === 'exp' && modal.mode !== 'edit' && amt > 0 && walletBal < amt
+  // Selected wallet ka available balance. Edit me usi wallet ki purani expense wapas jod di jati hai.
+  const selAcct = (finAccounts || []).find((a) => String(a.id) === String(v.acctId))
+  const isEdit = modal.mode === 'edit'
+  const addBack = isEdit && seg === 'exp' && String(x.acctId) === String(v.acctId) ? (Number(x.amount) || 0) : 0
+  const available = selAcct ? (Number(selAcct.balance) || 0) + addBack : null
+  const insufficient = seg === 'exp' && selAcct && Number(v.amount) > 0 && Number(v.amount) > available
   const save = () => {
     if (!v.headNo) return onToast('Please select an account head', 'warn')
     if (!v.amount || Number(v.amount) <= 0) return onToast('Please enter a valid amount', 'warn')
-    return onSave(v, modal.mode === 'edit' ? x.id : null)
+    if (insufficient) return onToast(`Insufficient balance in ${selAcct.name}. Available: ${rs(available)}`, 'warn')
+    return onSave(v, isEdit ? x.id : null)
   }
   return (
     <Shell title={`${modal.mode === 'edit' ? 'Edit' : 'New'} ${seg === 'rev' ? 'Revenue' : 'Expense'} Entry`} icon={seg === 'rev' ? 'fa-arrow-down-long' : 'fa-arrow-up-long'} onClose={onClose}
@@ -428,16 +476,25 @@ function TxnModal({ modal, seg, heads, finAccounts, defaultAcctId, onClose, onSa
         <div className="acc-field"><label>Cheque No. (optional)</label><input className="acc-input" value={v.chqNo} onChange={set('chqNo')} placeholder="e.g. CHQ-44120" /></div>
         <div className="acc-field"><label>Cheque Date (optional)</label><input className="acc-input" type="date" value={v.chqDate} onChange={set('chqDate')} /></div>
       </div>
-      {finAccounts?.length > 0 && (
+ {finAccounts?.length > 0 && (
         <div className="acc-entry-acctbox">
           <div className="acc-field">
             <label><i className="fa-solid fa-wallet" /> {seg === 'rev' ? 'Received In Account' : 'Paid From Account'}</label>
             <select className="acc-input" value={v.acctId} onChange={set('acctId')}>
               {finAccounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {finTypeMeta(a.type).label}{a.id === defaultAcctId ? ' (Default)' : ''}</option>)}
             </select>
-            <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 6 }}>
-              <i className="fa-solid fa-circle-info" /> {seg === 'rev' ? ' Choose which account this money is received into. Its balance will increase.' : ' Choose which account this expense is paid from. Its balance will decrease.'}
-            </div>
+                      {selAcct ? (
+              <div style={{ fontSize: 11, marginTop: 6, display: 'flex', alignItems: 'center', gap: 5, color: insufficient ? 'var(--err)' : 'var(--tm)', fontWeight: insufficient ? 700 : 400 }}>
+                <i className={`fa-solid ${insufficient ? 'fa-triangle-exclamation' : 'fa-wallet'}`} />
+                {insufficient
+                  ? `Insufficient balance — ${selAcct.name} has Rs ${available.toLocaleString()} available`
+                  : `${selAcct.name} balance: Rs ${available.toLocaleString()}`}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 6 }}>
+                <i className="fa-solid fa-circle-info" /> {seg === 'rev' ? ' Choose which account this money is received into. Its balance will increase.' : ' Choose which account this expense is paid from. Its balance will decrease.'}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -673,8 +730,7 @@ const REPORT_TYPES = [
   { key: 'revenue', label: 'Revenue Report', icon: 'fa-arrow-trend-up' },
   { key: 'expense', label: 'Expense Report', icon: 'fa-arrow-trend-down' },
   { key: 'pl', label: 'Profit & Loss', icon: 'fa-scale-balanced' },
-  { key: 'cash', label: 'Cash In Hand', icon: 'fa-wallet' },
-  { key: 'books', label: 'Account Books', icon: 'fa-book-open' },
+  // { key: 'cash', label: 'Cash In Hand', icon: 'fa-wallet' },  { key: 'books', label: 'Account Books', icon: 'fa-book-open' },
   { key: 'headwise', label: 'Head-wise Summary', icon: 'fa-layer-group' },
   { key: 'overview', label: 'Financial Overview', icon: 'fa-chart-pie' },
 ]
@@ -964,8 +1020,20 @@ const FIN_TYPES = [
   { key: 'other', label: 'Other', icon: 'fa-wallet' },
 ]
 const finTypeMeta = (key) => FIN_TYPES.find((t) => t.key === key) || FIN_TYPES[3]
+const defaultFinAccountId = (acc) => (acc.finAccounts.find((a) => a.isDefault) || acc.finAccounts[0] || {}).id
+/* Balance: server ka currentBalance mile to wahi; warna opening +/- transfers. */
+function finAccountBalance(acc, account) {
+  if (account.serverBalance != null) return account.serverBalance
+   // Opening fixed rehta hai; debit/credit sirf current balance badalte hain
+  let bal = (Number(account.opening) || 0) + (Number(account.txnNet) || 0)
+  acc.transfers.forEach((tr) => {
+    if (tr.toId === account.id) bal += Number(tr.amount) || 0
+    if (tr.fromId === account.id) bal -= Number(tr.amount) || 0
+  })
+  return bal
+}
 
-function AccountsManagementTab({ acc, commit, fire }) {
+function AccountsManagementTab({ acc, fire, reload, loading }) {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
   const [editAccount, setEditAccount] = useState(null) // { mode:'add'|'edit', account? }
@@ -973,8 +1041,8 @@ function AccountsManagementTab({ acc, commit, fire }) {
   const [statementFor, setStatementFor] = useState(null)
   const [toggleTarget, setToggleTarget] = useState(null) // account being disabled (confirm)
   const [delTransfer, setDelTransfer] = useState(null)
+  const [busy, setBusy] = useState(false)
 
-  const defaultId = defaultFinAccountId(acc)
   const activeAccounts = acc.finAccounts.filter((a) => a.status === 'active')
   const balanceOf = (a) => finAccountBalance(acc, a)
 
@@ -986,37 +1054,41 @@ function AccountsManagementTab({ acc, commit, fire }) {
   const totalOpening = acc.finAccounts.reduce((a, x) => a + (Number(x.opening) || 0), 0)
   const totalCurrent = acc.finAccounts.reduce((a, x) => a + balanceOf(x), 0)
 
-  const onSaveAccount = (payload) => {
-    const id = editAccount?.mode === 'edit' ? editAccount.account.id : undefined
-    commit(saveFinAccount(acc, payload, id))
-    fire(id ? 'Account updated' : 'Account created')
-    setEditAccount(null)
+  // API call -> wallets reload -> toast. Fail par error toast, modal khula rehta hai.
+  const run = async (fn, okMsg, okType = 'success') => {
+    setBusy(true)
+    try { await fn(); await reload(); fire(okMsg, okType); return true }
+    catch (e) { fire(e?.message || 'Request failed', 'error'); return false }
+    finally { setBusy(false) }
+  }
+  const onSaveAccount = async (payload) => {
+    if (busy) return
+    const id = editAccount?.mode === 'edit' ? editAccount.account.walletID : 0
+    if (await run(() => saveWallet(payload, id), id ? 'Account updated' : 'Account created')) setEditAccount(null)
   }
   const onToggleStatus = (a) => {
+    if (busy) return
     if (a.status === 'active') { setToggleTarget(a); return }
-    commit(setFinAccountStatus(acc, a.id, 'active'))
-    fire(`${a.name} re-enabled`)
+    run(() => setWalletStatus(a.walletID, 'active'), `${a.name} re-enabled`)
   }
-  const confirmDisable = () => {
-    commit(setFinAccountStatus(acc, toggleTarget.id, 'inactive'))
-    fire(`${toggleTarget.name} disabled`, 'info')
+  const confirmDisable = async () => {
+    await run(() => setWalletStatus(toggleTarget.walletID, 'inactive'), `${toggleTarget.name} disabled`, 'info')
     setToggleTarget(null)
   }
-  const onSaveTransfer = (payload) => {
-    commit(saveTransfer(acc, payload))
+  const onSaveTransfer = async (payload) => {
+    if (busy) return
     const fromName = acc.finAccounts.find((a) => a.id === payload.fromId)?.name || 'account'
     const toName = acc.finAccounts.find((a) => a.id === payload.toId)?.name || 'account'
-    fire(`Transferred ${rs(payload.amount)} from ${fromName} to ${toName}`)
-    setTransferOpen(false)
+    if (await run(() => apiSaveTransfer(payload), `Transferred ${rs(payload.amount)} from ${fromName} to ${toName}`)) setTransferOpen(false)
   }
-  const confirmDeleteTransfer = () => {
-    commit(deleteTransfer(acc, delTransfer.id))
-    fire('Transfer deleted', 'info')
+  const confirmDeleteTransfer = async () => {
+    await run(() => apiDeleteTransfer(delTransfer.id), 'Transfer deleted', 'info')
     setDelTransfer(null)
   }
 
   return (
     <>
+      {loading && <div className="acc-info-note" style={{ marginBottom: 12 }}><i className="fa-solid fa-spinner fa-spin" /> Loading wallets…</div>}
       <div className="acc-overview-banner">
         <div className="acc-overview-ic" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-wallet" /></div>
         <div style={{ flex: 1, minWidth: 240 }}>
@@ -1110,8 +1182,8 @@ function AccountsManagementTab({ acc, commit, fire }) {
       </div>
 
       {editAccount && <FinAccountModal cfg={editAccount} onClose={() => setEditAccount(null)} onSave={onSaveAccount} onToast={fire} />}
-      {transferOpen && <TransferModal accounts={activeAccounts} users={acc.users} currentUser={acc.currentUser} balanceOf={balanceOf} onClose={() => setTransferOpen(false)} onSave={onSaveTransfer} onToast={fire} />}
-      {statementFor && <FinAccountStatementModal account={statementFor} acc={acc} defaultId={defaultId} onClose={() => setStatementFor(null)} onToast={fire} />}
+      {transferOpen && <TransferModal accounts={activeAccounts} balanceOf={balanceOf} onClose={() => setTransferOpen(false)} onSave={onSaveTransfer} onToast={fire} />}
+      {statementFor && <FinAccountStatementModal account={statementFor} acc={acc} onClose={() => setStatementFor(null)} onToast={fire} />}
       {toggleTarget && (
         <ConfirmModal
           title="Disable this account?"
@@ -1142,8 +1214,9 @@ function FinAccountModal({ cfg, onClose, onSave, onToast }) {
     status: a.status || 'active', bankName: a.bankName || '', accountNo: a.accountNo || '', description: a.description || '',
   })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
-  const showBank = v.type === 'bank'
-  const showAccountNo = v.type === 'bank' || v.type === 'other'
+  // Backend wallet API me bankName/accountNo fields nahi hain — API me aane par restore karein.
+  const showBank = false
+  const showAccountNo = false
   const save = () => {
     if (!v.name.trim()) return onToast('Please enter an account name', 'warn')
     onSave({
@@ -1161,11 +1234,10 @@ function FinAccountModal({ cfg, onClose, onSave, onToast }) {
         <i className="fa-solid fa-circle-info" /> An account is a wallet where the school holds money. This includes <strong>Cash In Hand, a bank account, the owner&apos;s account</strong> or any custom location. Income can be received into it and expenses paid from it.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div className="acc-field"><label>Account Name *</label><input className="acc-input" value={v.name} onChange={set('name')} placeholder="e.g. Bank of Punjab" /></div>
-        <div className="acc-field"><label>Account Type *</label><select className="acc-input" value={v.type} onChange={set('type')}>{FIN_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
+<div className="acc-field"><label>Account Name *</label><input className="acc-input" value={v.name} onChange={set('name')} placeholder="e.g. Bank of Punjab" disabled={isDefault} /></div>        <div className="acc-field"><label>Account Type *</label><select className="acc-input" value={v.type} onChange={set('type')}>{FIN_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div className="acc-field"><label>Opening Balance</label><input className="acc-input" type="number" value={v.opening} onChange={set('opening')} placeholder="0" /></div>
+        <div className="acc-field"><label>Opening Balance</label><input className="acc-input" type="number" value={v.opening} onChange={set('opening')} placeholder="0" disabled={isEdit} title={isEdit ? 'Opening balance account banne ke baad change nahi hota' : ''} /></div>
         <div className="acc-field"><label>Status</label><select className="acc-input" value={v.status} onChange={set('status')} disabled={isDefault}><option value="active">Active</option><option value="inactive">Disabled</option></select></div>
       </div>
       {(showBank || showAccountNo) && (
@@ -1184,8 +1256,8 @@ function FinAccountModal({ cfg, onClose, onSave, onToast }) {
   )
 }
 
-function TransferModal({ accounts, users, currentUser, balanceOf, onClose, onSave, onToast }) {
-  const [v, setV] = useState({ fromId: accounts[0]?.id || '', toId: accounts[1]?.id || accounts[0]?.id || '', amount: '', date: todayISO(), note: '', by: currentUser || 'Sana Malik' })
+function TransferModal({ accounts, balanceOf, onClose, onSave, onToast }) {
+  const [v, setV] = useState({ fromId: accounts[0]?.id || '', toId: accounts[1]?.id || accounts[0]?.id || '', amount: '', date: todayISO(), note: '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
   const fromAcct = accounts.find((a) => a.id === v.fromId)
   const toAcct = accounts.find((a) => a.id === v.toId)
@@ -1198,11 +1270,12 @@ function TransferModal({ accounts, users, currentUser, balanceOf, onClose, onSav
     if (!v.fromId || !v.toId) return onToast('Please choose both accounts', 'warn')
     if (v.fromId === v.toId) return onToast('Source and destination must be different', 'warn')
     if (!amt || amt <= 0) return onToast('Please enter a valid amount', 'warn')
-    onSave({ fromId: v.fromId, toId: v.toId, amount: amt, date: v.date, note: v.note.trim(), by: v.by || 'Sana Malik' })
+    if (overdraft) return onToast(`Insufficient balance in ${fromAcct?.name}. Available: ${rs(fromBal)}`, 'warn')
+    onSave({ fromId: v.fromId, toId: v.toId, amount: amt, date: v.date, note: v.note.trim() })
   }
   return (
     <Shell title="Transfer Money" icon="fa-right-left" onClose={onClose}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save} disabled={sameAccount}><i className="fa-solid fa-right-left" /> Transfer</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save} disabled={sameAccount || overdraft}><i className="fa-solid fa-right-left" /> Transfer</button></>}>
       <div className="acc-info-note" style={{ marginBottom: 14 }}>
         <i className="fa-solid fa-circle-info" /> A transfer moves a balance between two accounts only. The source account decreases and the destination increases. <strong>This is not income or an expense and does not affect Profit &amp; Loss.</strong>
       </div>
@@ -1217,8 +1290,7 @@ function TransferModal({ accounts, users, currentUser, balanceOf, onClose, onSav
         <div className="acc-field"><label>Amount *</label><input className="acc-input" type="number" value={v.amount} onChange={set('amount')} placeholder="Enter amount" /></div>
         <div className="acc-field"><label>Date</label><input className="acc-input" type="date" value={v.date} onChange={set('date')} /></div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div className="acc-field"><label>Entered By</label><select className="acc-input" value={v.by} onChange={set('by')}>{(users || []).map((u) => <option key={u} value={u}>{u}</option>)}</select></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginBottom: 12 }}>
         <div className="acc-field"><label>Note</label><input className="acc-input" value={v.note} onChange={set('note')} placeholder="e.g. Deposit cash to bank" /></div>
       </div>
 
@@ -1235,7 +1307,7 @@ function TransferModal({ accounts, users, currentUser, balanceOf, onClose, onSav
               <div className="acc-xfer-preview-row"><span className="l">{fromAcct?.name}</span><span className="v down">{rs(fromBal)} <i className="fa-solid fa-arrow-right" /> {rs(fromBal - amt)}</span></div>
               <div className="acc-xfer-preview-row"><span className="l">{toAcct?.name}</span><span className="v up">{rs(toBal)} <i className="fa-solid fa-arrow-right" /> {rs(toBal + amt)}</span></div>
               {overdraft && (
-                <div className="acc-xfer-preview-row"><span className="l" style={{ color: 'var(--err)' }}><i className="fa-solid fa-triangle-exclamation" /> This exceeds the available balance. The source account will go negative.</span></div>
+                <div className="acc-xfer-preview-row"><span className="l" style={{ color: 'var(--err)' }}><i className="fa-solid fa-triangle-exclamation" /> Insufficient balance. Transfer is not allowed from this account.</span></div>
               )}
               <div className="acc-xfer-preview-row" style={{ borderTop: '1px dashed var(--bm)', marginTop: 6, paddingTop: 8 }}><span className="l"><i className="fa-solid fa-circle-info" /> Balance movement only. It is not counted in Profit &amp; Loss.</span></div>
             </>
@@ -1246,28 +1318,36 @@ function TransferModal({ accounts, users, currentUser, balanceOf, onClose, onSav
   )
 }
 
-function FinAccountStatementModal({ account, acc, defaultId, onClose, onToast }) {
+function FinAccountStatementModal({ account, acc, onClose, onToast }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [filter, setFilter] = useState('all')
 
   const tm = finTypeMeta(account.type)
   const current = finAccountBalance(acc, account)
-  const income = acc.txns.rev.filter((t) => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
-  const expense = acc.txns.exp.filter((t) => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
+  const [txns, setTxns] = useState([])
+  useEffect(() => {
+    let alive = true
+    fetchWalletTransactions(account.walletID)
+      .then((r) => { if (alive) setTxns(r) })
+      .catch((e) => { if (alive) onToast(e?.message || 'Could not load transactions', 'error') })
+    return () => { alive = false }
+  }, [account.walletID]) // eslint-disable-line react-hooks/exhaustive-deps
+  const income = txns.filter((t) => t.kind === 'credit').reduce((x, t) => x + t.amount, 0)
+  const expense = txns.filter((t) => t.kind === 'debit').reduce((x, t) => x + t.amount, 0)
   const transfersIn = acc.transfers.filter((t) => t.toId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
   const transfersOut = acc.transfers.filter((t) => t.fromId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0)
 
   const moves = []
-  acc.txns.rev.forEach((t) => { if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Revenue · ${t.head}`, cat: 'revenue', amount: Number(t.amount) || 0, kind: 'credit' }) })
-  acc.txns.exp.forEach((t) => { if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Expense · ${t.head}`, cat: 'expense', amount: Number(t.amount) || 0, kind: 'debit' }) })
+  txns.forEach((t) => moves.push({ date: t.date, desc: t.desc || t.head, ref: `${t.kind === 'credit' ? 'Revenue' : 'Expense'}${t.head ? ' · ' + t.head : ''}`, cat: t.kind === 'credit' ? 'revenue' : 'expense', amount: t.amount, kind: t.kind }))
   acc.transfers.forEach((tr) => {
     if (tr.toId === account.id) { const fn = acc.finAccounts.find((a) => a.id === tr.fromId)?.name || 'another account'; moves.push({ date: tr.date, desc: tr.note || `Transfer from ${fn}`, ref: `Transfer from ${fn}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'credit' }) }
     if (tr.fromId === account.id) { const tn = acc.finAccounts.find((a) => a.id === tr.toId)?.name || 'another account'; moves.push({ date: tr.date, desc: tr.note || `Transfer to ${tn}`, ref: `Transfer to ${tn}`, cat: 'transfer', amount: Number(tr.amount) || 0, kind: 'debit' }) }
   })
   moves.sort((a, b) => a.date.localeCompare(b.date))
-
-  const broughtForward = (Number(account.opening) || 0) + moves.filter((m) => !from || m.date < from).reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0)
+  // Opening wohi rehta hai jo add kiya; sirf From Date se PEHLE ki entries brought forward me judti hain
+  const broughtForward = (Number(account.opening) || 0) + moves.filter((m) => from && m.date < from).reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0)
+  // const broughtForward = (Number(account.opening) || 0) + moves.filter((m) => !from || m.date < from).reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0)
   let rangeMoves = moves.filter((m) => (!from || m.date >= from) && (!to || m.date <= to))
   if (filter !== 'all') rangeMoves = rangeMoves.filter((m) => m.kind === filter)
   let running = broughtForward
@@ -1294,14 +1374,16 @@ function FinAccountStatementModal({ account, acc, defaultId, onClose, onToast })
   }
   const doCsv = () => {
     const csvEsc = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`
+       // Excel date ko number samajh kar narrow column me #### dikhata hai — text bana kar bhejein (e.g. 10 Jan 2026)
+    const csvDate = (d) => (d ? `="${fmtDate(d)}"` : '')
     const lines = [
       `${account.name} Statement`, `${from || 'All time'} to ${to || 'today'}`, '',
       ['Date', 'Description', 'Type', 'Debit', 'Credit', 'Balance'].join(','),
-      [openDate, csvEsc(openLabel), 'Opening', '', '', broughtForward].join(','),
-      ...rows.map((r) => [fmtDate(r.date), csvEsc(r.desc), catLabel(r), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
+      [csvDate(openDate), csvEsc(openLabel), 'Opening', '', '', broughtForward].join(','),
+      ...rows.map((r) => [csvDate(r.date), csvEsc(r.desc),catLabel(r), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
       ['', 'Closing Balance', '', '', '', closing].join(','),
     ]
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const el = document.createElement('a')
     el.href = url; el.download = `${account.name.replace(/[^A-Za-z0-9]+/g, '-')}-statement-${from || 'all'}-to-${to || 'all'}.csv`
