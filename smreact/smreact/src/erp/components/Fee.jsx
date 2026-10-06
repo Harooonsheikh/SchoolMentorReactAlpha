@@ -6958,6 +6958,9 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
           disc,
           net: amt - disc,
           prev: feeHeadPrev(r),
+          /* Poori discount (Give Discount samet) — head-wise previous par bhi lag sakti hai
+             (neeche std + prev tak cap hoti hai). */
+          rawDisc: amt >= 0 ? Math.max(0, d) : 0,
         });
         /* Option A: Old Advance head table me rehti hai, magar save/withAdvanceRow
            ke liye asli subHead yahan pin karo (model.advance me double-count mat karo —
@@ -7005,6 +7008,17 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
       }
       prev = heads.reduce((a, h) => a + (+h.prev || 0), 0);
       advance = 0;
+      /* Give Discount PREVIOUS baqaye par bhi di ja sakti hai (setup "Previous Due" head:
+         is mahine 0, previous 33,600, Give Discount 13,400). Upar disc sirf is mahine ke
+         amount tak cap hoti thi → 13,400 gum, list ka Discount/Remaining ghalat jabke slip
+         sahi. Ab cap = is mahine + us head ka previous (slip jaisa). */
+      heads.forEach(h => {
+        if (!(h.rawDisc > h.disc)) return;
+        const cap = Math.max(0, +h.std || 0) + Math.max(0, +h.prev || 0);
+        h.disc = Math.min(h.rawDisc, cap);
+        h.net = h.std - h.disc;
+      });
+      disc = heads.reduce((a, h) => a + h.disc, 0);
     } else if (prevOverride) {
       /* Non-head-wise: LIVE prior-outstanding (running-ledger) authority. */
       prev = Math.max(0, +prevOverride.dues || 0);
@@ -17143,7 +17157,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Fee Head</th><th>Std.</th>${showDisc ? '<th>Disc</th>' : ''}<th>Prev</th><th>Net</th></tr></thead>
+      <thead><tr><th>Fee Head</th><th>Standard</th>${showDisc ? '<th>Discount</th>' : ''}<th>Previous</th><th>Net</th></tr></thead>
       <tbody>
         ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
         <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
@@ -17449,9 +17463,9 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <thead>
       <tr>
         <th>Head</th>
-        <th class="right">Std.</th>
-        ${showDiscCol ? '<th class="right">Disc</th>' : ''}
-        ${showPrevCol ? '<th class="right">Prev</th>' : ''}
+        <th class="right">Standard</th>
+        ${showDiscCol ? '<th class="right">Discount</th>' : ''}
+        ${showPrevCol ? '<th class="right">Previous</th>' : ''}
         <th class="right">Net</th>
       </tr>
     </thead>
@@ -17558,7 +17572,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Child (Class)</th><th>Std.</th>${showDisc ? '<th>Disc</th>' : ''}<th>Prev</th><th>Net</th></tr></thead>
+      <thead><tr><th>Child (Class)</th><th>Standard</th>${showDisc ? '<th>Discount</th>' : ''}<th>Previous</th><th>Net</th></tr></thead>
       <tbody>
         ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${(typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
         <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
@@ -17683,7 +17697,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   <div class="th-section">Children &amp; Fees</div>
   <table class="th-tbl">
     <thead>
-      <tr><th>Child (Class)</th><th class="right">Std.</th>${showDisc ? '<th class="right">Disc</th>' : ''}${showPrevCol ? '<th class="right">Prev</th>' : ''}<th class="right">Net</th></tr>
+      <tr><th>Child (Class)</th><th class="right">Standard</th>${showDisc ? '<th class="right">Discount</th>' : ''}${showPrevCol ? '<th class="right">Previous</th>' : ''}<th class="right">Net</th></tr>
     </thead>
     <tbody>
       ${rows.map(r => `<tr>
