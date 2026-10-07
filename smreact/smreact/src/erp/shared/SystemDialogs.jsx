@@ -27,6 +27,12 @@ import Tooltip from './Tooltip';
 /* Is speed (Mbps) ya zyada par "Slow Internet" banner nahi. */
 const SLOW_MIN_MBPS = 3;
 
+/* Continuous background speed monitor */
+const PROBE_INTERVAL_MS = 10000;   // har 10 sec test
+const SLOW_TOAST_MBPS   = 2;       // 2 Mbps se kam → Slow internet
+const NO_NET_MBPS       = 0.5;     // 0.5 Mbps se kam → No internet
+// const TOAST_REPEAT_MS   = 20000;   // masla rahe to har 20 sec toast
+let speedMonitorActive  = false;   // loop sirf EK chale (2 jagah mount hai)
 /* ── Asli speed test (probe) ──────────────────────────────────────
    Chrome ka navigator.connection.downlink sirf andaza hai (hamari slow APIs dekh
    kar khud kam ho jata hai, 10 Mbps par capped) — is liye "Slow Internet" ke liye
@@ -42,8 +48,8 @@ const PROBE_TIMEOUT_MS = 10000;
 const PROBE_CACHE_MS = 60000;
 let probeCache = { at: 0, mbps: null };
 let probeInFlight = null;
-function measureMbps() {
-  if (probeCache.mbps != null && Date.now() - probeCache.at < PROBE_CACHE_MS) {
+function measureMbps(force = false) {
+  if (!force && probeCache.mbps != null && Date.now() - probeCache.at < PROBE_CACHE_MS) {
     return Promise.resolve(probeCache.mbps);
   }
   if (probeInFlight) return probeInFlight;
@@ -61,7 +67,10 @@ function measureMbps() {
     /* 10 sec me ~300 KB bhi na aaye = bohat dheema internet (0 Mbps maano).
        Doosri ghalti (file na mile waghera) par null — tab "Please wait" hi. */
     .catch((err) => {
-      if (err && err.name === 'AbortError') { probeCache = { at: Date.now(), mbps: 0 }; return 0; }
+      if (err && (err.name === 'AbortError' || err.name === 'TypeError')) {
+        probeCache = { at: Date.now(), mbps: 0 };
+        return 0;
+      }
       return null;
     })
     .finally(() => { clearTimeout(timer); probeInFlight = null; });
@@ -74,8 +83,11 @@ export default function SystemDialogs({ toast = () => {} }) {
   const [showSlow,   setShowSlow]   = useState(false);
   const [showWait,   setShowWait]   = useState(false);   // API 15 sec se slow (internet theek)
   const [showNoNet,  setShowNoNet]  = useState(typeof navigator !== 'undefined' && navigator.onLine === false);
-  const slowTimerRef       = useRef(null);
-  const offlineShownRef    = useRef(false);   // offline toast ek hi baar (transition par)
+  const [speedInfo, setSpeedInfo] = useState(() => (
+    typeof window !== 'undefined' && window.__smSpeed && window.__smSpeed.state !== 'ok' ? window.__smSpeed : null
+  ));
+  const speedDismissedRef  = useRef(false);
+  const slowTimerRef       = useRef(null);  const offlineShownRef    = useRef(false);   // offline toast ek hi baar (transition par)
   const lastServerToastRef = useRef(0);       // 500 toast debounce (spam se bachne ke liye)
   const noNetRef           = useRef(false);   // listeners ke andar offline banner ki taaza halat
   const slowShownRef       = useRef(false);   // listeners ke andar slow banner ki taaza halat
@@ -87,9 +99,9 @@ export default function SystemDialogs({ toast = () => {} }) {
   useEffect(() => {
     const main = document.querySelector('.main-content');
     if (!main) return undefined;
-    main.style.paddingTop = (showSlow || showNoNet || showWait) ? '60px' : '';
+    main.style.paddingTop = (showSlow || showNoNet || showWait || !!speedInfo) ? '60px' : '';
     return () => { if (main) main.style.paddingTop = ''; };
-  }, [showSlow, showNoNet, showWait]);
+  }, [showSlow, showNoNet, showWait, speedInfo]);
 
   /* Refs ko state ke saath mila kar rakho (listeners [] deps wale effect me hain). */
   useEffect(() => { noNetRef.current = showNoNet; }, [showNoNet]);
@@ -178,8 +190,55 @@ export default function SystemDialogs({ toast = () => {} }) {
     };
   }, []);
 
-  /* Offline banner ka Retry — sach me connection wapas aaya to hi banner hatao. */
-  const retryConnection = useCallback(() => {
+  useEffect(() => {
+    const onSpeed = (e) => {
+      const d = e && e.detail;
+      if (!d) return;
+      if (d.state === 'ok') { speedDismissedRef.current = false; setSpeedInfo(null); return; }
+      setSpeedInfo((prev) => {
+        if (!prev || prev.state !== d.state) speedDismissedRef.current = false;
+        return speedDismissedRef.current ? null : { state: d.state, mbps: d.mbps };
+      });
+    };
+    window.addEventListener('sm:speed', onSpeed);
+    return () => window.removeEventListener('sm:speed', onSpeed);
+  }, []);
+
+  /* ── Continuous speed monitor (background) ── */  useEffect(() => {
+    if (speedMonitorActive) return undefined;
+    speedMonitorActive = true;
+    let stopped = false;
+    let timer = null;
+       let state = 'ok';                       // 'ok' | 'slow' | 'none'
+    const publish = (st, mbps) => {
+      window.__smSpeed = { state: st, mbps };
+      try { window.dispatchEvent(new CustomEvent('sm:speed', { detail: { state: st, mbps } })); } catch (e) { /* ignore */ }
+    };
+
+    const tick = async () => {
+      if (stopped) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        state = 'none';
+      } else {
+        const mbps = await measureMbps(true);
+        if (stopped) return;
+        if (mbps == null) { /* probe file ghalat / 404 — kuch na karo */ }
+        else if (mbps < NO_NET_MBPS)         state = 'none';
+        else if (mbps < SLOW_TOAST_MBPS)     state = 'slow';
+             else state = 'ok';
+        if (mbps != null) publish(state, mbps);
+      }
+      if (!stopped) timer = setTimeout(tick, PROBE_INTERVAL_MS);
+    };
+    timer = setTimeout(tick, 3000);          // load ke 3 sec baad pehla test
+    return () => {
+      stopped = true;
+      speedMonitorActive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  /* Offline banner ka Retry — sach me connection wapas aaya to hi banner hatao. */  const retryConnection = useCallback(() => {
     toast('Checking connection…', 'info');
     setTimeout(() => {
       if (typeof navigator !== 'undefined' && navigator.onLine) {
@@ -194,8 +253,34 @@ export default function SystemDialogs({ toast = () => {} }) {
   /* ── Render ───────────────────────────────────────────────────── */
   return (
     <>
+      {speedInfo && !showNoNet && createPortal(
+        <div className={`sys-banner${speedInfo.state === 'none' ? ' sys-banner--red' : ''}`}>
+          <div className="sys-banner-inner">
+            <div className={`sys-banner-icon ${speedInfo.state === 'none' ? 'sys-red' : 'sys-amber'}`}>
+              <i className={`fa-solid ${speedInfo.state === 'none' ? 'fa-wifi-slash' : 'fa-wifi'}`} aria-hidden="true"></i>
+            </div>
+            <div className="sys-banner-text">
+              <strong>{speedInfo.state === 'none' ? 'No Internet — Very Low Speed' : 'Slow Internet Detected'}</strong>
+              <span>
+                {speedInfo.state === 'none' ? 'Please check your connection.' : 'Pages may load slowly.'}
+              </span>
+            </div>
+            <span className="sys-banner-speed">{Number(speedInfo.mbps || 0).toFixed(2)} Mbps</span>
+            <div className="sys-banner-pulse">
+              <span></span><span></span><span></span>
+            </div>
+            <Tooltip text="Dismiss" placement="bottom">
+              <button className="sys-banner-close" onClick={() => { speedDismissedRef.current = true; setSpeedInfo(null); }} aria-label="Dismiss banner">
+                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+            </Tooltip>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* 1. Slow Internet banner */}
-      {showSlow && !showNoNet && createPortal(
+      {showSlow && !showNoNet && !speedInfo && createPortal(
         <div className="sys-banner">
           <div className="sys-banner-inner">
             <div className="sys-banner-icon sys-amber">
@@ -219,8 +304,7 @@ export default function SystemDialogs({ toast = () => {} }) {
       )}
 
       {/* 1b. Please wait banner — API 15 sec se jawab nahi de rahi, internet theek hai */}
-      {showWait && !showSlow && !showNoNet && createPortal(
-        <div className="sys-banner">
+      {showWait && !showSlow && !showNoNet && !speedInfo && createPortal(        <div className="sys-banner">
           <div className="sys-banner-inner">
             <div className="sys-banner-icon sys-amber">
               <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i>
@@ -321,6 +405,14 @@ if (typeof document !== 'undefined' && !document.getElementById('sys-dialog-styl
   color: #78350F;
 }
 .sys-banner--red .sys-banner-text span { color: #7F1D1D; }
+
+.sys-banner-speed {
+  flex-shrink: 0; padding: 5px 12px; border-radius: 999px;
+  background: rgba(217, 119, 6, .15); border: 1px solid rgba(217, 119, 6, .35);
+  color: #92400E; font: 800 12px/1 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.sys-banner--red .sys-banner-speed { background: rgba(220, 38, 38, .12); border-color: rgba(220, 38, 38, .35); color: #991B1B; }
 
 .sys-banner-pulse { display: flex; gap: 4px; align-items: center; }
 .sys-banner-pulse span {
