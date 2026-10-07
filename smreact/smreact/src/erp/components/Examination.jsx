@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as cbrApi from '../services/combinedAssessmentService';
@@ -894,6 +895,7 @@ const [subjects, setSubjects] = useState([]);
   const [resRemarksCtx, setResRemarksCtx]         = useState(null); // { examId, key, studentId }
   const [resClassReportReq, setResClassReportReq] = useState(null); // { examId, key, className }
   const [bulkCardCtx, setBulkCardCtx] = useState(null); // { classID, sectionID, selectExam, termID, className, examName } — bulk result cards
+  const [resBulkUploadCtx, setResBulkUploadCtx] = useState(null); // class-wide Excel marks upload
   const [bulkCbrCtx, setBulkCbrCtx]   = useState(null); // { grp, termID } — bulk COMBINED result cards
 
   /* Branch header (name / logo / address / academic session) for result cards —
@@ -5513,6 +5515,55 @@ setResTotalMarksCtx({
 </Tooltip>
                     </div>
                     <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
+                      <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Bulk upload obtained marks for the whole class via Excel'}>
+                        <button
+                          className="res-download-btn"
+                          disabled={isOtherSession || !canSingleEdit}
+                          style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : { background: '#1E40AF', color: '#fff', borderColor: '#1E40AF' }}
+                          onClick={async e => {
+                            e.stopPropagation();
+                            if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                            const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
+                            if (!saSubjects.length) {
+                              toast('No exam subjects found for this class', 'error');
+                              return;
+                            }
+                            let students = resStudentData[key]?.students || [];
+                            if (!students.length) {
+                              try {
+                                const token = sessionStorage.getItem('token');
+                                const branchID = sessionStorage.getItem('branchID');
+                                const studentsRes = await fetch(
+                                  buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
+                                  { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+                                );
+                                const studentsData = await studentsRes.json();
+                                students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
+                              } catch (err) {
+                                students = [];
+                              }
+                            }
+                            if (!students.length) {
+                              toast('No students found for this class', 'error');
+                              return;
+                            }
+                            setResBulkUploadCtx({
+                              examId: resExamId,
+                              key,
+                              className,
+                              examName: resCurrentExam?.name || '',
+                              classID: cls.classID,
+                              sectionID: cls.sectionID,
+                              selectExam: resCurrentExam?.selectExam || 0,
+                              termID: selectedTermId,
+                              subjects: saSubjects,
+                              students,
+                            });
+                          }}
+                        >
+                          <i className="fa-solid fa-file-excel"></i>
+                        </button>
+                      </Tooltip>
                       <Tooltip text="Generate all students' result cards (bulk)"><button
                         className="res-download-btn"
                         onClick={e => {
@@ -6998,6 +7049,21 @@ onClick={async () => {
     />
   );
 })()}
+
+      {resBulkUploadCtx && (
+        <BulkMarksUploadModal
+          ctx={resBulkUploadCtx}
+          grades={rsGrades}
+          remarksScale={rsRemarks}
+          onClose={() => setResBulkUploadCtx(null)}
+          onSaved={() => {
+            const ctx = resBulkUploadCtx;
+            setResBulkUploadCtx(null);
+            if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
+          }}
+          toast={toast}
+        />
+      )}
       {/* ── Result History — report picker (Colorful / Colorless) ── */}
       {rhReportReq && (
         <RhReportPicker
@@ -10302,6 +10368,756 @@ const improvements = sorted
         <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.45)' }}>Page 2 of 2 &nbsp;·&nbsp; {schoolName}</div>
       </div>
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SINGLE ASSESSMENT — BULK MARKS UPLOAD (Excel)
+   Class-wide obtained marks. Roll / name / father and subject max marks
+   come from the live class APIs. Teacher comments and final remarks are
+   either generated from the branch grade scale, or typed on the sheet.
+   Saves through the same sauploadmarkscrud + remarksforstudentcrud path
+   as the per-student Update Result modal.
+   ═══════════════════════════════════════════════════════════════════ */
+const BMU_COMMENT_SUFFIX = ' — Teacher Comment';
+
+function bmuCellText(value) {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    if (Array.isArray(value.richText)) return value.richText.map(t => t.text || '').join('').trim();
+    if (value.text != null) return String(value.text).trim();
+    if (value.result != null) return bmuCellText(value.result);
+    return '';
+  }
+  return String(value).trim();
+}
+
+function bmuSubjectCols(subjects) {
+  const counts = {};
+  (subjects || []).forEach(s => {
+    const label = saSubjectLabel(s);
+    counts[label] = (counts[label] || 0) + 1;
+  });
+  return (subjects || [])
+    .filter(s => Number(s.subjectID))
+    .map(s => {
+      const label = saSubjectLabel(s);
+      const header = counts[label] > 1 ? `${label} (#${s.subjectID})` : label;
+      return {
+        subjectID: Number(s.subjectID),
+        header,
+        total: Number(s.totalMarks || 0) || 0,
+      };
+    });
+}
+
+function bmuNormalizeStudents(raw) {
+  const seenRoll = new Set();
+  return (raw || []).map(st => {
+    const id = st.id ?? st.studentID ?? st.StudentID;
+    let rollNo = String(st.registrationNumber ?? st.RegistrationNumber ?? st.rollNo ?? '').trim();
+    if (!rollNo || seenRoll.has(rollNo)) rollNo = String(id);
+    seenRoll.add(rollNo);
+    return {
+      id,
+      rollNo,
+      name: st.studentName || st.StudentName || st.name || '—',
+      father: st.fatherName || st.FatherName || st.father || '',
+      obtained: {},
+      manualRemarks: {},
+      markIds: {},
+      finalRemarks: '',
+      remarkId: 0,
+    };
+  }).filter(s => s.id != null);
+}
+
+function bmuBuildColumns(subjects, commentsMode) {
+  const cols = [
+    { key: 'rollNo', header: 'Roll No', width: 16, kind: 'rollNo' },
+    { key: 'name', header: 'Student Name', width: 24, kind: 'name' },
+    { key: 'father', header: 'Father Name', width: 22, kind: 'father' },
+  ];
+  subjects.forEach(subj => {
+    cols.push({ key: `obt_${subj.subjectID}`, subject: subj, width: 16, kind: 'obtained' });
+    if (commentsMode === 'manual') {
+      cols.push({
+        key: `cmt_${subj.subjectID}`,
+        subject: subj,
+        header: `${subj.header}${BMU_COMMENT_SUFFIX}`,
+        width: 28,
+        kind: 'comment',
+      });
+    }
+  });
+  if (commentsMode === 'manual') {
+    cols.push({ key: 'finalRemarks', header: 'Final Remarks', width: 42, kind: 'finalRemarks' });
+  }
+  return cols;
+}
+
+async function bmuBuildWorkbook({ examName, className, students, subjects, commentsMode }) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'School Mentor';
+  wb.created = new Date();
+
+  const guide = wb.addWorksheet('Instructions');
+  guide.columns = [{ width: 96 }];
+  const genDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const skipped = subjects.filter(s => !(s.total > 0)).map(s => s.header);
+  const guideLines = [
+    ['MARKS BULK UPLOAD — HOW TO USE THIS SHEET', 'title'],
+    ['', null],
+    [`Exam: ${examName}`, 'bold'],
+    [`Class: ${className}`, 'bold'],
+    [`Generated: ${genDate}`, 'bold'],
+    ['', null],
+    ['1. Open the "Marks" sheet tab below (bottom of this window).', null],
+    ['2. Roll No, Student Name and Father Name are already filled in — do not edit, delete or reorder these columns or rows.', null],
+    ['3. Enter each student\'s Obtained Marks under the correct subject column. The maximum marks for that subject are shown in the column header.', null],
+    ['4. If a student was absent for a subject, type AB in that subject\'s cell instead of a number.', null],
+    ['5. Leave a cell blank to keep that subject\'s existing marks unchanged. Type 0 only when the student scored zero.', null],
+    commentsMode === 'manual'
+      ? ['6. Fill in a Teacher Comment for any subject and an overall Final Remarks for each student, or leave them blank to use the automatic text.', null]
+      : ['6. Teacher Comments and Final Remarks are not needed in this sheet — they will be generated automatically for each student based on their percentage.', null],
+    ['7. Do not add, delete or reorder rows or columns, and do not rename the sheet tabs.', null],
+    ['8. Save the file, then go back to School Mentor and upload it on the Bulk Upload screen.', null],
+    skipped.length ? [`Subjects left off this sheet because total marks are not set yet: ${skipped.join(', ')}. Set Total Marks first if you need them.`, 'bold'] : ['', null],
+  ];
+  guideLines.forEach(([text, style]) => {
+    if (!text) { guide.addRow(['']); return; }
+    const row = guide.addRow([text]);
+    row.alignment = { wrapText: true, vertical: 'top' };
+    if (style === 'title') row.getCell(1).font = { bold: true, size: 14, color: { argb: 'FF1E3A8A' } };
+    else if (style === 'bold') row.getCell(1).font = { bold: true, size: 12 };
+    else row.getCell(1).font = { size: 11.5 };
+  });
+
+  const active = subjects.filter(s => s.total > 0);
+  const sheetCols = bmuBuildColumns(active, commentsMode);
+  const ws = wb.addWorksheet('Marks');
+  ws.columns = sheetCols.map(c => ({ width: c.width }));
+  ws.mergeCells(1, 1, 1, Math.max(sheetCols.length, 1));
+  const titleCell = ws.getCell(1, 1);
+  titleCell.value = `${examName} — ${className} — Marks Upload Sheet`;
+  titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+  ws.getRow(1).height = 26;
+
+  const headerRow = ws.getRow(2);
+  sheetCols.forEach((c, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = c.kind === 'obtained' ? `${c.subject.header}\n(Max ${c.subject.total})` : c.header;
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10.5 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: (c.kind === 'rollNo' || c.kind === 'name' || c.kind === 'father') ? 'FF475569' : 'FF2563EB' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  });
+  headerRow.height = 32;
+
+  (students || []).forEach((st, rIdx) => {
+    const row = ws.getRow(3 + rIdx);
+    sheetCols.forEach((c, cIdx) => {
+      const cell = row.getCell(cIdx + 1);
+      if (c.kind === 'rollNo') cell.value = st.rollNo;
+      else if (c.kind === 'name') cell.value = st.name;
+      else if (c.kind === 'father') cell.value = st.father || '';
+      else if (c.kind === 'obtained') {
+        const existing = st.obtained?.[c.subject.subjectID];
+        cell.value = existing == null || existing === '' ? '' : Number(existing);
+        const max = c.subject.total;
+        cell.dataValidation = {
+          type: 'custom',
+          allowBlank: true,
+          formulae: [`OR(TRIM(${cell.address})="",UPPER(TRIM(${cell.address}))="AB",AND(ISNUMBER(${cell.address}),${cell.address}>=0,${cell.address}<=${max}))`],
+          showErrorMessage: true,
+          errorStyle: 'error',
+          errorTitle: 'Invalid marks',
+          error: `Enter a number between 0 and ${max}, or type AB for Absent.`,
+        };
+      } else if (c.kind === 'comment') cell.value = st.manualRemarks?.[c.subject.subjectID] || '';
+      else if (c.kind === 'finalRemarks') cell.value = st.finalRemarks || '';
+
+      if (c.kind === 'rollNo' || c.kind === 'name' || c.kind === 'father') {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+        cell.font = { color: { argb: 'FF64748B' } };
+      }
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      };
+    });
+  });
+  ws.views = [{ state: 'frozen', xSplit: 3, ySplit: 2 }];
+  return wb;
+}
+
+async function bmuDownloadWorkbook(wb, filename) {
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function bmuFindColumns(headerRow, subjects) {
+  const map = { rollNo: null, name: null, father: null, obtained: {}, comment: {}, finalRemarks: null };
+  const lastCol = Math.max(headerRow.cellCount || 0, headerRow.actualCellCount || 0, 3 + subjects.length * 2);
+  const byHeader = {};
+  subjects.forEach(s => { byHeader[s.header] = s; });
+  for (let c = 1; c <= lastCol; c++) {
+    const text = bmuCellText(headerRow.getCell(c).value);
+    if (!text) continue;
+    const firstLine = text.split(/\r?\n/)[0].trim();
+    if (firstLine === 'Roll No') map.rollNo = c;
+    else if (firstLine === 'Student Name') map.name = c;
+    else if (firstLine === 'Father Name') map.father = c;
+    else if (firstLine === 'Final Remarks') map.finalRemarks = c;
+    else if (firstLine.endsWith(BMU_COMMENT_SUFFIX)) {
+      const subjName = firstLine.slice(0, -BMU_COMMENT_SUFFIX.length);
+      if (byHeader[subjName]) map.comment[byHeader[subjName].subjectID] = c;
+    } else if (byHeader[firstLine]) {
+      map.obtained[byHeader[firstLine].subjectID] = c;
+    }
+  }
+  return map;
+}
+
+function bmuParseWorkbook(wb, students, subjects, commentsMode) {
+  const errors = [];
+  const warnings = [];
+  const results = [];
+  const active = subjects.filter(s => s.total > 0);
+  const ws = wb.getWorksheet('Marks');
+  if (!ws) {
+    errors.push('This file does not have a "Marks" sheet — please use the template downloaded from this screen and try again.');
+    return { results, errors, warnings };
+  }
+  const colMap = bmuFindColumns(ws.getRow(2), active);
+  const missing = active.filter(s => !colMap.obtained[s.subjectID]);
+  if (!colMap.rollNo || !colMap.name) {
+    errors.push('Could not find the Roll No / Student Name columns — please use the template downloaded from this screen and try again.');
+    return { results, errors, warnings };
+  }
+  if (missing.length) {
+    errors.push(`Missing column(s) for: ${missing.map(s => s.header).join(', ')} — please use a freshly downloaded template.`);
+    return { results, errors, warnings };
+  }
+  const byRoll = {};
+  (students || []).forEach(s => { byRoll[String(s.rollNo).trim()] = s; });
+  const seenRoll = new Set();
+  const lastRow = ws.lastRow ? ws.lastRow.number : 2;
+  for (let r = 3; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    const rollNo = bmuCellText(row.getCell(colMap.rollNo).value);
+    if (!rollNo) continue;
+    const name = bmuCellText(row.getCell(colMap.name).value);
+    const student = byRoll[rollNo];
+    if (!student) { errors.push(`Row ${r}: Roll No "${rollNo}" (${name || 'unknown'}) does not match any student in this class.`); continue; }
+    if (seenRoll.has(rollNo)) { errors.push(`Row ${r}: Roll No "${rollNo}" appears more than once in the sheet.`); continue; }
+    seenRoll.add(rollNo);
+
+    const obtained = {};
+    const absent = {};
+    const skipped = {};
+    active.forEach(subj => {
+      const text = bmuCellText(row.getCell(colMap.obtained[subj.subjectID]).value);
+      if (text === '') { skipped[subj.subjectID] = true; }
+      else if (text.toUpperCase() === 'AB') { absent[subj.subjectID] = true; obtained[subj.subjectID] = 0; }
+      else {
+        const num = Number(text);
+        if (Number.isNaN(num) || num < 0 || num > subj.total) {
+          errors.push(`Row ${r} (${student.name}): invalid value "${text}" for ${subj.header} — must be a number between 0 and ${subj.total}, or AB.`);
+        } else obtained[subj.subjectID] = num;
+      }
+    });
+
+    const manualRemarks = {};
+    let finalRemarksRaw = '';
+    if (commentsMode === 'manual') {
+      active.forEach(subj => {
+        const col = colMap.comment[subj.subjectID];
+        const val = col ? bmuCellText(row.getCell(col).value) : '';
+        if (val) manualRemarks[subj.subjectID] = val.slice(0, 200);
+      });
+      finalRemarksRaw = colMap.finalRemarks ? bmuCellText(row.getCell(colMap.finalRemarks).value).slice(0, 200) : '';
+    }
+    const touched = active.some(s => !skipped[s.subjectID]);
+    if (!touched && !finalRemarksRaw && !Object.keys(manualRemarks).length) {
+      warnings.push(`${student.name} (Roll No ${rollNo}) has no new marks — left unchanged.`);
+      continue;
+    }
+    results.push({
+      studentId: student.id,
+      rollNo,
+      name: student.name,
+      markIds: student.markIds || {},
+      remarkId: student.remarkId || 0,
+      existing: student.obtained || {},
+      obtained,
+      absent,
+      skipped,
+      manualRemarks,
+      finalRemarksRaw,
+    });
+  }
+  (students || []).forEach(s => {
+    if (!seenRoll.has(String(s.rollNo).trim())) warnings.push(`${s.name} (Roll No ${s.rollNo}) was not found in the uploaded sheet — their marks will remain unchanged.`);
+  });
+  return { results, errors, warnings };
+}
+
+function bmuComputeRow(subjects, grades, entry) {
+  const active = subjects.filter(s => s.total > 0);
+  let tot = 0;
+  let obt = 0;
+  active.forEach(s => {
+    tot += s.total;
+    if (entry.skipped?.[s.subjectID]) obt += Number(entry.existing?.[s.subjectID] || 0);
+    else if (entry.absent?.[s.subjectID]) obt += 0;
+    else obt += Number(entry.obtained[s.subjectID] || 0);
+  });
+  const pct = tot ? (obt / tot) * 100 : 0;
+  const grade = obt > 0 ? (rcGradeByScale(pct, grades) || rcGetGrade(obt, tot)) : null;
+  return { tot, obt, pct, grade };
+}
+
+function bmuSubjectRemark(subject, obtainedMarks, grades) {
+  const max = subject.total;
+  const num = Number(obtainedMarks) || 0;
+  if (!max || !num) return '';
+  const pct = Math.round((num / max) * 100);
+  const grade = rcGradeByScale(pct, grades) || rcGetGrade(num, max);
+  return grade?.comment || '';
+}
+
+async function bmuLoadExisting(ctx, students, subjects) {
+  const token = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID');
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const active = subjects.filter(s => s.total > 0);
+  const out = students.map(s => ({ ...s, obtained: {}, manualRemarks: {}, markIds: {} }));
+  const BATCH = 4;
+  for (let i = 0; i < out.length; i += BATCH) {
+    const slice = out.slice(i, i + BATCH);
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(slice.map(async (st) => {
+      await Promise.all(active.map(async (su) => {
+        const p = new URLSearchParams({
+          classID: String(ctx.classID),
+          termID: String(ctx.termID),
+          ExamID: String(ctx.selectExam),
+          SubjectID: String(su.subjectID),
+          StudentID: String(st.id),
+          sectionID: String(ctx.sectionID),
+          pageNo: '1',
+        });
+        try {
+          const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+          const d = await r.json();
+          const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
+          if (!rec) return;
+          st.markIds[su.subjectID] = Number(rec.id || rec.ID || 0) || 0;
+          const obt = rec.obtainedMarks ?? rec.obtainMarks ?? rec.marks ?? rec.ObtainedMarks;
+          if (obt != null && String(obt).trim() !== '') st.obtained[su.subjectID] = Number(obt);
+          const rem = rec.remarks ?? rec.Remarks ?? '';
+          if (rem) st.manualRemarks[su.subjectID] = String(rem);
+        } catch { /* leave blank */ }
+      }));
+      try {
+        const fp = new URLSearchParams({
+          branchID: String(branchID),
+          classID: String(ctx.classID),
+          sectionID: String(ctx.sectionID),
+          examID: String(ctx.selectExam),
+          termID: String(ctx.termID),
+          studentID: String(st.id),
+          pageNo: '1',
+          pageCount: '20',
+        });
+        const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
+        const fd = await fr.json();
+        const frec = Array.isArray(fd) ? fd[0] : (Array.isArray(fd?.data) ? fd.data[0] : null);
+        if (frec) {
+          st.finalRemarks = frec.remarks || '';
+          st.remarkId = Number(frec.id || 0) || 0;
+        }
+      } catch { /* no final remark */ }
+    }));
+  }
+  return out;
+}
+
+async function bmuApplyResults({ ctx, subjects, grades, remarksScale, commentsMode, results, onProgress }) {
+  const token = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID');
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  const active = subjects.filter(s => s.total > 0);
+  const failures = [];
+  let savedStudents = 0;
+  for (let i = 0; i < results.length; i++) {
+    const entry = results[i];
+    if (onProgress) onProgress(i + 1, results.length);
+    const touched = active.filter(s => !entry.skipped?.[s.subjectID]);
+    let studentOk = true;
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(touched.map(async (su) => {
+      const obtainedMarks = entry.absent?.[su.subjectID] ? 0 : (Number(entry.obtained[su.subjectID]) || 0);
+      const manual = commentsMode === 'manual' ? String(entry.manualRemarks?.[su.subjectID] || '').trim() : '';
+      const remarks = manual || bmuSubjectRemark(su, obtainedMarks, grades);
+      const existingId = Number(entry.markIds?.[su.subjectID] || 0);
+      const today = new Date().toISOString().split('T')[0];
+      const pct = su.total > 0 ? Math.round((obtainedMarks / su.total) * 100) : 0;
+      const payload = {
+        id: existingId,
+        subjectID: Number(su.subjectID),
+        obtainMarks: String(obtainedMarks),
+        totalMarks: String(su.total),
+        subjectName: '',
+        studentID: Number(entry.studentId),
+        classID: Number(ctx.classID),
+        className: '',
+        termID: Number(ctx.termID),
+        term: '',
+        examID: Number(ctx.selectExam),
+        examName: '',
+        sectionID: Number(ctx.sectionID),
+        sectionName: '',
+        branchID: Number(branchID),
+        dateFrom: today,
+        dateTo: today,
+        remarks,
+        percentage: String(pct),
+        action: existingId > 0 ? 'update' : 'insert',
+      };
+      try {
+        const saveRes = await fetch(buildUrl('/api/sauploadmarkscrud'), {
+          method: 'POST', headers, body: JSON.stringify(payload),
+        });
+        if (!saveRes.ok) {
+          studentOk = false;
+          const text = await saveRes.text().catch(() => '');
+          failures.push(`${entry.name} · ${su.header}: save failed (HTTP ${saveRes.status}). ${String(text).slice(0, 80)}`);
+          return;
+        }
+        if (!manual) {
+          const common = new URLSearchParams({
+            branchId: String(branchID),
+            classId: String(ctx.classID),
+            sectionId: String(ctx.sectionID),
+            termId: String(ctx.termID),
+            examId: String(ctx.selectExam),
+            studentId: String(entry.studentId),
+            subjectId: String(su.subjectID),
+          });
+          await fetch(buildUrl(`/api/CalculateUploadRemark?${common}`), { method: 'GET', headers });
+        }
+      } catch (err) {
+        studentOk = false;
+        failures.push(`${entry.name} · ${su.header}: ${err?.message || 'could not save'}`);
+      }
+    }));
+    try {
+      const commonParams = new URLSearchParams({
+        branchId: String(branchID),
+        classId: String(ctx.classID),
+        sectionId: String(ctx.sectionID),
+        termId: String(ctx.termID),
+        examId: String(ctx.selectExam),
+        studentId: String(entry.studentId),
+      });
+      await fetch(buildUrl(`/api/FetchFinalRemarksAgainstPercentage?${commonParams}`), { method: 'GET', headers });
+      const row = bmuComputeRow(subjects, grades, entry);
+      const autoFinal = rcRemarkByScale(row.pct, remarksScale) || rcGetFinalRemarks(row.pct);
+      const finalText = commentsMode === 'manual'
+        ? (entry.finalRemarksRaw || autoFinal)
+        : autoFinal;
+      if (finalText) {
+        await fetch(buildUrl('/api/remarksforstudentcrud'), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            id: Number(entry.remarkId || 0),
+            branchID: String(branchID),
+            classID: String(ctx.classID),
+            sectionID: String(ctx.sectionID),
+            examID: String(ctx.selectExam),
+            termID: String(ctx.termID),
+            studentID: String(entry.studentId),
+            remarks: String(finalText).slice(0, 200),
+            action: Number(entry.remarkId || 0) > 0 ? 'update' : 'insert',
+          }),
+        });
+      }
+    } catch (err) {
+      studentOk = false;
+      failures.push(`${entry.name}: remarks could not be saved.`);
+    }
+    if (studentOk) savedStudents += 1;
+  }
+  try {
+    await fetch(buildUrl('/api/saveoverallstudentresultpercentage'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        branchID: Number(branchID),
+        classID: Number(ctx.classID),
+        sectionID: Number(ctx.sectionID),
+        termID: Number(ctx.termID),
+        examID: Number(ctx.selectExam),
+      }),
+    });
+  } catch { /* class totals refresh is best-effort */ }
+  return { savedStudents, failures };
+}
+
+function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, onSaved, toast }) {
+  const subjects = bmuSubjectCols(ctx.subjects);
+  const [students, setStudents] = useState(() => bmuNormalizeStudents(ctx.students));
+  const [loaded, setLoaded] = useState(false);
+  const [step, setStep] = useState('mode');
+  const [commentsMode, setCommentsMode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const [parsed, setParsed] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const fileInputRef = useRef(null);
+  const activeSubjects = subjects.filter(s => s.total > 0);
+
+  const ensureLoaded = async () => {
+    if (loaded) return students;
+    const next = await bmuLoadExisting(ctx, students, subjects);
+    setStudents(next);
+    setLoaded(true);
+    return next;
+  };
+
+  const download = async () => {
+    if (!activeSubjects.length) {
+      toast?.('Set total marks for at least one subject before downloading the sheet.', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      const rows = await ensureLoaded();
+      const wb = await bmuBuildWorkbook({
+        examName: ctx.examName || 'Exam',
+        className: ctx.className || 'Class',
+        students: rows,
+        subjects,
+        commentsMode,
+      });
+      const safe = s => String(s || 'Marks').replace(/[^A-Za-z0-9]+/g, '_');
+      await bmuDownloadWorkbook(wb, `Marks_${safe(ctx.className)}_${safe(ctx.examName)}.xlsx`);
+      toast?.('Template downloaded — fill it in and upload it below.', 'success');
+    } catch (e) {
+      console.error(e);
+      toast?.('Could not generate the template. Please try again.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onFile = async e => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setFileName(file.name);
+    setBusy(true);
+    try {
+      const rows = await ensureLoaded();
+      const buffer = await file.arrayBuffer();
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buffer);
+      setParsed(bmuParseWorkbook(wb, rows, subjects, commentsMode));
+      setStep('validate');
+    } catch (err) {
+      console.error(err);
+      toast?.('Could not read this file — make sure it\'s the .xlsx template downloaded from this screen.', 'error');
+    } finally {
+      setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const applyUpload = async () => {
+    if (!parsed || parsed.errors.length || !parsed.results.length) return;
+    setBusy(true);
+    setProgress({ done: 0, total: parsed.results.length });
+    try {
+      const { savedStudents, failures } = await bmuApplyResults({
+        ctx, subjects, grades, remarksScale, commentsMode,
+        results: parsed.results,
+        onProgress: (done, total) => setProgress({ done, total }),
+      });
+      if (failures.length) {
+        toast?.(`Saved ${savedStudents} of ${parsed.results.length} students. ${failures.length} item(s) failed.`, 'error');
+        setParsed(prev => ({ ...prev, errors: failures, results: [] }));
+        return;
+      }
+      toast?.(`Marks uploaded for ${savedStudents} student${savedStudents === 1 ? '' : 's'}.`, 'success');
+      onSaved?.();
+    } catch (err) {
+      console.error(err);
+      toast?.('Could not upload marks. Please try again.', 'error');
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
+  const totalStudents = students.length;
+
+  return createPortal(
+    <div
+      onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 9400, background: 'rgba(10,22,40,.58)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+    >
+      <div className="exam-modal" style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+        <div className="exam-modal-header">
+          <div className="exam-modal-header-left">
+            <div className="exam-modal-header-icon"><i className="fa-solid fa-file-excel"></i></div>
+            <div>
+              <div className="exam-modal-title">Bulk Upload Marks</div>
+              <div className="exam-modal-sub">{ctx.className} · {ctx.examName} · {totalStudents} student{totalStudents === 1 ? '' : 's'}</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="exam-modal-close" onClick={onClose} disabled={busy} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="exam-modal-body" style={{ paddingTop: 18, overflowY: 'auto' }}>
+          {step === 'mode' && (
+            <>
+              <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+                How should <strong>Teacher Comments</strong> (per subject) and <strong>Final Remarks</strong> be filled for this upload?
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <button type="button" className={`bmu-mode-card${commentsMode === 'auto' ? ' selected' : ''}`} onClick={() => setCommentsMode('auto')}>
+                  <div className="bmu-mode-icon" style={{ background: 'rgba(37,99,235,.1)', color: '#2563EB' }}><i className="fa-solid fa-wand-magic-sparkles"></i></div>
+                  <div className="bmu-mode-title">Auto-Generate</div>
+                  <div className="bmu-mode-desc">Comments &amp; remarks are generated automatically from each student's percentage. The sheet will only ask for Obtained Marks — simpler and faster.</div>
+                </button>
+                <button type="button" className={`bmu-mode-card${commentsMode === 'manual' ? ' selected' : ''}`} onClick={() => setCommentsMode('manual')}>
+                  <div className="bmu-mode-icon" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}><i className="fa-solid fa-pen"></i></div>
+                  <div className="bmu-mode-title">I'll Add Them Manually</div>
+                  <div className="bmu-mode-desc">The sheet will include extra columns for Teacher Comments per subject and an overall Final Remarks per student, for full control.</div>
+                </button>
+              </div>
+            </>
+          )}
+
+          {step === 'template' && (
+            <>
+              <div className="bmu-guide-box">
+                <div className="bmu-guide-title"><i className="fa-solid fa-circle-info"></i> How this works</div>
+                <ol className="bmu-guide-list">
+                  <li>Download the template — student names, roll numbers and each subject's total marks are already filled in.</li>
+                  <li>Enter Obtained Marks per subject for every student. Type <strong>AB</strong> for an absent student in that subject.</li>
+                  {commentsMode === 'manual'
+                    ? <li>Optionally fill in Teacher Comments and Final Remarks columns.</li>
+                    : <li>Teacher Comments and Final Remarks will be generated automatically — no need to fill them in.</li>}
+                  <li>Save the file and upload it below. We'll check it for errors before applying anything.</li>
+                </ol>
+              </div>
+              {!activeSubjects.length && (
+                <div className="bmu-issue-box error">
+                  <div className="bmu-issue-title"><i className="fa-solid fa-circle-exclamation"></i> Set total marks before uploading</div>
+                  <div className="bmu-issue-list">None of this class's subjects have total marks yet. Use Total Marks on the class row first.</div>
+                </div>
+              )}
+              <button type="button" className="exam-submit-btn" style={{ width: '100%', justifyContent: 'center', marginBottom: 16 }} onClick={download} disabled={busy || !activeSubjects.length}>
+                <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-download'}`}></i> {busy ? 'Preparing…' : 'Download Template'}
+              </button>
+              <label className="bmu-upload-drop">
+                <i className="fa-solid fa-file-arrow-up" style={{ fontSize: 22, color: 'var(--brand-primary)', marginBottom: 6 }}></i>
+                <div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--text-primary)' }}>{fileName || 'Click to upload the filled sheet'}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>.xlsx file only</div>
+                <input ref={fileInputRef} type="file" accept=".xlsx" onChange={onFile} style={{ display: 'none' }} disabled={busy || !activeSubjects.length} />
+              </label>
+            </>
+          )}
+
+          {step === 'validate' && parsed && (
+            <>
+              {parsed.errors.length > 0 ? (
+                <div className="bmu-issue-box error">
+                  <div className="bmu-issue-title"><i className="fa-solid fa-circle-exclamation"></i> {parsed.errors.length} issue{parsed.errors.length === 1 ? '' : 's'} must be fixed before uploading</div>
+                  <ul className="bmu-issue-list">{parsed.errors.map((err, i) => <li key={i}>{err}</li>)}</ul>
+                </div>
+              ) : (
+                <div className="bmu-issue-box ok">
+                  <div className="bmu-issue-title"><i className="fa-solid fa-circle-check"></i> {parsed.results.length} student{parsed.results.length === 1 ? '' : 's'} ready to update</div>
+                </div>
+              )}
+              {parsed.warnings.length > 0 && (
+                <div className="bmu-issue-box warn">
+                  <div className="bmu-issue-title"><i className="fa-solid fa-triangle-exclamation"></i> {parsed.warnings.length} note{parsed.warnings.length === 1 ? '' : 's'} (won't block upload)</div>
+                  <ul className="bmu-issue-list">{parsed.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                </div>
+              )}
+              {progress && (
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+                  Saving {progress.done} of {progress.total}…
+                </div>
+              )}
+              {parsed.errors.length === 0 && parsed.results.length > 0 && (
+                <div className="bmu-preview-wrap" style={{ marginTop: 4 }}>
+                  <table className="bmu-preview-table">
+                    <thead><tr><th>Student</th><th>Obtained / Total</th><th>%</th><th>Grade</th></tr></thead>
+                    <tbody>
+                      {parsed.results.map(r => {
+                        const c = bmuComputeRow(subjects, grades, r);
+                        return (
+                          <tr key={r.studentId}>
+                            <td>{r.name}</td>
+                            <td>{c.obt} / {c.tot}</td>
+                            <td>{c.tot ? `${Math.round(c.pct * 100) / 100}%` : '—'}</td>
+                            <td>{c.grade ? c.grade.grade : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="exam-modal-footer">
+          {step === 'mode' && (
+            <>
+              <Tooltip text="Close"><button className="exam-cancel-btn" onClick={onClose}><i className="fa-solid fa-xmark"></i> Cancel</button></Tooltip>
+              <Tooltip text="Continue"><button className="exam-submit-btn" disabled={!commentsMode} onClick={() => setStep('template')}><i className="fa-solid fa-arrow-right"></i> Continue</button></Tooltip>
+            </>
+          )}
+          {step === 'template' && (
+            <>
+              <Tooltip text="Back"><button className="exam-cancel-btn" onClick={() => setStep('mode')} disabled={busy}><i className="fa-solid fa-arrow-left"></i> Back</button></Tooltip>
+              <Tooltip text="Close"><button className="exam-cancel-btn" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark"></i> Close</button></Tooltip>
+            </>
+          )}
+          {step === 'validate' && (
+            <>
+              <Tooltip text="Upload a different file"><button className="exam-cancel-btn" disabled={busy} onClick={() => { setParsed(null); setStep('template'); }}><i className="fa-solid fa-rotate-left"></i> Choose Different File</button></Tooltip>
+              <Tooltip text="Close"><button className="exam-cancel-btn" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark"></i> Close</button></Tooltip>
+              <Tooltip text="Apply these marks to the class">
+                <button className="exam-submit-btn" disabled={busy || !parsed || parsed.errors.length > 0 || !parsed.results.length} onClick={applyUpload}>
+                  <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {busy ? 'Saving…' : 'Confirm & Apply'}
+                </button>
+              </Tooltip>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -18590,6 +19406,42 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   border-color:var(--border-med);
   color:var(--text-primary);
 }
+
+.bmu-mode-card {
+  display:flex; flex-direction:column; align-items:flex-start; gap:6px; text-align:left;
+  padding:14px; border:1.5px solid var(--border-light); border-radius:var(--radius-md, 10px);
+  background:var(--bg-card); cursor:pointer; font-family:inherit;
+}
+.bmu-mode-card:hover { border-color: var(--brand-primary); background: var(--bg-muted); }
+.bmu-mode-card.selected { border-color: var(--brand-primary); background: rgba(30,64,175,.06); box-shadow: 0 0 0 2px rgba(30,64,175,.12); }
+.bmu-mode-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 15px; margin-bottom: 2px; }
+.bmu-mode-title { font-size: 13px; font-weight: 800; color: var(--text-primary); }
+.bmu-mode-desc { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
+.bmu-guide-box { background: rgba(30,64,175,.05); border: 1.5px solid var(--border-light); border-radius: var(--radius-md, 10px); padding: 14px 16px; margin-bottom: 16px; }
+.bmu-guide-title { font-size: 12px; font-weight: 800; color: #1E40AF; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.bmu-guide-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+.bmu-upload-drop {
+  display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+  border:1.5px dashed var(--border-med, #CBD5E1); border-radius:var(--radius-md, 10px);
+  padding:22px 16px; cursor:pointer; background:var(--bg-muted); width:100%;
+}
+.bmu-upload-drop:hover { border-color: var(--brand-primary); background: rgba(30,64,175,.05); }
+.bmu-issue-box { border-radius: var(--radius-md, 10px); padding: 12px 14px; margin-bottom: 12px; border: 1.5px solid; }
+.bmu-issue-box.error { background: rgba(220,38,38,.06); border-color: rgba(220,38,38,.25); }
+.bmu-issue-box.warn { background: rgba(217,119,6,.06); border-color: rgba(217,119,6,.25); }
+.bmu-issue-box.ok { background: rgba(22,163,74,.06); border-color: rgba(22,163,74,.25); }
+.bmu-issue-title { font-size: 12.5px; font-weight: 800; display: flex; align-items: center; gap: 7px; }
+.bmu-issue-box.error .bmu-issue-title { color: #DC2626; }
+.bmu-issue-box.warn .bmu-issue-title { color: #D97706; }
+.bmu-issue-box.ok .bmu-issue-title { color: #16A34A; }
+.bmu-issue-list { margin: 8px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--text-secondary); line-height: 1.7; max-height: 160px; overflow-y: auto; }
+.bmu-preview-wrap { max-height: 260px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: var(--radius-md, 10px); }
+.bmu-preview-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bmu-preview-table th { position: sticky; top: 0; background: var(--bg-muted); color: var(--text-secondary); font-weight: 800; font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; padding: 8px 10px; text-align: left; border-bottom: 1.5px solid var(--border-light); }
+.bmu-preview-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-light); color: var(--text-primary); }
+.bmu-preview-table tbody tr:last-child td { border-bottom: none; }
+[data-theme="dark"] .bmu-mode-card { background: var(--bg-card); }
+[data-theme="dark"] .bmu-upload-drop { background: rgba(255,255,255,.03); }
 
 @media (max-width:768px) {
   .exam-tabs-row,.res-sub-tabs { padding:4px; gap:3px; margin-bottom:14px; }
