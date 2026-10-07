@@ -2740,8 +2740,31 @@ function AccountsManagementTab({ toast }) {
 
   const defaultId = (list.find(a => a.isDefault) || list[0] || {}).id;
   const activeAccounts = list.filter(a => a.status === 'active');
-  const balanceOf = (a) => accountsService.computeFinAccountBalance(a, serverTxns, transferList, defaultId);
-
+  /* Ledger (manage-transactions) is the source of truth, same rows as the
+     statement. Server's stored CurrentBalance can go stale. */
+  const [ledgerBal, setLedgerBal] = useState({});
+  useEffect(() => {
+    if (!accounts || accounts.length === 0) return undefined;
+    let cancelled = false;
+    Promise.all(accounts.map(a =>
+      accountsService.getWalletTransactions(a.id)
+        .then(rows => {
+          if (!rows || rows.length === 0) return [a.id, null];
+          const net = rows.reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+          return [a.id, (Number(a.opening) || 0) + net];
+        })
+        .catch(() => [a.id, null])
+    )).then(pairs => {
+      if (cancelled) return;
+      const map = {};
+      pairs.forEach(([id, v]) => { if (v != null) map[id] = v; });
+      setLedgerBal(map);
+    });
+    return () => { cancelled = true; };
+  }, [accounts, transfers]);
+  const balanceOf = (a) => (ledgerBal[a.id] != null
+    ? ledgerBal[a.id]
+    : accountsService.computeFinAccountBalance(a, serverTxns, transferList, defaultId));
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [editAccount, setEditAccount] = useState(null); // { mode:'add'|'edit', account? }
@@ -3378,8 +3401,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
   if (!account) return null;
 
   const tm = finTypeMeta(account.type);
-  const current = accountsService.computeFinAccountBalance(account, txns, transfers, defaultId);
-  let income = (txns?.rev || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  let current = accountsService.computeFinAccountBalance(account, txns, transfers, defaultId);  let income = (txns?.rev || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   let expense = (txns?.exp || []).filter(t => (t.acctId || defaultId) === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   let transfersIn = (transfers || []).filter(t => t.toId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   let transfersOut = (transfers || []).filter(t => t.fromId === account.id).reduce((s, t) => s + (Number(t.amount) || 0), 0);
@@ -3417,6 +3439,9 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
     expense      = sum(m => m.cat === 'expense');
     transfersIn  = sum(m => m.cat === 'transfer' && m.kind === 'credit');
     transfersOut = sum(m => m.cat === 'transfer' && m.kind === 'debit');
+    /* Statement header must agree with the running balance below. */
+    /* Statement header must agree with the running balance below. */
+    current = (Number(account.opening) || 0) + moves.reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
   }
 
    const broughtForward = from
