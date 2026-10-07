@@ -289,11 +289,11 @@ function loadClassPhotoMap(classID, sectionID) {
         );
         const json = await res.json();
         (Array.isArray(json) ? json : (json?.data || [])).forEach(s => {
-          const raw = String(s.picture ?? s.Picture ?? '').trim();
-          if (!raw) return;
+          const raw = String(s.picture ?? s.Picture ?? s.photo ?? '').trim();
+          if (!raw || raw.toLowerCase() === 'string' || raw.toUpperCase() === 'N/A') return;
           // Backend localhost:4100 jaisa URL bhejta hai → media host par resolve karo.
           const url = resolveMediaUrl(raw);
-          [s.id, s.studentID, s.StudentID, s.registrationNumber, s.RegistrationNumber]
+          [s.id, s.studentID, s.StudentID, s.registrationNumber, s.RegistrationNumber, s.registerNo, s.rollNo]
             .forEach(k => { if (k != null && String(k).trim() !== '') map[String(k).trim()] = url; });
         });
       } catch (e) {
@@ -318,6 +318,107 @@ async function rcStudentPhoto(classID, sectionID, ...keys) {
     }
   } catch { /* photo optional hai */ }
   return '';
+}
+
+function rcStuId(stu) {
+  return stu?.id ?? stu?.studentID ?? stu?.StudentID ?? stu?._id ?? stu?.studentId ?? null;
+}
+function rcStuName(stu) {
+  const direct = stu?.studentName ?? stu?.StudentName ?? stu?.name ?? stu?.fullName;
+  const joined = `${stu?.firstName || stu?.FirstName || ''} ${stu?.lastName || stu?.LastName || ''}`.trim();
+  return String(direct || joined || '—');
+}
+function rcStuFather(stu) {
+  return String(stu?.fatherName ?? stu?.FatherName ?? stu?.father ?? '');
+}
+function rcStuRoll(stu) {
+  const id = rcStuId(stu);
+  return String(stu?.registrationNumber ?? stu?.RegistrationNumber ?? stu?.registerNo ?? stu?.reg ?? stu?.rollNo ?? id ?? '');
+}
+function rcPhotoFromRecord(stu, photoMap) {
+  const id = rcStuId(stu);
+  const roll = rcStuRoll(stu);
+  const mapped = photoMap && (photoMap[String(id ?? '')] || (roll ? photoMap[String(roll)] : ''));
+  if (mapped) return mapped;
+  const raw = String(stu?.picture ?? stu?.Picture ?? stu?.photo ?? '').trim();
+  if (!raw || raw.toLowerCase() === 'string' || raw.toUpperCase() === 'N/A') return '';
+  return resolveMediaUrl(raw);
+}
+/* Class ki poori roster. Exam API kabhi sirf 1 row de deti hai — us soorat me
+   Launch Setup ki class/section list (jo Students screen use karti hai) se
+   lambi list lo, taake bulk har student ka card banaye. */
+async function rcFetchClassStudents(classID, sectionID, extra = []) {
+  const branchID = sessionStorage.getItem('branchID');
+  const token = sessionStorage.getItem('token');
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const lists = [];
+  if (Array.isArray(extra) && extra.length) lists.push(extra);
+  try {
+    const res = await fetch(
+      buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${sectionID}&gradeID=${classID}`),
+      { headers },
+    );
+    const json = await res.json();
+    const primary = saUnwrapList(json);
+    if (primary.length) lists.push(primary);
+    const nested = json?.data?.students || json?.data?.Students || json?.students || json?.Students;
+    if (Array.isArray(nested) && nested.length) lists.push(nested);
+  } catch (e) {
+    console.error('Could not load class students', e);
+  }
+  try {
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
+      { headers },
+    );
+    const json = await res.json();
+    const grades = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+    const fromRoster = [];
+    grades.forEach(g => {
+      const gid = g.id ?? g.gradeID ?? g.gradeId;
+      if (String(gid) !== String(classID)) return;
+      (g.sections || []).forEach(sec => {
+        const sid = sec.sectionID ?? sec.id ?? sec.sectionId;
+        if (String(sid) !== String(sectionID)) return;
+        (sec.students || []).forEach(st => {
+          if (st && st.isActive === false) return;
+          fromRoster.push(st);
+        });
+      });
+    });
+    if (fromRoster.length) lists.push(fromRoster);
+  } catch (e) {
+    console.error('Could not load branch student roster', e);
+  }
+  const best = lists.slice().sort((a, b) => b.length - a.length)[0] || [];
+  const seen = new Set();
+  return best.filter(stu => {
+    const id = String(rcStuId(stu) ?? '');
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+async function rcMapPool(items, limit, fn, shouldStop) {
+  const out = new Array(items.length);
+  let cursor = 0;
+  const n = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: n }, async () => {
+    while (cursor < items.length) {
+      if (shouldStop?.()) return;
+      const i = cursor++;
+      try { out[i] = await fn(items[i], i); }
+      catch (e) { console.error('bulk student card failed', e); out[i] = null; }
+    }
+  }));
+  return out.filter(Boolean);
+}
+function rcOrdinal(n) {
+  const num = Number(n) || 0;
+  if (!num) return '—';
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = num % 100;
+  return `${num}${s[(v - 20) % 10] || s[v] || s[0]}`;
 }
 
 /* Card ka avatar — asli tasveer, aur na mile (ya load na ho) to naam ke initials. */
@@ -662,6 +763,7 @@ const RC_TEMPLATES = [
    switch par ye component unmount ho jata hai) selection Classic par reset
    ho jati thi — user ka chuna hua design har baar gaayab. */
 const RC_TEMPLATE_PREF_KEY = 'sm.exam.resultCardTemplate';
+const RS_ABSENT_PREF_KEY = 'sm.exam.absentHandling';
 
 /* Default hamesha pehla template — RC_TEMPLATES ki tarteeb hi tay karti hai. */
 const RC_DEFAULT_TEMPLATE = RC_TEMPLATES[0].id;
@@ -870,7 +972,9 @@ const [subjects, setSubjects] = useState([]);
   const [rsGrades, setRsGrades]   = useState([]);
   const [rsSigs, setRsSigs]       = useState([]);
   const [rsRemarks, setRsRemarks] = useState([]);
-  const [rsAbsentMode, setRsAbsentMode] = useState(''); // '' | 'zero' | 'exclude' — none checked by default
+  /* localStorage — logout / dubara login ke baad bhi wahi Absent Handling selected rahe. */
+  const [rsAbsentSaved, setRsAbsentMode] = useUiPref(RS_ABSENT_PREF_KEY, '');
+  const rsAbsentMode = rsAbsentSaved === 'zero' || rsAbsentSaved === 'exclude' ? rsAbsentSaved : '';
   const [rsModalOpen, setRsModalOpen]   = useState(false);
   const [rsReportReq, setRsReportReq]   = useState(null);      // truthy → picker open
 
@@ -5520,45 +5624,10 @@ setResTotalMarksCtx({
                           className="res-download-btn"
                           disabled={isOtherSession || !canSingleEdit}
                           style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : { background: '#1E40AF', color: '#fff', borderColor: '#1E40AF' }}
-                          onClick={async e => {
+                          onClick={e => {
                             e.stopPropagation();
                             if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-                            const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
-                            if (!saSubjects.length) {
-                              toast('No exam subjects found for this class', 'error');
-                              return;
-                            }
-                            let students = resStudentData[key]?.students || [];
-                            if (!students.length) {
-                              try {
-                                const token = sessionStorage.getItem('token');
-                                const branchID = sessionStorage.getItem('branchID');
-                                const studentsRes = await fetch(
-                                  buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
-                                  { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-                                );
-                                const studentsData = await studentsRes.json();
-                                students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
-                              } catch (err) {
-                                students = [];
-                              }
-                            }
-                            if (!students.length) {
-                              toast('No students found for this class', 'error');
-                              return;
-                            }
-                            setResBulkUploadCtx({
-                              examId: resExamId,
-                              key,
-                              className,
-                              examName: resCurrentExam?.name || '',
-                              classID: cls.classID,
-                              sectionID: cls.sectionID,
-                              selectExam: resCurrentExam?.selectExam || 0,
-                              termID: selectedTermId,
-                              subjects: saSubjects,
-                              students,
-                            });
+                            toast('Coming soon', 'info');
                           }}
                         >
                           <i className="fa-solid fa-file-excel"></i>
@@ -5576,6 +5645,7 @@ setResTotalMarksCtx({
                             termID: selectedTermId,
                             className,
                             examName: resCurrentExam?.name || '',
+                            students: resStudentData[key]?.students || [],
                           });
                         }}
                       >
@@ -6225,7 +6295,7 @@ onClick={async () => {
               };
               const { avgPct, best, grade: avgGrade } = studentCardSummary(st);
               const worst = st.results.length ? Math.min(...st.results.map(r => r.pct)) : 0;
-              const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+              const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
               const attCol  = st.attendance >= 90 ? '#16A34A' : st.attendance >= 75 ? '#D97706' : '#DC2626';
               const avgCol  = avgPct >= 80 ? '#16A34A' : avgPct >= 60 ? '#1E40AF' : '#D97706';
               const worstCol = worst >= 60 ? '#D97706' : '#DC2626';
@@ -6573,7 +6643,7 @@ onClick={async () => {
                       ) : filtered.map(st => {
                         const pcts = st.results.map(r => r.pct);
                         const avgPct = pcts.length ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10 : 0;
-                        const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+                        const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
                         return (
                           <div
                             key={st.id}
@@ -6655,7 +6725,7 @@ onClick={async () => {
                       const attBg    = st.attendance >= 90 ? 'rgba(22,163,74,.07)' : st.attendance >= 75 ? 'rgba(217,119,6,.07)' : 'rgba(220,38,38,.07)';
                       const trendCol = trend === 'up' ? '#16A34A' : trend === 'down' ? '#DC2626' : '#64748B';
                       const trendLbl = trend === 'up' ? 'Improving' : trend === 'down' ? 'Declining' : 'Stable';
-                      const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+                      const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
                       return (
                         <div
@@ -6948,6 +7018,7 @@ onClick={async () => {
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
+          onAbsentChange={setRsAbsentMode}
           /* Save ke baad modal server se fresh rows le kar aata hai taake naye
              row ki asli DB id mil jaye (warna `temp_…` id rehti thi aur agla
              save UPDATE ki jagah dobara INSERT kar deta tha). */
@@ -7091,7 +7162,7 @@ onClick={async () => {
           manualRemarks: rhCardMarks?.remarks || {},   // saved per-subject remarks → Comment column
           finalRemarks: rhCardMarks?.finalRemark || '', // student ka final remark → Final Remarks section
           absentSubjects: rhCardMarks?.absentSubjects || [],
-          photo: rhCardMarks?.photo || '',   // header ke circle me asli tasveer
+          photo: rhCardMarks?.photo || rcPhotoFromRecord(student) || '',   // header ke circle me asli tasveer
           attendance: student.attendance ? `${student.attendance}%` : '—',
         };
         const cardRd = {
@@ -7165,7 +7236,7 @@ onClick={async () => {
           father: st.father,
           obtained: cbrCardMarks?.obtained || {},
           absentSubjects: cbrCardMarks?.absentSubjects || [],
-          photo: cbrCardMarks?.photo || '',   // header ke circle me asli tasveer
+          photo: cbrCardMarks?.photo || rcPhotoFromRecord(st) || '',   // header ke circle me asli tasveer
           attendance: '—',
           _combined: {
             grandTotal:   st.grandTotal,
@@ -7519,7 +7590,7 @@ onClick={async () => {
     manualRemarks: resCardMarks?.remarks || {},
     finalRemarks: resCardMarks?.finalRemark || '',
     absentSubjects: resCardMarks?.absentSubjects || [],
-    photo: resCardMarks?.photo || '',   // header ke circle me asli tasveer
+    photo: resCardMarks?.photo || rcPhotoFromRecord(stu) || '',   // header ke circle me asli tasveer
     attendance: '—',
   };
   
@@ -9382,7 +9453,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   if (opt['Show Position in Class']) sumItems.push({ label: 'Position in Class', val: position,                  col: warnCol });
   if (opt['Show Attendance'])        sumItems.push({ label: 'Attendance',        val: st.attendance || '—',      col: successCol });
 
-  const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+  const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
   return (
     <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)' }}>
@@ -9405,7 +9476,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
             Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}
           </div>
         </div>
-        {opt['Show Student Photo'] && (
+        {(opt['Show Student Photo'] || st.photo) && (
           <RcAvatar src={st.photo} initials={initials} size={54} fontSize={19} color="#fff"
                     bg="rgba(255,255,255,.2)" border="2px solid rgba(255,255,255,.4)" />
         )}
@@ -9721,7 +9792,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
     return m[g.grade] || '#475569';
   };
 
-  const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+  const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
   const summaryItems = [];
   if (opt['Show Percentage'])        summaryItems.push({ label: 'Overall', val: `${ovPct}%`,                col: accent, bg: '#EFF6FF', bdr: '#BFDBFE' });
@@ -9746,7 +9817,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           )}
           <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.6)', marginTop: 1 }}>Insight Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}</div>
         </div>
-        {opt['Show Student Photo'] && (
+        {(opt['Show Student Photo'] || st.photo) && (
           <RcAvatar src={st.photo} initials={initials} size={50} fontSize={17} color="#fff"
                     bg="rgba(255,255,255,.15)" border="2px solid rgba(255,255,255,.35)" />
         )}
@@ -10005,7 +10076,7 @@ const improvements = sorted
   if (opt['Show Position in Class']) tilesEnabled.push({ icon: 'fa-trophy',         label: 'Position',  val: position,            col: C.acc, bg: C.accL, bdr: C.accBdr });
   if (opt['Show Attendance'])        tilesEnabled.push({ icon: 'fa-calendar-check', label: 'Attendance',val: st.attendance || '—',col: C.pur, bg: C.purL, bdr: C.purBdr });
 
-  const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+  const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
   const span = 1 + (opt['Show Subject-wise Marks'] ? 1 : 0);
 
   const thBase = { padding: '5px 8px', fontSize: 9, fontWeight: 700, color: C.blu, textAlign: 'left', textTransform: 'uppercase', letterSpacing: '.4px', borderBottom: `2px solid ${C.bluBdr}` };
@@ -10046,7 +10117,7 @@ const improvements = sorted
 
         {/* Student banner */}
         <div style={{ padding: '16px 28px 22px', display: 'flex', alignItems: 'center', gap: 18, position: 'relative' }}>
-          {opt['Show Student Photo'] && (
+          {(opt['Show Student Photo'] || st.photo) && (
             <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color="rgba(255,255,255,.85)"
                       bg="rgba(255,255,255,.12)" border="3px solid rgba(255,255,255,.3)"
                       extraStyle={{ boxShadow: '0 4px 16px rgba(0,0,0,.25)' }} />
@@ -13319,7 +13390,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
    → getsauploadmarksbyclassandtermandexamandsubject (per student/subject marks + remarks)
    → getremarksbystudentfilters (final remark). Single-card jaisi hi rendering, bas N students. */
 function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
-  const { classID, sectionID, selectExam, termID, className, examName } = ctx;
+  const { classID, sectionID, selectExam, termID, className, examName, students: presetStudents } = ctx;
   const [cards, setCards]       = useState([]);   // [{ student, rd }]
   const [loading, setLoading]   = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -13349,33 +13420,30 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
         const token    = sessionStorage.getItem('token');
         const headers  = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
 
-        // 1) Students
-        const stRes = await fetch(buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${sectionID}&gradeID=${classID}`), { headers });
-        const stData = await stRes.json();
-        const studentsRaw = Array.isArray(stData?.data) ? stData.data : (Array.isArray(stData) ? stData : []);
+        // Poori class — exam list kabhi 1 student pe ruk jati hai, roster se poori lo.
+        const studentsRaw = await rcFetchClassStudents(classID, sectionID, presetStudents);
+        const photoMap = await loadClassPhotoMap(classID, sectionID).catch(() => ({}));
 
-        // 2) Subjects — exam setup list + is student ke uploaded marks wale extra subjects
-        let baseSubs = [];
+        let subs = [];
         try {
           const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
-          baseSubs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
+          subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         } catch { /* no subjects */ }
-
-        if (!cancelled) setProgress({ done: 0, total: studentsRaw.length });
-        const built = [];
-        for (const stu of studentsRaw) {
-          if (cancelled) return;
-          const studentId = stu.id ?? stu.studentID ?? stu.StudentID;
-          let subs = baseSubs;
+        if (!subs.length && studentsRaw[0]) {
           try {
             const merged = await cbrApi.mergeSaSubjectsWithStudentMarks({
-              classID, sectionID, termID, examID: selectExam, studentID: studentId,
+              classID, sectionID, termID, examID: selectExam, studentID: rcStuId(studentsRaw[0]),
             });
-            const normalized = rcNormalizeSubjects((merged || []).map(saNormSubject).filter(Boolean));
-            if (normalized.length) subs = normalized;
-          } catch { /* keep baseSubs */ }
-          const obtained = {}, remarks = {}, totals = {}, absentSubjects = [];
-          // 3) Har subject ke marks + remarks
+            subs = rcNormalizeSubjects((merged || []).map(saNormSubject).filter(Boolean));
+          } catch { /* keep empty */ }
+        }
+
+        if (!cancelled) setProgress({ done: 0, total: studentsRaw.length });
+        let done = 0;
+        const built = await rcMapPool(studentsRaw, 4, async (stu) => {
+          if (cancelled) return null;
+          const studentId = rcStuId(stu);
+          const obtained = {}, manualRemarks = {}, totals = {}, absentSubjects = [];
           await Promise.all(subs.map(async su => {
             try {
               const p = new URLSearchParams({
@@ -13384,14 +13452,13 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
               });
               const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
               const d = await r.json();
-              const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+              const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
               obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
               totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
-              if (rec?.remarks) remarks[su.subjectName] = rec.remarks;
+              if (rec?.remarks) manualRemarks[su.subjectName] = rec.remarks;
               if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
             } catch { absentSubjects.push(su.subjectName); }
           }));
-          // 4) Final remark
           let finalRemark = '';
           try {
             const fp = new URLSearchParams({
@@ -13404,21 +13471,38 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
             const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : null);
             finalRemark = frec?.remarks || '';
           } catch { /* no final remark */ }
-
-          built.push({
+          done += 1;
+          if (!cancelled) setProgress({ done, total: studentsRaw.length });
+          const obtSum = Object.values(obtained).reduce((a, n) => a + (Number(n) || 0), 0);
+          return {
+            _obt: obtSum,
             student: {
               id: studentId,
-              rollNo: stu.registrationNumber ?? stu.RegistrationNumber ?? stu.registerNo ?? studentId,
-              name: (stu.studentName ?? stu.StudentName ?? `${stu.firstName || ''} ${stu.lastName || ''}`.trim()) || '—',
-              father: stu.fatherName ?? stu.FatherName ?? '',
-              obtained, manualRemarks: remarks, finalRemarks: finalRemark,
+              rollNo: rcStuRoll(stu),
+              name: rcStuName(stu),
+              father: rcStuFather(stu),
+              obtained, manualRemarks, finalRemarks: finalRemark,
               absentSubjects, attendance: '—',
+              photo: rcPhotoFromRecord(stu, photoMap),
             },
             rd: { released: false, totalMarks: totals, subjects: subs.map(s => s.subjectName) },
-          });
-          if (!cancelled) { setCards([...built]); setProgress({ done: built.length, total: studentsRaw.length }); }
-        }
-        if (!cancelled) setLoading(false);
+          };
+        }, () => cancelled);
+
+        const ranked = built
+          .filter(c => c._obt > 0)
+          .sort((a, b) => (b._obt - a._obt) || a.student.name.localeCompare(b.student.name));
+        const rankOf = {};
+        let cur = 0, prev = null;
+        ranked.forEach((c, i) => {
+          if (prev === null || c._obt !== prev) { cur = i + 1; prev = c._obt; }
+          rankOf[String(c.student.id)] = rcOrdinal(cur);
+        });
+        const cardsOut = built.map(c => ({
+          student: { ...c.student, position: rankOf[String(c.student.id)] || '—' },
+          rd: c.rd,
+        }));
+        if (!cancelled) { setCards(cardsOut); setLoading(false); }
       } catch (e) {
         console.error('Bulk card load failed', e);
         if (!cancelled) { setLoading(false); toast?.('Could not load bulk cards', 'error'); }
@@ -13436,24 +13520,19 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
     if (!node) return;
     const w = window.open('', '_blank', 'width=980,height=860');
     if (!w) { toast?.('Pop-up blocker prevented opening', 'error'); return; }
-    // w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Result Cards — ${className || ''}</title>
-
-w.document.write(`<!DOCTYPE html><html><head>
+    w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="UTF-8">
-
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
 <title>Result Cards — ${className || ''}</title>
-
-<style>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
 @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
   thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
-.bulk-card{max-width:210mm;margin:0 auto 18px;page-break-after:always}
-.bulk-card:last-child{page-break-after:auto}
+.bulk-card{max-width:210mm;margin:0 auto 12px;page-break-after:always;break-after:page;overflow:visible!important;height:auto!important}
+.bulk-card:last-child{page-break-after:auto;break-after:auto}
+.bulk-card img{max-width:100%;height:auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE}
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
@@ -13481,9 +13560,9 @@ ${node.innerHTML}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={printAll} disabled={!cards.length}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: cards.length ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: cards.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
-              <i className="fa-solid fa-file-pdf"></i> Print All
+            <button type="button" onClick={printAll} disabled={loading || !cards.length}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: (!loading && cards.length) ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: (!loading && cards.length) ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+              <i className="fa-solid fa-file-pdf"></i> {loading ? `Loading ${progress.done}/${progress.total}` : `Print All (${cards.length})`}
             </button>
             <button type="button" onClick={onClose}
               style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -13572,15 +13651,85 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
         subs = rcNormalizeSubjects(subs, nameMap);
         const subjectNames = subs.map(s => s.subjectName);
 
-        const students = grp.students || [];
-        if (!cancelled) setProgress({ done: 0, total: students.length });
-        const built = [];
-        for (const st of students) {
-          if (cancelled) return;
+        // Poori class. grp.students kabhi sirf 1 row hoti hai (CA marks API) —
+        // roster se baqi students bhi lo, warna bulk ek hi card banata hai.
+        const roster = await rcFetchClassStudents(grp.classID, grp.sectionID);
+        const photoMap = await loadClassPhotoMap(grp.classID, grp.sectionID).catch(() => ({}));
+        const known = new Map();
+        (grp.students || []).forEach(st => {
+          if (st?.studentID != null) known.set(String(st.studentID), st);
+        });
+        let people = roster.slice();
+        const rosterIds = new Set(people.map(p => String(rcStuId(p) ?? '')));
+        known.forEach((st, id) => {
+          if (!rosterIds.has(id)) {
+            people.push({
+              id: st.studentID, studentID: st.studentID,
+              studentName: st.name, fatherName: st.father, registrationNumber: st.rollNo,
+            });
+          }
+        });
+        if (!people.length) {
+          people = [...known.values()].map(st => ({
+            id: st.studentID, studentID: st.studentID,
+            studentName: st.name, fatherName: st.father, registrationNumber: st.rollNo,
+          }));
+        }
+
+        const num = v => Number(v ?? 0) || 0;
+        const fromApiCard = (c, info) => {
+          const sid = c.studentID ?? c.StudentID;
+          const main = c.mainExam ?? c.MainExam ?? {};
+          const subArr = c.subExams ?? c.SubExams ?? [];
+          return {
+            studentID: sid,
+            rollNo: info.rollNo || c.registrationNumber || c.RegistrationNumber || sid,
+            name: info.name || c.studentName || c.StudentName || '—',
+            father: info.father || c.fatherName || c.FatherName || '',
+            mainObt: num(main.obtainedMarks ?? main.ObtainedMarks),
+            mainTotal: num(main.totalMarks ?? main.TotalMarks),
+            subs: subArr.map(s => ({
+              name: s.examName ?? s.ExamName ?? '',
+              subObt: num(s.originalObtained ?? s.OriginalObtained),
+              origT: num(s.originalTotal ?? s.OriginalTotal),
+              conv: num(s.convertedObtained ?? s.ConvertedObtained),
+              weight: num(s.weightage ?? s.Weightage),
+            })),
+            grandObt: num(c.grandObtained ?? c.GrandObtained),
+            grandTotal: num(c.grandTotal ?? c.GrandTotal),
+            pct: num(c.percentage ?? c.Percentage),
+            rank: String(c.ranking ?? c.Ranking ?? ''),
+          };
+        };
+
+        if (!cancelled) setProgress({ done: 0, total: people.length });
+        let done = 0;
+        const built = await rcMapPool(people, 4, async (person) => {
+          if (cancelled) return null;
+          const studentId = rcStuId(person);
+          let st = known.get(String(studentId));
+          if (!st && studentId != null) {
+            const card = await cbrApi.getStudentCard({
+              studentID: studentId, subExamIDs: grp.subExamIDs || [],
+              classID: grp.classID, sectionID: grp.sectionID, mainExamID: grp.mainExamID,
+            }).catch(() => null);
+            if (card) {
+              st = fromApiCard(card, { name: rcStuName(person), father: rcStuFather(person), rollNo: rcStuRoll(person) });
+            }
+          }
+          if (!st) {
+            st = {
+              studentID: studentId, rollNo: rcStuRoll(person), name: rcStuName(person), father: rcStuFather(person),
+              mainObt: 0, mainTotal: 0, subs: [], grandObt: 0, grandTotal: 0, pct: 0, rank: '',
+            };
+          }
           const obtained = {}, totals = {}, absentSubjects = [];
           if (withMarks) {
             await Promise.all(subs.map(async su => {
-              const m = await cbrApi.getStudentSubjectMark({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID }).catch(() => null);
+              const m = await cbrApi.getStudentSubjectMark({
+                classID: grp.classID, sectionID: grp.sectionID, termID,
+                examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID,
+              }).catch(() => null);
               obtained[su.subjectName] = m == null ? '' : m;
               totals[su.subjectName]   = su.totalMarks;
               if (m == null || String(m).trim() === '' || !su.totalMarks || Number(su.totalMarks) <= 0) absentSubjects.push(su.subjectName);
@@ -13588,12 +13737,15 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
           } else {
             subs.forEach(su => { obtained[su.subjectName] = ''; totals[su.subjectName] = su.totalMarks; absentSubjects.push(su.subjectName); });
           }
-          const rankNum = parseInt(st.rank, 10) || 1;
-          const rankSfx = (String(st.rank).match(/[a-z]+$/i) || ['th'])[0];
-          built.push({
+          done += 1;
+          if (!cancelled) setProgress({ done, total: people.length });
+          const rankNum = parseInt(st.rank, 10) || 0;
+          const rankSfx = rankNum ? ((String(st.rank).match(/[a-z]+$/i) || [''])[0] || (rankNum === 1 ? 'st' : rankNum === 2 ? 'nd' : rankNum === 3 ? 'rd' : 'th')) : '';
+          return {
             student: {
-              id: st.rollNo, rollNo: st.rollNo, name: st.name, father: st.father,
+              id: st.studentID, rollNo: st.rollNo || rcStuRoll(person), name: st.name || rcStuName(person), father: st.father || rcStuFather(person),
               obtained, absentSubjects, attendance: '—', _attnId: st.studentID,
+              photo: rcPhotoFromRecord(person, photoMap) || await rcStudentPhoto(grp.classID, grp.sectionID, st.studentID, st.rollNo),
               _combined: {
                 grandTotal: st.grandTotal, grandObt: st.grandObt, ovPct: st.pct,
                 mainExName: grp.mainExam, mainTotal: st.mainTotal, mainObt: st.mainObt,
@@ -13601,10 +13753,33 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
               },
             },
             rd: { totalMarks: Object.keys(totals).length ? totals : { ...RES_DEFAULT_TOTALS }, subjects: subjectNames },
+          };
+        }, () => cancelled);
+
+        // Jis student ka rank API se nahi aaya, grand obtained se class position.
+        const needRank = built.some(c => !c.student._combined.rank);
+        if (needRank) {
+          const order = built
+            .map((c, i) => ({ i, obt: Number(c.student._combined.grandObt) || 0, name: c.student.name }))
+            .filter(x => x.obt > 0)
+            .sort((a, b) => (b.obt - a.obt) || String(a.name).localeCompare(String(b.name)));
+          let cur = 0, prev = null;
+          order.forEach((x, idx) => {
+            if (prev === null || x.obt !== prev) { cur = idx + 1; prev = x.obt; }
+            if (!built[x.i].student._combined.rank) {
+              const label = rcOrdinal(cur);
+              built[x.i].student._combined.rank = cur;
+              built[x.i].student._combined.rankSfx = String(label).replace(String(cur), '');
+            }
           });
-          if (!cancelled) { setCards([...built]); setProgress({ done: built.length, total: students.length }); }
         }
-        if (!cancelled) setLoading(false);
+        built.forEach(c => {
+          if (!c.student._combined.rank) {
+            c.student._combined.rank = '—';
+            c.student._combined.rankSfx = '';
+          }
+        });
+        if (!cancelled) { setCards(built); setLoading(false); }
       } catch (e) {
         console.error('Bulk combined card load failed', e);
         if (!cancelled) { setLoading(false); toast?.('Could not load combined cards', 'error'); }
@@ -13623,14 +13798,16 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
     const w = window.open('', '_blank', 'width=980,height=860');
     if (!w) { toast?.('Pop-up blocker prevented opening', 'error'); return; }
     w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Combined Result Cards — ${grp?.cls || ''}</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
 @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
   thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
-.bulk-card{max-width:210mm;margin:0 auto 18px;page-break-after:always}
-.bulk-card:last-child{page-break-after:auto}
+.bulk-card{max-width:210mm;margin:0 auto 12px;page-break-after:always;break-after:page;overflow:visible!important;height:auto!important}
+.bulk-card:last-child{page-break-after:auto;break-after:auto}
+.bulk-card img{max-width:100%;height:auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE}
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
@@ -13657,9 +13834,9 @@ ${node.innerHTML}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={printAll} disabled={!cards.length}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: cards.length ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: cards.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
-              <i className="fa-solid fa-file-pdf"></i> Print All
+            <button type="button" onClick={printAll} disabled={loading || !cards.length}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: (!loading && cards.length) ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: (!loading && cards.length) ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+              <i className="fa-solid fa-file-pdf"></i> {loading ? `Loading ${progress.done}/${progress.total}` : `Print All (${cards.length})`}
             </button>
             <button type="button" onClick={onClose}
               style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -13805,7 +13982,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
 /* ═══════════════════════════════════════════════════════════════════
    RESULT SETUP — EDIT MODAL (4 tabs: grades, signatures, remarks, absent)
    ═══════════════════════════════════════════════════════════════════ */
-function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, toast,
+function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, onSave, onClose, toast,
                            reloadGrades, reloadSigs, reloadRemarks }) {
   const [tab, setTab] = useState('grades');
   const [draftGrades, setDraftGrades] = useState(() => {
@@ -14556,7 +14733,11 @@ const runDelete = async () => {
                   <div
                     key={opt.v}
                     className={`rs-abs-opt${isSel ? ' selected' : ''}`}
-                    onClick={() => setDraftAbsent(prev => prev === opt.v ? '' : opt.v)}
+                    onClick={() => {
+                      const next = draftAbsent === opt.v ? '' : opt.v;
+                      setDraftAbsent(next);
+                      onAbsentChange?.(next);
+                    }}
                   >
                     <div className="rs-abs-radio">
                       <div className="rs-abs-radio-dot" style={{ display: isSel ? 'block' : 'none' }} />
