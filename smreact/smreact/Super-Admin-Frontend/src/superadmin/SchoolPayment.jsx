@@ -3,6 +3,7 @@ import {
   PAY_SCHOOLS, INITIAL_PAY_SETUP, RECEIVING_METHODS,
   monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, todayISO, deriveRow, trialInfo,
   SCHOOL_MENTOR_BANK, INITIAL_OT_CHALLANS, INITIAL_OT_RECEIVING,
+  genPsid, defaultOneLink,
 } from './paymentData';
 import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
 
@@ -1768,14 +1769,22 @@ function SetupSummaryStrip({ school, summary, loading }) {
 }
 
 function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast }) {
-  const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '' };
-  const [f, setF] = useState({ ...init });
+  const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '', oneLink: defaultOneLink(), lateSurcharge: 0 };
+  const [f, setF] = useState({ ...init, oneLink: { ...defaultOneLink(), ...(init.oneLink || {}) }, lateSurcharge: init.lateSurcharge ?? 0 });
   const [summary, setSummary] = useState(existing || null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   /* Form sirf tab tak API se bharta hai jab tak user ne khud kuch na chhua ho —
      slow response beech me typing na kha jaye. */
   const dirty = useRef(false);
   const set = (k, v) => { dirty.current = true; setF((p) => ({ ...p, [k]: v })); };
+  const setOneLink = (k, v) => {
+    dirty.current = true;
+    setF((p) => {
+      const next = { ...defaultOneLink(), ...(p.oneLink || {}), [k]: v };
+      if (k === 'enabled' && v && !next.psid) next.psid = genPsid(s.id);
+      return { ...p, oneLink: next };
+    });
+  };
 
   /* Modal khulte hi usi branch ka TAAZA summary: GET /summary?branchId=&type=.
      payStore purana ho sakta hai (kisi aur ne backend par badla ho), aur upar
@@ -1787,7 +1796,7 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
       .then((live) => {
         if (!alive || !live) return;
         setSummary(live);
-        if (!dirty.current) setF({ ...live });
+        if (!dirty.current) setF({ ...live, oneLink: { ...defaultOneLink(), ...(live.oneLink || {}) }, lateSurcharge: live.lateSurcharge ?? 0 });
       })
       .catch(() => { /* strip optional — form phir bhi bhara ja sakta hai */ })
       .finally(() => { if (alive) setLoadingSummary(false); });
@@ -1845,7 +1854,27 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
             {(preview > 0) && <div style={{ marginTop: 14, background: 'var(--muted)', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ fontSize: 12, color: 'var(--tm)', fontWeight: 600 }}>Estimated Monthly Bill</div><div style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand)' }}>PKR {preview.toLocaleString()}</div></div>}
           </div>
         )}
-        <div className="pay-field" style={{ marginTop: 16, marginBottom: 0 }}><label><i className="fa-regular fa-note-sticky" style={{ color: 'var(--brand)', marginRight: 4 }} /> Notes (optional)</label><textarea className="pay-input" rows={2} style={{ height: 'auto', padding: '10px 14px', resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Add any billing notes or special instructions…" /></div>
+        <div className="pay-field" style={{ marginTop: 16 }}><label><i className="fa-regular fa-note-sticky" style={{ color: 'var(--brand)', marginRight: 4 }} /> Notes (optional)</label><textarea className="pay-input" rows={2} style={{ height: 'auto', padding: '10px 14px', resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Add any billing notes or special instructions…" /></div>
+
+        <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1.5px solid var(--bl)' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#7C3AED', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-link" /> OneLink Billing</div>
+          <div className="pay-toggle-row">
+            <div><div className="pay-toggle-label"><i className="fa-solid fa-link" style={{ color: '#7C3AED', marginRight: 5 }} /> OneLink Billing Enabled</div><div className="pay-toggle-sub">Lets this school pay its subscription invoice through OneLink using a PS ID.</div></div>
+            <Switch checked={!!f.oneLink?.enabled} onChange={(v) => setOneLink('enabled', v)} />
+          </div>
+          {f.oneLink?.enabled && (
+            <>
+              <div className="pay-field"><label><i className="fa-solid fa-hashtag" style={{ color: '#7C3AED', marginRight: 4 }} /> School's PS ID</label><input className="pay-input" value={f.oneLink.psid} readOnly style={{ fontFamily: 'ui-monospace,Menlo,monospace', fontWeight: 700, color: '#7C3AED' }} /></div>
+              <div className="pay-field"><label><i className="fa-solid fa-coins" style={{ color: '#7C3AED', marginRight: 4 }} /> OneLink Service Charge (PKR, per transaction)</label><input className="pay-input" type="number" value={f.oneLink.serviceCharge} onChange={(e) => setOneLink('serviceCharge', e.target.value)} placeholder="e.g. 50" /></div>
+            </>
+          )}
+        </div>
+
+        <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1.5px solid var(--bl)' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--warn)', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-triangle-exclamation" /> Late Payment Surcharge</div>
+          <div className="pay-field" style={{ marginBottom: 6 }}><label><i className="fa-solid fa-money-bill-wave" style={{ color: 'var(--warn)', marginRight: 4 }} /> Surcharge Amount (PKR, fixed)</label><input className="pay-input" type="number" value={f.lateSurcharge} onChange={(e) => set('lateSurcharge', e.target.value)} placeholder="0" /></div>
+          <div className="pay-info-box"><i className="fa-solid fa-circle-info" /><p>A fixed lump-sum amount — not a percentage — added to this school's invoice automatically once its due date has passed and it's still unpaid. Shown on the Challans tab and the printed challan slip.</p></div>
+        </div>
       </div>
       <div className="pay-modal-foot">
         <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>

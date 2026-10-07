@@ -43,6 +43,13 @@ export const RECEIVING_METHODS = [
   'Cash', 'Easypaisa', 'JazzCash', 'Cheque',
 ];
 
+/* Demo PSID shown in the setup modal when OneLink is toggled on. */
+export function genPsid(schoolId) {
+  return `OL-${700000 + Number(schoolId)}`;
+}
+
+export const defaultOneLink = () => ({ enabled: false, psid: '', serviceCharge: 50 });
+
 /* Monthly charge from a school's billing setup. */
 export function monthlyCharge(school, setup) {
   if (!setup) return 0;
