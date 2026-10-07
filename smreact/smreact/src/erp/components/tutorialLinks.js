@@ -30,12 +30,13 @@ export const TUTORIAL_LINKS = {
   examination: {
     title: 'Examination Tutorials',
     items: [
-      { label: 'Exam Setup',           url: '' },
-      { label: 'Date Sheet',           url: '' },
-      { label: 'Syllabus',             url: '' },
-      { label: 'Single Assessment',    url: '' },
-      { label: 'Combined Assessment',  url: '' },
-      { label: 'Result History',       url: '' },
+      { label: 'Exam Setup',                 url: 'https://youtu.be/YLKC4DJTrTM' },
+      { label: 'Date Sheet',                 url: 'https://youtu.be/sVabf9oMi7Y' },
+      { label: 'Syllabus',                   url: 'https://youtu.be/eCtdYg3ngpg' },
+      { label: 'Results',                    url: 'https://youtu.be/PVE-0Q49PmM' },
+      { label: 'Result History',             url: 'https://youtu.be/_LVgvMtM2wM' },
+      { label: 'Single Assessment Result',   url: 'https://youtu.be/_LVgvMtM2wM' },
+      { label: 'Combined Assessment Result', url: 'https://youtu.be/bbyw9yDxosw' },
     ],
   },
   paperGenerator: {
@@ -176,6 +177,21 @@ export const TUTORIAL_LINKS = {
       { label: 'Module Activation', url: '' },
       { label: 'School Profile',    url: '' },
       { label: 'Initial Configuration', url: '' },
+    ],
+  },
+  /* Setup app (src/App.js) — the 6 initial-setup tabs (School / Classes /
+     Subjects / Departments / Staff Details / Student Details). Passed as
+     moduleKey="launch-setup" (hyphen), distinct from the ERP "Activated
+     Modules" page above which uses `launchSetup`. */
+  'launch-setup': {
+    title: 'Launch Setup Tutorials',
+    items: [
+      { label: 'School',          url: 'https://youtu.be/ltR0mKrSFAY' },
+      { label: 'Classes',         url: 'https://youtu.be/1uKofOjox30' },
+      { label: 'Subjects',        url: 'https://youtu.be/ZIkVnDsCpvs' },
+      { label: 'Departments',     url: 'https://youtu.be/nw6a_et253Q' },
+      { label: 'Staff Details',   url: 'https://youtu.be/PQbBtpgSdu0' },
+      { label: 'Student Details', url: 'https://youtu.be/hNgS9zmyOPw' },
     ],
   },
 };
