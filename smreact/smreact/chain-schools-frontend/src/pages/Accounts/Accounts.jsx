@@ -730,8 +730,8 @@ const REPORT_TYPES = [
   { key: 'revenue', label: 'Revenue Report', icon: 'fa-arrow-trend-up' },
   { key: 'expense', label: 'Expense Report', icon: 'fa-arrow-trend-down' },
   { key: 'pl', label: 'Profit & Loss', icon: 'fa-scale-balanced' },
-  // { key: 'cash', label: 'Cash In Hand', icon: 'fa-wallet' },  { key: 'books', label: 'Account Books', icon: 'fa-book-open' },
-  { key: 'headwise', label: 'Head-wise Summary', icon: 'fa-layer-group' },
+  { key: 'cash', label: 'Cash In Hand', icon: 'fa-wallet' },
+  // { key: 'books', label: 'Account Books', icon: 'fa-book-open' },  { key: 'headwise', label: 'Head-wise Summary', icon: 'fa-layer-group' },
   { key: 'overview', label: 'Financial Overview', icon: 'fa-chart-pie' },
 ]
 
