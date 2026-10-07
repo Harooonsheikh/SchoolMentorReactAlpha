@@ -555,6 +555,9 @@ const FEE_SETTINGS_DEFAULTS = {
   multipleReceiving:       true,
   advancePaymentReceiving: true,
   psidInstallments:        true,
+  /* Create Installment Challan. API field exactly `particalChallan`.
+     Pehli value false — button tab tak chhupa jab tak toggle ON save na ho. */
+  installmentChallan:      false,
 };
 
 const uiPrintSizeToApi = (size) => (
@@ -591,6 +594,8 @@ function mapFeeSettingsFromApi(row = {}) {
     psidInstallments:        (typeof row.psidInstallmentPayments === 'boolean' ? row.psidInstallmentPayments
                               : typeof row.psidInstallments === 'boolean' ? row.psidInstallments
                               : FEE_SETTINGS_DEFAULTS.psidInstallments),
+    /* Installment Challan ↔ API `particalChallan`. null (not saved yet) = false. */
+    installmentChallan:      row.particalChallan === true,
     createdDate:        row.createdDate ?? null,
     modifiedDate:       row.modifiedDate ?? null,
     createdBy:          row.createdBy ?? null,
@@ -651,6 +656,8 @@ function mapFeeSettingsToApi(settings = {}) {
     advancePaymentReceiving:   settings.advancePaymentReceiving !== false,
     psidInstallmentPayments:   settings.psidInstallments !== false,
     psidInstallments:          settings.psidInstallments !== false, /* alias, harmless */
+    /* UI key installmentChallan → API particalChallan. Pehli save false. */
+    particalChallan:           settings.installmentChallan === true,
     createdDate:       settings.createdDate || now,
     modifiedDate:      now,
     createdBy:         Number(settings.createdBy) || userID,
@@ -680,12 +687,13 @@ function apiRowHasBankField(row) {
 
 /* Fee Module feature controls — API ab columns bhejta hai. localStorage
    fallback jab get-all me boolean na ho (purana record / pehli load). */
-const FEATURE_TOGGLE_KEYS = ['multipleReceiving', 'advancePaymentReceiving', 'psidInstallments'];
+const FEATURE_TOGGLE_KEYS = ['multipleReceiving', 'advancePaymentReceiving', 'psidInstallments', 'installmentChallan'];
 /* UI key → API field name(s) — pehla match jo boolean ho, authority. */
 const FEATURE_TOGGLE_API_FIELDS = {
   multipleReceiving:       ['multipleReceiving'],
   advancePaymentReceiving: ['advancePaymentReceiving'],
   psidInstallments:        ['psidInstallmentPayments', 'psidInstallments'],
+  installmentChallan:      ['particalChallan'],
 };
 /* "Show Discount on Challan" — SERVER ko hamesha TRUE jaata hai (discount calculation kabhi
    toggle par depend na kare; OFF par server multi-month challan ka discount 0 save kar raha
@@ -714,13 +722,21 @@ function readFeatureTogglesLs() {
 function writeFeatureTogglesLs(settings) {
   try {
     const out = {};
-    FEATURE_TOGGLE_KEYS.forEach(k => { out[k] = settings?.[k] !== false; });
+    FEATURE_TOGGLE_KEYS.forEach(k => {
+      /* Installment starts false. `!== false` would store a missing value as true. */
+      out[k] = k === 'installmentChallan' ? settings?.[k] === true : settings?.[k] !== false;
+    });
     localStorage.setItem(featureTogglesLsKey(), JSON.stringify(out));
   } catch { /* ignore */ }
 }
 function apiRowHasFeatureToggle(row, uiKey) {
   if (!row) return false;
   const fields = FEATURE_TOGGLE_API_FIELDS[uiKey] || [uiKey];
+  /* particalChallan: null is still the server's answer (off). Don't let
+     localStorage paint the toggle on while GET stays null. */
+  if (uiKey === 'installmentChallan') {
+    return fields.some(f => Object.prototype.hasOwnProperty.call(row, f));
+  }
   return fields.some(f => typeof row[f] === 'boolean');
 }
 
@@ -734,7 +750,10 @@ export async function getFeeSettings() {
     throw new Error(apiMessage(json) || 'Could not load fee challan settings');
   }
 
-  const rows = Array.isArray(json?.data) ? json.data : [];
+  const raw = json?.data;
+  /* get-all is usually an array. /get/{id} (and some branches) return one object.
+     A single object must still keep its id, or save posts id 0 and the real row stays null. */
+  const rows = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
   /* Empty data = branch has never saved its challan settings → everything off. */
   const settings = rows.length ? mapFeeSettingsFromApi(rows[0]) : blankFeeSettings();
   /* Bank-details toggle: backend field na ho to localStorage se overlay. */

@@ -1224,12 +1224,53 @@ function FeeChallansTab({ toast }) {
   );
 }
 
+/* Aggregate carry line only ("Previous Pending" / "Arrear").
+   Launch-setup "Previous Due" / "Previous Dues" and the migrated
+   "Pending Due" / "Old Dues Till Date" head are real fee heads — a broad
+   /previous|pending|arrear/ test used to skip their balance on the next
+   month's challan list while the printed challan still showed it. */
+function isAggregateCarryRow(r) {
+  return /previous\s*pending|arrears?/i.test(String((r && (r.subHead || r.head || r.name)) || ''));
+}
+
+/* Heads still open for an installment. Receiving is taken off previous first,
+   then off this month's net — same order as the challan list. A head whose
+   remaining balance is 0 is left out, so a fully received amount is not shown. */
+function installmentHeadsOf(rec) {
+  return ((rec && rec.detailRows) || [])
+    .filter(r => !isAggregateCarryRow(r) && !feeService.isLateFineRow(r))
+    .map(r => {
+      const billed = Math.max(0, Math.round(Number(r.challanAmount) || 0));
+      const discount = Math.min(Math.max(0, Math.round(Number(r.discount) || 0)), billed);
+      const prevRaw = r.previousPendingorAdv ?? r.previousPendingOrAdv
+        ?? r.previousAmount ?? r.previousBalance ?? r.prevAmount ?? r.prevBalance
+        ?? r.previousPending ?? r.prevPending ?? r.previousDue ?? r.previousDues
+        ?? r.openingBalance ?? r.arrearAmount;
+      const prevGross = Math.max(0, Math.round(Number(prevRaw) || 0));
+      const recv = Math.max(0, Math.round(Number(r.receivedAmount) || 0));
+      const curNet = Math.max(0, billed - discount);
+      const againstPrev = Math.min(recv, prevGross);
+      const againstCur = Math.max(0, recv - againstPrev);
+      const prev = Math.max(0, prevGross - againstPrev);
+      const curLeft = Math.max(0, curNet - againstCur);
+      /* Challan column follows the unpaid current bill, so received rupees
+         are not still sitting in the row. Discount stays on that unpaid part. */
+      const challanAmount = curLeft > 0 ? curLeft + discount : 0;
+      return {
+        name: String(r.subHead || r.head || ''),
+        challanAmount,
+        discount: curLeft > 0 ? discount : 0,
+        prev,
+        afterDiscount: curLeft + prev,
+      };
+    })
+    .filter(h => h.name && h.afterDiscount > 0);
+}
+
 /* Split a BranchLedger challan record into the family-table figures:
-   transport heads → Transport, previous/pending heads → dues/advance,
-   everything else → Fee; discounts sum across heads. `payable` mirrors the
-   family table's fee + transport − discount (dues/advance are surfaced
-   separately and not rolled into the displayed payable, matching the class
-   challan list's behaviour). */
+   transport heads → Transport, the aggregate carry line → dues/advance,
+   everything else → Fee. A real previous/old-dues head's previousPendingorAdv
+   is added to Total Dues (same as the printed challan). */
 function familyChildFigures(rec) {
   const rows = (rec && rec.detailRows) || [];
   let fee = 0, transport = 0, discount = 0, dues = 0, advance = 0;
@@ -1240,20 +1281,25 @@ function familyChildFigures(rec) {
     const recv = Number(r.receivedAmount) || 0;
     const net = amt - disc;
     const out = Math.max(0, net - recv);   // wasooli ke baad bacha hua
+    const hp = Math.max(0, Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0);
     totalNet += net;
     totalRecv += recv;
     const label = String(r.subHead || r.head || '').toLowerCase().trim();
     /* Fee / Transport / Dues ab BAQAYA dikhate hain — poora receive ho jaye to 0.
        Discount billed hi rehta hai (sirf information ke liye). */
-    if (/previous|pending|arrear/.test(label)) {
+    if (isAggregateCarryRow(r)) {
       if (amt >= 0) dues += out; else advance += Math.abs(amt);
     } else if (label === 'transport') {
       /* SIRF Transport Fee Setup se auto-add hone wali row ka subHead exactly
          "Transport" hota hai. Class ke apne fee heads (jaise "Transport Fee")
          Fee column me hi ginne chahiyein — warna wo galti se Transport dikhte the. */
       transport += out; discount += disc;
+      dues += hp;
     } else {
       fee += out; discount += disc;
+      /* Head ka previous (Pending Due 1,200) list ke Total Dues me — challan jaisa.
+         Received pehle is mahine ke bill par lag chuka (out), is liye yahan poora hp. */
+      dues += hp;
     }
   });
   /* Over-receiving (total se zyada wasool) → extra raqam ADVANCE. */
@@ -1556,6 +1602,8 @@ function FamilyTreeChallansList({ toast }) {
   const [bulkGen, setBulkGen] = useState(null);
   const [challanPreview, setChallanPreview] = useState(null);
   const [downloadCtx, setDownloadCtx] = useState(null);
+  /* Installment challan modal — { classMeta, student, rec, heads } */
+  const [installmentCtx, setInstallmentCtx] = useState(null);
 
   const apply = () => {
     setAppliedMonth(month); setAppliedYear(year);
@@ -1662,6 +1710,89 @@ function FamilyTreeChallansList({ toast }) {
       heads: familyHeads,
       mode: 'single',
     });
+  };
+
+  /* Installment challan — same slip as Individual, against this child's ledger. */
+  const openInstallment = (f, ch) => {
+    const rec = recMap[keyOf(f.key, ch.reg)];
+    if (!rec) { toast('Generate the challan first', 'warning'); return; }
+    if (challanFullyPaid(rec)) { toast('This challan is fully received', 'warning'); return; }
+    const heads = installmentHeadsOf(rec);
+    if (!heads.length) { toast('This challan is fully received', 'warning'); return; }
+    setInstallmentCtx({
+      classMeta: { key: `g${ch.gradeID}-s${ch.sectionID}`, cls: ch.cls, sec: ch.sec },
+      student: ch,
+      rec,
+      heads,
+    });
+  };
+
+  const createInstallmentChallan = async (cfg, amount) => {
+    const { classMeta: c, student: s, rec, heads } = cfg;
+    const amt = Math.round(Number(amount) || 0);
+    const totalInstallment = amt * heads.length;
+    const branchID = Number(sessionStorage.getItem('branchID')) || Number(rec.branchID) || 1;
+    const userID = Number(sessionStorage.getItem('UserID')) || 0;
+    const mo = Number(rec.month) || (monthIdx + 1);
+    const yr = Number(rec.year) || Number(appliedYear) || new Date().getFullYear();
+    const dueISO = (() => {
+      const d = new Date(rec.dueDate || Date.now());
+      return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    })();
+    const res = await feeService.generatePsid({
+      studentID: Number(rec.studentID || s.applicantsID || s.studentID) || 0,
+      branchID,
+      month: mo,
+      year: yr,
+      amount: totalInstallment,
+      fullName: String(s.name || rec.fullName || ''),
+      mobileNo: String(s.mobile || s.phone || ''),
+      dueDate: dueISO,
+      ledgerId: Number(rec.id) || 0,
+      forceNew: true,
+      modifiedBy: userID,
+    });
+    let psid = feeService.psidFromResponse(res);
+    if (!psid) {
+      try {
+        const list = await feeService.getWithInstallments({
+          branchId: branchID,
+          studentId: Number(rec.studentID || s.applicantsID || s.studentID) || 0,
+          month: mo,
+          year: yr,
+        });
+        const latest = Array.isArray(list) && list.length ? list[list.length - 1] : null;
+        psid = latest ? feeService.psidOf(latest) : '';
+      } catch (e) { /* best-effort */ }
+    }
+    try {
+      const instChallan = {
+        ...rec,
+        plpsid: psid,
+        detailRows: heads.map(h => ({
+          head: 'Account Payable', subHead: String(h.name || ''),
+          challanAmount: amt, discount: 0, receivedAmount: 0,
+        })),
+      };
+      const html = buildChallanHTML({
+        classMeta: c,
+        students: [{ ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan }],
+        installmentSlip: true,
+        heads: headsForChildGrade(s.gradeID),
+        settings, discountMap: {}, bw: false, size: settings.printSize || 'a4', school: branchHeader,
+      });
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+        w.onload = () => { try { w.focus(); w.print(); } catch (err) { /* ignore */ } };
+      } else {
+        toast('Please allow pop-ups to download the challan', 'error');
+      }
+    } catch (e) { /* PSID already generated */ }
+    toast(`Installment ${psid || 'challan'} challan created`, 'success');
+    setInstallmentCtx(null);
+    loadLedgers();
   };
 
   /* ── Preview / Download ── */
@@ -2088,6 +2219,21 @@ function FamilyTreeChallansList({ toast }) {
                                 {billedFine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(billedFine)}</span>}
                               </td>
                               <td className="fee-center fee-st-actions">
+                                {generated && settings.installmentChallan === true && (
+                                  challanFullyPaid(chRec) ? (
+                                    <Tooltip text="Fully received">
+                                      <button className="fee-iconbtn" disabled aria-disabled="true" style={{ opacity: .4, cursor: 'not-allowed' }}>
+                                        <i className="fa-solid fa-money-check-dollar"></i>
+                                      </button>
+                                    </Tooltip>
+                                  ) : (
+                                    <Tooltip text={`Create installment challan for ${ch.name}`}>
+                                      <button className="fee-iconbtn" onClick={() => openInstallment(f, ch)}>
+                                        <i className="fa-solid fa-money-check-dollar"></i>
+                                      </button>
+                                    </Tooltip>
+                                  )
+                                )}
                                 {generated ? (
                                   <Tooltip text={challanHasReceiving(chRec) ? DEL_LOCKED_TIP : `Delete ${appliedMonth} challan for ${ch.name}`}>
                                     <button
@@ -2200,6 +2346,13 @@ function FamilyTreeChallansList({ toast }) {
           else if (ctx.family) runDownload(ctx.family, picks); // combined family slip
         }}
       />
+
+      <InstallmentChallanModal
+        cfg={installmentCtx}
+        onClose={() => setInstallmentCtx(null)}
+        onCreate={createInstallmentChallan}
+        toast={toast}
+      />
     </>
   );
 }
@@ -2214,7 +2367,9 @@ function FamilyTreeChallansList({ toast }) {
    5000 receive ke baad bhi Current pe phantom 500 reh jata tha. */
 function challanFigures(rec, byHead = null) {
   const rows = (rec && rec.detailRows) || [];
-  const isPrevRow = (r) => /previous|pending|arrear/.test(String(r.subHead || r.head || '').toLowerCase());
+  /* Sirf aggregate "Previous Pending" / Arrear. "Previous Due" aur "Pending Due"
+     asli heads hain — unka previous list se skip nahi hona. */
+  const isPrevRow = (r) => isAggregateCarryRow(r);
   /* Head-wise: kisi non-prev head par per-head previousPendingorAdv ho to previous PER-HEAD me
      hai — aise me aggregate "Previous Pending" rows ko SKIP karte hain (warna previous DO baar
      ginta: ek per-head, ek aggregate row → fully-paid par bhi Total Dues 1,500 dikhता tha). */
@@ -2269,7 +2424,7 @@ function challanFigures(rec, byHead = null) {
 function advConsumedOf(rec) {
   if (!rec || !Array.isArray(rec.detailRows)) return 0;
   return rec.detailRows
-    .filter(r => /previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (Number(r.challanAmount) || 0) < 0)
+    .filter(r => isAggregateCarryRow(r) && (Number(r.challanAmount) || 0) < 0)
     .reduce((a, r) => a + Math.abs(Number(r.receivedAmount) || 0), 0);
 }
 
@@ -2282,7 +2437,7 @@ function advConsumedOf(rec) {
    prevOut override branches isay alag rakhte hain, warna −3,500 advance 0 ho jaata tha. */
 function challanOverpaid(rec, byHead = null) {
   if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return 0;
-  const isPrevRow = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  const isPrevRow = (r) => isAggregateCarryRow(r);
   const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
   const norm = (s) => String(s || '').toLowerCase().trim();
   let outstanding = 0;
@@ -2303,7 +2458,7 @@ function challanOverpaid(rec, byHead = null) {
 
 function challanFullyPaid(rec, byHead = null) {
   if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return false;
-  const isPrevRow = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  const isPrevRow = (r) => isAggregateCarryRow(r);
   /* Head-wise: previous per-head hai to aggregate "Previous Pending" row SKIP (double-count na
      ho — warna fully-paid ke bawajood us row ki wajah se outstanding 1,500 reh jaata tha). */
   const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
@@ -2344,8 +2499,6 @@ function FeeChallansList({ toast }) {
   const canChCreate = can('Fee', 'Fee Challans', 'Create');
   const canChDelete = can('Fee', 'Fee Challans', 'Delete');
   const canChDownload = can('Fee', 'Fee Challans', 'Download');
-  /* Installment challan sirf Branch 1 par — baaqi branches par button hide. */
-  const isBranch1 = Number(sessionStorage.getItem('branchID')) === 1;
   const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
@@ -2642,7 +2795,7 @@ function FeeChallansList({ toast }) {
           const consumed = advConsumedOf(rec);
           const detail = rec.detailRows || [];
           const hasHeadPrev = detail.some(r =>
-            !/previous|pending|arrear/i.test(String(r.subHead || r.head || ''))
+            !isAggregateCarryRow(r)
             && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0
           );
           const byHeadSum = byHead
@@ -2854,28 +3007,18 @@ function FeeChallansList({ toast }) {
   const openInstallment = (c, s) => {
     const rec = challanMap[keyOf(c.key, s.reg)];
     if (!rec) { toast('Generate the challan first', 'warning'); return; }
-    const isPrevRow = (r) => /previous\s*pending|arrear|pending/i.test(String(r.subHead || r.head || ''));
-    const heads = (rec.detailRows || [])
-      .filter(r => !isPrevRow(r) && !feeService.isLateFineRow(r) && Math.round(Number(r.challanAmount) || 0) > 0)
-      .map(r => {
-        const challanAmount = Math.round(Number(r.challanAmount) || 0);
-        const discount = Math.min(Math.round(Number(r.discount) || 0), challanAmount);
-        return { name: r.subHead || r.head || '', challanAmount, discount, afterDiscount: challanAmount - discount };
-      });
-    if (!heads.length) { toast('This challan has no billable heads for an installment', 'warning'); return; }
+    if (challanFullyPaid(rec)) { toast('This challan is fully received', 'warning'); return; }
+    const heads = installmentHeadsOf(rec);
+    if (!heads.length) { toast('This challan is fully received', 'warning'); return; }
     setInstallmentCtx({ classMeta: c, student: s, rec, heads });
   };
 
-  /* Create the installment challan. The installment amount is the SAME per head,
-     so the total the new PSID collects = amt × heads. We hit generate-psid against
-     the EXISTING challan's ledger id — the backend mints a fresh PSID (forceNew)
-     for that amount and returns it — then download a slip that shows the per-head
-     installment amounts with the new PSID stamped on it. Throws propagate to the
-     modal so it can keep itself open and surface the error. */
+  /* One amount is typed and copied onto every head. PSID total = that amount × heads.
+     The slip prints the typed amount as Standard and Net — no discount, no previous. */
   const createInstallmentChallan = async (cfg, amount) => {
     const { classMeta: c, student: s, rec, heads } = cfg;
     const amt = Math.round(Number(amount) || 0);
-    const totalInstallment = amt * heads.length;   // PSID amount = sum of per-head installments
+    const totalInstallment = amt * heads.length;
     const branchID = Number(sessionStorage.getItem('branchID')) || Number(rec.branchID) || 1;
     const userID = Number(sessionStorage.getItem('UserID')) || 0;
     const mo = Number(rec.month) || (monthIdx + 1);
@@ -2919,13 +3062,14 @@ function FeeChallansList({ toast }) {
         plpsid: psid,   // psidOf() isay slip par naya PSID/QR banane ke liye padhta hai
         detailRows: heads.map(h => ({
           head: 'Account Payable', subHead: String(h.name || ''),
-          challanAmount: amt, discount: h.discount, receivedAmount: 0,
+          challanAmount: amt, discount: 0, receivedAmount: 0,
         })),
       };
-      const student = { ...s, _challan: instChallan };
+      const student = { ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan };
       const html = buildChallanHTML({
         classMeta: c, students: [student], heads: headsMap[c.key] || [],
         settings, discountMap: {}, bw: false, size: settings.printSize || 'a4', school: branchHeader,
+        installmentSlip: true,
       });
       const w = window.open('', '_blank');
       if (w) {
@@ -3408,7 +3552,7 @@ function FeeChallansList({ toast }) {
                             const consumed = advConsumedOf(rec);
                             const rows = rec.detailRows || [];
                             const hasHeadPrev = rows.some(r =>
-                              !/previous|pending|arrear/i.test(String(r.subHead || r.head || ''))
+                              !isAggregateCarryRow(r)
                               && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0
                             );
                             /* Head-wise: previous IS challan par bill / receive ho chuka —
@@ -3459,12 +3603,20 @@ function FeeChallansList({ toast }) {
                                 )}
                               </td>
                               <td className="fee-center fee-st-actions">
-                                {generated && isBranch1 && (
-                                  <Tooltip text={`Create installment challan for ${s.name}`}>
-                                    <button className="fee-iconbtn" onClick={() => openInstallment(c, s)}>
-                                      <i className="fa-solid fa-money-check-dollar"></i>
-                                    </button>
-                                  </Tooltip>
+                                {generated && settings.installmentChallan === true && (
+                                  challanFullyPaid(rec) ? (
+                                    <Tooltip text="Fully received">
+                                      <button className="fee-iconbtn" disabled aria-disabled="true" style={{ opacity: .4, cursor: 'not-allowed' }}>
+                                        <i className="fa-solid fa-money-check-dollar"></i>
+                                      </button>
+                                    </Tooltip>
+                                  ) : (
+                                    <Tooltip text={`Create installment challan for ${s.name}`}>
+                                      <button className="fee-iconbtn" onClick={() => openInstallment(c, s)}>
+                                        <i className="fa-solid fa-money-check-dollar"></i>
+                                      </button>
+                                    </Tooltip>
+                                  )
                                 )}
                                 {generated ? (
                                   <Tooltip text={challanHasReceiving(rec) ? DEL_LOCKED_TIP : `Delete ${appliedMonth} challan for ${s.name}`}>
@@ -4459,20 +4611,13 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   INSTALLMENT CHALLAN MODAL — split an already-generated challan into an
-   installment. Every billable head is shown with its Challan Amount,
-   Discount and After-Discount (all fixed), plus one editable "Installment
-   Amount" column. Business rules:
-     1. The installment amount is the SAME across every head — typing it
-        against any head mirrors it into the others.
-     2. Each head's installment amount must be > 0 and ≤ that head's
-        After-Discount amount (so the shared amount can't exceed the
-        smallest after-discount).
-   On Create the parent posts create-challan-installment, reads the new
-   PSID back from the DB, downloads the slip, toasts and closes.
+   INSTALLMENT CHALLAN MODAL — one amount typed on any head is copied onto
+   every head. Cap is that head's After Discount (challan − discount, plus
+   head-wise previous when the head has one). Create posts generate-psid
+   for amount × heads, then prints that same amount as Standard and Net.
    ═══════════════════════════════════════════════════════════════════ */
 function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
-  const [amount, setAmount] = useState('');   // shared installment amount (all heads)
+  const [amount, setAmount] = useState('');
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -4493,21 +4638,21 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
 
   const { classMeta, student, heads } = cfg;
   const amt = Math.round(Number(amount) || 0);
-  /* Rule #2 ki hadd: sabse chhoti after-discount. Is se zyada par create block. */
-  const minAfter = heads.reduce((m, h) => Math.min(m, h.afterDiscount), Infinity);
-  const overHead = heads.find(h => amt > h.afterDiscount) || null;
+  const rows = heads.map(h => ({ ...h, amt, over: amt > h.afterDiscount }));
+  const overHead = rows.find(h => h.over) || null;
+  const showPrev = rows.some(h => h.prev > 0);
+  const totalChallan = rows.reduce((a, h) => a + h.challanAmount, 0);
+  const totalDiscount = rows.reduce((a, h) => a + h.discount, 0);
+  const totalPrev = rows.reduce((a, h) => a + (h.prev || 0), 0);
+  const totalAfter = rows.reduce((a, h) => a + h.afterDiscount, 0);
+  const totalInstallment = amt * rows.length;
   const invalid = amt <= 0 || !!overHead;
-
-  const totalChallan = heads.reduce((a, h) => a + h.challanAmount, 0);
-  const totalDiscount = heads.reduce((a, h) => a + h.discount, 0);
-  const totalAfter = heads.reduce((a, h) => a + h.afterDiscount, 0);
-  const totalInstallment = amt * heads.length;
 
   const handleCreate = async () => {
     if (creating) return;
     if (amt <= 0) { toast('Enter an installment amount', 'warning'); return; }
     if (overHead) {
-      toast(`Installment for “${overHead.name}” cannot exceed its after-discount amount (${money(overHead.afterDiscount)})`, 'error');
+      toast(`Installment cannot exceed “${overHead.name}” after-discount amount (${money(overHead.afterDiscount)})`, 'error');
       return;
     }
     try {
@@ -4546,8 +4691,9 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
             <i className="fa-solid fa-circle-info"></i>
             <span>
               Enter the <strong>installment amount</strong> against any head — the same amount
-              applies to every head automatically. Each amount must be at most that head's
-              <strong> after-discount</strong> value.
+              applies to every head automatically. Amounts already received are taken off.
+              Each amount must be at most that head's <strong>after-discount</strong> balance
+              {showPrev ? ' (after-discount already includes the previous still left)' : ''}.
             </span>
           </div>
 
@@ -4559,32 +4705,30 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
                   <th className="fee-right">Challan Amount</th>
                   <th className="fee-right">Discount</th>
                   <th className="fee-right">After Discount</th>
+                  {showPrev && <th className="fee-right">Previous Amount</th>}
                   <th className="fee-right">Installment Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {heads.map(h => {
-                  const over = amt > h.afterDiscount;
-                  return (
+                {rows.map(h => (
                     <tr key={h.name}>
                       <td><b>{h.name}</b></td>
-                      <td className="fee-right">{money(h.challanAmount)}</td>
+                      <td className="fee-right">{h.challanAmount ? money(h.challanAmount) : '—'}</td>
                       <td className="fee-right">{h.discount ? money(h.discount) : '—'}</td>
                       <td className="fee-right">{money(h.afterDiscount)}</td>
+                      {showPrev && <td className="fee-right">{h.prev ? money(h.prev) : '—'}</td>}
                       <td className="fee-right">
                         <input
                           type="number"
                           min="0"
                           max={h.afterDiscount}
-                          /* 0 par field khaali dikhe. Kisi ek me type karo → sab sync. */
                           value={amount}
                           onChange={e => setAmount(e.target.value)}
-                          style={over ? { borderColor: '#DC2626', color: '#DC2626' } : undefined}
+                          style={h.over ? { borderColor: '#DC2626', color: '#DC2626' } : undefined}
                         />
                       </td>
                     </tr>
-                  );
-                })}
+                ))}
               </tbody>
               <tfoot>
                 <tr className="fee-dm-total-row">
@@ -4592,6 +4736,7 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
                   <td className="fee-right">{money(totalChallan)}</td>
                   <td className="fee-right">{money(totalDiscount)}</td>
                   <td className="fee-right">{money(totalAfter)}</td>
+                  {showPrev && <td className="fee-right">{money(totalPrev)}</td>}
                   <td className="fee-right fee-dm-net">{money(totalInstallment)}</td>
                 </tr>
               </tfoot>
@@ -4602,8 +4747,7 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
             <div className="fee-info" style={{ marginTop: 12, background: '#FEF2F2', color: '#B91C1C' }}>
               <i className="fa-solid fa-triangle-exclamation"></i>
               <span>
-                Installment amount cannot exceed <strong>{money(minAfter)}</strong> — the smallest
-                after-discount amount (head “{overHead.name}”).
+                “{overHead.name}” cannot exceed its after-discount amount ({money(overHead.afterDiscount)}).
               </span>
             </div>
           )}
@@ -12977,7 +13121,7 @@ function RepActions({ title, onGenerate, previewFallback = true }) {
 /* The (month, year) pairs a report spans, oldest first. Capped so a wide date
    range can't fan out into an unbounded number of requests. */
 /* Aggregate carry rows ("Previous Pending"/arrear) — prevOutFromLedgerRows jaisa. */
-const isLedgerCarryRow = (r) => /previous\s*pending|arrears?/i.test(String(r.subHead || r.head || ''));
+const isLedgerCarryRow = (r) => isAggregateCarryRow(r);
 
 /* Ek challan ki ASLI wasooli receipts (installment-wise) — Collection & Advance
    Adjustment reports ke liye. Har installment = ek receipt: date, time, cash amount,
@@ -13180,8 +13324,11 @@ function ledgerPeriods(fromM, fromY, toM, toY) {
    dobara compute kar ke payable/paid + Head-Wise me shaamil ki jaati hai. Jis din
    backend row bhejne lage, isLateFineRow match ho jaayegi aur ye reconstruction
    apne aap skip ho jaayegi (double-count nahi hoga). */
+const isOldDuesName = (r) => /old\s*dues|dues\s*till/i.test(String(r?.subHead || r?.head || ''));
+
 export function ledgerModel(recs, settings = null) {
-  const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  const isPrev = (r) => !isOldDuesName(r)
+    && /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
   const headPrevOf = (r) => +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
   /* Mahine-wise sort — running-ledger sahi chalne ke liye. */
   const list = (recs || []).slice().sort(
@@ -13316,7 +13463,9 @@ export function ledgerModel(recs, settings = null) {
       (latest.detailRows || [])
         .filter(r => {
           if (feeService.isLateFineRow(r)) return false;
-          if (/previous|pending|arrear/i.test(String(r.subHead || r.head || ''))) return false;
+          /* Aggregate "Previous Pending" skip — warna wahi baqaya head ke saath do dafa.
+             Previous Due / Pending Due / Old Dues Till Date yahan rehte hain. */
+          if (isAggregateCarryRow(r)) return false;
           const hp = headPrevOf(r);
           const pend = ((+r.challanAmount || 0) - (+r.discount || 0) + hp) - ledgerRowRecv(r);
           return pend > 0;
@@ -13324,6 +13473,19 @@ export function ledgerModel(recs, settings = null) {
         .map(r => r.subHead || r.head || '—'),
     ))
     : [];
+
+    /* Old Dues Till Date ka baqaya (aakhri challan se) */
+  let oldDues = 0;
+  if (latest && Array.isArray(latest.detailRows)) {
+    latest.detailRows.forEach(r => {
+      if (!isOldDuesName(r)) return;
+      const hp = headPrevOf(r);
+      const pend = (+r.challanAmount || 0) - (+r.discount || 0) + hp - ledgerRowRecv(r);
+      if (pend > 0) oldDues += pend;
+    });
+  }
+  oldDues = Math.round(oldDues);
+  const dueISO = latest ? challanDueISO(latest) : '';
 
   return {
     billed: list.length > 0,
@@ -13339,6 +13501,7 @@ export function ledgerModel(recs, settings = null) {
     heads: Array.from(heads.values()),
     recs: list,
     unpaidHeads,
+    oldDues, dueISO,
   };
 }
 
@@ -13546,21 +13709,109 @@ function ReportPanelDefaulter({ toast }) {
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
   const [year, setYear] = useState(String(new Date().getFullYear()));
 
-  /* "All" walks January → the current month of the picked year and aggregates;
-     "Monthly" pulls just the selected month. Same ledger call either way. */
   const periods = useMemo(() => {
     const now = new Date();
     const y = Number(year) || now.getFullYear();
-    if (seg === 'month') return [{ month: FEE_MONTHS.indexOf(month) + 1, year: y }];
-    const upto = y === now.getFullYear() ? now.getMonth() + 1 : 12;
-    return ledgerPeriods(1, y, upto, y);
+    const endM = seg === 'month'
+      ? FEE_MONTHS.indexOf(month) + 1
+      : (y === now.getFullYear() ? now.getMonth() + 1 : 12);
+    const back = new Date(y, endM - 13, 1);   // 12 mahine peeche se, taake carry-forward aaye
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), endM, y);
   }, [seg, month, year]);
 
-  const { classes, studentsMap, allStudents, totals, loading, error } = useLedgerReportData(periods);
+  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+
+  /* Old ERP ka baqaya: applicantID -> amount */
+  const [oldErp, setOldErp] = useState(new Map());
+  useEffect(() => {
+    if (!classes.length) return undefined;
+    let alive = true;
+    const m = OLD_ERP_LAST.monthIdx + 1;
+    const y = OLD_ERP_LAST.year;
+    const pairs = classes.map(c => ({ gradeId: c._gradeId, sectionId: c._sectionId }));
+    Promise.all([
+      feeService.getOldErpLedgerForClasses(m, y, pairs).catch(() => ({ rows: [] })),
+      feeService.getOldErpLedger(m, y).catch(() => ({ summary: [] })),
+    ]).then(([byClass, wide]) => {
+      if (!alive) return;
+      const map = new Map();
+      const seen = new Set();
+      [...(byClass.rows || []), ...(wide.summary || [])].forEach(r => {
+        const id = String(r?.applicantID ?? r?.applicantsID ?? r?.applicantId ?? '').trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        const net = oldErpRowTotals(r).net;
+        if (net > 0) map.set(id, net);
+      });
+      setOldErp(map);
+    });
+    return () => { alive = false; };
+  }, [classes]);
+
+  /* Defaulter = baqaya > 0 AUR aaj > due date */
+  const { groups, totals } = useMemo(() => {
+    const today = localTodayISO();
+    const nowD = new Date();
+    const yy = Number(year) || nowD.getFullYear();
+    const endM = seg === 'month'
+      ? FEE_MONTHS.indexOf(month) + 1
+      : (yy === nowD.getFullYear() ? nowD.getMonth() + 1 : 12);
+    const monthKey = yy * 12 + endM;
+    const cutoffISO = `${yy}-${String(endM).padStart(2, '0')}-${String(new Date(yy, endM, 0).getDate()).padStart(2, '0')}`;
+    const t = { def: 0, pend: 0, fine: 0, finePend: 0, oldDues: 0, n: 0, paid: 0 };
+    const out = classes.map(c => {
+      const list = [];
+      (studentsMap[c.key] || []).forEach(s => {
+        const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
+        if (!m) return;
+        /* per-head baqaya (carry-forward samet) — Old Dues Till Date bhi yahin se */
+        const entries = [...ledgerPendingAsOf(m.recs || [], monthKey, cutoffISO).entries()]
+          .map(([name, amt]) => ({ name, amt: Math.round(+amt || 0) }))
+          .filter(e => e.amt > 0 && !feeService.isLateFineRow({ subHead: e.name }));
+        let rem = m.remaining;
+        let oldD = entries
+          .filter(e => isOldDuesName({ subHead: e.name }))
+          .reduce((a, e) => a + e.amt, 0) || (m.oldDues || 0);
+        let due = m.dueISO || '';
+        /* Unpaid Heads = har baqaya head, Previous Due / Pending Due / Old Dues Till Date samet.
+           Alag "Old Dues" column nahi. */
+        const byName = new Map(entries.map(e => [e.name, e.amt]));
+        const latestRec = (m.recs || [])[Math.max(0, (m.recs || []).length - 1)];
+        (latestRec?.detailRows || []).forEach(r => {
+          if (feeService.isLateFineRow(r) || isAggregateCarryRow(r)) return;
+          const name = r.subHead || r.head || '';
+          if (!name) return;
+          const named = isOldDuesName(r) || /previous|pending|arrear/i.test(name);
+          if (!named || byName.has(name)) return;
+          const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
+          const pend = Math.round((+r.challanAmount || 0) - (+r.discount || 0) + hp - ledgerRowRecv(r));
+          if (pend > 0) byName.set(name, pend);
+        });
+        let heads = byName.size
+          ? [...byName.entries()].map(([name, amt]) => `${headLabel(name)} (${amt.toLocaleString('en-PK')})`)
+          : (m.unpaidHeads || []);
+        if (!m.billed && seg === 'all') {
+          const o = oldErp.get(String(s.applicantsID ?? s.studentID)) || 0;
+          if (o > 0) { rem = o; oldD = o; due = ''; heads = [`Old Dues Till Date (${o.toLocaleString('en-PK')})`]; }
+        }
+        if (m.billed || rem > 0) t.n += 1;
+        if (rem <= 0) { if (m.billed) t.paid += 1; return; }
+        /* Old Dues pehle hi purane mahine ka hai → hamesha defaulter.
+           Baqi heads sirf due date guzarne ke baad. */
+        const overdue = oldD > 0 || !due || due < today;
+        if (!overdue) return;
+        list.push({ s, rem, oldD, due, heads, finePend: m.finePend || 0 });
+        t.def += 1; t.pend += rem; t.oldDues += oldD;
+        t.fine += m.fine || 0; t.finePend += m.finePend || 0;
+      });
+      return { c, list };
+    });
+    return { groups: out, totals: t };
+  }, [classes, studentsMap, allStudents, oldErp, seg,month, year]);
 
   const reportTitle = `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`;
   const downloadReport = (style, format) => {
-    const html = buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope: seg, isBW: style === 'bw', school });
+    const html = buildRepDefaulterHTML({ groups, totals, month, year, scope: seg, isBW: style === 'bw', school });
     openPrintReport(html, reportTitle, toast, format);
   };
 
@@ -13578,11 +13829,8 @@ function ReportPanelDefaulter({ toast }) {
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
         <span>
-          Defaulters are students whose challan heads are still unpaid in the ledger (no amount received yet).
-          {seg === 'all'
-            ? ' All Fee Defaulters aggregates every month from January up to the current month of the selected year.'
-            : ' Monthly Fee Defaulters shows only the selected month.'}
-          {' '}Open any class to see student dues; download a class-wise A4 report via Preview / PDF.
+          Student tab defaulter banta hai jab challan ki <b>due date guzar jaye</b> (due 11 ho to 12 se) aur baqaya baqi ho.
+          Previous Due aur Old Dues Till Date <b>Unpaid Heads</b> mein dikhte hain.
         </span>
       </div>
 
@@ -13592,10 +13840,8 @@ function ReportPanelDefaulter({ toast }) {
         ['k-red', 'fa-user-clock', 'Total Defaulters', `${totals.def} students`, ''],
         ['k-amber', 'fa-money-bill-trend-up', 'Total Outstanding', fmtRs(totals.pend),
           totals.finePend > 0 ? `incl. fine ${fmtRs(totals.finePend)}` : ''],
-        /* Late fine apni tile me — kitni banni aur usme se kitni wasool hui. */
         ['k-red', 'fa-triangle-exclamation', 'Fine', fmtRs(totals.fine),
-          totals.fine > 0 ? `${fmtRs(totals.fineRecv)} collected · ${fmtRs(totals.finePend)} pending` : 'No overdue challans'],
-        ['k-blue', 'fa-users', 'Students Billed', `${totals.n}`, ''],
+          totals.fine > 0 ? `${fmtRs(totals.fine - totals.finePend)} collected · ${fmtRs(totals.finePend)} pending` : 'No overdue challans'],
         ['k-green', 'fa-circle-check', 'Fully Cleared', `${totals.paid} students`, ''],
       ])}
 
@@ -13605,7 +13851,6 @@ function ReportPanelDefaulter({ toast }) {
             <div className="fee-field">
               <span className="fee-label">Select Month</span>
               <div className="fee-select-wrap">
-                {/* The All scope spans every month, so the picker only drives the Monthly view. */}
                 <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)} disabled={seg === 'all'}>
                   {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
                 </select>
@@ -13634,12 +13879,8 @@ function ReportPanelDefaulter({ toast }) {
           <div className="fee-th fee-right">Total Pending</div>
           <div className="fee-th fee-center">Details</div>
         </div>
-        {classes.map((c, i) => {
-          const defs = (studentsMap[c.key] || []).map(s => {
-            const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
-            return m ? { s, m } : null;
-          }).filter(x => x && x.m.remaining > 0);
-          const pend = defs.reduce((t, x) => t + x.m.remaining, 0);
+        {groups.map(({ c, list }, i) => {
+          const pend = list.reduce((a, x) => a + x.rem, 0);
           const isOpen = openKey === c.key;
           return (
             <div key={c.key} className="fee-rowwrap">
@@ -13654,7 +13895,7 @@ function ReportPanelDefaulter({ toast }) {
               </div>
               <div className={`fee-detail${isOpen ? ' open' : ''}`}>
                 <div className="fee-detail-inner">
-                  {defs.length === 0 ? (
+                  {list.length === 0 ? (
                     <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18, fontSize: 12.5 }}>No defaulters in this section.</div>
                   ) : (
                     <>
@@ -13663,30 +13904,24 @@ function ReportPanelDefaulter({ toast }) {
                         <table className="fee-stbl">
                           <thead>
                             <tr>
-                              <th>Sn.</th>
-                              <th>Student Name</th>
-                              <th>Father</th>
-                              <th>Reg No</th>
-                              <th>Contact</th>
-                              <th>Unpaid Heads</th>
-                              {/* Due date guzarne par banti fine — Total Pending me shaamil. */}
+                              <th>Sn.</th><th>Student Name</th><th>Father</th><th>Reg No</th><th>Contact</th>
+                              <th>Unpaid Heads</th><th>Due Date</th>
                               <th className="fee-right">Fine</th>
                               <th className="fee-right">Total Pending</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {defs.map((x, j) => (
+                            {list.map((x, j) => (
                               <tr key={x.s.reg}>
                                 <td className="fee-num">{j + 1}</td>
                                 <td><b>{x.s.name}</b></td>
                                 <td>{x.s.father || '—'}</td>
                                 <td>{x.s.reg}</td>
                                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{studentPhone(x.s)}</td>
-                                <td>{x.m.unpaidHeads.length ? x.m.unpaidHeads.join(', ') : '—'}</td>
-                                <td className={`fee-right${x.m.finePend > 0 ? ' fee-fine' : ''}`}>
-                                  {x.m.finePend > 0 ? money(x.m.finePend) : '0'}
-                                </td>
-                                <td className="fee-right fee-neg">{money(x.m.remaining)}</td>
+                                <td>{x.heads.length ? x.heads.join(', ') : '—'}</td>
+                                <td>{fmtDMY(x.due) || '—'}</td>
+                                <td className={`fee-right${x.finePend > 0 ? ' fee-fine' : ''}`}>{x.finePend > 0 ? money(x.finePend) : '0'}</td>
+                                <td className="fee-right fee-neg">{money(x.rem)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -16618,34 +16853,31 @@ function repWrap(title, filters, body, isBW = false, school = null) {
   return buildStandardReportHtml({ title: escHtml(title), format: 'pdf', isColor, bodyHtml, schoolName: feeKitSchoolName(school) && escHtml(feeKitSchoolName(school)) });
 }
 
-function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope = 'all', isBW = false, school = null }) {
-  const blocks = classes.map(c => {
-    const defs = (studentsMap[c.key] || []).map(s => {
-      const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
-      return m && m.remaining > 0 ? { s, m } : null;
-    }).filter(Boolean);
-    if (!defs.length) return '';
-    const sub = defs.reduce((a, x) => a + x.m.remaining, 0);
-    const subFine = defs.reduce((a, x) => a + (x.m.finePend || 0), 0);
-    return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${defs.length} defaulter(s)</div>
+
+function buildRepDefaulterHTML({ groups, totals, month, year, scope = 'all', isBW = false, school = null }) {
+  const fmt = (n) => (+n || 0).toLocaleString('en-PK');
+  const blocks = (groups || []).map(({ c, list }) => {
+    if (!list.length) return '';
+    const sub = list.reduce((a, x) => a + x.rem, 0);
+    const subFine = list.reduce((a, x) => a + x.finePend, 0);
+    return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${list.length} defaulter(s)</div>
       <table class="rep-tbl">
-        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th class="r">Fine</th><th class="r">Pending</th></tr></thead>
-        <tbody>${defs.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td>${escHtml((x.m.unpaidHeads || []).join(', ') || '—')}</td><td class="r ${x.m.finePend > 0 ? 'neg' : ''}">${(x.m.finePend || 0).toLocaleString('en-PK')}</td><td class="r neg">${(x.m.remaining).toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
-        <tfoot><tr class="rep-tot"><td colspan="6">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${subFine.toLocaleString('en-PK')}</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
+        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th>Due Date</th><th class="r">Fine</th><th class="r">Pending</th></tr></thead>
+        <tbody>${list.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td>${escHtml(x.heads.join(', ') || '—')}</td><td>${escHtml(fmtDMY(x.due) || '—')}</td><td class="r ${x.finePend > 0 ? 'neg' : ''}">${fmt(x.finePend)}</td><td class="r neg">${fmt(x.rem)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="rep-tot"><td colspan="7">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${fmt(subFine)}</td><td class="r">${fmt(sub)}</td></tr></tfoot>
       </table>`;
   }).filter(Boolean).join('');
 
   return repWrap(
     scope === 'month' ? `Fee Defaulter List — ${month} ${year}` : 'Fee Defaulter List — All',
-    `<span><b>Scope:</b> ${scope === 'month' ? `${month} ${year}` : 'All Periods'}</span><span><b>Defaulters:</b> ${totals.def}</span><span><b>Outstanding:</b> Rs. ${totals.pend.toLocaleString('en-PK')}</span>`,
+    `<span><b>Scope:</b> ${scope === 'month' ? `${month} ${year}` : 'All Periods'}</span><span><b>Defaulters:</b> ${totals.def}</span><span><b>Outstanding:</b> Rs. ${fmt(totals.pend)}</span>`,
     `<div class="kpi-row">
       <div class="kpi"><div class="l">Total Defaulters</div><div class="v">${totals.def}</div></div>
-      <div class="kpi"><div class="l">Outstanding</div><div class="v">Rs. ${totals.pend.toLocaleString('en-PK')}</div></div>
-      <div class="kpi"><div class="l">Fine (pending)</div><div class="v">Rs. ${(totals.finePend || 0).toLocaleString('en-PK')}</div></div>
-      <div class="kpi"><div class="l">Students Billed</div><div class="v">${totals.n}</div></div>
+      <div class="kpi"><div class="l">Outstanding</div><div class="v">Rs. ${fmt(totals.pend)}</div></div>
+      <div class="kpi"><div class="l">Fine (pending)</div><div class="v">Rs. ${fmt(totals.finePend)}</div></div>
       <div class="kpi"><div class="l">Fully Cleared</div><div class="v">${totals.paid}</div></div>
     </div>
-    ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No defaulters — congratulations!</div>'}`,
+    ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No defaulters.</div>'}`,
     isBW,
     school,
   );
@@ -17031,8 +17263,8 @@ const fmtChallanDate = (iso) => {
   return `${d}-${m[(+mo - 1) || 0]}-${y.slice(2)}`;
 };
 
-function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school }) {
-  const showDisc = settings.showDiscount !== false;
+function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school, installmentSlip = false }) {
+  const showDisc = !installmentSlip && settings.showDiscount !== false;
   const showPsd = settings.showPsd !== false;
   const fine = !!settings.fineEnabled;
   const fineAmt = +settings.fineAmt || 0;
@@ -17063,7 +17295,16 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     /* Late Fine ko challan par NAHI dikhate — fine sirf RECEIVING time par (user ke mutabiq).
        Aggregate "Previous Pending" row bhi nahi — previous har head ke Prev column me. */
     const billRows = detailRows.filter(r => !isPrevRow(r) && !feeService.isLateFineRow(r));
-    rows = billRows.map(r => {
+    /* Installment slip: the typed amount is both Standard and Net.
+       Discount and previous stay off this slip. */
+    if (installmentSlip) {
+      rows = billRows.map(r => {
+        const name = r.subHead || r.head || '';
+        const std = whole(r.challanAmount);
+        return { name, std, disc: 0, prev: 0, net: std };
+      }).filter(r => r.std > 0);
+      arrears = 0;
+    } else rows = billRows.map(r => {
       const name = r.subHead || r.head || '';
       const std = whole(r.challanAmount);
       const raw = whole(r.discount);
@@ -17072,15 +17313,16 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       const prev = whole(feeHeadPrev(r));   // us head ka pichhla baqaya (negative = advance)
       return { name, std, disc, prev, net: std - disc + prev };
     });
-    /* Transport fallback — challan me na ho magar setup amount ho to add karo. */
+    /* Transport fallback — challan me na ho magar setup amount ho to add karo.
+       Installment slip sirf typed heads dikhata hai. */
     const hasTransport = detailRows.some(r => String(r.subHead || r.head || '').toLowerCase().trim() === 'transport');
-    if (!hasTransport && whole(student.transport) > 0) {
+    if (!installmentSlip && !hasTransport && whole(student.transport) > 0) {
       const t = whole(student.transport);
       rows.push({ name: 'Transport', std: t, disc: 0, prev: 0, net: t });
     }
     /* Head-wise previous (running-ledger byHead) — har head ka apna baqaya usi head par.
        Multi-month covering challan: skip (warna Std + Prev double). */
-    if (!isMultiMonthChallan(student?._challan) && !applyPrevByHead(rows, student, whole)) {
+    if (!installmentSlip && !isMultiMonthChallan(student?._challan) && !applyPrevByHead(rows, student, whole)) {
       const sumHeadPrev = rows.reduce((a, r) => a + (r.prev || 0), 0);
       const runningPrev = (student && (student.dues != null || student.advance != null))
         ? (whole(student.dues) - whole(student.advance)) : null;
@@ -17157,10 +17399,10 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Fee Head</th><th>Standard</th>${showDisc ? '<th>Discount</th>' : ''}<th>Previous</th><th>Net</th></tr></thead>
+      <thead><tr><th>Fee Head</th><th>Standard</th>${showDisc ? '<th>Discount</th>' : ''}${installmentSlip ? '' : '<th>Previous</th>'}<th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
-        <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
+        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}${installmentSlip ? '' : `<td>${prevCol(r)}</td>`}<td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        <tr class="tr-total"><td colspan="${(showDisc ? 3 : 2) + (installmentSlip ? 0 : 1)}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
       </tbody>
     </table>
   </div>
@@ -17270,7 +17512,7 @@ function challanDatesOf(rec, fb = {}) {
    still win; today + 10 days is only the last-resort fallback for a student who
    has no saved challan yet. */
 function buildChallanInner({ classMeta, students, heads, settings, discountMap, bw = false, size = 'a4', school = null,
-  period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
+  period: periodOverride, issueISO: issueOverride, dueISO: dueOverride, installmentSlip = false }) {
   const today = new Date();
   const dueDate = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
   const m = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -17293,7 +17535,7 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
       const { period, issueISO, dueISO } = datesFor(s);
       return feeThermalChallanHTML({
         classMeta, student: s, heads, settings, period, issueISO, dueISO,
-        studentDisc: classDisc[s.reg] || {}, school: sch,
+        studentDisc: classDisc[s.reg] || {}, school: sch, installmentSlip,
       });
     }).join('');
     return `<div class="fee-thermal-doc">${slips || '<div style="padding:14px;text-align:center;color:#64748B">Nothing to render.</div>'}</div>`;
@@ -17305,9 +17547,9 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
     return `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeSlipHTML({ copyLabel: 'Parent Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch })}
-        ${feeSlipHTML({ copyLabel: 'Bank Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch })}
-        ${feeSlipHTML({ copyLabel: 'School Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch })}
+        ${feeSlipHTML({ copyLabel: 'Parent Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
+        ${feeSlipHTML({ copyLabel: 'Bank Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
+        ${feeSlipHTML({ copyLabel: 'School Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
       </div>
     </div>`;
   }).join('');
@@ -17362,8 +17604,8 @@ body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;back
 @media print{ body{padding:0;} .th-challan{page-break-after:always;} .th-challan:last-child{page-break-after:auto;} }
 `;
 
-function feeThermalChallanHTML({ classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school }) {
-  const showDisc = settings.showDiscount !== false;
+function feeThermalChallanHTML({ classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school, installmentSlip = false }) {
+  const showDisc = !installmentSlip && settings.showDiscount !== false;
   const showPsd = settings.showPsd !== false;
   const fine = !!settings.fineEnabled;
   const fineAmt = +settings.fineAmt || 0;
@@ -17385,27 +17627,30 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
        BAAD "Arrears / Advance" me minus hota hai. Warna wo discount column me chala jata
        tha (Std −1,770 / Disc −1,770 / Net 0) aur Net Payable se ghatta hi nahi tha. */
     let advOut = 0;
-    const billRows = detailRows.filter(r => {
-      const isPrev = /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
-      if (isPrev && whole(r.challanAmount) < 0) { advOut += Math.abs(whole(r.challanAmount)); return false; }
-      return true;
-    });
+    const billRows = installmentSlip
+      ? detailRows.filter(r => !feeService.isLateFineRow(r))
+      : detailRows.filter(r => {
+        const isPrev = /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+        if (isPrev && whole(r.challanAmount) < 0) { advOut += Math.abs(whole(r.challanAmount)); return false; }
+        return true;
+      });
     rows = billRows.map(r => {
       const name = r.subHead || r.head || '';
       const std = whole(r.challanAmount);
+      if (installmentSlip) return { name, std, disc: 0, net: std, prev: 0 };
       /* Har challan apna HI stored discount dikhata hai — jo us mahine generate karte
          waqt laga tha. Discount baad me badalne se PURANE mahino ke challan nahi
          badalne chahiye; naya discount sirf aage banne wale challan par lagta hai. */
       const raw = whole(r.discount);
       const disc = Math.min(raw, std);   // Net hamesha discount ke baad; toggle sirf column
       return { name, std, disc, net: std - disc, prev: feeHeadPrev(r) };
-    });
+    }).filter(r => !installmentSlip || r.std > 0);
     const hasTransport = detailRows.some(r => String(r.subHead || r.head || '').toLowerCase().trim() === 'transport');
-    if (!hasTransport && whole(student.transport) > 0) {
+    if (!installmentSlip && !hasTransport && whole(student.transport) > 0) {
       const t = whole(student.transport);
       rows.push({ name: 'Transport', std: t, disc: 0, net: t });
     }
-    arrears = -advOut;   // advance → Total ke baad minus
+    arrears = installmentSlip ? 0 : -advOut;   // advance → Total ke baad minus
   } else {
     rows = heads.map(h => {
       const raw = whole(h.amt);
@@ -17900,6 +18145,15 @@ function FeeChallanSettings({ toast }) {
               info="Controls the 'Generate Partial Payment Challan' (OneLink / PSID) feature in Fee Challans, which lets a parent pay a portion of their challan via a temporary PSID-bearing challan. ON: the OneLink action button on each student's challan row is available. OFF: that button is disabled everywhere in Fee Challans, with an explanation, and generating a new partial challan is blocked even if attempted directly."
             />
             )}
+
+            {/* Installment Challan — backend field `particalChallan`. Default false. */}
+            <SettingCard
+              name="Installment Challan"
+              desc="Show Create Installment Challan on Individual and Family Tree challans for every branch."
+              on={value.installmentChallan === true}
+              onToggle={() => set({ installmentChallan: value.installmentChallan !== true })}
+              info="Controls the Create Installment Challan button on Fee Challans (Individual and Family Tree). Saved as particalChallan. Starts OFF. ON: the button is available on every branch once a challan exists. OFF: the button is hidden."
+            />
 
             {/* NOTE — "Future Month Challan Printing" (sibling) is intentionally NOT
                 ported here. The ERP already gates future/adjacent months through the
