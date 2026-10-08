@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import LessonPlans from './LessonPlans.vo';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
