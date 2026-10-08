@@ -1,17 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 
 /* ═══════════════════════════════════════════════════════════════════
    SYSTEM DIALOGS — 1:1 port from "ERP_Home Final.html".
 
-   Renders all five demo system surfaces:
-     1. Slow Internet banner       (top, amber)
-     2. No Internet / Offline      (top, red, with Retry)
-     3. Server Error dialog        (500, red glow)
-     4. Session Timeout dialog     (amber, countdown)
-     5. Are You Sure dialog        (blue, generic confirm)
-     6. Floating Demo Trigger bar  (bottom-right pill)
+   Slow Internet banner (only when speed is 0.5 Mbps or less AND an API
+   has taken more than 30 seconds) and a non-blocking server-error toast.
 
    Public surface
    ──────────────
@@ -24,51 +19,36 @@ import Tooltip from './Tooltip';
    - Inputs all kept simple — no business logic, mirrors the HTML demo.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Is speed (Mbps) ya zyada par "Slow Internet" banner nahi. */
-const SLOW_MIN_MBPS = 3;
-
-/* Continuous background speed monitor */
-const PROBE_INTERVAL_MS = 10000;   // har 10 sec test
-const SLOW_TOAST_MBPS   = 2;       // 2 Mbps se kam → Slow internet
-const NO_NET_MBPS       = 0.5;     // 0.5 Mbps se kam → No internet
-// const TOAST_REPEAT_MS   = 20000;   // masla rahe to har 20 sec toast
-let speedMonitorActive  = false;   // loop sirf EK chale (2 jagah mount hai)
-/* ── Asli speed test (probe) ──────────────────────────────────────
-   Chrome ka navigator.connection.downlink sirf andaza hai (hamari slow APIs dekh
-   kar khud kam ho jata hai, 10 Mbps par capped) — is liye "Slow Internet" ke liye
-   us par bharosa NAHI. Jab koi API 15 sec tak atak jaye, tab ek chhoti STATIC file
-   (public/ ki icon PNG, ~300 KB, pehle se compressed) cache ke baghair download kar
-   ke asli speed naapi jati hai. Static file IIS seedha deta hai — API/DB ki
-   susti is par asar nahi karti, is liye:
-     probe tez (>= 3 Mbps)  → internet theek, server slow → "Please wait"
-     probe dheema / atka    → internet hi slow           → "Slow Connection"
-   Natija 60 sec cache — kai slow APIs par baar-baar download nahi. */
-const PROBE_URL = `${process.env.PUBLIC_URL || ''}/android-chrome-512x512.png`;
-const PROBE_TIMEOUT_MS = 10000;
-const PROBE_CACHE_MS = 60000;
-let probeCache = { at: 0, mbps: null };
+/* Slow Internet banner sirf tab: download speed 0.5 Mbps ya kam, AUR koi API
+   30 sec se zyada le rahi ho. Speed har 1 minute dobara naapi jati hai. */
+const SLOW_MBPS = 0.5;
+const PROBE_INTERVAL_MS = 60000;
+const PROBE_BYTES = 500000;
+const PROBE_URL = `https://speed.cloudflare.com/__down?bytes=${PROBE_BYTES}`;
+const PROBE_TIMEOUT_MS = 15000;
+let speedMonitorActive = false;
+let lastSpeed = { at: 0, mbps: null };
 let probeInFlight = null;
-function measureMbps(force = false) {
-  if (!force && probeCache.mbps != null && Date.now() - probeCache.at < PROBE_CACHE_MS) {
-    return Promise.resolve(probeCache.mbps);
-  }
+
+function measureMbps() {
   if (probeInFlight) return probeInFlight;
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = setTimeout(() => { if (ctrl) ctrl.abort(); }, PROBE_TIMEOUT_MS);
   const t0 = performance.now();
-  probeInFlight = fetch(`${PROBE_URL}?probe=${Date.now()}`, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+  probeInFlight = fetch(`${PROBE_URL}&probe=${Date.now()}`, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
     .then((res) => { if (!res.ok) throw new Error('probe ' + res.status); return res.arrayBuffer(); })
     .then((buf) => {
       const secs = Math.max(0.001, (performance.now() - t0) / 1000);
       const mbps = (buf.byteLength * 8) / secs / 1e6;
-      probeCache = { at: Date.now(), mbps };
+      lastSpeed = { at: Date.now(), mbps };
+      window.__smSpeed = { state: mbps <= SLOW_MBPS ? 'slow' : 'ok', mbps };
       return mbps;
     })
-    /* 10 sec me ~300 KB bhi na aaye = bohat dheema internet (0 Mbps maano).
-       Doosri ghalti (file na mile waghera) par null — tab "Please wait" hi. */
     .catch((err) => {
-      if (err && (err.name === 'AbortError' || err.name === 'TypeError')) {
-        probeCache = { at: Date.now(), mbps: 0 };
+      /* Sample 15s me khatam nahi hui = 0.5 Mbps se bhi dheemi. */
+      if (err && err.name === 'AbortError') {
+        lastSpeed = { at: Date.now(), mbps: 0 };
+        window.__smSpeed = { state: 'slow', mbps: 0 };
         return 0;
       }
       return null;
@@ -78,159 +58,68 @@ function measureMbps(force = false) {
 }
 
 export default function SystemDialogs({ toast = () => {} }) {
-  /* Banner / dialog visibility — sirf REAL conditions: offline / slow API / 500.
-     (Session-timeout aur "Are you sure" demo surfaces hata diye gaye.) */
-  const [showSlow,   setShowSlow]   = useState(false);
-  const [showWait,   setShowWait]   = useState(false);   // API 15 sec se slow (internet theek)
-  const [showNoNet,  setShowNoNet]  = useState(typeof navigator !== 'undefined' && navigator.onLine === false);
-  const [speedInfo, setSpeedInfo] = useState(() => (
-    typeof window !== 'undefined' && window.__smSpeed && window.__smSpeed.state !== 'ok' ? window.__smSpeed : null
-  ));
-  const speedDismissedRef  = useRef(false);
-  const slowTimerRef       = useRef(null);  const offlineShownRef    = useRef(false);   // offline toast ek hi baar (transition par)
-  const lastServerToastRef = useRef(0);       // 500 toast debounce (spam se bachne ke liye)
-  const noNetRef           = useRef(false);   // listeners ke andar offline banner ki taaza halat
-  const slowShownRef       = useRef(false);   // listeners ke andar slow banner ki taaza halat
-  const lastSlowAtRef      = useRef(0);       // Slow banner 30 sec me ek hi dafa (kai slow APIs par baar-baar nahi)
+  const [showSlow, setShowSlow] = useState(false);
+  const [slowMbps, setSlowMbps] = useState(null);
+  const lastServerToastRef = useRef(0);
+  const slowDismissedRef = useRef(false);
 
-  /* Push <main> down while a banner is open so the page content
-     never sits behind the fixed strip. The HTML reference does the
-     same via .main-content padding-top. */
   useEffect(() => {
     const main = document.querySelector('.main-content');
     if (!main) return undefined;
-    main.style.paddingTop = (showSlow || showNoNet || showWait || !!speedInfo) ? '60px' : '';
+    main.style.paddingTop = showSlow ? '60px' : '';
     return () => { if (main) main.style.paddingTop = ''; };
-  }, [showSlow, showNoNet, showWait, speedInfo]);
+  }, [showSlow]);
 
-  /* Refs ko state ke saath mila kar rakho (listeners [] deps wale effect me hain). */
-  useEffect(() => { noNetRef.current = showNoNet; }, [showNoNet]);
-  useEffect(() => { slowShownRef.current = showSlow; }, [showSlow]);
-
-  /* REAL network conditions — browser offline/online + slow API + server 500.
-     `sm:slow` / `sm:server-error` events apiConfig ke fetch-wrapper se aate hain
-     (poore ERP par har API call monitor hoti hai). */
+  /* Banner sirf jab API 30s se lambi ho (sm:slow) AUR last speed test <= 0.5 Mbps.
+     Tez internet par lambi API, ya dheemi internet bina lambi API ke, banner nahi. */
   useEffect(() => {
-    const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
-    /* Offline hote hi Slow banner hata do — dono ek saath nahi. Banner ke saath ek
-       toast bhi (sirf online→offline transition par), taake feedback saaf nazar aaye. */
-    const goOffline = () => {
-      setShowSlow(false);
-      setShowWait(false);
-      setShowNoNet(true);
-      if (!offlineShownRef.current) {
-        offlineShownRef.current = true;
-        toast('You are offline — please check your internet connection.', 'error');
-      }
-    };
-    const goOnline = () => {
-      setShowNoNet(false);
-      if (offlineShownRef.current) {
-        offlineShownRef.current = false;
-        toast('Back online — connection restored.', 'success');
-      }
-    };
-    /* Upar ek waqt me SIRF EK banner (priority: Offline > Slow Internet > Please wait).
-       Koi bhi banner TABHI jab koi API 15 sec tak jawab na de (sm:slow) — page khulte /
-       refresh par speed check NAHI hota (browser ka shuru ka andaza ghalat/kam hota hai aur
-       banner baar-baar aa jata tha). 15 sec par:
-         - asli speed test (measureMbps, upar) SLOW_MIN_MBPS se kam → "Slow Connection"
-           banner (3 sec). Har browser me ek jaisa chalta hai.
-         - warna → "Please wait" banner, jo slow API ka jawab aate hi (sm:slow-end, koi slow
-           call baqi na rahe) band hota hai. */
-    const showSlowBanner = () => {
-      setShowWait(false);
-      const now = Date.now();
-      if (now - lastSlowAtRef.current < 30000) return;
-      lastSlowAtRef.current = now;
-      setShowSlow(true);
-      if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
-      slowTimerRef.current = setTimeout(() => setShowSlow(false), 3000);   // 3 sec baad khud band
-    };
     let alive = true;
     const onSlow = async () => {
-      if (isOffline()) { goOffline(); return; }
-      if (noNetRef.current) return;
-      const mbps = await measureMbps();
-      if (!alive || isOffline() || noNetRef.current) return;
-      if (mbps != null && mbps < SLOW_MIN_MBPS) { showSlowBanner(); return; }
-      if (slowShownRef.current) return;
-      /* Probe ke dauran slow API ka jawab aa gaya ho to "Please wait" ki zaroorat nahi. */
+      if (slowDismissedRef.current) return;
+      const fresh = lastSpeed.mbps != null && (Date.now() - lastSpeed.at) < (PROBE_INTERVAL_MS + 5000);
+      const mbps = fresh ? lastSpeed.mbps : await measureMbps();
+      if (!alive) return;
       if (!(window.__smSlowPending > 0)) return;
-      setShowWait(true);
+      if (mbps != null && mbps <= SLOW_MBPS) {
+        setSlowMbps(mbps);
+        setShowSlow(true);
+      }
     };
     const onSlowEnd = (e) => {
-      if (!e || !e.detail || !e.detail.pending) setShowWait(false);
+      if (!e || !e.detail || !e.detail.pending) {
+        slowDismissedRef.current = false;
+        setShowSlow(false);
+      }
     };
-    /* 500 ab BLOCKING modal nahi — sirf ek non-blocking toast (app chalti rahe).
-       Baar-baar 500 par spam na ho, is liye 8s ka debounce. */
     const onServerError = () => {
       const now = Date.now();
       if (now - lastServerToastRef.current < 8000) return;
       lastServerToastRef.current = now;
       toast('Server error (500) — something went wrong. Please try again in a moment.', 'error');
     };
-    window.addEventListener('offline', goOffline);
-    window.addEventListener('online',  goOnline);
     window.addEventListener('sm:slow', onSlow);
     window.addEventListener('sm:slow-end', onSlowEnd);
-    window.addEventListener('sm:offline', goOffline);
-    window.addEventListener('sm:online', goOnline);
     window.addEventListener('sm:server-error', onServerError);
     return () => {
       alive = false;
-      window.removeEventListener('offline', goOffline);
-      window.removeEventListener('online',  goOnline);
       window.removeEventListener('sm:slow', onSlow);
       window.removeEventListener('sm:slow-end', onSlowEnd);
-      window.removeEventListener('sm:offline', goOffline);
-      window.removeEventListener('sm:online', goOnline);
       window.removeEventListener('sm:server-error', onServerError);
-      if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
     };
-  }, []);
+  }, [toast]);
 
+  /* Har 1 minute asli download speed. Banner yahan se nahi khulta. */
   useEffect(() => {
-    const onSpeed = (e) => {
-      const d = e && e.detail;
-      if (!d) return;
-      if (d.state === 'ok') { speedDismissedRef.current = false; setSpeedInfo(null); return; }
-      setSpeedInfo((prev) => {
-        if (!prev || prev.state !== d.state) speedDismissedRef.current = false;
-        return speedDismissedRef.current ? null : { state: d.state, mbps: d.mbps };
-      });
-    };
-    window.addEventListener('sm:speed', onSpeed);
-    return () => window.removeEventListener('sm:speed', onSpeed);
-  }, []);
-
-  /* ── Continuous speed monitor (background) ── */  useEffect(() => {
     if (speedMonitorActive) return undefined;
     speedMonitorActive = true;
     let stopped = false;
     let timer = null;
-       let state = 'ok';                       // 'ok' | 'slow' | 'none'
-    const publish = (st, mbps) => {
-      window.__smSpeed = { state: st, mbps };
-      try { window.dispatchEvent(new CustomEvent('sm:speed', { detail: { state: st, mbps } })); } catch (e) { /* ignore */ }
-    };
-
     const tick = async () => {
       if (stopped) return;
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-        state = 'none';
-      } else {
-        const mbps = await measureMbps(true);
-        if (stopped) return;
-        if (mbps == null) { /* probe file ghalat / 404 — kuch na karo */ }
-        else if (mbps < NO_NET_MBPS)         state = 'none';
-        else if (mbps < SLOW_TOAST_MBPS)     state = 'slow';
-             else state = 'ok';
-        if (mbps != null) publish(state, mbps);
-      }
+      await measureMbps();
       if (!stopped) timer = setTimeout(tick, PROBE_INTERVAL_MS);
     };
-    timer = setTimeout(tick, 3000);          // load ke 3 sec baad pehla test
+    timer = setTimeout(tick, 3000);
     return () => {
       stopped = true;
       speedMonitorActive = false;
@@ -238,111 +127,25 @@ export default function SystemDialogs({ toast = () => {} }) {
     };
   }, []);
 
-  /* Offline banner ka Retry — sach me connection wapas aaya to hi banner hatao. */  const retryConnection = useCallback(() => {
-    toast('Checking connection…', 'info');
-    setTimeout(() => {
-      if (typeof navigator !== 'undefined' && navigator.onLine) {
-        setShowNoNet(false);
-        toast('Connection restored!', 'success');
-      } else {
-        toast('Still offline — check your network.', 'error');
-      }
-    }, 1200);
-  }, [toast]);
-
   /* ── Render ───────────────────────────────────────────────────── */
   return (
     <>
-      {speedInfo && !showNoNet && createPortal(
-        <div className={`sys-banner${speedInfo.state === 'none' ? ' sys-banner--red' : ''}`}>
-          <div className="sys-banner-inner">
-            <div className={`sys-banner-icon ${speedInfo.state === 'none' ? 'sys-red' : 'sys-amber'}`}>
-              <i className={`fa-solid ${speedInfo.state === 'none' ? 'fa-wifi-slash' : 'fa-wifi'}`} aria-hidden="true"></i>
-            </div>
-            <div className="sys-banner-text">
-              <strong>{speedInfo.state === 'none' ? 'No Internet — Very Low Speed' : 'Slow Internet Detected'}</strong>
-              <span>
-                {speedInfo.state === 'none' ? 'Please check your connection.' : 'Pages may load slowly.'}
-              </span>
-            </div>
-            <span className="sys-banner-speed">{Number(speedInfo.mbps || 0).toFixed(2)} Mbps</span>
-            <div className="sys-banner-pulse">
-              <span></span><span></span><span></span>
-            </div>
-            <Tooltip text="Dismiss" placement="bottom">
-              <button className="sys-banner-close" onClick={() => { speedDismissedRef.current = true; setSpeedInfo(null); }} aria-label="Dismiss banner">
-                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-              </button>
-            </Tooltip>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* 1. Slow Internet banner */}
-      {showSlow && !showNoNet && !speedInfo && createPortal(
+      {showSlow && createPortal(
         <div className="sys-banner">
           <div className="sys-banner-inner">
             <div className="sys-banner-icon sys-amber">
               <i className="fa-solid fa-wifi" aria-hidden="true"></i>
             </div>
             <div className="sys-banner-text">
-              <strong>Slow Connection Detected</strong>
-              <span>Your internet seems slow. Some features may load longer than usual.</span>
+              <strong>Slow Internet Detected</strong>
+              <span>Your connection is {Number(slowMbps || 0).toFixed(2)} Mbps. Some features may load longer than usual.</span>
             </div>
+            <span className="sys-banner-speed">{Number(slowMbps || 0).toFixed(2)} Mbps</span>
             <div className="sys-banner-pulse">
               <span></span><span></span><span></span>
             </div>
             <Tooltip text="Dismiss" placement="bottom">
-              <button className="sys-banner-close" onClick={() => setShowSlow(false)} aria-label="Dismiss banner">
-                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-              </button>
-            </Tooltip>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* 1b. Please wait banner — API 15 sec se jawab nahi de rahi, internet theek hai */}
-      {showWait && !showSlow && !showNoNet && !speedInfo && createPortal(        <div className="sys-banner">
-          <div className="sys-banner-inner">
-            <div className="sys-banner-icon sys-amber">
-              <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i>
-            </div>
-            <div className="sys-banner-text">
-              <strong>Please wait, Taking Longer Than Usual</strong>
-            </div>
-            <div className="sys-banner-pulse">
-              <span></span><span></span><span></span>
-            </div>
-            <Tooltip text="Dismiss" placement="bottom">
-              <button className="sys-banner-close" onClick={() => setShowWait(false)} aria-label="Dismiss banner">
-                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-              </button>
-            </Tooltip>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* 2. No Internet banner */}
-      {showNoNet && createPortal(
-        <div className="sys-banner sys-banner--red">
-          <div className="sys-banner-inner">
-            <div className="sys-banner-icon sys-red">
-              <i className="fa-solid fa-wifi-slash" aria-hidden="true"></i>
-            </div>
-            <div className="sys-banner-text">
-              <strong>No Internet Connection</strong>
-              <span>You're offline. Please check your network and try again.</span>
-            </div>
-            <Tooltip text="Try reconnecting now" placement="bottom">
-              <button className="sys-banner-retry" onClick={retryConnection}>
-                <i className="fa-solid fa-rotate-right" aria-hidden="true"></i> Retry
-              </button>
-            </Tooltip>
-            <Tooltip text="Dismiss" placement="bottom">
-              <button className="sys-banner-close" onClick={() => setShowNoNet(false)} aria-label="Dismiss banner">
+              <button className="sys-banner-close" onClick={() => { slowDismissedRef.current = true; setShowSlow(false); }} aria-label="Dismiss banner">
                 <i className="fa-solid fa-xmark" aria-hidden="true"></i>
               </button>
             </Tooltip>
