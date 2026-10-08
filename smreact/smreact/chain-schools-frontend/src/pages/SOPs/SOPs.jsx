@@ -424,7 +424,6 @@ function InlineForms({ manual, forms = [], loading, readOnly, onAdd, onEdit, onD
             <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
             <div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.desc || ''}</div>
           </div>
-          {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
           <div style={{ display: 'flex', gap: 5 }}>
             <button className="btn-sm" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--info)', color: 'var(--info)', background: 'rgba(2,132,199,.06)' }} title="View form" onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-eye" /> View</button>
             <button className="btn-sm" style={{ height: 26, fontSize: 10.5 }} title="Download / print PDF" onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-download" /></button>
@@ -460,6 +459,7 @@ function ManualModal({ modal, busy, cats, activeCat, onClose, onSave, onToast })
   const [catId, setCatId] = useState(mn?.catId || activeCat || '')
   const [code, setCode] = useState(mn?.code || '')
   const [title, setTitle] = useState(mn?.title || '')
+  const [pageRef, setPageRef] = useState(mn?.pageRef || '')
   const [desc, setDesc] = useState(mn?.desc || '')
   const [pdfName, setPdfName] = useState(mn?.pdfName || '')
   /* Nayi chuni hui file — na chuni ho to purana PDFPath hi waapis jaata hai. */
@@ -474,7 +474,7 @@ function ManualModal({ modal, busy, cats, activeCat, onClose, onSave, onToast })
     if (busy) return
     if (!catId) return onToast('Please select a category', 'warn')
     if (!title.trim()) return onToast('Please enter a manual title', 'warn')
-    onSave({ catId: Number(catId), title: title.trim(), code: code.trim(), desc: desc.trim(), pdfFile, pdfPath: mn?.pdfPath || '', vidTitle: vidTitle.trim(), vidUrl: vidUrl.trim(), vidDesc: vidDesc.trim(), vidStatus, status })
+    onSave({ catId: Number(catId), title: title.trim(), code: code.trim(), pageRef: pageRef.trim(), desc: desc.trim(), pdfFile, pdfPath: mn?.pdfPath || '', vidTitle: vidTitle.trim(), vidUrl: vidUrl.trim(), vidDesc: vidDesc.trim(), vidStatus, status })
   }
   return (
     <PayModal title={modal.mode === 'edit' ? 'Edit Manual' : 'Add Manual'} sub={modal.mode === 'edit' ? mn.title : 'Create a new manual under the selected category'} icon="fa-book" onClose={onClose} maxWidth={560}
@@ -484,6 +484,7 @@ function ManualModal({ modal, busy, cats, activeCat, onClose, onSave, onToast })
         <div className="pay-field"><label>Manual Code</label><input className="pay-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. ACD-001" /></div>
       </div>
       <div className="pay-field"><label>Manual Title</label><input className="pay-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Manual head title" /></div>
+      <div className="pay-field"><label>Page Reference</label><input className="pay-input" value={pageRef} onChange={(e) => setPageRef(e.target.value)} placeholder="e.g. Page 5" /></div>
       <div className="pay-field"><label>Description</label><input className="pay-input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" /></div>
       <div className="pay-field"><label>PDF Manual</label>
         <div className="sop-upload" onClick={() => pdfRef.current?.click()}>
@@ -509,7 +510,6 @@ function FormModal({ modal, busy, onClose, onSave, onToast }) {
   const fm = modal.form
   const [name, setName] = useState(fm?.title || '')
   const [code, setCode] = useState(fm?.code || '')
-  const [page, setPage] = useState(fm?.pageRef || '')
   const [desc, setDesc] = useState(fm?.desc || '')
   const [fileName, setFileName] = useState(fm?.fileName || '')
   const [file, setFile] = useState(null)
@@ -517,16 +517,13 @@ function FormModal({ modal, busy, onClose, onSave, onToast }) {
   const save = () => {
     if (busy) return
     if (!name.trim()) return onToast('Please enter a form name', 'warn')
-    onSave({ title: name.trim(), code: code.trim(), pageRef: page.trim(), desc: desc.trim(), file, formPath: fm?.formPath || '' })
+    onSave({ title: name.trim(), code: code.trim(), desc: desc.trim(), file, formPath: fm?.formPath || '' })
   }
   return (
     <PayModal title={modal.mode === 'edit' ? 'Edit Form' : 'Upload Form'} sub={modal.mode === 'edit' ? 'Update form details' : 'Attach a form to this manual'} icon="fa-paperclip" onClose={onClose} maxWidth={480}
       foot={<><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-primary" onClick={save} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : 'Save Form'}</button></>}>
       <div className="pay-field"><label>Form Name</label><input className="pay-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Student Registration Form" /></div>
-      <div className="pay-input-row">
-        <div className="pay-field"><label>Form Code</label><input className="pay-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. FORM-001" /></div>
-        <div className="pay-field"><label>Page Reference</label><input className="pay-input" value={page} onChange={(e) => setPage(e.target.value)} placeholder="e.g. Page 5" /></div>
-      </div>
+      <div className="pay-field"><label>Form Code</label><input className="pay-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. FORM-001" /></div>
       <div className="pay-field"><label>Description</label><input className="pay-input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" /></div>
       <div className="pay-field" style={{ marginBottom: 0 }}><label>Attach File</label>
         <div className="sop-upload" onClick={() => fileRef.current?.click()}>
@@ -548,7 +545,7 @@ function PdfViewer({ manual, forms = [], readOnly, onClose, onEdit, onToast }) {
       <div className="pay-modal" style={{ maxWidth: 720 }}>
         <div className="pay-modal-hdr" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}>
           <div className="pay-modal-av" style={{ background: 'rgba(255,255,255,.15)' }}><i className="fa-solid fa-book" /></div>
-          <div><div className="pay-modal-title" style={{ color: '#fff' }}>{manual.title}</div><div className="pay-modal-sub" style={{ color: 'rgba(255,255,255,.8)' }}>{manual.code || ''} · Manual document</div></div>
+          <div><div className="pay-modal-title" style={{ color: '#fff' }}>{manual.title}</div><div className="pay-modal-sub" style={{ color: 'rgba(255,255,255,.8)' }}>{[manual.code, manual.pageRef, 'Manual document'].filter(Boolean).join(' · ')}</div></div>
           <button className="pay-modal-x" style={{ background: 'rgba(255,255,255,.12)', borderColor: 'rgba(255,255,255,.3)', color: '#fff' }} onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
         <div className="pay-modal-body">
@@ -583,7 +580,7 @@ function PdfViewer({ manual, forms = [], readOnly, onClose, onEdit, onToast }) {
               {forms.map((f) => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--muted)', border: '1px solid var(--bl)', borderRadius: 8, padding: '10px 14px', marginBottom: 7 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#0369A1,#0284C7)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}><i className="fa-solid fa-file" /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--t1)' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--t1)' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.code || ''}</div></div>
                   <button className="btn-sm" style={{ height: 28, borderColor: 'var(--info)', color: 'var(--info)', background: 'rgba(2,132,199,.06)' }} onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-eye" /> View</button>
                   <button className="btn-sm" style={{ height: 28 }} onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-download" /> Download</button>
                 </div>
@@ -722,11 +719,11 @@ function manualPdfHTML(manual, forms = []) {
   const code = manual.code || `SOP-${String(manual.id).padStart(3, '0')}`
   const intro = manual.desc || 'This Standard Operating Procedure (SOP) defines the standardised process to be followed across all member schools to ensure consistency, quality and compliance with head-office policy.'
   const formsRows = forms.length
-    ? forms.map((f, i) => `<tr><td>${i + 1}</td><td>${sopEsc(f.title)}</td><td>${sopEsc(f.code || '—')}</td><td>${sopEsc(f.pageRef || '—')}</td></tr>`).join('')
-    : '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px">No forms attached to this manual.</td></tr>'
+    ? forms.map((f, i) => `<tr><td>${i + 1}</td><td>${sopEsc(f.title)}</td><td>${sopEsc(f.code || '—')}</td></tr>`).join('')
+    : '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:14px">No forms attached to this manual.</td></tr>'
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${sopEsc(chain.chainName)} — ${sopEsc(manual.title)}</title><style>${SOP_DOC_CSS}</style></head>
 <body><div class="pg" style="--ac:#1E3A8A">
-  ${sopHead(chain, 'Operational Manual', manual.title, `${code} · Issued ${dateStr}`)}
+  ${sopHead(chain, 'Operational Manual', manual.title, `${code}${manual.pageRef ? ' · ' + sopEsc(manual.pageRef) : ''} · Issued ${dateStr}`)}
   <table class="ctl"><tbody>
     <tr><td class="k">Document Code</td><td>${sopEsc(code)}</td><td class="k">Version</td><td>1.0</td></tr>
     <tr><td class="k">Effective Date</td><td>${sopEsc(dateStr)}</td><td class="k">Review Date</td><td>Annual</td></tr>
@@ -749,7 +746,7 @@ function manualPdfHTML(manual, forms = []) {
       <li>Escalate any exceptions or deviations to the Branch Principal and Head Office.</li>
     </ol></div>
   <div class="sec"><div class="sec-h">5. Records &amp; Attached Forms</div>
-    <table class="gt"><thead><tr><th>#</th><th>Form Title</th><th>Form Code</th><th>Page Ref</th></tr></thead><tbody>${formsRows}</tbody></table></div>
+    <table class="gt"><thead><tr><th>#</th><th>Form Title</th><th>Form Code</th></tr></thead><tbody>${formsRows}</tbody></table></div>
   <div class="sec"><div class="sec-h">6. References</div><p>Head-Office Policy Handbook · Quality Standards · Applicable regulatory guidelines.</p></div>
   <div class="sign"><div>Prepared By — Head Office</div><div>Approved By — Director Operations</div></div>
   <div class="foot"><span>${sopEsc(chain.chainName)}${chain.website ? ' · ' + sopEsc(chain.website) : ''}</span><span>Controlled document · ${sopEsc(code)} · sample preview</span></div>
@@ -765,7 +762,7 @@ function formPdfHTML(form, manual) {
   const blankRows = Array.from({ length: 6 }, (_, i) => `<tr><td>${i + 1}</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`).join('')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${sopEsc(chain.chainName)} — ${sopEsc(form.title)}</title><style>${SOP_DOC_CSS}</style></head>
 <body><div class="pg" style="--ac:#0369A1">
-  ${sopHead(chain, 'Operational Form', form.title, `${code}${form.pageRef ? ' · ' + form.pageRef : ''}`)}
+  ${sopHead(chain, 'Operational Form', form.title, code)}
   <div class="sec"><p style="font-size:11.5px;color:#64748b">Related Manual: <strong>${sopEsc(manual.title)}</strong>${manual.code ? ` (${sopEsc(manual.code)})` : ''} · ${sopEsc(form.desc || 'Complete all fields in block capitals. Submit the signed form to the relevant in-charge.')}</p></div>
   <div class="sec-h">Branch &amp; Submission Details</div>
   <div class="fld">

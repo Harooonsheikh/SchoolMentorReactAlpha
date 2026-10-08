@@ -143,6 +143,7 @@ export function manualToUi(m) {
     vidUrl:    String(m?.youtubeURL ?? m?.youtubeUrl ?? '').trim(),
     vidDesc:   String(m?.videoDescription ?? '').trim(),
     vidStatus: m?.tutorialAvailable ? 'available' : 'coming_soon',
+    pageRef:   String(m?.reference ?? m?.Reference ?? '').trim(),
     status:    m?.isActive === false ? 'inactive' : 'active',
     createdAt: String(m?.createdAt ?? '').slice(0, 10),
     forms:     (Array.isArray(m?.forms) ? m.forms : []).map(formToUi),
@@ -171,6 +172,7 @@ function manualForm(action, m = {}) {
   fd.append('VideoDescription', m.vidDesc ?? '')
   fd.append('TutorialAvailable', String(m.vidStatus === 'available'))
   fd.append('IsActive', String(m.status !== 'inactive'))
+  fd.append('Reference', m.pageRef ?? '')
   fd.append('Type', 'chain')
   fd.append('CreatedAt', now)
   fd.append('CreatedBy', String(userId()))
@@ -266,7 +268,7 @@ function formBody(action, f = {}) {
   fd.append('ManualDetailID', String(Number(f.manualId) || 0))
   fd.append('FormName', f.title ?? '')
   fd.append('FormCode', f.code ?? '')
-  fd.append('Reference', f.pageRef ?? '')
+  fd.append('Reference', '')
   fd.append('ShortDescription', f.desc ?? '')
   if (f.file instanceof File) fd.append('Document', f.file, f.file.name)
   fd.append('FormPath', f.formPath ?? '')

@@ -419,7 +419,14 @@ function ProductModal({ modal, onClose, onSave, onToast }) {
   const p = modal.prod
   const [v, setV] = useState({ name: p?.name || '', cat: p?.cat || 'Stationery', barcode: p?.barcode || '', stock: p?.stock ?? '', low: p?.low ?? 0, cost: p?.cost ?? '', price: p?.price ?? '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
-  const save = () => { if (!v.name.trim()) return onToast('Please enter a product name', 'warn'); return onSave({ name: v.name.trim(), cat: v.cat.trim() || 'Other', barcode: v.barcode.trim(), stock: Number(v.stock) || 0, low: Number(v.low) || 0, cost: Number(v.cost) || 0, price: Number(v.price) || 0 }, modal.mode === 'edit' ? p.id : null) }
+  const save = () => {
+    if (!v.name.trim()) return onToast('Please enter a product name', 'warn')
+    const stockN = Number(v.stock) || 0
+    const lowN = Number(v.low) || 0
+    /* Low-stock alert stock se KAM hona chahiye — barabar bhi nahi (strictly less). */
+    if (lowN >= stockN) return onToast('Low-stock alert must be less than stock', 'warn')
+    return onSave({ name: v.name.trim(), cat: v.cat.trim() || 'Other', barcode: v.barcode.trim(), stock: stockN, low: lowN, cost: Number(v.cost) || 0, price: Number(v.price) || 0 }, modal.mode === 'edit' ? p.id : null)
+  }
   return (
     <Shell title={p ? 'Edit Product' : 'Add Product'} icon="fa-box-open" onClose={onClose} maxWidth={520}
       foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={save}>Save Product</SpinnerButton></>}>

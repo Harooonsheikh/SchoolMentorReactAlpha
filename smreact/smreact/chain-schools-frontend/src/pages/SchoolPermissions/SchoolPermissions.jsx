@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
@@ -14,6 +14,7 @@ import {
   cachedPermissions, cachePermissions,
   listMobileAppPermission, saveMobileAppPermission, emptyMobileAppPerms,
 } from '../../api/schoolPermissionsApi'
+import { fetchAcademicsPermissions, saveAcademicsPermissions, currentNetworkId } from '../../api/academicsPermissionsApi'
 import './SchoolPermissions.css'
 
 export default function SchoolPermissions() {
@@ -556,8 +557,10 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
       {settingsModuleCfg && (
         <AdvancedPermissionsModal
           school={school}
+          moduleKey={settingsModuleKey}
           config={settingsModuleCfg}
           value={modulePermissions[settingsModuleKey] || getDefaultSubPermissions(settingsModuleKey)}
+          onToast={onToast}
           onClose={() => setSettingsModuleKey(null)}
           onSave={(next) => {
             setModulePermissions((mp) => ({ ...mp, [settingsModuleKey]: next }))
@@ -573,7 +576,8 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
 /* ── Advanced content permissions modal (Academics today; the same
    component drives any future module listed in MODULE_ADVANCED_PERMISSIONS
    — it only ever reads `config`/`value`, never a module-specific prop). ── */
-function AdvancedPermissionsModal({ school, config, value, onClose, onSave }) {
+function AdvancedPermissionsModal({ school, moduleKey, config, value, onToast, onClose, onSave }) {
+  const isAcademics = moduleKey === 'academics'
   const [perms, setPerms] = useState(() => {
     const seeded = { ...value }
     config.sections.forEach((sec) => {
@@ -581,11 +585,55 @@ function AdvancedPermissionsModal({ school, config, value, onClose, onSave }) {
     })
     return seeded
   })
+  /* Academics content permissions ab asli API se aati/jaati hain
+     (manage-academics-permission). GET par maujooda state bilkul waisi hi
+     dikhti hai jaisi save hui thi — enabled wahi jo di gayi, view-only to
+     sirf View, delete di ho to Delete. ids rakhte hain taake SAVE purani
+     row update kare, nayi duplicate na bane. */
+  const [loading, setLoading] = useState(isAcademics)
+  const [savingPerms, setSavingPerms] = useState(false)
+  const idsRef = useRef({})
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [])
+
+  useEffect(() => {
+    if (!isAcademics) return undefined
+    let alive = true
+    setLoading(true)
+    fetchAcademicsPermissions(school.id, currentNetworkId())
+      .then(({ perms: saved, ids }) => {
+        if (!alive) return
+        idsRef.current = ids
+        setPerms(() => {
+          const next = {}
+          config.sections.forEach((sec) => {
+            next[sec.key] = { view: false, add: false, edit: false, delete: false, ...(saved[sec.key] || {}) }
+          })
+          return next
+        })
+      })
+      .catch((err) => { onToast?.({ type: 'error', text: err?.message || 'Could not load academics permissions' }) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [isAcademics, school.id, config])
+
+  const handleSave = async () => {
+    if (!isAcademics) { onSave(perms); return }
+    if (savingPerms || loading) return
+    setSavingPerms(true)
+    try {
+      await saveAcademicsPermissions(school.id, perms, currentNetworkId(), idsRef.current)
+      onToast?.({ type: 'success', text: `Academics permissions saved for ${school?.name || 'this school'}` })
+      onSave(perms)
+    } catch (err) {
+      onToast?.({ type: 'error', text: err?.message || 'Could not save academics permissions' })
+    } finally {
+      setSavingPerms(false)
+    }
+  }
 
   /* Add/Edit/Delete always force View on; View can't be switched off while
      any of Add/Edit/Delete is still on — the chip just goes disabled instead
@@ -626,12 +674,18 @@ function AdvancedPermissionsModal({ school, config, value, onClose, onSave }) {
               <strong>{school?.name || 'This school'}</strong> will follow exactly what you set below — it's not
               a suggestion, it's an on/off switch for this branch. For each content type, <strong>View Only</strong> means
               they can only see what Head Office shares; turning on <strong>Add</strong>, <strong>Edit</strong>, or <strong>Delete</strong> is
-              what actually lets them create, change, or remove their own {school?.name ? 'branch’s' : ''} Lesson Plans,
-              Activity Planner entries, and Notebook Lesson Plans. Leave an action off and that action stays blocked for them.
+              what actually lets them create, change, or remove records. <strong>Activity Planner</strong> controls the Calendar tab — Academic Calendar and Activity Calendar.
+              <strong>Lesson Plan</strong> applies to Classwork Lesson Plan. <strong>Notebook Lesson Plan</strong> applies to notebook lesson plans.
+              Leave an action off and that action stays blocked for them.
             </div>
           </div>
 
-          {config.sections.map((sec) => {
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}>
+              <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 22, color: 'var(--brand)' }} />
+              <div style={{ marginTop: 10, fontSize: 12.5, fontWeight: 700 }}>Loading permissions…</div>
+            </div>
+          ) : config.sections.map((sec) => {
             const sp = perms[sec.key] || { view: true, add: false, edit: false, delete: false }
             return (
               <div className="apm-section" key={sec.key}>
@@ -668,8 +722,12 @@ function AdvancedPermissionsModal({ school, config, value, onClose, onSave }) {
         </div>
 
         <div className="pm-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={() => onSave(perms)}><i className="fa-solid fa-floppy-disk" /> Save</button>
+          <button className="btn-secondary" onClick={onClose} disabled={savingPerms}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" onClick={handleSave} disabled={loading || savingPerms}>
+            {savingPerms
+              ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
+              : <><i className="fa-solid fa-floppy-disk" /> Save</>}
+          </button>
         </div>
       </div>
     </div>,
