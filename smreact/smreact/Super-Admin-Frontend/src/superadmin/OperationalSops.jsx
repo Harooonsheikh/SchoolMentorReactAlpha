@@ -445,7 +445,6 @@ export default function OperationalSops({ toast }) {
                                   {f.desc || (f.fileName ? <><i className="fa-solid fa-paperclip" style={{ marginRight: 4, opacity: 0.7 }} />{f.fileName}</> : '')}
                                 </div>
                               </div>
-                              {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
                               <div style={{ display: 'flex', gap: 5 }}>
                                 <button
                                   className="btn-sm"
@@ -539,7 +538,7 @@ function CategoryModal({ cat, saving = false, onClose, onSave, toast }) {
 function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave, toast }) {
   const editing = Boolean(manual);
   const [f, setF] = useState({
-    catId: manual?.catId || activeCat, code: manual?.code || '', title: manual?.title || '', desc: manual?.desc || '',
+    catId: manual?.catId || activeCat, code: manual?.code || '', title: manual?.title || '', pageRef: manual?.pageRef || '', desc: manual?.desc || '',
     pdfName: manual?.pdfName || '', vidTitle: manual?.vidTitle || '', vidUrl: manual?.vidUrl || '', vidDesc: manual?.vidDesc || '',
     vidStatus: manual?.vidStatus || 'coming_soon', status: manual?.status || 'active',
   });
@@ -558,7 +557,7 @@ function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave,
       toast?.('Please upload the manual PDF', 'warn'); return;
     }
     onSave({
-      catId: Number(f.catId), title: f.title.trim(), code: f.code.trim(), desc: f.desc.trim(),
+      catId: Number(f.catId), title: f.title.trim(), code: f.code.trim(), pageRef: f.pageRef.trim(), desc: f.desc.trim(),
       /* Nayi file ho to wo, warna server par pada purana path jyun ka tyun. */
       pdfFile, pdfName: f.pdfName, pdfPath: pdfFile ? '' : (manual?.pdfPath || ''),
       vidTitle: f.vidTitle.trim(), vidUrl: f.vidUrl.trim(), vidDesc: f.vidDesc.trim(), vidStatus: f.vidStatus, status: f.status,
@@ -577,6 +576,7 @@ function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave,
           <div className="sop-field"><label>Manual Code / Number</label><input className="sop-input" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="e.g. ACD-001" /></div>
         </div>
         <div className="sop-field"><label>Manual Title</label><input className="sop-input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Teacher Recruitment Manual" /></div>
+        <div className="sop-field"><label>Page Reference</label><input className="sop-input" value={f.pageRef} onChange={(e) => set('pageRef', e.target.value)} placeholder="e.g. Page 18" /></div>
         <div className="sop-field"><label>Short Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Brief description of this manual…" rows={2} /></div>
         <div className="sop-section-divider"><i className="fa-solid fa-file-pdf" /> Manual PDF</div>
         <FileRow icon="fa-file-pdf" iconBg="linear-gradient(135deg,#b91c1c,#dc2626)" label="Click to upload PDF manual (20–30+ pages)" sub="PDF files accepted" fileName={f.pdfName} accept=".pdf" onPick={(n, file) => { set('pdfName', n); setPdfFile(file || null); }} />
@@ -603,7 +603,7 @@ function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave,
 /* ═══════════════════════ FORM MODAL ═══════════════════════ */
 function FormModal({ manualId, manualTitle, form, saving = false, onClose, onSave, toast }) {
   const editing = Boolean(form);
-  const [f, setF] = useState({ title: form?.title || '', code: form?.code || '', pageRef: form?.pageRef || '', desc: form?.desc || '', fileName: form?.fileName || '' });
+  const [f, setF] = useState({ title: form?.title || '', code: form?.code || '', desc: form?.desc || '', fileName: form?.fileName || '' });
   /* Chuni hui asli file (Document field ke liye). */
   const [file, setFile] = useState(null);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -611,7 +611,7 @@ function FormModal({ manualId, manualTitle, form, saving = false, onClose, onSav
     if (saving) return;
     if (!f.title.trim()) { toast?.('Please enter a form name', 'warn'); return; }
     onSave(manualId, {
-      title: f.title.trim(), code: f.code.trim(), pageRef: f.pageRef.trim(), desc: f.desc.trim(),
+      title: f.title.trim(), code: f.code.trim(), desc: f.desc.trim(),
       /* Nayi file ho to wo, warna server par pada purana path jyun ka tyun. */
       file, fileName: f.fileName, formPath: file ? '' : (form?.formPath || ''),
     }, form?.id);
@@ -625,10 +625,7 @@ function FormModal({ manualId, manualTitle, form, saving = false, onClose, onSav
       </div>
       <div style={{ padding: 22 }}>
         <div className="sop-field"><label>Form Name</label><input className="sop-input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Teacher Interview Scorecard" /></div>
-        <div className="sop-2col">
-          <div className="sop-field"><label>Form Number / Code</label><input className="sop-input" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="e.g. FORM-001" /></div>
-          <div className="sop-field"><label>Page Reference</label><input className="sop-input" value={f.pageRef} onChange={(e) => set('pageRef', e.target.value)} placeholder="e.g. Page 18" /></div>
-        </div>
+        <div className="sop-field"><label>Form Number / Code</label><input className="sop-input" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="e.g. FORM-001" /></div>
         <div className="sop-field"><label>Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Brief description of this form…" rows={2} /></div>
         <div className="sop-section-divider"><i className="fa-solid fa-paperclip" /> Attach Document</div>
         <FileRow icon="fa-file" iconBg="linear-gradient(135deg,#0369A1,#0284C7)" label="Click to choose file (PDF, DOC, DOCX)" sub="1–2 page form document" fileName={f.fileName} accept=".pdf,.doc,.docx" onPick={(n, picked) => { set('fileName', n); setFile(picked || null); }} />
@@ -657,6 +654,7 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
           <div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <span><i className="fa-solid fa-layer-group" style={{ color: 'var(--brand)' }} /> {cat ? cat.title : '—'}</span>
             {m.code && <span><i className="fa-solid fa-hashtag" style={{ color: 'var(--brand)' }} /> {m.code}</span>}
+            {m.pageRef && <span><i className="fa-solid fa-bookmark" style={{ color: 'var(--brand)' }} /> {m.pageRef}</span>}
             <span><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)' }} /> {m.createdAt || '—'}</span>
             <span className={`badge ${m.status === 'active' ? 'b-green' : 'b-gray'}`}>{m.status === 'active' ? 'Active' : 'Inactive'}</span>
           </div>
@@ -686,7 +684,6 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
             <div className="sop-form-item" key={f.id}>
               <div className="sop-form-icon"><i className="fa-solid fa-file" /></div>
               <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
-              {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
               <button
                 className="btn-sm"
                 data-tip={f.fileUrl ? 'Open / download file' : 'No file attached'}
@@ -813,7 +810,7 @@ function PdfModal({ m, onClose, onUpload, toast }) {
             {forms.map((f) => (
               <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 14px', marginBottom: 7 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#0369A1,#0284C7)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}><i className="fa-solid fa-file" /></div>
-                <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: '#0F172A' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: '#64748B' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
+                <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: '#0F172A' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: '#64748B' }}>{f.code || ''}</div></div>
                 <button
                   onClick={() => {
                     if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
