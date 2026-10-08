@@ -2726,7 +2726,8 @@ function AccountsManagementTab({ toast }) {
     Promise.all(accounts.map(a =>
       accountsService.getWalletTransactions(a.id)
         .then(rows => {
-          if (!rows || rows.length === 0) return [a.id, null];
+          // if (!rows || rows.length === 0) return [a.id, null];
+                    if (!rows) return [a.id, null];
           const net = rows.reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0);
           return [a.id, (Number(a.opening) || 0) + net];
         })
@@ -3363,7 +3364,8 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
     setWalletTxns(null);
     accountsService.getWalletTransactions(account.id)
       .then((rows) => { if (!cancelled) setWalletTxns(rows); })
-      .catch(() => { if (!cancelled) setWalletTxns(null); });
+      // .catch(() => { if (!cancelled) setWalletTxns(null); });
+            .catch(() => { if (!cancelled) setWalletTxns([]); });
     return () => { cancelled = true; };
   }, [account]);
 
@@ -3391,8 +3393,12 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
   /* The wallet ledger from the API is authoritative (it already includes
      transfers). Only when it has nothing do we derive moves from the day-book
      + transfers, so a transfer is never counted twice. */
-  const useLedger = Array.isArray(walletTxns) && walletTxns.length > 0;
-  if (useLedger) walletTxns.forEach(m => moves.push({ ...m }));
+  const useLedger = true; /* Statement shows only the wallet API ledger */
+  (walletTxns || []).forEach(m => moves.push({
+    ...m,
+    date: String(m.date || '').slice(0, 10),
+    amount: Number(m.amount) || 0,
+  }));
   if (!useLedger) (txns?.rev || []).forEach(t => {
     if ((t.acctId || defaultId) === account.id) moves.push({ date: t.date, desc: t.detail || t.head, ref: `Revenue · ${t.head}`, cat: 'revenue', amount: Number(t.amount) || 0, kind: 'credit' });
   });
@@ -3426,8 +3432,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
       + moves.filter(m => m.date < from).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0)
     : (Number(account.opening) || 0);
   let rangeMoves = moves.filter(m => (!from || m.date >= from) && (!to || m.date <= to));
-  if (filter !== 'all') rangeMoves = rangeMoves.filter(m => m.kind === filter);
-  if (filter !== 'all') rangeMoves = rangeMoves.filter(m => m.kind === filter);
+    if (filter !== 'all') rangeMoves = rangeMoves.filter(m => m.kind === filter);
   let running = broughtForward;
   const rows = rangeMoves.map(m => {
     running += m.kind === 'credit' ? m.amount : -m.amount;
@@ -3534,8 +3539,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
                   <td className="r acc-stmt-bal">{fmtMoney(broughtForward)}</td>
                 </tr>
                 {rows.length === 0 ? (
-                  <tr><td colSpan={6}><div className="acc-txn-empty"><i className="fa-solid fa-inbox"></i>No movements in this period.</div></td></tr>
-                ) : rows.map((r, i) => (
+                  <tr><td colSpan={6}><div className="acc-txn-empty"><i className={`fa-solid ${walletTxns === null ? 'fa-spinner fa-spin' : 'fa-inbox'}`}></i>{walletTxns === null ? 'Loading transactions…' : 'No movements in this period.'}</div></td></tr>                ) : rows.map((r, i) => (
                   <tr key={i}>
                     <td><span className="acc-txn-date">{accFmtDate(r.date)}</span></td>
                     <td><div className="acc-txn-detail">{r.desc || '—'}</div><div className="acc-txn-meta"><span>{r.ref}</span></div></td>
