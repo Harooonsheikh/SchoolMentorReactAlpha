@@ -258,6 +258,19 @@ function resSubjAbsent(rec, subjTotal) {
 function rcHideZeroMarkSubjects(mode) {
   return mode !== 'zero' && mode !== 'exclude';
 }
+/* Zero / Exclude mode mein 0, blank, ya AB wala subject absent hai.
+   Exclude uska total grand total se hata deta hai; Zero usay total mein rakhta hai. */
+function rcCardIsAbsent(student, name, mode) {
+  const want = String(name).trim().toLowerCase();
+  const listed = (student?.absentSubjects || []).some(s => String(s).trim().toLowerCase() === want);
+  if (listed) return true;
+  if (mode !== 'zero' && mode !== 'exclude') return false;
+  const raw = student?.obtained?.[name];
+  if (raw == null || String(raw).trim() === '') return true;
+  const token = String(raw).trim().toUpperCase();
+  if (token === 'AB' || token === 'ABS' || token === 'ABSENT') return true;
+  return !(Number(raw) > 0);
+}
 function rcFilterZeroMarkSubjects(subjects, student) {
   const obtained = student?.obtained || {};
   const absentSet = {};
@@ -5600,10 +5613,45 @@ setResTotalMarksCtx({
                           className="res-download-btn"
                           disabled={isOtherSession || !canSingleEdit}
                           style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : { background: '#1E40AF', color: '#fff', borderColor: '#1E40AF' }}
-                          onClick={e => {
+                          onClick={async e => {
                             e.stopPropagation();
                             if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-                            toast('Coming soon', 'info');
+                            const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
+                            if (!saSubjects.length) {
+                              toast('No exam subjects found for this class', 'error');
+                              return;
+                            }
+                            let students = resStudentData[key]?.students || [];
+                            if (!students.length) {
+                              try {
+                                const token = sessionStorage.getItem('token');
+                                const branchID = sessionStorage.getItem('branchID');
+                                const studentsRes = await fetch(
+                                  buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
+                                  { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+                                );
+                                const studentsData = await studentsRes.json();
+                                students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
+                              } catch (err) {
+                                students = [];
+                              }
+                            }
+                            if (!students.length) {
+                              toast('No students found for this class', 'error');
+                              return;
+                            }
+                            setResBulkUploadCtx({
+                              examId: resExamId,
+                              key,
+                              className,
+                              examName: resCurrentExam?.name || '',
+                              classID: cls.classID,
+                              sectionID: cls.sectionID,
+                              selectExam: resCurrentExam?.selectExam || 0,
+                              termID: selectedTermId,
+                              subjects: saSubjects,
+                              students,
+                            });
                           }}
                         >
                           <i className="fa-solid fa-file-excel"></i>
@@ -9372,9 +9420,6 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
 
-  const absentSet = {};
-  (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
-
   const useZeroMode = rsAbsentMode === 'zero';
   // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
   // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
@@ -9384,9 +9429,11 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
 
-  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
-  const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
-  const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
+  const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
+  const obtAll   = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
+  const ovPct    = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+    ? cb.ovPct
+    : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
@@ -9508,7 +9555,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
             </thead>
             <tbody>
               {subjects.map((s, i) => {
-                const isAbs = !!absentSet[s];
+                const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
                 const tot = rd.totalMarks[s] ?? 0;
                 const obt = isAbs ? 0 : (st.obtained[s] || 0);
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
@@ -9723,9 +9770,6 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
-  const absentSet = {};
-  (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
-
   const useZeroMode = rsAbsentMode === 'zero';
   // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
   // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
@@ -9734,9 +9778,11 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
-  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
-  const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
-  const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
+  const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
+  const obtAll   = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
+  const ovPct    = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+    ? cb.ovPct
+    : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
@@ -9752,7 +9798,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 
   const barPalette = ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'];
   const subjData = subjects.map((s, i) => {
-    const isAbs = !!absentSet[s];
+    const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
@@ -9977,9 +10023,6 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
-  const absentSet = {};
-  (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
-
   const useZeroMode = rsAbsentMode === 'zero';
   // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
   // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
@@ -9988,9 +10031,11 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
-  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
-  const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
-  const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
+  const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
+  const obtAll   = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
+  const ovPct    = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+    ? cb.ovPct
+    : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
@@ -10003,7 +10048,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const finalRem = rcRemarkByScale(ovPct, remarks);
 
   const subjData = subjects.map((s, i) => {
-    const isAbs = !!absentSet[s];
+    const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
@@ -10179,7 +10224,11 @@ const improvements = sorted
                   {opt['Show Obtained Marks'] && (
                     <td style={{ ...tdBase, textAlign: 'center' }}>
                       {d.isAbs ? (
-                        <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: absBg, color: absC, border: '1px solid rgba(217,119,6,.25)' }}>AB</span>
+                        useZeroMode ? (
+                          <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: absBg, color: absC, border: '1px solid rgba(217,119,6,.25)' }}>AB / 0</span>
+                        ) : (
+                          <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: absBg, color: absC, border: '1px solid rgba(217,119,6,.25)' }}>AB</span>
+                        )
                       ) : (
                         <strong style={{ color: C.blu }}>{d.obt}</strong>
                       )}

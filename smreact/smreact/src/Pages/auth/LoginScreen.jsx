@@ -1,8 +1,9 @@
 import AuthLayout from './AuthLayout';
 import ForgotPasswordScreen from './ForgotPasswordScreen';
 import { useState, useEffect } from 'react';
-import { buildUrl, buildChainApiUrl, refreshActiveAcademicSession } from '../../utils/apiConfig';
+import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
+import { clearAcademicsContentPerms, loadAcademicsContentPermissions } from '../../erp/services/academicsContentPermissions';
 
 /* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
    ka portal khulta hai.
@@ -262,6 +263,8 @@ export default function LoginScreen({ onLogin, onSignup }) {
       /* Pichhli branch ka chain-membership jawab bhi hata do — nayi branch ka
          apna hisaab hoga (dekhein erp/services/chainBranch.js). */
       sessionStorage.removeItem('sm_chain_branch');
+      sessionStorage.removeItem('sm_chain_network_id');
+      clearAcademicsContentPerms();
     } catch (_) { /* private mode */ }
 
     if (data?.branchID) {
@@ -297,10 +300,9 @@ export default function LoginScreen({ onLogin, onSignup }) {
     if (data?.launchSetup) {
       sessionStorage.setItem("launchSetup", data.launchSetup);
     }
-    /* Active session (start/end, status, module flags) once at login.
-       Tabs read sessionStorage and do not call this API again. */
-    try { await refreshActiveAcademicSession(); }
-    catch (e) { console.error('Could not load active academic session', e); }
+    /* Chain associate school: Head Office ki academics content permissions
+       (Activity / Lesson / Notebook × view/add/edit/delete) GETBYBRANCH se. */
+    loadAcademicsContentPermissions().catch(() => {});
     onLogin(data);
 
   } catch (err) {

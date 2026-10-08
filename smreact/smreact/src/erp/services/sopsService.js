@@ -210,6 +210,7 @@ export async function getManuals(headId) {
       code:     String(m?.manualCode ?? '').trim(),
       category: Number(m?.manualHeadID ?? headId) || 0,
       description: String(m?.shortDescription ?? '').trim(),
+      pageRef: String(m?.reference ?? m?.Reference ?? '').trim(),
       pdfUrl:   manualPdfUrl(m?.pdfPath),
       pdfName:  fileNameFrom(m?.pdfPath),
       /* Tutorial tab hi "hai" jab wo WAQAI chal sake — khaana bhara hona

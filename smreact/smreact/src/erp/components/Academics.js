@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import LessonPlans from './LessonPlans';
+import LessonPlans from './LessonPlans.vo';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
@@ -24,6 +24,7 @@ import {
    hi nahi, us ke liye ye banner bemani hai. Jawab sessionStorage me sambhal
    jata hai, is liye poore app me ek hi call. */
 import { checkChainBranch, cachedChainBranch } from '../services/chainBranch';
+import { useAcademicsContentPerms, ACADEMICS_VIEW_ONLY_MSG } from '../services/academicsContentPermissions';
 /* Head Office ki asli releases — sirf wahi jo is branch ko bheji gayi hain. */
 import { fetchHeadOfficeReleases, duplicateReleaseData, RELEASE_TYPE } from '../services/headOfficeReleases';
 
@@ -70,8 +71,11 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const acadView = (sub) => can('Academics', sub, 'View');
   const showTextbooks = acadView('Textbooks');
   const showTerms     = acadView('Term Settings');
-  const showAcadCal   = acadView('Academic Calendar');
-  const showActCal    = acadView('Activity Calendar');
+  const acp = useAcademicsContentPerms();
+  /* Activity Planner poori Calendar tab ko control karta hai:
+     Academic Calendar aur Activity Calendar, dono. */
+  const showAcadCal   = acadView('Academic Calendar') && acp.can('activity', 'view');
+  const showActCal    = acadView('Activity Calendar') && acp.can('activity', 'view');
   const showCal       = showAcadCal || showActCal;
   const showSos       = showTextbooks || showTerms || showCal;
   const showLp        = ['Session Settings', 'Term Breakups', 'Create Lesson Plans', 'Submissions'].some(acadView);
@@ -542,7 +546,11 @@ return (
               <AcademicCalendar
                 terms={terms}
                 onReport={openReport}
-                onEdit={() => setCalEditOpen(true)}
+                onEdit={() => {
+                  const canWrite = acp.can('activity', 'add') || acp.can('activity', 'edit') || acp.can('activity', 'delete');
+                  if (!canWrite) return;
+                  setCalEditOpen(true);
+                }}
                 isOtherSession={isOtherSession}
               />
             )}
@@ -551,8 +559,14 @@ return (
                 events={events}
                 setEvents={setEvents}
                 onReport={openReport}
-                onAdd={() => setActivityModal({ open: true, editing: null })}
-                onEdit={ev => setActivityModal({ open: true, editing: ev })}
+                onAdd={() => {
+                  if (acp.denyWrite('activity', 'add', toast)) return;
+                  setActivityModal({ open: true, editing: null });
+                }}
+                onEdit={ev => {
+                  if (acp.denyWrite('activity', 'edit', toast)) return;
+                  setActivityModal({ open: true, editing: ev });
+                }}
                 openConfirm={openConfirm}
                 toast={toast}
                 isOtherSession={isOtherSession}
@@ -608,6 +622,7 @@ return (
       toast={toast}
       onClose={() => setActivityModal({ open: false, editing: null })}
       onSave={async ev => {
+        if (acp.denyWrite('activity', activityModal.editing ? 'edit' : 'add', toast)) return;
         if (activityModal.editing) {
           setEvents(prev => prev.map(p => p.id === ev.id ? { ...p, ...ev } : p));
           toast(`"${ev.name}" updated`, 'success');
@@ -891,6 +906,10 @@ function NoSessionModal({ open, onClose, onGoToSettings }) {
    CAL EDIT MODAL — edit Academic Calendar key-date entries per term
    ═══════════════════════════════════════════════════════════════════ */
 function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
+  const acp = useAcademicsContentPerms();
+  const hoAdd = acp.can('activity', 'add');
+  const hoEdit = acp.can('activity', 'edit');
+  const hoDelete = acp.can('activity', 'delete');
   const [draft, setDraft] = useState([]);
   /* Snapshot of saved key dates by id → lets save() diff into insert/update/delete. */
   const [orig, setOrig] = useState({});
@@ -907,16 +926,22 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
   }, [open, terms]);
 
   const updateEntry = (ti, ei, key, value) => {
-    setDraft(prev => prev.map((t, idx) =>
-      idx !== ti ? t : { ...t, entries: t.entries.map((e, j) => j === ei ? { ...e, [key]: value } : e) }
-    ));
+    setDraft(prev => prev.map((t, idx) => {
+      if (idx !== ti) return t;
+      const entry = t.entries[ei];
+      if (entry?.id ? !hoEdit : !hoAdd) { toast?.(ACADEMICS_VIEW_ONLY_MSG, 'error'); return t; }
+      return { ...t, entries: t.entries.map((e, j) => j === ei ? { ...e, [key]: value } : e) };
+    }));
   };
   const addEntry = ti => {
+    if (!hoAdd) { toast?.(ACADEMICS_VIEW_ONLY_MSG, 'error'); return; }
     setDraft(prev => prev.map((t, idx) =>
       idx !== ti ? t : { ...t, entries: [...t.entries, { heading: '', date: '' }] }
     ));
   };
   const removeEntry = (ti, ei) => {
+    const entry = draft[ti]?.entries[ei];
+    if (entry?.id ? !hoDelete : !hoAdd) { toast?.(ACADEMICS_VIEW_ONLY_MSG, 'error'); return; }
     setDraft(prev => prev.map((t, idx) =>
       idx !== ti ? t : { ...t, entries: t.entries.filter((_, j) => j !== ei) }
     ));
@@ -947,16 +972,16 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
         if (!head && !value) return;
         if (e.id) {
           const o = orig[e.id];
-          if (!o || o.heading !== e.heading || o.date !== e.date) {
+          if (hoEdit && (!o || o.heading !== e.heading || o.date !== e.date)) {
             ops.push(keyDatesCrud({ id: e.id, branchID: termsBranchID(), terms: String(term.id), head, value, action: 'update' }));
           }
-        } else {
+        } else if (hoAdd) {
           ops.push(keyDatesCrud({ id: 0, branchID: termsBranchID(), terms: String(term.id), head, value, action: 'insert' }));
         }
       }));
       Object.keys(orig).forEach(idStr => {
         const id = Number(idStr);
-        if (!present.has(id)) {
+        if (hoDelete && !present.has(id)) {
           ops.push(keyDatesCrud({ id, branchID: termsBranchID(), terms: String(orig[idStr].termId), head: '', value: '', action: 'delete' }));
         }
       });
@@ -1015,30 +1040,40 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
               }}>
                 {term.entries.length === 0 ? (
                   <div className="no-data" style={{ padding: '12px 0' }}>No data</div>
-                ) : term.entries.map((e, ei) => (
+                ) : term.entries.map((e, ei) => {
+                  const canChange = e.id ? hoEdit : hoAdd;
+                  const canRemove = e.id ? hoDelete : hoAdd;
+                  return (
                   <div key={ei} className="cal-entry-row">
+                    <Tooltip text={canChange ? 'Heading/Event' : ACADEMICS_VIEW_ONLY_MSG}>
                     <input
                       className="cal-entry-input"
                       value={e.heading}
                       placeholder="Heading/Event"
+                      disabled={!canChange}
                       onChange={ev => updateEntry(ti, ei, 'heading', ev.target.value)}
                     />
+                    </Tooltip>
+                    <Tooltip text={canChange ? 'Date/Details' : ACADEMICS_VIEW_ONLY_MSG}>
                     <input
                       className="cal-entry-input"
                       value={e.date}
                       placeholder="Date/Details"
+                      disabled={!canChange}
                       onChange={ev => updateEntry(ti, ei, 'date', ev.target.value)}
                     />
-                    <Tooltip text="Remove this entry">
-                      <button className="remove-btn" onClick={() => removeEntry(ti, ei)}>
+                    </Tooltip>
+                    <Tooltip text={canRemove ? 'Remove this entry' : ACADEMICS_VIEW_ONLY_MSG}>
+                      <button className="remove-btn" disabled={!canRemove} style={!canRemove ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => removeEntry(ti, ei)}>
                         <i className="fa-solid fa-xmark"></i> Remove
                       </button>
                     </Tooltip>
                   </div>
-                ))}
+                  );
+                })}
               </div>
-              <Tooltip text="Add another entry to this term">
-                <button className="add-more-btn" onClick={() => addEntry(ti)}>
+              <Tooltip text={hoAdd ? 'Add another entry to this term' : ACADEMICS_VIEW_ONLY_MSG}>
+                <button className="add-more-btn" disabled={!hoAdd} style={!hoAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => addEntry(ti)}>
                   <i className="fa-solid fa-plus"></i> Add More
                 </button>
               </Tooltip>
@@ -1431,6 +1466,10 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
    ═══════════════════════════════════════════════════════════════════ */
 function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession, reloadKey }) {
   const { can } = usePermissions();
+  const acp = useAcademicsContentPerms();
+  const hoAdd = acp.can('activity', 'add');
+  const hoEdit = acp.can('activity', 'edit');
+  const hoDelete = acp.can('activity', 'delete');
   const academicYearSub = formatAcademicYearLabel(resolveAcademicSession(null)) || 'Academic Session';
   const canActCreate   = can('Academics', 'Activity Calendar', 'Create');
   const canActEdit     = can('Academics', 'Activity Calendar', 'Edit');
@@ -1651,6 +1690,7 @@ const nextMonth = () => {
   }
 };
   const handleDelete = ev => {
+  if (acp.denyWrite('activity', 'delete', toast)) return;
   closeDropdown();
 
   openConfirm({
@@ -1878,7 +1918,7 @@ const nextMonth = () => {
 ) : view === 'Day' ? (
   <DayView events={displayEvents} />
 ) : view === 'List' ? (
-  <ListView events={monthScopedEvents} onReport={onReport} onEdit={onEdit} isOtherSession={isOtherSession} />
+  <ListView events={monthScopedEvents} onReport={onReport} onEdit={onEdit} onDelete={handleDelete} isOtherSession={isOtherSession} toast={toast} />
 ) : (
   <YearView
     events={displayEvents}
@@ -1897,10 +1937,13 @@ const nextMonth = () => {
               <div className="act-events-title">Activities</div>
               <div className="act-events-sub">{events.length} activities scheduled</div>
             </div>
-            <Tooltip text={!canActCreate ? 'You do not have permission to add activities' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Schedule a new activity on the calendar')}>
-              <button className="act-add-btn" onClick={onAdd}
-                disabled={isOtherSession || !canActCreate}
-                style={(isOtherSession || !canActCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+            <Tooltip text={!canActCreate ? 'You do not have permission to add activities' : (!hoAdd ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : 'Schedule a new activity on the calendar'))}>
+              <button className="act-add-btn" onClick={() => {
+                  if (isOtherSession || !canActCreate || !hoAdd) return;
+                  onAdd();
+                }}
+                disabled={isOtherSession || !canActCreate || !hoAdd}
+                style={(isOtherSession || !canActCreate || !hoAdd) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Activity
               </button>
             </Tooltip>
@@ -1975,11 +2018,16 @@ const nextMonth = () => {
             onClick={e => e.stopPropagation()}
           >
             {canActEdit && (
-            <button className="dropdown-item" onClick={() => { onEdit(ev); closeDropdown(); }}
-              disabled={isOtherSession}
-              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+            <Tooltip text={!hoEdit ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit this activity')}>
+            <button className="dropdown-item" onClick={() => {
+                if (isOtherSession || !hoEdit) return;
+                onEdit(ev); closeDropdown();
+              }}
+              disabled={isOtherSession || !hoEdit}
+              style={(isOtherSession || !hoEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
+            </Tooltip>
             )}
             {canActDownload && (<>
             <button className="dropdown-item" onClick={() => { onReport(ev.name, 'pdf'); closeDropdown(); }}>
@@ -1990,11 +2038,16 @@ const nextMonth = () => {
             </button>
             </>)}
             {canActDelete && (
-            <button className="dropdown-item delete" onClick={() => handleDelete(ev)}
-              disabled={isOtherSession}
-              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+            <Tooltip text={!hoDelete ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : 'Delete this activity')}>
+            <button className="dropdown-item delete" onClick={() => {
+                if (isOtherSession || !hoDelete) return;
+                handleDelete(ev);
+              }}
+              disabled={isOtherSession || !hoDelete}
+              style={(isOtherSession || !hoDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-trash"></i> Delete
             </button>
+            </Tooltip>
             )}
           </div>
         );
@@ -2185,7 +2238,10 @@ function DayView({ events }) {
   );
 }
 
-function ListView({ events, onReport, onEdit, isOtherSession }) {
+function ListView({ events, onReport, onEdit, onDelete, isOtherSession, toast }) {
+  const acp = useAcademicsContentPerms();
+  const hoEdit = acp.can('activity', 'edit');
+  const hoDelete = acp.can('activity', 'delete');
   const sorted = [...events].sort((a, b) => new Date(a.start) - new Date(b.start));
   if (sorted.length === 0) {
     return (
@@ -2237,18 +2293,39 @@ function ListView({ events, onReport, onEdit, isOtherSession }) {
                   }}
                 ><i className="fa-solid fa-file-pdf"></i></button>
               </Tooltip>
-              <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Edit ${ev.name}`}>
+              <Tooltip text={!hoEdit ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : `Edit ${ev.name}`)}>
                 <button
-                  onClick={() => onEdit(ev)}
-                  disabled={isOtherSession}
+                  onClick={() => {
+                    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+                    if (acp.denyWrite('activity', 'edit', toast)) return;
+                    onEdit(ev);
+                  }}
+                  disabled={isOtherSession || !hoEdit}
                   style={{
                     width: 26, height: 26, borderRadius: 7,
                     border: '1px solid var(--border-light)', background: 'var(--bg-muted)',
-                    color: 'var(--text-muted)', cursor: isOtherSession ? 'not-allowed' : 'pointer', fontSize: 10,
-                    opacity: isOtherSession ? .45 : 1,
+                    color: 'var(--text-muted)', cursor: (isOtherSession || !hoEdit) ? 'not-allowed' : 'pointer', fontSize: 10,
+                    opacity: (isOtherSession || !hoEdit) ? .45 : 1,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 ><i className="fa-solid fa-pen"></i></button>
+              </Tooltip>
+              <Tooltip text={!hoDelete ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : `Delete ${ev.name}`)}>
+                <button
+                  onClick={() => {
+                    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+                    if (acp.denyWrite('activity', 'delete', toast)) return;
+                    onDelete?.(ev);
+                  }}
+                  disabled={isOtherSession || !hoDelete}
+                  style={{
+                    width: 26, height: 26, borderRadius: 7,
+                    border: '1px solid rgba(220,38,38,.2)', background: 'rgba(220,38,38,.06)',
+                    color: '#DC2626', cursor: (isOtherSession || !hoDelete) ? 'not-allowed' : 'pointer', fontSize: 10,
+                    opacity: (isOtherSession || !hoDelete) ? .45 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                ><i className="fa-solid fa-trash"></i></button>
               </Tooltip>
             </div>
           </div>
@@ -2361,6 +2438,8 @@ function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
    ═══════════════════════════════════════════════════════════════════ */
 function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
   const { can } = usePermissions();
+  const acp = useAcademicsContentPerms();
+  const hoWrite = acp.can('activity', 'add') || acp.can('activity', 'edit') || acp.can('activity', 'delete');
   const canAcEdit     = can('Academics', 'Academic Calendar', 'Edit');
   const canAcDownload = can('Academics', 'Academic Calendar', 'Download');
   return (
@@ -2388,10 +2467,10 @@ function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
             </button>
           </Tooltip>
           </>)}
-          <Tooltip text={!canAcEdit ? 'You do not have permission to edit the academic calendar' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates')}>
-            <button className="cal-edit-btn" onClick={onEdit}
-              disabled={isOtherSession || !canAcEdit}
-              style={(isOtherSession || !canAcEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+          <Tooltip text={!canAcEdit ? 'You do not have permission to edit the academic calendar' : (!hoWrite ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates'))}>
+            <button className="cal-edit-btn" onClick={() => { if (!hoWrite) return; onEdit(); }}
+              disabled={isOtherSession || !canAcEdit || !hoWrite}
+              style={(isOtherSession || !canAcEdit || !hoWrite) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
           </Tooltip>
@@ -3748,6 +3827,7 @@ const hoLoadList = key => { try { const d = JSON.parse(localStorage.getItem(key)
 const hoPushList = (key, rec) => { const l = hoLoadList(key); l.unshift(rec); try { localStorage.setItem(key, JSON.stringify(l)); } catch { /* ignore */ } };
 
 function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases = [], hoName = '', loading = false, error = '', addActivity }) {
+  const acp = useAcademicsContentPerms();
   const [saved, setSaved] = useState(hoLoadSaved);
   const [detail, setDetail] = useState(null); // release object
   const ho = hoName || HO_NAME;
@@ -3771,6 +3851,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
   };
 
   const saveActivity = (rel, act) => {
+    if (acp.denyWrite('activity', 'add', toast)) return;
     if (isSaved(rel.id, act.id)) return;
     addActivity({
       id: `ho-${rel.id}-${act.id}`,
@@ -3786,6 +3867,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
   };
 
   const saveLessonPlan = (rel, lp, classId, subjectName, extra = {}) => {
+    if (acp.denyWrite('lesson', 'add', toast)) return;
     if (isSaved(rel.id, lp.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
     hoPushList(HO_LP_KEY, {
@@ -3806,6 +3888,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
   };
 
   const saveNotebookPlan = (rel, nb, classId, subjectName, extra = {}) => {
+    if (acp.denyWrite('notebook', 'add', toast)) return;
     if (isSaved(rel.id, nb.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
     hoPushList(HO_NB_KEY, {
@@ -3941,6 +4024,10 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
 }
 
 function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, onClose, isSaved, onSaveActivity, onSaveLessonPlan, onSaveNotebookPlan, onSaveResource, toast }) {
+  const acp = useAcademicsContentPerms();
+  const canActAdd = acp.can('activity', 'add');
+  const canLpAdd = acp.can('lesson', 'add');
+  const canNbAdd = acp.can('notebook', 'add');
   const [tab, setTab] = useState('activities');
   const [mapping, setMapping] = useState(null); // { kind, item }
   const [preview, setPreview] = useState(null); // { kind, item }
@@ -3949,6 +4036,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
   const SavedBadge = () => <span className="ho-saved-badge"><i className="fa-solid fa-circle-check"></i> Saved</span>;
 
   const saveAllActivities = () => {
+    if (!canActAdd) return;
     const pending = r.activities.filter(a => !isSaved(r.id, a.id));
     if (!pending.length) { toast('All activities already saved', 'info'); return; }
     pending.forEach(a => onSaveActivity(r, a));
@@ -3996,7 +4084,9 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
                 <>
                   <div className="ho-sec-bar">
                     <span>{r.activities.length} activities — general, no class/subject needed.</span>
-                    <button className="btn btn-secondary ho-saveall" onClick={saveAllActivities}><i className="fa-solid fa-layer-group"></i> Save All Activities</button>
+                    <Tooltip text={!canActAdd ? ACADEMICS_VIEW_ONLY_MSG : 'Save all pending activities'}>
+                    <button className="btn btn-secondary ho-saveall" onClick={saveAllActivities} disabled={!canActAdd} style={!canActAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-layer-group"></i> Save All Activities</button>
+                    </Tooltip>
                   </div>
                   {r.activities.map(a => {
                     const done = isSaved(r.id, a.id);
@@ -4013,7 +4103,11 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
                           {a.resource && <div className="ho-item-line"><b>Resources:</b> {a.resource}</div>}
                         </div>
                         <div className="ho-item-actions">
-                          {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => onSaveActivity(r, a)}><i className="fa-solid fa-calendar-plus"></i> Save to Activity Calendar</button>}
+                          {done ? <SavedBadge /> : (
+                            <Tooltip text={!canActAdd ? ACADEMICS_VIEW_ONLY_MSG : 'Save to Activity Calendar'}>
+                              <button className="btn btn-primary ho-save-btn" disabled={!canActAdd} style={!canActAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!canActAdd) return; onSaveActivity(r, a); }}><i className="fa-solid fa-calendar-plus"></i> Save to Activity Calendar</button>
+                            </Tooltip>
+                          )}
                         </div>
                       </div>
                     );
@@ -4042,7 +4136,11 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
                     </div>
                     <div className="ho-item-actions">
                       <button className="rl-act" onClick={() => setPreview({ kind: 'lesson', item: lp })}><i className="fa-solid fa-eye"></i> View Preview</button>
-                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'lesson', item: lp })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
+                      {done ? <SavedBadge /> : (
+                        <Tooltip text={!canLpAdd ? ACADEMICS_VIEW_ONLY_MSG : 'Save to Portal'}>
+                          <button className="btn btn-primary ho-save-btn" disabled={!canLpAdd} style={!canLpAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!canLpAdd) return; setMapping({ kind: 'lesson', item: lp }); }}><i className="fa-solid fa-download"></i> Save to Portal</button>
+                        </Tooltip>
+                      )}
                     </div>
                   </div>
                 );
@@ -4068,7 +4166,11 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
                     </div>
                     <div className="ho-item-actions">
                       <button className="rl-act" onClick={() => setPreview({ kind: 'notebook', item: nb })}><i className="fa-solid fa-eye"></i> View Preview</button>
-                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'notebook', item: nb })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
+                      {done ? <SavedBadge /> : (
+                        <Tooltip text={!canNbAdd ? ACADEMICS_VIEW_ONLY_MSG : 'Save to Portal'}>
+                          <button className="btn btn-primary ho-save-btn" disabled={!canNbAdd} style={!canNbAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!canNbAdd) return; setMapping({ kind: 'notebook', item: nb }); }}><i className="fa-solid fa-download"></i> Save to Portal</button>
+                        </Tooltip>
+                      )}
                     </div>
                   </div>
                 );

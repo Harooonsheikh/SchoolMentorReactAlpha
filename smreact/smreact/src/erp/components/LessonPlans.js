@@ -8,6 +8,7 @@ import { deliverReport } from './reportDelivery';
 import { buildStandardReportHtml } from '../reports/reportKit';
 import { useModuleReadOnly, useSettings, validateSessionDate } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
+import { useAcademicsContentPerms } from '../services/academicsContentPermissions';
 import 'mathlive';   // registers the <math-field> visual math editor custom element
 import { convertLatexToMarkup } from 'mathlive';  // LaTeX → rendered HTML (editor/view/report)
 import 'mathlive/static.css';                     // static render CSS (fractions, powers …)
@@ -3928,7 +3929,17 @@ function CreateLessonPlans({
   const acadReadOnly = useModuleReadOnly('acad');
   const isOtherSession = (!!clpChangeSessionId && !!clpLoginSessionId && String(clpChangeSessionId) !== String(clpLoginSessionId)) || acadReadOnly;
   const { can: canClp } = usePermissions();
+  const acp = useAcademicsContentPerms();
   const canClpCreate = canClp('Academics', 'Create Lesson Plans', 'Create');
+  const clpMenu = clpSubtab === 'notebook' ? 'notebook' : 'lesson';
+  const hoAdd = acp.can(clpMenu, 'add');
+  const showNbTab = acp.can('notebook', 'view');
+  const showLpTab = acp.can('lesson', 'view');
+
+  useEffect(() => {
+    if (clpSubtab === 'notebook' && !showNbTab && showLpTab) setClpSubtab('lesson');
+    else if (clpSubtab === 'lesson' && !showLpTab && showNbTab) setClpSubtab('notebook');
+  }, [clpSubtab, showNbTab, showLpTab, setClpSubtab]);
   /* Bumped locally (panel deletes) to make notebook unit rows reload their
      detail; combined with clpRefresh (bumped after modal saves). */
   const [nbReload, setNbReload] = useState(0);
@@ -4089,7 +4100,9 @@ const handleSectionChange = async (e) => {
     id, ...resolveCtx(), unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
   });
 
-  const removeUnit = u => openConfirm({
+  const removeUnit = u => {
+    if (acp.denyWrite(clpMenu, 'delete', toast)) return;
+    openConfirm({
     title: 'Delete Unit?',
     message: `Unit <strong>"${u.unitName || u.unitNo}"</strong> and all its ${u.lessons?.length || u.questions?.length || 0} item(s) will be permanently removed.`,
     hint: 'This cannot be undone.',
@@ -4113,8 +4126,11 @@ const handleSectionChange = async (e) => {
       toast('Unit deleted', 'success');
     },
   });
+  };
 
-  const removeLesson = (unitId, lesson) => openConfirm({
+  const removeLesson = (unitId, lesson) => {
+    if (acp.denyWrite('lesson', 'delete', toast)) return;
+    openConfirm({
     title: 'Delete Lesson?',
     message: `Lesson <strong>"${lesson.topic || `Lesson ${lesson.num}`}"</strong> will be permanently removed.`,
     hint: 'This cannot be undone.',
@@ -4129,8 +4145,11 @@ const handleSectionChange = async (e) => {
       toast('Lesson deleted', 'success');
     },
   });
+  };
 
-  const removeQuestion = (unitId, q) => openConfirm({
+  const removeQuestion = (unitId, q) => {
+    if (acp.denyWrite('notebook', 'delete', toast)) return;
+    openConfirm({
     title: 'Delete Question Type?',
     message: `Question type <strong>"${q.type}"</strong> (${q.items.length} items) will be permanently removed.`,
     hint: 'This cannot be undone.',
@@ -4154,6 +4173,7 @@ const handleSectionChange = async (e) => {
       toast('Question type deleted', 'success');
     },
   });
+  };
 
   return (
     <>
@@ -4293,22 +4313,30 @@ const handleSectionChange = async (e) => {
           {/* Toolbar */}
           <div className="clp2-toolbar">
             <div className="clp2-subtabs">
+              {showLpTab && (
               <Tooltip text="Switch to Lesson Plans">
                 <button className={`clp2-subtab${clpSubtab === 'lesson' ? ' active' : ''}`} onClick={() => setClpSubtab('lesson')}>
                   <i className="fa-solid fa-list-ul"></i> Lesson Plans
                 </button>
               </Tooltip>
+              )}
+              {showNbTab && (
               <Tooltip text="Switch to Notebook Plans">
                 <button className={`clp2-subtab${clpSubtab === 'notebook' ? ' active' : ''}`} onClick={() => setClpSubtab('notebook')}>
                   <i className="fa-solid fa-book"></i> Notebook Plans
                 </button>
               </Tooltip>
+              )}
             </div>
-            <Tooltip text={!canClpCreate ? 'You do not have permission to create lesson plans' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Manage units (add, rename, reorder)')}>
+            <Tooltip text={!canClpCreate ? 'You do not have permission to create lesson plans' : (!hoAdd ? 'This is a view only' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Manage units (add, rename, reorder)'))}>
               <button className="clp2-add-btn"
                 disabled={isOtherSession || !canClpCreate}
-                style={(isOtherSession || !canClpCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } onManageUnits(clpSubtab); }}>
+                style={(isOtherSession || !canClpCreate || !hoAdd) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                onClick={() => {
+                  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                  if (acp.denyWrite(clpMenu, 'add', toast)) return;
+                  onManageUnits(clpSubtab);
+                }}>
                 <i className="fa-solid fa-plus"></i><span>Add Unit</span>
               </button>
             </Tooltip>
@@ -4317,7 +4345,10 @@ const handleSectionChange = async (e) => {
           <div className="clp2-table-card">
             {clpSubtab === 'lesson' ? (
               units.length === 0 ? (
-                <EmptyUnits label="Click 'Add Unit' to create your first unit" onAdd={() => onManageUnits('lesson')} />
+                <EmptyUnits label="Click 'Add Unit' to create your first unit" onAdd={() => {
+                  if (acp.denyWrite('lesson', 'add', toast)) return;
+                  onManageUnits('lesson');
+                }} />
               ) : (
                 units.map((u, i) => (
                   <UnitRow
@@ -4325,16 +4356,24 @@ const handleSectionChange = async (e) => {
                     unit={u}
                     index={i}
                     isOtherSession={isOtherSession}
+                    toast={toast}
+                    guard={acp.denyWrite}
                     onReport={onReport}
                     onDeleteUnit={() => removeUnit(u)}
-                    onEditLesson={l => onEditLesson(u.id, l.id, l, u)}
+                    onEditLesson={l => {
+                      if (acp.denyWrite('lesson', 'edit', toast)) return;
+                      onEditLesson(u.id, l.id, l, u);
+                    }}
                     onDeleteLesson={l => removeLesson(u.id, l)}
                   />
                 ))
               )
             ) : (
               nbUnits.length === 0 ? (
-                <EmptyUnits label="Click 'Add Unit' to create your first notebook unit" onAdd={() => onManageUnits('notebook')} />
+                <EmptyUnits label="Click 'Add Unit' to create your first notebook unit" onAdd={() => {
+                  if (acp.denyWrite('notebook', 'add', toast)) return;
+                  onManageUnits('notebook');
+                }} />
               ) : (
                 nbUnits.map((u, i) => (
                   <NbUnitRow
@@ -4342,10 +4381,18 @@ const handleSectionChange = async (e) => {
                     unit={u}
                     index={i}
                     isOtherSession={isOtherSession}
+                    toast={toast}
+                    guard={acp.denyWrite}
                     onReport={onReport}
                     onDeleteUnit={() => removeUnit(u)}
-                    onAddType={() => onAddQuestionType(u.id)}
-                    onEditType={q => onEditQuestionType(u.id, q)}
+                    onAddType={() => {
+                      if (acp.denyWrite('notebook', 'add', toast)) return;
+                      onAddQuestionType(u.id);
+                    }}
+                    onEditType={q => {
+                      if (acp.denyWrite('notebook', 'edit', toast)) return;
+                      onEditQuestionType(u.id, q);
+                    }}
                     onDeleteType={q => removeQuestion(u.id, q)}
                     reloadKey={`${clpRefresh}_${nbReload}`}
                   />
@@ -4380,7 +4427,14 @@ function EmptyUnits({ label, onAdd }) {
 }
 
 /* ─── Lesson-plans unit row (lessons) ─── */
-function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson, isOtherSession }) {
+function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson, isOtherSession, toast, guard }) {
+  const hoEdit = !(guard && guard('lesson', 'edit'));
+  const hoDelete = !(guard && guard('lesson', 'delete'));
+  const stopWrite = (action, fn) => () => {
+    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+    if (guard?.('lesson', action, toast)) return;
+    fn();
+  };
   const [open, setOpen] = useState(false);
   const manualCount = unit.lessons.filter(l => l.source === 'manual').length;
   const aiCount     = unit.lessons.filter(l => l.source === 'mentorai').length;
@@ -4421,10 +4475,10 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
               <i className="fa-brands fa-microsoft"></i> Word
             </button>
           </Tooltip>
-          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete unit'}><button className="lp-icon-del"
+          <Tooltip text={!hoDelete ? 'This is a view only' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Delete unit')}><button className="lp-icon-del"
             disabled={isOtherSession}
-            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-            onClick={onDeleteUnit} aria-label="Delete unit">
+            style={(isOtherSession || !hoDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+            onClick={stopWrite('delete', onDeleteUnit)} aria-label="Delete unit">
             <i className="fa-solid fa-trash"></i>
           </button></Tooltip>
           <Tooltip text={open ? 'Collapse unit' : 'Expand unit'}>
@@ -4456,11 +4510,11 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
                     : <><i className="fa-solid fa-pen-nib"></i> Manual</>}
                 </span>
                 <div className="clpr-lesson-actions" onClick={e => e.stopPropagation()}>
-                  <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit this lesson'}>
+                  <Tooltip text={!hoEdit ? 'This is a view only' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit this lesson')}>
                     <button className="clpr-action-btn clpr-action-edit"
                       disabled={isOtherSession}
-                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                      onClick={() => onEditLesson(l)}>
+                      style={(isOtherSession || !hoEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={stopWrite('edit', () => onEditLesson(l))}>
                       <i className="fa-solid fa-pen"></i> <span>Edit</span>
                     </button>
                   </Tooltip>
@@ -4469,11 +4523,11 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
                       <i className="fa-solid fa-file-pdf"></i> <span>PDF</span>
                     </button>
                   </Tooltip>
-                  <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete this lesson'}>
+                  <Tooltip text={!hoDelete ? 'This is a view only' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Delete this lesson')}>
                     <button className="clpr-action-btn clpr-action-del"
                       disabled={isOtherSession}
-                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                      onClick={() => onDeleteLesson(l)}>
+                      style={(isOtherSession || !hoDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={stopWrite('delete', () => onDeleteLesson(l))}>
                       <i className="fa-solid fa-trash-can"></i>
                     </button>
                   </Tooltip>
@@ -4850,7 +4904,15 @@ async function lpMapLimited(items, limit, mapper) {
 }
 
 /* ─── Notebook-plans unit row — verbatim from HTML ─── */
-function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey, isOtherSession }) {
+function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey, isOtherSession, toast, guard }) {
+  const hoAdd = !(guard && guard('notebook', 'add'));
+  const hoEdit = !(guard && guard('notebook', 'edit'));
+  const hoDelete = !(guard && guard('notebook', 'delete'));
+  const stopWrite = (action, fn) => () => {
+    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+    if (guard?.('notebook', action, toast)) return;
+    fn();
+  };
   const [open, setOpen] = useState(false);
   /* Question types are loaded from getulpfornotebookdetails on mount so the
      type/manual counts show at runtime WITHOUT expanding the unit; null = not

@@ -159,31 +159,61 @@ export default function Tooltip({ text, placement = 'top', delay = 220, disabled
     ? { left: `${pos.arrowOffset}px` }
     : { top:  `${pos.arrowOffset}px` };
 
+  /* Disabled buttons do not receive hover, so the tip never appears.
+     A wrapper takes the pointer; the button itself stays unclickable. */
+  const tip = open && createPortal(
+    <div
+      ref={tooltipRef}
+      id={tipId}
+      className={`erp-tip erp-tip--${pos.side}`}
+      style={{ top: pos.top, left: pos.left }}
+      role="tooltip"
+    >
+      <div className="erp-tip-body">{text}</div>
+      <div className="erp-tip-arrow" style={arrowStyle} />
+    </div>,
+    document.body
+  );
+
+  if (child?.props?.disabled) {
+    return (
+      <>
+        <span
+          ref={triggerRef}
+          onMouseEnter={show}
+          onMouseLeave={hide}
+          onFocus={show}
+          onBlur={hide}
+          className="erp-tip-dis"
+        >
+          {child}
+        </span>
+        {tip}
+      </>
+    );
+  }
+
   return (
     <>
       {React.cloneElement(child, triggerProps)}
-      {open && createPortal(
-        <div
-          ref={tooltipRef}
-          id={tipId}
-          className={`erp-tip erp-tip--${pos.side}`}
-          style={{ top: pos.top, left: pos.left }}
-          role="tooltip"
-        >
-          <div className="erp-tip-body">{text}</div>
-          <div className="erp-tip-arrow" style={arrowStyle} />
-        </div>,
-        document.body
-      )}
+      {tip}
     </>
   );
 }
 
 /* ─── One-time global stylesheet — appended on first import ──────── */
-if (typeof document !== 'undefined' && !document.getElementById('erp-tip-style')) {
-  const el = document.createElement('style');
-  el.id = 'erp-tip-style';
+if (typeof document !== 'undefined') {
+  let el = document.getElementById('erp-tip-style');
+  const fresh = !el;
+  if (fresh) {
+    el = document.createElement('style');
+    el.id = 'erp-tip-style';
+  }
   el.textContent = `
+.erp-tip-dis { display: inline-flex; max-width: 100%; vertical-align: middle; }
+.erp-tip-dis > * { pointer-events: none; }
+.dropdown-menu .erp-tip-dis { display: flex; width: 100%; }
+.dropdown-menu .erp-tip-dis > button { width: 100%; }
 .erp-tip {
   /* Outer wrapper: shrink-to-fit around the body so the position math and
      the rendered background stay in sync. */
@@ -237,5 +267,5 @@ if (typeof document !== 'undefined' && !document.getElementById('erp-tip-style')
   .erp-tip { display: none; }
 }
   `;
-  document.head.appendChild(el);
+  if (fresh) document.head.appendChild(el);
 }

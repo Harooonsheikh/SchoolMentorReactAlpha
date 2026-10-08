@@ -288,9 +288,8 @@ function ManualRow({ manual, onView, onTutorial, canViewManuals = true, canWatch
           <span className="sops-title-text">{manual.title}</span>
           {manual.code && <span className="sops-badge sops-badge--blue" style={{ marginLeft: 8 }}>{manual.code}</span>}
         </div>
-        {/* "Pages" column me is manual ki forms ki tadaad aati hai (manual-form
-            API se) — API manual ka page count bhejti hi nahi. Count aane tak `…`. */}
-        <div className="td c sops-pages">{manual.formsCount ?? '…'}</div>
+        {/* Pages = manual-detail ka Reference (page number). */}
+        <div className="td c sops-pages">{manual.pageRef || '—'}</div>
         <div className="td sops-updated">{manual.lastUpdated}</div>
         <div className="td c sops-actions">
           {canViewManuals && (
@@ -386,13 +385,12 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
         </div>
 
         <div className="sops-modal-body">
-          {/* Meta — Pages + Last Updated. "Pages" khane me is manual ki forms
-              ki tadaad aati hai (API page count bhejti hi nahi). */}
+          {/* Pages = wahi page number jo manual-detail ke Reference se aata hai. */}
           {!fullScreen && (
             <div className="sops-pdf-meta">
               <div className="sops-pdf-meta-item">
                 <span className="sops-pdf-meta-lbl">Pages</span>
-                <span className="sops-pdf-meta-val">{forms.length}</span>
+                <span className="sops-pdf-meta-val">{manual.pageRef || '—'}</span>
               </div>
               <div className="sops-pdf-meta-item">
                 <span className="sops-pdf-meta-lbl">Last Updated</span>
@@ -418,7 +416,7 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
                       {f.title}{f.code ? ` · ${f.code}` : ''}
                     </div>
                     <div style={{ fontSize: 11, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {f.desc || f.fileName}{f.pageRef ? ` · ${f.pageRef}` : ''}
+                      {f.desc || f.fileName}
                     </div>
                   </div>
                 </div>

@@ -19,6 +19,7 @@ import {
   fetchChatContacts, getOpenChatId, chatDisplayName,
 } from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
+import { loadAcademicsContentPermissions } from '../services/academicsContentPermissions';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
 import feeReferenceAlignment from './feeReferenceAlignment';
@@ -306,6 +307,13 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
+
+  /* Branch login / refresh — chain Head Office ki academics content
+     permissions (GETBYBRANCH) taake Activity / Lesson / Notebook ke
+     add-edit-delete isAccessable se chalen. */
+  useEffect(() => {
+    loadAcademicsContentPermissions().catch(() => {});
+  }, []);
 
   /* Branch header (name, logo, address) for the sidebar top — same API the
      reports use. */
