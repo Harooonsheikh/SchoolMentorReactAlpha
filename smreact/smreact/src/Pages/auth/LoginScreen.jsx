@@ -1,7 +1,7 @@
 import AuthLayout from './AuthLayout';
 import ForgotPasswordScreen from './ForgotPasswordScreen';
 import { useState, useEffect } from 'react';
-import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
+import { buildUrl, buildChainApiUrl, refreshActiveAcademicSession } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 
 /* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
@@ -297,6 +297,10 @@ export default function LoginScreen({ onLogin, onSignup }) {
     if (data?.launchSetup) {
       sessionStorage.setItem("launchSetup", data.launchSetup);
     }
+    /* Active session (start/end, status, module flags) once at login.
+       Tabs read sessionStorage and do not call this API again. */
+    try { await refreshActiveAcademicSession(); }
+    catch (e) { console.error('Could not load active academic session', e); }
     onLogin(data);
 
   } catch (err) {

@@ -17,6 +17,7 @@ import { AppProvider } from './context/AppContext';
 import LoginScreen from './Pages/auth/LoginScreen';
 import SignupFlow from './Pages/auth/SignupFlow';
 import { isErpUnlocked } from './utils/erp';
+import { hasStoredActiveSessionCheck, refreshActiveAcademicSession } from './utils/apiConfig';
 import ErpApp from './erp/App';
 import ViewOnlyGuard, { VIEW_ONLY_TIP, useViewOnly } from './erp/shared/ViewOnlyGuard';
 import { PermissionsProvider } from './erp/context/PermissionsContext';
@@ -421,6 +422,16 @@ function AuthGate() {
 
   /* Signup network ka hai ya school ka — login screen ke active tab se aata hai. */
   const [signupIsNetwork, setSignupIsNetwork] = useState(false);
+
+  /* Refresh of an already-open login: sessionStorage still holds the row from
+     login, so this does not call the API again. It runs only when that row
+     was never stored (for example a session started before this change). */
+  useEffect(() => {
+    if (screen !== 'erp' && screen !== 'app') return;
+    if (hasStoredActiveSessionCheck()) return;
+    if (!sessionStorage.getItem('token') || !sessionStorage.getItem('branchID')) return;
+    refreshActiveAcademicSession().catch((e) => console.error('Could not load active academic session', e));
+  }, [screen]);
 
   function handleLogin(userData) {
     setUser(userData);

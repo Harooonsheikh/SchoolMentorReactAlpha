@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import LessonPlans from './LessonPlans';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
-import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession } from '../../utils/apiConfig';
+import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
 import { fetchReportHeader, resolveAcademicSession, formatAcademicYearLabel } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import {
@@ -191,35 +191,11 @@ const getClassesData = async () => {
 
 const getSessionData = async () => {
   try {
-    const branchID = sessionStorage.getItem("branchID");
-
-    const res = await fetch(
-      buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
-      {
-        method: "GET",
-        headers: {
-          Accept: "*/*",
-        },
-      }
-    );
-
-    const json = await res.json();
-
-    if (json?.data && json.data.length > 0) {
-      const active = json.data[0];
-      sessionStorage.setItem('sessionID', active.ID);
-      sessionStorage.setItem('sessionName', active.SessionName);
-      notifySessionChange();
-    } else {
-      /* No active academic session found for this branch — guide the user
-         to configure one instead of silently failing or carrying over a
-         stale session from a previously opened branch. */
-      sessionStorage.removeItem('sessionID');
-      sessionStorage.removeItem('sessionName');
-      sessionStorage.removeItem('changeSessionId');
-     setNoSessionModal(true);
-notifySessionChange();
+    if (!hasStoredActiveSessionCheck() || !readStoredActiveSession()) {
+      setNoSessionModal(true);
+      return;
     }
+    setNoSessionModal(false);
   } catch (error) {
     console.error("Error loading session data:", error);
     toast('Could not load academic session for this branch', 'error');

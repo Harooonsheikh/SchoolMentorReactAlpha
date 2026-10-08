@@ -4,7 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel } from '../reports/reportKit';
@@ -104,35 +104,12 @@ export default function Accounts({ toast }) {
      modules read) so the edit/delete guard can compare against the date range.
      No active session → gate the whole module behind the "set session" message. */
   const loadSessionDates = async () => {
-    try {
-      const branchID = Number(sessionStorage.getItem('branchID')) || 0;
-      const res = await fetch(
-        buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
-        {
-          method: 'GET',
-          headers: {
-            Accept: '*/*',
-            Authorization: `Bearer ${sessionStorage.getItem('token') || ''}`,
-          },
-        }
-      );
-      const json = await res.json();
-      /* Active session response can be an array or a single object. */
-      const data = json?.data;
-      const row  = Array.isArray(data) ? data[0] : data;
-      if (!row) { setHasActiveSession(false); return; }
-      sessionStorage.setItem('sessionID', row.ID);
-      sessionStorage.setItem('sessionName', row.SessionName);
-      sessionStorage.setItem('sessionStatus', row.Status);
-      sessionStorage.setItem('sessionStartDate', row.StartDate);
-      sessionStorage.setItem('sessionEndDate', row.EndDate);
-      /* Accounts module toggle for this session — true → editable, false → view-only. */
-      setAccountsModuleOn(row.Accounts === true || row.Accounts === 'true' || row.Accounts === 1);
-      setHasActiveSession(true);
-    } catch (e) {
-      console.error('Error loading active session:', e);
-      setHasActiveSession(false);
-    }
+    /* Stored at login and refreshed when a session is saved. */
+    if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return; }
+    const row = readStoredActiveSession();
+    if (!row) { setHasActiveSession(false); return; }
+    setAccountsModuleOn(row.Accounts === true || row.Accounts === 'true' || row.Accounts === 1);
+    setHasActiveSession(true);
   };
 
   /* Run the session check when the module mounts, and re-run when a session key

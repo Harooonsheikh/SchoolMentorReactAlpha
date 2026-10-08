@@ -247,6 +247,60 @@ export function storeCurrentSession(row) {
   return true;
 }
 
+const ACTIVE_SESSION_ROW_KEY = 'activeSessionRow';
+const ACTIVE_SESSION_LOADED_KEY = 'activeSessionLoaded';
+
+/* Active session saved at login (and again after save-academic-session).
+   Tabs read this instead of calling the API again. */
+export function readStoredActiveSession() {
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_SESSION_ROW_KEY);
+    if (!raw) return null;
+    const row = JSON.parse(raw);
+    return row && (row.ID != null || row.id != null) ? row : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function hasStoredActiveSessionCheck() {
+  try { return sessionStorage.getItem(ACTIVE_SESSION_LOADED_KEY) === '1'; }
+  catch (e) { return false; }
+}
+
+/* GET /api/Setting/get-academic-active-sessions-by-branch — once per login,
+   and again only when an academic session is saved. Writes the same
+   sessionStorage keys every tab already reads. */
+export async function refreshActiveAcademicSession() {
+  const branchID = sessionStorage.getItem('branchID');
+  const token = sessionStorage.getItem('token') || '';
+  if (!branchID) return null;
+  const res = await fetch(
+    buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
+    { method: 'GET', headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, cache: 'no-store' },
+  );
+  const json = await res.json().catch(() => null);
+  const data = json?.data;
+  const row = Array.isArray(data) ? (data[0] || null) : (data || null);
+  const id = row && (row.ID ?? row.id);
+  if (!row || id == null || id === '') {
+    ['sessionID', 'sessionName', 'sessionStatus', 'sessionStartDate', 'sessionEndDate', ACTIVE_SESSION_ROW_KEY]
+      .forEach((k) => sessionStorage.removeItem(k));
+    sessionStorage.setItem(ACTIVE_SESSION_LOADED_KEY, '1');
+    notifySessionChange();
+    return null;
+  }
+  sessionStorage.setItem(ACTIVE_SESSION_ROW_KEY, JSON.stringify(row));
+  sessionStorage.setItem(ACTIVE_SESSION_LOADED_KEY, '1');
+  setKey('sessionID', id);
+  setKey('sessionName', row.SessionName ?? row.sessionName);
+  setKey('sessionStatus', row.Status ?? row.status);
+  setKey('sessionStartDate', row.StartDate ?? row.startDate);
+  setKey('sessionEndDate', row.EndDate ?? row.endDate);
+  notifySessionChange();
+  return row;
+}
+
 /**
  * Record the session the user switched TO. Both keys must move together —
  * writing only the id (as the Examination switcher did) leaves every label and

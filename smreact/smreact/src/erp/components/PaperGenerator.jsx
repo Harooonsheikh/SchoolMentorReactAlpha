@@ -4,7 +4,7 @@
   import TutorialModal from './TutorialModal';
   import * as paperService from '../services/paperService';
   import useAsync from '../hooks/useAsync';
-  import { buildUrl, resolveMediaUrl, storeSwitchedSession } from '../../utils/apiConfig';
+  import { buildUrl, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
   import Select from 'react-select';
   import { deliverReport } from './reportDelivery';
   import { useModuleReadOnly } from '../pages/Settings/settingsStore';
@@ -215,36 +215,12 @@ const [hasActiveSession, setHasActiveSession] = useState(null);
     })();
 
     const loadSessionDates = async () => {
-        try {
-            const res = await fetch(
-                buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${termsBranchID()}`),
-                {
-                    method: 'GET',
-                    headers: {
-                        Accept: '*/*',
-                        Authorization: `Bearer ${sessionStorage.getItem('token') || ''}`,
-                    },
-                }
-            );
-            const json = await res.json();
-            const data = json?.data;
-            const row = Array.isArray(data) ? data[0] : data;
-            if (row) {
-                sessionStorage.setItem('sessionID', row.ID);
-                sessionStorage.setItem('sessionName', row.SessionName);
-                sessionStorage.setItem('sessionStatus', row.Status);
-                sessionStorage.setItem('sessionStartDate', row.StartDate);
-                sessionStorage.setItem('sessionEndDate', row.EndDate);
-                setHasActiveSession(true);
-                setStart(row.StartDate);
-                setEnd(row.EndDate);
-            } else {
-                setHasActiveSession(false);
-            }
-        } catch (e) {
-            console.error('Error loading active session:', e);
-            setHasActiveSession(false);
-        }
+        if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return; }
+        const row = readStoredActiveSession();
+        if (!row) { setHasActiveSession(false); return; }
+        setHasActiveSession(true);
+        setStart(row.StartDate || sessionStorage.getItem('sessionStartDate') || '');
+        setEnd(row.EndDate || sessionStorage.getItem('sessionEndDate') || '');
     };
 
     const changeSession = async (id) => {

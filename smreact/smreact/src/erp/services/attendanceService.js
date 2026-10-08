@@ -1,4 +1,4 @@
-import { buildUrl, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession } from '../../utils/apiConfig';
 import { delay, clone } from './_http';
 
 // src/services/attendanceService.js
@@ -68,50 +68,16 @@ export async function saveWeeklyOff(payload) {
 
   return await response.json();
 }
-// Active academic session ID for the branch — same API examination uses.
-// Returns the active session's ID (row.ID), or 0 if none is active.
+// Active academic session ID — stored at login (and refreshed when a session
+// is saved). Does not call the API again.
 export async function getActiveSessionID() {
-  const token = sessionStorage.getItem("token");
-  const branchID = sessionStorage.getItem("branchID");
-
-  const response = await fetch(
-    buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
-    {
-      method: "GET",
-      headers: {
-        Accept: "*/*",
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const json = await response.json();
-  const data = json?.data;
-  const row = Array.isArray(data) ? data[0] : data;
-  return row?.ID || 0;
+  const row = readStoredActiveSession();
+  return Number(row?.ID ?? row?.id ?? sessionStorage.getItem('sessionID')) || 0;
 }
 
-// Full active-session row (ID + SessionName + dates) for the branch.
+// Full active-session row (ID + SessionName + dates) from the login snapshot.
 export async function getActiveSession() {
-  const token = sessionStorage.getItem("token");
-  const branchID = sessionStorage.getItem("branchID");
-
-  const response = await fetch(
-    buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
-    { method: "GET", headers: { Accept: "*/*", Authorization: `Bearer ${token}` } }
-  );
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const json = await response.json();
-  const data = json?.data;
-  return (Array.isArray(data) ? data[0] : data) || null;
+  return readStoredActiveSession();
 }
 
 // All academic sessions for the branch (for the session dropdown).

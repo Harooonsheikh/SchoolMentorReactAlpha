@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { buildUrl, resolveMediaUrl, storeCurrentSession } from '../../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, storeCurrentSession, refreshActiveAcademicSession } from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS STORE — sessions + signatures + global current session
@@ -132,7 +132,14 @@ export async function apiSaveSession(session) {
     headers: sessionAuthHeaders(),
     body: JSON.stringify(sessionToPayload(session)),
   });
-  return res.json().catch(() => ({}));
+  const json = await res.json().catch(() => ({}));
+  /* Session change: refresh the stored active session immediately so every
+     tab keeps using the new start/end without calling the API itself. */
+  if (settingResult(json, 'Academic session saved').ok) {
+    try { await refreshActiveAcademicSession(); }
+    catch (e) { console.error('Could not refresh active academic session', e); }
+  }
+  return json;
 }
 
 /* DELETE one session by id. */
@@ -141,7 +148,12 @@ export async function apiDeleteSession(id) {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });
-  return res.json().catch(() => ({}));
+  const json = await res.json().catch(() => ({}));
+  if (settingResult(json, 'Academic session deleted').ok) {
+    try { await refreshActiveAcademicSession(); }
+    catch (e) { console.error('Could not refresh active academic session', e); }
+  }
+  return json;
 }
 
 /* GET branch employees for the signature staff dropdown.

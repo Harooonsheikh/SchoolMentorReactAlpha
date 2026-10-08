@@ -1,5 +1,5 @@
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl, activeSessionName, readStoredActiveSession } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    Students Module — real API wiring (LaunchSetup).
@@ -423,24 +423,14 @@ export async function getStuGrades() {
     .map(({ _i, ...g }) => g);
 }
 
-/* Branch ka ACTIVE academic session (read-only display ke liye) — session yahin
-   se aata hai, change sirf Settings me hota hai.
-   GET /api/Setting/get-academic-active-sessions-by-branch/{branchID}. */
+/* Branch ka ACTIVE academic session — login par store hota hai, yahan sirf
+   wohi padha jata hai. Change sirf Settings me hota hai. */
 export async function getStuActiveSession() {
-  const branchID = sessionStorage.getItem('branchID') || 0;
-  try {
-    const res  = await fetch(buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`), {
-      headers: { Accept: '*/*' },
-    });
-    const json = await res.json().catch(() => null);
-    const first = Array.isArray(json?.data) ? json.data[0] : null;
-    return {
-      id:   Number(first?.ID ?? first?.id ?? sessionStorage.getItem('sessionID') ?? 0) || 0,
-      name: first?.SessionName ?? first?.sessionName ?? activeSessionName(),
-    };
-  } catch (e) {
-    return { id: Number(sessionStorage.getItem('sessionID')) || 0, name: activeSessionName() };
-  }
+  const first = readStoredActiveSession();
+  return {
+    id:   Number(first?.ID ?? first?.id ?? sessionStorage.getItem('sessionID') ?? 0) || 0,
+    name: first?.SessionName ?? first?.sessionName ?? activeSessionName(),
+  };
 }
 
 /* Promote ONE student to a new class/section. isCarryForward=true → agar from-class aur

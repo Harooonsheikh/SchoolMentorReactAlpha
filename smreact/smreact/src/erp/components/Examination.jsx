@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as cbrApi from '../services/combinedAssessmentService';
-import { buildUrl, resolveMediaUrl, activeSessionName, storeSwitchedSession } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
 import { formatAcademicYearLabel, resolveAcademicSession } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import {
@@ -1070,12 +1070,13 @@ const [subjects, setSubjects] = useState([]);
       try { const r = await fetch(buildUrl(url), { method: 'GET', headers }); return await r.json(); }
       catch (e) { console.error('Result History load failed:', url, e); return null; }
     };
-    const [classes, classSection, sessions, branchSession] = await Promise.all([
+    const [classes, classSection, sessions] = await Promise.all([
       getJson(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
       getJson(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
       getJson(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
-      getJson(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
     ]);
+    const storedActive = readStoredActiveSession();
+    const branchSession = storedActive ? { data: [storedActive] } : { data: [] };
     setRhData({ classes, classSection, sessions, branchSession });
     // Active session ko dropdown mein default-select karo (active-sessions API se).
     const sessList = sessions?.data || [];
@@ -1963,42 +1964,17 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
     }, []);
   
     const loadSessionDates = async () => {
-      try {
-        const res = await fetch(
-          buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${termsBranchID()}`),
-         {
-          method: 'GET',
-          headers: {
-            Accept: '*/*',
-            Authorization: `Bearer ${sessionStorage.getItem('token') || ''}`,
-          },
-        }
-        );
-        const json = await res.json();
-        /* Active session response can be an array or a single object. If there's
-           no active session, gate the whole module behind the "set session" popup. */
-        const data = json?.data;
-        const row  = Array.isArray(data) ? data[0] : data;
- if (row) {
-      sessionStorage.setItem('sessionID', row.ID);
-      sessionStorage.setItem('sessionName', row.SessionName);
-      sessionStorage.setItem('sessionStatus', row.Status);        // ✅ ADD THIS
-      sessionStorage.setItem('sessionStartDate', row.StartDate);  // ✅ ADD THIS
-      sessionStorage.setItem('sessionEndDate', row.EndDate);      // ✅ ADD THIS
+      /* Dates and status were stored at login (and refreshed when a session
+         is saved). Opening this tab does not call the active-session API. */
+      if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return false; }
+      const row = readStoredActiveSession();
+      if (!row) { setHasActiveSession(false); return false; }
       setHasActiveSession(true);
-    }
-        if (!row) { setHasActiveSession(false); return false; }
-        setHasActiveSession(true);
-        if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
-        if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
-        // Caller (bootstrap/reload) isi par terms call karta hai — is liye batao
-        // ke session mili ya nahi.
-        return true;
-      } catch (e) {
-        console.error('Error loading active session:', e);
-        setHasActiveSession(false);
-        return false;
-      }
+      const start = row.sessionStart || row.StartDate || sessionStorage.getItem('sessionStartDate') || '';
+      const end = row.sessionEnd || row.EndDate || sessionStorage.getItem('sessionEndDate') || '';
+      if (start) setStart(String(start).slice(0, 10));
+      if (end) setEnd(String(end).slice(0, 10));
+      return true;
     };
   
   const getSessionData = async () => {
