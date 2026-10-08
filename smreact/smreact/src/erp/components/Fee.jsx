@@ -1604,7 +1604,8 @@ function FamilyTreeChallansList({ toast }) {
   const [downloadCtx, setDownloadCtx] = useState(null);
   /* Installment challan modal — { classMeta, student, rec, heads } */
   const [installmentCtx, setInstallmentCtx] = useState(null);
-
+  /* Installment challan ka Colorful / Colorless picker */
+  const [instPrintCtx, setInstPrintCtx] = useState(null);
   const apply = () => {
     setAppliedMonth(month); setAppliedYear(year);
     toast(`Loaded ${month} ${year} family challans`, 'info');
@@ -1727,7 +1728,7 @@ function FamilyTreeChallansList({ toast }) {
     });
   };
 
-  const createInstallmentChallan = async (cfg, amount) => {
+  const createInstallmentChallan = async (cfg, amount, bw = false) => {
     const { classMeta: c, student: s, rec, heads } = cfg;
     const amt = Math.round(Number(amount) || 0);
     const totalInstallment = amt * heads.length;
@@ -1774,12 +1775,12 @@ function FamilyTreeChallansList({ toast }) {
           challanAmount: amt, discount: 0, receivedAmount: 0,
         })),
       };
-      const html = buildChallanHTML({
+        const html = buildChallanHTML({
         classMeta: c,
         students: [{ ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan }],
         installmentSlip: true,
         heads: headsForChildGrade(s.gradeID),
-        settings, discountMap: {}, bw: false, size: settings.printSize || 'a4', school: branchHeader,
+        settings, discountMap: {}, bw, size: settings.printSize || 'a4', school: branchHeader,
       });
       const w = window.open('', '_blank');
       if (w) {
@@ -3015,8 +3016,7 @@ function FeeChallansList({ toast }) {
 
   /* One amount is typed and copied onto every head. PSID total = that amount × heads.
      The slip prints the typed amount as Standard and Net — no discount, no previous. */
-  const createInstallmentChallan = async (cfg, amount) => {
-    const { classMeta: c, student: s, rec, heads } = cfg;
+  const createInstallmentChallan = async (cfg, amount, bw = false) => {    const { classMeta: c, student: s, rec, heads } = cfg;
     const amt = Math.round(Number(amount) || 0);
     const totalInstallment = amt * heads.length;
     const branchID = Number(sessionStorage.getItem('branchID')) || Number(rec.branchID) || 1;
@@ -3065,10 +3065,10 @@ function FeeChallansList({ toast }) {
           challanAmount: amt, discount: 0, receivedAmount: 0,
         })),
       };
-      const student = { ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan };
-      const html = buildChallanHTML({
+          const student = { ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan };
+           const html = buildChallanHTML({
         classMeta: c, students: [student], heads: headsMap[c.key] || [],
-        settings, discountMap: {}, bw: false, size: settings.printSize || 'a4', school: branchHeader,
+        settings, discountMap: {}, bw, size: settings.printSize || 'a4', school: branchHeader,
         installmentSlip: true,
       });
       const w = window.open('', '_blank');
@@ -3737,6 +3737,16 @@ function FeeChallansList({ toast }) {
         onCreate={createInstallmentChallan}
         toast={toast}
       />
+
+      {/* <DownloadPickerModal
+        cfg={instPrintCtx}
+        onClose={() => setInstPrintCtx(null)}
+        onSubmit={(picks) => {
+          const ctx = instPrintCtx;
+          setInstPrintCtx(null);
+          if (ctx && ctx.print) ctx.print(picks.theme === 'bw');
+        }}
+      /> */}
     </>
   );
 }
@@ -4367,6 +4377,7 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
             </button>
           </div>
 
+          {!cfg.themeOnly && (<>
           <div className="fee-dl-label" style={{ marginTop: 18 }}>Paper Size</div>
           <div className="fee-dl-fmt-grid">
             <button
@@ -4417,18 +4428,20 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
               <div className="fee-dl-fmt-ic" style={{ background: 'rgba(2,132,199,.1)', color: '#0284C7' }}>
                 <i className="fa-solid fa-file-word"></i>
               </div>
-              <div className="fee-dl-fmt-name">Word (.docx)</div>
+                      <div className="fee-dl-fmt-name">Word (.docx)</div>
             </button>
           </div>
+          </>)}
         </div>
 
         <div className="fee-modal-foot">
           <Tooltip text="Discard and close">
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
-          <Tooltip text={`Generate ${size === 'thermal' ? 'Thermal 80mm' : 'A4'} · ${theme === 'bw' ? 'Colorless' : 'Colorful'} ${fmt === 'word' ? 'Word' : 'PDF'} report`}>
-            <button className="fee-btn fee-btn-primary" onClick={() => onSubmit({ theme, fmt, size })}>
-              <i className="fa-solid fa-file-arrow-down"></i> Generate Report
+          <Tooltip text={cfg.themeOnly
+            ? `Generate ${theme === 'bw' ? 'Colorless' : 'Colorful'} installment challan`
+            : `Generate ${size === 'thermal' ? 'Thermal 80mm' : 'A4'} · ${theme === 'bw' ? 'Colorless' : 'Colorful'} ${fmt === 'word' ? 'Word' : 'PDF'} report`}>
+            <button className="fee-btn fee-btn-primary" onClick={() => onSubmit({ theme, fmt, size })}>              <i className="fa-solid fa-file-arrow-down"></i> Generate Report
             </button>
           </Tooltip>
         </div>
@@ -4620,19 +4633,23 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
   const [amount, setAmount] = useState('');
   const [creating, setCreating] = useState(false);
 
+    /* Create Installment dabane par pehle Colorful / Colorless poocho */
+  const [askTheme, setAskTheme] = useState(false);
+
   useEffect(() => {
     if (!cfg) return;
     setAmount('');
     setCreating(false);
+    setAskTheme(false);
   }, [cfg]);
 
   useEffect(() => {
     if (!cfg) return undefined;
-    const onKey = e => { if (e.key === 'Escape' && !creating) onClose(); };
-    window.addEventListener('keydown', onKey);
+    const onKey = e => { if (e.key === 'Escape' && !creating && !askTheme) onClose(); };
+        window.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
-  }, [cfg, onClose, creating]);
+  }, [cfg, onClose, creating, askTheme]);
 
   if (!cfg) return null;
 
@@ -4655,17 +4672,26 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
       toast(`Installment cannot exceed “${overHead.name}” after-discount amount (${money(overHead.afterDiscount)})`, 'error');
       return;
     }
+    setAskTheme(true);   // pehle Colorful / Colorless picker
+  };
+
+  const runCreate = async (bw) => {
+    setAskTheme(false);
     try {
       setCreating(true);
-      await onCreate(cfg, amt);
+      await onCreate(cfg, amt, bw);
     } catch (e) {
       toast(e.message || 'Could not create installment challan', 'error');
       setCreating(false);
     }
   };
-
   return createPortal(
-    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget && !creating) onClose(); }}>
+     <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget && !creating) onClose(); }}>
+      <DownloadPickerModal
+        cfg={askTheme ? { sub: `${student.name} · Installment challan`, themeOnly: true } : null}
+        onClose={() => setAskTheme(false)}
+        onSubmit={(picks) => runCreate(picks.theme === 'bw')}
+      />
       <div className="fee-modal">
         <div className="fee-modal-head">
           <div className="fee-modal-head-title">
@@ -17179,7 +17205,11 @@ html,body,.fee-challan-doc,.fee-challan-doc *{-webkit-print-color-adjust:exact !
 .fee-challan-doc .logo-circle svg{width:14px;height:14px;}
 .fee-challan-doc .school-name{font-size:12px;font-weight:700;color:#1E3A8A;line-height:1.2;}
 .fee-challan-doc .copy-tag{font-size:8px;font-weight:600;color:#1E40AF;letter-spacing:0.8px;text-transform:uppercase;background:#DBEAFE;border:0.5px solid #93C5FD;padding:1px 5px;border-radius:2px;display:inline-block;margin-top:2px;}
-.fee-challan-doc .info-grid{display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:0;padding:7px 10px;background:#F8FAFF;border-bottom:1px solid #DBEAFE;}
+/* Installment challan (Colorful) — solid blue header */
+.fee-challan-doc.fee-inst:not(.fee-bw) .slip-header{background:#1E3A8A;border-bottom-color:#1E3A8A;}
+.fee-challan-doc.fee-inst:not(.fee-bw) .school-name{color:#fff;}
+.fee-challan-doc.fee-inst:not(.fee-bw) .school-addr{color:#DBEAFE !important;}
+.fee-challan-doc.fee-inst:not(.fee-bw) .logo-circle{border-color:#fff;}.fee-challan-doc .info-grid{display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:0;padding:7px 10px;background:#F8FAFF;border-bottom:1px solid #DBEAFE;}
 .fee-challan-doc .ig-lbl{font-size:9px;color:#777;font-weight:800;padding:2.5px 0;white-space:nowrap;}
 .fee-challan-doc .ig-val{font-size:9px;color:#111;font-weight:600;padding:2.5px 0;text-align:right;}
 .fee-challan-doc .fee-wrap{padding:7px 10px 0;}
@@ -17554,8 +17584,7 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
     </div>`;
   }).join('');
 
-  return `<div class="fee-challan-doc${bw ? ' fee-bw' : ''}">${pages || '<div style="padding:30px;text-align:center;color:#64748B">Nothing to render.</div>'}</div>`;
-}
+  return `<div class="fee-challan-doc${bw ? ' fee-bw' : ''}${installmentSlip ? ' fee-inst' : ''}">${pages || '<div style="padding:30px;text-align:center;color:#64748B">Nothing to render.</div>'}</div>`;}
 
 function buildChallanHTML(opts) {
   const size = opts.size || 'a4';
@@ -17565,7 +17594,8 @@ function buildChallanHTML(opts) {
      `.fee-challan-doc.fee-bw ...` selector becomes `body.fee-bw ...`, which
      only matches if <body> itself carries `fee-bw` (buildChallanInner puts
      it on the inner div), so Colorless never applied here without this. */
-  const bwClass = opts.bw ? ' class="fee-bw"' : '';
+  const bodyCls = [opts.bw ? 'fee-bw' : '', opts.installmentSlip ? 'fee-inst' : ''].filter(Boolean).join(' ');
+  const bwClass = bodyCls ? ` class="${bodyCls}"` : '';
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Fee Challan — ${opts.classMeta.cls} (${opts.classMeta.sec})`)}</title>
 <style>${css}</style></head><body${bwClass}>${buildChallanInner(opts)}</body></html>`;
 }
@@ -17590,7 +17620,12 @@ body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;back
 .th-tbl th.right,.th-tbl td.right{text-align:right;}
 .th-tbl .tr-total td{border-top:1px solid #111;border-bottom:none;font-weight:800;padding-top:3px;}
 .th-net{display:flex;justify-content:space-between;align-items:center;background:#111;color:#fff;padding:6px 10px;border-radius:3px;font-weight:800;font-size:12px;margin:6px 0;}
-.th-fine{font-size:9px;color:#777;margin-bottom:5px;}
+/* Installment challan (Colorful, Thermal) — blue header + Net Payable */
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+body.fee-inst:not(.fee-bw) .th-school{background:#1E3A8A;color:#fff;padding:5px 4px;border-radius:3px 3px 0 0;}
+body.fee-inst:not(.fee-bw) .th-tag{background:#1E3A8A;color:#DBEAFE;border-bottom:none;border-radius:0 0 3px 3px;padding:2px 4px 5px;margin-top:0;}
+body.fee-inst:not(.fee-bw) .th-net{background:#1E3A8A;}
+body.fee-inst:not(.fee-bw) .tr-total td{border-top-color:#1E3A8A;}.th-fine{font-size:9px;color:#777;margin-bottom:5px;}
 .th-psid{border:1px dashed #555;border-radius:3px;padding:5px 8px;margin-top:5px;}
 .th-psid-top{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#333;margin-bottom:3px;}
 .th-psid-num{font-size:11.5px;font-weight:800;color:#111;margin-bottom:3px;letter-spacing:.5px;font-variant-numeric:tabular-nums;}
