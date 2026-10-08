@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
+import LessonPlans from './LessonPlans';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
 import { fetchReportHeader, resolveAcademicSession, formatAcademicYearLabel } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
@@ -10,7 +11,6 @@ import {
 } from '../reports/reportKit';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
-import RouteFallback from '../shared/RouteFallback';
 /* Resource Library LIVE hai — school ke apne PDF resources branchID ki base
    par (/api/manage-resource-library). Wahi table chain portal bhi use karta
    hai, wahan scope networkID ka hota hai. */
@@ -51,15 +51,8 @@ const parseEventDate = str => {
   return isNaN(d) ? null : d;
 };
 
-/* ── Module-level cache (mount ke beech survive karta hai) ──
-   Ek dafa Academics load ho jaye to dobara aane par loader NAHI — cached classes
-   foran, background refresh. Loader sirf: (a) pehli dfa (login ke baad), ya
-   (b) jab session badle (Settings me action → sessionID/changeSessionId change). */
-let acadLoadedOnce = false;
-let acadLoadedSessionKey = '';
+/* Classes cache survives leaving the tab so a return visit is not empty. */
 let acadClassesCache = [];
-const acadSessionKey = () =>
-  `${sessionStorage.getItem('sessionID') || ''}|${sessionStorage.getItem('changeSessionId') || ''}`;
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN ACADEMICS SHELL
@@ -137,9 +130,6 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const acadModuleReadOnly = useModuleReadOnly('acad');
   const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 const [noSessionModal, setNoSessionModal] = useState(false);
-/* Loader tabhi jab pehli dfa load ho raha ho YA session badla ho — warna cached
-   data foran (dobara Academics par aane par loader nahi). */
-const [sessionLoading, setSessionLoading] = useState(() => !acadLoadedOnce || acadLoadedSessionKey !== acadSessionKey());
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
   const [calEditOpen, setCalEditOpen] = useState(false);
@@ -203,23 +193,16 @@ const getSessionData = async () => {
     console.error("Error loading session data:", error);
     toast('Could not load academic session for this branch', 'error');
   }
-  // NOTE: setSessionLoading(false) yahan se hata diya — mount effect isay session +
-  // classes DONO load hone ke baad off karta hai (warna classes empty aati thi).
 };
 
 
 useEffect(() => {
   (async () => {
     try {
-      /* Pehle session-check API (sessionID set hoti hai), PHIR classes. Agar pehle se
-         loaded ha aur session wahi ha to sessionLoading already false ha (loader nahi) —
-         ye fetch sirf background refresh ha. Warna loader chalta ha. */
       await getSessionData();
       if (l2 === 'tb') await getClassesData();
     } finally {
-      acadLoadedOnce = true;
-      acadLoadedSessionKey = acadSessionKey();
-      setSessionLoading(false); // needFull tha to loader band; warna already false (no-op)
+      /* Session is already stored at login — this tab does not block on a loader. */
     }
   })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -333,14 +316,6 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
   }, []);
 
  const hasSession = !!sessionStorage.getItem('sessionID');
-
-/* While the active-session API is still loading, show the same module loader
-   used across the app — never the "no session" screen. This stops the false
-   "no session" flash on entry (e.g. right after login) while the session-get
-   API is in flight. */
-if (sessionLoading) {
-  return <RouteFallback label="Loading Academics…" sub="Loading the current academic session — please wait." />;
-}
 
 if (!hasSession) {
   return (

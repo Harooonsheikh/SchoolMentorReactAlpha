@@ -2144,7 +2144,9 @@ function buildAccReportHTML(cfg, school, isBW = false) {
     cash:     { color: '#0E7490', dark: '#155E75', title: 'Cash In Hand Statement',   sub: 'P/L sum + cash-flagged book balances' },
     books:    { color: '#6D28D9', dark: '#5B21B6', title: 'Account Books Summary',    sub: 'Running balances across every book' },
     headwise: { color: '#D97706', dark: '#B45309', title: 'Head-wise Summary',        sub: 'Totals grouped by account head' },
+    'monthly-statement': { color: '#1E40AF', dark: '#1E3A8A', title: 'Account Statement', sub: 'Opening balance, income, expense & closing position for the selected period' },
     overview: { color: '#1E40AF', dark: '#1E3A8A', title: 'Financial Overview',       sub: 'Consolidated revenue / expense / books dashboard' },
+    'fin-summary': { color: '#0891B2', dark: '#0E7490', title: 'Accounts Summary',    sub: 'Opening, income, expense & current balance per Financial Account' },
   };
   const meta = META[cfg.kind] || META.revenue;
   const logoHtml = school?.logo
@@ -2211,6 +2213,23 @@ function buildAccReportHTML(cfg, school, isBW = false) {
       <div class="kpi b"><div class="l">Total Expense</div><div class="v" style="color:#B91C1C">${fmtPK(totE)}</div><div class="m">period</div></div>
       <div class="kpi c"><div class="l">Net Profit / Loss</div><div class="v" style="color:${totP >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(totP)}</div><div class="m">${totP >= 0 ? 'surplus' : 'deficit'}</div></div>
       <div class="kpi d"><div class="l">Cash In Hand</div><div class="v" style="color:${meta.dark}">${fmtPK(totP + cBooks)}</div><div class="m">P/L + cash books</div></div>`;
+  } else if (cfg.kind === 'monthly-statement') {
+    const s = list[0] || {};
+    kpis = `
+      <div class="kpi a"><div class="l">Opening Balance</div><div class="v">${fmtPK(s.opening)}</div><div class="m">start of ${s.monthLabel || ''}</div></div>
+      <div class="kpi b"><div class="l">Total Income</div><div class="v" style="color:#15803D">${fmtPK(s.totalIncome)}</div><div class="m">${(s.incomeAll || []).length} entries</div></div>
+      <div class="kpi c"><div class="l">Total Expense</div><div class="v" style="color:#B91C1C">${fmtPK(s.totalExpense)}</div><div class="m">${(s.expenseAll || []).length} entries</div></div>
+      <div class="kpi d"><div class="l">${s.netPL >= 0 ? 'Net Profit' : 'Net Loss'}</div><div class="v" style="color:${s.netPL >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(Math.abs(s.netPL))}</div><div class="m">closing ${fmtPK(s.closingBalance)}</div></div>`;
+  } else if (cfg.kind === 'fin-summary') {
+    const totOpening = list.reduce((a, r) => a + r.opening, 0);
+    const totCurrent = list.reduce((a, r) => a + r.current, 0);
+    const totIncome  = list.reduce((a, r) => a + r.incomeIn, 0);
+    const totExpense = list.reduce((a, r) => a + r.expenseOut, 0);
+    kpis = `
+      <div class="kpi a"><div class="l">Total Opening</div><div class="v">${fmtPK(totOpening)}</div><div class="m">${list.length} account(s)</div></div>
+      <div class="kpi b"><div class="l">Income In</div><div class="v" style="color:#15803D">${fmtPK(totIncome)}</div><div class="m">selected period</div></div>
+      <div class="kpi c"><div class="l">Expense Out</div><div class="v" style="color:#B91C1C">${fmtPK(totExpense)}</div><div class="m">selected period</div></div>
+      <div class="kpi d"><div class="l">Total Current Balance</div><div class="v" style="color:${meta.dark}">${fmtPK(totCurrent)}</div><div class="m">as of To Date</div></div>`;
   }
 
   /* ─── Body table / panels (vary per report) ─── */
@@ -2439,6 +2458,104 @@ function buildAccReportHTML(cfg, school, isBW = false) {
         <b>${totP >= 0 ? '✓ Surplus' : '⚠ Deficit'} ${fmtPK(Math.abs(totP))}</b> from operations, ${fmtPK(cashBal)} cash-flagged book balances, ${fmtPK(totP + cashBal)} <b>final Cash In Hand</b>.
         Total book exposure across all books: ${fmtPK(totBal)}.
       </div>`;
+  } else if (cfg.kind === 'monthly-statement') {
+    const s = list[0] || {};
+    const incomeRows = (s.incomeShown || []).map((x, i) => `
+      <tr>
+        <td>${escH(accFmtDate(x.date))}</td>
+        <td><b>INC-${String(i + 1).padStart(3, '0')}</b><div class="sub">Ref: ${escH(x.id)}</div></td>
+        <td><b>${escH(x.head)}</b></td>
+        <td class="detail">${escH(x.detail || '')}</td>
+        <td class="r"><b>${fmtPK(x.amount)}</b></td>
+      </tr>`).join('');
+    const expenseRows = (s.expenseShown || []).map((x, i) => `
+      <tr>
+        <td>${escH(accFmtDate(x.date))}</td>
+        <td><b>EXP-${String(i + 1).padStart(3, '0')}</b><div class="sub">Ref: ${escH(x.id)}</div></td>
+        <td><b>${escH(x.head)}</b></td>
+        <td class="detail">${escH(x.detail || '')}</td>
+        <td class="r"><b>${fmtPK(x.amount)}</b></td>
+      </tr>`).join('');
+    body = `
+      <div class="callout" style="margin-top:0;margin-bottom:14px;">
+        <b>Opening Balance — ${fmtPK(s.opening)}</b> carried forward from before ${escH(s.periodStartLabel || s.monthLabel || '')}.
+        ${s.filtered ? 'Showing entries for the selected account head only; totals below still reflect the full period.' : ''}
+      </div>
+      <div class="sec-band" style="background:linear-gradient(135deg,#16A34A,#15803D)">
+        <span>Income Details</span>
+        <small>${(s.incomeShown || []).length} entr${(s.incomeShown || []).length === 1 ? 'y' : 'ies'}</small>
+      </div>
+      <table class="t">
+        <thead><tr><th>Date</th><th>Voucher / Ref No.</th><th>Income Head</th><th>Description</th><th class="r">Amount</th></tr></thead>
+        <tbody>${incomeRows || '<tr><td colspan="5" class="empty">No income entries.</td></tr>'}</tbody>
+        <tfoot><tr><td colspan="4" class="totlbl">Total Income</td><td class="r totval" style="color:#15803D">${fmtPK(s.totalIncome)}</td></tr></tfoot>
+      </table>
+      <div class="sec-band" style="background:linear-gradient(135deg,#DC2626,#B91C1C);margin-top:14px">
+        <span>Expense Details</span>
+        <small>${(s.expenseShown || []).length} entr${(s.expenseShown || []).length === 1 ? 'y' : 'ies'}</small>
+      </div>
+      <table class="t">
+        <thead><tr><th>Date</th><th>Voucher / Ref No.</th><th>Expense Head</th><th>Description</th><th class="r">Amount</th></tr></thead>
+        <tbody>${expenseRows || '<tr><td colspan="5" class="empty">No expense entries.</td></tr>'}</tbody>
+        <tfoot><tr><td colspan="4" class="totlbl">Total Expense</td><td class="r totval" style="color:#B91C1C">${fmtPK(s.totalExpense)}</td></tr></tfoot>
+      </table>
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark});margin-top:14px">
+        <span>Statement Summary</span>
+      </div>
+      <table class="t">
+        <tbody>
+          <tr><td>Opening Balance</td><td class="r"><b>${fmtPK(s.opening)}</b></td></tr>
+          <tr><td>Add: Total Income</td><td class="r"><b style="color:#15803D">${fmtPK(s.totalIncome)}</b></td></tr>
+          <tr><td>Available Balance</td><td class="r"><b>${fmtPK(s.availableBalance)}</b></td></tr>
+          <tr><td>Less: Total Expense</td><td class="r"><b style="color:#B91C1C">${fmtPK(s.totalExpense)}</b></td></tr>
+        </tbody>
+        <tfoot><tr><td class="totlbl">Closing Balance</td><td class="r totval">${fmtPK(s.closingBalance)}</td></tr></tfoot>
+      </table>
+      <div class="callout" style="margin-top:14px;">
+        <b>${s.netPL >= 0 ? '✓ Net Profit' : '⚠ Net Loss'} ${fmtPK(Math.abs(s.netPL))}</b> for ${escH(s.monthLabel || '')} — Total Income (${fmtPK(s.totalIncome)}) − Total Expense (${fmtPK(s.totalExpense)}).
+      </div>`;
+  } else if (cfg.kind === 'fin-summary') {
+    const rows = list.map(r => `
+      <tr>
+        <td><b>${escH(r.account)}</b></td>
+        <td>${escH(r.type)}</td>
+        <td class="c"><span class="status ${r.status}">${escH(r.status)}</span></td>
+        <td class="r">${fmtPK(r.opening)}</td>
+        <td class="r" style="color:#15803D">${fmtPK(r.incomeIn)}</td>
+        <td class="r" style="color:#B91C1C">${fmtPK(r.expenseOut)}</td>
+        <td class="r">${fmtPK(r.transfersNet)}</td>
+        <td class="r"><b>${fmtPK(r.current)}</b></td>
+      </tr>`).join('');
+    const totOpening = list.reduce((a, r) => a + r.opening, 0);
+    const totIncome  = list.reduce((a, r) => a + r.incomeIn, 0);
+    const totExpense = list.reduce((a, r) => a + r.expenseOut, 0);
+    const totTransfers = list.reduce((a, r) => a + r.transfersNet, 0);
+    const totCurrent = list.reduce((a, r) => a + r.current, 0);
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>Accounts Summary</span>
+        <small>${list.length} account(s)</small>
+      </div>
+      <table class="t">
+        <thead>
+          <tr>
+            <th>Account</th><th>Type</th><th class="c">Status</th>
+            <th class="r">Opening</th><th class="r">Income In</th><th class="r">Expense Out</th>
+            <th class="r">Transfers Net</th><th class="r">Current Balance</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="8" class="empty">No accounts.</td></tr>'}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" class="totlbl">Totals</td>
+            <td class="r">${fmtPK(totOpening)}</td>
+            <td class="r">${fmtPK(totIncome)}</td>
+            <td class="r">${fmtPK(totExpense)}</td>
+            <td class="r">${fmtPK(totTransfers)}</td>
+            <td class="r totval">${fmtPK(totCurrent)}</td>
+          </tr>
+        </tfoot>
+      </table>`;
   }
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escH(meta.title)}</title>
@@ -2550,12 +2667,12 @@ body{background:#F1F3F8;padding:18px 0;}
     ${school?.address ? `<div class="addr">${escH(school.address)}</div>` : ''}
     ${school?.session ? `<div class="session">Academic Session: ${escH(school.session)}</div>` : ''}
   </div>
-  <div class="meta">Generated: ${today}<br/>By: ${escH(school?.generatedBy || 'Accounts')}<br/>Records: ${list.length}</div>
+  <div class="meta">Generated: ${today}<br/>By: ${escH(school?.generatedBy || 'Accounts')}<br/>${cfg.kind === 'monthly-statement' ? `Period: ${escH((list[0] || {}).monthLabel || '')}` : `Records: ${list.length}`}</div>
 </div>
 
 <div class="report-card">
   <div class="report-card-name">${escH(meta.title)}</div>
-  <div class="report-card-sub">${escH(meta.sub)}</div>
+  <div class="report-card-sub">${cfg.kind === 'monthly-statement' ? `Period: ${escH((list[0] || {}).monthLabel || '')}` : escH(meta.sub)}</div>
 </div>
 
 <div class="kpi-row">${kpis}</div>
@@ -2617,6 +2734,26 @@ function buildAccReportCSV(cfg) {
   if (cfg.kind === 'headwise') {
     const header = ['Type', 'HeadNo', 'Head', 'Entries', 'TotalAmount'];
     const rows = list.map(r => [r.type, r.headNo, r.head, r.count, r.total]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'fin-summary') {
+    const header = ['Account', 'Type', 'Status', 'Opening', 'IncomeIn', 'ExpenseOut', 'TransfersNet', 'CurrentBalance'];
+    const rows = list.map(r => [r.account, r.type, r.status, r.opening, r.incomeIn, r.expenseOut, r.transfersNet, r.current]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'monthly-statement') {
+    const s = list[0] || {};
+    const header = ['Section', 'Date', 'RefNo', 'Head', 'Description', 'Amount'];
+    const rows = [
+      ['Opening Balance', '', '', '', '', s.opening],
+      ...(s.incomeShown || []).map((x, i) => ['Income', x.date, `INC-${String(i + 1).padStart(3, '0')}`, x.head, x.detail || '', x.amount]),
+      ['Income', '', '', '', 'Total Income', s.totalIncome],
+      ...(s.expenseShown || []).map((x, i) => ['Expense', x.date, `EXP-${String(i + 1).padStart(3, '0')}`, x.head, x.detail || '', x.amount]),
+      ['Expense', '', '', '', 'Total Expense', s.totalExpense],
+      ['Summary', '', '', '', 'Available Balance', s.availableBalance],
+      ['Summary', '', '', '', 'Closing Balance', s.closingBalance],
+      ['Summary', '', '', '', s.netPL >= 0 ? 'Net Profit' : 'Net Loss', Math.abs(s.netPL)],
+    ];
     return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
   }
   return '';
@@ -5064,7 +5201,9 @@ const REPORT_TYPES = [
   // { id: 'cash',     ic: 'fa-wallet',           label: 'Cash In Hand' },
   { id: 'books',    ic: 'fa-book-open',        label: 'Account Books' },
   { id: 'headwise', ic: 'fa-layer-group',      label: 'Head-wise Summary' },
+  { id: 'monthly-statement', ic: 'fa-calendar-check', label: 'Account Statement' },
   { id: 'overview', ic: 'fa-chart-pie',        label: 'Financial Overview' },
+  { id: 'fin-summary', ic: 'fa-building-columns', label: 'Accounts Summary' },
 ];
 
 function repMonthsBetween(fromM, toM) {
@@ -5082,6 +5221,17 @@ function repMonthsBetween(fromM, toM) {
 }
 
 const dateMonth = (d) => String(d || '').slice(0, 7);
+
+/* Opening balance needs every month before the selected period. The
+   entries API is month-scoped, so load from the stored session start
+   (or one year before the period when no session date is stored). */
+function reportHistoryStart(periodStart) {
+  const stored = String(sessionStorage.getItem('sessionStartDate') || '').slice(0, 7);
+  const [y, m] = String(periodStart || '').split('-').map(Number);
+  const fallback = y && m ? `${y - 1}-${String(m).padStart(2, '0')}` : periodStart;
+  if (/^\d{4}-\d{2}$/.test(stored) && stored < (periodStart || stored)) return stored;
+  return fallback || periodStart;
+}
 
 function Reports({ toast }) {
   const { can } = usePermissions();
@@ -5106,6 +5256,26 @@ function Reports({ toast }) {
   const [plTo, setPlTo]         = useState(startMonth);
   const [cashDate, setCashDate] = useState(today);
   const [dlReport, setDlReport] = useState(null); // download modal cfg
+  const [masMode, setMasMode]   = useState('monthly');
+  const [masMonth, setMasMonth] = useState(startMonth);
+  const [masFrom, setMasFrom]   = useState(`${startMonth}-01`);
+  const [masTo, setMasTo]       = useState(today);
+  const [masHead, setMasHead]   = useState('all');
+  const [finAccounts, setFinAccounts] = useState([]);
+  const [finTransfers, setFinTransfers] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      accountsService.getFinAccounts().catch(() => []),
+      accountsService.getTransfers().catch(() => []),
+    ]).then(([accounts, transfers]) => {
+      if (!alive) return;
+      setFinAccounts(accounts || []);
+      setFinTransfers(transfers || []);
+    });
+    return () => { alive = false; };
+  }, []);
 
   const reportMonths = useMemo(() => {
     if (repType === 'revenue' || repType === 'expense' || repType === 'headwise') {
@@ -5119,8 +5289,18 @@ function Reports({ toast }) {
       const toM = dateMonth(cashDate) || dateMonth(today);
       return repMonthsBetween(`${toM.slice(0, 4)}-01`, toM);
     }
+    if (repType === 'monthly-statement') {
+      const end = masMode === 'custom' ? (dateMonth(masTo) || dateMonth(today)) : masMonth;
+      const periodStart = masMode === 'custom' ? (dateMonth(masFrom) || end) : masMonth;
+      return repMonthsBetween(reportHistoryStart(periodStart), end);
+    }
+    if (repType === 'fin-summary') {
+      const end = dateMonth(toDate) || dateMonth(today);
+      const periodStart = dateMonth(fromDate) || end;
+      return repMonthsBetween(reportHistoryStart(periodStart), end);
+    }
     return [dateMonth(today)];
-  }, [repType, fromDate, toDate, today, plMode, plMonth, plFrom, plTo, cashDate]);
+  }, [repType, fromDate, toDate, today, plMode, plMonth, plFrom, plTo, cashDate, masMode, masMonth, masFrom, masTo]);
 
   const loadReportData = useCallback(async () => {
     setReportLoading(true);
@@ -5209,8 +5389,68 @@ function Reports({ toast }) {
         return { sr: i + 1, month: `${MONTH_NAMES[Number(mm) - 1]} ${yy}`, monthKey: m, revenue: rev, expense: exp, pl: rev - exp };
       });
     }
+    if (repType === 'monthly-statement') {
+      const isCustom = masMode === 'custom';
+      const rangeStart = isCustom ? masFrom : `${masMonth}-01`;
+      const priorRev = (txnData.rev || []).filter(x => x.date < rangeStart).reduce((a, x) => a + Number(x.amount || 0), 0);
+      const priorExp = (txnData.exp || []).filter(x => x.date < rangeStart).reduce((a, x) => a + Number(x.amount || 0), 0);
+      const opening = priorRev - priorExp;
+      const incomeAll = isCustom
+        ? (txnData.rev || []).filter(x => x.date >= masFrom && x.date <= masTo).sort((a, b) => (a.date < b.date ? -1 : 1))
+        : (txnData.rev || []).filter(x => x.month === masMonth).sort((a, b) => (a.date < b.date ? -1 : 1));
+      const expenseAll = isCustom
+        ? (txnData.exp || []).filter(x => x.date >= masFrom && x.date <= masTo).sort((a, b) => (a.date < b.date ? -1 : 1))
+        : (txnData.exp || []).filter(x => x.month === masMonth).sort((a, b) => (a.date < b.date ? -1 : 1));
+      const incomeShown  = incomeAll.filter(x => masHead === 'all' || masHead === `rev:${x.headNo}`);
+      const expenseShown = expenseAll.filter(x => masHead === 'all' || masHead === `exp:${x.headNo}`);
+      const totalIncome  = incomeAll.reduce((a, x) => a + Number(x.amount || 0), 0);
+      const totalExpense = expenseAll.reduce((a, x) => a + Number(x.amount || 0), 0);
+      const availableBalance = opening + totalIncome;
+      const closingBalance   = availableBalance - totalExpense;
+      const netPL = totalIncome - totalExpense;
+      let monthKey, monthLabel, periodStartLabel;
+      if (isCustom) {
+        monthKey = `${masFrom}_${masTo}`;
+        monthLabel = `${accFmtDate(masFrom)} – ${accFmtDate(masTo)}`;
+        periodStartLabel = accFmtDate(masFrom);
+      } else {
+        const [yy, mm] = masMonth.split('-');
+        monthKey = masMonth;
+        monthLabel = `${MONTH_NAMES[Number(mm) - 1]} ${yy}`;
+        periodStartLabel = monthLabel;
+      }
+      return [{
+        monthKey, monthLabel, periodStartLabel,
+        opening, incomeAll, expenseAll, incomeShown, expenseShown,
+        totalIncome, totalExpense, availableBalance, closingBalance, netPL,
+        filtered: masHead !== 'all',
+      }];
+    }
+    if (repType === 'fin-summary') {
+      const defId = String((finAccounts.find(a => a.isDefault) || finAccounts[0] || {}).id || '');
+      return finAccounts.map(a => {
+        const id = String(a.id);
+        const acctMoves = [];
+        (txnData.rev || []).forEach(t => { if (String(t.acctId || defId) === id) acctMoves.push({ date: t.date, amt: Number(t.amount) || 0, dir: 1 }); });
+        (txnData.exp || []).forEach(t => { if (String(t.acctId || defId) === id) acctMoves.push({ date: t.date, amt: Number(t.amount) || 0, dir: -1 }); });
+        (finTransfers || []).forEach(tr => {
+          if (String(tr.toId) === id)   acctMoves.push({ date: tr.date, amt: Number(tr.amount) || 0, dir: 1 });
+          if (String(tr.fromId) === id) acctMoves.push({ date: tr.date, amt: Number(tr.amount) || 0, dir: -1 });
+        });
+        const opening = Number(a.opening || 0) + acctMoves.filter(m => !fromDate || m.date < fromDate).reduce((s, m) => s + m.dir * m.amt, 0);
+        const incomeIn = (txnData.rev || []).filter(t => String(t.acctId || defId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        const expenseOut = (txnData.exp || []).filter(t => String(t.acctId || defId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        const transfersInRange = (finTransfers || []).filter(tr => (!fromDate || tr.date >= fromDate) && (!toDate || tr.date <= toDate));
+        const transfersNet = transfersInRange.reduce((s, tr) => s + (String(tr.toId) === id ? Number(tr.amount) || 0 : 0) - (String(tr.fromId) === id ? Number(tr.amount) || 0 : 0), 0);
+        const current = opening + incomeIn - expenseOut + transfersNet;
+        return {
+          account: a.name, type: finTypeMeta(a.type).label, status: a.status,
+          opening, incomeIn, expenseOut, transfersNet, current,
+        };
+      });
+    }
     return [];
-  }, [repType, txnData, books, head, fromDate, toDate, plMode, plMonth, plFrom, plTo, cashDate]);
+  }, [repType, txnData, books, head, fromDate, toDate, plMode, plMonth, plFrom, plTo, cashDate, masMode, masMonth, masFrom, masTo, masHead, finAccounts, finTransfers]);
 
   /* Build the "Download Report" payload + open the picker. */
   const openDownload = () => {
@@ -5318,7 +5558,7 @@ function Reports({ toast }) {
               </div>
             )}
 
-            {repType === 'headwise' && (
+            {(repType === 'headwise' || repType === 'fin-summary') && (
               <>
                 <div className="fee-field">
                   <span className="fee-label">From Date</span>
@@ -5327,6 +5567,53 @@ function Reports({ toast }) {
                 <div className="fee-field">
                   <span className="fee-label">To Date</span>
                   <input className="fee-input" type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            {repType === 'monthly-statement' && (
+              <>
+                <div className="acc-rep-subtypes">
+                  <button type="button" className={`acc-rep-subtype${masMode === 'monthly' ? ' active' : ''}`} onClick={() => setMasMode('monthly')}>
+                    Monthly
+                  </button>
+                  <button type="button" className={`acc-rep-subtype${masMode === 'custom' ? ' active' : ''}`} onClick={() => setMasMode('custom')}>
+                    Custom Range
+                  </button>
+                </div>
+                {masMode === 'monthly' ? (
+                  <div className="fee-field">
+                    <span className="fee-label">Select Month &amp; Year</span>
+                    <input className="fee-input" type="month" value={masMonth} onChange={e => setMasMonth(e.target.value)} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="fee-field">
+                      <span className="fee-label">From Date</span>
+                      <input className="fee-input" type="date" value={masFrom} onChange={e => setMasFrom(e.target.value)} />
+                    </div>
+                    <div className="fee-field">
+                      <span className="fee-label">To Date</span>
+                      <input className="fee-input" type="date" value={masTo} onChange={e => setMasTo(e.target.value)} />
+                    </div>
+                  </>
+                )}
+                <div className="fee-field">
+                  <span className="fee-label">
+                    Account Head <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional)</span>
+                  </span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={masHead} onChange={e => setMasHead(e.target.value)} style={{ minWidth: 220 }}>
+                      <option value="all">All Heads</option>
+                      <optgroup label="Income Heads">
+                        {headsFor('rev').map(h => <option key={`rev:${h.no}`} value={`rev:${h.no}`}>{h.name}</option>)}
+                      </optgroup>
+                      <optgroup label="Expense Heads">
+                        {headsFor('exp').map(h => <option key={`exp:${h.no}`} value={`exp:${h.no}`}>{h.name}</option>)}
+                      </optgroup>
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
                 </div>
               </>
             )}
@@ -5369,6 +5656,10 @@ function Reports({ toast }) {
               <><i className="fa-solid fa-book-open"></i> Summary of every account book with opening, received, returned and running balance.</>
             ) : repType === 'headwise' ? (
               <><i className="fa-solid fa-layer-group"></i> Totals grouped by each account head across revenue and expenditure.</>
+            ) : repType === 'monthly-statement' ? (
+              <><i className="fa-solid fa-circle-info"></i> Opening Balance is carried forward automatically from every prior month — Opening + Income − Expense = Closing Balance. Click any entry to see its full detail.</>
+            ) : repType === 'fin-summary' ? (
+              <><i className="fa-solid fa-building-columns"></i> One row per Financial Account, scoped to the selected date range. Current Balance = Opening + Income In − Expense Out + Transfers Net.</>
             ) : (
               <><i className="fa-solid fa-chart-pie"></i> A consolidated dashboard of revenue, expense, profit trend and account-book exposure.</>
             )}
@@ -5384,6 +5675,8 @@ function Reports({ toast }) {
         books={books}
         plMode={plMode}
         onDownload={openDownload}
+        school={school}
+        toast={toast}
       />
 
       <AccDownloadReportModal
@@ -5475,6 +5768,32 @@ function ReportKpiStrip({ repType, rows, books, plMode, cashDate }) {
       </div>
     );
   }
+  if (repType === 'monthly-statement') {
+    const s = rows[0];
+    if (!s) return null;
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-blue"  ic="fa-wallet"         label="Opening Balance" val={fmtMoney(s.opening)}      meta={`start of ${s.monthLabel}`} />
+        <Kpi cls="k-green" ic="fa-arrow-down"     label="Total Income"    val={fmtMoney(s.totalIncome)}  meta={`${s.incomeAll.length} entries`} />
+        <Kpi cls="k-red"   ic="fa-arrow-up"       label="Total Expense"   val={fmtMoney(s.totalExpense)} meta={`${s.expenseAll.length} entries`} />
+        <Kpi cls={s.netPL >= 0 ? 'k-blue' : 'k-amber'} ic="fa-scale-balanced" label={s.netPL >= 0 ? 'Net Profit' : 'Net Loss'} val={fmtMoney(Math.abs(s.netPL))} meta={`closing balance ${fmtMoney(s.closingBalance)}`} />
+      </div>
+    );
+  }
+  if (repType === 'fin-summary') {
+    const totOpening = rows.reduce((a, r) => a + r.opening, 0);
+    const totCurrent = rows.reduce((a, r) => a + r.current, 0);
+    const totIncome  = rows.reduce((a, r) => a + r.incomeIn, 0);
+    const totExpense = rows.reduce((a, r) => a + r.expenseOut, 0);
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-blue"  ic="fa-wallet"         label="Total Opening"  val={fmtMoney(totOpening)} meta={`${rows.length} account(s)`} />
+        <Kpi cls="k-green" ic="fa-arrow-down"     label="Income In"      val={fmtMoney(totIncome)}  meta="selected period" />
+        <Kpi cls="k-red"   ic="fa-arrow-up"       label="Expense Out"    val={fmtMoney(totExpense)} meta="selected period" />
+        <Kpi cls="k-blue"  ic="fa-building-columns" label="Total Current" val={fmtMoney(totCurrent)} meta="as of To Date" />
+      </div>
+    );
+  }
   return null;
 }
 
@@ -5492,7 +5811,7 @@ function Kpi({ cls, ic, label, val, meta }) {
 }
 
 /* ─── Report body (varies per report) ─── */
-function ReportBody({ repType, rows, books, plMode, onDownload }) {
+function ReportBody({ repType, rows, books, plMode, onDownload, school, toast }) {
   if (rows.length === 0 && repType !== 'overview') {
     return (
       <div className="fee-section">
@@ -5776,12 +6095,171 @@ function ReportBody({ repType, rows, books, plMode, onDownload }) {
             </div>
           </div>
         </div>
+          </div>
+        </div>
       </div>
+    );
+  }
+  if (repType === 'monthly-statement') {
+    const s = rows[0];
+    if (!s) return null;
+    return <AccountStatementBody snap={s} school={school} toast={toast} onDownload={onDownload} />;
+  }
+  if (repType === 'fin-summary') {
+    return (
+      <div className="fee-section">
+        <RepSectionHeader name="Accounts Summary" sub="opening, income, expense & current balance per account" count={rows.length} onDownload={onDownload} />
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table">
+            <thead>
+              <tr>
+                <th>Account</th><th>Type</th><th className="c">Status</th>
+                <th className="r">Opening</th><th className="r">Income In</th><th className="r">Expense Out</th>
+                <th className="r">Transfers Net</th><th className="r">Current Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="acc-txn-headname">{r.account}</td>
+                  <td>{r.type}</td>
+                  <td className="c"><span className={`acc-book-status ${r.status}`}>{r.status}</span></td>
+                  <td className="r">{fmtMoney(r.opening)}</td>
+                  <td className="r acc-stmt-credit">{fmtMoney(r.incomeIn)}</td>
+                  <td className="r acc-stmt-debit">{fmtMoney(r.expenseOut)}</td>
+                  <td className="r">{r.transfersNet >= 0 ? '+' : '−'}{fmtMoney(Math.abs(r.transfersNet))}</td>
+                  <td className="r"><span className="acc-txn-amt">{fmtMoney(r.current)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3} className="acc-txn-totlbl">Total:</td>
+                <td className="r">{fmtMoney(rows.reduce((a, r) => a + r.opening, 0))}</td>
+                <td className="r acc-stmt-credit">{fmtMoney(rows.reduce((a, r) => a + r.incomeIn, 0))}</td>
+                <td className="r acc-stmt-debit">{fmtMoney(rows.reduce((a, r) => a + r.expenseOut, 0))}</td>
+                <td></td>
+                <td className="r"><span className="acc-txn-amt">{fmtMoney(rows.reduce((a, r) => a + r.current, 0))}</span></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div className="acc-ov-callout" style={{ margin: '0 20px 20px' }}>
+          <div className="acc-ov-callout-ic" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-circle-info"></i></div>
+          <div>
+            <div className="acc-ov-callout-t">Transfers are excluded from Profit and Loss</div>
+            <div className="acc-ov-callout-d">Current Balance = Opening + Income In − Expense Out + Transfers Net. Moving money between accounts changes balances only. It is never income or expense.</div>
+          </div>
         </div>
       </div>
     );
   }
   return null;
+}
+
+function AccountStatementBody({ snap: s, school, toast, onDownload }) {
+  const [slip, setSlip] = useState(null);
+  const openRow = (x, seg) => setSlip({ txn: x, seg, school });
+
+  const EntryRow = ({ x, seg, idx, prefix }) => (
+    <tr className="acc-mas-row" onClick={() => openRow(x, seg)}>
+      <td className="acc-txn-date">{accFmtDate(x.date)}</td>
+      <td>
+        <span className="acc-txn-headno">{prefix}-{String(idx + 1).padStart(3, '0')}</span>
+        <div className="acc-rep-subno">Ref: {x.id}</div>
+      </td>
+      <td className="acc-txn-headname">{x.head}</td>
+      <td className="acc-txn-detail">{x.detail || '—'}</td>
+      <td className="r"><span className="acc-txn-amt">{fmtMoney(x.amount)}</span></td>
+    </tr>
+  );
+
+  return (
+    <div className="fee-section">
+      <RepSectionHeader
+        name="Account Statement"
+        sub={s.monthLabel}
+        count={s.incomeAll.length + s.expenseAll.length}
+        onDownload={onDownload}
+      />
+      <div className="fee-section-body">
+        <div className="fee-detail-title"><i className="fa-solid fa-wallet"></i> Opening Balance</div>
+        <div className="acc-bs-final" style={{ marginBottom: 20 }}>
+          <div className="acc-bs-final-row">
+            <span>Balance brought forward, as of the start of {s.periodStartLabel || s.monthLabel}</span>
+            <b>{fmtMoney(s.opening)}</b>
+          </div>
+        </div>
+
+        {s.filtered && (
+          <div className="fee-hint" style={{ marginBottom: 16 }}>
+            <i className="fa-solid fa-filter"></i>
+            <span>Showing entries for the selected account head only. Opening Balance and every total below still reflect the <strong>full period</strong>, so the statement always reconciles correctly.</span>
+          </div>
+        )}
+
+        <div className="fee-detail-title"><i className="fa-solid fa-arrow-down" style={{ color: '#16A34A' }}></i> Income Details</div>
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table acc-rep-table">
+            <thead>
+              <tr><th>Date</th><th>Voucher / Ref No.</th><th>Income Head</th><th>Description</th><th className="r">Amount</th></tr>
+            </thead>
+            <tbody>
+              {s.incomeShown.length === 0
+                ? <tr><td colSpan="5" className="acc-txn-empty"><i className="fa-solid fa-inbox"></i> No income entries for this period.</td></tr>
+                : s.incomeShown.map((x, i) => <EntryRow key={x.id} x={x} seg="rev" idx={i} prefix="INC" />)}
+            </tbody>
+            <tfoot>
+              <tr><td colSpan="4" className="acc-txn-totlbl">Total Income</td><td className="r totval" style={{ color: '#16A34A' }}>{fmtMoney(s.totalIncome)}</td></tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div className="fee-detail-title" style={{ marginTop: 22 }}><i className="fa-solid fa-arrow-up" style={{ color: '#DC2626' }}></i> Expense Details</div>
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table acc-rep-table">
+            <thead>
+              <tr><th>Date</th><th>Voucher / Ref No.</th><th>Expense Head</th><th>Description</th><th className="r">Amount</th></tr>
+            </thead>
+            <tbody>
+              {s.expenseShown.length === 0
+                ? <tr><td colSpan="5" className="acc-txn-empty"><i className="fa-solid fa-inbox"></i> No expense entries for this period.</td></tr>
+                : s.expenseShown.map((x, i) => <EntryRow key={x.id} x={x} seg="exp" idx={i} prefix="EXP" />)}
+            </tbody>
+            <tfoot>
+              <tr><td colSpan="4" className="acc-txn-totlbl">Total Expense</td><td className="r totval" style={{ color: '#DC2626' }}>{fmtMoney(s.totalExpense)}</td></tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div className="fee-detail-title" style={{ marginTop: 22 }}><i className="fa-solid fa-calculator"></i> Statement Summary</div>
+        <div className="acc-bs-final">
+          <div className="acc-bs-final-row"><span>Opening Balance</span><b>{fmtMoney(s.opening)}</b></div>
+          <div className="acc-bs-final-row"><span>Add: Total Income</span><b className="acc-pl-profit">{fmtMoney(s.totalIncome)}</b></div>
+          <div className="acc-bs-final-row"><span>Available Balance</span><b>{fmtMoney(s.availableBalance)}</b></div>
+          <div className="acc-bs-final-row"><span>Less: Total Expense</span><b className="acc-pl-loss">{fmtMoney(s.totalExpense)}</b></div>
+          <div className="acc-bs-final-row"><span>Closing Balance</span><b>{fmtMoney(s.closingBalance)}</b></div>
+        </div>
+
+        <div className="fee-detail-title" style={{ marginTop: 22 }}><i className="fa-solid fa-scale-balanced"></i> Profit / Loss Summary</div>
+        <div className={`acc-bs-status ${s.netPL >= 0 ? 'ok' : 'bad'}`}>
+          <div className="acc-bs-status-l">
+            <i className={`fa-solid ${s.netPL >= 0 ? 'fa-circle-check' : 'fa-triangle-exclamation'}`}></i>
+            <div>
+              <div className="acc-bs-status-title">{s.netPL >= 0 ? 'NET PROFIT' : 'NET LOSS'}</div>
+              <div className="acc-bs-status-eq">Total Income − Total Expense</div>
+            </div>
+          </div>
+          <div className="acc-bs-status-r">
+            <span className="acc-bs-status-lbl">{s.netPL >= 0 ? 'Net Profit' : 'Net Loss'}</span>
+            <span className="acc-bs-status-val">{fmtMoney(Math.abs(s.netPL))}</span>
+          </div>
+        </div>
+      </div>
+
+      <AccVoucherModal cfg={slip} onClose={() => setSlip(null)} toast={toast} />
+    </div>
+  );
 }
 
 function RepSectionHeader({ name, sub, count, onDownload }) {
@@ -8727,6 +9205,49 @@ const ACC_CSS = `
 .acc-rep-user.upd i { color: #D97706; }
 .acc-rep-stamp { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .acc-rep-dash  { color: var(--text-muted); opacity: .6; }
+
+.acc-mas-row { cursor: pointer; }
+.acc-mas-row:hover td { background: rgba(30,58,138,.04); }
+.acc-stmt-credit { color: #16A34A; font-weight: 700; }
+.acc-stmt-debit { color: #DC2626; font-weight: 700; }
+.acc-bs-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1.5px solid var(--border-light);
+  background: var(--bg-card);
+  margin-bottom: 18px;
+}
+.acc-bs-status.ok  { border-color: rgba(22,163,74,.3);  background: rgba(22,163,74,.06); }
+.acc-bs-status.bad { border-color: rgba(220,38,38,.3);  background: rgba(220,38,38,.06); }
+.acc-bs-status-l { display: flex; align-items: center; gap: 12px; }
+.acc-bs-status-l > i { font-size: 22px; }
+.acc-bs-status.ok  .acc-bs-status-l > i { color: #16A34A; }
+.acc-bs-status.bad .acc-bs-status-l > i { color: #DC2626; }
+.acc-bs-status-title { font-size: 15px; font-weight: 800; letter-spacing: .02em; color: var(--text-primary); }
+.acc-bs-status-eq { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.acc-bs-status-r { text-align: right; }
+.acc-bs-status-lbl { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text-muted); }
+.acc-bs-status-val { font-size: 18px; font-weight: 800; color: var(--text-primary); }
+.acc-bs-final {
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  padding: 14px 18px;
+  background: var(--bg-muted);
+}
+.acc-bs-final-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.acc-bs-final-row + .acc-bs-final-row { border-top: 1px dashed var(--border-light); }
+.acc-bs-final-row b { color: var(--text-primary); font-size: 14px; }
 
 /* P/L profit / loss cells */
 .acc-pl-profit { color: #16A34A; font-weight: 800; }

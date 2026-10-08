@@ -1,6 +1,5 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
-import RouteFallback from '../shared/RouteFallback';
 import SystemDialogs from '../shared/SystemDialogs';
 import ViewOnlyGuard, { VIEW_ONLY_TIP } from '../shared/ViewOnlyGuard';
 // eslint-disable-next-line no-unused-vars
@@ -55,41 +54,44 @@ const EXTRA_NAV_BRANCHES = {};
 const RETIRED_NAV = new Set(['networks']);
 
 /* ─── Code-split each ERP module ─────────────────────────────────────
-   React.lazy() wraps each module so its JS chunk is fetched only when
-   the user navigates to that module. Combined with the <Suspense
-   fallback={…}> wrappers below this keeps the initial bundle small
-   while the rest of the app loads on demand. The chunk naming comment
-   (/* webpackChunkName */ /*) gives each chunk a stable name in the
-   build output so the backend team can later configure caching /
-   pre-fetching per module without UI changes.
+   Chunks still load separately so the login shell stays small, but they
+   are fetched once in the background after login. Opening a tab does not
+   show a "Loading …" card — the screen is already there.
    ──────────────────────────────────────────────────────────────────── */
-const Academics      = lazy(() => import(/* webpackChunkName: "mod-academics" */     './Academics'));
-const Examination    = lazy(() => import(/* webpackChunkName: "mod-examination" */   './Examination.jsx'));
-const PaperGenerator = lazy(() => import(/* webpackChunkName: "mod-papergen" */      './PaperGenerator.jsx'));
-const Attendance     = lazy(() => import(/* webpackChunkName: "mod-attendance" */    './Attendance.jsx'));
-const TimeTable      = lazy(() => import(/* webpackChunkName: "mod-timetable" */     './TimeTable.jsx'));
-const Fee            = lazy(() => import(/* webpackChunkName: "mod-fee" */           './Fee.jsx'));
-const Accounts       = lazy(() => import(/* webpackChunkName: "mod-accounts" */      './Accounts.jsx'));
-const Inventory      = lazy(() => import(/* webpackChunkName: "mod-inventory" */     './Inventory.jsx'));
-const AdmissionCrm   = lazy(() => import(/* webpackChunkName: "mod-admissioncrm" */  './AdmissionCrm.jsx'));
-const Students       = lazy(() => import(/* webpackChunkName: "mod-students" */      './Students.jsx'));
-const HumanResource  = lazy(() => import(/* webpackChunkName: "mod-hr" */            './HumanResource.jsx'));
+const modulePreloads = [];
+function lazyTab(factory) {
+  let pending;
+  const load = () => (pending || (pending = factory()));
+  modulePreloads.push(() => load().catch(() => {}));
+  return lazy(load);
+}
+const Academics      = lazyTab(() => import(/* webpackChunkName: "mod-academics" */     './Academics'));
+const Examination    = lazyTab(() => import(/* webpackChunkName: "mod-examination" */   './Examination.jsx'));
+const PaperGenerator = lazyTab(() => import(/* webpackChunkName: "mod-papergen" */      './PaperGenerator.jsx'));
+const Attendance     = lazyTab(() => import(/* webpackChunkName: "mod-attendance" */    './Attendance.jsx'));
+const TimeTable      = lazyTab(() => import(/* webpackChunkName: "mod-timetable" */     './TimeTable.jsx'));
+const Fee            = lazyTab(() => import(/* webpackChunkName: "mod-fee" */           './Fee.jsx'));
+const Accounts       = lazyTab(() => import(/* webpackChunkName: "mod-accounts" */      './Accounts.jsx'));
+const Inventory      = lazyTab(() => import(/* webpackChunkName: "mod-inventory" */     './Inventory.jsx'));
+const AdmissionCrm   = lazyTab(() => import(/* webpackChunkName: "mod-admissioncrm" */  './AdmissionCrm.jsx'));
+const Students       = lazyTab(() => import(/* webpackChunkName: "mod-students" */      './Students.jsx'));
+const HumanResource  = lazyTab(() => import(/* webpackChunkName: "mod-hr" */            './HumanResource.jsx'));
 // Networks ab yahan se lazy-load nahi hota — Settings us screen ko seedha
 // import karta hai (pages/Settings/SettingsModule.jsx):
 // const Networks = lazy(() => import('./Networks.jsx'));
-const StaffAppraisalPage = lazy(() => import(/* webpackChunkName: "mod-appraisal" */ './StaffAppraisalPage.jsx'));
-const Approvals      = lazy(() => import(/* webpackChunkName: "mod-approvals" */     './Approvals.jsx'));
-const SettingsModule = lazy(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
-const SchoolSOPs     = lazy(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
-const TeacherTrainings = lazy(() => import(/* webpackChunkName: "mod-trainings" */    '../pages/SchoolMentor/TeacherTrainings.jsx'));
-const ETube          = lazy(() => import(/* webpackChunkName: "mod-etube" */         '../pages/SchoolMentor/ETube.jsx'));
-const Chat           = lazy(() => import(/* webpackChunkName: "mod-chat" */          '../pages/SchoolMentor/Chat.jsx'));
-const Notifications  = lazy(() => import(/* webpackChunkName: "mod-notifications" */ '../pages/SchoolMentor/Notifications.jsx'));
-const UserPermissions  = lazy(() => import(/* webpackChunkName: "mod-permissions" */  '../pages/UserPermissions/UserPermissions.jsx'));
-const AuditLogs        = lazy(() => import(/* webpackChunkName: "mod-auditlogs"   */  '../pages/AuditLogs/AuditLogs.jsx'));
-const LaunchSetup      = lazy(() => import(/* webpackChunkName: "mod-launchsetup" */  '../pages/LaunchSetup/LaunchSetup.jsx'));
-const Dashboard        = lazy(() => import(/* webpackChunkName: "mod-dashboard"   */  '../pages/Dashboard/Dashboard.jsx'));
-const MentorAI         = lazy(() => import(/* webpackChunkName: "mod-mentorai"    */  '../pages/MentorAI/MentorAI.jsx'));
+const StaffAppraisalPage = lazyTab(() => import(/* webpackChunkName: "mod-appraisal" */ './StaffAppraisalPage.jsx'));
+const Approvals      = lazyTab(() => import(/* webpackChunkName: "mod-approvals" */     './Approvals.jsx'));
+const SettingsModule = lazyTab(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
+const SchoolSOPs     = lazyTab(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
+const TeacherTrainings = lazyTab(() => import(/* webpackChunkName: "mod-trainings" */    '../pages/SchoolMentor/TeacherTrainings.jsx'));
+const ETube          = lazyTab(() => import(/* webpackChunkName: "mod-etube" */         '../pages/SchoolMentor/ETube.jsx'));
+const Chat           = lazyTab(() => import(/* webpackChunkName: "mod-chat" */          '../pages/SchoolMentor/Chat.jsx'));
+const Notifications  = lazyTab(() => import(/* webpackChunkName: "mod-notifications" */ '../pages/SchoolMentor/Notifications.jsx'));
+const UserPermissions  = lazyTab(() => import(/* webpackChunkName: "mod-permissions" */  '../pages/UserPermissions/UserPermissions.jsx'));
+const AuditLogs        = lazyTab(() => import(/* webpackChunkName: "mod-auditlogs"   */  '../pages/AuditLogs/AuditLogs.jsx'));
+const LaunchSetup      = lazyTab(() => import(/* webpackChunkName: "mod-launchsetup" */  '../pages/LaunchSetup/LaunchSetup.jsx'));
+const Dashboard        = lazyTab(() => import(/* webpackChunkName: "mod-dashboard"   */  '../pages/Dashboard/Dashboard.jsx'));
+const MentorAI         = lazyTab(() => import(/* webpackChunkName: "mod-mentorai"    */  '../pages/MentorAI/MentorAI.jsx'));
 
 /* ProfileModal is only mounted when the user opens "My Profile" from
    the avatar menu. Lazy-loading keeps its ~630 lines out of the initial
@@ -200,6 +202,10 @@ export default function App() {
   useEffect(() => {
     try { sessionStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
   }, [active]);
+  /* Tab chunks load once after login. Opening a tab does not show a loader. */
+  useEffect(() => {
+    modulePreloads.forEach(run => run());
+  }, []);
   /* Dashboard ke universal search se aaye params (jaise { studentReg }) —
      target module unhe istemal kar ke onFocusHandled se saaf kar deta hai. */
   const [navFocus, setNavFocus] = useState(null);
@@ -736,18 +742,17 @@ if (navId === 'mentorai') {
           </header>
 
           {/* PAGE CONTENT —
-              Each lazy module is rendered inside its own <Suspense>
-              boundary so a slow chunk fetch never blanks the rest of
-              the shell. The fallback's label is module-specific so the
-              user sees what is being loaded. */}
+              Each module stays in its own Suspense boundary so a chunk
+              that is still arriving cannot blank the shell. There is no
+              tab loader: chunks are prefetched once after login. */}
           <main className="page-content">
             {active === 'mentorai' && (
-              <Suspense fallback={<RouteFallback label="Loading Mentor AI…" />}>
+              <Suspense fallback={null}>
                 <MentorAI toast={pushToast} schoolName={branchInfo?.branchName || 'Your School'} />
               </Suspense>
             )}
             {active === 'acad' && (
-              <Suspense fallback={<RouteFallback label="Loading Academics…" />}>
+              <Suspense fallback={null}>
                 <Academics
                   l1={l1} setL1={setL1}
                   l2={l2} setL2={setL2}
@@ -757,88 +762,88 @@ if (navId === 'mentorai') {
               </Suspense>
             )}
             {active === 'exam' && (
-              <Suspense fallback={<RouteFallback label="Loading Examination…" />}>
+              <Suspense fallback={null}>
                 <Examination toast={pushToast} />
               </Suspense>
             )}
             {active === 'paper' && (
-              <Suspense fallback={<RouteFallback label="Loading Paper Generator…" />}>
+              <Suspense fallback={null}>
                 <PaperGenerator toast={pushToast} />
               </Suspense>
             )}
             {active === 'att' && (
-              <Suspense fallback={<RouteFallback label="Loading Attendance…" />}>
+              <Suspense fallback={null}>
                 <Attendance onToast={pushToast} />
               </Suspense>
             )}
             {active === 'tt' && (
-              <Suspense fallback={<RouteFallback label="Loading Timetable…" />}>
+              <Suspense fallback={null}>
                 <TimeTable toast={pushToast} />
               </Suspense>
             )}
             {/* Networks ab apna module nahi — Settings › Networks tab se chalta hai.
             {active === 'networks' && (
-              <Suspense fallback={<RouteFallback label="Loading Networks…" />}>
+              <Suspense fallback={null}>
                 <Networks toast={pushToast} />
               </Suspense>
             )} */}
             {active === 'fee' && (
-              <Suspense fallback={<RouteFallback label="Loading Fee…" />}>
+              <Suspense fallback={null}>
                 <Fee toast={pushToast} />
               </Suspense>
             )}
             {active === 'accounts' && (
-              <Suspense fallback={<RouteFallback label="Loading Accounts…" />}>
+              <Suspense fallback={null}>
                 <Accounts toast={pushToast} />
               </Suspense>
             )}
             {active === 'inventory' && (
-              <Suspense fallback={<RouteFallback label="Loading Inventory…" />}>
+              <Suspense fallback={null}>
                 <Inventory toast={pushToast} />
               </Suspense>
             )}
             {active === 'crm' && (
-              <Suspense fallback={<RouteFallback label="Loading Admission CRM…" />}>
+              <Suspense fallback={null}>
                 <AdmissionCrm toast={pushToast} />
               </Suspense>
             )}
             {active === 'students' && (
-              <Suspense fallback={<RouteFallback label="Loading Students…" />}>
+              <Suspense fallback={null}>
                 <Students toast={pushToast} focus={navFocus} onFocusHandled={() => setNavFocus(null)} />
               </Suspense>
             )}
             {active === 'hr' && (
-              <Suspense fallback={<RouteFallback label="Loading Human Resource…" />}>
+              <Suspense fallback={null}>
                 <HumanResource toast={pushToast} />
               </Suspense>
             )}
             {active === 'appraisal' && (
-              <Suspense fallback={<RouteFallback label="Loading Staff Appraisals…" />}>
+              <Suspense fallback={null}>
                 <StaffAppraisalPage toast={pushToast} />
               </Suspense>
             )}
             {active === 'approvals' && (
-              <Suspense fallback={<RouteFallback label="Loading Approvals…" />}>
+              <Suspense fallback={null}>
                 <Approvals toast={pushToast} />
               </Suspense>
             )}
             {active === 'settings' && (
-              <Suspense fallback={<RouteFallback label="Loading Settings…" />}>
+              <Suspense fallback={null}>
                 <SettingsModule toast={pushToast} />
               </Suspense>
             )}
             {active === 'sops' && (
-              <Suspense fallback={<RouteFallback label="Loading Policy Manuals…" />}>
+              <Suspense fallback={null}>
                 <SchoolSOPs toast={pushToast} />
               </Suspense>
             )}
             {active === 'trainings' && (
-              <Suspense fallback={<RouteFallback label="Loading Teacher Trainings…" />}>
+              <Suspense fallback={null}>
                 <TeacherTrainings toast={pushToast} />
               </Suspense>
             )}
             {active === 'etube' && (
-              <Suspense fallback={<RouteFallback label="Loading e-Tube…" />}>
+              <Suspense fallback={null}>
                 <ETube
                   toast={pushToast}
                   canView={!mobilePerms.hasRow || mobilePerms.etube.viewing}
@@ -847,32 +852,32 @@ if (navId === 'mentorai') {
               </Suspense>
             )}
             {active === 'chat' && (
-              <Suspense fallback={<RouteFallback label="Loading Chat…" />}>
+              <Suspense fallback={null}>
                 <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={onChatUnreadChange} />
               </Suspense>
             )}
             {active === 'notifications' && (
-              <Suspense fallback={<RouteFallback label="Loading Notifications…" />}>
+              <Suspense fallback={null}>
                 <Notifications toast={pushToast} />
               </Suspense>
             )}
             {active === 'perm' && (
-              <Suspense fallback={<RouteFallback label="Loading User Permissions…" />}>
+              <Suspense fallback={null}>
                 <UserPermissions toast={pushToast} />
               </Suspense>
             )}
             {active === 'audit' && (
-              <Suspense fallback={<RouteFallback label="Loading Audit Logs…" />}>
+              <Suspense fallback={null}>
                 <AuditLogs toast={pushToast} />
               </Suspense>
             )}
             {active === 'launch' && (
-              <Suspense fallback={<RouteFallback label="Loading Launch Setup…" />}>
+              <Suspense fallback={null}>
                 <LaunchSetup toast={pushToast} />
               </Suspense>
             )}
             {active === 'dashboard' && (
-              <Suspense fallback={<RouteFallback label="Loading Dashboard…" />}>
+              <Suspense fallback={null}>
                 <Dashboard
                   toast={pushToast}
                   /* Universal search params bhi saath rakho (pehle gir jate

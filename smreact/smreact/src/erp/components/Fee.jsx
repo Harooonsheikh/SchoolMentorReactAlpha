@@ -1179,11 +1179,16 @@ const FEE_MONTHS = [
    "Previous"/"next" are measured against today's real month, not the month
    picker, so changing the filter can't shift what the gate means. Returns the
    reason a month is barred, or null when it's fine. */
+/* Sirf in branches ko previous-month challan CREATE karne ki ijazat hai.
+   Receiving isPastView se band rehti hai. */
+const PREV_MONTH_CHALLAN_BRANCHES = new Set([210780]);
+
 function challanMonthLock(monthIdx, year, settings) {
   if (!settings || monthIdx < 0) return null;
   const now = new Date();
   const diff = (Number(year) * 12 + monthIdx) - (now.getFullYear() * 12 + now.getMonth());
-  if (diff === -1 && !settings.prevMonthChallan) {
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  if (diff === -1 && !settings.prevMonthChallan && !PREV_MONTH_CHALLAN_BRANCHES.has(branchId)) {
     /* Toggle UI se comment-out hai — message usay point na kare. */
     return 'Previous month is locked — receive its pending dues from the current month (Receive Pending).';
   }
@@ -1728,10 +1733,13 @@ function FamilyTreeChallansList({ toast }) {
     });
   };
 
-  const createInstallmentChallan = async (cfg, amount, bw = false) => {
+  const createInstallmentChallan = async (cfg, perHead, bw = false, size = 'a4') => {
     const { classMeta: c, student: s, rec, heads } = cfg;
-    const amt = Math.round(Number(amount) || 0);
-    const totalInstallment = amt * heads.length;
+    const billed = heads
+      .map(h => ({ ...h, amt: Math.max(0, Math.round(Number(perHead?.[h.name]) || 0)) }))
+      .filter(h => h.amt > 0 && h.amt <= h.afterDiscount);
+    const totalInstallment = billed.reduce((a, h) => a + h.amt, 0);
+    if (!totalInstallment) throw new Error('Enter an installment amount on at least one fee head');
     const branchID = Number(sessionStorage.getItem('branchID')) || Number(rec.branchID) || 1;
     const userID = Number(sessionStorage.getItem('UserID')) || 0;
     const mo = Number(rec.month) || (monthIdx + 1);
@@ -1770,9 +1778,9 @@ function FamilyTreeChallansList({ toast }) {
       const instChallan = {
         ...rec,
         plpsid: psid,
-        detailRows: heads.map(h => ({
+        detailRows: billed.map(h => ({
           head: 'Account Payable', subHead: String(h.name || ''),
-          challanAmount: amt, discount: 0, receivedAmount: 0,
+          challanAmount: h.amt, discount: 0, receivedAmount: 0,
         })),
       };
         const html = buildChallanHTML({
@@ -1780,7 +1788,7 @@ function FamilyTreeChallansList({ toast }) {
         students: [{ ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan }],
         installmentSlip: true,
         heads: headsForChildGrade(s.gradeID),
-        settings, discountMap: {}, bw, size: settings.printSize || 'a4', school: branchHeader,
+        settings, discountMap: {}, bw, size: size === 'thermal' ? 'thermal' : 'a4', school: branchHeader,
       });
       const w = window.open('', '_blank');
       if (w) {
@@ -2353,6 +2361,7 @@ function FamilyTreeChallansList({ toast }) {
         onClose={() => setInstallmentCtx(null)}
         onCreate={createInstallmentChallan}
         toast={toast}
+        defaultSize={settings.printSize || 'a4'}
       />
     </>
   );
@@ -3014,11 +3023,14 @@ function FeeChallansList({ toast }) {
     setInstallmentCtx({ classMeta: c, student: s, rec, heads });
   };
 
-  /* One amount is typed and copied onto every head. PSID total = that amount × heads.
-     The slip prints the typed amount as Standard and Net — no discount, no previous. */
-  const createInstallmentChallan = async (cfg, amount, bw = false) => {    const { classMeta: c, student: s, rec, heads } = cfg;
-    const amt = Math.round(Number(amount) || 0);
-    const totalInstallment = amt * heads.length;
+  /* Each head has its own installment amount. PSID total = the sum of those amounts.
+     The slip prints each typed amount as Standard and Net — no discount, no previous. */
+  const createInstallmentChallan = async (cfg, perHead, bw = false, size = 'a4') => {    const { classMeta: c, student: s, rec, heads } = cfg;
+    const billed = heads
+      .map(h => ({ ...h, amt: Math.max(0, Math.round(Number(perHead?.[h.name]) || 0)) }))
+      .filter(h => h.amt > 0 && h.amt <= h.afterDiscount);
+    const totalInstallment = billed.reduce((a, h) => a + h.amt, 0);
+    if (!totalInstallment) throw new Error('Enter an installment amount on at least one fee head');
     const branchID = Number(sessionStorage.getItem('branchID')) || Number(rec.branchID) || 1;
     const userID = Number(sessionStorage.getItem('UserID')) || 0;
     const mo = Number(rec.month) || (monthIdx + 1);
@@ -3060,15 +3072,15 @@ function FeeChallansList({ toast }) {
       const instChallan = {
         ...rec,
         plpsid: psid,   // psidOf() isay slip par naya PSID/QR banane ke liye padhta hai
-        detailRows: heads.map(h => ({
+        detailRows: billed.map(h => ({
           head: 'Account Payable', subHead: String(h.name || ''),
-          challanAmount: amt, discount: 0, receivedAmount: 0,
+          challanAmount: h.amt, discount: 0, receivedAmount: 0,
         })),
       };
           const student = { ...s, dues: 0, advance: 0, prevByHead: null, _challan: instChallan };
            const html = buildChallanHTML({
         classMeta: c, students: [student], heads: headsMap[c.key] || [],
-        settings, discountMap: {}, bw, size: settings.printSize || 'a4', school: branchHeader,
+        settings, discountMap: {}, bw, size: size === 'thermal' ? 'thermal' : 'a4', school: branchHeader,
         installmentSlip: true,
       });
       const w = window.open('', '_blank');
@@ -3736,6 +3748,7 @@ function FeeChallansList({ toast }) {
         onClose={() => setInstallmentCtx(null)}
         onCreate={createInstallmentChallan}
         toast={toast}
+        defaultSize={settings.printSize || 'a4'}
       />
 
       {/* <DownloadPickerModal
@@ -4377,7 +4390,7 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
             </button>
           </div>
 
-          {!cfg.themeOnly && (<>
+          {(!cfg.themeOnly || cfg.askSize) && (<>
           <div className="fee-dl-label" style={{ marginTop: 18 }}>Paper Size</div>
           <div className="fee-dl-fmt-grid">
             <button
@@ -4407,7 +4420,9 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
               </div>
             </button>
           </div>
+          </>)}
 
+          {!cfg.themeOnly && (<>
           <div className="fee-dl-label" style={{ marginTop: 18 }}>Report Format</div>
           <div className="fee-dl-fmt-grid">
             <button
@@ -4439,7 +4454,7 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
           <Tooltip text={cfg.themeOnly
-            ? `Generate ${theme === 'bw' ? 'Colorless' : 'Colorful'} installment challan`
+            ? `Generate ${cfg.askSize ? `${size === 'thermal' ? 'Thermal 80mm' : 'A4'} · ` : ''}${theme === 'bw' ? 'Colorless' : 'Colorful'} installment challan`
             : `Generate ${size === 'thermal' ? 'Thermal 80mm' : 'A4'} · ${theme === 'bw' ? 'Colorless' : 'Colorful'} ${fmt === 'word' ? 'Word' : 'PDF'} report`}>
             <button className="fee-btn fee-btn-primary" onClick={() => onSubmit({ theme, fmt, size })}>              <i className="fa-solid fa-file-arrow-down"></i> Generate Report
             </button>
@@ -4624,13 +4639,13 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   INSTALLMENT CHALLAN MODAL — one amount typed on any head is copied onto
-   every head. Cap is that head's After Discount (challan − discount, plus
-   head-wise previous when the head has one). Create posts generate-psid
-   for amount × heads, then prints that same amount as Standard and Net.
+   INSTALLMENT CHALLAN MODAL — each fee head has its own installment
+   amount. Cap is that head's After Discount (unpaid challan after
+   discount, plus head-wise previous still left). Create posts
+   generate-psid for the sum, then prints each typed amount.
    ═══════════════════════════════════════════════════════════════════ */
-function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
-  const [amount, setAmount] = useState('');
+function InstallmentChallanModal({ cfg, onClose, onCreate, toast, defaultSize = 'a4' }) {
+  const [amounts, setAmounts] = useState({});
   const [creating, setCreating] = useState(false);
 
     /* Create Installment dabane par pehle Colorful / Colorless poocho */
@@ -4638,7 +4653,7 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
 
   useEffect(() => {
     if (!cfg) return;
-    setAmount('');
+    setAmounts({});
     setCreating(false);
     setAskTheme(false);
   }, [cfg]);
@@ -4654,20 +4669,21 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
   if (!cfg) return null;
 
   const { classMeta, student, heads } = cfg;
-  const amt = Math.round(Number(amount) || 0);
-  const rows = heads.map(h => ({ ...h, amt, over: amt > h.afterDiscount }));
+  const rows = heads.map(h => {
+    const amt = Math.max(0, Math.round(Number(amounts[h.name]) || 0));
+    return { ...h, amt, over: amt > h.afterDiscount };
+  });
   const overHead = rows.find(h => h.over) || null;
-  const showPrev = rows.some(h => h.prev > 0);
   const totalChallan = rows.reduce((a, h) => a + h.challanAmount, 0);
   const totalDiscount = rows.reduce((a, h) => a + h.discount, 0);
   const totalPrev = rows.reduce((a, h) => a + (h.prev || 0), 0);
   const totalAfter = rows.reduce((a, h) => a + h.afterDiscount, 0);
-  const totalInstallment = amt * rows.length;
-  const invalid = amt <= 0 || !!overHead;
+  const totalInstallment = rows.reduce((a, h) => a + h.amt, 0);
+  const invalid = totalInstallment <= 0 || !!overHead;
 
   const handleCreate = async () => {
     if (creating) return;
-    if (amt <= 0) { toast('Enter an installment amount', 'warning'); return; }
+    if (totalInstallment <= 0) { toast('Enter an installment amount on at least one fee head', 'warning'); return; }
     if (overHead) {
       toast(`Installment cannot exceed “${overHead.name}” after-discount amount (${money(overHead.afterDiscount)})`, 'error');
       return;
@@ -4675,11 +4691,13 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
     setAskTheme(true);   // pehle Colorful / Colorless picker
   };
 
-  const runCreate = async (bw) => {
+  const runCreate = async (bw, size) => {
     setAskTheme(false);
     try {
       setCreating(true);
-      await onCreate(cfg, amt, bw);
+      const perHead = {};
+      rows.forEach(h => { if (h.amt > 0) perHead[h.name] = h.amt; });
+      await onCreate(cfg, perHead, bw, size === 'thermal' ? 'thermal' : 'a4');
     } catch (e) {
       toast(e.message || 'Could not create installment challan', 'error');
       setCreating(false);
@@ -4688,9 +4706,9 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
   return createPortal(
      <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget && !creating) onClose(); }}>
       <DownloadPickerModal
-        cfg={askTheme ? { sub: `${student.name} · Installment challan`, themeOnly: true } : null}
+        cfg={askTheme ? { sub: `${student.name} · Installment challan`, themeOnly: true, askSize: true, defaultSize } : null}
         onClose={() => setAskTheme(false)}
-        onSubmit={(picks) => runCreate(picks.theme === 'bw')}
+        onSubmit={(picks) => runCreate(picks.theme === 'bw', picks.size)}
       />
       <div className="fee-modal">
         <div className="fee-modal-head">
@@ -4716,10 +4734,10 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
           <div className="fee-info">
             <i className="fa-solid fa-circle-info"></i>
             <span>
-              Enter the <strong>installment amount</strong> against any head — the same amount
-              applies to every head automatically. Amounts already received are taken off.
+              Enter an <strong>installment amount</strong> on any fee head. Each head can
+              have its own amount. Amounts already received are taken off.
               Each amount must be at most that head's <strong>after-discount</strong> balance
-              {showPrev ? ' (after-discount already includes the previous still left)' : ''}.
+              (after-discount already includes the previous still left).
             </span>
           </div>
 
@@ -4728,10 +4746,10 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
               <thead>
                 <tr>
                   <th>Fee Head</th>
+                  <th className="fee-right">Previous Amount</th>
                   <th className="fee-right">Challan Amount</th>
                   <th className="fee-right">Discount</th>
                   <th className="fee-right">After Discount</th>
-                  {showPrev && <th className="fee-right">Previous Amount</th>}
                   <th className="fee-right">Installment Amount</th>
                 </tr>
               </thead>
@@ -4739,17 +4757,17 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
                 {rows.map(h => (
                     <tr key={h.name}>
                       <td><b>{h.name}</b></td>
+                      <td className="fee-right">{h.prev ? money(h.prev) : '—'}</td>
                       <td className="fee-right">{h.challanAmount ? money(h.challanAmount) : '—'}</td>
                       <td className="fee-right">{h.discount ? money(h.discount) : '—'}</td>
                       <td className="fee-right">{money(h.afterDiscount)}</td>
-                      {showPrev && <td className="fee-right">{h.prev ? money(h.prev) : '—'}</td>}
                       <td className="fee-right">
                         <input
                           type="number"
                           min="0"
                           max={h.afterDiscount}
-                          value={amount}
-                          onChange={e => setAmount(e.target.value)}
+                          value={amounts[h.name] ?? ''}
+                          onChange={e => setAmounts(prev => ({ ...prev, [h.name]: e.target.value }))}
                           style={h.over ? { borderColor: '#DC2626', color: '#DC2626' } : undefined}
                         />
                       </td>
@@ -4759,10 +4777,10 @@ function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
               <tfoot>
                 <tr className="fee-dm-total-row">
                   <td>Total</td>
+                  <td className="fee-right">{money(totalPrev)}</td>
                   <td className="fee-right">{money(totalChallan)}</td>
                   <td className="fee-right">{money(totalDiscount)}</td>
                   <td className="fee-right">{money(totalAfter)}</td>
-                  {showPrev && <td className="fee-right">{money(totalPrev)}</td>}
                   <td className="fee-right fee-dm-net">{money(totalInstallment)}</td>
                 </tr>
               </tfoot>

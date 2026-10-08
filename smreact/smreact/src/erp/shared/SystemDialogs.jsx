@@ -2,22 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 
-/* ═══════════════════════════════════════════════════════════════════
-   SYSTEM DIALOGS — 1:1 port from "ERP_Home Final.html".
-
-   Slow Internet banner (only when speed is 0.5 Mbps or less AND an API
-   has taken more than 30 seconds) and a non-blocking server-error toast.
-
-   Public surface
-   ──────────────
-   Default export: <SystemDialogs toast={fn} />
-   - Self-contained. Drop it once in the dashboard shell; the demo bar
-     drives every surface.
-   - All overlays + the trigger bar render via React Portal so parent
-     overflow:hidden can never clip them.
-   - Honors dark mode via the project's `[data-theme="dark"]` selector.
-   - Inputs all kept simple — no business logic, mirrors the HTML demo.
-   ═══════════════════════════════════════════════════════════════════ */
+/* Slow Internet banner only when measured speed is 0.5 Mbps or less AND an API
+   has been pending more than 30 seconds. Speed is rechecked every 1 minute. */
 
 /* Slow Internet banner sirf tab: download speed 0.5 Mbps ya kam, AUR koi API
    30 sec se zyada le rahi ho. Speed har 1 minute dobara naapi jati hai. */
@@ -45,7 +31,6 @@ function measureMbps() {
       return mbps;
     })
     .catch((err) => {
-      /* Sample 15s me khatam nahi hui = 0.5 Mbps se bhi dheemi. */
       if (err && err.name === 'AbortError') {
         lastSpeed = { at: Date.now(), mbps: 0 };
         window.__smSpeed = { state: 'slow', mbps: 0 };
@@ -70,8 +55,7 @@ export default function SystemDialogs({ toast = () => {} }) {
     return () => { if (main) main.style.paddingTop = ''; };
   }, [showSlow]);
 
-  /* Banner sirf jab API 30s se lambi ho (sm:slow) AUR last speed test <= 0.5 Mbps.
-     Tez internet par lambi API, ya dheemi internet bina lambi API ke, banner nahi. */
+  /* Banner sirf jab API 30s se lambi ho (sm:slow) AUR last speed test <= 0.5 Mbps. */
   useEffect(() => {
     let alive = true;
     const onSlow = async () => {
@@ -108,7 +92,6 @@ export default function SystemDialogs({ toast = () => {} }) {
     };
   }, [toast]);
 
-  /* Har 1 minute asli download speed. Banner yahan se nahi khulta. */
   useEffect(() => {
     if (speedMonitorActive) return undefined;
     speedMonitorActive = true;
@@ -127,7 +110,6 @@ export default function SystemDialogs({ toast = () => {} }) {
     };
   }, []);
 
-  /* ── Render ───────────────────────────────────────────────────── */
   return (
     <>
       {showSlow && createPortal(
@@ -153,14 +135,9 @@ export default function SystemDialogs({ toast = () => {} }) {
         </div>,
         document.body
       )}
-
-      {/* 500 Server Error ab blocking dialog nahi — non-blocking toast dikhta hai
-          (onServerError me), taake ek endpoint 500 de to bhi baaki app chalti rahe.
-          Session Timeout + "Are You Sure" demo dialogs aur Demo Trigger bar bhi hata diye. */}
     </>
   );
 }
-
 
 /* ─── One-time stylesheet (1:1 port of HTML's CSS) ────────────── */
 if (typeof document !== 'undefined' && !document.getElementById('sys-dialog-style')) {
