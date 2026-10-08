@@ -1,6 +1,7 @@
 // PDF report generation — opens a print-ready window with color/BW choice
 
 import { buildUrl, resolveMediaUrl, activeSessionName } from './apiConfig';
+import { downloadHtmlAsDocx } from './wordExport';
 
 /* Fetch the branch report header (name, logo, address, session, generated date)
    for the logged-in branch. Returns the data object, or null on failure so
@@ -428,17 +429,16 @@ function openViewWindow(html, showToast) {
   w.document.close();
 }
 
-/* Download a report's HTML as a Word (.docx) file — Word opens HTML wrapped with
-   the Office namespaces. */
-function downloadWordDoc(innerHtml, filename, showToast) {
-  const full = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8">${FONTS}</head><body>${innerHtml}</body></html>`;
-  const blob = new Blob(['﻿', full], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  showToast && showToast('Word document downloaded', 'success');
+/* Download a report's HTML (the same page the PDF prints) as a native Word
+   .docx. Previously the HTML itself was saved with a .docx name, which Word
+   rejects as a corrupt file. */
+function downloadWordDoc(html, filename, showToast) {
+  downloadHtmlAsDocx(html, filename)
+    .then(() => { showToast && showToast('Word document downloaded', 'success'); })
+    .catch((err) => {
+      console.error('Word export failed', err);
+      showToast && showToast('Could not generate the Word document', 'error');
+    });
 }
 
 // ════════════════ SECTION STUDENT LIST (per class+section) ════════════════

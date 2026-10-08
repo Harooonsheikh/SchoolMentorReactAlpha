@@ -6,6 +6,8 @@ import {
   resolveAcademicSession,
 } from "../utils/pdfReports";
 
+import { downloadHtmlAsDocx } from "../utils/wordExport";
+
 /* ---------------------------------------------
    BASIC HELPERS
 --------------------------------------------- */
@@ -601,57 +603,15 @@ const downloadWord = (
   fileName
 ) => {
   /*
-    This generates a Word-compatible .doc file.
-
-    Word opens this normally and the report
-    keeps most HTML formatting.
-
-    A genuine .docx package requires a DOCX
-    library such as "docx".
+    Native .docx of the same report HTML the
+    PDF prints (shared exporter in
+    src/utils/wordExport.js).
   */
 
-  const wordHtml = `
-    <html
-      xmlns:o="urn:schemas-microsoft-com:office:office"
-      xmlns:w="urn:schemas-microsoft-com:office:word"
-      xmlns="http://www.w3.org/TR/REC-html40"
-    >
-      <head>
-        <meta charset="utf-8" />
-      </head>
-
-      <body>
-        ${html}
-      </body>
-    </html>
-  `;
-
-  const blob = new Blob(
-    ["\ufeff", wordHtml],
-    {
-      type:
-        "application/msword;charset=utf-8",
-    }
+  return downloadHtmlAsDocx(
+    html,
+    safeFileName(fileName)
   );
-
-  const url =
-    URL.createObjectURL(blob);
-
-  const link =
-    document.createElement("a");
-
-  link.href = url;
-
-  link.download =
-    `${safeFileName(fileName)}.doc`;
-
-  document.body.appendChild(link);
-
-  link.click();
-
-  document.body.removeChild(link);
-
-  URL.revokeObjectURL(url);
 };
 
 /* ---------------------------------------------

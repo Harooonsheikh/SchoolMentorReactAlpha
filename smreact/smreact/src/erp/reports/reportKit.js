@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import ExcelJS from 'exceljs';
 import Tooltip from '../components/Tooltip';
 import { activeSessionName, buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { downloadHtmlAsDocx } from '../../utils/wordExport';
+import { downloadHtmlAsXlsx } from '../../utils/excelExport';
 
 /* ═══════════════════════════════════════════════════════════════════
    REPORT KIT — the ERP-wide standard report system.
@@ -474,13 +476,6 @@ export function openReportWindow(html, w = 900, h = 700) {
   if (win) { win.document.write(html); win.document.close(); }
 }
 
-/* Word export — the exact same report HTML, saved as a .doc file via
-   the Blob technique already established elsewhere in this codebase
-   (PaperGenerator.jsx, hrReports.js's exportHrReportAsWord). Word
-   viewers open HTML saved with a .doc extension + application/msword
-   MIME type just fine — no real docx library needed for this
-   mock/demo app, and it turns Academics' previous "coming soon" stub
-   into an actually-working export. */
 /* Shared filename sanitizer — every module's own reportFileName/
    downloadHtmlAsWord helper duplicated this exact regex; centralized
    here so new modules calling downloadReportAsWord/downloadReportHtmlAsExcel
@@ -489,8 +484,10 @@ export function reportFileName(title) {
   return (title || 'Report').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
 }
 
-export function downloadReportAsWord(html, filename) {
-  const blob = new Blob([html], { type: 'application/msword' });
+/* Last-resort fallback if the native export fails: the raw HTML blob the
+   ERP used to download (opens in Office, but without full formatting). */
+function downloadLegacyHtml(html, filename, mime) {
+  const blob = new Blob(['﻿', html], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -498,24 +495,28 @@ export function downloadReportAsWord(html, filename) {
   URL.revokeObjectURL(url);
 }
 
-/* Universal Excel export — the exact same report HTML, saved as a
-   .xls file via the Blob technique already established independently
-   in Fee.jsx, DoubleEntryAccounts.jsx and AdmissionCrm.jsx (Excel
-   opens HTML content fine when served with a .xls extension +
-   application/vnd.ms-excel MIME type). This is what makes "Excel
-   wherever applicable" tractable for every free-form/sectioned report
-   in the ERP — not just the handful with a real {columns,rows} shape
-   (those keep using downloadReportExcel below for a true, nicer-
-   formatted .xlsx with frozen panes etc.) — since it reuses whatever
-   HTML was already built for PDF/Word, no separate column mapping
-   needed per report. */
+/* Word export — the SAME report HTML the PDF prints, converted to a native
+   .docx (src/utils/wordExport.js). Previously the HTML itself was saved as
+   .doc, and Word's legacy HTML importer dropped class-based styles, rgba/
+   gradient colours, flex/grid layout and SVG logos. A ".doc" filename from
+   callers is upgraded to ".docx". */
+export function downloadReportAsWord(html, filename) {
+  return downloadHtmlAsDocx(html, filename).catch((err) => {
+    console.error('Word export failed, falling back to HTML .doc', err);
+    downloadLegacyHtml(html, filename.replace(/\.docx$/i, '.doc'), 'application/msword');
+  });
+}
+
+/* Universal Excel export — the SAME report HTML converted to a native .xlsx
+   (src/utils/excelExport.js) with real fonts, fills, borders, merged
+   cells, column widths and number formats. Previously the HTML was saved
+   as .xls, which Excel opened with a format warning and without most of
+   the styling. A ".xls" filename from callers is upgraded to ".xlsx". */
 export function downloadReportHtmlAsExcel(html, filename) {
-  const blob = new Blob(['﻿', html], { type: 'application/vnd.ms-excel' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  return downloadHtmlAsXlsx(html, filename).catch((err) => {
+    console.error('Excel export failed, falling back to HTML .xls', err);
+    downloadLegacyHtml(html, filename.replace(/\.xlsx$/i, '.xls'), 'application/vnd.ms-excel');
+  });
 }
 
 /* Builds just the inner <table> for a columns+rows report (Examination's
@@ -555,7 +556,11 @@ export async function downloadReportExcel({ title, subtitle, metaLine, columns, 
   wb.creator = 'School Mentor';
   wb.created = new Date();
   const ws = wb.addWorksheet((title || 'Report').slice(0, 31));
-  ws.columns = columns.map(() => ({ width: 20 }));
+  /* Fit each column to its longest value (header included), within limits. */
+  ws.columns = columns.map(c => {
+    const longest = rows.reduce((m, r) => Math.max(m, ...String(r[c.key] ?? '—').split('\n').map(s => s.length)), String(c.label || '').length);
+    return { width: Math.min(50, Math.max(8, longest + 3)) };
+  });
 
   ws.mergeCells(1, 1, 1, columns.length);
   const titleCell = ws.getCell(1, 1);
@@ -600,7 +605,7 @@ export async function downloadReportExcel({ title, subtitle, metaLine, columns, 
     columns.forEach((c, ci) => {
       const cell = row.getCell(ci + 1);
       cell.value = r[c.key] ?? '—';
-      cell.alignment = { horizontal: c.align === 'right' || c.align === 'center' ? 'center' : 'left' };
+      cell.alignment = { horizontal: c.align === 'right' ? 'right' : c.align === 'center' ? 'center' : 'left', vertical: 'middle', wrapText: true };
       cell.border = {
         top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
