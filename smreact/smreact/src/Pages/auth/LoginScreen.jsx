@@ -263,6 +263,7 @@ export default function LoginScreen({ onLogin, onSignup }) {
       /* Pichhli branch ka chain-membership jawab bhi hata do — nayi branch ka
          apna hisaab hoga (dekhein erp/services/chainBranch.js). */
       sessionStorage.removeItem('sm_chain_branch');
+      sessionStorage.removeItem('sm_chain_branch_for');
       sessionStorage.removeItem('sm_chain_network_id');
       clearAcademicsContentPerms();
     } catch (_) { /* private mode */ }

@@ -7,9 +7,11 @@
        { action: "GETBYBRANCH", branchID, networkID: null, … }
 
    Branch login (aur ERP refresh) par ek dafa aati hai, sessionStorage me
-   rehti hai. Chain ka hissa na ho to applies:false — school ke apne
-   actions pe koi rok nahi. Chain ho to har action isAccessable se chalti
-   hai: true → kaam, false → button band, hover par head-office message.
+   rehti hai. Sirf usi branch par lagti hain jo abhi kisi chain network ka
+   accepted hissa ho. Chain se nikal kar Super Admin school ban jaye to
+   purani rows reh jayein tab bhi applies:false — school ke apne actions
+   pe koi rok nahi. Chain ho to har action isAccessable se chalti hai:
+   true → kaam, false → button band, hover par head-office message.
    ═══════════════════════════════════════════════════════════════════ */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -25,7 +27,7 @@ const MENUS = ['activity', 'lesson', 'notebook'];
 const ACTIONS = ['view', 'add', 'edit', 'delete'];
 
 /* Head Office modal:
-     activity → Calendar tab: Academic Calendar + Activity Calendar (view / add / edit / delete)
+     activity → Activity Calendar only (view / add / edit / delete). Academic Calendar school ki apni role par.
      lesson   → Classwork Lesson Plan (jo permission di, wahi apply)
      notebook → Notebook Lesson Plan
    Purane labels aur classwork/notebook ke display naam bhi isi par map hote hain. */
@@ -88,8 +90,9 @@ export function clearAcademicsContentPerms() {
 }
 
 function remember(value) {
-  try { sessionStorage.setItem(ACADEMICS_CONTENT_KEY, JSON.stringify(value)); } catch (e) { /* private mode */ }
-  return value;
+  const stored = { ...value, branchID: int(sessionStorage.getItem('branchID')) };
+  try { sessionStorage.setItem(ACADEMICS_CONTENT_KEY, JSON.stringify(stored)); } catch (e) { /* private mode */ }
+  return stored;
 }
 
 function rowsOf(json) {
@@ -138,11 +141,12 @@ async function fetchBranchPermissionRows(branchID) {
 let loadInflight = null;
 
 /**
- * Branch login / ERP boot par. Chain school na ho to applies:false.
- * GET fail → applies:false (fail-open). Chain ho aur rows hon to unka
- * isAccessable overlay; rows na hon to View Only default.
- * lesson ki permission Classwork Lesson Plan par, notebook ki Notebook
- * Lesson Plan par, activity ki Activity Planner par lagti hai.
+ * Branch login / ERP boot par. Chain ka accepted hissa na ho to applies:false,
+ * chahe purani permission rows server par padi hon.
+ * GET fail → applies:false (fail-open), siwaye isi branch ke pehle wale cache ke.
+ * Chain ho aur rows hon to unka isAccessable overlay; rows na hon to View Only.
+ * activity → Activity Calendar. lesson → Classwork Lesson Plan.
+ * notebook → Notebook Lesson Plan.
  */
 export function loadAcademicsContentPermissions() {
   if (loadInflight) return loadInflight;
@@ -155,17 +159,21 @@ async function loadAcademicsContentPermissionsNow() {
   if (!branchID) return remember({ applies: false, ...blank(true) });
 
   try {
+    /* Pehle membership. Chain se hat chuki branch par GETBYBRANCH ki purani
+       rows bhi apply nahi hotin — Activity Calendar / Classwork / Notebook wapas
+       school ki apni role permissions par chalte hain. */
+    const inChain = await checkChainBranch();
+    if (!inChain) return remember({ applies: false, ...blank(true) });
+
     const rows = await fetchBranchPermissionRows(branchID);
     /* Saved rows hon to wahi law. View only = view true, add/edit/delete false.
        Sirf Add = add chale, edit aur delete band. */
     if (rows.length) return remember({ applies: true, ...parseRows(rows) });
-    const inChain = await checkChainBranch();
-    if (!inChain) return remember({ applies: false, ...blank(true) });
     return remember({ applies: true, ...blank(true) });
   } catch (err) {
     console.error('Academics content permissions load failed:', err);
     const cached = cachedAcademicsContentPerms();
-    if (cached && cached.applies) return cached;
+    if (cached && cached.applies && cached.branchID === branchID) return cached;
     return remember({ applies: false, ...blank(true) });
   }
 }

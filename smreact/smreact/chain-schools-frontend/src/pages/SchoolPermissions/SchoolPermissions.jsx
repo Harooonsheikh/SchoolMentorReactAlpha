@@ -674,7 +674,7 @@ function AdvancedPermissionsModal({ school, moduleKey, config, value, onToast, o
               <strong>{school?.name || 'This school'}</strong> will follow exactly what you set below — it's not
               a suggestion, it's an on/off switch for this branch. For each content type, <strong>View Only</strong> means
               they can only see what Head Office shares; turning on <strong>Add</strong>, <strong>Edit</strong>, or <strong>Delete</strong> is
-              what actually lets them create, change, or remove records. <strong>Activity Planner</strong> controls the Calendar tab — Academic Calendar and Activity Calendar.
+              what actually lets them create, change, or remove records. <strong>Activity Planner</strong> controls Activity Calendar only. Academic Calendar stays on the school's own permissions.
               <strong>Lesson Plan</strong> applies to Classwork Lesson Plan. <strong>Notebook Lesson Plan</strong> applies to notebook lesson plans.
               Leave an action off and that action stays blocked for them.
             </div>

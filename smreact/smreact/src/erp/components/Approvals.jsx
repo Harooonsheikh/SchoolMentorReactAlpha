@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import * as approvalsService from '../services/approvalsService';
 import { APPROVAL_ACTION_META } from '../mock/approvals';
+import { usePermissions } from '../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    APPROVALS — central review screen for sensitive changes raised
@@ -27,10 +28,14 @@ import { APPROVAL_ACTION_META } from '../mock/approvals';
      - History           — everything already approved/rejected
    ═══════════════════════════════════════════════════════════════════ */
 
+/* `screen` = the exact User-Permissions submenu label that governs this
+   tab (permissionsData.js → approvals.my_requests / approvals.review).
+   My Requests is its own screen; Pending Approvals AND History share the
+   "Pending Approvals & History" review screen. */
 const TABS = [
-  { id: 'my',      label: 'My Requests',       icon: 'fa-inbox' },
-  { id: 'pending', label: 'Pending Approvals',  icon: 'fa-hourglass-half' },
-  { id: 'history', label: 'History',            icon: 'fa-clock-rotate-left' },
+  { id: 'my',      label: 'My Requests',       icon: 'fa-inbox',               screen: 'My Requests' },
+  { id: 'pending', label: 'Pending Approvals',  icon: 'fa-hourglass-half',      screen: 'Pending Approvals & History' },
+  { id: 'history', label: 'History',            icon: 'fa-clock-rotate-left',   screen: 'Pending Approvals & History' },
 ];
 
 function fmtDateTime(iso) {
@@ -130,6 +135,14 @@ function GroupCard({ label, value, tone }) {
 }
 
 export default function Approvals({ toast = () => {} }) {
+  const { can } = usePermissions();
+  /* Layer 1 — tabs gated by View on their governing screen; Layer 2 —
+     row actions gated by their own action. Revoke = Delete on My Requests;
+     Approve/Reject = Approve on Pending Approvals & History. */
+  const canRevoke = can('Approvals', 'My Requests', 'Delete');
+  const canDecide = can('Approvals', 'Pending Approvals & History', 'Approve');
+  const visibleTabs = TABS.filter(t => can('Approvals', t.screen, 'View'));
+
   const [tab, setTab] = useState('pending');
   const [currentUser, setCurrentUser] = useState('');
   const [approver, setApprover] = useState(null);
@@ -166,7 +179,16 @@ export default function Approvals({ toast = () => {} }) {
 
   useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const rows = tab === 'my' ? myRequests : tab === 'pending' ? pending : history;
+  /* Snap to the first permitted tab if the current one isn't visible
+     (e.g. default 'pending' when the user only has My Requests View). */
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some(t => t.id === tab)) {
+      setTab(visibleTabs[0].id);
+    }
+  }, [visibleTabs, tab]);
+
+  const tabVisible = visibleTabs.some(t => t.id === tab);
+  const rows = !tabVisible ? [] : tab === 'my' ? myRequests : tab === 'pending' ? pending : history;
 
   const stats = useMemo(() => {
     const all = [...myRequests, ...pending, ...history];
@@ -246,7 +268,7 @@ export default function Approvals({ toast = () => {} }) {
       </div>
 
       <div className="ap-tabs">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.id}
             type="button"
@@ -324,16 +346,20 @@ export default function Approvals({ toast = () => {} }) {
                               <i className="fa-solid fa-eye" aria-hidden="true"></i>
                             </button>
                           </Tooltip>
-                          <Tooltip text="Approve">
-                            <button type="button" className="al-icon-btn ap-icon-btn--green" onClick={() => openDetail(r, 'approve')}>
-                              <i className="fa-solid fa-check" aria-hidden="true"></i>
-                            </button>
-                          </Tooltip>
-                          <Tooltip text="Reject">
-                            <button type="button" className="al-icon-btn ap-icon-btn--red" onClick={() => openDetail(r, 'reject')}>
-                              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-                            </button>
-                          </Tooltip>
+                          {canDecide && (
+                            <>
+                              <Tooltip text="Approve">
+                                <button type="button" className="al-icon-btn ap-icon-btn--green" onClick={() => openDetail(r, 'approve')}>
+                                  <i className="fa-solid fa-check" aria-hidden="true"></i>
+                                </button>
+                              </Tooltip>
+                              <Tooltip text="Reject">
+                                <button type="button" className="al-icon-btn ap-icon-btn--red" onClick={() => openDetail(r, 'reject')}>
+                                  <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+                                </button>
+                              </Tooltip>
+                            </>
+                          )}
                         </div>
                       ) : (
                         <div className="ap-row-actions">
@@ -342,7 +368,7 @@ export default function Approvals({ toast = () => {} }) {
                               <i className="fa-solid fa-eye" aria-hidden="true"></i>
                             </button>
                           </Tooltip>
-                          {tab === 'my' && r.status === 'pending' && (
+                          {tab === 'my' && r.status === 'pending' && canRevoke && (
                             <Tooltip text="Revoke your request">
                               <button type="button" className="al-icon-btn ap-icon-btn--gray" onClick={() => openDetail(r, 'revoke')}>
                                 <i className="fa-solid fa-rotate-left" aria-hidden="true"></i>

@@ -681,6 +681,13 @@ export default function SchoolPayment({ toast }) {
 
   /* ── One-Time Receiving — LIVE receive-payment / reset-payment ── */
   const saveOtReceiving = async (id, rec) => {
+    const challan = otChallans.find((x) => x.id === id);
+    const due = Number(challan?.netPayable) || 0;
+    const paid = Number(rec?.receivedAmount) || 0;
+    if (!due || Math.round(paid * 100) !== Math.round(due * 100)) {
+      toast?.(`Enter the exact challan amount of ${pkr(due)}. Payment was not saved.`, 'warn');
+      return;
+    }
     setSaving(true);
     try {
       await paymentsApi.receiveOneTimePayment({ id, rec });
@@ -765,10 +772,10 @@ export default function SchoolPayment({ toast }) {
       {modal?.type === 'delRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the payment receiving record for "${modal.school.name}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteReceiving(modal.school.id)} onClose={() => setModal(null)} />}
 
       {/* ── One-Time Payment modals ── */}
-      {modal?.type === 'addOtChallan' && <AddOtChallanModal onClose={() => setModal(null)} onSave={addOtChallan} toast={toast} />}
+      {modal?.type === 'addOtChallan' && <AddOtChallanModal onClose={() => setModal(null)} onSave={addOtChallan} toast={toast} saving={saving} />}
       {modal?.type === 'otSlip' && <OtSlipModal challan={modal.challan} onClose={() => setModal(null)} />}
       {modal?.type === 'delOtChallan' && <ConfirmDel title="Delete One-Time Challan?" sub={`This will permanently delete the one-time challan "${modal.challan.challanNumber}" for ${modal.challan.schoolName}. If a payment receiving is recorded against it, delete that receiving record first.`} confirmText="Delete Challan" onConfirm={() => deleteOtChallan(modal.challan)} onClose={() => setModal(null)} />}
-      {modal?.type === 'otReceive' && <OtReceiveModal challan={modal.challan} prevRecv={otRecvStore[modal.challan.id]} onClose={() => setModal(null)} onSave={saveOtReceiving} toast={toast} />}
+      {modal?.type === 'otReceive' && <OtReceiveModal challan={modal.challan} prevRecv={otRecvStore[modal.challan.id]} saving={saving} onClose={() => setModal(null)} onSave={saveOtReceiving} toast={toast} />}
       {modal?.type === 'delOtRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the one-time payment receiving record for "${modal.challan.schoolName}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteOtReceiving(modal.challan.id)} onClose={() => setModal(null)} />}
     </div>
   );
@@ -1415,10 +1422,12 @@ function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete, per
                           band. Adhuri payment modal me hi rok di jati hai. */}
                       <button
                         className="recv-btn-recv"
-                        style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
+                        style={recv
+                          ? { background: '#94A3B8', boxShadow: 'none', cursor: 'not-allowed', opacity: .7 }
+                          : { background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
                         disabled={!!recv}
-                        data-tip={recv ? 'Payment already received — delete to re-enter' : ''}
-                        onClick={() => onReceive(c)}
+                        data-tip={recv ? 'Payment already received — delete to re-enter' : 'Record the one-time payment'}
+                        onClick={() => { if (!recv) onReceive(c); }}
                       >
                         <i className="fa-solid fa-hand-holding-dollar" /> Receiving
                       </button>
@@ -2325,7 +2334,7 @@ function PaySubmodeTabs({ mode, setMode, otCount, monthlyLabel, otLabel }) {
   );
 }
 
-function AddOtChallanModal({ onClose, onSave, toast }) {
+function AddOtChallanModal({ onClose, onSave, toast, saving }) {
   const [schoolName, setSchoolName] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(todayISO());
   const [challanDate, setChallanDate] = useState(todayISO());
@@ -2337,11 +2346,16 @@ function AddOtChallanModal({ onClose, onSave, toast }) {
   const price = parseFloat(perStudentPrice) || 0;
   const lump = parseFloat(lumpAmount) || 0;
   const net = formula === 'lumpsum' ? lump : students * price;
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!saving) setBusy(false); }, [saving]);
+  const locked = busy || !!saving;
   const save = () => {
+    if (locked) return;
     if (!schoolName.trim()) { toast?.('Please enter the school name', 'warn'); return; }
     if (!invoiceDate || !challanDate) { toast?.('Please select the invoice and challan dates', 'warn'); return; }
     if (formula === 'perstudent' && (!students || !price)) { toast?.('Please enter total students and price per student', 'warn'); return; }
     if (formula === 'lumpsum' && !lump) { toast?.('Please enter the lump sum amount', 'warn'); return; }
+    setBusy(true);
     onSave({ schoolName: schoolName.trim(), invoiceDate, challanDate, formula, totalStudents: students, perStudentPrice: price, lumpAmount: lump });
   };
   return (
@@ -2382,7 +2396,7 @@ function AddOtChallanModal({ onClose, onSave, toast }) {
           <div style={{ fontSize: 24, fontWeight: 800, color: '#7C3AED' }}>{pkr(net)}</div>
         </div>
       </div>
-      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-file-invoice-dollar" /> Generate Challan</button></div>
+      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose} disabled={locked}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)', opacity: locked ? .55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }} onClick={save} disabled={locked}><i className={`fa-solid ${locked ? 'fa-circle-notch fa-spin' : 'fa-file-invoice-dollar'}`} /> {locked ? 'Generating…' : 'Generate Challan'}</button></div>
     </Ov>
   );
 }
@@ -2445,25 +2459,30 @@ function OtSlipModal({ challan: c, onClose }) {
   );
 }
 
-function OtReceiveModal({ challan: c, onClose, onSave, toast }) {
-  const netPayable = c.netPayable;
-  /* One-time payment EK hi dafa aur POORI hoti hai — koi partial / "Receive
-     More" nahi. Is liye input default poori raqam par bhara aata hai, aur
-     chalan se kam raqam qubool nahi (neeche toast). */
+function OtReceiveModal({ challan: c, onClose, onSave, toast, saving }) {
+  const netPayable = Number(c.netPayable) || 0;
+  /* One-time payment sirf challan ki exact amount par. Kam ya zyada dono
+     reject — pehle zyada amount cap hokar poori raqam save ho jati thi. */
   const [received, setReceived] = useState(String(netPayable));
   const [via, setVia] = useState(RECEIVING_METHODS[0]);
   const [date, setDate] = useState(todayISO());
-  const thisAmount = parseFloat(received) || 0;
-  const remaining = Math.max(0, netPayable - thisAmount);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!saving) setBusy(false); }, [saving]);
+  const locked = busy || !!saving;
+  const thisAmount = parseFloat(received);
+  const remaining = Number.isFinite(thisAmount) ? Math.max(0, netPayable - thisAmount) : netPayable;
   const save = () => {
-    if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
+    if (locked) return;
+    if (!received || !Number.isFinite(thisAmount)) { toast?.('Please enter the received amount', 'warn'); return; }
     if (!date) { toast?.('Please select a payment date', 'warn'); return; }
-    /* Sirf POORI payment — chalan ki poori raqam se kam par receive nahi hoti. */
-    if (thisAmount < netPayable) {
-      toast?.(`Please receive the full payment of ${pkr(netPayable)} — partial payments are not allowed for one-time challans.`, 'warn');
+    const same = Math.round(thisAmount * 100) === Math.round(netPayable * 100);
+    if (!same) {
+      toast?.(thisAmount > netPayable
+        ? `Amount cannot be more than the challan (${pkr(netPayable)}). Payment was not saved.`
+        : `Enter the exact challan amount of ${pkr(netPayable)}. You cannot pay less. Payment was not saved.`, 'warn');
       return;
     }
-    /* Record hamesha poori raqam par (overpay bhi cap). */
+    setBusy(true);
     onSave(c.id, { receivedAmount: netPayable, remainingAmount: 0, via, date: fmtDateShort(date), dateRaw: date });
   };
   return (
@@ -2485,7 +2504,7 @@ function OtReceiveModal({ challan: c, onClose, onSave, toast }) {
         <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
         <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Amount Received</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
       </div>
-      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
+      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose} disabled={locked}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)', opacity: locked ? .55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }} onClick={save} disabled={locked}><i className={`fa-solid ${locked ? 'fa-circle-notch fa-spin' : 'fa-circle-check'}`} /> {locked ? 'Saving…' : 'Add Payment'}</button></div>
     </Ov>
   );
 }

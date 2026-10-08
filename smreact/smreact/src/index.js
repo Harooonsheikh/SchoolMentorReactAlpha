@@ -54,7 +54,7 @@ function isOneLinkPreview() {
       /* Pichhle school-login ka bacha session pehle saaf — warna nayi branch ke
          sath purani keys mix ho jati hain. */
       ['token', 'branchID', 'UserID', 'employee_ID', 'accountType', 'designationName', 'displayName',
-        'userName', 'launchSetup', 'sm_chain_branch', 'sm_chain_network_id',
+        'userName', 'launchSetup', 'sm_chain_branch', 'sm_chain_branch_for', 'sm_chain_network_id',
         'sm_academics_content_perms', 'moduleState',
       ].forEach((k) => { try { sessionStorage.removeItem(k); } catch (e) { /* noop */ } });
 

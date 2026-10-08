@@ -3306,6 +3306,20 @@ const dsSaveEdit = async (payload) => {
     
     await Promise.all(savePromises);
 
+    /* Published date sheet edit hone par release hata do, taake naya data
+       dubara Publish se student/parent ko jaye. */
+    let unpublished = false;
+    if (dsReleased[payload.classKey]) {
+      try {
+        const termID = selectedExam?.termID ?? selectedTermId;
+        await postDsRelease(payload.classID, payload.sectionID, selectExamValue, termID, false);
+        setDsReleased(prev => ({ ...prev, [payload.classKey]: false }));
+        unpublished = true;
+      } catch (e) {
+        console.error('Date sheet unpublish after edit failed:', e);
+      }
+    }
+
     // Save ke baad GET API se FRESH data lo (backend IDs + status turant update) — page refresh ni karna parta.
     let freshRows = cleaned;
     try {
@@ -3320,7 +3334,9 @@ const dsSaveEdit = async (payload) => {
       },
     }));
 
-    toast('Date sheet saved successfully!', 'success');
+    toast(unpublished
+      ? 'Date sheet saved. It is unpublished — publish again to show the changes.'
+      : 'Date sheet saved successfully!', 'success');
     setDsEditing(null);
   } catch (error) {
     console.error('Error saving date sheet:', error);
@@ -3612,7 +3628,20 @@ const dsRunCopy = async () => {
       ...prev,
       [ed.examId]: { ...(prev[ed.examId] || {}), [ed.classKey]: freshRows },
     }));
-    toast('Syllabus saved successfully!', 'success');
+    /* Published syllabus edit hone par release hata do. */
+    let unpublished = false;
+    if (sylReleased[ed.classKey] && sylCurrentExam) {
+      try {
+        await postSylRelease(ed.classID, ed.sectionID, sylCurrentExam.selectExam, sylCurrentExam.termID ?? selectedTermId, false);
+        setSylReleased(prev => ({ ...prev, [ed.classKey]: false }));
+        unpublished = true;
+      } catch (e) {
+        console.error('Syllabus unpublish after edit failed:', e);
+      }
+    }
+    toast(unpublished
+      ? 'Syllabus saved. It is unpublished — publish again to show the changes.'
+      : 'Syllabus saved successfully!', 'success');
     setSylEditing(null);
   };
 const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
@@ -6981,6 +7010,18 @@ onClick={async () => {
   ctx={sylEditing}
   onClose={() => setSylEditing(null)}
   onSave={sylSaveEdit}
+  onContentSaved={async () => {
+    const ed = sylEditing;
+    if (!ed || !sylReleased[ed.classKey] || !sylCurrentExam) return false;
+    try {
+      await postSylRelease(ed.classID, ed.sectionID, sylCurrentExam.selectExam, sylCurrentExam.termID ?? selectedTermId, false);
+      setSylReleased(prev => ({ ...prev, [ed.classKey]: false }));
+      return true;
+    } catch (e) {
+      console.error('Syllabus unpublish after edit failed:', e);
+      return false;
+    }
+  }}
   toast={toast}
   subjects={subjects}
     examId={sylCurrentExam?.selectExam} 
@@ -8849,7 +8890,7 @@ function SylRteEditor({ html, onChange, placeholder }) {
   );
 }
 
-function SylEditModal({ ctx, onClose, onSave, toast, subjects: externalSubjects = [], examId, term, fetchSubjectSyllabus }) {
+function SylEditModal({ ctx, onClose, onSave, onContentSaved, toast, subjects: externalSubjects = [], examId, term, fetchSubjectSyllabus }) {
 const [localSubjects, setLocalSubjects] = useState(() => {
     if (externalSubjects && externalSubjects.length) {
       return externalSubjects.map(s => ({
@@ -8946,9 +8987,12 @@ const payload = {
       throw new Error(data.message || 'Failed to save syllabus');
     }
 
-    toast('Syllabus saved successfully.', 'success');
+    const unpublished = typeof onContentSaved === 'function' ? !!(await onContentSaved()) : false;
 
     if (goNext) {
+      toast(unpublished
+        ? 'Syllabus saved. It is unpublished — publish again to show the changes.'
+        : 'Syllabus saved successfully.', 'success');
       const next = (activeIdx + 1) % localSubjects.length;
       setActiveIdx(next);
 

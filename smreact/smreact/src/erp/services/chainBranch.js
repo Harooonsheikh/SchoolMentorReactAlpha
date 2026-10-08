@@ -25,14 +25,22 @@ export const CHAIN_BRANCH_KEY = 'sm_chain_branch';   // '1' | '0'
 const MANAGE_URL = buildChainApiUrl('/api/Network_Setup/network-schools/manage');
 
 /** Pehle se maloom jawab — '1' / '0', ya null (abhi poocha hi nahi). */
+const CHAIN_BRANCH_FOR_KEY = 'sm_chain_branch_for';
+
 export function cachedChainBranch() {
-  try { return sessionStorage.getItem(CHAIN_BRANCH_KEY); }
-  catch (e) { return null; }
+  try {
+    const branchID = String(Number(sessionStorage.getItem('branchID')) || 0);
+    if (sessionStorage.getItem(CHAIN_BRANCH_FOR_KEY) !== branchID) return null;
+    return sessionStorage.getItem(CHAIN_BRANCH_KEY);
+  } catch (e) { return null; }
 }
 
 function remember(value) {
-  try { sessionStorage.setItem(CHAIN_BRANCH_KEY, value ? '1' : '0'); }
-  catch (e) { /* private mode */ }
+  try {
+    const branchID = String(Number(sessionStorage.getItem('branchID')) || 0);
+    sessionStorage.setItem(CHAIN_BRANCH_KEY, value ? '1' : '0');
+    sessionStorage.setItem(CHAIN_BRANCH_FOR_KEY, branchID);
+  } catch (e) { /* private mode */ }
   return value;
 }
 

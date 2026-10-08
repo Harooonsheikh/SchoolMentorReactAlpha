@@ -64,9 +64,9 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const showTextbooks = acadView('Textbooks');
   const showTerms     = acadView('Term Settings');
   const acp = useAcademicsContentPerms();
-  /* Activity Planner poori Calendar tab ko control karta hai:
-     Academic Calendar aur Activity Calendar, dono. */
-  const showAcadCal   = acadView('Academic Calendar') && acp.can('activity', 'view');
+  /* Activity Planner sirf Activity Calendar par lagti hai.
+     Academic Calendar school ki apni role permission par chalti hai. */
+  const showAcadCal   = acadView('Academic Calendar');
   const showActCal    = acadView('Activity Calendar') && acp.can('activity', 'view');
   const showCal       = showAcadCal || showActCal;
   const showSos       = showTextbooks || showTerms || showCal;
@@ -520,11 +520,7 @@ return (
               <AcademicCalendar
                 terms={terms}
                 onReport={openReport}
-                onEdit={() => {
-                  const canWrite = acp.can('activity', 'add') || acp.can('activity', 'edit') || acp.can('activity', 'delete');
-                  if (!canWrite) return;
-                  setCalEditOpen(true);
-                }}
+                onEdit={() => setCalEditOpen(true)}
                 isOtherSession={isOtherSession}
               />
             )}
@@ -880,10 +876,6 @@ function NoSessionModal({ open, onClose, onGoToSettings }) {
    CAL EDIT MODAL — edit Academic Calendar key-date entries per term
    ═══════════════════════════════════════════════════════════════════ */
 function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
-  const acp = useAcademicsContentPerms();
-  const hoAdd = acp.can('activity', 'add');
-  const hoEdit = acp.can('activity', 'edit');
-  const hoDelete = acp.can('activity', 'delete');
   const [draft, setDraft] = useState([]);
   /* Snapshot of saved key dates by id → lets save() diff into insert/update/delete. */
   const [orig, setOrig] = useState({});
@@ -902,20 +894,15 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
   const updateEntry = (ti, ei, key, value) => {
     setDraft(prev => prev.map((t, idx) => {
       if (idx !== ti) return t;
-      const entry = t.entries[ei];
-      if (entry?.id ? !hoEdit : !hoAdd) { toast?.(ACADEMICS_VIEW_ONLY_MSG, 'error'); return t; }
       return { ...t, entries: t.entries.map((e, j) => j === ei ? { ...e, [key]: value } : e) };
     }));
   };
   const addEntry = ti => {
-    if (!hoAdd) { toast?.(ACADEMICS_VIEW_ONLY_MSG, 'error'); return; }
     setDraft(prev => prev.map((t, idx) =>
       idx !== ti ? t : { ...t, entries: [...t.entries, { heading: '', date: '' }] }
     ));
   };
   const removeEntry = (ti, ei) => {
-    const entry = draft[ti]?.entries[ei];
-    if (entry?.id ? !hoDelete : !hoAdd) { toast?.(ACADEMICS_VIEW_ONLY_MSG, 'error'); return; }
     setDraft(prev => prev.map((t, idx) =>
       idx !== ti ? t : { ...t, entries: t.entries.filter((_, j) => j !== ei) }
     ));
@@ -946,16 +933,16 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
         if (!head && !value) return;
         if (e.id) {
           const o = orig[e.id];
-          if (hoEdit && (!o || o.heading !== e.heading || o.date !== e.date)) {
+          if (!o || o.heading !== e.heading || o.date !== e.date) {
             ops.push(keyDatesCrud({ id: e.id, branchID: termsBranchID(), terms: String(term.id), head, value, action: 'update' }));
           }
-        } else if (hoAdd) {
+        } else {
           ops.push(keyDatesCrud({ id: 0, branchID: termsBranchID(), terms: String(term.id), head, value, action: 'insert' }));
         }
       }));
       Object.keys(orig).forEach(idStr => {
         const id = Number(idStr);
-        if (hoDelete && !present.has(id)) {
+        if (!present.has(id)) {
           ops.push(keyDatesCrud({ id, branchID: termsBranchID(), terms: String(orig[idStr].termId), head: '', value: '', action: 'delete' }));
         }
       });
@@ -1014,40 +1001,34 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
               }}>
                 {term.entries.length === 0 ? (
                   <div className="no-data" style={{ padding: '12px 0' }}>No data</div>
-                ) : term.entries.map((e, ei) => {
-                  const canChange = e.id ? hoEdit : hoAdd;
-                  const canRemove = e.id ? hoDelete : hoAdd;
-                  return (
+                ) : term.entries.map((e, ei) => (
                   <div key={ei} className="cal-entry-row">
-                    <Tooltip text={canChange ? 'Heading/Event' : ACADEMICS_VIEW_ONLY_MSG}>
+                    <Tooltip text="Heading/Event">
                     <input
                       className="cal-entry-input"
                       value={e.heading}
                       placeholder="Heading/Event"
-                      disabled={!canChange}
                       onChange={ev => updateEntry(ti, ei, 'heading', ev.target.value)}
                     />
                     </Tooltip>
-                    <Tooltip text={canChange ? 'Date/Details' : ACADEMICS_VIEW_ONLY_MSG}>
+                    <Tooltip text="Date/Details">
                     <input
                       className="cal-entry-input"
                       value={e.date}
                       placeholder="Date/Details"
-                      disabled={!canChange}
                       onChange={ev => updateEntry(ti, ei, 'date', ev.target.value)}
                     />
                     </Tooltip>
-                    <Tooltip text={canRemove ? 'Remove this entry' : ACADEMICS_VIEW_ONLY_MSG}>
-                      <button className="remove-btn" disabled={!canRemove} style={!canRemove ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => removeEntry(ti, ei)}>
+                    <Tooltip text="Remove this entry">
+                      <button className="remove-btn" onClick={() => removeEntry(ti, ei)}>
                         <i className="fa-solid fa-xmark"></i> Remove
                       </button>
                     </Tooltip>
                   </div>
-                  );
-                })}
+                ))}
               </div>
-              <Tooltip text={hoAdd ? 'Add another entry to this term' : ACADEMICS_VIEW_ONLY_MSG}>
-                <button className="add-more-btn" disabled={!hoAdd} style={!hoAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => addEntry(ti)}>
+              <Tooltip text="Add another entry to this term">
+                <button className="add-more-btn" onClick={() => addEntry(ti)}>
                   <i className="fa-solid fa-plus"></i> Add More
                 </button>
               </Tooltip>
@@ -2412,8 +2393,6 @@ function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
    ═══════════════════════════════════════════════════════════════════ */
 function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
   const { can } = usePermissions();
-  const acp = useAcademicsContentPerms();
-  const hoWrite = acp.can('activity', 'add') || acp.can('activity', 'edit') || acp.can('activity', 'delete');
   const canAcEdit     = can('Academics', 'Academic Calendar', 'Edit');
   const canAcDownload = can('Academics', 'Academic Calendar', 'Download');
   return (
@@ -2441,10 +2420,10 @@ function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
             </button>
           </Tooltip>
           </>)}
-          <Tooltip text={!canAcEdit ? 'You do not have permission to edit the academic calendar' : (!hoWrite ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates'))}>
-            <button className="cal-edit-btn" onClick={() => { if (!hoWrite) return; onEdit(); }}
-              disabled={isOtherSession || !canAcEdit || !hoWrite}
-              style={(isOtherSession || !canAcEdit || !hoWrite) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+          <Tooltip text={!canAcEdit ? 'You do not have permission to edit the academic calendar' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates')}>
+            <button className="cal-edit-btn" onClick={onEdit}
+              disabled={isOtherSession || !canAcEdit}
+              style={(isOtherSession || !canAcEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
           </Tooltip>

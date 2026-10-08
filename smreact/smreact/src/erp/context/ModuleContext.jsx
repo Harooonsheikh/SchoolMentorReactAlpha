@@ -61,6 +61,8 @@ export function ModuleProvider({ children }) {
   /* false jab tak backend se module-permission na aa jaye (ya fail na ho jaye).
      Sidebar isay dekh kar tab tak nav render nahi karta. */
   const [ready, setReady] = useState(() => !!readCache());
+  /* true jab is mount ki module-permission call khatam ho (cache se pehle nahi). */
+  const [synced, setSynced] = useState(false);
 
   /* ── Backend se per-branch module activation load karo ──────────────
      GET /api/SchoolPermissions/module-permission/{branchID}
@@ -69,7 +71,7 @@ export function ModuleProvider({ children }) {
      jaan-boojh kar liya hai (off module dikhane se behtar hai). */
   useEffect(() => {
     const branchID = sessionStorage.getItem('branchID');
-    if (!branchID) { setReady(true); return; }
+    if (!branchID) { setReady(true); setSynced(true); return; }
 
     /* ── Dev/demo override: branch 220941 ko poora sidebar dikhao ──────
        Is branch par module-permission API ko bypass kar ke har module on
@@ -84,6 +86,7 @@ export function ModuleProvider({ children }) {
       setModuleState(allOn);
       writeCache(allOn);
       setReady(true);
+      setSynced(true);
       return;
     }
 
@@ -104,7 +107,7 @@ export function ModuleProvider({ children }) {
       } catch (err) {
         console.error('Module permissions load failed:', err);
       } finally {
-        if (!cancelled) setReady(true);
+        if (!cancelled) { setReady(true); setSynced(true); }
       }
     })();
 
@@ -146,18 +149,20 @@ export function ModuleProvider({ children }) {
     setModuleState(next);
     writeCache(next);
     setReady(true);
+    setSynced(true);
   }, []);
 
   const value = useMemo(() => ({
     moduleState,
     ready,
+    synced,
     toggleModule,
     isActive,
     activateAll,
     getActiveModules,
     loadFromBackend,
     allModules: MODULE_REGISTRY,
-  }), [moduleState, ready, toggleModule, isActive, activateAll, getActiveModules, loadFromBackend]);
+  }), [moduleState, ready, synced, toggleModule, isActive, activateAll, getActiveModules, loadFromBackend]);
 
   return (
     <ModuleContext.Provider value={value}>

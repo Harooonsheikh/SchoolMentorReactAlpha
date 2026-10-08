@@ -17304,6 +17304,17 @@ body{font-family:'DM Sans','Plus Jakarta Sans','Segoe UI',sans-serif;color:#111;
 @media print{ body{background:#fff;padding:0;} .challan-page{box-shadow:none;border:none;page-break-after:always;padding:8mm;} .challan-page:last-child{page-break-after:auto;} }
 `;
 
+/* Super Admin module-permission `1LinkIntegration`. True hi PSID print kare.
+   Cache ModuleContext likhta hai; print functions hook nahi chala sakte. */
+function oneLinkIntegrationOn() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem('moduleState') || 'null');
+    if (!cached?.state) return false;
+    if (String(cached.branchID) !== String(sessionStorage.getItem('branchID'))) return false;
+    return cached.state.one_link_integration === true;
+  } catch { return false; }
+}
+
 const fmtChallanDate = (iso) => {
   if (!iso) return '';
   const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -17313,7 +17324,7 @@ const fmtChallanDate = (iso) => {
 
 function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school, installmentSlip = false }) {
   const showDisc = !installmentSlip && settings.showDiscount !== false;
-  const showPsd = settings.showPsd !== false;
+  const showPsd = oneLinkIntegrationOn() && settings.showPsd !== false;
   const fine = !!settings.fineEnabled;
   const fineAmt = +settings.fineAmt || 0;
   const fineType = settings.fineType || 'fixed';
@@ -17659,7 +17670,7 @@ body.fee-inst:not(.fee-bw) .tr-total td{border-top-color:#1E3A8A;}.th-fine{font-
 
 function feeThermalChallanHTML({ classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school, installmentSlip = false }) {
   const showDisc = !installmentSlip && settings.showDiscount !== false;
-  const showPsd = settings.showPsd !== false;
+  const showPsd = oneLinkIntegrationOn() && settings.showPsd !== false;
   const fine = !!settings.fineEnabled;
   const fineAmt = +settings.fineAmt || 0;
   const fineType = settings.fineType || 'fixed';
@@ -17813,7 +17824,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
 function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO, school = null }) {
   /* Show Discount on Challan OFF → sirf Disc column chhupta hai; Net discount ke baad hi. */
   const showDisc = (settings || {}).showDiscount !== false;
-  const showPsd = settings.showPsd !== false;
+  const showPsd = oneLinkIntegrationOn() && settings.showPsd !== false;
   /* Asli school header — report-header API `branchName`/`branchLogo` bhejti hai (na ke
      name/logo), is liye feeReportSchool() se map karna zaroori hai. Warna school.name
      undefined ho kar dummy "The Oxford System, Lahore Campus" chhapta tha. */
@@ -17953,7 +17964,7 @@ function buildFamilyChallanHTML(opts) {
 function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school = null }) {
   /* Show Discount OFF → Disc column nahi, Std = discount ke BAAD (Net jaisa). */
   const showDisc = (settings || {}).showDiscount !== false;
-  const showPsd = settings.showPsd !== false;
+  const showPsd = oneLinkIntegrationOn() && settings.showPsd !== false;
   const sch = feeReportSchool(school);
   const schName = sch.name;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
@@ -18045,11 +18056,12 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 function FeeChallanSettings({ toast }) {
   const { can } = usePermissions();
   const canFcsEdit = can('Fee', 'Fee Challan Settings', 'Edit');
-  /* 1Link / PSID payment features sirf tab dikhte hain jab is branch ki
-     module-permission me "1LinkIntegration": true ho (Super-Admin se set hota
-     hai). Off/missing → ye saare PSID controls hide. */
-  const { isActive } = useModules();
-  const oneLinkOn = isActive('one_link_integration');
+  /* 1LinkIntegration true → Show PSID toggle dikhe. False → toggle band karke
+     save, phir hide. Jab tak module-permission load na ho, true wale branch
+     ka toggle mat chhupao (missing key pehle false padh jati thi). */
+  const { moduleState, synced } = useModules();
+  /* Sirf live API ke false par hide. Cache / loading par true wala toggle mat chhupao. */
+  const hidePsidControls = synced && moduleState.one_link_integration === false;
   const {
     data: serverSettings,
     loading,
@@ -18077,6 +18089,24 @@ function FeeChallanSettings({ toast }) {
   const dirtyRef = useRef(false);
   const toastRef = useRef(toast);
   useEffect(() => { dirtyRef.current = dirty; toastRef.current = toast; });
+
+  /* 1LinkIntegration false: Show PSID agar on hai to off karke save, phir card hide. */
+  const psidForcedOff = useRef(false);
+  useEffect(() => {
+    if (!hidePsidControls || !serverSettings || serverSettings.showPsd === false) return;
+    if (psidForcedOff.current) return;
+    psidForcedOff.current = true;
+    (async () => {
+      try {
+        const saved = await feeService.saveFeeSettings({ ...serverSettings, showPsd: false });
+        setServerSettings(saved);
+        setLocal(saved);
+      } catch (err) {
+        psidForcedOff.current = false;
+        console.error('Could not turn off Show PSID after 1Link was disabled:', err);
+      }
+    })();
+  }, [hidePsidControls, serverSettings, setServerSettings]);
   useEffect(() => () => {
     if (dirtyRef.current) {
       toastRef.current('Fee challan settings not saved — please click Save Settings', 'warning');
@@ -18189,7 +18219,7 @@ function FeeChallanSettings({ toast }) {
 
             {/* PSID Installment Payments — default ON (OneLink/PSID partial challan available).
                 Sirf tab dikhta hai jab branch par 1Link integration on ho. */}
-            {oneLinkOn && (
+            {!hidePsidControls && (
             <SettingCard
               name="PSID Installment Payments"
               desc="Allow installments to be created through PSID / OneLink partial-payment challans."
@@ -18273,7 +18303,7 @@ function FeeChallanSettings({ toast }) {
             />
 
             {/* Show PSID — sirf tab jab branch par 1Link integration on ho. */}
-            {oneLinkOn && (
+            {!hidePsidControls && (
             <SettingCard
               name="Show PSID Code on Challan"
               desc="Print the PSID / bank payment code so parents can pay via bank or app."
@@ -18398,7 +18428,7 @@ function FeeChallanSettings({ toast }) {
                   {value.showDiscount ? 'Visible' : 'Hidden'}
                 </strong>
               </li>
-              {oneLinkOn && (
+              {!hidePsidControls && (
               <li>
                 PSD / bank code on challan: {' '}
                 <strong className={value.showPsd ? 'fee-pos' : 'fee-neg'}>

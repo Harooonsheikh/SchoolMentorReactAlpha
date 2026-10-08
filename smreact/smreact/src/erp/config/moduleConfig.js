@@ -108,10 +108,14 @@ export const API_FIELD_TO_MODULE_MAP = {
  */
 export function mapApiPermissionsToModuleState(payload) {
   if (!payload || typeof payload !== 'object') return null;
+  /* Kabhi body seedha DTO hoti hai, kabhi { data: { ... } }. Dono se 1Link padho. */
+  const src = (!Array.isArray(payload) && payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data))
+    ? { ...payload, ...payload.data }
+    : (Array.isArray(payload) ? (payload[0] || {}) : payload);
 
   /* Response ki keys lowercase index kar lo taake casing mismatch na tootay. */
   const lowered = {};
-  for (const [k, v] of Object.entries(payload)) lowered[k.toLowerCase()] = v;
+  for (const [k, v] of Object.entries(src)) lowered[k.toLowerCase()] = v;
 
   const truthy = (v) =>
     v === true || v === 1 || String(v).toLowerCase() === 'true' || String(v) === '1';
@@ -122,6 +126,10 @@ export function mapApiPermissionsToModuleState(payload) {
     if (raw === undefined) continue;      /* API ne bheja hi nahi → chhedo mat */
     state[moduleId] = truthy(raw);
   }
+
+  /* 1Link kai naam se aa sakta hai. Explicit true hi on; false / missing = off. */
+  const oneLinkRaw = lowered['1linkintegration'] ?? lowered['onelinkintegration'] ?? lowered['onelink'];
+  if (oneLinkRaw !== undefined) state.one_link_integration = truthy(oneLinkRaw);
 
   /* coreLocked hamesha on. */
   for (const m of MODULE_REGISTRY) if (m.coreLocked) state[m.id] = true;
