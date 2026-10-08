@@ -5028,6 +5028,10 @@ function EditPaymentModal({ cfg, onClose, onSave, toast }) {
 /* "Old Dues Till Date" head — modal khulte hi Received me POORA baqaya
    pre-fill hota hai (Pending 0), magar cashier isay edit bhi kar sakta hai. */
 const isOldDuesHead = (name) => /old\s*dues/i.test(String(name || ''));
+/* Previous / old-dues head — challan amount aksar 0 hota hai, raqam previous me hoti hai.
+   Paid ho jane par backend previousPendingorAdv 0 kar deta hai, is liye slip us wasooli
+   ko advance (minus remaining) samajh leti thi. */
+const isPreviousDuesHead = (name) => /old\s*dues|previous\s*dues?|pending\s*dues?|previous\s*pending|arrears?/i.test(String(name || ''));
 
 function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onEditPayment }) {
   /* Receiving Date par late fine ka poora hisaab chalta hai — is liye LOCAL date
@@ -6372,8 +6376,14 @@ function installmentSlipRows(challan, payments, payment) {
        Remaining = baqaya). Poora ada shuda aur ab bhi kuch nahi → chhod do. */
     if (!recv && !disc && Math.round(before) <= 0) return;
     /* _mgr / _first: slip (toggle ON) is head ki PEHLI receiving par manager discount bhi
-       dikhaye — Std gross, Discount = manager + give. */
-    out.push({ name, std: Math.round(before), disc: Math.round(disc), recv: Math.round(recv), prev: 0, _mgr: Math.round(mgr), _first: earlierPaid === 0 });
+       dikhaye — Std gross, Discount = manager + give.
+       Previous alag column me: is installment se pehle ka previous baqaya. Old-dues head
+       par stored previous 0 ho (paid ke baad) to wasooli khud previous hai, advance nahi. */
+    const prevNow = isPreviousDuesHead(name)
+      ? Math.max(0, Math.round(before) - Math.max(0, Math.round((+r.challanAmount || 0) - mgr)))
+      : 0;
+    const prev = prevNow > 0 ? prevNow : 0;
+    out.push({ name, std: Math.round(before) - prev, disc: Math.round(disc), recv: Math.round(recv), prev, _mgr: Math.round(mgr), _first: earlierPaid === 0 });
   });
   return out.length ? out : null;
 }
@@ -6416,7 +6426,12 @@ function latestReceivingSlipRows(challan) {
     const std = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0) - before;
     /* Is receiving me kuch na liya magar baqaya ho to bhi head dikhe (Received "—"). */
     if (!recvNow && !discNow && Math.round(std) <= 0) return;
-    out.push({ name: r.subHead || r.head || '', std: Math.round(std), disc: Math.round(discNow), recv: Math.round(recvNow), prev: 0, _mgr: Math.round(mgr), _first: before === 0 });
+    const headName = r.subHead || r.head || '';
+    const prevNow = isPreviousDuesHead(headName)
+      ? Math.max(0, Math.round(std) - Math.max(0, Math.round((+r.challanAmount || 0) - mgr - before)))
+      : 0;
+    const prev = prevNow > 0 ? prevNow : 0;
+    out.push({ name: headName, std: Math.round(std) - prev, disc: Math.round(discNow), recv: Math.round(recvNow), prev, _mgr: Math.round(mgr), _first: before === 0 });
   });
   return out.length ? out : null;
 }
@@ -6548,7 +6563,19 @@ function FeeSlipModal({ cfg, onClose, toast }) {
       return { name: 'Fine', std: slipFine + fd, disc: fd, recv: slipFine, prev: 0 };
     })()]
     : baseRows;
+  /* Previous-dues head (Old Dues Till Date, Previous Due, …) par challan amount 0 hota
+     hai. Paid ke baad previous field bhi 0 ho jati hai, is liye Received poora
+     Remaining me minus (advance) dikhta tha. Wo raqam Previous Dues hai. */
+  headRows.forEach(r => {
+    if (r.isAdvance) return;
+    const challanNet = (r.std || 0) - (r.disc || 0);
+    const gap = (r.recv || 0) - (challanNet + (r.prev || 0));
+    /* Challan amount khali ho, ya head khud previous/old dues ho, to minus advance nahi —
+       wo Previous Dues column me jaata hai. */
+    if (gap > 0 && (challanNet <= 0 || isPreviousDuesHead(r.name))) r.prev = (r.prev || 0) + gap;
+  });
   const totStd = headRows.reduce((a, r) => a + r.std, 0);
+  const totPrev = headRows.reduce((a, r) => a + (r.prev || 0), 0);
   const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
   const total = headRows.reduce((a, r) => a + r.recv, 0);
   /* "Amount Received": challan-wali (cumulative) slip par KUL wasooli (table ke Received
@@ -6637,10 +6664,10 @@ function FeeSlipModal({ cfg, onClose, toast }) {
           ${payment.txn ? `<span class="k">Transaction</span><span class="v">${escHtml(payment.txn)}</span>` : ''}
         </div>
         <table class="fee-slip-tbl fee-slip-heads">
-          <thead><tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr></thead>
+          <thead><tr><th>Head</th><th>Previous Dues</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr></thead>
           <tbody>
-            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>${r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>${r.recv ? r.recv.toLocaleString('en-PK') : '—'}</td><td>${remCell(r)}</td></tr>`).join('')}
-            <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td><td>${totRemTxt}</td></tr>
+            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.isAdvance ? '—' : ((r.prev || 0) ? (r.prev || 0).toLocaleString('en-PK') : '—')}</td><td>${r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>${r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>${r.recv ? r.recv.toLocaleString('en-PK') : '—'}</td><td>${remCell(r)}</td></tr>`).join('')}
+            <tr class="fee-slip-headtot"><td>Total</td><td>${totPrev ? totPrev.toLocaleString('en-PK') : '—'}</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td><td>${totRemTxt}</td></tr>
           </tbody>
         </table>
             <div class="fee-slip-net">
@@ -6861,13 +6888,13 @@ function FeeSlipModal({ cfg, onClose, toast }) {
                 </div>
                 <table className="fee-slip-tbl fee-slip-heads">
                   <thead>
-                    <tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr>
+                    <tr><th>Head</th><th>Previous Dues</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr>
                   </thead>
                   <tbody>
                     {headRows.map(r => (
-                      <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv ? r.recv.toLocaleString('en-PK') : '—'}</td><td>{remCell(r)}</td></tr>
+                      <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : ((r.prev || 0) ? (r.prev || 0).toLocaleString('en-PK') : '—')}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv ? r.recv.toLocaleString('en-PK') : '—'}</td><td>{remCell(r)}</td></tr>
                     ))}
-                    <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
+                    <tr className="fee-slip-headtot"><td>Total</td><td>{totPrev ? totPrev.toLocaleString('en-PK') : '—'}</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
                   </tbody>
                 </table>
                 <div className="fee-slip-net">
