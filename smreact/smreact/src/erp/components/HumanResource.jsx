@@ -7,6 +7,7 @@ import * as hrService from '../services/hrService';
 import * as attendanceService from '../services/attendanceService';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
+import { qrSVG } from '../utils/qrcode';
 import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName } from '../reports/reportKit';
 
 import {
@@ -5797,7 +5798,17 @@ function MarkInactiveModal({ emp, onClose, onConfirm }) {
 
 /* ═══════════════════════════════════════════════════════════════════
    STAFF ID CARD MODAL — Vertical/Horizontal picker → live card preview.
+   
    ═══════════════════════════════════════════════════════════════════ */
+   function staffQrValue(emp) {
+    const id = String(emp?.id ?? '').trim();
+    if (id && id !== '0') return id;
+    return String(emp?.eid || '').trim();
+  }
+  
+  function staffQrSVG(value) {
+    return qrSVG(value, { quiet: 4 });
+  }
 function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
   const [layout, setLayout] = useState('v');     // 'v' | 'h'
   const [generated, setGenerated] = useState(false);
@@ -5911,7 +5922,7 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                       <div><span>Blood</span><b>{emp.blood || '—'}</b></div>
                     </div>
                     <div className="idc-r-foot">
-                      <div className="idc-r-qr"><i className="fa-solid fa-qrcode"></i></div>
+                    <div className="idc-r-qr" dangerouslySetInnerHTML={{ __html: staffQrSVG(staffQrValue(emp)) }} />
                       <div className="idc-r-validity">Session {session}<br /><small>Valid till {validity}</small></div>
                     </div>
                   </div>
@@ -5954,7 +5965,7 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                         <div><span>Session</span><b>{session}</b></div>
                       </div>
                     </div>
-                    <div className="idc-r-h-qr"><i className="fa-solid fa-qrcode"></i></div>
+                    <div className="idc-r-h-qr" dangerouslySetInnerHTML={{ __html: staffQrSVG(staffQrValue(emp)) }} />
                   </div>
                   <div className="idc-render idc-render--h idc-render--back">
                     <div className="idc-r-back-body">

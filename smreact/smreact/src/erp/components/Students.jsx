@@ -682,11 +682,11 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
 /* ID card ke QR me kya encode hota hai — student ka DB id.
    `_id` blank/0 ho (freshly added student) to reg ya adm no par gir jaate
    hain, warna QR bilkul khali reh jaata. */
-function stuQrValue(s) {
-  const id = String(s?._id ?? '').trim();
-  if (id && id !== '0') return id;
-  return String(s?.reg || s?.adm || '').trim();
-}
+   function stuQrValue(s) {
+    const appId = String(s?._id ?? '').trim();
+    const reg   = String(s?.reg || s?.adm || '').trim();
+    return `${appId}|${reg}`;
+  }
 
 /* Wrapper — SVG markup string, preview aur print HTML dono me lagta hai. */
 function stuQrSVG(value) {
@@ -712,7 +712,6 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         <div class="photo">${s.photo ? `<img src="${s.photo}" alt=""/>` : `<span>${stuEsc(initials)}</span>`}</div>
         <div class="lbl">Student Name</div>
         <div class="val val-name" style="color:${theme.ink}">${stuEsc(stuFullName(s))}</div>
-        <div class="kv-row"><div><div class="lbl">Class / Section</div><div class="val">${stuEsc(cls?.cls || '—')} · ${stuEsc(cls?.sec || '—')}</div></div><div><div class="lbl">Reg No</div><div class="val mono">${stuEsc(s.reg)}</div></div></div>
         <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Designation</div><div class="val">${stuEsc(role || 'Student')}</div></div></div>
         <div class="kv-row"><div><div class="lbl">Date of Birth</div><div class="val">${stuFmtDate(s.dob)}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '—')}</div></div></div>
       </div>
@@ -727,14 +726,14 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         <div class="face-lbl">Back</div>
       </div>
       <div class="card-body card-body-back">
-        <div class="qr-strip-back"><div class="qr-big" style="box-shadow:0 0 0 0.5mm ${theme.c1}">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div><div class="qr-s">Valid for ${stuEsc(session || '—')}</div></div></div>
-        <div class="back-rows">
-          <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
-          <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
-          <div class="back-row"><span class="lbl">D.O.B.</span><b>${stuFmtDate(s.dob)}</b></div>
-          <div class="back-row"><span class="lbl">Adm No</span><b class="mono">${stuEsc(s.adm || '—')}</b></div>
-          ${s.bform ? `<div class="back-row"><span class="lbl">B-Form</span><b class="mono">${stuEsc(s.bform)}</b></div>` : ''}
-        </div>
+       <div class="back-rows">
+       <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
+       <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
+       <div class="back-row"><span class="lbl">D.O.B.</span><b>${stuFmtDate(s.dob)}</b></div>
+       <div class="back-row"><span class="lbl">Adm No</span><b class="mono">${stuEsc(s.adm || '—')}</b></div>
+       <div class="back-row"><span class="lbl">Applicant ID</span><b class="mono">${stuEsc(s._id || '—')}</b></div>
+       ${s.bform ? `<div class="back-row"><span class="lbl">B-Form</span><b class="mono">${stuEsc(s.bform)}</b></div>` : ''}
+</div>
         ${school?.address || school?.phone ? `<div class="addr">${school?.address ? stuEsc(school.address) : ''}${school?.phone ? ` · ☎ ${stuEsc(school.phone)}` : ''}</div>` : ''}
       </div>
       <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>
@@ -801,7 +800,6 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
           <div class="photo">${s.photo ? `<img src="${s.photo}" alt=""/>` : `<span>${stuEsc(initials)}</span>`}</div>
           <div class="lbl">Student Name</div>
           <div class="val val-name" style="color:${theme.ink}">${stuEsc(stuFullName(s))}</div>
-          <div class="kv-row"><div><div class="lbl">Class</div><div class="val">${stuEsc(cls?.cls || '—')} · ${stuEsc(cls?.sec || '—')}</div></div><div><div class="lbl">Reg</div><div class="val mono">${stuEsc(s.reg)}</div></div></div>
           <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '—')}</div></div></div>
         </div>
         <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-f-foot`)}<span class="card-foot-txt">If found, please return to the school office.</span></div>
@@ -815,12 +813,12 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
           <div class="face-lbl">Back</div>
         </div>
         <div class="card-body card-body-back">
-          <div class="qr-strip-back"><div class="qr-big">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div></div></div>
-          <div class="back-rows">
+            <div class="back-rows">
             <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
             <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
             <div class="back-row"><span class="lbl">D.O.B.</span><b>${stuFmtDate(s.dob)}</b></div>
             <div class="back-row"><span class="lbl">Adm No</span><b class="mono">${stuEsc(s.adm || '—')}</b></div>
+             <div class="back-row"><span class="lbl">Applicant ID</span><b class="mono">${stuEsc(s._id || '—')}</b></div>
           </div>
         </div>
         <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>
@@ -4252,18 +4250,19 @@ function StuIdCardPreview({ student: s, cls, school, template, theme, session, r
             {/* Asli QR — student id encode hota hai (pehle sirf CSS mock tha). */}
             <div className="stu-id-card-qr-mock" style={{ borderColor: theme.c1 }}
               dangerouslySetInnerHTML={{ __html: stuQrSVG(stuQrValue(s)) }} />
-            <div className="stu-id-card-qr-text">
-              <div className="stu-id-card-qr-lbl">Scan to verify</div>
-              <div className="stu-id-card-qr-reg" style={{ color: theme.c1 }}>{s.reg}</div>
-            </div>
+         <div className="stu-id-card-qr-text">
+  <div className="stu-id-card-qr-lbl">Scan to verify</div>
+  <div className="stu-id-card-qr-reg" style={{ color: theme.c1 }}>{s._id}</div>
+</div>
           </div>
           <div className="stu-id-card-back-rows">
-            <div><span>Guardian</span><b>{s.father || '—'}</b></div>
-            <div><span>Mobile</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.mobile || '—'}</b></div>
-            <div><span>D.O.B.</span><b>{stuFmtDate(s.dob)}</b></div>
-            <div><span>Blood Grp</span><b>—</b></div>
-            <div><span>Adm No</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.adm || '—'}</b></div>
-          </div>
+             <div><span>Guardian</span><b>{s.father || '—'}</b></div>
+               <div><span>Mobile</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.mobile || '—'}</b></div>
+               <div><span>D.O.B.</span><b>{stuFmtDate(s.dob)}</b></div>
+               <div><span>Blood Grp</span><b>—</b></div>
+              <div><span>Adm No</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.adm || '—'}</b></div>
+               <div><span>Applicant ID</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s._id || '—'}</b></div>
+</div>
           <div className="stu-id-card-school-addr">
             {school?.address && <div>{school.address}</div>}
             {school?.phone && <div>☎ {school.phone}</div>}
@@ -4277,11 +4276,11 @@ function StuIdCardPreview({ student: s, cls, school, template, theme, session, r
           <div className="stu-id-card-info">
             <div className="stu-id-card-name" style={{ color: theme.ink }}>{stuFullName(s)}</div>
             <div className="stu-id-card-kv">
-              <span>Class</span><b>{cls?.cls} · {cls?.sec}</b>
-              <span>Reg No</span><b style={{ color: theme.c1, fontFamily: 'ui-monospace,monospace' }}>{s.reg}</b>
-              <span>Father</span><b>{s.father || '—'}</b>
-              <span>Role</span><b>{role}</b>
-              <span>Session</span><b>{session}</b>
+             <span>Class</span><b>{cls?.cls} · {cls?.sec}</b>
+             <span>Applicant ID</span><b style={{ color: theme.c1, fontFamily: 'ui-monospace,monospace' }}>{s._id}</b>
+             <span>Father</span><b>{s.father || '—'}</b>
+             <span>Role</span><b>{role}</b>
+             <span>Session</span><b>{session}</b>
             </div>
           </div>
         </div>
