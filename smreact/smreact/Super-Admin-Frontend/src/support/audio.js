@@ -19,7 +19,9 @@
 export const VOICE_EXTENSIONS = ['mp3', 'wav', 'm4a', 'ogg'];
 
 const TARGET_SAMPLE_RATE = 16000;
-
+const TARGET_PEAK = 0.99;   // sabse unchi awaaz full scale ke 95% tak
+const MAX_GAIN = 8;         // bohat halki recording me shor na barhe
+const EXTRA_GAIN = 1.5;     // aur buland chahiye to 1.2–1.5
 /** MediaRecorder ke mime se file extension. */
 export function voiceExtForMime(mime) {
   const t = String(mime || '').toLowerCase();
@@ -36,9 +38,9 @@ export function voiceExtForMime(mime) {
  * @returns {Promise<{ blob: Blob, ext: string, converted: boolean }>}
  * Container pehle se allowed ho to blob waisa ka waisa; warna WAV.
  */
-export async function toUploadableVoice(blob, mimeType) {
+export async function toUploadableVoice(blob, mimeType, { forceConvert = true } = {}) {
   const ext = voiceExtForMime(mimeType || blob?.type);
-  if (VOICE_EXTENSIONS.includes(ext)) return { blob, ext, converted: false };
+  if (!forceConvert && VOICE_EXTENSIONS.includes(ext)) return { blob, ext, converted: false };
   const wav = await blobToWav(blob);
   return { blob: wav, ext: 'wav', converted: true };
 }
@@ -71,9 +73,8 @@ export async function blobToWav(blob) {
   source.start();
   const rendered = await offline.startRendering();
 
-  return encodeWav(rendered.getChannelData(0), rate);
+  return encodeWav(boostSamples(rendered.getChannelData(0)), rate);
 }
-
 /** Float32 samples → 16-bit PCM WAV blob. */
 function encodeWav(samples, sampleRate) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);

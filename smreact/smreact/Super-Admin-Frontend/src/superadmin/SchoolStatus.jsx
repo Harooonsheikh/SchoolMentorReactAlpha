@@ -5,7 +5,7 @@ import {
   MOBILE_FEATURES, MOBILE_CATEGORIES,
 } from './statusData';
 import { schoolProgressApi, schoolPermissionsApi, authApi } from './api';
-
+import * as supportApi from '../support/api';
 /* Assign dropdown ka pehla option — branch kisi ko assign na ho to yehi. */
 const UNASSIGNED = '-- Unassigned --';
 
@@ -222,6 +222,23 @@ export default function SchoolStatus({ toast }) {
         const { id } = await schoolProgressApi.saveAssignedUser({ id: row?.id || 0, branchId, userId: uid, launchSetup });
         setAssignMap((m) => ({ ...m, [branchId]: { id: id || row?.id || 0, userId: uid } }));
         toast?.(`Assigned to: ${label}`, 'success');
+        console.log('[assign-check] school assign OK', { branchId, uid });
+
+        try {
+          const { items } = await supportApi.getActiveSessions(1, 100);
+          const open = items.filter((s) => Number(s.schoolId) === Number(branchId));
+          console.log('[assign-check] open chats for this school:', open.map((s) => s.sessionId));
+          for (const s of open) {
+            try {
+              await supportApi.assignSession(s.sessionId, uid);
+              console.log('[assign-check] chat assign OK', s.sessionId);
+            } catch (e) {
+              console.error('[assign-check] chat assign FAILED', { sessionId: s.sessionId, status: e?.status, message: e?.message });
+            }
+          }
+        } catch (e) {
+          console.error('[assign-check] could not load chats', e);
+        }
       } else if (row?.id) {
         await schoolProgressApi.clearAssignedUser({ id: row.id, branchId, launchSetup });
         setAssignMap((m) => { const next = { ...m }; delete next[branchId]; return next; });
