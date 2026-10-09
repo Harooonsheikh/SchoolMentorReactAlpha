@@ -9,6 +9,7 @@ const v = (tab, url = SAMPLE) => ({ tab, url })
 export const TUTORIALS = {
   '/dashboard': { icon: 'fa-gauge-high', videos: [v('Dashboard Overview')] },
   '/academics': { icon: 'fa-graduation-cap', videos: [v('Scheme of Studies'), v('Lesson Plans')] },
+  '/examination': { icon: 'fa-file-signature', videos: [v('Overview'), v('Exams'), v('Result Policy')] },
   '/school-permissions': { icon: 'fa-key', videos: [v('Managing School Permissions')] },
   '/school-progress': { icon: 'fa-chart-line', videos: [v('School Progress'), v('Follow-up Cards')] },
   '/school-payments': { icon: 'fa-credit-card', videos: [v('Payment Setup'), v('Challans'), v('Receiving'), v('Reports')] },

@@ -12,7 +12,7 @@ const KEY_PERMS = 'csp_um_perms'
 const KEY_ASSIGN = 'csp_um_assign'
 
 /* Menus available for permission — this app's actual modules. */
-export const UM_MENUS = NAV_SECTIONS.flatMap((s) => s.items).map((i) => i.label)
+export const UM_MENUS = NAV_SECTIONS.flatMap((s) => s.items).filter((i) => !i.hidden).map((i) => i.label)
 
 /* Sub-permission nested under the "Academics" menu — controls who can
    push a Master/Sub Release to member schools (Create Master Release /

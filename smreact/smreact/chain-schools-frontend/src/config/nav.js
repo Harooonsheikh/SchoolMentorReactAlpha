@@ -21,6 +21,8 @@ export const NAV_SECTIONS = [
     label: 'Academics & ERP',
     items: [
       { key: 'academics', path: '/academics', label: 'Academics', icon: 'fa-graduation-cap' },
+      /* Examination sidebar item hidden for now — route still redirects away. */
+      { key: 'examination', path: '/examination', label: 'Examination', icon: 'fa-file-signature', hidden: true },
       { key: 'permissions', path: '/school-permissions', label: 'School Permissions', icon: 'fa-key' },
       { key: 'progress', path: '/school-progress', label: 'School Progress', icon: 'fa-chart-line' },
       { key: 'payments', path: '/school-payments', label: 'School Payments', icon: 'fa-credit-card' },
