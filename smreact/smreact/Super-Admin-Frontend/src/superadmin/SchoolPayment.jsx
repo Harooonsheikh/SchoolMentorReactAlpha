@@ -72,10 +72,10 @@ const dateInPeriod = (iso, p) => {
 };
 
 const TABS = [
-  { id: 'setup',     name: 'Payment Setup', icon: 'fa-gear' },
-  { id: 'challans',  name: 'Challans',      icon: 'fa-file-invoice' },
-  { id: 'receiving', name: 'Receiving',     icon: 'fa-hand-holding-dollar' },
-  { id: 'report',    name: 'Reports',       icon: 'fa-chart-bar' },
+  { id: 'setup', name: 'Payment Setup', icon: 'fa-gear' },
+  { id: 'challans', name: 'Challans', icon: 'fa-file-invoice' },
+  { id: 'receiving', name: 'Receiving', icon: 'fa-hand-holding-dollar' },
+  { id: 'report', name: 'Reports', icon: 'fa-chart-bar' },
 ];
 
 /* Branch directory ki row → wohi school shape jo yeh screen padhti hai. */
@@ -440,7 +440,7 @@ export default function SchoolPayment({ toast }) {
     const s = schools.find((x) => x.id === id);
     const setup = payStore[id];
     const monthly = setupMonthly(s, setup);
-    
+
     setSaving(true);
     try {
       const saved = await paymentsApi.saveChallan({
@@ -531,7 +531,7 @@ export default function SchoolPayment({ toast }) {
     }
     toast?.(`Challans generated for ${word} · ${failures.length} failed (${failures[0].name}: ${failures[0].why})`, 'warn');
   };
-   const deleteChallan = async (id) => {
+  const deleteChallan = async (id) => {
     const rowId = chStore[id]?.id || 0;
     /* Challan par receiving bani ho to DB usay hatane hi nahi deti (foreign
        key FK_NetworkSchoolPayment_Receiving_PaymentLedgerID). DELETE bhej kar
@@ -607,13 +607,15 @@ export default function SchoolPayment({ toast }) {
       /* Tab badal kar wapas aane par yeh lines dobara API ki ek jama line me
          nahi badlengi (see saveRecvHistory). */
       saveRecvHistory(id, period, history);
-      setRecvStore((prev) => ({ ...prev, [id]: {
-        ...saved,
-        /* Save ke baad API se padha hua `paymentVia` hi sach hai; kisi purane
-           record par khali ho to jo abhi chuna gaya wo dikh jata hai. */
-        via: saved.via || rec.via || '',
-        history,
-      } }));
+      setRecvStore((prev) => ({
+        ...prev, [id]: {
+          ...saved,
+          /* Save ke baad API se padha hua `paymentVia` hi sach hai; kisi purane
+             record par khali ho to jo abhi chuna gaya wo dikh jata hai. */
+          via: saved.via || rec.via || '',
+          history,
+        }
+      }));
       setModal(null);
       toast?.(`Payment recorded for ${s ? s.name : 'school'}`, 'success');
     } catch (err) {
@@ -681,13 +683,6 @@ export default function SchoolPayment({ toast }) {
 
   /* ── One-Time Receiving — LIVE receive-payment / reset-payment ── */
   const saveOtReceiving = async (id, rec) => {
-    const challan = otChallans.find((x) => x.id === id);
-    const due = Number(challan?.netPayable) || 0;
-    const paid = Number(rec?.receivedAmount) || 0;
-    if (!due || Math.round(paid * 100) !== Math.round(due * 100)) {
-      toast?.(`Enter the exact challan amount of ${pkr(due)}. Payment was not saved.`, 'warn');
-      return;
-    }
     setSaving(true);
     try {
       await paymentsApi.receiveOneTimePayment({ id, rec });
@@ -772,10 +767,10 @@ export default function SchoolPayment({ toast }) {
       {modal?.type === 'delRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the payment receiving record for "${modal.school.name}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteReceiving(modal.school.id)} onClose={() => setModal(null)} />}
 
       {/* ── One-Time Payment modals ── */}
-      {modal?.type === 'addOtChallan' && <AddOtChallanModal onClose={() => setModal(null)} onSave={addOtChallan} toast={toast} saving={saving} />}
+      {modal?.type === 'addOtChallan' && <AddOtChallanModal onClose={() => setModal(null)} onSave={addOtChallan} toast={toast} />}
       {modal?.type === 'otSlip' && <OtSlipModal challan={modal.challan} onClose={() => setModal(null)} />}
       {modal?.type === 'delOtChallan' && <ConfirmDel title="Delete One-Time Challan?" sub={`This will permanently delete the one-time challan "${modal.challan.challanNumber}" for ${modal.challan.schoolName}. If a payment receiving is recorded against it, delete that receiving record first.`} confirmText="Delete Challan" onConfirm={() => deleteOtChallan(modal.challan)} onClose={() => setModal(null)} />}
-      {modal?.type === 'otReceive' && <OtReceiveModal challan={modal.challan} prevRecv={otRecvStore[modal.challan.id]} saving={saving} onClose={() => setModal(null)} onSave={saveOtReceiving} toast={toast} />}
+      {modal?.type === 'otReceive' && <OtReceiveModal challan={modal.challan} prevRecv={otRecvStore[modal.challan.id]} onClose={() => setModal(null)} onSave={saveOtReceiving} toast={toast} />}
       {modal?.type === 'delOtRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the one-time payment receiving record for "${modal.challan.schoolName}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteOtReceiving(modal.challan.id)} onClose={() => setModal(null)} />}
     </div>
   );
@@ -1018,55 +1013,55 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
             <tbody>
               {loading ? <LoadingRow cols={8} msg="Loading payment setups…" />
                 : list.length === 0 ? <NoResults cols={8} /> : list.map((s, i) => {
-                const setup = payStore[s.id];
-                const monthly = setupMonthly(s, setup);
-                const trial = trialInfo(setup);
-                return (
-                  <React.Fragment key={s.id}>
-                    <tr>
-                      <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                      <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal} · {s.contact}</div></td>
-                      <td><FormulaBadge setup={setup} /></td>
-                      <td><TrialCell trial={trial} /></td>
-                      <td style={{ textAlign: 'center' }}>{setup ? <><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>{setup.formula === 'perstudent' ? `${setup.perStudentRate} × ${setup.studentCount || s.students} students` : '/ month'}</div></> : '—'}</td>
-                      <td style={{ textAlign: 'center' }}>{setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
-                      <td style={{ textAlign: 'center' }}><button className={`ps-action-btn${setup ? ' is-edit' : ' is-setup'}`} onClick={() => onEdit(s)}><i className={`fa-solid fa-${setup ? 'pen' : 'plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
-                      <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
-                    </tr>
-                    {expanded[s.id] && (
-                      <tr className="psetup-expand-row"><td colSpan={8}>
-                        <div className="psetup-detail-box open">{setup ? (() => {
-                          const annual = monthly * 12;
-                          /* Yeh chaar seedha summary API se aate hain — jab
-                             record live ho tabhi dikhte hain. */
-                          const updated = fmtStamp(setup.modifiedAt || setup.createdAt);
-                          return (
-                            <div className="psetup-detail-grid">
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Formula</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'}</div></div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{pkr(monthly)}</div>{setup.formula === 'perstudent' && <div className="pdc-sub">{setup.perStudentRate} × {setup.studentCount || s.students} students</div>}</div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Annual Revenue</div><div className="pdc-val">{pkr(annual)}</div><div className="pdc-sub">projected</div></div>
-                              <div className="psetup-detail-card">
-                                <div className="pdc-lbl">Free Trial</div>
-                                <div className="pdc-val" style={{ fontSize: 13, color: trial && trial.ended ? 'var(--err)' : undefined }}>
-                                  {!trial ? 'None' : trial.ended ? 'Ended' : `${trial.days} days`}
+                  const setup = payStore[s.id];
+                  const monthly = setupMonthly(s, setup);
+                  const trial = trialInfo(setup);
+                  return (
+                    <React.Fragment key={s.id}>
+                      <tr>
+                        <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                        <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal} · {s.contact}</div></td>
+                        <td><FormulaBadge setup={setup} /></td>
+                        <td><TrialCell trial={trial} /></td>
+                        <td style={{ textAlign: 'center' }}>{setup ? <><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>{setup.formula === 'perstudent' ? `${setup.perStudentRate} × ${setup.studentCount || s.students} students` : '/ month'}</div></> : '—'}</td>
+                        <td style={{ textAlign: 'center' }}>{setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
+                        <td style={{ textAlign: 'center' }}><button className={`ps-action-btn${setup ? ' is-edit' : ' is-setup'}`} onClick={() => onEdit(s)}><i className={`fa-solid fa-${setup ? 'pen' : 'plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
+                        <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
+                      </tr>
+                      {expanded[s.id] && (
+                        <tr className="psetup-expand-row"><td colSpan={8}>
+                          <div className="psetup-detail-box open">{setup ? (() => {
+                            const annual = monthly * 12;
+                            /* Yeh chaar seedha summary API se aate hain — jab
+                               record live ho tabhi dikhte hain. */
+                            const updated = fmtStamp(setup.modifiedAt || setup.createdAt);
+                            return (
+                              <div className="psetup-detail-grid">
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Formula</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'}</div></div>
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{pkr(monthly)}</div>{setup.formula === 'perstudent' && <div className="pdc-sub">{setup.perStudentRate} × {setup.studentCount || s.students} students</div>}</div>
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Annual Revenue</div><div className="pdc-val">{pkr(annual)}</div><div className="pdc-sub">projected</div></div>
+                                <div className="psetup-detail-card">
+                                  <div className="pdc-lbl">Free Trial</div>
+                                  <div className="pdc-val" style={{ fontSize: 13, color: trial && trial.ended ? 'var(--err)' : undefined }}>
+                                    {!trial ? 'None' : trial.ended ? 'Ended' : `${trial.days} days`}
+                                  </div>
+                                  {trial && trial.daysLeft != null && (
+                                    <div className="pdc-sub">{trial.ended ? `${trial.days}d · ended ${trial.endLabel}` : `${trial.daysLeft} days left · ends ${trial.endLabel}`}</div>
+                                  )}
                                 </div>
-                                {trial && trial.daysLeft != null && (
-                                  <div className="pdc-sub">{trial.ended ? `${trial.days}d · ended ${trial.endLabel}` : `${trial.daysLeft} days left · ends ${trial.endLabel}`}</div>
-                                )}
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Total Students</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.studentCount || s.students || 0}</div></div>
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Previous Amount</div><div className="pdc-val" style={{ fontSize: 13 }}>{pkr(setup.previousAmount || 0)}</div></div>
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Setup ID</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.id ? `#${setup.id}` : '—'}</div>{setup.type && <div className="pdc-sub">{setup.type}</div>}</div>
+                                <div className="psetup-detail-card"><div className="pdc-lbl">Last Updated</div><div className="pdc-val" style={{ fontSize: 13 }}>{updated || '—'}</div></div>
+                                {setup.notes && <div className="psetup-detail-card" style={{ gridColumn: 'span 4', textAlign: 'left' }}><div className="pdc-lbl">Notes</div><div style={{ fontSize: 12.5, color: 'var(--t2)', marginTop: 4 }}>{setup.notes}</div></div>}
                               </div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Total Students</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.studentCount || s.students || 0}</div></div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Previous Amount</div><div className="pdc-val" style={{ fontSize: 13 }}>{pkr(setup.previousAmount || 0)}</div></div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Setup ID</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.id ? `#${setup.id}` : '—'}</div>{setup.type && <div className="pdc-sub">{setup.type}</div>}</div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Last Updated</div><div className="pdc-val" style={{ fontSize: 13 }}>{updated || '—'}</div></div>
-                              {setup.notes && <div className="psetup-detail-card" style={{ gridColumn: 'span 4', textAlign: 'left' }}><div className="pdc-lbl">Notes</div><div style={{ fontSize: 12.5, color: 'var(--t2)', marginTop: 4 }}>{setup.notes}</div></div>}
-                            </div>
-                          );
-                        })() : <div style={{ textAlign: 'center', padding: 16, color: 'var(--tm)', fontSize: 13 }}><i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />No payment setup configured yet. Click Set Up to begin.</div>}</div>
-                      </td></tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+                            );
+                          })() : <div style={{ textAlign: 'center', padding: 16, color: 'var(--tm)', fontSize: 13 }}><i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />No payment setup configured yet. Click Set Up to begin.</div>}</div>
+                        </td></tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
             </tbody>
           </table>
         </div>
@@ -1091,68 +1086,68 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
     <div className="ss-panel">
       <PaySubmodeTabs mode={mode} setMode={setMode} otCount={otChallans.length} monthlyLabel="Monthly Payments" otLabel="One-Time Payments (New Signups)" />
       {mode === 'monthly' ? (
-      <div className="section-card">
-        <CardHeader icon="fa-file-invoice" title="Challans" sub="Generate, download, and delete fee challans for each school.">
-          {/* Sab ek hi lakeer me: mahina + saal (poori tab isi par chalti
+        <div className="section-card">
+          <CardHeader icon="fa-file-invoice" title="Challans" sub="Generate, download, and delete fee challans for each school.">
+            {/* Sab ek hi lakeer me: mahina + saal (poori tab isi par chalti
               hai), talash, chhanni, aur bulk. */}
-          <select className="f-input" style={{ width: 132, height: 38 }}
-            value={period.month}
-            onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select>
-          <select className="f-input" style={{ width: 92, height: 38 }}
-            value={period.year}
-            onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
-            {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <Search value={q} onChange={setQ} placeholder="Search schools…" />
-          <select className="f-input" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 150, height: 38 }}>
-            <option value="">All Schools</option><option value="generated">Challan Generated</option><option value="pending">Not Generated</option>
-          </select>
-          <button className="btn-primary" onClick={onBulk}><i className="fa-solid fa-bolt" /> Generate in Bulk</button>
-        </CardHeader>
-        <div className="tbl-wrap">
-          <table className="ch-table">
-            <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Amount</th><th style={{ width: 130, textAlign: 'center' }}>Challan Status</th><th style={{ width: 200, textAlign: 'center' }}>Actions</th></tr></thead>
-            <tbody>
-              {loading ? <LoadingRow cols={6} msg="Loading challans…" />
-                : list.length === 0 ? <NoResults cols={6} /> : list.map((s, i) => {
-                const setup = payStore[s.id]; const challan = chStore[s.id]; const monthly = setupMonthly(s, setup);
-                return (
-                  <tr key={s.id}>
-                    <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                    <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
-                    <td><FormulaBadge setup={setup} /></td>
-                    <td style={{ textAlign: 'center' }}>{setup ? <><div style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</div><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></> : <span style={{ color: 'var(--tm)', fontSize: 12 }}>—</span>}</td>
-                    <td style={{ textAlign: 'center' }}>{challan ? <div><span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Generated</span><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 3 }}>Due: {challan.dueDate || '—'}</div></div> : <span className="badge b-gray"><i className="fa-solid fa-clock" style={{ fontSize: 8 }} /> Not Generated</span>}</td>
-                    <td style={{ textAlign: 'center' }}>
-                      <div className="ch-actions" style={{ justifyContent: 'center' }}>
-                        {/* Jis mahine ka challan pehle se ban chuka hai us par
+            <select className="f-input" style={{ width: 132, height: 38 }}
+              value={period.month}
+              onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
+              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+            <select className="f-input" style={{ width: 92, height: 38 }}
+              value={period.year}
+              onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
+              {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <Search value={q} onChange={setQ} placeholder="Search schools…" />
+            <select className="f-input" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 150, height: 38 }}>
+              <option value="">All Schools</option><option value="generated">Challan Generated</option><option value="pending">Not Generated</option>
+            </select>
+            <button className="btn-primary" onClick={onBulk}><i className="fa-solid fa-bolt" /> Generate in Bulk</button>
+          </CardHeader>
+          <div className="tbl-wrap">
+            <table className="ch-table">
+              <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Amount</th><th style={{ width: 130, textAlign: 'center' }}>Challan Status</th><th style={{ width: 200, textAlign: 'center' }}>Actions</th></tr></thead>
+              <tbody>
+                {loading ? <LoadingRow cols={6} msg="Loading challans…" />
+                  : list.length === 0 ? <NoResults cols={6} /> : list.map((s, i) => {
+                    const setup = payStore[s.id]; const challan = chStore[s.id]; const monthly = setupMonthly(s, setup);
+                    return (
+                      <tr key={s.id}>
+                        <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                        <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
+                        <td><FormulaBadge setup={setup} /></td>
+                        <td style={{ textAlign: 'center' }}>{setup ? <><div style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</div><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></> : <span style={{ color: 'var(--tm)', fontSize: 12 }}>—</span>}</td>
+                        <td style={{ textAlign: 'center' }}>{challan ? <div><span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Generated</span><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 3 }}>Due: {challan.dueDate || '—'}</div></div> : <span className="badge b-gray"><i className="fa-solid fa-clock" style={{ fontSize: 8 }} /> Not Generated</span>}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                            {/* Jis mahine ka challan pehle se ban chuka hai us par
                             Generate band. Har mahine ka ek hi challan hota hai;
                             pehle ye button khula rehta tha aur dobara dabane par
                             usi row ka UPDATE chal jata tha — jo aksar ghalti se
                             hota tha. Badalna ho to pehle challan delete karein. */}
-                        <button
-                          className="ch-btn ch-btn-gen"
-                          disabled={!setup || !!challan}
-                          data-tip={!setup
-                            ? 'Set up payment first'
-                            : challan ? `Challan already generated for ${periodLabel(period)}` : ''}
-                          onClick={() => onGenerate(s)}
-                        >
-                          <i className="fa-solid fa-file-invoice-dollar" /> Generate
-                        </button>
-                        <button className="ch-btn ch-btn-dl" disabled={!challan} data-tip={!challan ? 'Generate challan first' : ''} onClick={() => onDownload(s)}><i className="fa-solid fa-download" /> Download</button>
-                        <button className="ch-btn ch-btn-del" disabled={!challan} data-tip={challan ? 'Delete challan' : 'No challan to delete'} data-tip-pos="left" onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                            <button
+                              className="ch-btn ch-btn-gen"
+                              disabled={!setup || !!challan}
+                              data-tip={!setup
+                                ? 'Set up payment first'
+                                : challan ? `Challan already generated for ${periodLabel(period)}` : ''}
+                              onClick={() => onGenerate(s)}
+                            >
+                              <i className="fa-solid fa-file-invoice-dollar" /> Generate
+                            </button>
+                            <button className="ch-btn ch-btn-dl" disabled={!challan} data-tip={!challan ? 'Generate challan first' : ''} onClick={() => onDownload(s)}><i className="fa-solid fa-download" /> Download</button>
+                            <button className="ch-btn ch-btn-del" disabled={!challan} data-tip={challan ? 'Delete challan' : 'No challan to delete'} data-tip-pos="left" onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
       ) : (
         <OneTimeChallansTab otChallans={otChallans} onAdd={onAddOt} onDownload={onDownloadOt} onDelete={onDeleteOt} period={period} onPeriod={onPeriod} loading={otLoading} />
       )}
@@ -1188,23 +1183,23 @@ function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, o
           <tbody>
             {loading ? <LoadingRow cols={9} msg="Loading challans…" />
               : list.length === 0 ? <NoResults cols={9} msg="No one-time challans generated yet" /> : list.map((c, i) => (
-              <tr key={c.id}>
-                <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                <td><span className="badge b-purple">{c.challanNumber}</span></td>
-                <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
-                <td>{fmtDateLong(c.invoiceDate)}</td>
-                <td>{fmtDateLong(c.challanDate)}</td>
-                <td><FormulaBadge setup={{ formula: c.formula }} /></td>
-                <td style={{ textAlign: 'center' }}>{c.formula === 'lumpsum' ? <span style={{ color: 'var(--tm)' }}>—</span> : c.totalStudents}</td>
-                <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--t1)' }}>{pkr(c.netPayable)}</td>
-                <td style={{ textAlign: 'center' }}>
-                  <div className="ch-actions" style={{ justifyContent: 'center' }}>
-                    <button className="ch-btn ch-btn-dl" onClick={() => onDownload(c)}><i className="fa-solid fa-download" /> Download</button>
-                    <button className="ch-btn ch-btn-del" data-tip="Delete challan" data-tip-pos="left" onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                <tr key={c.id}>
+                  <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                  <td><span className="badge b-purple">{c.challanNumber}</span></td>
+                  <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
+                  <td>{fmtDateLong(c.invoiceDate)}</td>
+                  <td>{fmtDateLong(c.challanDate)}</td>
+                  <td><FormulaBadge setup={{ formula: c.formula }} /></td>
+                  <td style={{ textAlign: 'center' }}>{c.formula === 'lumpsum' ? <span style={{ color: 'var(--tm)' }}>—</span> : c.totalStudents}</td>
+                  <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--t1)' }}>{pkr(c.netPayable)}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                      <button className="ch-btn ch-btn-dl" onClick={() => onDownload(c)}><i className="fa-solid fa-download" /> Download</button>
+                      <button className="ch-btn ch-btn-del" data-tip="Delete challan" data-tip-pos="left" onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </div>
@@ -1223,26 +1218,26 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
     <div className="ss-panel">
       <PaySubmodeTabs mode={mode} setMode={setMode} otCount={otChallans.length} monthlyLabel="Monthly Receiving" otLabel="One-Time Receiving" />
       {mode === 'monthly' ? (
-      <div className="section-card">
-        <CardHeader icon="fa-hand-holding-dollar" title="Receiving" sub={`Fee receiving for ${periodLabel(period)} — discounts, remaining dues and payment history.`}>
-          {/* Wahi mahina jo Challans tab par chuna hua hai: receiving usi
+        <div className="section-card">
+          <CardHeader icon="fa-hand-holding-dollar" title="Receiving" sub={`Fee receiving for ${periodLabel(period)} — discounts, remaining dues and payment history.`}>
+            {/* Wahi mahina jo Challans tab par chuna hua hai: receiving usi
               mahine ke challan ke khilaf hoti hai, is liye dono ek hi
               period par chalte hain. */}
-          <select className="f-input" style={{ width: 132, height: 38 }}
-            value={period.month}
-            onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select>
-          <select className="f-input" style={{ width: 92, height: 38 }}
-            value={period.year}
-            onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
-            {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <Search value={q} onChange={setQ} placeholder="Search schools…" width={200} />
-        </CardHeader>
-        <div className="tbl-wrap">
-          <table className="recv-table">
-            {/* ── Columns ka matlab ─────────────────────────────────────
+            <select className="f-input" style={{ width: 132, height: 38 }}
+              value={period.month}
+              onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
+              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+            <select className="f-input" style={{ width: 92, height: 38 }}
+              value={period.year}
+              onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
+              {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <Search value={q} onChange={setQ} placeholder="Search schools…" width={200} />
+          </CardHeader>
+          <div className="tbl-wrap">
+            <table className="recv-table">
+              {/* ── Columns ka matlab ─────────────────────────────────────
                 Total Dues      — PICHHLE mahine ka bacha hua baqaya
                                   (August khula ho to July ka, September
                                   khula ho to August ka). Is mahine ka
@@ -1253,117 +1248,117 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
                                   to usi khane ke neeche "disc ..." bhi)
                 Total Payable   — Total Dues + Current Month − Received
                                   Amount − Discount, yani abhi kitna baqi hai */}
-            <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 120, textAlign: 'center' }}>Total Dues</th><th style={{ width: 125, textAlign: 'center' }}>Current Month</th><th style={{ width: 135, textAlign: 'center' }}>Received Amount</th><th style={{ width: 125, textAlign: 'center' }}>Total Payable</th><th style={{ width: 90, textAlign: 'center' }}>Download</th><th style={{ width: 80, textAlign: 'center' }}>Delete</th><th style={{ width: 110, textAlign: 'center' }}>Receiving</th><th style={{ width: 60, textAlign: 'center' }}>Detail</th></tr></thead>
-            <tbody>
-              {loading ? <LoadingRow cols={10} msg="Loading receiving records…" />
-                : list.length === 0 ? <NoResults cols={10} /> : list.map((s, i) => {
-                const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
-                const monthly = setup ? setupMonthly(s, setup) : 0;
-                /* Challan hi na bana ho to kuch payable hai hi nahi — na total,
-                   na remaining. Pehle yahan setup ka mahaana charge gir jata
-                   tha, is liye un schools ke saamne bhi dues likhe aate thay
-                   jinka challan generate hi nahi hua tha. */
-                /* Pichhle mahine ka baqaya — API se, us mahine ke apne
-                   challan + receiving se nikala hua (listPreviousDues).
-                   Pehle ye is mahine ke challan ke `prevDues` se aata tha,
-                   is liye jis mahine ka challan abhi bana hi na ho uska
-                   Total Dues khali dikhta tha — halanke pichhla baqaya
-                   maujood hota tha. */
-                const totalDues = Number(prevDuesStore[s.id]) || 0;
-                const currentMonth = challan ? (challan.monthly || 0) : 0;
-                const receivingDues = recv ? (recv.receivedAmount || 0) : 0;
-                const discount = recv ? (recv.discount || 0) : 0;
-                /* Total Payable
-                     Total Dues + Current Month − Received Amount − Discount
-
-                   Yani wohi column jo isi row me saath hi dikhte hain: pichhla
-                   baqaya, is mahine ka charge, aur jitna is mahine mil chuka.
-                   Screen par jama-tafreeq karne wala wahi jawab nikale jo yahan
-                   likha hai.
-
-                   Discount bhi ghata diya jata hai: rely di gayi raqam school se
-                   maangi hi nahi jani, is liye wo baqaya me nahi rehni chahiye.
-                   Wo Received Amount ke neeche "disc ..." ke tor par isi row me
-                   dikhti hai (aur modal ka Net Payable bhi yehi ghata kar banta
-                   hai), is liye dono jagah ek hi hisaab chalta hai.
-
-                   Pehle yeh `challan.total` tha. Us me na receiving ka hisaab
-                   hota hai na discount ka (wo challan bante waqt ki raqam hai),
-                   is liye poora paisa aa jane ke baad bhi Total Payable utna hi
-                   khada rehta tha — aur jis mahine ka challan abhi bana hi na ho
-                   uska is mahine ka charge is column me aata hi nahi tha.
-
-                   Zyada wasooli par jawab manfi aata hai (Dues khud usay
-                   `dues-neg` me dikhata hai) — yeh chhupaya nahi jata, kyunke
-                   wo school ka credit hai aur nazar aana chahiye. */
-                const totalPayable = totalDues + currentMonth - receivingDues - discount;
-                const remainingDues = recv ? (recv.remainingAmount || 0) : totalPayable;
-                /* ── Receiving ki halat — wahi teen soortein jo ERP ke Fee
-                      module me hain (components/Fee.jsx → fee-recv-acts):
-                        challan hi nahi   → kuch receive nahi ho sakta
-                        koi receiving nahi → "Receiving"
-                        adhi receiving     → "Receive More" (baqi raqam ke liye)
-                        poori ho chuki     → button band
-                      Pehle yahan sirf "recv hai ya nahi" dekha jata tha, is
-                      liye adhi receiving ke baad bhi button band ho jata tha
-                      aur bacha hua paisa liya hi nahi ja sakta tha. */
-                const fullyReceived = !!recv && remainingDues <= 0;
-                const partlyReceived = !!recv && remainingDues > 0;
-                return (
-                  <React.Fragment key={s.id}>
-                    <tr>
-                      <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                      <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
-                      {/* Total Dues — pichhle mahine ka bacha hua baqaya. */}
-                      <td style={{ textAlign: 'center' }}><Dues v={totalDues} /></td>
-                      {/* Current Month — is mahine ka apna charge. */}
-                      <td style={{ textAlign: 'center' }}><Dues v={currentMonth} /></td>
-                      {/* Received Amount — is mahine jitna mila; rely di
+              <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 120, textAlign: 'center' }}>Total Dues</th><th style={{ width: 125, textAlign: 'center' }}>Current Month</th><th style={{ width: 135, textAlign: 'center' }}>Received Amount</th><th style={{ width: 125, textAlign: 'center' }}>Total Payable</th><th style={{ width: 90, textAlign: 'center' }}>Download</th><th style={{ width: 80, textAlign: 'center' }}>Delete</th><th style={{ width: 110, textAlign: 'center' }}>Receiving</th><th style={{ width: 60, textAlign: 'center' }}>Detail</th></tr></thead>
+              <tbody>
+                {loading ? <LoadingRow cols={10} msg="Loading receiving records…" />
+                  : list.length === 0 ? <NoResults cols={10} /> : list.map((s, i) => {
+                    const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
+                    const monthly = setup ? setupMonthly(s, setup) : 0;
+                    /* Challan hi na bana ho to kuch payable hai hi nahi — na total,
+                       na remaining. Pehle yahan setup ka mahaana charge gir jata
+                       tha, is liye un schools ke saamne bhi dues likhe aate thay
+                       jinka challan generate hi nahi hua tha. */
+                    /* Pichhle mahine ka baqaya — API se, us mahine ke apne
+                       challan + receiving se nikala hua (listPreviousDues).
+                       Pehle ye is mahine ke challan ke `prevDues` se aata tha,
+                       is liye jis mahine ka challan abhi bana hi na ho uska
+                       Total Dues khali dikhta tha — halanke pichhla baqaya
+                       maujood hota tha. */
+                    const totalDues = Number(prevDuesStore[s.id]) || 0;
+                    const currentMonth = challan ? (challan.monthly || 0) : 0;
+                    const receivingDues = recv ? (recv.receivedAmount || 0) : 0;
+                    const discount = recv ? (recv.discount || 0) : 0;
+                    /* Total Payable
+                         Total Dues + Current Month − Received Amount − Discount
+    
+                       Yani wohi column jo isi row me saath hi dikhte hain: pichhla
+                       baqaya, is mahine ka charge, aur jitna is mahine mil chuka.
+                       Screen par jama-tafreeq karne wala wahi jawab nikale jo yahan
+                       likha hai.
+    
+                       Discount bhi ghata diya jata hai: rely di gayi raqam school se
+                       maangi hi nahi jani, is liye wo baqaya me nahi rehni chahiye.
+                       Wo Received Amount ke neeche "disc ..." ke tor par isi row me
+                       dikhti hai (aur modal ka Net Payable bhi yehi ghata kar banta
+                       hai), is liye dono jagah ek hi hisaab chalta hai.
+    
+                       Pehle yeh `challan.total` tha. Us me na receiving ka hisaab
+                       hota hai na discount ka (wo challan bante waqt ki raqam hai),
+                       is liye poora paisa aa jane ke baad bhi Total Payable utna hi
+                       khada rehta tha — aur jis mahine ka challan abhi bana hi na ho
+                       uska is mahine ka charge is column me aata hi nahi tha.
+    
+                       Zyada wasooli par jawab manfi aata hai (Dues khud usay
+                       `dues-neg` me dikhata hai) — yeh chhupaya nahi jata, kyunke
+                       wo school ka credit hai aur nazar aana chahiye. */
+                    const totalPayable = totalDues + currentMonth - receivingDues - discount;
+                    const remainingDues = recv ? (recv.remainingAmount || 0) : totalPayable;
+                    /* ── Receiving ki halat — wahi teen soortein jo ERP ke Fee
+                          module me hain (components/Fee.jsx → fee-recv-acts):
+                            challan hi nahi   → kuch receive nahi ho sakta
+                            koi receiving nahi → "Receiving"
+                            adhi receiving     → "Receive More" (baqi raqam ke liye)
+                            poori ho chuki     → button band
+                          Pehle yahan sirf "recv hai ya nahi" dekha jata tha, is
+                          liye adhi receiving ke baad bhi button band ho jata tha
+                          aur bacha hua paisa liya hi nahi ja sakta tha. */
+                    const fullyReceived = !!recv && remainingDues <= 0;
+                    const partlyReceived = !!recv && remainingDues > 0;
+                    return (
+                      <React.Fragment key={s.id}>
+                        <tr>
+                          <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                          <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
+                          {/* Total Dues — pichhle mahine ka bacha hua baqaya. */}
+                          <td style={{ textAlign: 'center' }}><Dues v={totalDues} /></td>
+                          {/* Current Month — is mahine ka apna charge. */}
+                          <td style={{ textAlign: 'center' }}><Dues v={currentMonth} /></td>
+                          {/* Received Amount — is mahine jitna mila; rely di
                           gayi ho to neeche "disc" bhi. */}
-                      <td style={{ textAlign: 'center' }}>{recv ? (
-                        <>
-                          <span style={{ color: 'var(--success)', fontWeight: 800 }}>{receivingDues.toLocaleString()}</span>
-                          {discount > 0 && (
-                            <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>disc {discount.toLocaleString()}</div>
-                          )}
-                        </>
-                      ) : <span className="dues-zero">—</span>}</td>
-                      {/* Total Payable — pichhla baqaya + is mahine ka charge. */}
-                      <td style={{ textAlign: 'center' }}><Dues v={totalPayable} /></td>
-                      <td style={{ textAlign: 'center' }}><button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadRecvSlip(s, recv)}><i className="fa-solid fa-download" /> Download</button></td>
-                      <td style={{ textAlign: 'center' }}><button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /> Delete</button></td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button
-                          className="recv-btn-recv"
-                          disabled={!challan || fullyReceived}
-                          data-tip={!challan
-                            ? `No challan generated for ${periodLabel(period)}`
-                            : fullyReceived
-                              ? `Payment already received for ${periodLabel(period)}`
-                              : partlyReceived ? 'Receive the remaining balance' : ''}
-                          onClick={() => onReceive(s)}
-                        >
-                          <i className={`fa-solid ${partlyReceived ? 'fa-plus' : 'fa-hand-holding-dollar'}`} />
-                          {partlyReceived ? ' Receive More' : ' Receiving'}
-                        </button>
-                      </td>
-                      <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
-                    </tr>
-                    {expanded[s.id] && (
-                      <tr className="recv-expand-row"><td colSpan={10}>
-                        {/* Detail box ko POORA payable chahiye (prev + current),
+                          <td style={{ textAlign: 'center' }}>{recv ? (
+                            <>
+                              <span style={{ color: 'var(--success)', fontWeight: 800 }}>{receivingDues.toLocaleString()}</span>
+                              {discount > 0 && (
+                                <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>disc {discount.toLocaleString()}</div>
+                              )}
+                            </>
+                          ) : <span className="dues-zero">—</span>}</td>
+                          {/* Total Payable — pichhla baqaya + is mahine ka charge. */}
+                          <td style={{ textAlign: 'center' }}><Dues v={totalPayable} /></td>
+                          <td style={{ textAlign: 'center' }}><button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadRecvSlip(s, recv)}><i className="fa-solid fa-download" /> Download</button></td>
+                          <td style={{ textAlign: 'center' }}><button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /> Delete</button></td>
+                          <td style={{ textAlign: 'center' }}>
+                            <button
+                              className="recv-btn-recv"
+                              disabled={!challan || fullyReceived}
+                              data-tip={!challan
+                                ? `No challan generated for ${periodLabel(period)}`
+                                : fullyReceived
+                                  ? `Payment already received for ${periodLabel(period)}`
+                                  : partlyReceived ? 'Receive the remaining balance' : ''}
+                              onClick={() => onReceive(s)}
+                            >
+                              <i className={`fa-solid ${partlyReceived ? 'fa-plus' : 'fa-hand-holding-dollar'}`} />
+                              {partlyReceived ? ' Receive More' : ' Receiving'}
+                            </button>
+                          </td>
+                          <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
+                        </tr>
+                        {expanded[s.id] && (
+                          <tr className="recv-expand-row"><td colSpan={10}>
+                            {/* Detail box ko POORA payable chahiye (prev + current),
                             sirf purana baqaya nahi — warna Net Payable aur
                             Remaining ghalat nikalte hain. */}
-                        <div className="recv-detail-box open"><RecvDetail s={s} monthly={monthly} totalDues={totalPayable} recv={recv} /></div>
-                      </td></tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                            <div className="recv-detail-box open"><RecvDetail s={s} monthly={monthly} totalDues={totalPayable} recv={recv} /></div>
+                          </td></tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
       ) : (
         <OneTimeReceivingTab otChallans={otChallans} otRecvStore={otRecvStore} onReceive={onReceiveOt} onDelete={onDeleteOt} period={period} onPeriod={onPeriod} loading={otLoading} />
       )}
@@ -1398,44 +1393,42 @@ function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete, per
           <tbody>
             {loading ? <LoadingRow cols={10} msg="Loading receiving records…" />
               : list.length === 0 ? <NoResults cols={10} msg="No one-time challans generated yet" /> : list.map((c, i) => {
-              const recv = otRecvStore[c.id];
-              const received = recv ? (recv.receivedAmount || 0) : 0;
-              const remaining = recv ? (recv.remainingAmount || 0) : c.netPayable;
-              const status = !recv ? 'pending' : remaining <= 0 ? 'paid' : 'partial';
-              return (
-                <tr key={c.id}>
-                  <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                  <td><span className="badge b-purple">{c.challanNumber}</span></td>
-                  <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
-                  <td style={{ textAlign: 'center', fontWeight: 800 }}>{pkr(c.netPayable)}</td>
-                  <td style={{ textAlign: 'center' }}>{recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{received.toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
-                  <td style={{ fontSize: 11.5, color: 'var(--t2)' }}>{recv ? recv.via : '—'}</td>
-                  <td>{recv ? recv.date : '—'}</td>
-                  <td style={{ textAlign: 'center' }}>{remaining === 0 ? <span className="dues-zero">0</span> : <span className="dues-pos">{remaining.toLocaleString()}</span>}</td>
-                  <td style={{ textAlign: 'center' }}>{status === 'paid' ? <span className="rpt-paid">Received</span> : status === 'partial' ? <span className="rpt-partial">Partial</span> : <span className="rpt-pending">Pending</span>}</td>
-                  <td style={{ textAlign: 'center' }}>
-                    <div className="ch-actions" style={{ justifyContent: 'center' }}>
-                      <button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
-                      <button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
-                      {/* One-time payment EK hi dafa, POORI — "Receive More"
+                const recv = otRecvStore[c.id];
+                const received = recv ? (recv.receivedAmount || 0) : 0;
+                const remaining = recv ? (recv.remainingAmount || 0) : c.netPayable;
+                const status = !recv ? 'pending' : remaining <= 0 ? 'paid' : 'partial';
+                return (
+                  <tr key={c.id}>
+                    <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                    <td><span className="badge b-purple">{c.challanNumber}</span></td>
+                    <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.schoolName}</div></td>
+                    <td style={{ textAlign: 'center', fontWeight: 800 }}>{pkr(c.netPayable)}</td>
+                    <td style={{ textAlign: 'center' }}>{recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{received.toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
+                    <td style={{ fontSize: 11.5, color: 'var(--t2)' }}>{recv ? recv.via : '—'}</td>
+                    <td>{recv ? recv.date : '—'}</td>
+                    <td style={{ textAlign: 'center' }}>{remaining === 0 ? <span className="dues-zero">0</span> : <span className="dues-pos">{remaining.toLocaleString()}</span>}</td>
+                    <td style={{ textAlign: 'center' }}>{status === 'paid' ? <span className="rpt-paid">Received</span> : status === 'partial' ? <span className="rpt-partial">Partial</span> : <span className="rpt-pending">Pending</span>}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                        <button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
+                        <button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
+                        {/* One-time payment EK hi dafa, POORI — "Receive More"
                           nahi. Jaise hi koi receiving record ban jaye, button
                           band. Adhuri payment modal me hi rok di jati hai. */}
-                      <button
-                        className="recv-btn-recv"
-                        style={recv
-                          ? { background: '#94A3B8', boxShadow: 'none', cursor: 'not-allowed', opacity: .7 }
-                          : { background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
-                        disabled={!!recv}
-                        data-tip={recv ? 'Payment already received — delete to re-enter' : 'Record the one-time payment'}
-                        onClick={() => { if (!recv) onReceive(c); }}
-                      >
-                        <i className="fa-solid fa-hand-holding-dollar" /> Receiving
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                        <button
+                          className="recv-btn-recv"
+                          style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
+                          disabled={!!recv}
+                          data-tip={recv ? 'Payment already received — delete to re-enter' : ''}
+                          onClick={() => onReceive(c)}
+                        >
+                          <i className="fa-solid fa-hand-holding-dollar" /> Receiving
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>
@@ -1531,45 +1524,45 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onP
           </div>
         </div>
       ) : (
-      <div className="sa-print-area">
-      <div className="rpt-stat-grid">
-        <div className="rpt-stat"><div className="rpt-stat-val">{overview.total}</div><div className="rpt-stat-lbl">Total Schools</div></div>
-        <div className="rpt-stat s-info"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.payable)}</div><div className="rpt-stat-lbl">Total Payable</div></div>
-        <div className="rpt-stat s-green"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.received)}</div><div className="rpt-stat-lbl">Total Received</div></div>
-        <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.outstanding)}</div><div className="rpt-stat-lbl">Outstanding</div></div>
-        <div className="rpt-stat s-green"><div className="rpt-stat-val">{overview.paid}</div><div className="rpt-stat-lbl">Paid Schools</div></div>
-        <div className="rpt-stat s-warn"><div className="rpt-stat-val">{overview.unpaid}</div><div className="rpt-stat-lbl">Unpaid / Partial</div></div>
-      </div>
+        <div className="sa-print-area">
+          <div className="rpt-stat-grid">
+            <div className="rpt-stat"><div className="rpt-stat-val">{overview.total}</div><div className="rpt-stat-lbl">Total Schools</div></div>
+            <div className="rpt-stat s-info"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.payable)}</div><div className="rpt-stat-lbl">Total Payable</div></div>
+            <div className="rpt-stat s-green"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.received)}</div><div className="rpt-stat-lbl">Total Received</div></div>
+            <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.outstanding)}</div><div className="rpt-stat-lbl">Outstanding</div></div>
+            <div className="rpt-stat s-green"><div className="rpt-stat-val">{overview.paid}</div><div className="rpt-stat-lbl">Paid Schools</div></div>
+            <div className="rpt-stat s-warn"><div className="rpt-stat-val">{overview.unpaid}</div><div className="rpt-stat-lbl">Unpaid / Partial</div></div>
+          </div>
 
-      <div className="section-card">
-        <div className="rpt-filter-bar sa-no-print">
-          <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school name…" width="100%" /></div>
-          {/* Report bhi usi mahine ki hai jo Challans/Receiving par khula hai. */}
-          <div className="f-field"><select className="f-input" style={{ height: 38, width: 132 }}
-            value={period.month} onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select></div>
-          <div className="f-field"><select className="f-input" style={{ height: 38, width: 92 }}
-            value={period.year} onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
-            {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
-          </select></div>
-          <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-challan">No Challan</option><option value="no-setup">No Setup</option></select></div>
-          <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
-          <button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
-        </div>
+          <div className="section-card">
+            <div className="rpt-filter-bar sa-no-print">
+              <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school name…" width="100%" /></div>
+              {/* Report bhi usi mahine ki hai jo Challans/Receiving par khula hai. */}
+              <div className="f-field"><select className="f-input" style={{ height: 38, width: 132 }}
+                value={period.month} onChange={(e) => onPeriod({ ...period, month: Number(e.target.value) })}>
+                {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select></div>
+              <div className="f-field"><select className="f-input" style={{ height: 38, width: 92 }}
+                value={period.year} onChange={(e) => onPeriod({ ...period, year: Number(e.target.value) })}>
+                {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
+              </select></div>
+              <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-challan">No Challan</option><option value="no-setup">No Setup</option></select></div>
+              <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
+              <button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
+            </div>
 
-        <div style={{ padding: '14px 18px 0' }}>
-          <div className="rpt-subtabs">
-            {RPT_SUBTABS.map((t) => <button key={t.id} className={`rpt-stab${sub === t.id ? ' active' : ''}`} onClick={() => setSub(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
+            <div style={{ padding: '14px 18px 0' }}>
+              <div className="rpt-subtabs">
+                {RPT_SUBTABS.map((t) => <button key={t.id} className={`rpt-stab${sub === t.id ? ' active' : ''}`} onClick={() => setSub(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
+              </div>
+            </div>
+
+            {sub === 'summary' && <SummaryReport rows={filtered} />}
+            {sub === 'outstanding' && <OutstandingReport rows={filtered.filter((r) => r.outstanding > 0 || r.status === 'unpaid' || r.status === 'partial')} />}
+            {sub === 'received' && <ReceivedReport rows={filtered.filter((r) => r.received > 0)} />}
+            {sub === 'challan' && <ChallanReport rows={filtered.filter((r) => r.challan)} />}
           </div>
         </div>
-
-        {sub === 'summary' && <SummaryReport rows={filtered} />}
-        {sub === 'outstanding' && <OutstandingReport rows={filtered.filter((r) => r.outstanding > 0 || r.status === 'unpaid' || r.status === 'partial')} />}
-        {sub === 'received' && <ReceivedReport rows={filtered.filter((r) => r.received > 0)} />}
-        {sub === 'challan' && <ChallanReport rows={filtered.filter((r) => r.challan)} />}
-      </div>
-      </div>
       )}
     </div>
   );
@@ -1650,13 +1643,29 @@ function SummaryReport({ rows }) {
   const tot = rows.reduce((a, r) => ({ payable: a.payable + r.payable, received: a.received + r.received, outstanding: a.outstanding + r.outstanding }), { payable: 0, received: 0, outstanding: 0 });
   return (
     <ReportTable
-      head={<><th style={{ width: 40 }}>#</th><th>School Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'right' }}>Total Payable</th><th style={{ width: 120, textAlign: 'right' }}>Total Received</th><th style={{ width: 120, textAlign: 'right' }}>Outstanding</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 100 }}>Last Payment</th></>}
-      foot={rows.length ? <tr className="rpt-totals-row"><td colSpan={3} style={{ fontWeight: 800, color: 'var(--brand)', padding: '10px 13px' }}>TOTALS</td><td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(tot.payable)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--success)' }}>{pkr(tot.received)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--err)' }}>{pkr(tot.outstanding)}</td><td colSpan={2} /></tr> : null}>
+      head={<><th style={{ width: 40 }}>#</th><th>School Name</th>
+        <th>Owner Name</th>
+        <th>Owner Phone Number</th>
+        <th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'right' }}>Total Payable</th><th style={{ width: 120, textAlign: 'right' }}>Total Received</th><th style={{ width: 120, textAlign: 'right' }}>Outstanding</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 100 }}>Last Payment</th></>}
+      foot={rows.length ? <tr className="rpt-totals-row"><td colSpan={5} style={{ fontWeight: 800, color: 'var(--brand)', padding: '10px 13px' }}>TOTALS</td><td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(tot.payable)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--success)' }}>{pkr(tot.received)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--err)' }}>{pkr(tot.outstanding)}</td><td colSpan={2} /></tr> : null}>
       {rows.length === 0 ? <EmptyReport cols={8} msg="No data found" /> : rows.map(({ s, setup, status, payable, received, outstanding, lastPayDate }, i) => (
         <tr key={s.id}>
           <td>{i + 1}</td>
-          <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 10.5, color: 'var(--tm)' }}>{s.principal}</div></td>
-          <td><FormulaBadge setup={setup} /></td>
+          <td>
+            <div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div>
+          </td>
+
+          <td>
+            {s.principal || '—'}
+          </td>
+
+          <td>
+            {s.contact || '—'}
+          </td>
+
+          <td>
+            <FormulaBadge setup={setup} />
+          </td>
           <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr(payable)}</td>
           <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>{pkr(received)}</td>
           <td style={{ textAlign: 'right', fontWeight: 700, color: outstanding > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(outstanding)}</td>
@@ -2334,7 +2343,7 @@ function PaySubmodeTabs({ mode, setMode, otCount, monthlyLabel, otLabel }) {
   );
 }
 
-function AddOtChallanModal({ onClose, onSave, toast, saving }) {
+function AddOtChallanModal({ onClose, onSave, toast }) {
   const [schoolName, setSchoolName] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(todayISO());
   const [challanDate, setChallanDate] = useState(todayISO());
@@ -2346,16 +2355,11 @@ function AddOtChallanModal({ onClose, onSave, toast, saving }) {
   const price = parseFloat(perStudentPrice) || 0;
   const lump = parseFloat(lumpAmount) || 0;
   const net = formula === 'lumpsum' ? lump : students * price;
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (!saving) setBusy(false); }, [saving]);
-  const locked = busy || !!saving;
   const save = () => {
-    if (locked) return;
     if (!schoolName.trim()) { toast?.('Please enter the school name', 'warn'); return; }
     if (!invoiceDate || !challanDate) { toast?.('Please select the invoice and challan dates', 'warn'); return; }
     if (formula === 'perstudent' && (!students || !price)) { toast?.('Please enter total students and price per student', 'warn'); return; }
     if (formula === 'lumpsum' && !lump) { toast?.('Please enter the lump sum amount', 'warn'); return; }
-    setBusy(true);
     onSave({ schoolName: schoolName.trim(), invoiceDate, challanDate, formula, totalStudents: students, perStudentPrice: price, lumpAmount: lump });
   };
   return (
@@ -2396,7 +2400,7 @@ function AddOtChallanModal({ onClose, onSave, toast, saving }) {
           <div style={{ fontSize: 24, fontWeight: 800, color: '#7C3AED' }}>{pkr(net)}</div>
         </div>
       </div>
-      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose} disabled={locked}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)', opacity: locked ? .55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }} onClick={save} disabled={locked}><i className={`fa-solid ${locked ? 'fa-circle-notch fa-spin' : 'fa-file-invoice-dollar'}`} /> {locked ? 'Generating…' : 'Generate Challan'}</button></div>
+      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-file-invoice-dollar" /> Generate Challan</button></div>
     </Ov>
   );
 }
@@ -2459,30 +2463,25 @@ function OtSlipModal({ challan: c, onClose }) {
   );
 }
 
-function OtReceiveModal({ challan: c, onClose, onSave, toast, saving }) {
-  const netPayable = Number(c.netPayable) || 0;
-  /* One-time payment sirf challan ki exact amount par. Kam ya zyada dono
-     reject — pehle zyada amount cap hokar poori raqam save ho jati thi. */
+function OtReceiveModal({ challan: c, onClose, onSave, toast }) {
+  const netPayable = c.netPayable;
+  /* One-time payment EK hi dafa aur POORI hoti hai — koi partial / "Receive
+     More" nahi. Is liye input default poori raqam par bhara aata hai, aur
+     chalan se kam raqam qubool nahi (neeche toast). */
   const [received, setReceived] = useState(String(netPayable));
   const [via, setVia] = useState(RECEIVING_METHODS[0]);
   const [date, setDate] = useState(todayISO());
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (!saving) setBusy(false); }, [saving]);
-  const locked = busy || !!saving;
-  const thisAmount = parseFloat(received);
-  const remaining = Number.isFinite(thisAmount) ? Math.max(0, netPayable - thisAmount) : netPayable;
+  const thisAmount = parseFloat(received) || 0;
+  const remaining = Math.max(0, netPayable - thisAmount);
   const save = () => {
-    if (locked) return;
-    if (!received || !Number.isFinite(thisAmount)) { toast?.('Please enter the received amount', 'warn'); return; }
+    if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
     if (!date) { toast?.('Please select a payment date', 'warn'); return; }
-    const same = Math.round(thisAmount * 100) === Math.round(netPayable * 100);
-    if (!same) {
-      toast?.(thisAmount > netPayable
-        ? `Amount cannot be more than the challan (${pkr(netPayable)}). Payment was not saved.`
-        : `Enter the exact challan amount of ${pkr(netPayable)}. You cannot pay less. Payment was not saved.`, 'warn');
+    /* Sirf POORI payment — chalan ki poori raqam se kam par receive nahi hoti. */
+    if (thisAmount < netPayable) {
+      toast?.(`Please receive the full payment of ${pkr(netPayable)} — partial payments are not allowed for one-time challans.`, 'warn');
       return;
     }
-    setBusy(true);
+    /* Record hamesha poori raqam par (overpay bhi cap). */
     onSave(c.id, { receivedAmount: netPayable, remainingAmount: 0, via, date: fmtDateShort(date), dateRaw: date });
   };
   return (
@@ -2504,7 +2503,7 @@ function OtReceiveModal({ challan: c, onClose, onSave, toast, saving }) {
         <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#7C3AED', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
         <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Balance</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Amount Received</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
       </div>
-      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose} disabled={locked}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)', opacity: locked ? .55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }} onClick={save} disabled={locked}><i className={`fa-solid ${locked ? 'fa-circle-notch fa-spin' : 'fa-circle-check'}`} /> {locked ? 'Saving…' : 'Add Payment'}</button></div>
+      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
     </Ov>
   );
 }
