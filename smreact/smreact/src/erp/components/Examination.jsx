@@ -946,6 +946,7 @@ export default function Examination({ toast = () => {} }) {
   const canRsDownload     = can('Examination', 'Result Setup', 'Download');
   const canRcoEdit        = can('Examination', 'Result Card Options', 'Edit');
   const canSingleEdit     = can('Examination', 'Single Assessment', 'Edit');
+  const canSingleDownload = can('Examination', 'Single Assessment', 'Download');
   const canCombinedCreate = can('Examination', 'Combined Assessment', 'Create');
 
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -2894,7 +2895,7 @@ const sylPickExam = async (id) => {
   }
 };
 const loadResClassData = async (key, cls, force = false) => {
-  if (!force && resStudentData[key]) return; // already loaded (force=true par dobara fetch)
+  if (!force && resStudentData[key]) return resStudentData[key]; // already loaded (force=true par dobara fetch)
   setResLoadingKey(key);
   try {
     const branchID = sessionStorage.getItem('branchID');
@@ -3071,10 +3072,12 @@ const rankings = Array.isArray(rankData)
   ? rankData
   : (rankData?.data || []);
     // Store everything
+    const pack = { students, subjects, marks, rankings, mappedSubjectIDs, scopedObtained, scopedObtainedOk };
     setResStudentData(prev => ({
       ...prev,
-      [key]: { students, subjects, marks, rankings, mappedSubjectIDs, scopedObtained, scopedObtainedOk }
+      [key]: pack
     }));
+    return pack;
 console.log('SUBJECTS:', subjects);
 console.log('MARKS:', marks);
 console.log('totalMarksSum:', subjects[0]?.totalMarksSum);
@@ -5639,9 +5642,9 @@ setResTotalMarksCtx({
                     <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
                       <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Bulk upload obtained marks for the whole class via Excel'}>
                         <button
-                          className="res-download-btn"
+                          className="res-bulk-btn"
                           disabled={isOtherSession || !canSingleEdit}
-                          style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : { background: '#1E40AF', color: '#fff', borderColor: '#1E40AF' }}
+                          style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                           onClick={async e => {
                             e.stopPropagation();
                             if (isOtherSession) { toast('Method not allowed', 'error'); return; }
@@ -5686,24 +5689,31 @@ setResTotalMarksCtx({
                           <i className="fa-solid fa-file-excel"></i>
                         </button>
                       </Tooltip>
-                      <Tooltip text="Generate all students' result cards (bulk)"><button
-                        className="res-download-btn"
-                        onClick={e => {
-                          e.stopPropagation();
-                          loadCardOptions(true);
-                          setBulkCardCtx({
-                            classID: cls.classID,
-                            sectionID: cls.sectionID,
-                            selectExam: resCurrentExam?.selectExam || 0,
-                            termID: selectedTermId,
-                            className,
-                            examName: resCurrentExam?.name || '',
-                            students: resStudentData[key]?.students || [],
-                          });
-                        }}
-                      >
-                        <i className="fa-solid fa-file-arrow-down"></i>
-                      </button></Tooltip>
+                      <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : 'Download class result report'}>
+                        <button
+                          className="res-download-btn"
+                          disabled={!canSingleDownload}
+                          style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          onClick={async e => {
+                            e.stopPropagation();
+                            if (!canSingleDownload) return;
+                            const pack = await loadResClassData(key, cls);
+                            if (!pack || !(pack.students || []).length) {
+                              toast('No students found for this class', 'error');
+                              return;
+                            }
+                            setResClassReportReq({
+                              examId: resExamId,
+                              key,
+                              className,
+                              ex: resCurrentExam,
+                              cd: liveClassReportCd(pack, { released: isRel, grades: rsGrades }),
+                            });
+                          }}
+                        >
+                          <i className="fa-solid fa-file-arrow-down"></i>
+                        </button>
+                      </Tooltip>
                       <Tooltip text="Delete class data"><button
                         className="ds-del-btn"
                         onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resExamId, key, className }); }}
@@ -7507,8 +7517,8 @@ onClick={async () => {
 
       {/* ── Single Assessment — Class report picker ── */}
       {resClassReportReq && (() => {
-        const cd = resultData[resClassReportReq.examId]?.[resClassReportReq.key];
-        const ex = exams.find(e => e.id === resClassReportReq.examId);
+        const cd = resClassReportReq.cd || resultData[resClassReportReq.examId]?.[resClassReportReq.key];
+        const ex = resClassReportReq.ex || exams.find(e => e.id === resClassReportReq.examId);
         if (!cd || !ex) return null;
         return (
           <ClassReportPicker
@@ -12418,6 +12428,48 @@ function ClassReportPicker({ cd, ex, className, term, absentMode, branchSchool, 
   );
 }
 
+/* Class row numbers from the live single-assessment APIs (same scope as the table). */
+function liveClassReportCd(pack, { released, grades }) {
+  const apiStudents = pack?.students || [];
+  const apiMarks = pack?.marks || [];
+  const apiSubjects = pack?.subjects || [];
+  const mappedIDs = (pack?.mappedSubjectIDs || []).map(Number).filter(Boolean);
+  const totalByID = {};
+  apiSubjects.forEach(s => {
+    const id = Number(s.subjectID ?? s.SubjectID ?? 0);
+    if (id) totalByID[id] = Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0;
+  });
+  const scopedActive = mappedIDs.length > 0;
+  const totalMarksSum = scopedActive
+    ? mappedIDs.reduce((a, id) => a + (totalByID[id] || 0), 0)
+    : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
+  const scopedObt = pack?.scopedObtained || null;
+  const useScopedObt = scopedActive && !!pack?.scopedObtainedOk && !!scopedObt;
+  const students = apiStudents.map(st => {
+    const sid = st.id ?? st.studentID ?? st.StudentID;
+    const marksEntry = apiMarks.find(m => String(m.studentID) === String(sid));
+    const obt = useScopedObt
+      ? (Number(scopedObt[String(sid)]) || 0)
+      : (marksEntry ? Number(marksEntry.obtainedMarks) : 0);
+    const pct = totalMarksSum > 0 ? Math.round((obt / totalMarksSum) * 10000) / 100 : 0;
+    const grade = (obt > 0 && totalMarksSum > 0)
+      ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, totalMarksSum))
+      : null;
+    return {
+      id: sid,
+      name: st.studentName || st.name || '',
+      father: st.fatherName || st.father || '',
+      rollNo: st.registrationNumber || st.rollNo || '—',
+      tot: totalMarksSum,
+      obt,
+      pct,
+      grade,
+      absent: false,
+    };
+  });
+  return { live: true, released: !!released, students };
+}
+
 function generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, isColor, format = 'pdf') {
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
@@ -12431,7 +12483,9 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
   // Compute each student's totals + ranking
   const useZero = absentMode === 'zero';
   const hideZero = rcHideZeroMarkSubjects(absentMode);
-  const students = cd.students.map(st => {
+  const students = cd.live
+    ? cd.students.map(st => ({ st, tot: st.tot, obt: st.obt, pct: st.pct, grade: st.grade }))
+    : cd.students.map(st => {
     const absSet = {};
     (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
     const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
@@ -12457,6 +12511,7 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
   const lowest    = ranked.length ? ranked[ranked.length - 1] : null;
   const completeCount = students.filter(r => {
     if (r.st.absent) return false;
+    if (cd.live) return r.obt > 0;
     return RES_SUBJECTS.every(s => r.st.obtained[s] > 0);
   }).length;
 
@@ -12503,7 +12558,7 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
         ${[
           ['Term',     term],
           ['Exam',     ex.name],
-          ['Class',    `${className} · Section A`],
+          ['Class',    className],
           ['Students', String(students.length)],
           ['Released', cd.released ? 'Yes' : 'No'],
         ].map(([k, v]) => `
@@ -16900,6 +16955,17 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 }
 .res-download-btn:hover { background:#16A34A; color:#fff; transform:translateY(-1px); box-shadow:0 4px 12px rgba(22,163,74,.3); }
 
+.res-bulk-btn {
+  width:32px; height:32px; border-radius:8px;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:12.5px; cursor:pointer; flex-shrink:0;
+  background:rgba(37,99,235,.1); color:#2563EB;
+  border:1.5px solid transparent;
+  transition:all .18s ease;
+}
+.res-bulk-btn:hover { background:#2563EB; color:#fff; transform:translateY(-1px); box-shadow:0 4px 12px rgba(37,99,235,.3); }
+.res-bulk-btn:disabled { opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
+
 .res-detail {
   background:#F8FAFF;
   border:1px solid var(--border-light); border-top:none;
@@ -17809,6 +17875,8 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
 [data-theme="dark"] .res-marks-btn:hover { background:rgba(59,130,246,.2); border-color:#3B82F6; }
 [data-theme="dark"] .res-download-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
 [data-theme="dark"] .res-download-btn:hover { background:var(--bg-card); border-color:#3B82F6; color:#3B82F6; }
+[data-theme="dark"] .res-bulk-btn { background:rgba(59,130,246,.12); color:#93C5FD; border-color:rgba(59,130,246,.3); }
+[data-theme="dark"] .res-bulk-btn:hover { background:rgba(59,130,246,.2); border-color:#3B82F6; color:#fff; }
 [data-theme="dark"] .res-action-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-secondary); }
 [data-theme="dark"] .res-action-btn:hover { background:var(--bg-card); border-color:#3B82F6; color:#3B82F6; }
 [data-theme="dark"] .res-action-btn.view:hover { border-color:#0891B2; color:#22D3EE; background:rgba(8,145,178,.1); }
@@ -18757,6 +18825,7 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .res-row .res-bulk-btn,
   .res-row .res-download-btn,
   .res-row .ds-del-btn,
   .res-row .ds-expand-btn {

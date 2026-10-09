@@ -28,10 +28,22 @@ function measureMbps() {
       const mbps = (buf.byteLength * 8) / secs / 1e6;
       lastSpeed = { at: Date.now(), mbps };
       window.__smSpeed = { state: mbps <= SLOW_MBPS ? 'slow' : 'ok', mbps };
+      if (window.__smWasOffline) {
+        window.__smWasOffline = false;
+        try { window.dispatchEvent(new CustomEvent('sm:online')); } catch (e) { /* ignore */ }
+      }
       return mbps;
     })
     .catch((err) => {
-      if (err && err.name === 'AbortError') {
+      const browserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const noNetwork = browserOffline || !err || err.name === 'TypeError';
+      if (noNetwork) {
+        lastSpeed = { at: Date.now(), mbps: null };
+        window.__smSpeed = { state: 'offline', mbps: null };
+        try { window.dispatchEvent(new CustomEvent('sm:offline')); } catch (e) { /* ignore */ }
+        return null;
+      }
+      if (err.name === 'AbortError') {
         lastSpeed = { at: Date.now(), mbps: 0 };
         window.__smSpeed = { state: 'slow', mbps: 0 };
         return 0;
@@ -44,16 +56,18 @@ function measureMbps() {
 
 export default function SystemDialogs({ toast = () => {} }) {
   const [showSlow, setShowSlow] = useState(false);
+  const [showOffline, setShowOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
   const [slowMbps, setSlowMbps] = useState(null);
   const lastServerToastRef = useRef(0);
   const slowDismissedRef = useRef(false);
+  const offlineDismissedRef = useRef(false);
 
   useEffect(() => {
     const main = document.querySelector('.main-content');
     if (!main) return undefined;
-    main.style.paddingTop = showSlow ? '60px' : '';
+    main.style.paddingTop = (showOffline || showSlow) ? '60px' : '';
     return () => { if (main) main.style.paddingTop = ''; };
-  }, [showSlow]);
+  }, [showOffline, showSlow]);
 
   /* Banner sirf jab API 30s se lambi ho (sm:slow) AUR last speed test <= 0.5 Mbps. */
   useEffect(() => {
@@ -63,6 +77,7 @@ export default function SystemDialogs({ toast = () => {} }) {
       const fresh = lastSpeed.mbps != null && (Date.now() - lastSpeed.at) < (PROBE_INTERVAL_MS + 5000);
       const mbps = fresh ? lastSpeed.mbps : await measureMbps();
       if (!alive) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       if (!(window.__smSlowPending > 0)) return;
       if (mbps != null && mbps <= SLOW_MBPS) {
         setSlowMbps(mbps);
@@ -81,14 +96,34 @@ export default function SystemDialogs({ toast = () => {} }) {
       lastServerToastRef.current = now;
       toast('Server error (500) — something went wrong. Please try again in a moment.', 'error');
     };
+    const onOffline = () => {
+      window.__smWasOffline = true;
+      setShowSlow(false);
+      if (offlineDismissedRef.current) return;
+      setShowOffline(true);
+    };
+    const onOnline = () => {
+      window.__smWasOffline = false;
+      offlineDismissedRef.current = false;
+      setShowOffline(false);
+    };
     window.addEventListener('sm:slow', onSlow);
     window.addEventListener('sm:slow-end', onSlowEnd);
     window.addEventListener('sm:server-error', onServerError);
+    window.addEventListener('sm:offline', onOffline);
+    window.addEventListener('sm:online', onOnline);
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) onOffline();
     return () => {
       alive = false;
       window.removeEventListener('sm:slow', onSlow);
       window.removeEventListener('sm:slow-end', onSlowEnd);
       window.removeEventListener('sm:server-error', onServerError);
+      window.removeEventListener('sm:offline', onOffline);
+      window.removeEventListener('sm:online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
     };
   }, [toast]);
 
@@ -112,7 +147,33 @@ export default function SystemDialogs({ toast = () => {} }) {
 
   return (
     <>
-      {showSlow && createPortal(
+      {showOffline && createPortal(
+        <div className="sys-banner sys-banner--red">
+          <div className="sys-banner-inner">
+            <div className="sys-banner-icon sys-red">
+              <i className="fa-solid fa-wifi" aria-hidden="true"></i>
+            </div>
+            <div className="sys-banner-text">
+              <strong>No Internet Connection</strong>
+              <span>You are offline. Check your connection — pages cannot load until it is back.</span>
+            </div>
+            <button
+              type="button"
+              className="sys-banner-retry"
+              onClick={() => { window.location.reload(); }}
+            >
+              <i className="fa-solid fa-rotate-right" aria-hidden="true"></i> Retry
+            </button>
+            <Tooltip text="Dismiss" placement="bottom">
+              <button className="sys-banner-close" onClick={() => { offlineDismissedRef.current = true; setShowOffline(false); }} aria-label="Dismiss banner">
+                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+            </Tooltip>
+          </div>
+        </div>,
+        document.body
+      )}
+      {showSlow && !showOffline && createPortal(
         <div className="sys-banner">
           <div className="sys-banner-inner">
             <div className="sys-banner-icon sys-amber">
@@ -199,6 +260,7 @@ if (typeof document !== 'undefined' && !document.getElementById('sys-dialog-styl
   width: 7px; height: 7px; border-radius: 50%; background: #D97706;
   animation: sysPulseDot 1.2s ease infinite;
 }
+.sys-banner--red .sys-banner-pulse span { background: #DC2626; }
 .sys-banner-pulse span:nth-child(2) { animation-delay: .2s; }
 .sys-banner-pulse span:nth-child(3) { animation-delay: .4s; }
 @keyframes sysPulseDot {

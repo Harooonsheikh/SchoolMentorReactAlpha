@@ -1108,17 +1108,19 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
           </CardHeader>
           <div className="tbl-wrap">
             <table className="ch-table">
-              <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Amount</th><th style={{ width: 130, textAlign: 'center' }}>Challan Status</th><th style={{ width: 200, textAlign: 'center' }}>Actions</th></tr></thead>
+              <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'center' }}>Challan Amount</th><th style={{ width: 130, textAlign: 'center' }}>Challan Status</th><th style={{ width: 200, textAlign: 'center' }}>Actions</th></tr></thead>
               <tbody>
                 {loading ? <LoadingRow cols={6} msg="Loading challans…" />
                   : list.length === 0 ? <NoResults cols={6} /> : list.map((s, i) => {
-                    const setup = payStore[s.id]; const challan = chStore[s.id]; const monthly = setupMonthly(s, setup);
+                    const setup = payStore[s.id]; const challan = chStore[s.id];
                     return (
                       <tr key={s.id}>
                         <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                         <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
                         <td><FormulaBadge setup={setup} /></td>
-                        <td style={{ textAlign: 'center' }}>{setup ? <><div style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</div><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></> : <span style={{ color: 'var(--tm)', fontSize: 12 }}>—</span>}</td>
+                        <td style={{ textAlign: 'center' }}>{challan
+                          ? <><div style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(challan.total)}</div><div style={{ fontSize: 10, color: 'var(--tm)' }}>{periodLabel(period)}</div></>
+                          : <span style={{ color: 'var(--tm)', fontSize: 12 }}>—</span>}</td>
                         <td style={{ textAlign: 'center' }}>{challan ? <div><span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Generated</span><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 3 }}>Due: {challan.dueDate || '—'}</div></div> : <span className="badge b-gray"><i className="fa-solid fa-clock" style={{ fontSize: 8 }} /> Not Generated</span>}</td>
                         <td style={{ textAlign: 'center' }}>
                           <div className="ch-actions" style={{ justifyContent: 'center' }}>

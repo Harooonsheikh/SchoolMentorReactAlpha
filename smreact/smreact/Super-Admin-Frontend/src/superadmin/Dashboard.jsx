@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fmt } from './dashboardData';
 import { DASHBOARD_GATES } from './userMgmtData';
-import { fetchDashboard, schoolPermissionsApi } from './api';
+import { fetchDashboard, schoolPermissionsApi, paymentsApi } from './api';
 import OneLinkOverviewSection, { Modal } from './OneLinkSection';
 import BugsReport from './BugsReport';
 
@@ -52,10 +52,81 @@ const biLabel = (id) => (BI_PERIODS.find((p) => p.id === id) || BI_PERIODS[2]).l
 const FEE_PERIODS = BI_PERIODS.filter((p) => p.id !== 'all');
 
 /* ── Fee Analytics ke chhe card ────────────────────────────────────────
-   Ab LIVE hain: admin_dashboard ke `CurrentMonthDetails` ka jama (d.feeTotals)
-   dikhate hain — bilkul wahi rows jo neeche "Current Month Details" table me
-   aati hain. API sirf CHALTE mahine ka fee data deti hai (route par koi
-   from/to nahi), is liye period bar ke doosre option par cards 0 rehte hain. */
+   Challan / receiving School Payments se (is mahine ke generated challans
+   aur unki receiving). Hisaab har row par yahi hai, cards us ka jama hain:
+
+     After Discount = Previous Dues + Challan − Discount
+     Total Pending  = Previous Dues + Challan − Discount − Received
+
+   Doosre period par sab 0. */
+
+function thisPayPeriod() {
+  const n = new Date();
+  return { month: n.getMonth() + 1, year: n.getFullYear() };
+}
+
+const nFee = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+
+function pickPay(map, id) {
+  if (!map) return undefined;
+  return map[id] || map[Number(id)] || map[String(id)];
+}
+
+/** After Discount = prev + challan − discount
+    Pending        = prev + challan − discount − received */
+function settleFeeRow(r) {
+  const prevDues = nFee(r.prevDues);
+  const challan = nFee(r.challan);
+  const discount = nFee(r.discount);
+  const received = nFee(r.received);
+  const receivable = prevDues + challan - discount;
+  const pending = receivable - received;
+  return { ...r, prevDues, challan, discount, received, receivable, pending };
+}
+
+function sumFeeRows(rows) {
+  return rows.reduce((t, r) => ({
+    prevDues: t.prevDues + r.prevDues,
+    challan: t.challan + r.challan,
+    discount: t.discount + r.discount,
+    receivable: t.receivable + r.receivable,
+    received: t.received + r.received,
+    pending: t.pending + r.pending,
+  }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
+}
+
+/** Dashboard rows: School Payments challan + receiving, phir upar wala hisaab. */
+function overlayPayChallans(dash, challansById, schools, recvsById = {}) {
+  const names = {};
+  (schools || []).forEach((s) => { if (s?.id != null) names[s.id] = s.name; });
+  const seen = new Set();
+  const feeRows = (dash.feeRows || []).map((r) => {
+    seen.add(Number(r.id));
+    const ch = pickPay(challansById, r.id);
+    const recv = pickPay(recvsById, r.id);
+    return settleFeeRow({
+      ...r,
+      challan: ch ? nFee(ch.total) : 0,
+      received: recv ? nFee(recv.receivedAmount) : 0,
+      discount: recv ? nFee(recv.discount) : 0,
+    });
+  });
+  Object.keys(challansById || {}).forEach((key) => {
+    const id = Number(key);
+    if (!id || seen.has(id)) return;
+    const ch = challansById[key];
+    const recv = pickPay(recvsById, id);
+    feeRows.push(settleFeeRow({
+      id,
+      name: names[id] || names[key] || `Branch #${id}`,
+      prevDues: 0,
+      challan: nFee(ch?.total),
+      discount: recv ? nFee(recv.discount) : 0,
+      received: recv ? nFee(recv.receivedAmount) : 0,
+    }));
+  });
+  return { ...dash, feeRows, feeTotals: sumFeeRows(feeRows) };
+}
 
 /* ── Improvements Summary ke teen card ────────────────────────────────
    Faisla (Super Admin ka): ye bhi abhi 0 par park hain.
@@ -125,15 +196,29 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const [impPeriod, setImpPeriod] = useState('all');
   const today = todayLabel();
 
-  /* Poora overview EK live call se:
-     GET .../api/AHM_School_Progress/admin_dashboard (see api/services/dashboard).
-     Us call ka mapping wahi shape deta hai jo neeche ka poora JSX padhta hai. */
+  /* Overview: admin_dashboard, phir is mahine ke School Payments challans
+     (wahi ledger jo Challans tab padhta hai) challan column par chadha diye
+     jate hain. Payments na chale to challan 0 — ERP fee challan nahi dikhate. */
   useEffect(() => {
     let on = true;
     setLoadErr(null);
-    fetchDashboard()
-      .then((res) => { if (on) setD(res); })
-      .catch((e) => { if (on) setLoadErr(e); });
+    (async () => {
+      const dash = await fetchDashboard();
+      let next = dash;
+      try {
+        const { schools } = await schoolPermissionsApi.listPermissionBranches();
+        const paySchools = (schools || []).map((s) => ({ id: s.id, name: s.name, students: 0 }));
+        const period = thisPayPeriod();
+        const [challans, recvs] = await Promise.all([
+          paymentsApi.listChallans(paySchools, {}, period),
+          paymentsApi.listReceivings(paySchools.map((s) => s.id), period).catch(() => ({})),
+        ]);
+        next = overlayPayChallans(dash, challans, paySchools, recvs);
+      } catch {
+        next = overlayPayChallans(dash, {}, []);
+      }
+      if (on) setD(next);
+    })().catch((e) => { if (on) setLoadErr(e); });
     return () => { on = false; };
   }, []);
 
@@ -359,7 +444,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           {feePeriod === 'thisMonth' ? (
             <div className="db-locked db-locked-ok" style={{ marginTop: -8 }}>
               <i className="fa-solid fa-circle-check" />
-              <span>Fee figures are live for the <b>current month</b> — challan, discount, received and pending across all schools (same rows as the Current Month Details table below).</span>
+              <span>This month: challan from <b>School Payments → Challans</b> (generated only). After discount = previous dues + challan − discount. Pending = that − received.</span>
             </div>
           ) : (
             <div className="db-locked" style={{ marginTop: -8 }}>
