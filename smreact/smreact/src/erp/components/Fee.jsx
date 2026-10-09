@@ -13900,9 +13900,9 @@ function ReportPanelDefaulter({ toast }) {
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
         <span>
-          Student tab defaulter banta hai jab challan ki <b>due date guzar jaye</b> (due 11 ho to 12 se) aur baqaya baqi ho.
-          Previous Due aur Old Dues Till Date <b>Unpaid Heads</b> mein dikhte hain.
-        </span>
+  A student becomes a defaulter when the <b>due date of the challan has passed</b> (e.g., if the due date is the 11th, then starting from the 12th) and there is an outstanding balance.
+  Previous Due and Old Dues Till Date are displayed under <b>Unpaid Heads</b>.
+</span>
       </div>
 
       <RepLoadState loading={loading} error={error} />
