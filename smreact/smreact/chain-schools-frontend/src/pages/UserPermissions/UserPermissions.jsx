@@ -4,22 +4,30 @@ import { createPortal } from 'react-dom'
 import { loadAssign, saveAssign, ERP_SCHOOLS, INACTIVE_SCHOOLS, initialsOf } from './data'
 import { permStats, permsForUser, saveUserPerms } from './permissionsData'
 import PermissionMatrixModal from './PermissionMatrixModal'
-import { loadHr, fullName } from '../HumanResource/data'
+import { fullName } from '../HumanResource/data'
+import * as hrApi from '../../api/hrApi'
 import './UserPermissions.css'
 
 export default function UserPermissions() {
   /* Assign School tab abhi k liye band — default seedha User Permission par. */
   const [tab, setTab] = useState('perm')
   const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(true)
   const [assignStore, setAssignStore] = useState({})
   const [toast, setToast] = useState(null)
 
-  /* Staff now come straight from the Human Resource module — no separate
-     user registration. Each employee is a manageable user here. */
+  /* Staff seedha Chain HR API se (wahi jo Human Resource page dikhata hai) — koi
+     mock/seed localStorage nahi. API fail ho to khaali list ("No staff found"),
+     farzi seed data NAHI. Jab tak API chalti hai, loader dikhta hai. */
   useEffect(() => {
-    const hr = loadHr()
-    setUsers(hr.emps.map((e) => ({ id: e.id, fullName: fullName(e), status: e.status })))
+    let alive = true
+    setLoading(true)
+    hrApi.getHrEmployees()
+      .then((emps) => { if (alive) setUsers(emps.map((e) => ({ id: e.id, fullName: fullName(e), status: e.status }))) })
+      .catch((err) => { if (alive) { setUsers([]); setToast({ text: err?.message || 'Could not load staff', type: 'warn' }) } })
+      .finally(() => { if (alive) setLoading(false) })
     setAssignStore(loadAssign())
+    return () => { alive = false }
   }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
 
@@ -47,7 +55,7 @@ export default function UserPermissions() {
       </div>
 
       {tab === 'assign' && <AssignTab users={users} assignStore={assignStore} commit={commitAssign} fire={fire} />}
-      {tab === 'perm' && <UsersPermTab users={users} fire={fire} />}
+      {tab === 'perm' && <UsersPermTab users={users} loading={loading} fire={fire} />}
 
       {toast && createPortal(
         <div className="ss-toast-wrap"><div className={`ss-toast ${toast.type}`}><i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check' : toast.type === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} /> {toast.text}</div></div>,
@@ -132,7 +140,7 @@ function AssignTab({ users, assignStore, commit, fire }) {
 }
 
 /* ════════ USER PERMISSION — per-user module→screen→action matrix ════════ */
-function UsersPermTab({ users, fire }) {
+function UsersPermTab({ users, loading, fire }) {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState(null)
 
@@ -159,7 +167,11 @@ function UsersPermTab({ users, fire }) {
         <table className="um-table">
           <thead><tr><th style={{ width: 60 }}>Sr #</th><th>Staff Member</th><th>Status</th><th style={{ width: 150 }}>Permissions</th><th style={{ width: 170 }}>Actions</th></tr></thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {loading ? (
+              <tr><td colSpan={5} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} /> Loading staff…
+              </td></tr>
+            ) : filtered.length === 0 ? (
               <tr><td colSpan={5} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No staff found</td></tr>
             ) : filtered.map((u, i) => {
               const stats = permStats(permsForUser(u.id))
