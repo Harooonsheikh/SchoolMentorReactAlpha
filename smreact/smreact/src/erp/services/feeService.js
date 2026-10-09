@@ -325,6 +325,46 @@ export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, head
   return json;
 }
 
+/* Logged-in user ki saari approval requests (pending + history).
+   GET /api/Approvals/approvals_by_user?branchId=&userId=.
+   Raw rows lautata hai — caller module/status par filter karta hai. Fee Challans
+   list khulte waqt isi se student ke against pending FeeDiscount badge resolve hota hai. */
+export async function getUserApprovalRequests() {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  let userID = 0;
+  for (const k of ['UserID', 'userID', 'userId', 'user_id']) {
+    const v = Number(sessionStorage.getItem(k));
+    if (v) { userID = v; break; }
+  }
+  const res = await fetch(
+    buildUrl(`/api/Approvals/approvals_by_user?branchId=${branchID}&userId=${userID}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load approval requests');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+/* Withdraw a still-pending fee-discount approval request. Jab save-fee-discount
+   `PendingApproval:true` + ApprovalID lauta de, requester apni request wapas le
+   sakta hai (approve/reject hone se pehle). POST /api/Approvals/withdraw
+   { approvalId, userId }. */
+export async function withdrawFeeDiscount(approvalId) {
+  const userId = Number(sessionStorage.getItem('UserID')) || 0;
+  const res = await fetch(buildUrl('/api/Approvals/withdraw'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approvalId: Number(approvalId) || 0, userId }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not withdraw discount request');
+  }
+  return json;
+}
+
 /* Saved fee discounts for ONE student — used to pre-fill the Discount Manager.
    GET /api/Student/get-fee-discounts-by-student/{studentId}.
    Returns only that student's rows: { headID, discountAmount, ... }. */

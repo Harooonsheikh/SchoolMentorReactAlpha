@@ -2664,6 +2664,36 @@ function FeeChallansList({ toast }) {
   const [installmentCtx, setInstallmentCtx] = useState(null);
   /* Per-class per-student discount map: { [classKey]: { [reg]: { [headName]: amount } } } */
   const [discountMap, setDiscountMap] = useState({});
+  /* Student-specific discounts jo abhi approval ka intezaar kar rahe hain. save-fee-discount
+     ke `PendingApproval:true` response par set hota hai — ACTION column me "Pending Approval"
+     badge (ApprovalID ke saath) + Withdraw icon isi se render hota hai.
+     keyOf(classKey, reg) -> { approvalId, requestNo } */
+  const [pendingDiscounts, setPendingDiscounts] = useState({});
+  /* List open par server se aayi pending FeeDiscount requests (page reload ke baad bhi
+     badge dikhe). approvals_by_user se filter: module=FeeDiscount, status=Pending.
+     studentID -> { approvalId, requestNo }. Render dono (session + server) ko dekhta hai. */
+  const [pendingByStudent, setPendingByStudent] = useState({});
+  const loadPendingDiscountApprovals = useCallback(async () => {
+    try {
+      const rows = await feeService.getUserApprovalRequests();
+      const map = {};
+      rows
+        .filter(r => String(r.module) === 'FeeDiscount'
+          && String(r.status).toLowerCase() === 'pending'
+          && r.studentID != null)
+        .forEach(r => {
+          const sid = String(r.studentID);
+          /* Ek student ke multiple pending heads — sab se naya (bada id) badge me. */
+          const prev = map[sid];
+          if (!prev || Number(r.id) > Number(prev.approvalId)) {
+            map[sid] = { approvalId: r.id, requestNo: r.requestNo };
+          }
+        });
+      setPendingByStudent(map);
+    } catch (e) { /* optional — na mile to sirf session-saved badges dikhenge */ }
+  }, []);
+  /* Mount par aur roster badalne par (tab/branch switch) refresh. */
+  useEffect(() => { loadPendingDiscountApprovals(); }, [loadPendingDiscountApprovals, studentsMap]);
 
   const apply = () => {
     setAppliedMonth(month);
@@ -3133,7 +3163,15 @@ function FeeChallansList({ toast }) {
     } catch (e) { /* API fail → local mirror hi use hoga */ }
     setDiscountCtx({ classMeta: c, student: s, heads, initial });
   };
-  const saveDiscount = async (classKey, reg, perHead) => {
+  const saveDiscount = async (classKey, reg, perHead, changedHeads) => {
+    const pendKey = keyOf(classKey, reg);
+    /* changedHeads diya ho to SIRF un heads ka API call jaata hai (jo add/change hue).
+       Na diya ho (purane callers) to sab heads — backward compatible. */
+    const changedSet = Array.isArray(changedHeads) ? new Set(changedHeads) : null;
+    /* Mirror ki purani value — agar response "Pending Approval" aaye to yahin wapas
+       laut jaate hain (discount abhi lagा nahi, approval ka intezaar hai). */
+    const prevMirror = (discountMap[classKey] || {})[reg];
+
     /* Local mirror (drives the challan discount figures). */
     setDiscountMap(prev => {
       const next = { ...prev };
@@ -3150,8 +3188,13 @@ function FeeChallansList({ toast }) {
     const heads = (classFeeStruct[gradeId] && classFeeStruct[gradeId].length)
       ? classFeeStruct[gradeId]
       : (headsMap[classKey] || []);
-    const entries = Object.entries(perHead || {});
+    const entries = Object.entries(perHead || {})
+      .filter(([name]) => !changedSet || changedSet.has(name));
     const idMap = discountIdRef.current[String(student?.studentID)] || {};
+    /* Agar koi head approval-gated nikla to uska ApprovalID/RequestNo yahan. */
+    let pending = null;
+    /* Jo bhi message API response me aaye (save/approval) wahi toast me dikhao. */
+    let apiMessage = '';
     if (student && entries.length) {
       try {
         for (const [headName, discountAmount] of entries) {
@@ -3166,7 +3209,7 @@ function FeeChallansList({ toast }) {
              Is liye 0 par koi call nahi bhejte; clear sirf is session ke local mirror se
              chalta hai (challan generation aur discount box dono use karte hain). */
           if (num > 0) {
-            await feeService.saveFeeDiscount({
+            const resp = await feeService.saveFeeDiscount({
               id: existingId,
               gradeID: student.gradeID || cls?._gradeId,
               sectionID: student.sectionID || cls?._sectionId,
@@ -3177,9 +3220,43 @@ function FeeChallansList({ toast }) {
               studentName: student.name,
               isActive: true,
             });
+            /* Server ka message (har head ka) — aakhri wala toast me dikhega. */
+            if (resp?.message || resp?.Message) apiMessage = resp.message || resp.Message;
+            /* Approval ON ho to backend save nahi karta — { PendingApproval, ApprovalID,
+               RequestNo } lauta deta hai. Casing backend ke hisaab se badalti hai. */
+            const d = resp?.data || resp?.Data || {};
+            const isPending = d.PendingApproval ?? d.pendingApproval ?? d.isPending;
+            if (isPending) {
+              pending = {
+                approvalId: d.ApprovalID ?? d.approvalID ?? d.approvalId ?? null,
+                requestNo:  d.RequestNo ?? d.requestNo ?? '',
+                message:    resp?.message || resp?.Message || 'Request sent for approval',
+              };
+            }
           }
         }
-        toast('Discount saved', 'success');
+        if (pending) {
+          /* Discount lagा nahi — mirror ko wapas purani value par le jaao. */
+          setDiscountMap(prev => {
+            const next = { ...prev };
+            next[classKey] = { ...(next[classKey] || {}) };
+            if (prevMirror === undefined) delete next[classKey][reg];
+            else next[classKey][reg] = prevMirror;
+            return next;
+          });
+          setPendingDiscounts(prev => ({
+            ...prev,
+            [pendKey]: { approvalId: pending.approvalId, requestNo: pending.requestNo },
+          }));
+          toast(pending.message, 'info');
+        } else {
+          /* Seedha save ho gaya — koi purani pending request thi to hata do. */
+          setPendingDiscounts(prev => {
+            if (!prev[pendKey]) return prev;
+            const next = { ...prev }; delete next[pendKey]; return next;
+          });
+          toast(apiMessage || 'Discount saved', 'success');
+        }
       } catch (e) {
         toast(e.message || 'Could not save discount', 'error');
       }
@@ -3187,6 +3264,43 @@ function FeeChallansList({ toast }) {
       toast('Discount saved', 'success');
     }
     setDiscountCtx(null);
+  };
+
+  /* ACTION column ke "Withdraw this discount request" icon se — pending request
+     wapas lene se pehle confirm modal (FeeConfirmDialog, primary/undo style). */
+  const requestWithdrawDiscount = (c, s) => {
+    const key = keyOf(c.key, s.reg);
+    const sid = String(s.studentID);
+    const aid = String(s.applicantsID);
+    const pend = pendingDiscounts[key] || pendingByStudent[sid] || pendingByStudent[aid];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: 'The change will not be applied.',
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        setBusyMsg('Withdrawing request…');
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingDiscounts(prev => {
+            const next = { ...prev }; delete next[key]; return next;
+          });
+          setPendingByStudent(prev => {
+            if (!prev[sid] && !prev[aid]) return prev;
+            const next = { ...prev }; delete next[sid]; delete next[aid]; return next;
+          });
+          toast('Discount request withdrawn', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not withdraw request', 'error');
+        } finally {
+          setBusyMsg('');
+        }
+      },
+    });
   };
 
   /* Confirm-driven delete — DELETE /delete-challan-installment/{ledgerId}.
@@ -3681,6 +3795,36 @@ function FeeChallansList({ toast }) {
                                     <i className="fa-solid fa-percent"></i>
                                   </button>
                                 </Tooltip>
+                                {(() => {
+                                  /* Session (abhi save hua) ya server (approvals_by_user) — dono me se jo mile.
+                                     Server match studentID YA applicantsID par (roster me id field
+                                     kabhi studentID, kabhi applicantsID se aati hai). */
+                                  const pend = pendingDiscounts[keyOf(c.key, s.reg)]
+                                    || pendingByStudent[String(s.studentID)]
+                                    || pendingByStudent[String(s.applicantsID)];
+                                  if (!pend) return null;
+                                  return (
+                                    <>
+                                      <Tooltip text={`Discount request ${pend.requestNo || ''} awaiting approval`.trim()}>
+                                        <span className="fee-pending-badge" role="status">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          <span>Pending Approval</span>
+                                          {pend.approvalId != null && (
+                                            <b className="fee-pending-id">#{pend.approvalId}</b>
+                                          )}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this discount request">
+                                        <button
+                                          className="fee-iconbtn fee-withdraw-btn"
+                                          onClick={() => requestWithdrawDiscount(c, s)}
+                                        >
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </>
+                                  );
+                                })()}
                               </td>
                             </tr>
                           );
@@ -4514,18 +4658,26 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
   });
   const totalNet = totalStd - totalDisc;
 
-  /* onSave posts one /api/Student/save-fee-discount per head and closes the
+  /* onSave posts one /api/Student/save-fee-discount per CHANGED head and closes the
      modal itself, so hold the spinner until it resolves. */
   const handleSave = async () => {
     if (saving) return;
-    /* HAR head bhejo — 0 samet. Warna discount clear (0) karne par wo head omit ho
-       jaata tha aur server par purana discount waisa ka waisa reh jaata tha. 0 bhejne
-       se purana saved discount update ho kar clear ho jaata hai. */
+    /* perHead = PURA state (local mirror/challan figures ke liye — sab heads).
+       changed = sirf wahi heads jinki value modal khulne wali (initial) value se
+       alag hai. Server par SIRF changed heads jaate hain — jo head user ne na add
+       kiya na change kiya uska dobara save-fee-discount NAHI chalta. Clear (saved
+       discount → 0) bhi ek change hai, is liye wo bhi bhejta hai. */
     const perHead = {};
-    rows.forEach(r => { perHead[r.name] = r.disc; });
+    const changed = [];
+    rows.forEach(r => {
+      perHead[r.name] = r.disc;
+      const initial = Number((cfg.initial || {})[r.name]) || 0;
+      if (r.disc !== initial) changed.push(r.name);
+    });
+    if (!changed.length) { toast('No changes to save', 'info'); onClose(); return; }
     try {
       setSaving(true);
-      await onSave(cfg.classMeta.key, cfg.student.reg, perHead);
+      await onSave(cfg.classMeta.key, cfg.student.reg, perHead, changed);
     } finally {
       setSaving(false);
     }
@@ -19390,6 +19542,30 @@ const FEE_CSS = `
 .fee-iconbtn.green { color: #16A34A; border-color: rgba(34,197,94,.3); background: rgba(34,197,94,.08); }
 .fee-iconbtn.green:hover { background: #16A34A; color: #fff; border-color: #16A34A; }
 .fee-iconbtn:disabled { cursor: not-allowed; }
+
+/* ── Pending-approval badge + Withdraw icon (student discount, ACTION column) ── */
+.fee-pending-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  letter-spacing: .1px; white-space: nowrap;
+  color: #DC2626;
+  border: 1.5px solid rgba(220,38,38,.35);
+  border-radius: 999px;
+  background: rgba(220,38,38,.08);
+  box-shadow: 0 1px 2px rgba(220,38,38,.08);
+}
+.fee-pending-badge i { font-size: 10px; animation: fee-pending-pulse 1.8s ease-in-out infinite; }
+.fee-pending-badge .fee-pending-id {
+  font-weight: 800; font-size: 10.5px;
+  padding: 2px 6px; border-radius: 999px;
+  color: #fff; background: #DC2626;
+}
+@keyframes fee-pending-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.fee-iconbtn.fee-withdraw-btn {
+  color: #1E40AF; border-color: rgba(30,64,175,.3); background: rgba(30,64,175,.06);
+}
+.fee-iconbtn.fee-withdraw-btn:hover { background: #1E40AF; color: #fff; border-color: #1E40AF; }
 .fee-iconbtn:disabled:hover { color: var(--text-muted); border-color: var(--border-light); background: var(--bg-card); }
 /* Action icons hamesha EK line me — wrap ho kar doosri line par na jayein. */
 .fee-st-actions { display: flex; gap: 4px; justify-content: center; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
@@ -20710,6 +20886,10 @@ const FEE_CSS = `
 [data-theme="dark"] .fee-iconbtn:hover { color: #3B82F6; border-color: #3B82F6; background: var(--bg-card); }
 [data-theme="dark"] .fee-iconbtn.danger { background: rgba(220,38,38,.12); border-color: rgba(220,38,38,.3); color: #FCA5A5; }
 [data-theme="dark"] .fee-iconbtn.danger:hover { background: var(--error); color: #fff; border-color: var(--error); }
+[data-theme="dark"] .fee-pending-badge { color: #FCA5A5; border-color: rgba(220,38,38,.4); background: rgba(220,38,38,.15); }
+[data-theme="dark"] .fee-pending-badge .fee-pending-id { background: #EF4444; color: #fff; }
+[data-theme="dark"] .fee-iconbtn.fee-withdraw-btn { background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.35); color: #93C5FD; }
+[data-theme="dark"] .fee-iconbtn.fee-withdraw-btn:hover { background: #2563EB; color: #fff; border-color: #2563EB; }
 [data-theme="dark"] .fee-detail { background: var(--bg-muted); }
 [data-theme="dark"] .fee-detail.open { border-top-color: var(--border-light); }
 [data-theme="dark"] .fee-detail-title { color: var(--text-secondary); }

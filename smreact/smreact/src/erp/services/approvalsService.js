@@ -8,6 +8,65 @@ import { buildUrl } from '../../utils/apiConfig';
      UI action keys → swagger Mdl_AHM_Settings_Approvals field names.
      `editAccoutEntry` / `duesSettelmentDiscount` API ki spelling hain. */
 const SETTINGS_APPROVALS_ENDPOINT = '/api/Setting/manage-settings-approvals';
+/* ── My Requests → GET /api/Approvals/approvals_by_user ── */
+const MY_REQUESTS_ENDPOINT = '/api/Approvals/approvals_by_user';
+
+/* API "module" → UI actionType (APPROVAL_ACTION_META ki key).
+   Baqi modules ke liye yahan entries add karte jayein. */
+const MODULE_TO_ACTION = {
+  FeeDiscount: 'fee_discount',
+};
+
+/* NOTE: login ke baad userId sessionStorage mein jis key se save hota hai
+   wahi yahan rakhein — neeche common names try ho rahe hain. */
+function currentUserId() {
+  for (const k of ['userID', 'userId', 'UserID', 'user_id']) {
+    const v = sessionStorage.getItem(k);
+    if (v) return Number(v) || 0;
+  }
+  return 0;
+}
+
+const fmtRs = (n) => `Rs. ${Number(n || 0).toLocaleString('en-PK')}`;
+
+function mapApiRequest(r) {
+  const actionType = MODULE_TO_ACTION[r.module] || String(r.module || '').toLowerCase();
+  const meta = APPROVAL_ACTION_META[actionType] || {};
+  const status = String(r.status || 'pending').toLowerCase();
+  const reviewed = status !== 'pending';
+  const headName = r.headName || (r.headID ? `Head #${r.headID}` : '—');
+
+  const payload = {
+    Student: r.studentName,
+    Class: [r.className, r.sectionName && `(${r.sectionName})`].filter(Boolean).join(' '),
+    'Fee Head': headName,
+    'Discount Amount': fmtRs(r.discountAmount),
+  };
+  if (r.changedFields) payload['Changed Fields'] = r.changedFields;
+
+  const before = r.requestAction === 'UPDATE'
+    ? { 'Discount Amount': fmtRs(r.oldDiscountAmount) }
+    : null;
+
+  return {
+    id: r.requestNo || String(r.id),      // UI mein "Request" column mein yahi dikhega
+    apiId: r.id,
+    actionType,
+    module: meta.module || r.module,
+    actionLabel: meta.label || `${r.module} — ${r.requestAction}`,
+    entityId: r.recordID,
+    entitySummary: r.summary || '',
+    requestedBy: r.requestedByName || `User #${r.requestedBy}`,
+    requestedAt: r.requestedAt,
+    status,
+    requestComment: '',
+    reviewedBy: reviewed ? (r.reviewedByName || `User #${r.modifiedBy}`) : null,
+    reviewedAt: reviewed ? r.modifiedAt : null,
+    reviewComment: '',
+    payload,
+    before,
+  };
+}
 
 const ACTION_TO_API = {
   fee_discount:             'feeDiscount',
@@ -207,19 +266,46 @@ const nextId = () => `AR-${String(seq++).padStart(4, '0')}`;
 /* ── Reads ─────────────────────────────────────────────────────────── */
 export async function getApprovalRequests() { await delay(); return clone(mockApprovalRequests); }
 
-export async function getMyRequests(requestedBy) {
-  await delay();
-  return clone(mockApprovalRequests.filter(r => r.requestedBy === requestedBy));
+export async function getMyRequests() {
+  const branchId = currentBranchId();
+  const userId = currentUserId();
+  const res = await fetch(
+    buildUrl(`${MY_REQUESTS_ENDPOINT}?branchId=${branchId}&userId=${userId}`),
+    { method: 'GET', headers: settingsAuthHeaders() },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new Error((json && (json.message || json.Message)) || 'Could not load your requests');
+  }
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(mapApiRequest);
 }
 
-export async function getPendingApprovals() {
-  await delay();
-  return clone(mockApprovalRequests.filter(r => r.status === APPROVAL_STATUS.PENDING));
+
+/* ── Pending / History → GET /api/Approvals/approvals_list?branchId=&status= ── */
+const APPROVALS_LIST_ENDPOINT = '/api/Approvals/approvals_list';
+
+async function fetchApprovalsList(status) {
+  const branchId = currentBranchId();
+  const qs = status
+    ? `branchId=${branchId}&status=${status}`
+    : `branchId=${branchId}`;
+  const res = await fetch(
+    buildUrl(`${APPROVALS_LIST_ENDPOINT}?${qs}`),
+    { method: 'GET', headers: settingsAuthHeaders() },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new Error((json && (json.message || json.Message)) || `Could not load ${status || 'history'} approvals`);
+  }
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(mapApiRequest);
 }
 
+export async function getPendingApprovals() { return fetchApprovalsList('pending'); }
 export async function getApprovalHistory() {
-  await delay();
-  return clone(mockApprovalRequests.filter(r => r.status !== APPROVAL_STATUS.PENDING));
+  const rows = await fetchApprovalsList('');
+  return rows.filter((r) => r.status !== 'pending');
 }
 
 /* Duplicate-pending-request protection — source modules call this
@@ -264,30 +350,44 @@ export async function createApprovalRequest({ actionType, entityId, entitySummar
    On the mock data path approving only records the decision — the real
    per-action apply (Fee discount, challan delete, etc.) is a backend
    concern and is not wired here. */
-export async function approveRequest(id, { reviewedBy, comment } = {}) {
-  await delay();
-  const record = mockApprovalRequests.find(r => r.id === id);
-  if (!record) throw new Error('Approval request not found.');
-  if (record.status !== APPROVAL_STATUS.PENDING) throw new Error('This request has already been reviewed.');
+/* ── Approve / Reject → POST /api/Approvals/process ── */
+const PROCESS_ENDPOINT = '/api/Approvals/process';
 
-  record.status = APPROVAL_STATUS.APPROVED;
-  record.reviewedBy = reviewedBy || resolveApprover().name;
-  record.reviewedAt = new Date().toISOString();
-  record.reviewComment = comment || '';
-  return clone(record);
+async function processApproval(apiId, status) {
+  const res = await fetch(buildUrl(PROCESS_ENDPOINT), {
+    method: 'POST',
+    headers: settingsAuthHeaders(),
+    body: JSON.stringify({
+      approvalId: Number(apiId),
+      status,                       // 'Approved' | 'Rejected'
+      modifiedBy: currentUserId(),  // jis user ne tick/cross kiya
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new Error((json && (json.message || json.Message)) || `Could not mark request as ${status}`);
+  }
+  return json;
 }
 
-export async function rejectRequest(id, { reviewedBy, comment } = {}) {
-  await delay();
-  const record = mockApprovalRequests.find(r => r.id === id);
-  if (!record) throw new Error('Approval request not found.');
-  if (record.status !== APPROVAL_STATUS.PENDING) throw new Error('This request has already been reviewed.');
+export async function approveRequest(apiId) { return processApproval(apiId, 'Approved'); }
+export async function rejectRequest(apiId)  { return processApproval(apiId, 'Rejected'); }
 
-  record.status = APPROVAL_STATUS.REJECTED;
-  record.reviewedBy = reviewedBy || resolveApprover().name;
-  record.reviewedAt = new Date().toISOString();
-  record.reviewComment = comment || '';
-  return clone(record);
+/* ── Withdraw (requester apni PENDING request khud wapas le) ──
+   POST /api/Approvals/withdraw { approvalId, userId }. apiId numeric ApprovalID
+   hai (requestNo nahi). Real endpoint — pehle wali mock revokeRequest ki jagah. */
+const WITHDRAW_ENDPOINT = '/api/Approvals/withdraw';
+export async function withdrawRequest(apiId) {
+  const res = await fetch(buildUrl(WITHDRAW_ENDPOINT), {
+    method: 'POST',
+    headers: settingsAuthHeaders(),
+    body: JSON.stringify({ approvalId: Number(apiId) || 0, userId: currentUserId() }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new Error((json && (json.message || json.Message)) || 'Could not withdraw request');
+  }
+  return json;
 }
 
 /* Lets the ORIGINAL REQUESTER withdraw their own request before anyone

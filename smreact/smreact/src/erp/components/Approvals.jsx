@@ -40,11 +40,10 @@ const TABS = [
 
 function fmtDateTime(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = new Date(String(iso).replace(' ', 'T'));
   if (isNaN(d.getTime())) return iso;
   return d.toLocaleString('en-PK', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
-
 function statusBadgeTone(status) {
   if (status === 'approved') return 'green';
   if (status === 'rejected') return 'red';
@@ -137,9 +136,11 @@ function GroupCard({ label, value, tone }) {
 export default function Approvals({ toast = () => {} }) {
   const { can } = usePermissions();
   /* Layer 1 — tabs gated by View on their governing screen; Layer 2 —
-     row actions gated by their own action. Revoke = Delete on My Requests;
-     Approve/Reject = Approve on Pending Approvals & History. */
-  const canRevoke = can('Approvals', 'My Requests', 'Delete');
+     row actions gated by their own action. Approve/Reject = Approve on
+     Pending Approvals & History.
+     Revoke (apni PENDING request wapas lena) har requester ka haq hai — ye
+     Delete permission par gate NAHI, warna Teacher jaise roles ko My Requests
+     me apni pending request ke saamne revert icon milta hi nahi tha. */
   const canDecide = can('Approvals', 'Pending Approvals & History', 'Approve');
   const visibleTabs = TABS.filter(t => can('Approvals', t.screen, 'View'));
 
@@ -159,10 +160,15 @@ export default function Approvals({ toast = () => {} }) {
     setLoading(true);
     try {
       const user = await approvalsService.getCurrentUser();
+      const safe = (p, label) => p.catch((e) => {
+        toast(e.message || `Failed to load ${label}`, 'error');
+        return [];
+      });
+      
       const [mine, pend, hist, appr] = await Promise.all([
-        approvalsService.getMyRequests(user),
-        approvalsService.getPendingApprovals(),
-        approvalsService.getApprovalHistory(),
+        safe(approvalsService.getMyRequests(), 'your requests'),
+        safe(approvalsService.getPendingApprovals(), 'pending approvals'),
+        safe(approvalsService.getApprovalHistory(), 'history'),
         approvalsService.getCurrentApprover(),
       ]);
       setCurrentUser(user);
@@ -208,14 +214,15 @@ export default function Approvals({ toast = () => {} }) {
   const handleDecision = async (id, decision, comment) => {
     try {
       if (decision === 'approve') {
-        await approvalsService.approveRequest(id, { reviewedBy: approver?.name, comment });
-        toast('Request approved', 'success');
+        const r = await approvalsService.approveRequest(id);
+        toast(r?.message || 'Request approved', 'success');
       } else if (decision === 'reject') {
-        await approvalsService.rejectRequest(id, { reviewedBy: approver?.name, comment });
-        toast('Request rejected', 'success');
+        const r = await approvalsService.rejectRequest(id);
+        toast(r?.message || 'Request rejected', 'success');
       } else if (decision === 'revoke') {
-        await approvalsService.revokeRequest(id, { revokedBy: currentUser });
-        toast('Request revoked', 'success');
+        /* Real withdraw API — POST /api/Approvals/withdraw { approvalId, userId }. */
+        const r = await approvalsService.withdrawRequest(id);
+        toast(r?.message || 'Request withdrawn', 'success');
       }
       closeDetail();
       reload();
@@ -368,7 +375,7 @@ export default function Approvals({ toast = () => {} }) {
                               <i className="fa-solid fa-eye" aria-hidden="true"></i>
                             </button>
                           </Tooltip>
-                          {tab === 'my' && r.status === 'pending' && canRevoke && (
+                          {tab === 'my' && r.status === 'pending' && (
                             <Tooltip text="Revoke your request">
                               <button type="button" className="al-icon-btn ap-icon-btn--gray" onClick={() => openDetail(r, 'revoke')}>
                                 <i className="fa-solid fa-rotate-left" aria-hidden="true"></i>
@@ -424,7 +431,9 @@ function ApprovalDetailModal({ request, mode, onClose, onDecide }) {
 
   const submit = async () => {
     setBusy(true);
-    await onDecide(request.id, mode, comment.trim());
+    /* Withdraw/approve/reject sab numeric ApprovalID (apiId) par chalte hain. */
+    const key = request.apiId ?? request.id;
+    await onDecide(key, mode, comment.trim());
     setBusy(false);
   };
 
