@@ -44,7 +44,7 @@ async function computeMonthWorkInfo(year, month1) {
   /* Is month ke holiday dates. */
   const holidayDates = new Set();
   try {
-    const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
+    const branchID = Number(sessionStorage.getItem('branchID')) || 0;
     const sessionID = await attendanceService.getActiveSessionID().catch(() => 0);
     const res = await attendanceService.monthlySetup({
       id: 0, branchID, sessionID, holidayTitle: '', description: '',
@@ -52,7 +52,7 @@ async function computeMonthWorkInfo(year, month1) {
     });
     (res?.data || []).forEach((h) => {
       const from = String(h.DateFrom ?? h.dateFrom ?? '').slice(0, 10);
-      const to   = String(h.DateTo ?? h.dateTo ?? '').slice(0, 10);
+      const to = String(h.DateTo ?? h.dateTo ?? '').slice(0, 10);
       if (!from || !to) return;
       const end = new Date(`${to}T00:00:00`);
       for (let d = new Date(`${from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
@@ -84,21 +84,21 @@ async function computeMonthWorkInfo(year, month1) {
    ═══════════════════════════════════════════════════════════════════ */
 
 const HR_TABS = [
-  { id: 'basics',   icon: 'fa-building',     label: 'HR Basics' },
-  { id: 'emps',     icon: 'fa-user-tie',     label: 'Employee Management' },
-  { id: 'finance',  icon: 'fa-coins',        label: 'Financials' },
-  { id: 'reports',  icon: 'fa-chart-line',   label: 'Reports' },
+  { id: 'basics', icon: 'fa-building', label: 'HR Basics' },
+  { id: 'emps', icon: 'fa-user-tie', label: 'Employee Management' },
+  { id: 'finance', icon: 'fa-coins', label: 'Financials' },
+  { id: 'reports', icon: 'fa-chart-line', label: 'Reports' },
 ];
 
-export default function HumanResource({ toast = () => {} }) {
+export default function HumanResource({ toast = () => { } }) {
   const [tab, setTab] = useState('basics');
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   /* ── Permission gating (2-layer): tab View + per-action buttons ── */
   const { can } = usePermissions();
   const TAB_LABEL = {
-    basics:  'HR Basics',
-    emps:    'Employee Management',
+    basics: 'HR Basics',
+    emps: 'Employee Management',
     finance: 'Financials',
     reports: 'Reports',
   };
@@ -110,46 +110,46 @@ export default function HumanResource({ toast = () => {} }) {
   }, [visibleTabs, tab]);
   // action flags per screen
   const canBasicsCreate = can('Human Resource', 'HR Basics', 'Create');
-  const canBasicsEdit   = can('Human Resource', 'HR Basics', 'Edit');
+  const canBasicsEdit = can('Human Resource', 'HR Basics', 'Edit');
   const canBasicsDelete = can('Human Resource', 'HR Basics', 'Delete');
-  const canEmpCreate    = can('Human Resource', 'Employee Management', 'Create');
-  const canEmpEdit      = can('Human Resource', 'Employee Management', 'Edit');
-  const canEmpDelete    = can('Human Resource', 'Employee Management', 'Delete');
-  const canEmpDownload  = can('Human Resource', 'Employee Management', 'Download');
-  const canEmpAssign    = can('Human Resource', 'Employee Management', 'Assign');
-  const canFinCreate    = can('Human Resource', 'Financials', 'Create');
-  const canFinEdit      = can('Human Resource', 'Financials', 'Edit');
-  const canFinDelete    = can('Human Resource', 'Financials', 'Delete');
-  const canFinApprove   = can('Human Resource', 'Financials', 'Approve');
-  const canFinDownload  = can('Human Resource', 'Financials', 'Download');
-  const canRepDownload  = can('Human Resource', 'Reports', 'Download');
+  const canEmpCreate = can('Human Resource', 'Employee Management', 'Create');
+  const canEmpEdit = can('Human Resource', 'Employee Management', 'Edit');
+  const canEmpDelete = can('Human Resource', 'Employee Management', 'Delete');
+  const canEmpDownload = can('Human Resource', 'Employee Management', 'Download');
+  const canEmpAssign = can('Human Resource', 'Employee Management', 'Assign');
+  const canFinCreate = can('Human Resource', 'Financials', 'Create');
+  const canFinEdit = can('Human Resource', 'Financials', 'Edit');
+  const canFinDelete = can('Human Resource', 'Financials', 'Delete');
+  const canFinApprove = can('Human Resource', 'Financials', 'Approve');
+  const canFinDownload = can('Human Resource', 'Financials', 'Download');
+  const canRepDownload = can('Human Resource', 'Reports', 'Download');
 
   /* Shared data hoisted to the module so the rebuilt screens can
      reuse it later without re-fetching. */
-  const { data: serverDepts        = [] } = useAsync(hrService.getHrDepts, []);
-  const { data: serverDesigs       = [] } = useAsync(hrService.getHrDesigs, []);
-  const { data: serverEmps         = [] } = useAsync(hrService.getHrEmployees, []);
-  const { data: serverNextDeptId   = 5 } = useAsync(hrService.getHrNextDeptId,  5);
-  const { data: serverNextDesigId  = 9 } = useAsync(hrService.getHrNextDesigId, 9);
-  const { data: serverNextEmpId    = 7 } = useAsync(hrService.getHrNextEmpId,   7);
+  const { data: serverDepts = [] } = useAsync(hrService.getHrDepts, []);
+  const { data: serverDesigs = [] } = useAsync(hrService.getHrDesigs, []);
+  const { data: serverEmps = [] } = useAsync(hrService.getHrEmployees, []);
+  const { data: serverNextDeptId = 5 } = useAsync(hrService.getHrNextDeptId, 5);
+  const { data: serverNextDesigId = 9 } = useAsync(hrService.getHrNextDesigId, 9);
+  const { data: serverNextEmpId = 7 } = useAsync(hrService.getHrNextEmpId, 7);
 
-  const [depts, setDepts]   = useState(null);
+  const [depts, setDepts] = useState(null);
   const [desigs, setDesigs] = useState(null);
-  const [emps,   setEmps]   = useState(null);
-  const [nextDeptId,  setNextDeptId]  = useState(null);
+  const [emps, setEmps] = useState(null);
+  const [nextDeptId, setNextDeptId] = useState(null);
   const [nextDesigId, setNextDesigId] = useState(null);
-  const [nextEmpId,   setNextEmpId]   = useState(null);
+  const [nextEmpId, setNextEmpId] = useState(null);
 
-  useEffect(() => { if (serverDepts.length  && depts  == null) setDepts(serverDepts);   }, [serverDepts,  depts]);
+  useEffect(() => { if (serverDepts.length && depts == null) setDepts(serverDepts); }, [serverDepts, depts]);
   useEffect(() => { if (serverDesigs.length && desigs == null) setDesigs(serverDesigs); }, [serverDesigs, desigs]);
-  useEffect(() => { if (serverEmps.length   && emps   == null) setEmps(serverEmps);     }, [serverEmps,   emps]);
-  useEffect(() => { if (nextDeptId  == null && serverNextDeptId)  setNextDeptId(serverNextDeptId);   }, [serverNextDeptId,  nextDeptId]);
+  useEffect(() => { if (serverEmps.length && emps == null) setEmps(serverEmps); }, [serverEmps, emps]);
+  useEffect(() => { if (nextDeptId == null && serverNextDeptId) setNextDeptId(serverNextDeptId); }, [serverNextDeptId, nextDeptId]);
   useEffect(() => { if (nextDesigId == null && serverNextDesigId) setNextDesigId(serverNextDesigId); }, [serverNextDesigId, nextDesigId]);
-  useEffect(() => { if (nextEmpId   == null && serverNextEmpId)   setNextEmpId(serverNextEmpId);     }, [serverNextEmpId,   nextEmpId]);
+  useEffect(() => { if (nextEmpId == null && serverNextEmpId) setNextEmpId(serverNextEmpId); }, [serverNextEmpId, nextEmpId]);
 
-  const deptList  = depts  || [];
+  const deptList = depts || [];
   const desigList = desigs || [];
-  const empList   = emps   || [];
+  const empList = emps || [];
 
   /* Re-pull departments + designations from the server after a mutation
      so the table reflects the saved state. */
@@ -210,7 +210,7 @@ export default function HumanResource({ toast = () => {} }) {
           desigs={desigList}
           setDesigs={setDesigs}
           emps={empList}
-          nextDeptId={nextDeptId  || 5}
+          nextDeptId={nextDeptId || 5}
           nextDesigId={nextDesigId || 9}
           setNextDeptId={setNextDeptId}
           setNextDesigId={setNextDesigId}
@@ -286,7 +286,7 @@ function HrBasics({
   canCreate = true, canEdit = true, canDelete = true,
 }) {
   const [openDeptId, setOpenDeptId] = useState(null);   // id of currently-expanded dept
-  const [deptModal,  setDeptModal]  = useState(null);   // null | { mode:'add'|'edit', dept? }
+  const [deptModal, setDeptModal] = useState(null);   // null | { mode:'add'|'edit', dept? }
   const [desigModal, setDesigModal] = useState(null);   // null | { mode:'add'|'edit', desig?, defaultDId? }
   const [confirmCfg, setConfirmCfg] = useState(null);   // null | { title, msg, hint, label, danger, icon, onConfirm }
 
@@ -306,37 +306,37 @@ function HrBasics({
     const name = (payload.name || '').trim();
     if (!name) { toast('Department name is required', 'error'); return false; }
 
-    const isEdit   = deptModal?.mode === 'edit';
+    const isEdit = deptModal?.mode === 'edit';
     const branchID = sessionStorage.getItem('branchID');
-    const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+    const userID = Number(sessionStorage.getItem('UserID')) || 0;
     /* An edit reuses the add endpoint with the department id; resend the
        existing designations so a rename doesn't wipe them. */
     const existing = isEdit ? (deptModal.dept.raw?.designations || []) : [];
     const designations = isEdit && existing.length
       ? existing.map(d => ({
-          designationID:      d.designationID ?? 0,
-          branchID:           Number(branchID) || 0,
-          branchDepartmentID: deptModal.dept.id,
-          designationName:    d.designationName ?? '',
-          description:        d.description ?? '',
-          qualificationID:    d.qualificationID ?? 0,
-          qualificationName:  d.qualificationName ?? '',
-          createdBy:          userID,
-          modifiedBy:         userID,
-        }))
+        designationID: d.designationID ?? 0,
+        branchID: Number(branchID) || 0,
+        branchDepartmentID: deptModal.dept.id,
+        designationName: d.designationName ?? '',
+        description: d.description ?? '',
+        qualificationID: d.qualificationID ?? 0,
+        qualificationName: d.qualificationName ?? '',
+        createdBy: userID,
+        modifiedBy: userID,
+      }))
       : [{
-          designationID: 0, branchID: 0, branchDepartmentID: 0,
-          designationName: '', description: '', qualificationID: 0,
-          qualificationName: '', createdBy: 0, modifiedBy: 0,
-        }];
+        designationID: 0, branchID: 0, branchDepartmentID: 0,
+        designationName: '', description: '', qualificationID: 0,
+        qualificationName: '', createdBy: 0, modifiedBy: 0,
+      }];
 
     const apiPayload = {
-      id:                    isEdit ? deptModal.dept.id : 0,
+      id: isEdit ? deptModal.dept.id : 0,
       branchID,
-      departmentName:        name,
+      departmentName: name,
       totalDesignationCount: existing.length,
-      createdBy:             userID,
-      modifiedBy:            userID,
+      createdBy: userID,
+      modifiedBy: userID,
       designations,
     };
 
@@ -352,14 +352,14 @@ function HrBasics({
   };
   const deleteDept = (dept) => {
     setConfirmCfg({
-      title:        'Confirm Deletion',
-      message:      'Are you sure you want to delete this record?',
-      hint:         `Department "${dept.name}" and all its designations will be removed.`,
+      title: 'Confirm Deletion',
+      message: 'Are you sure you want to delete this record?',
+      hint: `Department "${dept.name}" and all its designations will be removed.`,
       confirmLabel: 'Yes, Delete',
       confirmStyle: 'danger',
-      icon:         'fa-trash',
-      iconBg:       'rgba(220,38,38,.1)',
-      iconColor:    '#DC2626',
+      icon: 'fa-trash',
+      iconBg: 'rgba(220,38,38,.1)',
+      iconColor: '#DC2626',
       onConfirm: async () => {
         try {
           await hrService.deleteHrDept({ id: dept.id });
@@ -377,25 +377,25 @@ function HrBasics({
   const saveDesig = async (payload) => {
     const name = (payload.name || '').trim();
     if (!name) { toast('Designation title required', 'error'); return false; }
-    const dId    = Number(payload.dId);
+    const dId = Number(payload.dId);
     if (!dId) { toast('Department is required', 'error'); return false; }
     const qualId = Number(payload.qualId) || 0;
     if (!qualId) { toast('Qualification is required', 'error'); return false; }
-    const desc   = (payload.desc || '').trim();
+    const desc = (payload.desc || '').trim();
 
-    const isEdit   = desigModal?.mode === 'edit';
+    const isEdit = desigModal?.mode === 'edit';
     const branchID = sessionStorage.getItem('branchID');
-    const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+    const userID = Number(sessionStorage.getItem('UserID')) || 0;
     const apiPayload = {
-      designationID:      isEdit ? desigModal.desig.id : 0,
+      designationID: isEdit ? desigModal.desig.id : 0,
       branchID,
       branchDepartmentID: dId,
-      designationName:    name,
-      description:        desc,
-      qualificationID:    qualId,
-      qualificationName:  (payload.qualName || '').trim(),
-      createdBy:          userID,
-      modifiedBy:         userID,
+      designationName: name,
+      description: desc,
+      qualificationID: qualId,
+      qualificationName: (payload.qualName || '').trim(),
+      createdBy: userID,
+      modifiedBy: userID,
     };
 
     try {
@@ -411,14 +411,14 @@ function HrBasics({
   };
   const deleteDesig = (desig) => {
     setConfirmCfg({
-      title:        'Confirm Deletion',
-      message:      'Are you sure you want to delete this record?',
-      hint:         `Designation "${desig.name}" — employees holding it will lose this assignment.`,
+      title: 'Confirm Deletion',
+      message: 'Are you sure you want to delete this record?',
+      hint: `Designation "${desig.name}" — employees holding it will lose this assignment.`,
       confirmLabel: 'Yes, Delete',
       confirmStyle: 'danger',
-      icon:         'fa-trash',
-      iconBg:       'rgba(220,38,38,.1)',
-      iconColor:    '#DC2626',
+      icon: 'fa-trash',
+      iconBg: 'rgba(220,38,38,.1)',
+      iconColor: '#DC2626',
       onConfirm: async () => {
         try {
           await hrService.deleteHrDesig({ id: desig.id });
@@ -440,15 +440,15 @@ function HrBasics({
             Departments &amp; Designations
           </div>
           {canCreate && (
-          <Tooltip text="Add a new department to organize employees">
-            <button
-              type="button"
-              className="btn-add"
-              onClick={() => setDeptModal({ mode: 'add' })}
-            >
-              <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Department
-            </button>
-          </Tooltip>
+            <Tooltip text="Add a new department to organize employees">
+              <button
+                type="button"
+                className="btn-add"
+                onClick={() => setDeptModal({ mode: 'add' })}
+              >
+                <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Department
+              </button>
+            </Tooltip>
           )}
         </div>
 
@@ -496,39 +496,39 @@ function HrBasics({
                     </div>
                     <div className="td dept-row-actions">
                       {canCreate && (
-                      <Tooltip text="Add Designation">
-                        <button
-                          type="button"
-                          className="btn-sm"
-                          onClick={() => setDesigModal({ mode: 'add', defaultDId: d.id })}
-                        >
-                          <i className="fa-solid fa-plus" aria-hidden="true"></i> Designation
-                        </button>
-                      </Tooltip>
+                        <Tooltip text="Add Designation">
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            onClick={() => setDesigModal({ mode: 'add', defaultDId: d.id })}
+                          >
+                            <i className="fa-solid fa-plus" aria-hidden="true"></i> Designation
+                          </button>
+                        </Tooltip>
                       )}
                       {canEdit && (
-                      <Tooltip text="Edit">
-                        <button
-                          type="button"
-                          className="btn-edit"
-                          onClick={() => setDeptModal({ mode: 'edit', dept: d })}
-                          aria-label={`Edit ${d.name}`}
-                        >
-                          <i className="fa-solid fa-pen" aria-hidden="true"></i>
-                        </button>
-                      </Tooltip>
+                        <Tooltip text="Edit">
+                          <button
+                            type="button"
+                            className="btn-edit"
+                            onClick={() => setDeptModal({ mode: 'edit', dept: d })}
+                            aria-label={`Edit ${d.name}`}
+                          >
+                            <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                          </button>
+                        </Tooltip>
                       )}
                       {canDelete && (
-                      <Tooltip text="Delete">
-                        <button
-                          type="button"
-                          className="btn-del"
-                          onClick={() => deleteDept(d)}
-                          aria-label={`Delete ${d.name}`}
-                        >
-                          <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                        </button>
-                      </Tooltip>
+                        <Tooltip text="Delete">
+                          <button
+                            type="button"
+                            className="btn-del"
+                            onClick={() => deleteDept(d)}
+                            aria-label={`Delete ${d.name}`}
+                          >
+                            <i className="fa-solid fa-trash" aria-hidden="true"></i>
+                          </button>
+                        </Tooltip>
                       )}
                     </div>
                     <div className="td" style={{ justifyContent: 'center' }}>
@@ -576,28 +576,28 @@ function HrBasics({
                                 <div className="td"><span className="badge b-green">{dec} emp.</span></div>
                                 <div className="td desig-row-actions">
                                   {canEdit && (
-                                  <Tooltip text="Edit">
-                                    <button
-                                      type="button"
-                                      className="btn-edit"
-                                      onClick={() => setDesigModal({ mode: 'edit', desig: des })}
-                                      aria-label={`Edit ${des.name}`}
-                                    >
-                                      <i className="fa-solid fa-pen" aria-hidden="true"></i>
-                                    </button>
-                                  </Tooltip>
+                                    <Tooltip text="Edit">
+                                      <button
+                                        type="button"
+                                        className="btn-edit"
+                                        onClick={() => setDesigModal({ mode: 'edit', desig: des })}
+                                        aria-label={`Edit ${des.name}`}
+                                      >
+                                        <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                                      </button>
+                                    </Tooltip>
                                   )}
                                   {canDelete && (
-                                  <Tooltip text="Delete">
-                                    <button
-                                      type="button"
-                                      className="btn-del"
-                                      onClick={() => deleteDesig(des)}
-                                      aria-label={`Delete ${des.name}`}
-                                    >
-                                      <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                                    </button>
-                                  </Tooltip>
+                                    <Tooltip text="Delete">
+                                      <button
+                                        type="button"
+                                        className="btn-del"
+                                        onClick={() => deleteDesig(des)}
+                                        aria-label={`Delete ${des.name}`}
+                                      >
+                                        <i className="fa-solid fa-trash" aria-hidden="true"></i>
+                                      </button>
+                                    </Tooltip>
                                   )}
                                 </div>
                               </div>
@@ -730,17 +730,17 @@ function DeptModal({ mode, dept, onClose, onSave }) {
    ═══════════════════════════════════════════════════════════════════ */
 function DesigModal({ mode, desig, defaultDId, depts, onClose, onSave }) {
   const isEdit = mode === 'edit';
-  const [name, setName]   = useState(desig?.name || '');
-  const [dId,  setDId]    = useState(desig?.dId ?? defaultDId ?? (depts[0]?.id || ''));
+  const [name, setName] = useState(desig?.name || '');
+  const [dId, setDId] = useState(desig?.dId ?? defaultDId ?? (depts[0]?.id || ''));
   const [qualId, setQualId] = useState(desig?.qualificationID ?? '');
-  const [desc, setDesc]   = useState(desig?.desc || '');
+  const [desc, setDesc] = useState(desig?.desc || '');
   const [quals, setQuals] = useState([]);
 
   useEffect(() => {
     let alive = true;
     hrService.getHrQualifications()
       .then(list => { if (alive) setQuals(list); })
-      .catch(() => {});
+      .catch(() => { });
     return () => { alive = false; };
   }, []);
 
@@ -932,9 +932,9 @@ function ConfirmDialog({ cfg, onClose }) {
    ═══════════════════════════════════════════════════════════════════ */
 
 const PAY_MONTHS = [
-  'January', 'February', 'March',     'April',
-  'May',     'June',     'July',      'August',
-  'September','October', 'November',  'December',
+  'January', 'February', 'March', 'April',
+  'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December',
 ];
 
 function fmtMoney(n) {
@@ -947,25 +947,25 @@ function fmtMoney(n) {
    ═══════════════════════════════════════════════════════════════════ */
 
 const HR_REPORT_META = {
-  'directory'       : { title: 'Employee Directory',          sub: 'All staff · Personal, department & contact info',                       icon: 'fa-users',                gradFrom: 'rgba(30,58,138,.1)',  gradTo: 'rgba(30,64,175,.18)',  iconColor: '#1E40AF', period: false, chips: ['All Staff', 'Dept-wise', 'Active / Inactive'], desc: 'Full staff list with personal details, departments, designations & contact info' },
-  'salary-register' : { title: 'Salary Register',             sub: 'Monthly gross, deductions & net pay for all staff',                     icon: 'fa-file-invoice-dollar',  gradFrom: 'rgba(22,163,74,.1)',  gradTo: 'rgba(22,163,74,.18)',  iconColor: '#16A34A', period: true,  chips: ['Monthly', 'All Employees', 'PKR Totals'],          desc: 'Month-wise gross pay, allowances, deductions & net payable for all employees' },
-  'loan-summary'    : { title: 'Loan & Advance Ledger',       sub: 'All employee loans, repayments & balances',                             icon: 'fa-hand-holding-dollar',  gradFrom: 'rgba(217,119,6,.1)',  gradTo: 'rgba(217,119,6,.18)',  iconColor: '#D97706', period: false, chips: ['Active Loans', 'Outstanding', 'Repayments'],       desc: 'All employee loans — issued amounts, repayments & outstanding balances' },
-  'dept-summary'    : { title: 'Department Summary',          sub: 'Headcount, designations & salary cost per dept',                        icon: 'fa-building',             gradFrom: 'rgba(2,132,199,.1)',  gradTo: 'rgba(2,132,199,.18)',  iconColor: '#0284C7', period: false, chips: ['Headcount', 'Cost Analysis', 'Dept-wise'],         desc: 'Headcount, designations, salary cost & breakdown per department' },
-  'leave-register'  : { title: 'Leave & Attendance Register', sub: 'Leave entitlements, balances & deduction policy',                       icon: 'fa-plane-departure',      gradFrom: 'rgba(139,92,246,.1)', gradTo: 'rgba(139,92,246,.18)', iconColor: '#7C3AED', period: false, chips: ['Leave Balance', 'Policy', 'Deductions'],           desc: 'Leave balances, entitlements, deductions & attendance policy per employee' },
-  'payroll-summary' : { title: 'Payroll Summary Report',      sub: 'Month-wise payroll totals, deductions & status for all staff',          icon: 'fa-chart-pie',            gradFrom: 'rgba(15,118,110,.1)', gradTo: 'rgba(15,118,110,.18)', iconColor: '#0F766E', period: true,  chips: ['Monthly', 'All Staff', 'Totals & Status'],         desc: 'Month-wise payroll totals — gross pay, deductions, net payable & payment status overview' },
+  'directory': { title: 'Employee Directory', sub: 'All staff · Personal, department & contact info', icon: 'fa-users', gradFrom: 'rgba(30,58,138,.1)', gradTo: 'rgba(30,64,175,.18)', iconColor: '#1E40AF', period: false, chips: ['All Staff', 'Dept-wise', 'Active / Inactive'], desc: 'Full staff list with personal details, departments, designations & contact info' },
+  'salary-register': { title: 'Salary Register', sub: 'Monthly gross, deductions & net pay for all staff', icon: 'fa-file-invoice-dollar', gradFrom: 'rgba(22,163,74,.1)', gradTo: 'rgba(22,163,74,.18)', iconColor: '#16A34A', period: true, chips: ['Monthly', 'All Employees', 'PKR Totals'], desc: 'Month-wise gross pay, allowances, deductions & net payable for all employees' },
+  'loan-summary': { title: 'Loan & Advance Ledger', sub: 'All employee loans, repayments & balances', icon: 'fa-hand-holding-dollar', gradFrom: 'rgba(217,119,6,.1)', gradTo: 'rgba(217,119,6,.18)', iconColor: '#D97706', period: false, chips: ['Active Loans', 'Outstanding', 'Repayments'], desc: 'All employee loans — issued amounts, repayments & outstanding balances' },
+  'dept-summary': { title: 'Department Summary', sub: 'Headcount, designations & salary cost per dept', icon: 'fa-building', gradFrom: 'rgba(2,132,199,.1)', gradTo: 'rgba(2,132,199,.18)', iconColor: '#0284C7', period: false, chips: ['Headcount', 'Cost Analysis', 'Dept-wise'], desc: 'Headcount, designations, salary cost & breakdown per department' },
+  'leave-register': { title: 'Leave & Attendance Register', sub: 'Leave entitlements, balances & deduction policy', icon: 'fa-plane-departure', gradFrom: 'rgba(139,92,246,.1)', gradTo: 'rgba(139,92,246,.18)', iconColor: '#7C3AED', period: false, chips: ['Leave Balance', 'Policy', 'Deductions'], desc: 'Leave balances, entitlements, deductions & attendance policy per employee' },
+  'payroll-summary': { title: 'Payroll Summary Report', sub: 'Month-wise payroll totals, deductions & status for all staff', icon: 'fa-chart-pie', gradFrom: 'rgba(15,118,110,.1)', gradTo: 'rgba(15,118,110,.18)', iconColor: '#0F766E', period: true, chips: ['Monthly', 'All Staff', 'Totals & Status'], desc: 'Month-wise payroll totals — gross pay, deductions, net payable & payment status overview' },
 };
 
 function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
-  const deptMap  = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
+  const deptMap = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
-  const getDeptName  = (id) => deptMap.get(id)?.name || '—';
+  const getDeptName = (id) => deptMap.get(id)?.name || '—';
   const getDesigName = (id) => desigMap.get(id)?.name || '—';
 
   const [picker, setPicker] = useState(null); // { type }
-const [reportMonth, setReportMonth] = useState(() => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-});
+  const [reportMonth, setReportMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
   const buildCtx = () => ({
     emps, depts, desigs,
     fmtMoney, fmtDate, getFullName,
@@ -973,11 +973,12 @@ const [reportMonth, setReportMonth] = useState(() => {
     getEmpTotalGross, getEmpStdDeductions,
   });
 
-const generate = async (
-  style,
-  monthKey,
-  format = 'pdf'
-) => {    if (!picker) return;
+  const generate = async (
+    style,
+    monthKey,
+    format = 'pdf'
+  ) => {
+    if (!picker) return;
     const { type } = picker;
     /* Employee Directory is handled by DirectoryReportModal (column picker →
        Word / Excel / PDF), not this print-only flow. */
@@ -1008,9 +1009,9 @@ const generate = async (
          • leave register   → each active employee's leave settings (the
                               employee-list API omits them, so fetch per-employee
                               or every row shows zeros).                          */
-    let empPayroll  = {};
-    let empLoans    = {};
-    let empsForCtx  = emps;
+    let empPayroll = {};
+    let empLoans = {};
+    let empsForCtx = emps;
     try {
       if (type === 'salary-register' || type === 'payroll-summary') {
         const [y, m] = String(monthKey || '').split('-').map(Number);
@@ -1024,7 +1025,7 @@ const generate = async (
         );
         emps.forEach((e, i) => { empLoans[e.id] = lists[i] || []; });
       } else if (type === 'leave-register') {
-        const active   = emps.filter(e => e.status === 'Active');
+        const active = emps.filter(e => e.status === 'Active');
         const settings = await Promise.all(
           active.map(e => hrService.getHrLeaveSettings(e.id).catch(() => null)),
         );
@@ -1037,33 +1038,33 @@ const generate = async (
       return;
     }
 
-const ctx = {
-  ...buildCtx(),
-  emps: empsForCtx,
-  empPayroll,
-  empLoans,
-  branch,
-  style,
-  format: isPdf ? 'pdf' : format,
-};
+    const ctx = {
+      ...buildCtx(),
+      emps: empsForCtx,
+      empPayroll,
+      empLoans,
+      branch,
+      style,
+      format: isPdf ? 'pdf' : format,
+    };
 
-let html = '';
+    let html = '';
 
-if (type === 'salary-register') {
-  html = generateHrSalaryRegister(ctx, monthKey);
-}
-else if (type === 'loan-summary') {
-  html = generateHrLoanSummary(ctx);
-}
-else if (type === 'dept-summary') {
-  html = generateHrDeptSummary(ctx);
-}
-else if (type === 'leave-register') {
-  html = generateHrLeaveRegister(ctx);
-}
-else if (type === 'payroll-summary') {
-  html = generateHrPayrollSummary(ctx, monthKey);
-}
+    if (type === 'salary-register') {
+      html = generateHrSalaryRegister(ctx, monthKey);
+    }
+    else if (type === 'loan-summary') {
+      html = generateHrLoanSummary(ctx);
+    }
+    else if (type === 'dept-summary') {
+      html = generateHrDeptSummary(ctx);
+    }
+    else if (type === 'leave-register') {
+      html = generateHrLeaveRegister(ctx);
+    }
+    else if (type === 'payroll-summary') {
+      html = generateHrPayrollSummary(ctx, monthKey);
+    }
     if (!html) { failReport('Could not build this report'); return; }
     const meta = HR_REPORT_META[type];
     if (format === 'word') {
@@ -1082,7 +1083,7 @@ else if (type === 'payroll-summary') {
     w.document.open();
     w.document.write(html);
     w.document.close();
-    setTimeout(() => { try { w.print(); } catch {} }, 400);
+    setTimeout(() => { try { w.print(); } catch { } }, 400);
     toast(`${meta.title} (${style === 'color' ? 'Colorful' : 'B&W'}) ready — Print or Save as PDF`, 'success');
     setPicker(null);
   };
@@ -1103,8 +1104,8 @@ else if (type === 'payroll-summary') {
               <div
                 className="hr-rpt-icon"
                 style={{
-                  background:  `linear-gradient(135deg, ${m.gradFrom}, ${m.gradTo})`,
-                  color:        m.iconColor,
+                  background: `linear-gradient(135deg, ${m.gradFrom}, ${m.gradTo})`,
+                  color: m.iconColor,
                 }}
               >
                 <i className={`fa-solid ${m.icon}`} aria-hidden="true"></i>
@@ -1122,27 +1123,27 @@ else if (type === 'payroll-summary') {
         </div>
       </div>
 
-{picker && picker.type === 'directory' && (
-  <DirectoryReportModal
-    emps={emps}
-    depts={depts}
-    getFullName={getFullName}
-    getDeptName={getDeptName}
-    getDesigName={getDesigName}
-    onClose={() => setPicker(null)}
-    toast={toast}
-  />
-)}
+      {picker && picker.type === 'directory' && (
+        <DirectoryReportModal
+          emps={emps}
+          depts={depts}
+          getFullName={getFullName}
+          getDeptName={getDeptName}
+          getDesigName={getDesigName}
+          onClose={() => setPicker(null)}
+          toast={toast}
+        />
+      )}
 
-{picker && picker.type !== 'directory' && (
-  <HrRptModal
-    type={picker.type}
-    monthKey={reportMonth}
-    onMonthChange={setReportMonth}
-    onClose={() => setPicker(null)}
-    onGenerate={(style, format, monthKey) => generate(style, monthKey, format)}
-  />
-)}
+      {picker && picker.type !== 'directory' && (
+        <HrRptModal
+          type={picker.type}
+          monthKey={reportMonth}
+          onMonthChange={setReportMonth}
+          onClose={() => setPicker(null)}
+          onGenerate={(style, format, monthKey) => generate(style, monthKey, format)}
+        />
+      )}
     </div>
   );
 }
@@ -1255,6 +1256,7 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
   return (
     <StandardReportPicker
       open
+      scrollable
       title="Employee Directory"
       subtitle="Choose which information to include, then export"
       formats={['pdf', 'word', 'excel']}
@@ -1423,17 +1425,17 @@ function DeletePayrollModal({ open, mode = 'confirm', empName, month, year, mess
 function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
   const now = new Date();
   const [month, setMonth] = useState(PAY_MONTHS[now.getMonth()]);
-  const [year,  setYear]  = useState(String(now.getFullYear()));
-  const [openId,     setOpenId]     = useState(null);
-  const [reportsId,  setReportsId]  = useState(null);
-  const [actionsId,  setActionsId]  = useState(null);
-  const [prFor,      setPrFor]      = useState(null);   // emp opened in the Pay Roll modal
-  const [alFor,      setAlFor]      = useState(null);   // emp opened in the Advance / Loan modal
+  const [year, setYear] = useState(String(now.getFullYear()));
+  const [openId, setOpenId] = useState(null);
+  const [reportsId, setReportsId] = useState(null);
+  const [actionsId, setActionsId] = useState(null);
+  const [prFor, setPrFor] = useState(null);   // emp opened in the Pay Roll modal
+  const [alFor, setAlFor] = useState(null);   // emp opened in the Advance / Loan modal
   // Delete-payroll popup: { emp, payrollID, mode:'confirm'|'force', message }.
   // `delBusy` guards the confirm button while the API call is in flight.
-  const [delPay,     setDelPay]     = useState(null);
-  const [delBusy,    setDelBusy]    = useState(false);
-  const [rspFor,     setRspFor]     = useState(null);   // { emp, type } for the Reports style picker
+  const [delPay, setDelPay] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const [rspFor, setRspFor] = useState(null);   // { emp, type } for the Reports style picker
 
   /* Per-employee payroll: empPayroll[empId][monthKey] = { ...record }.
      monthKey is `YYYY-MM` (zero-padded). Persists in component state
@@ -1527,7 +1529,7 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
 
   const upsertRec = (empId, m, y, partial) => {
     setEmpPayroll(prev => {
-      const key  = monthKey(m, y);
+      const key = monthKey(m, y);
       const next = { ...prev };
       next[empId] = { ...(next[empId] || {}) };
       next[empId][key] = { ...(next[empId][key] || {}), ...partial };
@@ -1548,10 +1550,10 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   };
 
   /* Loan helpers */
-  const getEmpLoans          = (empId) => empLoans[empId] || [];
-  const getActiveLoans       = (empId) => getEmpLoans(empId).filter(l => l.status === 'active');
-  const getLoanRemaining     = (empId) => getActiveLoans(empId).reduce((s, l) => s + (Number(l.remaining) || 0), 0);
-  const getActiveLoanCount   = (empId) => getActiveLoans(empId).length;
+  const getEmpLoans = (empId) => empLoans[empId] || [];
+  const getActiveLoans = (empId) => getEmpLoans(empId).filter(l => l.status === 'active');
+  const getLoanRemaining = (empId) => getActiveLoans(empId).reduce((s, l) => s + (Number(l.remaining) || 0), 0);
+  const getActiveLoanCount = (empId) => getActiveLoans(empId).length;
   const getLoanTotalReturned = (empId) =>
     getEmpLoans(empId).reduce((s, l) => s + (l.received || []).reduce((a, r) => a + (Number(r.amount) || 0), 0), 0);
   /* Is mahine kitni loan deduction banti hai — Pay Roll ka "Loan Deduction this
@@ -1579,17 +1581,17 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
     if (amount <= 0) { toast('Please enter a valid loan amount', 'error'); return false; }
     if (!payload.repaymentType) { toast('Please select repayment type', 'error'); return false; }
     if (payload.repaymentType === 'Installment'
-        && (!payload.installmentType || !(Number(payload.installmentAmount) > 0))) {
+      && (!payload.installmentType || !(Number(payload.installmentAmount) > 0))) {
       toast('Please complete installment details', 'error'); return false;
     }
     try {
       await hrService.saveHrEmployeeLoan({
-        employeeID:        empId,
-        loanAmount:        amount,
-        comments:          payload.comment || '',
-        repaymentType:     payload.repaymentType,
-        repaymentDate:     payload.deductDate,
-        installmentType:   payload.repaymentType === 'Installment' ? payload.installmentType : '',
+        employeeID: empId,
+        loanAmount: amount,
+        comments: payload.comment || '',
+        repaymentType: payload.repaymentType,
+        repaymentDate: payload.deductDate,
+        installmentType: payload.repaymentType === 'Installment' ? payload.installmentType : '',
         installmentAmount: payload.repaymentType === 'Installment' ? (Number(payload.installmentAmount) || 0) : amount,
       });
     } catch (err) {
@@ -1613,10 +1615,10 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
     }
     try {
       await hrService.saveHrEmployeeLoanRepayment({
-        loanID:        payload.loanId,
-        amount:        amt,
+        loanID: payload.loanId,
+        amount: amt,
         repaymentDate: payload.date,
-        comments:      payload.comment || '',
+        comments: payload.comment || '',
       });
     } catch (err) {
       toast(err.message || 'Could not record repayment', 'error');
@@ -1651,9 +1653,9 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
     return () => document.removeEventListener('mousedown', onDown);
   }, [reportsId, actionsId]);
 
-  const deptMap  = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
+  const deptMap = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
-  const getDeptName  = (id) => deptMap.get(id)?.name || '—';
+  const getDeptName = (id) => deptMap.get(id)?.name || '—';
   const getDesigName = (id) => desigMap.get(id)?.name || '—';
 
   const activeEmps = useMemo(() => emps.filter(e => e.status === 'Active'), [emps]);
@@ -1738,9 +1740,9 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       const [settings, calc, workInfo, att] = await Promise.all([
         hrService.getHrLeaveSettings(emp.id).catch(() => null),
         hrService.calculateLeaveAbsentDeduction({
-          employeeID:   emp.id,
+          employeeID: emp.id,
           payrollMonth: mNum,
-          payrollYear:  yNum,
+          payrollYear: yNum,
         }).catch(() => null),
         computeMonthWorkInfo(yNum, mNum).catch(() => null),
         /* Us mahine ki ASAL haaziri — slip pehle Days Present payroll ke
@@ -1749,8 +1751,8 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
         hrService.getHrStaffMonthAttendance(emp.id, yNum, mNum).catch(() => null),
       ]);
       leaveInfoForCtx = { settings, calc };
-      workInfoForCtx  = workInfo;
-      attInfoForCtx   = att;
+      workInfoForCtx = workInfo;
+      attInfoForCtx = att;
     }
 
     const ctx = {
@@ -1759,13 +1761,13 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       empPayroll, empLoans: empLoansForCtx,
       branch,
       leaveInfo: leaveInfoForCtx,
-      workInfo:  workInfoForCtx,
-      attInfo:   attInfoForCtx,
+      workInfo: workInfoForCtx,
+      attInfo: attInfoForCtx,
     };
     let html = '';
-    if      (type === 'salaryslip') html = generateSalarySlipHTML(emp, picked.monthKey || '2026-05', style, ctx);
-    else if (type === 'history')    html = generatePayHistoryReportHTML(emp, picked.fromKey || '2026-01', picked.toKey || '2026-06', style, ctx);
-    else if (type === 'loan')       html = generateLoanReportHTML(emp, style, ctx);
+    if (type === 'salaryslip') html = generateSalarySlipHTML(emp, picked.monthKey || '2026-05', style, ctx);
+    else if (type === 'history') html = generatePayHistoryReportHTML(emp, picked.fromKey || '2026-01', picked.toKey || '2026-06', style, ctx);
+    else if (type === 'loan') html = generateLoanReportHTML(emp, style, ctx);
     if (!html) { failReport('Could not build this report'); return; }
     const title = RSP_META[type].title;
     if (format === 'word') {
@@ -1784,7 +1786,7 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
     w.document.open();
     w.document.write(html);
     w.document.close();
-    setTimeout(() => { try { w.print(); } catch {} }, 400);
+    setTimeout(() => { try { w.print(); } catch { } }, 400);
     toast(`${title} ready (${style === 'color' ? 'Colorful' : 'B&W'}) — Print or Save as PDF`, 'success');
     setRspFor(null);
   };
@@ -1987,7 +1989,7 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
           totalRemaining={getLoanRemaining(alFor.id)}
           activeCount={getActiveLoanCount(alFor.id)}
           onClose={() => setAlFor(null)}
-          onSaveNew={(payload)   => saveNewLoan(alFor.id, payload)}
+          onSaveNew={(payload) => saveNewLoan(alFor.id, payload)}
           onSaveRepay={(payload) => saveLoanRepayment(alFor.id, payload)}
           onMarkReturned={(loanId) => markLoanReturned(alFor.id, loanId)}
           toast={toast}
@@ -2026,10 +2028,10 @@ function PayrollRow({
   const ini = nm.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
 
   let status, statusLabel, statusIcon;
-  if (!rec)                                  { status = 'notgen';  statusLabel = 'Not Generated';   statusIcon = 'fa-circle'; }
-  else if (rec.status === 'Paid')            { status = 'paid';    statusLabel = 'Paid';            statusIcon = 'fa-circle-check'; }
-  else if (rec.status === 'Partially Paid')  { status = 'partial'; statusLabel = 'Partially Paid';  statusIcon = 'fa-circle-half-stroke'; }
-  else                                       { status = 'gen';     statusLabel = 'Generated';       statusIcon = 'fa-clock'; }
+  if (!rec) { status = 'notgen'; statusLabel = 'Not Generated'; statusIcon = 'fa-circle'; }
+  else if (rec.status === 'Paid') { status = 'paid'; statusLabel = 'Paid'; statusIcon = 'fa-circle-check'; }
+  else if (rec.status === 'Partially Paid') { status = 'partial'; statusLabel = 'Partially Paid'; statusIcon = 'fa-circle-half-stroke'; }
+  else { status = 'gen'; statusLabel = 'Generated'; statusIcon = 'fa-clock'; }
   const canPay = status !== 'paid';
 
   return (
@@ -2055,34 +2057,34 @@ function PayrollRow({
         {/* Reports button + dropdown */}
         <div className="td" style={{ justifyContent: 'center' }}>
           {canDownload && (
-          <div className="menu-wrap">
-            <Tooltip text="Open employee reports">
-              <button type="button" className="btn-reports" onClick={onToggleReports}>
-                <i className="fa-solid fa-chart-line" aria-hidden="true"></i>
-                <span className="label-full">Reports</span>
-                <i className="fa-solid fa-chevron-down chev" aria-hidden="true"></i>
-              </button>
-            </Tooltip>
-            {reportsOpen && (
-              <div className="drop-menu" role="menu">
-                <Tooltip text="Generate a printable salary slip for a selected month">
-                  <button type="button" className="drop-item" onClick={() => onReport('salaryslip')}>
-                    <i className="fa-solid fa-file-invoice-dollar" style={{ color: '#1E40AF' }} aria-hidden="true"></i> Salary Slip
-                  </button>
-                </Tooltip>
-                <Tooltip text="Detailed month-by-month pay history with totals">
-                  <button type="button" className="drop-item" onClick={() => onReport('history')}>
-                    <i className="fa-solid fa-clock-rotate-left" style={{ color: '#7C3AED' }} aria-hidden="true"></i> Pay History Ledger
-                  </button>
-                </Tooltip>
-                <Tooltip text="Full loan / advance account statement with transactions">
-                  <button type="button" className="drop-item" onClick={() => onReport('loan')}>
-                    <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }} aria-hidden="true"></i> Loan / Advance Report
-                  </button>
-                </Tooltip>
-              </div>
-            )}
-          </div>
+            <div className="menu-wrap">
+              <Tooltip text="Open employee reports">
+                <button type="button" className="btn-reports" onClick={onToggleReports}>
+                  <i className="fa-solid fa-chart-line" aria-hidden="true"></i>
+                  <span className="label-full">Reports</span>
+                  <i className="fa-solid fa-chevron-down chev" aria-hidden="true"></i>
+                </button>
+              </Tooltip>
+              {reportsOpen && (
+                <div className="drop-menu" role="menu">
+                  <Tooltip text="Generate a printable salary slip for a selected month">
+                    <button type="button" className="drop-item" onClick={() => onReport('salaryslip')}>
+                      <i className="fa-solid fa-file-invoice-dollar" style={{ color: '#1E40AF' }} aria-hidden="true"></i> Salary Slip
+                    </button>
+                  </Tooltip>
+                  <Tooltip text="Detailed month-by-month pay history with totals">
+                    <button type="button" className="drop-item" onClick={() => onReport('history')}>
+                      <i className="fa-solid fa-clock-rotate-left" style={{ color: '#7C3AED' }} aria-hidden="true"></i> Pay History Ledger
+                    </button>
+                  </Tooltip>
+                  <Tooltip text="Full loan / advance account statement with transactions">
+                    <button type="button" className="drop-item" onClick={() => onReport('loan')}>
+                      <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }} aria-hidden="true"></i> Loan / Advance Report
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -2097,25 +2099,25 @@ function PayrollRow({
             {actionsOpen && (
               <div className="drop-menu" role="menu">
                 {canCreate && (
-                <Tooltip text="Generate, process and pay this month's salary">
-                  <button
-                    type="button"
-                    className="drop-item"
-                    onClick={onPayRoll}
-                    disabled={!canPay}
-                    style={!canPay ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                  >
-                    <i className="fa-solid fa-money-check-dollar" style={{ color: '#1E40AF' }} aria-hidden="true"></i>{' '}
-                    {status === 'partial' ? 'Pay Roll (Add More Payment)' : status === 'paid' ? 'Pay Roll (Already Paid)' : 'Pay Roll'}
-                  </button>
-                </Tooltip>
+                  <Tooltip text="Generate, process and pay this month's salary">
+                    <button
+                      type="button"
+                      className="drop-item"
+                      onClick={onPayRoll}
+                      disabled={!canPay}
+                      style={!canPay ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    >
+                      <i className="fa-solid fa-money-check-dollar" style={{ color: '#1E40AF' }} aria-hidden="true"></i>{' '}
+                      {status === 'partial' ? 'Pay Roll (Add More Payment)' : status === 'paid' ? 'Pay Roll (Already Paid)' : 'Pay Roll'}
+                    </button>
+                  </Tooltip>
                 )}
                 {canCreate && (
-                <Tooltip text="Set up new advance/loan, record repayments or view loan history">
-                  <button type="button" className="drop-item" onClick={onAdvLoan}>
-                    <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }} aria-hidden="true"></i> Advance / Loan
-                  </button>
-                </Tooltip>
+                  <Tooltip text="Set up new advance/loan, record repayments or view loan history">
+                    <button type="button" className="drop-item" onClick={onAdvLoan}>
+                      <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }} aria-hidden="true"></i> Advance / Loan
+                    </button>
+                  </Tooltip>
                 )}
                 {canDelete && rec?.payrollID && (
                   <Tooltip text="Delete this month's payroll setup and all its payments">
@@ -2203,35 +2205,35 @@ function PrevPendingNote({ arrears, fmtMoney }) {
 
 function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
   rec = rec || {};
-  const basic       = Number(emp.basicSalary) || 0;
-  const totalGross  = rec.totalGross !== undefined ? rec.totalGross : getEmpTotalGross(emp, rec.bonus || 0);
+  const basic = Number(emp.basicSalary) || 0;
+  const totalGross = rec.totalGross !== undefined ? rec.totalGross : getEmpTotalGross(emp, rec.bonus || 0);
   const totalDeduct = rec.totalDeductions || 0;
-  const net         = rec.netPayable !== undefined ? rec.netPayable : (totalGross - getEmpStdDeductions(emp));
-  const payments    = rec.payments || [];
-  const paid        = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  const remaining   = Math.max(0, (rec.netPayable || net) - paid);
+  const net = rec.netPayable !== undefined ? rec.netPayable : (totalGross - getEmpStdDeductions(emp));
+  const payments = rec.payments || [];
+  const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const remaining = Math.max(0, (rec.netPayable || net) - paid);
   const statusClass = rec.status === 'Paid'
-                        ? 'paid'
-                        : rec.status === 'Partially Paid'
-                          ? 'partial'
-                          : (rec.status ? 'gen' : 'notgen');
+    ? 'paid'
+    : rec.status === 'Partially Paid'
+      ? 'partial'
+      : (rec.status ? 'gen' : 'notgen');
 
   const cls = (n) => n > 0 ? 'val neg' : 'val zero';
 
   return (
     <>
       <div className="pay-detail-grid">
-        <PdItem k="Month of"                  v={`${month} ${year}`} />
-        <PdItem k="Basic Pay"                 v={`PKR ${fmtMoney(basic)}`} />
-        <PdItem k="Bonus"                     v={`PKR ${fmtMoney(rec.bonus || 0)}`} valClass={(rec.bonus || 0) > 0 ? 'val pos' : 'val zero'} />
-        <PdItem k="Total Gross"               v={`PKR ${fmtMoney(totalGross)}`} valClass="val pos" />
+        <PdItem k="Month of" v={`${month} ${year}`} />
+        <PdItem k="Basic Pay" v={`PKR ${fmtMoney(basic)}`} />
+        <PdItem k="Bonus" v={`PKR ${fmtMoney(rec.bonus || 0)}`} valClass={(rec.bonus || 0) > 0 ? 'val pos' : 'val zero'} />
+        <PdItem k="Total Gross" v={`PKR ${fmtMoney(totalGross)}`} valClass="val pos" />
         <PdItem k="Advance / Loan Outstanding" v={`PKR ${fmtMoney(loanRemaining)}`} valClass={loanRemaining > 0 ? 'val neg' : 'val zero'} />
-        <PdItem k="Loan Deduction"            v={`PKR ${fmtMoney(rec.loanDeduct  || 0)}`} valClass={cls(rec.loanDeduct  || 0)} />
-        <PdItem k="Fine Deduction"            v={`PKR ${fmtMoney(rec.fineDeduct  || 0)}`} valClass={cls(rec.fineDeduct  || 0)} />
-        <PdItem k="Leave Deduction"           v={`PKR ${fmtMoney(rec.leaveDeduct || 0)}`} valClass={cls(rec.leaveDeduct || 0)} />
-        <PdItem k="Absent Deduction"          v={`PKR ${fmtMoney(rec.absentDeduct|| 0)}`} valClass={cls(rec.absentDeduct|| 0)} />
-        <PdItem k="Custom Loan Deduction"     v={`PKR ${fmtMoney(rec.customLoan  || 0)}`} valClass={cls(rec.customLoan  || 0)} />
-        <PdItem k="Total Deductions"          v={`PKR ${fmtMoney(totalDeduct)}`} valClass={cls(totalDeduct)} />
+        <PdItem k="Loan Deduction" v={`PKR ${fmtMoney(rec.loanDeduct || 0)}`} valClass={cls(rec.loanDeduct || 0)} />
+        <PdItem k="Fine Deduction" v={`PKR ${fmtMoney(rec.fineDeduct || 0)}`} valClass={cls(rec.fineDeduct || 0)} />
+        <PdItem k="Leave Deduction" v={`PKR ${fmtMoney(rec.leaveDeduct || 0)}`} valClass={cls(rec.leaveDeduct || 0)} />
+        <PdItem k="Absent Deduction" v={`PKR ${fmtMoney(rec.absentDeduct || 0)}`} valClass={cls(rec.absentDeduct || 0)} />
+        <PdItem k="Custom Loan Deduction" v={`PKR ${fmtMoney(rec.customLoan || 0)}`} valClass={cls(rec.customLoan || 0)} />
+        <PdItem k="Total Deductions" v={`PKR ${fmtMoney(totalDeduct)}`} valClass={cls(totalDeduct)} />
         <div className="pay-detail-item">
           <label>Payment Status</label>
           <div className="val">
@@ -2310,11 +2312,11 @@ function PayRollModal({
 }) {
   const [tab, setTab] = useState(0);
 
-  const heads      = emp.salaryHeads || [];
+  const heads = emp.salaryHeads || [];
   const allowances = heads.filter(h => h.type === 'allow');
   const deductions = heads.filter(h => h.type === 'deduct');
 
-  const basic     = Number(emp.basicSalary) || 0;
+  const basic = Number(emp.basicSalary) || 0;
   const stdDeduct = getEmpStdDeductions(emp);
 
   /* ── Setup form state (seeded from existing rec if any) ── */
@@ -2333,39 +2335,39 @@ function PayRollModal({
       ? { mode: 'incoming', total: prevMonthDue.total, key: prevMonthDue.key }
       : null);
 
-  const [bonus,         setBonus]         = useState(seed.bonus || 0);
-  const [loanDeduct,    setLoanDeduct]    = useState(seed.loanDeduct !== undefined ? seed.loanDeduct : monthlyLoanDeduct);
-  const [customLoan,    setCustomLoan]    = useState(seed.customLoan || 0);
+  const [bonus, setBonus] = useState(seed.bonus || 0);
+  const [loanDeduct, setLoanDeduct] = useState(seed.loanDeduct !== undefined ? seed.loanDeduct : monthlyLoanDeduct);
+  const [customLoan, setCustomLoan] = useState(seed.customLoan || 0);
 
   /* Loans load asynchronously after the modal opens, so `monthlyLoanDeduct` (the
      sum of active installment amounts) starts at 0. Once it resolves, reflect it
      in "Loan Deduction this Month" so the active installment always shows —
      unless this payroll is already settled, or the user has edited the field. */
   const loanDeductTouched = useRef(false);
-  const loanDeductLocked  = existingRec?.status === 'Paid' || existingRec?.status === 'Partially Paid';
+  const loanDeductLocked = existingRec?.status === 'Paid' || existingRec?.status === 'Partially Paid';
   useEffect(() => {
     if (loanDeductTouched.current || loanDeductLocked) return;
     if (monthlyLoanDeduct > 0) setLoanDeduct(monthlyLoanDeduct);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthlyLoanDeduct]);
-  const [fineDeduct,    setFineDeduct]    = useState(seed.fineDeduct || 0);
-  const [fineComment,   setFineComment]   = useState(seed.fineComment || '');
-  const [leaveCount,    setLeaveCount]    = useState(seed.leaveCount  || 0);
-  const [leaveDeduct,   setLeaveDeduct]   = useState(seed.leaveDeduct || 0);
-  const [leaveComment,  setLeaveComment]  = useState(seed.leaveComment || '');
-  const [absentCount,   setAbsentCount]   = useState(seed.absentCount  || 0);
-  const [absentDeduct,  setAbsentDeduct]  = useState(seed.absentDeduct || 0);
+  const [fineDeduct, setFineDeduct] = useState(seed.fineDeduct || 0);
+  const [fineComment, setFineComment] = useState(seed.fineComment || '');
+  const [leaveCount, setLeaveCount] = useState(seed.leaveCount || 0);
+  const [leaveDeduct, setLeaveDeduct] = useState(seed.leaveDeduct || 0);
+  const [leaveComment, setLeaveComment] = useState(seed.leaveComment || '');
+  const [absentCount, setAbsentCount] = useState(seed.absentCount || 0);
+  const [absentDeduct, setAbsentDeduct] = useState(seed.absentDeduct || 0);
   const [absentComment, setAbsentComment] = useState(seed.absentComment || '');
 
   /* ── Make Payment form state ── */
-  const [payAmount,  setPayAmount]  = useState('');
+  const [payAmount, setPayAmount] = useState('');
   const [payComment, setPayComment] = useState('');
 
   /* If a record already has payments, jump straight to Make Payment tab. */
   useEffect(() => {
     if ((existingRec?.payments || []).length > 0) setTab(1);
     else setTab(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Esc + body lock */
@@ -2402,9 +2404,9 @@ function PayRollModal({
     let alive = true;
     setAttnCalc({ loading: true, done: false, data: null });
     hrService.calculateLeaveAbsentDeduction({
-      employeeID:   emp.id,
+      employeeID: emp.id,
       payrollMonth: PAY_MONTHS.indexOf(month) + 1,
-      payrollYear:  Number(year),
+      payrollYear: Number(year),
     })
       .then((data) => {
         if (!alive) return;
@@ -2420,18 +2422,18 @@ function PayRollModal({
   }, []);
 
   /* ── Make Payment derived state ── */
-  const payments     = existingRec?.payments || [];
-  const totalPaid    = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  const recNet       = existingRec?.netPayable ?? netPayable;
-  const remaining    = Math.max(0, recNet - totalPaid);
-  const isFullyPaid  = remaining <= 0.01;
+  const payments = existingRec?.payments || [];
+  const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const recNet = existingRec?.netPayable ?? netPayable;
+  const remaining = Math.max(0, recNet - totalPaid);
+  const isFullyPaid = remaining <= 0.01;
 
   /* ── Pay Amount Now ki live jaanch ──
      Pehle raqam ki ghalati sirf "Make Payment" dabane par toast me pata chalti
      thi — aur toast modal ke peeche chhup jata tha, is liye lagta tha ke button
      kaam hi nahi kar raha. Ab likhte hi khane ke neeche wajah likh jaati hai
      aur button band ho jata hai. */
-  const payAmt   = Number(payAmount) || 0;
+  const payAmt = Number(payAmount) || 0;
   const payError = isFullyPaid ? '' : (
     payAmount === '' || payAmt <= 0
       ? 'Enter the amount you are paying now.'
@@ -2451,7 +2453,7 @@ function PayRollModal({
     }
     setPayAmount(remaining.toFixed(2).replace(/\.00$/, ''));
     setPayComment('');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, existingRec?.payments?.length, recNet]);
 
   const [savingSetup, setSavingSetup] = useState(false);
@@ -2462,19 +2464,19 @@ function PayRollModal({
     let payrollID = existingRec?.payrollID || 0;
     try {
       const resp = await hrService.saveHrPayrollSetup({
-        employeeID:       emp.id,
-        payrollMonth:     PAY_MONTHS.indexOf(month) + 1,
-        payrollYear:      Number(year),
+        employeeID: emp.id,
+        payrollMonth: PAY_MONTHS.indexOf(month) + 1,
+        payrollYear: Number(year),
         bonus,
-        loanDeduction:    loanDeduct,
+        loanDeduction: loanDeduct,
         customLoanAmount: customLoan,
-        fineDeduction:    fineDeduct,
+        fineDeduction: fineDeduct,
         fineComment,
         leaveCount,
-        leaveDeduction:   leaveDeduct,
+        leaveDeduction: leaveDeduct,
         leaveComment,
         absentCount,
-        absentDeduction:  absentDeduct,
+        absentDeduction: absentDeduct,
         absentComment,
       });
       payrollID = hrService.payrollIdFromSetupResponse(resp) || payrollID;
@@ -2491,9 +2493,9 @@ function PayRollModal({
        aata hai. Is liye save ke turant baad wahi authoritative record dobara fetch
        karke use karte hain, taake displayed Net Payable + remaining server se match karein. */
     try {
-      const mNum   = PAY_MONTHS.indexOf(month) + 1;
-      const fresh  = await hrService.getHrPayrollByBranch(mNum, Number(year));
-      const key    = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
+      const mNum = PAY_MONTHS.indexOf(month) + 1;
+      const fresh = await hrService.getHrPayrollByBranch(mNum, Number(year));
+      const key = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
       const serverRec = fresh?.[emp.id]?.[key];
       if (serverRec && serverRec.netPayable != null) {
         onSaveSetup({ month, year, ...serverRec });
@@ -2515,21 +2517,21 @@ function PayRollModal({
       bonus: Number(bonus),
       totalGross,
       stdDeductions: stdDeduct,
-      loanDeduct:   Number(loanDeduct),
-      customLoan:   Number(customLoan),
-      fineDeduct:   Number(fineDeduct),
-      leaveDeduct:  Number(leaveDeduct),
+      loanDeduct: Number(loanDeduct),
+      customLoan: Number(customLoan),
+      fineDeduct: Number(fineDeduct),
+      leaveDeduct: Number(leaveDeduct),
       absentDeduct: Number(absentDeduct),
       totalDeductions,
-      leaveCount:   Number(leaveCount),
-      absentCount:  Number(absentCount),
+      leaveCount: Number(leaveCount),
+      absentCount: Number(absentCount),
       fineComment, leaveComment, absentComment,
       netPayable,
-      payments:     existingRec?.payments || [],
-      paidAmount:   (existingRec?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0),
-      paidDate:     existingRec?.paidDate || null,
+      payments: existingRec?.payments || [],
+      paidAmount: (existingRec?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+      paidDate: existingRec?.paidDate || null,
       loanRecorded: existingRec?.loanRecorded || false,
-      generatedAt:  existingRec?.generatedAt  || new Date().toISOString().slice(0, 10),
+      generatedAt: existingRec?.generatedAt || new Date().toISOString().slice(0, 10),
     });
     toast('Payroll saved — proceed to Make Payment', 'success');
     setTab(1);
@@ -2552,9 +2554,9 @@ function PayRollModal({
     setPayingNow(true);
     try {
       await hrService.saveHrPayrollPayment({
-        payrollID:   existingRec.payrollID,
-        amount:      amt,
-        comment:     payComment.trim(),
+        payrollID: existingRec.payrollID,
+        amount: amt,
+        comment: payComment.trim(),
         paymentDate: new Date().toISOString(),
       });
     } catch (err) {
@@ -2566,7 +2568,7 @@ function PayRollModal({
 
     const today = new Date().toISOString().slice(0, 10);
     const newPayments = [...payments, { amount: amt, date: today, comment: payComment.trim() }];
-    const paidAmount  = newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const paidAmount = newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const newRemaining = recNet - paidAmount;
     const fullyPaid = newRemaining <= 0.01;
     onRecordPayment({
@@ -2592,7 +2594,7 @@ function PayRollModal({
     if (tab === 0) {
       return {
         label: savingSetup ? 'Saving…' : 'Save & Next',
-        icon:  savingSetup ? 'fa-spinner fa-spin' : 'fa-floppy-disk',
+        icon: savingSetup ? 'fa-spinner fa-spin' : 'fa-floppy-disk',
         onClick: savePRSetup,
         disabled: savingSetup,
       };
@@ -2600,14 +2602,14 @@ function PayRollModal({
     if (isFullyPaid) {
       return {
         label: 'Fully Settled',
-        icon:  'fa-circle-check',
-        onClick: () => {},
+        icon: 'fa-circle-check',
+        onClick: () => { },
         disabled: true,
       };
     }
     return {
       label: payingNow ? 'Processing…' : (totalPaid > 0 ? 'Record Additional Payment' : 'Make Payment'),
-      icon:  payingNow ? 'fa-spinner fa-spin' : 'fa-money-bill-wave',
+      icon: payingNow ? 'fa-spinner fa-spin' : 'fa-money-bill-wave',
       onClick: makePayment,
       /* Raqam ghalat ho to button hi band — pehle click par sirf toast aata tha
          jo modal ke peeche chhup jata, aur user ko lagta ke kuch hua hi nahi. */
@@ -2621,8 +2623,8 @@ function PayRollModal({
      possible once it's been saved (has a payrollID). Opens a confirmation popup
      (mode 'confirm'); if the backend blocks it because payments already exist,
      the popup switches to 'force' mode and retries with force:true. */
-  const [deleting,   setDeleting]   = useState(false);   // footer button spinner
-  const [delMode,    setDelMode]    = useState(null);    // null | 'confirm' | 'force'
+  const [deleting, setDeleting] = useState(false);   // footer button spinner
+  const [delMode, setDelMode] = useState(null);    // null | 'confirm' | 'force'
   const [delMessage, setDelMessage] = useState('');      // backend message in force mode
   const openDeletePayroll = () => {
     if (!existingRec?.payrollID) {
@@ -2971,15 +2973,15 @@ function PayRollModal({
           )}
           <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
           {((tab === 0 && canCreate) || (tab !== 0 && canApprove)) && (
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={footerBtn.onClick}
-            disabled={footerBtn.disabled}
-            style={footerBtn.disabled ? { opacity: .55, cursor: 'not-allowed' } : undefined}
-          >
-            <i className={`fa-solid ${footerBtn.icon}`} aria-hidden="true"></i> {footerBtn.label}
-          </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={footerBtn.onClick}
+              disabled={footerBtn.disabled}
+              style={footerBtn.disabled ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+            >
+              <i className={`fa-solid ${footerBtn.icon}`} aria-hidden="true"></i> {footerBtn.label}
+            </button>
           )}
         </div>
       </div>
@@ -3013,17 +3015,17 @@ function AdvLoanModal({
   const today = new Date().toISOString().slice(0, 10);
 
   /* ── Set Up New Loan form ── */
-  const [loanAmount,        setLoanAmount]        = useState('');
-  const [loanComment,       setLoanComment]       = useState('');
-  const [repayType,         setRepayType]         = useState('');
-  const [deductDate,        setDeductDate]        = useState(today);
-  const [installmentType,   setInstallmentType]   = useState('');
+  const [loanAmount, setLoanAmount] = useState('');
+  const [loanComment, setLoanComment] = useState('');
+  const [repayType, setRepayType] = useState('');
+  const [deductDate, setDeductDate] = useState(today);
+  const [installmentType, setInstallmentType] = useState('');
   const [installmentAmount, setInstallmentAmount] = useState('');
 
   /* ── Loan Repayment form ── */
-  const [repayLoanId,  setRepayLoanId]  = useState(activeLoans[0]?.id || '');
-  const [repayAmount,  setRepayAmount]  = useState('');
-  const [repayDate,    setRepayDate]    = useState(today);
+  const [repayLoanId, setRepayLoanId] = useState(activeLoans[0]?.id || '');
+  const [repayAmount, setRepayAmount] = useState('');
+  const [repayDate, setRepayDate] = useState(today);
   const [repayComment, setRepayComment] = useState('');
 
   /* Confirmation for mark-returned */
@@ -3057,9 +3059,9 @@ function AdvLoanModal({
 
   const handleSaveNew = async () => {
     const ok = await onSaveNew({
-      amount:            Number(loanAmount) || 0,
-      comment:           loanComment.trim(),
-      repaymentType:     repayType,
+      amount: Number(loanAmount) || 0,
+      comment: loanComment.trim(),
+      repaymentType: repayType,
       deductDate,
       installmentType,
       installmentAmount: Number(installmentAmount) || 0,
@@ -3072,9 +3074,9 @@ function AdvLoanModal({
 
   const handleSaveRepay = async () => {
     const ok = await onSaveRepay({
-      loanId:  Number(repayLoanId),
-      amount:  Number(repayAmount) || 0,
-      date:    repayDate,
+      loanId: Number(repayLoanId),
+      amount: Number(repayAmount) || 0,
+      date: repayDate,
       comment: repayComment.trim(),
     });
     if (ok) {
@@ -3211,32 +3213,32 @@ function AdvLoanModal({
                   {/* Installment Type + Amount sirf "Installment" repayment par — One Time
                       (ya kuch select na ho) par ye fields hide rehti hain. */}
                   {repayType === 'Installment' && (
-                  <>
-                  <div className="pr-field">
-                    <label>Installment Type</label>
-                    <select
-                      value={installmentType}
-                      onChange={(e) => setInstallmentType(e.target.value)}
-                    >
-                      <option value="">Select here</option>
-                      <option value="None">None</option>
-                      <option value="Monthly">Monthly</option>
-                      <option value="Quarterly">Quarterly</option>
-                      <option value="BiAnnually">BiAnnually</option>
-                      <option value="Annually">Annually</option>
-                    </select>
-                  </div>
-                  <div className="pr-field">
-                    <label>Installment Amount</label>
-                    <input
-                      type="number"
-                      min={0}
-                      placeholder="0.00"
-                      value={installmentAmount}
-                      onChange={(e) => setInstallmentAmount(e.target.value)}
-                    />
-                  </div>
-                  </>
+                    <>
+                      <div className="pr-field">
+                        <label>Installment Type</label>
+                        <select
+                          value={installmentType}
+                          onChange={(e) => setInstallmentType(e.target.value)}
+                        >
+                          <option value="">Select here</option>
+                          <option value="None">None</option>
+                          <option value="Monthly">Monthly</option>
+                          <option value="Quarterly">Quarterly</option>
+                          <option value="BiAnnually">BiAnnually</option>
+                          <option value="Annually">Annually</option>
+                        </select>
+                      </div>
+                      <div className="pr-field">
+                        <label>Installment Amount</label>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="0.00"
+                          value={installmentAmount}
+                          onChange={(e) => setInstallmentAmount(e.target.value)}
+                        />
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -3429,15 +3431,15 @@ function AdvLoanModal({
       {confLoan && (
         <ConfirmDialog
           cfg={{
-            title:        'Mark Loan as Returned',
-            message:      `Mark <strong>Loan #${confLoan.loanNumber}</strong> (PKR ${fmtMoney(confLoan.amount)}) as fully returned?`,
-            hint:         `Remaining balance of PKR ${fmtMoney(confLoan.remaining)} will be marked settled.`,
+            title: 'Mark Loan as Returned',
+            message: `Mark <strong>Loan #${confLoan.loanNumber}</strong> (PKR ${fmtMoney(confLoan.amount)}) as fully returned?`,
+            hint: `Remaining balance of PKR ${fmtMoney(confLoan.remaining)} will be marked settled.`,
             confirmLabel: 'Yes, Mark Returned',
             confirmStyle: 'primary',
-            icon:         'fa-circle-check',
-            iconBg:       'rgba(22,163,74,.1)',
-            iconColor:    '#16A34A',
-            onConfirm:    () => onMarkReturned(confLoan.id),
+            icon: 'fa-circle-check',
+            iconBg: 'rgba(22,163,74,.1)',
+            iconColor: '#16A34A',
+            onConfirm: () => onMarkReturned(confLoan.id),
           }}
           onClose={() => setConfLoan(null)}
         />
@@ -3454,9 +3456,9 @@ function AdvLoanModal({
    new window for print / save-as-PDF.
    ═══════════════════════════════════════════════════════════════════ */
 const RSP_META = {
-  salaryslip: { title: 'Salary Slip',           sub: 'Monthly payslip',                       icon: 'fa-file-invoice-dollar', iconBg: 'rgba(30,58,138,.12)',  iconColor: '#1E3A8A', range: 'single' },
-  history:    { title: 'Pay History Ledger',    sub: 'Detailed history with date range',      icon: 'fa-clock-rotate-left',   iconBg: 'rgba(124,58,237,.12)', iconColor: '#7C3AED', range: 'period' },
-  loan:       { title: 'Loan / Advance Report', sub: 'Full loan account with transactions',   icon: 'fa-hand-holding-dollar', iconBg: 'rgba(22,163,74,.12)',  iconColor: '#16A34A', range: false    },
+  salaryslip: { title: 'Salary Slip', sub: 'Monthly payslip', icon: 'fa-file-invoice-dollar', iconBg: 'rgba(30,58,138,.12)', iconColor: '#1E3A8A', range: 'single' },
+  history: { title: 'Pay History Ledger', sub: 'Detailed history with date range', icon: 'fa-clock-rotate-left', iconBg: 'rgba(124,58,237,.12)', iconColor: '#7C3AED', range: 'period' },
+  loan: { title: 'Loan / Advance Report', sub: 'Full loan account with transactions', icon: 'fa-hand-holding-dollar', iconBg: 'rgba(22,163,74,.12)', iconColor: '#16A34A', range: false },
 };
 
 function RspModal({ emp, type, month, year, onClose, onGenerate }) {
@@ -3468,8 +3470,8 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
   const monthIdx = PAY_MONTHS.indexOf(month) + 1;
   const seedMonthKey = `${year}-${String(monthIdx || 1).padStart(2, '0')}`;
   const [rspMonth, setRspMonth] = useState(seedMonthKey);
-  const [rspFrom,  setRspFrom]  = useState(`${year}-01`);
-  const [rspTo,    setRspTo]    = useState(seedMonthKey);
+  const [rspFrom, setRspFrom] = useState(`${year}-01`);
+  const [rspTo, setRspTo] = useState(seedMonthKey);
 
   /* Style + format ab shared StandardReportPicker me CHUNE jaate hain aur
      report uske "Download" button se banti hai (card-click par report banne
@@ -3477,8 +3479,8 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
   const [busy, setBusy] = useState(false);
 
   const picked = () => {
-    if (meta.range === 'single')      return { monthKey: rspMonth };
-    if (meta.range === 'period')      return { fromKey: rspFrom, toKey: rspTo };
+    if (meta.range === 'single') return { monthKey: rspMonth };
+    if (meta.range === 'period') return { fromKey: rspFrom, toKey: rspTo };
     return {};
   };
 
@@ -3546,22 +3548,22 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
    ═══════════════════════════════════════════════════════════════════ */
 function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEmpId, toast, canCreate = true, canEdit = true, canDelete = true, canDownload = true, canAssign = true }) {
   const [sub, setSub] = useState('active');
-  const [q,   setQ]   = useState('');
-  const [fDept,  setFDept]  = useState('');
+  const [q, setQ] = useState('');
+  const [fDept, setFDept] = useState('');
   const [fDesig, setFDesig] = useState('');
   const [openEmpId, setOpenEmpId] = useState(null);
   const [menuOpenId, setMenuOpenId] = useState(null);
-  const [addOpen,  setAddOpen]  = useState(false);
-  const [editFor,  setEditFor]  = useState(null);   // emp to edit
+  const [addOpen, setAddOpen] = useState(false);
+  const [editFor, setEditFor] = useState(null);   // emp to edit
   const [inactFor, setInactFor] = useState(null);   // emp to mark inactive
-  const [idcFor,   setIdcFor]   = useState(null);   // emp for ID card
+  const [idcFor, setIdcFor] = useState(null);   // emp for ID card
   const [letterFor, setLetterFor] = useState(null); // emp for Issue Letter
   const [viewLetterFor, setViewLetterFor] = useState(null); // letter to view (PDF/Word)
   const [letterConfirm, setLetterConfirm] = useState(null); // { empId, letter } pending delete
   const [profileFor, setProfileFor] = useState(null); // emp for Profile Report
   /* Duplicate-number popup (Launch Setup jaisa): number pehle se ho to email maango,
      email ko phone field me daal kar (email ke through) dobara add/update karo. */
-  const [dupEmp,   setDupEmp]   = useState(null);   // { payload, mode:'add'|'edit' }
+  const [dupEmp, setDupEmp] = useState(null);   // { payload, mode:'add'|'edit' }
   const [dupEmail, setDupEmail] = useState('');
 
   /* Pull the fresh staff list back from the API so newly-saved salary amounts
@@ -3609,40 +3611,40 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
     else saveNewEmployee(newPayload);
   };
 
-const confirmMarkInactive = async (payload) => {
-  const id = payload.id;
-  try {
-    await hrService.deleteHrEmployee({ id });
-    setEmps(prev => (prev || []).map(e => e.id === id ? {
-      ...e,
-      status: 'Inactive',
-      inactiveReason: payload.reason,
-      inactiveDate:   payload.date,
-      inactiveNotes:  payload.notes,
-    } : e));
-    setInactFor(null);
-    setSub('inactive');
-    toast(`${payload.name} marked Inactive`, 'success');
-  } catch (err) {
-    toast(err.message || 'Could not mark employee inactive', 'error');
-  }
-};
-const markActiveAgain = async (emp) => {
-  try {
-    await hrService.restoreHrEmployee({ id: emp.id });
-    setEmps(prev => (prev || []).map(e => e.id === emp.id ? {
-      ...e,
-      status: 'Active',
-      inactiveReason: undefined,
-      inactiveDate:   undefined,
-      inactiveNotes:  undefined,
-    } : e));
-    setSub('active');
-    toast(`${getFullName(emp)} marked Active again`, 'success');
-  } catch (err) {
-    toast(err.message || 'Could not mark employee active', 'error');
-  }
-};
+  const confirmMarkInactive = async (payload) => {
+    const id = payload.id;
+    try {
+      await hrService.deleteHrEmployee({ id });
+      setEmps(prev => (prev || []).map(e => e.id === id ? {
+        ...e,
+        status: 'Inactive',
+        inactiveReason: payload.reason,
+        inactiveDate: payload.date,
+        inactiveNotes: payload.notes,
+      } : e));
+      setInactFor(null);
+      setSub('inactive');
+      toast(`${payload.name} marked Inactive`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not mark employee inactive', 'error');
+    }
+  };
+  const markActiveAgain = async (emp) => {
+    try {
+      await hrService.restoreHrEmployee({ id: emp.id });
+      setEmps(prev => (prev || []).map(e => e.id === emp.id ? {
+        ...e,
+        status: 'Active',
+        inactiveReason: undefined,
+        inactiveDate: undefined,
+        inactiveNotes: undefined,
+      } : e));
+      setSub('active');
+      toast(`${getFullName(emp)} marked Active again`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not mark employee active', 'error');
+    }
+  };
   /* Fetch an employee's issued letters (from the branch endpoint, filtered)
      and store them on emp.letters so the detail panel lists them. */
   const loadEmpLetters = async (empId) => {
@@ -3687,18 +3689,18 @@ const markActiveAgain = async (emp) => {
   };
 
   /* Sub-tab counts — based on ALL employees, not the filtered slice. */
-  const activeCount   = useMemo(() => emps.filter(e => e.status === 'Active').length, [emps]);
+  const activeCount = useMemo(() => emps.filter(e => e.status === 'Active').length, [emps]);
   const inactiveCount = useMemo(() => emps.filter(e => e.status !== 'Active').length, [emps]);
 
   /* Filtered list */
   const list = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    const fd = Number(fDept)  || 0;
+    const fd = Number(fDept) || 0;
     const fds = Number(fDesig) || 0;
     return emps.filter(e => {
       const isInactive = e.status !== 'Active';
       if (sub === 'inactive' && !isInactive) return false;
-      if (sub === 'active'   &&  isInactive) return false;
+      if (sub === 'active' && isInactive) return false;
       if (fd && Number(e.dId) !== fd) return false;
       if (fds && Number(e.desId) !== fds) return false;
       if (qq) {
@@ -3710,9 +3712,9 @@ const markActiveAgain = async (emp) => {
   }, [emps, sub, q, fDept, fDesig]);
 
   /* Lookup maps for the department + designation badges. */
-  const deptMap  = useMemo(() => new Map(depts.map(d => [d.id, d])),  [depts]);
+  const deptMap = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
-  const getDeptName  = (id) => deptMap.get(id)?.name  || '—';
+  const getDeptName = (id) => deptMap.get(id)?.name || '—';
   const getDesigName = (id) => desigMap.get(id)?.name || '—';
 
   /* Close 3-dots dropdown on outside click. */
@@ -3813,16 +3815,16 @@ const markActiveAgain = async (emp) => {
             </select>
           </Tooltip>
           {canCreate && (
-          <Tooltip text="Add a new employee with full personal, official and salary details">
-            <button
-              type="button"
-              className="btn-add"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => setAddOpen(true)}
-            >
-              <i className="fa-solid fa-user-plus" aria-hidden="true"></i> Add Employee
-            </button>
-          </Tooltip>
+            <Tooltip text="Add a new employee with full personal, official and salary details">
+              <button
+                type="button"
+                className="btn-add"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => setAddOpen(true)}
+              >
+                <i className="fa-solid fa-user-plus" aria-hidden="true"></i> Add Employee
+              </button>
+            </Tooltip>
           )}
         </div>
 
@@ -3851,37 +3853,37 @@ const markActiveAgain = async (emp) => {
         ) : (
           <div>
             {list.map((e, i) => (
-         <EmployeeRow
-  key={e.id}
-  idx={i + 1}
-  emp={e}
-  depts={depts}
-  desigs={desigs}
-  deptName={getDeptName(e.dId)}
-  desigName={getDesigName(e.desId)}
-  isOpen={openEmpId === e.id}
-  onToggleOpen={() => setOpenEmpId(prev => {
-    const next = prev === e.id ? null : e.id;
-    if (next === e.id) loadEmpLetters(e.id);   // load letters on expand
-    return next;
-  })}
-  menuOpen={menuOpenId === e.id}
-  onToggleMenu={() => setMenuOpenId(prev => prev === e.id ? null : e.id)}
-  onCloseMenu={() => setMenuOpenId(null)}
-  onEdit={()      => { setMenuOpenId(null); setEditFor(e); }}
-  onProfile={()   => { setMenuOpenId(null); setProfileFor(e); }}
-  onIdCard={()    => { setMenuOpenId(null); setIdcFor(e); }}
-  onLetter={()    => { setMenuOpenId(null); setLetterFor(e); }}
-  onInactive={()  => { setMenuOpenId(null); setInactFor(e); }}
-  onRestore={()   => { setMenuOpenId(null); markActiveAgain(e); }}
-  onViewLetter={viewLetter}
-  onDeleteLetter={(letter) => setLetterConfirm({ empId: e.id, letter })}
-  toast={toast}
-  canEdit={canEdit}
-  canDelete={canDelete}
-  canDownload={canDownload}
-  canAssign={canAssign}
-/>
+              <EmployeeRow
+                key={e.id}
+                idx={i + 1}
+                emp={e}
+                depts={depts}
+                desigs={desigs}
+                deptName={getDeptName(e.dId)}
+                desigName={getDesigName(e.desId)}
+                isOpen={openEmpId === e.id}
+                onToggleOpen={() => setOpenEmpId(prev => {
+                  const next = prev === e.id ? null : e.id;
+                  if (next === e.id) loadEmpLetters(e.id);   // load letters on expand
+                  return next;
+                })}
+                menuOpen={menuOpenId === e.id}
+                onToggleMenu={() => setMenuOpenId(prev => prev === e.id ? null : e.id)}
+                onCloseMenu={() => setMenuOpenId(null)}
+                onEdit={() => { setMenuOpenId(null); setEditFor(e); }}
+                onProfile={() => { setMenuOpenId(null); setProfileFor(e); }}
+                onIdCard={() => { setMenuOpenId(null); setIdcFor(e); }}
+                onLetter={() => { setMenuOpenId(null); setLetterFor(e); }}
+                onInactive={() => { setMenuOpenId(null); setInactFor(e); }}
+                onRestore={() => { setMenuOpenId(null); markActiveAgain(e); }}
+                onViewLetter={viewLetter}
+                onDeleteLetter={(letter) => setLetterConfirm({ empId: e.id, letter })}
+                toast={toast}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                canDownload={canDownload}
+                canAssign={canAssign}
+              />
             ))}
           </div>
         )}
@@ -3989,13 +3991,13 @@ const markActiveAgain = async (emp) => {
       {letterConfirm && (
         <ConfirmDialog
           cfg={{
-            title:        'Delete Issued Letter',
-            message:      `Delete <strong>${letterConfirm.letter.label}</strong>${letterConfirm.letter.date ? ` (${letterConfirm.letter.date})` : ''}?`,
-            hint:         'This permanently removes the letter from this employee’s record.',
+            title: 'Delete Issued Letter',
+            message: `Delete <strong>${letterConfirm.letter.label}</strong>${letterConfirm.letter.date ? ` (${letterConfirm.letter.date})` : ''}?`,
+            hint: 'This permanently removes the letter from this employee’s record.',
             confirmLabel: 'Yes, Delete Letter',
             confirmStyle: 'danger',
-            icon:         'fa-trash',
-            onConfirm:    () => deleteLetter(letterConfirm.empId, letterConfirm.letter),
+            icon: 'fa-trash',
+            onConfirm: () => deleteLetter(letterConfirm.empId, letterConfirm.letter),
           }}
           onClose={() => setLetterConfirm(null)}
         />
@@ -4017,9 +4019,9 @@ function getFullName(e) {
    Save as PDF (print the preview) or Download the Word (.doc) file.
    ═══════════════════════════════════════════════════════════════════ */
 function LetterViewModal({ letter, onClose, toast }) {
-  const [html, setHtml]       = useState('');
+  const [html, setHtml] = useState('');
   const [loading, setLoading] = useState(true);
-  const [err, setErr]         = useState('');
+  const [err, setErr] = useState('');
   const frameRef = useRef(null);
 
   useEffect(() => {
@@ -4050,8 +4052,8 @@ function LetterViewModal({ letter, onClose, toast }) {
     /* Real .docx that embeds the full letter HTML (same design as the PDF/
        preview) via altChunk — Word renders the letterhead, colours & layout. */
     const blob = buildDocxFromHtml(html);
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
     a.href = url;
     a.download = `${(letter.label || 'letter').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}.docx`;
     document.body.appendChild(a); a.click(); a.remove();
@@ -4126,11 +4128,11 @@ function DocViewModal({ doc, onClose }) {
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [onClose]);
 
-  const url  = doc?.path || '';
+  const url = doc?.path || '';
   const name = doc?.name || 'Document';
-  const ext  = (url.split('?')[0].split('#')[0].match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  const ext = (url.split('?')[0].split('#')[0].match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
   const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
-  const isPdf   = ext === 'pdf';
+  const isPdf = ext === 'pdf';
 
   /* Open a print dialog for the document → browser "Save as PDF". PDFs/other
      files print via their iframe; images are wrapped in a print window. */
@@ -4218,15 +4220,15 @@ function EmployeeRow({
   toast,
   canEdit = true, canDelete = true, canDownload = true, canAssign = true,
 }) {
-  const nm  = getFullName(emp);
+  const nm = getFullName(emp);
   const ini = nm.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
   const isInactive = emp.status !== 'Active';
 
-  const taskCount   = (emp.tasks   || []).length;
+  const taskCount = (emp.tasks || []).length;
   const letterCount = (emp.letters || []).length;
-  const docCount    = Object.keys(emp.stdDocs || {}).length + (emp.docs || []).length;
-  const subjCount   = Object.values(emp.subjects || {}).reduce((s, arr) => s + (arr?.length || 0), 0);
-  const attCount    = (emp.attendance || []).length;
+  const docCount = Object.keys(emp.stdDocs || {}).length + (emp.docs || []).length;
+  const subjCount = Object.values(emp.subjects || {}).reduce((s, arr) => s + (arr?.length || 0), 0);
+  const attCount = (emp.attendance || []).length;
 
   const stubAction = (label) => {
     onCloseMenu();
@@ -4307,50 +4309,50 @@ function EmployeeRow({
                 {isInactive ? (
                   <>
                     {canDownload && (
-                    <button type="button" className="drop-item" onClick={onProfile}>
-                      <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
-                    </button>
+                      <button type="button" className="drop-item" onClick={onProfile}>
+                        <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
+                      </button>
                     )}
                     {canAssign && (
-                    <button type="button" className="drop-item" onClick={onLetter}>
-                      <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
-                    </button>
+                      <button type="button" className="drop-item" onClick={onLetter}>
+                        <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
+                      </button>
                     )}
-                  <button type="button" className="drop-item" style={{ color: '#16A34A' }} onClick={onRestore}>
-  <i className="fa-solid fa-user-check" aria-hidden="true"></i> Mark Active Again
-</button>
-                    {canDelete && (
-                    <button type="button" className="drop-item red" onClick={() => stubAction('Delete Employee')}>
-                      <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete Employee
+                    <button type="button" className="drop-item" style={{ color: '#16A34A' }} onClick={onRestore}>
+                      <i className="fa-solid fa-user-check" aria-hidden="true"></i> Mark Active Again
                     </button>
+                    {canDelete && (
+                      <button type="button" className="drop-item red" onClick={() => stubAction('Delete Employee')}>
+                        <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete Employee
+                      </button>
                     )}
                   </>
                 ) : (
                   <>
                     {canEdit && (
-                    <button type="button" className="drop-item" onClick={onEdit}>
-                      <i className="fa-solid fa-pen" aria-hidden="true"></i> Edit Employee
-                    </button>
+                      <button type="button" className="drop-item" onClick={onEdit}>
+                        <i className="fa-solid fa-pen" aria-hidden="true"></i> Edit Employee
+                      </button>
                     )}
                     {canDownload && (
-                    <>
-                    <button type="button" className="drop-item" onClick={onProfile}>
-                      <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
-                    </button>
-                    <button type="button" className="drop-item" onClick={onIdCard}>
-                      <i className="fa-solid fa-id-card" aria-hidden="true"></i> Generate Staff ID Card
-                    </button>
-                    </>
+                      <>
+                        <button type="button" className="drop-item" onClick={onProfile}>
+                          <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
+                        </button>
+                        <button type="button" className="drop-item" onClick={onIdCard}>
+                          <i className="fa-solid fa-id-card" aria-hidden="true"></i> Generate Staff ID Card
+                        </button>
+                      </>
                     )}
                     {canAssign && (
-                    <button type="button" className="drop-item" onClick={onLetter}>
-                      <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
-                    </button>
+                      <button type="button" className="drop-item" onClick={onLetter}>
+                        <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
+                      </button>
                     )}
                     {canDelete && (
-                    <button type="button" className="drop-item red" onClick={onInactive}>
-                      <i className="fa-solid fa-user-slash" aria-hidden="true"></i> Mark Inactive
-                    </button>
+                      <button type="button" className="drop-item red" onClick={onInactive}>
+                        <i className="fa-solid fa-user-slash" aria-hidden="true"></i> Mark Inactive
+                      </button>
                     )}
                   </>
                 )}
@@ -4404,16 +4406,18 @@ function EmployeeRow({
    ═══════════════════════════════════════════════════════════════════ */
 
 const HR_CLASS_LIST = [
-  { id: 1, name: 'class 1A', sections: [
-    { id: 11, name: 'B' }, { id: 12, name: 'C' }, { id: 13, name: 'D' },
-    { id: 14, name: 'Green f' }, { id: 15, name: 'New' },
-  ]},
-  { id: 2, name: 'II-Pre',  sections: [{ id: 21, name: 'A' }] },
+  {
+    id: 1, name: 'class 1A', sections: [
+      { id: 11, name: 'B' }, { id: 12, name: 'C' }, { id: 13, name: 'D' },
+      { id: 14, name: 'Green f' }, { id: 15, name: 'New' },
+    ]
+  },
+  { id: 2, name: 'II-Pre', sections: [{ id: 21, name: 'A' }] },
   { id: 3, name: 'III-Pre', sections: [{ id: 31, name: '2' }] },
-  { id: 4, name: 'I',       sections: [{ id: 41, name: 'Green' }, { id: 42, name: 'White' }] },
-  { id: 5, name: 'II',      sections: [{ id: 51, name: 'A' }, { id: 52, name: 'B' }] },
-  { id: 6, name: 'III',     sections: [{ id: 61, name: 'A' }] },
-  { id: 7, name: 'IV',      sections: [{ id: 71, name: 'A' }] },
+  { id: 4, name: 'I', sections: [{ id: 41, name: 'Green' }, { id: 42, name: 'White' }] },
+  { id: 5, name: 'II', sections: [{ id: 51, name: 'A' }, { id: 52, name: 'B' }] },
+  { id: 6, name: 'III', sections: [{ id: 61, name: 'A' }] },
+  { id: 7, name: 'IV', sections: [{ id: 71, name: 'A' }] },
 ];
 
 const HR_SUBJECT_LIST = [
@@ -4427,11 +4431,11 @@ const HR_SUBJECT_LIST = [
 /* Fixed employee document slots — key matches hrService.HR_EMP_DOC_TYPES;
    `type` is the backend documentType sent on upload. */
 const HR_DOC_SLOTS = [
-  { key: 'cnic',       type: 'CNIC',             icon: 'fa-id-card',        label: 'CNIC' },
-  { key: 'degree',     type: 'Degree',           icon: 'fa-graduation-cap', label: 'Degree / Certificate' },
-  { key: 'experience', type: 'ExperienceLetter', icon: 'fa-briefcase',      label: 'Experience Letter' },
-  { key: 'contract',   type: 'Contract',         icon: 'fa-file-signature', label: 'Contract' },
-  { key: 'resume',     type: 'Resume',           icon: 'fa-file-lines',     label: 'Resume / CV' },
+  { key: 'cnic', type: 'CNIC', icon: 'fa-id-card', label: 'CNIC' },
+  { key: 'degree', type: 'Degree', icon: 'fa-graduation-cap', label: 'Degree / Certificate' },
+  { key: 'experience', type: 'ExperienceLetter', icon: 'fa-briefcase', label: 'Experience Letter' },
+  { key: 'contract', type: 'Contract', icon: 'fa-file-signature', label: 'Contract' },
+  { key: 'resume', type: 'Resume', icon: 'fa-file-lines', label: 'Resume / CV' },
 ];
 
 /* The three allowances are fixed employee columns on the backend, so they are
@@ -4442,8 +4446,8 @@ const HR_DOC_SLOTS = [
    "— Deduct" pill purely as a visual label (see the fixed-head render). */
 function hrDefaultSalaryHeads() {
   return [
-    { name: 'Medical Allowance',   amount: 0, type: 'allow', fixed: true },
-    { name: 'Rent Allowance',      amount: 0, type: 'allow', fixed: true },
+    { name: 'Medical Allowance', amount: 0, type: 'allow', fixed: true },
+    { name: 'Rent Allowance', amount: 0, type: 'allow', fixed: true },
     { name: 'Transport Allowance', amount: 0, type: 'allow', fixed: true },
   ];
 }
@@ -4451,9 +4455,9 @@ function hrDefaultSalaryHeads() {
 function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose, onSave, toast }) {
   const isEdit = mode === 'edit';
   const photoRef = useRef(null);
-  const [tab, setTab]             = useState(0);
+  const [tab, setTab] = useState(0);
   const [assignTab, setAssignTab] = useState(0);
-  const [saving, setSaving]       = useState(false);          // true while the save APIs run
+  const [saving, setSaving] = useState(false);          // true while the save APIs run
   const [removedHeadIds, setRemovedHeadIds] = useState([]);   // custom heads to delete on save
 
   /* ── Seeded form state — Add mode mirrors openAddEmp(); Edit mode
@@ -4483,7 +4487,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     stdDocs: {},
     docs: [],
     photo: '',
-    subjects:   {},
+    subjects: {},
     attendance: [],
   };
   const [form, setForm] = useState(() => {
@@ -4493,28 +4497,28 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       ...emp,
       leaves: { ...blank.leaves, ...(emp.leaves || {}) },
       salaryHeads: emp.salaryHeads ? emp.salaryHeads.map(h => ({ ...h })) : blank.salaryHeads,
-      stdDocs:    emp.stdDocs ? { ...emp.stdDocs } : {},
-      docs:       Array.isArray(emp.docs) ? emp.docs.map(d => ({ ...d })) : [],
-      subjects:   emp.subjects   ? JSON.parse(JSON.stringify(emp.subjects))   : {},
+      stdDocs: emp.stdDocs ? { ...emp.stdDocs } : {},
+      docs: Array.isArray(emp.docs) ? emp.docs.map(d => ({ ...d })) : [],
+      subjects: emp.subjects ? JSON.parse(JSON.stringify(emp.subjects)) : {},
       attendance: Array.isArray(emp.attendance) ? [...emp.attendance] : [],
     };
   });
 
-  const [openClasses,  setOpenClasses]  = useState({});
+  const [openClasses, setOpenClasses] = useState({});
   const [openSections, setOpenSections] = useState({});
 
   /* ── Cascading location + qualification lookups (real /api/Setting data) ── */
-  const [countryList,  setCountryList]  = useState([]);
+  const [countryList, setCountryList] = useState([]);
   const [provinceList, setProvinceList] = useState([]);
-  const [cityList,     setCityList]     = useState([]);
-  const [qualList,     setQualList]     = useState([]);
+  const [cityList, setCityList] = useState([]);
+  const [qualList, setQualList] = useState([]);
 
   /* Real classes/sections + lazily-loaded subjects for the Assignments tab. */
-  const [hrGrades,      setHrGrades]      = useState([]);
+  const [hrGrades, setHrGrades] = useState([]);
   const [subjectsByKey, setSubjectsByKey] = useState({});   // { "gradeId_sectionId": [{id,name}] }
   useEffect(() => {
     let alive = true;
-    hrService.getHrGrades().then(g => alive && setHrGrades(g)).catch(() => {});
+    hrService.getHrGrades().then(g => alive && setHrGrades(g)).catch(() => { });
     return () => { alive = false; };
   }, []);
   const loadSubjectsFor = (gradeId, sectionId) => {
@@ -4533,10 +4537,10 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
      dropdowns show the current selection. */
   useEffect(() => {
     let alive = true;
-    hrService.getHrCountries().then(l => alive && setCountryList(l)).catch(() => {});
-    hrService.getHrQualifications().then(l => alive && setQualList(l)).catch(() => {});
-    if (form.countryID)  hrService.getHrProvinces(form.countryID).then(l => alive && setProvinceList(l)).catch(() => {});
-    if (form.provinceID) hrService.getHrCities(form.provinceID).then(l => alive && setCityList(l)).catch(() => {});
+    hrService.getHrCountries().then(l => alive && setCountryList(l)).catch(() => { });
+    hrService.getHrQualifications().then(l => alive && setQualList(l)).catch(() => { });
+    if (form.countryID) hrService.getHrProvinces(form.countryID).then(l => alive && setProvinceList(l)).catch(() => { });
+    if (form.provinceID) hrService.getHrCities(form.provinceID).then(l => alive && setCityList(l)).catch(() => { });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -4544,12 +4548,12 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   const onCountryChange = (val) => {
     setForm(f => ({ ...f, countryID: val, provinceID: '', cityID: '' }));
     setProvinceList([]); setCityList([]);
-    if (val) hrService.getHrProvinces(val).then(setProvinceList).catch(() => {});
+    if (val) hrService.getHrProvinces(val).then(setProvinceList).catch(() => { });
   };
   const onProvinceChange = (val) => {
     setForm(f => ({ ...f, provinceID: val, cityID: '' }));
     setCityList([]);
-    if (val) hrService.getHrCities(val).then(setCityList).catch(() => {});
+    if (val) hrService.getHrCities(val).then(setCityList).catch(() => { });
   };
 
   /* Leave settings live on their own endpoint — on edit, pull the saved record
@@ -4559,13 +4563,13 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     let alive = true;
     hrService.getHrLeaveSettings(emp.id)
       .then(l => { if (alive && l) setForm(f => ({ ...f, leaves: { ...f.leaves, ...l } })); })
-      .catch(() => {});
+      .catch(() => { });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Snapshot the subject + attendance assignments at open so save toggles only the diff. */
-  const subjectsOriginalRef   = useRef(JSON.parse(JSON.stringify(emp?.subjects || {})));
+  const subjectsOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.subjects || {})));
   const attendanceOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.attendance || [])));
 
   /* Esc dismisses, body lock */
@@ -4588,7 +4592,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       const first = desigs.find(d => String(d.dId) === String(form.dId));
       setForm(f => ({ ...f, desId: first ? first.id : '' }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.dId]);
 
   const filteredDesigs = useMemo(
@@ -4605,7 +4609,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   };
 
   /* ── Generic setters ── */
-  const set      = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const setLeave = (k, v) => setForm(f => ({ ...f, leaves: { ...f.leaves, [k]: v } }));
 
   /* ── Salary heads helpers ── */
@@ -4613,7 +4617,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     ...f, salaryHeads: f.salaryHeads.map((h, idx) => idx === i ? { ...h, ...patch } : h),
   }));
   const toggleHeadType = (i) => setHead(i, { type: form.salaryHeads[i].type === 'allow' ? 'deduct' : 'allow' });
-  const addHead    = () => setForm(f => ({ ...f, salaryHeads: [...f.salaryHeads, { name: '', amount: 0, type: 'allow', fixed: false }] }));
+  const addHead = () => setForm(f => ({ ...f, salaryHeads: [...f.salaryHeads, { name: '', amount: 0, type: 'allow', fixed: false }] }));
   const removeHead = (i) => setForm(f => {
     const h = f.salaryHeads[i];
     if (h?.fixed) return f;                              // fixed heads can't be removed
@@ -4622,17 +4626,17 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   });
 
   /* ── Live salary summary ── */
-  const allowTotal  = form.salaryHeads.filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
+  const allowTotal = form.salaryHeads.filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const deductTotal = form.salaryHeads.filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
-  const basicNum    = Number(form.basicSalary) || 0;
-  const netSalary   = basicNum + allowTotal - deductTotal;
-  const fmtMoney    = (n) => Number(n || 0).toLocaleString('en-US');
+  const basicNum = Number(form.basicSalary) || 0;
+  const netSalary = basicNum + allowTotal - deductTotal;
+  const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US');
 
   /* ── Photo + document upload ── */
   const onPhotoPick = (file) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) { toast('Please pick an image file', 'error'); return; }
-    if (file.size > 1.5 * 1024 * 1024)   { toast('Image must be under 1.5 MB', 'error'); return; }
+    if (file.size > 1.5 * 1024 * 1024) { toast('Image must be under 1.5 MB', 'error'); return; }
     setForm(f => ({ ...f, photoFile: file }));           // real File for the multipart upload
     const reader = new FileReader();
     reader.onload = (e) => set('photo', e.target.result);
@@ -4654,7 +4658,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   };
   const onEmpDocFile = (e) => {
     const file = e.target.files && e.target.files[0];
-    const key  = pendingDocKeyRef.current;
+    const key = pendingDocKeyRef.current;
     if (!file || !key) return;
     setForm(f => ({ ...f, stdDocs: { ...f.stdDocs, [key]: { file, name: file.name } } }));
     pendingDocKeyRef.current = null;
@@ -4696,15 +4700,15 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     setForm(f => {
       const k = subjKey(cId, sId);
       const next = { ...f.subjects };
-      const arr  = (next[k] || []).slice();
-      const i    = arr.indexOf(subId);
+      const arr = (next[k] || []).slice();
+      const i = arr.indexOf(subId);
       if (i >= 0) arr.splice(i, 1); else arr.push(subId);
       if (arr.length === 0) delete next[k]; else next[k] = arr;
       return { ...f, subjects: next };
     });
   };
-  const toggleClassOpen   = (cId)       => setOpenClasses(o => ({ ...o, [cId]: !o[cId] }));
-  const toggleSectionOpen = (cId, sId)  => {
+  const toggleClassOpen = (cId) => setOpenClasses(o => ({ ...o, [cId]: !o[cId] }));
+  const toggleSectionOpen = (cId, sId) => {
     const k = subjKey(cId, sId);
     setOpenSections(o => ({ ...o, [k]: !o[k] }));
     loadSubjectsFor(cId, sId);   // fetch real subjects the first time it opens
@@ -4731,15 +4735,15 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     };
   });
   const attendSelectAll = () => setForm(f => ({ ...f, attendance: allSections.map(s => ({ ...s })) }));
-  const attendClearAll  = () => setForm(f => ({ ...f, attendance: [] }));
+  const attendClearAll = () => setForm(f => ({ ...f, attendance: [] }));
 
   /* ── Submit (mirrors saveEmp() in the HTML) ── */
   const submit = async () => {
     if (saving) return;
-    if (!form.firstName.trim()) { toast('First name required', 'error');        setTab(0); return; }
-    if (!form.cnic.trim())      { toast('CNIC required', 'error');              setTab(0); return; }
-    if (!form.fn.trim())        { toast('Father / Husband name required', 'error'); setTab(0); return; }
-    if (!form.phone.trim())     { toast('Mobile number required', 'error');     setTab(0); return; }
+    if (!form.firstName.trim()) { toast('First name required', 'error'); setTab(0); return; }
+    if (!form.cnic.trim()) { toast('CNIC required', 'error'); setTab(0); return; }
+    if (!form.fn.trim()) { toast('Father / Husband name required', 'error'); setTab(0); return; }
+    if (!form.phone.trim()) { toast('Mobile number required', 'error'); setTab(0); return; }
     if (!form.dId || !form.desId) { toast('Department & Designation required', 'error'); setTab(1); return; }
 
     /* Documents the user picked this session (each carries a real File). Fixed
@@ -4766,11 +4770,11 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       removedDocIds,
       leaves: {
         ...form.leaves,
-        annual:    Number(form.leaves.annual)    || 0,
-        casual:    Number(form.leaves.casual)    || 0,
-        sick:      Number(form.leaves.sick)      || 0,
+        annual: Number(form.leaves.annual) || 0,
+        casual: Number(form.leaves.casual) || 0,
+        sick: Number(form.leaves.sick) || 0,
         maternity: Number(form.leaves.maternity) || 0,
-        balance:   Number(form.leaves.balance)   || 0,
+        balance: Number(form.leaves.balance) || 0,
         absentDed: Number(form.leaves.absentDed) || 0,
         unpaidDed: Number(form.leaves.unpaidDed) || 0,
       },
@@ -4792,12 +4796,12 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   const goNext = () => setTab(t => Math.min(5, t + 1));
 
   const TAB_DEFS = [
-    ['fa-user',                'Personal Information'],
-    ['fa-briefcase',           'Official Details'],
-    ['fa-money-bill-wave',     'Salary Details'],
-    ['fa-calendar-minus',      'Leave Details'],
-    ['fa-file-lines',          'Documents'],
-    ['fa-list-check',          'Assignments'],
+    ['fa-user', 'Personal Information'],
+    ['fa-briefcase', 'Official Details'],
+    ['fa-money-bill-wave', 'Salary Details'],
+    ['fa-calendar-minus', 'Leave Details'],
+    ['fa-file-lines', 'Documents'],
+    ['fa-list-check', 'Assignments'],
   ];
 
   return createPortal((
@@ -4905,7 +4909,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                 <div className="f-group"><label className="f-label">Email</label><input type="email" className="f-input" placeholder="email@school.com" value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
                 <div className="f-group"><label className="f-label">Blood Group</label>
                   <select className="f-select2" value={form.blood} onChange={(e) => set('blood', e.target.value)}>
-                    {['A+','A-','B+','B-','O+','O-','AB+','AB-'].map(b => <option key={b}>{b}</option>)}
+                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map(b => <option key={b}>{b}</option>)}
                   </select>
                 </div>
               </div>
@@ -5317,18 +5321,18 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                                         : subs.length === 0
                                           ? <span style={{ color: 'var(--tm)', fontWeight: 600, padding: 8 }}>No subjects for this section.</span>
                                           : subs.map(sub => {
-                                              const ck = (form.subjects[sKey] || []).includes(sub.id);
-                                              return (
-                                                <div
-                                                  key={sub.id}
-                                                  className={`assign-subj-pill${ck ? ' checked' : ''}`}
-                                                  onClick={() => toggleSubject(cls.id, sec.id, sub.id)}
-                                                >
-                                                  <div className="check-icon"><i className="fa-solid fa-check" aria-hidden="true"></i></div>
-                                                  <span>{sub.name}</span>
-                                                </div>
-                                              );
-                                            })}
+                                            const ck = (form.subjects[sKey] || []).includes(sub.id);
+                                            return (
+                                              <div
+                                                key={sub.id}
+                                                className={`assign-subj-pill${ck ? ' checked' : ''}`}
+                                                onClick={() => toggleSubject(cls.id, sec.id, sub.id)}
+                                              >
+                                                <div className="check-icon"><i className="fa-solid fa-check" aria-hidden="true"></i></div>
+                                                <span>{sub.name}</span>
+                                              </div>
+                                            );
+                                          })}
                                     </div>
                                   </div>
                                 </div>
@@ -5460,11 +5464,11 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
     return () => { alive = false; };
   }, [emp?.id]);
   const leaves = liveLeaves || emp.leaves || {};
-  const allow  = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
+  const allow = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const deduct = (emp.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
-  const basic  = Number(emp.basicSalary) || 0;
-  const net    = basic + allow - deduct;
-  const fmt    = (n) => `PKR ${Number(n || 0).toLocaleString('en-PK')}`;
+  const basic = Number(emp.basicSalary) || 0;
+  const net = basic + allow - deduct;
+  const fmt = (n) => `PKR ${Number(n || 0).toLocaleString('en-PK')}`;
 
   /* Prefer the names the API returns with each assignment; fall back to the
      mock class/subject lists only if no display rows are present. */
@@ -5489,45 +5493,45 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
   return (
     <div className="emp-detail">
       <ProfSection title="Personal Information" icon="fa-id-card">
-        <ProfKv k="Full Name"        v={getFullName(emp)} />
+        <ProfKv k="Full Name" v={getFullName(emp)} />
         <ProfKv k="Father / Husband" v={emp.fn} />
-        <ProfKv k="CNIC"             v={emp.cnic} />
-        <ProfKv k="Date of Birth"    v={emp.dob} />
-        <ProfKv k="Gender"           v={emp.gender} />
-        <ProfKv k="Marital Status"   v={emp.marital} />
-        <ProfKv k="Blood Group"      v={emp.blood} />
-        <ProfKv k="Mobile"           v={emp.phone} />
-        <ProfKv k="Email"            v={emp.email} />
-        <ProfKv k="Emergency"        v={emp.emergency} />
-        <ProfKv k="Nationality"      v={emp.nationality} />
-        <ProfKv k="Address"          v={emp.address} span={2} />
+        <ProfKv k="CNIC" v={emp.cnic} />
+        <ProfKv k="Date of Birth" v={emp.dob} />
+        <ProfKv k="Gender" v={emp.gender} />
+        <ProfKv k="Marital Status" v={emp.marital} />
+        <ProfKv k="Blood Group" v={emp.blood} />
+        <ProfKv k="Mobile" v={emp.phone} />
+        <ProfKv k="Email" v={emp.email} />
+        <ProfKv k="Emergency" v={emp.emergency} />
+        <ProfKv k="Nationality" v={emp.nationality} />
+        <ProfKv k="Address" v={emp.address} span={2} />
       </ProfSection>
 
       <ProfSection title="Official Details" icon="fa-briefcase">
-        <ProfKv k="Employee ID"      v={emp.eid} />
-        <ProfKv k="Date of Joining"  v={emp.join} />
-        <ProfKv k="Status"           v={emp.status} />
-        <ProfKv k="Department"       v={deptName} />
-        <ProfKv k="Designation"      v={desigName} />
-        <ProfKv k="Employment Type"  v={emp.type} />
-        <ProfKv k="Reporting To"     v={emp.manager} />
-        <ProfKv k="Qualification"    v={emp.qual} />
-        <ProfKv k="Experience"       v={emp.exp} />
-        <ProfKv k="Shift"            v={emp.shift} />
-        <ProfKv k="Country"          v={emp.country} />
-        <ProfKv k="Province"         v={emp.province} />
-        <ProfKv k="City"             v={emp.city} />
-        <ProfKv k="Role"             v={emp.role} span={3} />
+        <ProfKv k="Employee ID" v={emp.eid} />
+        <ProfKv k="Date of Joining" v={emp.join} />
+        <ProfKv k="Status" v={emp.status} />
+        <ProfKv k="Department" v={deptName} />
+        <ProfKv k="Designation" v={desigName} />
+        <ProfKv k="Employment Type" v={emp.type} />
+        <ProfKv k="Reporting To" v={emp.manager} />
+        <ProfKv k="Qualification" v={emp.qual} />
+        <ProfKv k="Experience" v={emp.exp} />
+        <ProfKv k="Shift" v={emp.shift} />
+        <ProfKv k="Country" v={emp.country} />
+        <ProfKv k="Province" v={emp.province} />
+        <ProfKv k="City" v={emp.city} />
+        <ProfKv k="Role" v={emp.role} span={3} />
       </ProfSection>
 
       <ProfSection title="Salary Details" icon="fa-money-bill-wave">
-        <ProfKv k="Basic Salary"   v={fmt(basic)} highlight />
-        <ProfKv k="Allowances"     v={`+ ${fmt(allow)}`} highlight />
-        <ProfKv k="Deductions"     v={`– ${fmt(deduct)}`} highlight />
-        <ProfKv k="Net Salary"     v={fmt(net)} highlight />
+        <ProfKv k="Basic Salary" v={fmt(basic)} highlight />
+        <ProfKv k="Allowances" v={`+ ${fmt(allow)}`} highlight />
+        <ProfKv k="Deductions" v={`– ${fmt(deduct)}`} highlight />
+        <ProfKv k="Net Salary" v={fmt(net)} highlight />
         <ProfKv k="Payment Method" v={emp.payMethod} />
-        <ProfKv k="Bank Name"      v={emp.bankName} />
-        <ProfKv k="Bank Account"   v={emp.bankAcc} span={2} />
+        <ProfKv k="Bank Name" v={emp.bankName} />
+        <ProfKv k="Bank Account" v={emp.bankAcc} span={2} />
       </ProfSection>
 
       {(emp.salaryHeads || []).length > 0 && (
@@ -5544,18 +5548,18 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
       )}
 
       <ProfSection title="Leave Details" icon="fa-calendar-minus">
-        <ProfKv k="Annual"        v={leaves.annual} />
-        <ProfKv k="Casual"        v={leaves.casual} />
-        <ProfKv k="Sick"          v={leaves.sick} />
-        <ProfKv k="Maternity"     v={leaves.maternity} />
-        <ProfKv k="Balance"       v={leaves.balance} />
-        <ProfKv k="Policy"        v={leaves.policy} />
+        <ProfKv k="Annual" v={leaves.annual} />
+        <ProfKv k="Casual" v={leaves.casual} />
+        <ProfKv k="Sick" v={leaves.sick} />
+        <ProfKv k="Maternity" v={leaves.maternity} />
+        <ProfKv k="Balance" v={leaves.balance} />
+        <ProfKv k="Policy" v={leaves.policy} />
         {/* 0 bhi asli value hai — is liye `? :` se dash nahi lagate, warna
             "koi deduction nahi" aur "set hi nahi" aik jaise dikhte hain. */}
-        <ProfKv k="Absent Ded."   v={leaves.absentDed === '' || leaves.absentDed == null ? '' : fmt(leaves.absentDed)} />
-        <ProfKv k="Unpaid Ded."   v={leaves.unpaidDed === '' || leaves.unpaidDed == null ? '' : fmt(leaves.unpaidDed)} />
+        <ProfKv k="Absent Ded." v={leaves.absentDed === '' || leaves.absentDed == null ? '' : fmt(leaves.absentDed)} />
+        <ProfKv k="Unpaid Ded." v={leaves.unpaidDed === '' || leaves.unpaidDed == null ? '' : fmt(leaves.unpaidDed)} />
         {/* Modal me ye toggle set hota hai magar details me kabhi dikhta nahi tha. */}
-        <ProfKv k="Deduction"     v={leaves.deductEn === false ? 'Disabled' : 'Enabled'} span={2} />
+        <ProfKv k="Deduction" v={leaves.deductEn === false ? 'Disabled' : 'Enabled'} span={2} />
       </ProfSection>
 
       <div className="emp-detail-cols">
@@ -5717,8 +5721,8 @@ function ProfKv({ k, v, span, highlight }) {
 function MarkInactiveModal({ emp, onClose, onConfirm }) {
   const today = new Date().toISOString().slice(0, 10);
   const [reason, setReason] = useState('Resignation');
-  const [date,   setDate]   = useState(today);
-  const [notes,  setNotes]  = useState('');
+  const [date, setDate] = useState(today);
+  const [notes, setNotes] = useState('');
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -5800,15 +5804,25 @@ function MarkInactiveModal({ emp, onClose, onConfirm }) {
    STAFF ID CARD MODAL — Vertical/Horizontal picker → live card preview.
    
    ═══════════════════════════════════════════════════════════════════ */
-   function staffQrValue(emp) {
-    const id = String(emp?.id ?? '').trim();
-    if (id && id !== '0') return id;
-    return String(emp?.eid || '').trim();
-  }
-  
-  function staffQrSVG(value) {
-    return qrSVG(value, { quiet: 4 });
-  }
+function staffQrValue(emp) {
+  const id = String(emp?.id ?? '').trim();
+  if (id && id !== '0') return id;
+  return String(emp?.eid || '').trim();
+}
+
+function staffQrSVG(value) {
+  return qrSVG(value, { quiet: 4 });
+}
+// function staffQrValue(emp) {
+//   const id = String(emp?.id ?? '').trim();
+//   if (id && id !== '0') return id;
+//   return String(emp?.eid || '').trim();
+// }
+
+// function staffQrSVG(value) {
+//   return qrSVG(value, { quiet: 4 });
+// }
+
 function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
   const [layout, setLayout] = useState('v');     // 'v' | 'h'
   const [generated, setGenerated] = useState(false);
@@ -5922,7 +5936,7 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                       <div><span>Blood</span><b>{emp.blood || '—'}</b></div>
                     </div>
                     <div className="idc-r-foot">
-                    <div className="idc-r-qr" dangerouslySetInnerHTML={{ __html: staffQrSVG(staffQrValue(emp)) }} />
+                      <div className="idc-r-qr" dangerouslySetInnerHTML={{ __html: staffQrSVG(staffQrValue(emp)) }} />
                       <div className="idc-r-validity">Session {session}<br /><small>Valid till {validity}</small></div>
                     </div>
                   </div>
@@ -6116,40 +6130,40 @@ const LETTER_TEMPLATES = {
 
 function fillLetterTemplate(tpl, e, deptName, desigName, schoolName) {
   return (tpl || '')
-    .replace(/\{name\}/g,            getFullName(e))
-    .replace(/\{designation\}/g,     desigName || '—')
-    .replace(/\{department\}/g,      deptName || '—')
-    .replace(/\{school\}/g,          schoolName || 'School Mentor')
-    .replace(/\{joinDate\}/g,        fmtDate(e.join))
-    .replace(/\{inactiveDate\}/g,    fmtDate(e.inactiveDate) || '[Inactive Date]')
+    .replace(/\{name\}/g, getFullName(e))
+    .replace(/\{designation\}/g, desigName || '—')
+    .replace(/\{department\}/g, deptName || '—')
+    .replace(/\{school\}/g, schoolName || 'School Mentor')
+    .replace(/\{joinDate\}/g, fmtDate(e.join))
+    .replace(/\{inactiveDate\}/g, fmtDate(e.inactiveDate) || '[Inactive Date]')
     .replace(/\{serviceDuration\}/g, empSvcDuration(e))
-    .replace(/\{cnic\}/g,            e.cnic || '—');
+    .replace(/\{cnic\}/g, e.cnic || '—');
 }
 
 function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
   const isInactive = emp.status !== 'Active';
   const templateNames = isInactive ? INACTIVE_LETTERS : ACTIVE_LETTERS;
-  const defaultType   = isInactive ? 'Experience Letter' : 'Appointment Letter';
+  const defaultType = isInactive ? 'Experience Letter' : 'Appointment Letter';
 
   const today = new Date().toISOString().slice(0, 10);
   const initialRef = `HR/${new Date().getFullYear()}/${String(((emp.letters || []).length + 1)).padStart(4, '0')}`;
 
   /* ── Settings state ── */
-  const [type,         setType]        = useState(defaultType);
-  const [letterDate,   setLetterDate]  = useState(today);
-  const [ref,          setRef]         = useState(initialRef);
-  const [subject,      setSubject]     = useState('');
-  const [content,      setContent]     = useState('');
-  const [issuedBy,     setIssuedBy]    = useState('HR Department');
-  const [schoolName,   setSchoolName]  = useState('School Mentor');
-  const [schoolAddr,   setSchoolAddr]  = useState('Islamabad, Pakistan');
-  const [logoName,     setLogoName]    = useState('Upload Logo');
-  const [logoData,     setLogoData]    = useState('');
-  const [sigP,         setSigP]        = useState(true);
-  const [sigD,         setSigD]        = useState(false);
-  const [sigH,         setSigH]        = useState(true);
-  const [style,        setStyle]       = useState('color');
-  const [issuing,      setIssuing]     = useState(false);
+  const [type, setType] = useState(defaultType);
+  const [letterDate, setLetterDate] = useState(today);
+  const [ref, setRef] = useState(initialRef);
+  const [subject, setSubject] = useState('');
+  const [content, setContent] = useState('');
+  const [issuedBy, setIssuedBy] = useState('HR Department');
+  const [schoolName, setSchoolName] = useState('School Mentor');
+  const [schoolAddr, setSchoolAddr] = useState('Islamabad, Pakistan');
+  const [logoName, setLogoName] = useState('Upload Logo');
+  const [logoData, setLogoData] = useState('');
+  const [sigP, setSigP] = useState(true);
+  const [sigD, setSigD] = useState(false);
+  const [sigH, setSigH] = useState(true);
+  const [style, setStyle] = useState('color');
+  const [issuing, setIssuing] = useState(false);
   const logoRef = useRef(null);
 
   useEffect(() => {
@@ -6169,7 +6183,7 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
     fetchReportHeader().then((b) => {
       if (!alive || !b) return;
       if (b.branchName) setSchoolName(b.branchName);
-      if (b.address)    setSchoolAddr(b.address);
+      if (b.address) setSchoolAddr(b.address);
       if (b.branchLogo) { setLogoData(b.branchLogo); setLogoName('Branch Logo'); }
     });
     return () => { alive = false; };
@@ -6183,7 +6197,7 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
     const tpl = LETTER_TEMPLATES[type] || LETTER_TEMPLATES['Custom Letter'];
     setSubject(tpl.subject ? fillLetterTemplate(tpl.subject, emp, deptName, desigName, schoolName) : '');
     setContent(fillLetterTemplate(tpl.content, emp, deptName, desigName, schoolName));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
   const onLogoPick = (file) => {
@@ -6198,8 +6212,8 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
     : { justifyContent: 'center', borderColor: '#BFDBFE' };
 
   const sigs = [];
-  if (sigP) sigs.push({ title: 'Principal',  sub: `For & on behalf of ${schoolName || 'School Mentor'}` });
-  if (sigD) sigs.push({ title: 'Director',   sub: 'Board of Governors' });
+  if (sigP) sigs.push({ title: 'Principal', sub: `For & on behalf of ${schoolName || 'School Mentor'}` });
+  if (sigD) sigs.push({ title: 'Director', sub: 'Board of Governors' });
   if (sigH) sigs.push({ title: 'HR Manager', sub: 'Human Resource Dept.' });
   if (sigs.length === 0) sigs.push({ title: 'Authorized Signatory', sub: schoolName || 'School Mentor' });
 
@@ -6487,11 +6501,11 @@ const LETTER_PRINT_CSS = `
    ═══════════════════════════════════════════════════════════════════ */
 
 const RPT_DOC_META = [
-  { key: 'cnic',       name: 'CNIC',                 icon: 'fa-id-card' },
-  { key: 'degree',     name: 'Degree / Certificate', icon: 'fa-graduation-cap' },
-  { key: 'experience', name: 'Experience Letter',    icon: 'fa-briefcase' },
-  { key: 'contract',   name: 'Contract',             icon: 'fa-file-signature' },
-  { key: 'resume',     name: 'Resume / CV',          icon: 'fa-file-lines' },
+  { key: 'cnic', name: 'CNIC', icon: 'fa-id-card' },
+  { key: 'degree', name: 'Degree / Certificate', icon: 'fa-graduation-cap' },
+  { key: 'experience', name: 'Experience Letter', icon: 'fa-briefcase' },
+  { key: 'contract', name: 'Contract', icon: 'fa-file-signature' },
+  { key: 'resume', name: 'Resume / CV', icon: 'fa-file-lines' },
 ];
 
 function defaultFinancial() {
@@ -6503,7 +6517,7 @@ function defaultFinancial() {
     securityDepositReturned: 0,
     otherRecoveries: 0,
     finalSettlement: 'pending',
-    clearanceStatus:  'pending',
+    clearanceStatus: 'pending',
   };
 }
 
@@ -6519,8 +6533,8 @@ function empSvcDuration(e) {
   if (m < 0) { y--; m += 12; }
   if (y < 0) return '—';
   const parts = [];
-  if (y > 0)             parts.push(`${y} Year${y !== 1 ? 's' : ''}`);
-  if (m > 0 || y > 0)    parts.push(`${m} Month${m !== 1 ? 's' : ''}`);
+  if (y > 0) parts.push(`${y} Year${y !== 1 ? 's' : ''}`);
+  if (m > 0 || y > 0) parts.push(`${m} Month${m !== 1 ? 's' : ''}`);
   parts.push(`${d} Day${d !== 1 ? 's' : ''}`);
   return parts.join(' ');
 }
@@ -6561,17 +6575,17 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
   /* Aggregated state */
-  const tasks      = emp.tasks      || [];
-  const letters    = emp.letters    || [];
-  const docs       = emp.docs       || [];
-  const stdDocs    = emp.stdDocs    || {};
-  const subjMap    = emp.subjects   || {};
-  const attCls     = emp.attendance || [];
+  const tasks = emp.tasks || [];
+  const letters = emp.letters || [];
+  const docs = emp.docs || [];
+  const stdDocs = emp.stdDocs || {};
+  const subjMap = emp.subjects || {};
+  const attCls = emp.attendance || [];
 
-  const allowTotal  = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
+  const allowTotal = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const deductTotal = (emp.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
-  const basicNum    = Number(emp.basicSalary) || 0;
-  const netSalary   = basicNum + allowTotal - deductTotal;
+  const basicNum = Number(emp.basicSalary) || 0;
+  const netSalary = basicNum + allowTotal - deductTotal;
 
   /* Flatten subject + attendance maps using the seed lists */
   /* Prefer the API's assignment names; fall back to the mock lists. */
@@ -6596,8 +6610,8 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
   const netPosition = depOut - ((Number(f.salaryAdvance) || 0) + (Number(f.loanBalance) || 0) + (Number(f.otherRecoveries) || 0));
 
   const isActive = emp.status === 'Active';
-  const statusBg     = isActive ? 'rgba(22,163,74,.12)' : 'rgba(217,119,6,.14)';
-  const statusFg     = isActive ? '#16A34A' : '#D97706';
+  const statusBg = isActive ? 'rgba(22,163,74,.12)' : 'rgba(217,119,6,.14)';
+  const statusFg = isActive ? '#16A34A' : '#D97706';
   const statusBorder = isActive ? 'rgba(22,163,74,.3)' : 'rgba(217,119,6,.3)';
 
   const num = (n) => Number(n || 0).toLocaleString('en-US');
@@ -6726,12 +6740,12 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
                 </div>
                 <div className="report-overview-role">{desigName} · {deptName}</div>
                 <div className="report-kv-grid g3">
-                  <RKv k="Employee ID"        v={emp.eid} />
-                  <RKv k="Department"         v={deptName} />
-                  <RKv k="Designation"        v={desigName} />
-                  <RKv k="Joining Date"       v={fmtDate(emp.join)} />
-                  <RKv k="Employment Status"  v={emp.status} valueStyle={{ color: statusFg, fontWeight: 800 }} />
-                  <RKv k="Employment Type"    v={emp.type || '—'} />
+                  <RKv k="Employee ID" v={emp.eid} />
+                  <RKv k="Department" v={deptName} />
+                  <RKv k="Designation" v={desigName} />
+                  <RKv k="Joining Date" v={fmtDate(emp.join)} />
+                  <RKv k="Employment Status" v={emp.status} valueStyle={{ color: statusFg, fontWeight: 800 }} />
+                  <RKv k="Employment Type" v={emp.type || '—'} />
                 </div>
               </div>
             </div>
@@ -6748,19 +6762,19 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
           <div className="report-sec">
             <div className="report-sec-title"><span className="report-sec-num">2</span> Personal Information</div>
             <div className="report-kv-grid">
-              <RKv k="First Name"        v={emp.firstName || fullName} />
-              <RKv k="Last Name"         v={emp.lastName || '—'} />
-              <RKv k="Father / Husband"  v={emp.fn || '—'} />
-              <RKv k="CNIC"              v={emp.cnic || '—'} />
-              <RKv k="Date of Birth"     v={fmtDate(emp.dob)} />
-              <RKv k="Gender"            v={emp.gender || '—'} />
-              <RKv k="Marital Status"    v={emp.marital || '—'} />
-              <RKv k="Blood Group"       v={emp.blood || '—'} />
-              <RKv k="Mobile"            v={emp.phone || '—'} />
-              <RKv k="Email"             v={emp.email || '—'} />
+              <RKv k="First Name" v={emp.firstName || fullName} />
+              <RKv k="Last Name" v={emp.lastName || '—'} />
+              <RKv k="Father / Husband" v={emp.fn || '—'} />
+              <RKv k="CNIC" v={emp.cnic || '—'} />
+              <RKv k="Date of Birth" v={fmtDate(emp.dob)} />
+              <RKv k="Gender" v={emp.gender || '—'} />
+              <RKv k="Marital Status" v={emp.marital || '—'} />
+              <RKv k="Blood Group" v={emp.blood || '—'} />
+              <RKv k="Mobile" v={emp.phone || '—'} />
+              <RKv k="Email" v={emp.email || '—'} />
               <RKv k="Emergency Contact" v={emp.emergency || '—'} />
-              <RKv k="Nationality"       v={emp.nationality || '—'} />
-              <RKv k="Address"           v={emp.address || '—'} span={4} />
+              <RKv k="Nationality" v={emp.nationality || '—'} />
+              <RKv k="Address" v={emp.address || '—'} span={4} />
             </div>
           </div>
 
@@ -6768,19 +6782,19 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
           <div className="report-sec">
             <div className="report-sec-title"><span className="report-sec-num">3</span> Official Details</div>
             <div className="report-kv-grid">
-              <RKv k="Employee ID"        v={emp.eid} />
-              <RKv k="Joining Date"       v={fmtDate(emp.join)} />
-              <RKv k="Status"             v={emp.status} />
-              <RKv k="Employment Type"    v={emp.type} />
-              <RKv k="Department"         v={deptName} />
-              <RKv k="Designation"        v={desigName} />
-              <RKv k="Reporting Manager"  v={emp.manager || '—'} />
-              <RKv k="Qualification"      v={emp.qual || '—'} />
-              <RKv k="Experience"         v={emp.exp || '—'} />
-              <RKv k="Shift / Timing"     v={emp.shift || '—'} />
-              <RKv k="Country"            v={emp.country || '—'} />
-              <RKv k="Province"           v={emp.province || '—'} />
-              <RKv k="City"               v={emp.city || '—'} />
+              <RKv k="Employee ID" v={emp.eid} />
+              <RKv k="Joining Date" v={fmtDate(emp.join)} />
+              <RKv k="Status" v={emp.status} />
+              <RKv k="Employment Type" v={emp.type} />
+              <RKv k="Department" v={deptName} />
+              <RKv k="Designation" v={desigName} />
+              <RKv k="Reporting Manager" v={emp.manager || '—'} />
+              <RKv k="Qualification" v={emp.qual || '—'} />
+              <RKv k="Experience" v={emp.exp || '—'} />
+              <RKv k="Shift / Timing" v={emp.shift || '—'} />
+              <RKv k="Country" v={emp.country || '—'} />
+              <RKv k="Province" v={emp.province || '—'} />
+              <RKv k="City" v={emp.city || '—'} />
               {emp.role && <RKv k="Job Role / Responsibilities" v={emp.role} span={4} />}
             </div>
           </div>
@@ -6789,9 +6803,9 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
           <div className="report-sec">
             <div className="report-sec-title"><span className="report-sec-num">4</span> Salary Details</div>
             <div className="report-kv-grid">
-              <RKv k="Basic Salary"   v={`PKR ${num(basicNum)}`} />
+              <RKv k="Basic Salary" v={`PKR ${num(basicNum)}`} />
               <RKv k="Payment Method" v={emp.payMethod || '—'} />
-              <RKv k="Bank Name"      v={emp.bankName || '—'} />
+              <RKv k="Bank Name" v={emp.bankName || '—'} />
               <RKv k="Account / IBAN" v={emp.bankAcc || '—'} />
             </div>
             {(emp.salaryHeads || []).length > 0 && (
@@ -6830,15 +6844,15 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
           <div className="report-sec">
             <div className="report-sec-title"><span className="report-sec-num">5</span> Leave Details</div>
             <div className="report-kv-grid">
-              <RKv k="Annual Leaves"           v={emp.leaves?.annual ?? '—'} />
-              <RKv k="Casual Leaves"           v={emp.leaves?.casual ?? '—'} />
-              <RKv k="Sick Leaves"             v={emp.leaves?.sick ?? '—'} />
-              <RKv k="Maternity / Paternity"   v={emp.leaves?.maternity ?? '—'} />
-              <RKv k="Leave Balance"           v={emp.leaves?.balance ?? '—'} />
-              <RKv k="Leave Policy"            v={emp.leaves?.policy || '—'} />
-              <RKv k="Deduction Enabled"       v={emp.leaves?.deductEn ? 'Yes' : 'No'} />
-              <RKv k="Absent Deduction / Day"  v={`PKR ${num(emp.leaves?.absentDed)}`} />
-              <RKv k="Unpaid Leave Deduction"  v={`PKR ${num(emp.leaves?.unpaidDed)}`} span={2} />
+              <RKv k="Annual Leaves" v={emp.leaves?.annual ?? '—'} />
+              <RKv k="Casual Leaves" v={emp.leaves?.casual ?? '—'} />
+              <RKv k="Sick Leaves" v={emp.leaves?.sick ?? '—'} />
+              <RKv k="Maternity / Paternity" v={emp.leaves?.maternity ?? '—'} />
+              <RKv k="Leave Balance" v={emp.leaves?.balance ?? '—'} />
+              <RKv k="Leave Policy" v={emp.leaves?.policy || '—'} />
+              <RKv k="Deduction Enabled" v={emp.leaves?.deductEn ? 'Yes' : 'No'} />
+              <RKv k="Absent Deduction / Day" v={`PKR ${num(emp.leaves?.absentDed)}`} />
+              <RKv k="Unpaid Leave Deduction" v={`PKR ${num(emp.leaves?.unpaidDed)}`} span={2} />
             </div>
           </div>
 
@@ -6942,9 +6956,9 @@ function ProfileReportModal({ emp, deptName, desigName, onClose, toast }) {
             <div className="report-sec-title"><span className="report-sec-num">10</span> Employment History &amp; Status</div>
             <div className="report-kv-grid">
               <RKv k="Employment Status" v={emp.status} valueStyle={{ color: statusFg, fontWeight: 800 }} />
-              <RKv k="Joined On"         v={fmtDate(emp.join)} />
+              <RKv k="Joined On" v={fmtDate(emp.join)} />
               <RKv k={isActive ? 'Tenure' : 'Inactive On'} v={isActive ? 'Ongoing' : (fmtDate(emp.inactiveDate) || '—')} />
-              <RKv k="Total Service"     v={empSvcDuration(emp)} valueStyle={{ fontWeight: 800, color: '#1E3A8A' }} />
+              <RKv k="Total Service" v={empSvcDuration(emp)} valueStyle={{ fontWeight: 800, color: '#1E3A8A' }} />
               {!isActive && (
                 <RKv k="Exit Reason" v={emp.inactiveReason || '—'} valueStyle={{ fontWeight: 700 }} span={2} />
               )}
