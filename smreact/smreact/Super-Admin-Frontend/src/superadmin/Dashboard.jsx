@@ -455,10 +455,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         </>
       )}
 
-      {/* ─── 1LINK / 1BILL TRANSACTION MONITORING & REVENUE ─── */}
-      {canPay && <OneLinkOverviewSection toast={toast} />}
-
-      {/* ─── SCHOOL OVERVIEW ─── */}
+        {/* ─── SCHOOL OVERVIEW ─── */}
       {canProgress && (
         <>
           <div className="section-hdr">
@@ -521,6 +518,14 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               overall={totalStaff} newSignup={d.staff.newSignup} signupColor="#D97706" />
           </div>
 
+               </>
+      )}
+
+      {/* ─── 1LINK / 1BILL TRANSACTION MONITORING & REVENUE ─── */}
+      {canPay && <OneLinkOverviewSection toast={toast} />}
+
+      {canProgress && (
+        <>
           {/* ─── BUGS SUMMARY ─── */}
           <div className="section-hdr" style={{ justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

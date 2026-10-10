@@ -296,6 +296,8 @@ function Comparison({ val }) {
 function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState('transactions');
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
 
   const rows = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -304,27 +306,45 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
     return list;
   }, [schoolWise, q, sort]);
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const curPage = Math.min(page, totalPages);
+  const start = (curPage - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+
+  /* Page buttons: 1 … 4 5 6 … 12 (116 entries par bhi chhote rehte hain) */
+  const pageNums = [];
+  for (let n = 1; n <= totalPages; n++) {
+    if (n === 1 || n === totalPages || Math.abs(n - curPage) <= 1) pageNums.push(n);
+    else if (pageNums[pageNums.length - 1] !== '…') pageNums.push('…');
+  }
+
   const body = (
     <>
       <div className="rpt-filter-bar">
         <div className="f-field-grow">
           <div className="search-box" style={{ width: '100%' }}>
             <i className="fa-solid fa-magnifying-glass" />
-            <input className="search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by school name, ID or branch…" />
+            <input className="search-input" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search by school name, ID or branch…" />
           </div>
         </div>
         <div className="f-field">
+          <label className="f-label">Show</label>
+          <select className="f-input" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ width: 80 }}>
+            <option value={10}>10</option><option value={25}>25</option><option value={50}>50</option>
+          </select>
+        </div>
+        <div className="f-field">
           <label className="f-label">Sort By</label>
-          <select className="f-input" value={sort} onChange={(e) => setSort(e.target.value)} style={{ width: 190 }}>
+          <select className="f-input" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }} style={{ width: 190 }}>
             <option value="transactions">Highest Transactions</option>
             <option value="collection">Highest Collection</option>
             <option value="revenue">Highest School Mentor Revenue</option>
           </select>
         </div>
       </div>
-      <div className="tbl-wrap">
+        <div className="tbl-wrap" style={{ maxHeight: 15 * 48 + 44, overflowY: 'auto' }}>
         <table className="rpt-table">
-          <thead>
+          <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: '#fff' }}>
             <tr>
               <th style={{ width: 40 }}>#</th><th>School</th><th style={{ width: 110 }}>School ID</th>
               <th style={{ width: 100, textAlign: 'right' }}>Transactions</th>
@@ -336,9 +356,9 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
           <tbody>
             {rows.length === 0 ? (
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: 'var(--tm)' }}><i className="fa-solid fa-school" style={{ fontSize: 24, opacity: 0.25, display: 'block', margin: '0 auto 10px' }} />{q.trim() ? 'No school matches your search.' : 'No schools loaded yet.'}</td></tr>
-            ) : rows.map((r, i) => (
+                  ) : pageRows.map((r, i) => (
               <tr key={r.schoolId} style={{ cursor: 'pointer' }} onClick={() => onSelectSchool(r)}>
-                <td>{i + 1}</td>
+                <td>{start + i + 1}</td>
                 <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{r.schoolName}</div><div style={{ fontSize: 10.5, color: 'var(--tm)' }}>{r.branch}</div></td>
                 <td>{r.schoolCode}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{r.transactions.toLocaleString()}</td>
@@ -358,8 +378,20 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
                 <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(rows.reduce((a, r) => a + r.smRevenue, 0))}</td>
               </tr>
             </tfoot>
-          )}
+            )}
         </table>
+      </div>
+      <div className="pag-bar">
+        <div className="pag-info">
+          {rows.length === 0 ? 'Showing 0 entries' : `Showing ${start + 1} to ${Math.min(start + pageSize, rows.length)} of ${rows.length} entries`}
+        </div>
+        <div className="pag-btns">
+          <button className="pag-btn" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>Previous</button>
+          {pageNums.map((n, i) => (n === '…'
+            ? <span key={`e${i}`} style={{ padding: '0 6px', color: 'var(--tm)' }}>…</span>
+            : <button key={n} className={`pag-btn${n === curPage ? ' active' : ''}`} onClick={() => setPage(n)}>{n}</button>))}
+          <button className="pag-btn" disabled={curPage >= totalPages} onClick={() => setPage(curPage + 1)}>Next</button>
+        </div>
       </div>
     </>
   );
