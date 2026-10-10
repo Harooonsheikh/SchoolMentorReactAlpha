@@ -9259,8 +9259,8 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
     }).join('') : `<tr><td colspan="4" style="padding:12px;text-align:center;font-size:12px;color:${tMuted}">No syllabus added</td></tr>`;
 
     return `
-      <div style="margin-bottom:20px;page-break-inside:avoid">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+      <div class="syl-class-block" style="margin-bottom:20px">
+        <div class="syl-class-head" style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
           <div style="width:7px;height:7px;border-radius:50%;background:${aColor};flex-shrink:0"></div>
           <div style="font-size:13px;font-weight:800;color:#0F172A">${sEsc(cls.className || `${cls.gradeName || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`.trim())}</div>
         </div>
@@ -9291,8 +9291,43 @@ td,th{overflow-wrap:break-word;word-break:normal}
 .syl-rep-html li{margin:2px 0 !important}
 .syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
 .syl-rep-html img{max-width:100%;height:auto}
+
+/* ── Dynamic print pagination (NO hardcoded page breaks) ──
+   Browser ki print layout engine khud available page-space ke hisaab se
+   content arrange karti hai; neeche ke rules us arrangement ko guide karte
+   hain. Sab selectors .syl-report-body ke andar scoped hain — sirf is
+   syllabus report ke document par asar, baaki reports bilkul untouched. */
+.syl-meta-grid{break-inside:avoid;page-break-inside:avoid}
+/* Class block khud toot sakta hai (bari table ko pages par split karne ke liye),
+   lekin uski heading hamesha table ke saath rahegi (orphan heading na ho). */
+.syl-class-block{break-inside:auto;page-break-inside:auto}
+.syl-class-head{break-after:avoid;page-break-after:avoid;break-inside:avoid;page-break-inside:avoid}
+/* Table page boundary par toote to column header har page par dobara aaye. */
+.syl-report-body table{page-break-inside:auto}
+.syl-report-body thead{display:table-header-group}
+.syl-report-body tfoot{display:table-footer-group}
+/* Rows ko current page par jahan se shuru hon wahin se fill hone do aur zaroorat
+   par (jab content remaining space se bari ho) natural-ly split hone do — yani
+   bara subject-summary page ke bache hue space me bharta hai aur agle page par
+   continue hota hai. 'avoid' yahan NAHI lagate: ek bari row (jo bache hue space
+   se lambi ho) 'avoid' ki wajah se poori agle page par defer ho jati thi, jis se
+   pehla page (ya pehla page bhi) blank reh jata tha. 'auto' us blank ko hata deta
+   hai. (shared PRINT_SAFE_CSS ka row-level avoid .syl-report-body ki zyada
+   specificity se override ho jata hai — sirf syllabus report par, baaki reports
+   waise hi.) Column-header (th) chhoti hai, use intact rakhte hain. */
+.syl-report-body tr{break-inside:auto;page-break-inside:auto}
+.syl-report-body th{break-inside:avoid;page-break-inside:avoid}
+/* Bari rich-text summary ko zaroorat par split hone do (warna poora blank page). */
+.syl-rep-html{break-inside:auto;page-break-inside:auto}
+.syl-rep-html p,.syl-rep-html li{orphans:2;widows:2}
+@media print{
+  .syl-report-body table{page-break-inside:auto}
+  .syl-report-body tr{break-inside:auto;page-break-inside:auto}
+  .syl-class-head{break-after:avoid;page-break-after:avoid}
+}
 </style>
-    <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;margin-bottom:16px;overflow:hidden">
+    <div class="syl-report-body">
+    <div class="syl-meta-grid" style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;margin-bottom:16px;overflow:hidden">
       ${[
         ['Term', termLabel],
         ['Exam', ex.name],
@@ -9304,7 +9339,8 @@ td,th{overflow-wrap:break-word;word-break:normal}
         </div>
       `).join('')}
     </div>
-    ${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No syllabus yet.</div>'}`;
+    ${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No syllabus yet.</div>'}
+    </div>`;
 
   const html = buildStandardReportHtml({
     title: `Syllabus — ${ex.name}`,
