@@ -19,6 +19,7 @@ import {
 } from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import { loadAcademicsContentPermissions } from '../services/academicsContentPermissions';
+import { startChatLoginWindow, pingChat, nudgeChatOnFocus, chatActive } from '../services/chatActivity';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
 import feeReferenceAlignment from './feeReferenceAlignment';
@@ -227,15 +228,30 @@ export default function App() {
     const branchId = chatBranchId();
     if (!me || !branchId) return undefined;
     let alive = true;
+    /* Login par activity window khul jati hai (1 min) — baqi chat poll isi par
+       chalte hain. get-unseen-chat-count ka apna 5s timer NAHI: ye sirf
+         • login par ek dafa, aur
+         • jab user chat khole/dekhe (onChatUnreadChange) ya gated notification
+           poll koi naya message pakde (notify → refreshChatUnreadRef)
+       par chalta hai. Is liye poore ERP me ye "hamesha" nahi chalta. */
+    startChatLoginWindow();
     const tick = async () => {
       if (document.hidden) return;
       const n = await fetchUnseenCount(branchId, me);
       if (alive) setChatUnread(n);
     };
     refreshChatUnreadRef.current = tick;
-    tick();
-    const id = setInterval(tick, 5000);
-    return () => { alive = false; clearInterval(id); refreshChatUnreadRef.current = () => {}; };
+    tick();   // login par ek dafa
+    /* Tab wapas focus → sirf activity window ko choti grace (get-unseen khud
+       nahi); gated notification poll chal kar naya message mile to tab badge
+       khud refresh ho jata hai. */
+    const onFocus = () => nudgeChatOnFocus();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', onFocus);
+      refreshChatUnreadRef.current = () => {};
+    };
   }, []);
 
   /* ── Naya chat message → notification ──
@@ -285,7 +301,8 @@ export default function App() {
     };
 
     const check = async () => {
-      if (busy) return;
+      /* Window band ho to kuch na karo — koi API call nahi. */
+      if (busy || document.hidden || !chatActive()) return;
       busy = true;
       try {
         const list = await fetchChatContacts(branchId, me);
@@ -294,7 +311,11 @@ export default function App() {
           const open = activeModuleRef.current === 'chat' && !document.hidden && document.hasFocus() ? getOpenChatId() : null;
           list.forEach(c => {
             const added = (now.get(c.userId) || 0) - (prev.get(c.userId) || 0);
-            if (added > 0 && c.userId !== open) notify(c, added);
+            if (added > 0) {
+              /* Doosri taraf se jawab aaya → poll ko 2 min aur chalne do. */
+              pingChat();
+              if (c.userId !== open) notify(c, added);
+            }
           });
         }
         prev = now;
@@ -398,7 +419,10 @@ const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).joi
        Misal: branch 1 par MentorAI flag false hai, phir bhi School Head aur
        Qasim TEST (jise Mentor AI di gayi) dono ko dikhta hai. */
 if (navId === 'mentorai') {
-  if (!isModuleActive('mentor_ai')) return false;
+  /* Har branch par available — school ka module-activation (mentor_ai) ise ab
+     nahi rokta, taake Mentor AI (aur uska Wallet) sab branches par khule.
+     Access phir bhi PERMISSION se governed: School Head (fullAccess) ya jise
+     "Mentor AI" module di gayi ho — baqi users ko phir bhi nahi dikhta. */
   return fullAccess || canModule('Mentor AI');
 }    if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
       /* Flag tab tak na maano jab tak jawab na aa jaye — warna 'off' wali

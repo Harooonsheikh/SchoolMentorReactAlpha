@@ -78,9 +78,14 @@ export default function Accounts({ toast }) {
   const [tab, setTab] = useState('coa');
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
-  /* Screen (tab) View permission — jis screen ka View nahi, uska tab hide. */
+  /* Screen (tab) View permission — jis screen ka View nahi, uska tab hide.
+     Wallets tab (id 'accounts') HAMESHA dikhta hai har branch par — ye ek ported
+     local feature hai jiska koi alag permission screen registry me nahi, is liye
+     governed users ke liye View kabhi grant na hone ki wajah se chhup jaata tha.
+     Visibility sab ke liye khuli; andar ke edit/transfer actions phir bhi module
+     ke readOnly / view-only rules se governed rehte hain. */
   const { can } = usePermissions();
-  const visibleTabs = ACC_TABS.filter(t => can('Accounts', t.label, 'View'));
+  const visibleTabs = ACC_TABS.filter(t => t.id === 'accounts' || can('Accounts', t.label, 'View'));
 
   /* Active tab hide ho jaye to pehle visible tab par snap. */
   useEffect(() => {
@@ -227,7 +232,7 @@ export default function Accounts({ toast }) {
       ) : tab === 'txn' ? (
         <Transactions toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'accounts' ? (
-        <AccountsManagementTab toast={toast} />
+        <AccountsManagementTab toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'books' ? (
         <AccountBooks toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'reports' ? (
@@ -2815,7 +2820,7 @@ const ACC_FIN_TYPES = [
 const finTypeMeta = (key) => ACC_FIN_TYPES.find(t => t.key === key) || ACC_FIN_TYPES[3];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-function AccountsManagementTab({ toast }) {
+function AccountsManagementTab({ toast, isOtherSession = false }) {
   // const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const school = useBranchSchool();
@@ -3025,12 +3030,12 @@ function AccountsManagementTab({ toast }) {
               </div>
             </div>
             <Tooltip text="Move money between two of your own accounts">
-              <button className="fee-btn fee-btn-ghost" onClick={() => setTransferOpen(true)} disabled={activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}>
+              <button className="fee-btn fee-btn-ghost" onClick={() => setTransferOpen(true)} disabled={isOtherSession || activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}>
                 <i className="fa-solid fa-right-left"></i> Transfer Money
               </button>
             </Tooltip>
             <Tooltip text="Add a new cash, bank, owner or other account">
-              <button className="fee-btn fee-btn-primary" onClick={() => setEditAccount({ mode: 'add' })}>
+              <button className="fee-btn fee-btn-primary" onClick={() => setEditAccount({ mode: 'add' })} disabled={isOtherSession}>
                 <i className="fa-solid fa-plus"></i> Create Account
               </button>
             </Tooltip>
@@ -3100,7 +3105,7 @@ function AccountsManagementTab({ toast }) {
                     </button>
                   </Tooltip>
                   <Tooltip text="Edit this account">
-                    <button className="fee-iconbtn" onClick={() => setEditAccount({ mode: 'edit', account: a })}>
+                    <button className="fee-iconbtn" onClick={() => setEditAccount({ mode: 'edit', account: a })} disabled={isOtherSession}>
                       <i className="fa-solid fa-pen"></i>
                     </button>
                   </Tooltip>
@@ -3109,6 +3114,7 @@ function AccountsManagementTab({ toast }) {
                       <button
                         className={`fee-iconbtn${a.status === 'active' ? ' danger' : ''}`}
                         onClick={() => requestToggleStatus(a)}
+                        disabled={isOtherSession}
                       >
                         <i className={`fa-solid ${a.status === 'active' ? 'fa-ban' : 'fa-circle-check'}`}></i>
                       </button>

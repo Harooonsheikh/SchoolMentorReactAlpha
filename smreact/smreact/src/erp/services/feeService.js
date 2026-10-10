@@ -598,6 +598,11 @@ const FEE_SETTINGS_DEFAULTS = {
   /* Create Installment Challan. API field exactly `particalChallan`.
      Pehli value false — button tab tak chhupa jab tak toggle ON save na ho. */
   installmentChallan:      false,
+  /* Note on Challan — toggle + text (max 50 words). Enabled hone par har NAYE
+     challan par ye note print hota hai. Backend field na ho to localStorage
+     fallback (bank details jaisa). */
+  challanNoteEnabled:      false,
+  challanNote:             '',
 };
 
 const uiPrintSizeToApi = (size) => (
@@ -636,6 +641,13 @@ function mapFeeSettingsFromApi(row = {}) {
                               : FEE_SETTINGS_DEFAULTS.psidInstallments),
     /* Installment Challan ↔ API `particalChallan`. null (not saved yet) = false. */
     installmentChallan:      row.particalChallan === true,
+    /* Note on Challan — backend field na ho to niche getFeeSettings me localStorage overlay. */
+    challanNoteEnabled:      (typeof row.challanNoteEnabled === 'boolean' ? row.challanNoteEnabled
+                              : typeof row.showChallanNote === 'boolean' ? row.showChallanNote
+                              : FEE_SETTINGS_DEFAULTS.challanNoteEnabled),
+    challanNote:             (typeof row.challanNote === 'string' ? row.challanNote
+                              : typeof row.challanNoteText === 'string' ? row.challanNoteText
+                              : FEE_SETTINGS_DEFAULTS.challanNote),
     createdDate:        row.createdDate ?? null,
     modifiedDate:       row.modifiedDate ?? null,
     createdBy:          row.createdBy ?? null,
@@ -698,6 +710,10 @@ function mapFeeSettingsToApi(settings = {}) {
     psidInstallments:          settings.psidInstallments !== false, /* alias, harmless */
     /* UI key installmentChallan → API particalChallan. Pehli save false. */
     particalChallan:           settings.installmentChallan === true,
+    /* Note on Challan — backend field aane tak harmless; localStorage bhi persist karti hai. */
+    challanNoteEnabled:        settings.challanNoteEnabled === true,
+    showChallanNote:           settings.challanNoteEnabled === true, /* alias, harmless */
+    challanNote:               settings.challanNoteEnabled === true ? String(settings.challanNote || '').slice(0, 500) : '',
     createdDate:       settings.createdDate || now,
     modifiedDate:      now,
     createdBy:         Number(settings.createdBy) || userID,
@@ -723,6 +739,28 @@ function apiRowHasBankField(row) {
      ho kar toggle hamesha OFF padh jaata. */
   return [row.bankDetails, row.showBankDetails, row.showBankDetailsOnChallan, row.showBankDetail]
     .some(v => typeof v === 'boolean');
+}
+
+/* "Note on Challan" — toggle + text. Backend field na ho to localStorage fallback
+   (bank details jaisa). JSON blob { enabled, text } branch-wise. */
+function challanNoteLsKey() { return `fee.challanNote.${feeSettingsBranchID()}`; }
+function readChallanNoteLs() {
+  try {
+    const raw = localStorage.getItem(challanNoteLsKey());
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : null;
+  } catch { return null; }
+}
+function writeChallanNoteLs(enabled, text) {
+  try { localStorage.setItem(challanNoteLsKey(), JSON.stringify({ enabled: !!enabled, text: String(text || '') })); }
+  catch { /* ignore */ }
+}
+function apiRowHasChallanNote(row) {
+  if (!row) return false;
+  return typeof row.challanNoteEnabled === 'boolean'
+      || typeof row.showChallanNote === 'boolean'
+      || typeof row.challanNote === 'string';
 }
 
 /* Fee Module feature controls — API ab columns bhejta hai. localStorage
@@ -800,6 +838,14 @@ export async function getFeeSettings() {
   if (!rows.length || !apiRowHasBankField(rows[0])) {
     const ls = readBankDetailsLs();
     if (ls != null) settings.showBankDetails = ls;
+  }
+  /* Note on Challan: backend field na ho to localStorage se overlay. */
+  if (!rows.length || !apiRowHasChallanNote(rows[0])) {
+    const ls = readChallanNoteLs();
+    if (ls) {
+      settings.challanNoteEnabled = !!ls.enabled;
+      settings.challanNote = String(ls.text || '');
+    }
   }
   /* Feature controls: har toggle par backend boolean na ho to localStorage overlay.
      Default ON hai, is liye LS na ho to settings apne default (true) par rehte hain. */
@@ -989,6 +1035,11 @@ export async function saveStudentTransport(classKey, reg, payload) {
 export async function saveFeeSettings(payload) {
   /* Bank-details toggle localStorage me bhi save — backend field aane tak persist rahe. */
   writeBankDetailsLs(payload?.showBankDetails === true);
+  /* Note on Challan localStorage me bhi save — backend field aane tak persist rahe. */
+  writeChallanNoteLs(
+    payload?.challanNoteEnabled === true,
+    payload?.challanNoteEnabled === true ? (payload?.challanNote || '') : '',
+  );
   /* Feature controls (Multiple Receiving / Advance Payment Receiving / PSID) bhi
      localStorage me persist — backend in fields ko store karne lage tak yahi authority. */
   writeFeatureTogglesLs(payload);
@@ -2095,12 +2146,26 @@ export function buildReceiveInstallmentRequest({
   detailRows = [],
   perHead = {},
   giveDisc = {},
+  /* Per-head FINAL remaining after this receive (modal ki "Remaining" column):
+     + = baqaya (pending), − = advance. SP ise seedha PendingorAdv/AdvanceAmount
+     me daal sakta hai — challan vs received se dobara calculate karne ki zaroorat
+     nahi (warna previous+challan = received par phantom advance banta tha). */
+  pendByHead = {},
   fine = 0,
   fineBilled = 0,
   newHeads = [],
 } = {}) {
   const rows = [];
   const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  /* Head ka pendingorAdv (+pending / −advance) jab frontend ne di ho — warna field
+     chhod do taake SP apna purana hisaab rakhe. */
+  const pendOf = (name) => {
+    const v = pendByHead?.[name];
+    return Number.isFinite(Number(v)) && pendByHead
+      && Object.prototype.hasOwnProperty.call(pendByHead, name)
+      ? { pendingorAdv: Math.round(Number(v)) }
+      : {};
+  };
 
   (detailRows || []).forEach(r => {
     if (isLateFineRow(r)) return;
@@ -2116,6 +2181,7 @@ export function buildReceiveInstallmentRequest({
       installmentId: 0,
       receivedAmount: Math.max(0, recvNow),
       discount: disc,
+      ...pendOf(headName),
     });
   });
 
@@ -2158,6 +2224,7 @@ export function buildReceiveInstallmentRequest({
       receivedAmount: amt,
       discount: 0,
       ...(existing ? {} : { head: 'Account Payable', subHead: name }),
+      ...pendOf(name),
     });
   });
 
@@ -2210,7 +2277,10 @@ function stripPendingFromReceiveBody(body) {
   const detailRows = Array.isArray(body.detailRows)
     ? body.detailRows.map(r => {
         if (!r || typeof r !== 'object') return r;
-        const { pendingorAdv, previousPendingorAdv, previousPendingOrAdv, advanceAmount, ...rest } = r;
+        /* pendingorAdv ko RAKHO — frontend ab per-head final remaining (+pending/−advance)
+           bhejta hai taake SP challan−received se phantom advance na banaye. Baqi
+           pending/advance snapshots (read-time fields) hata do. */
+        const { previousPendingorAdv, previousPendingOrAdv, advanceAmount, ...rest } = r;
         return rest;
       })
     : body.detailRows;

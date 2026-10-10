@@ -5746,12 +5746,21 @@ if (!anyHeadRecv && !anyGiveDisc) {
        nikalti hai (fully-paid head ka backend previousPendingorAdv baad me 0 ho jaata hai). */
     const prevByHead = {};
     (model.heads || []).forEach(h => { if (h.prev) prevByHead[h.name] = h.prev; });
+    /* Per-head FINAL remaining (modal ki "Remaining" column): + = baqaya, − = advance.
+       API ko bhejte hain taake SP (previous + challan − received) khud se phantom advance
+       na banaye — jahan is receive me kuch liya/discount diya wahin ki key. */
+    const pendByHead = {};
+    rows.forEach(r => {
+      if (r.isCredit) return;
+      if (r.recvNow !== 0 || (r.giveDisc || 0) > 0) pendByHead[r.name] = Math.round(r.remaining);
+    });
     const payload = {
       reg: student.reg, monthIdx,
       studentName: student.name,
       date, method, ref, txn, remarks,
       amount: receivingNow,
       perHead,
+      pendByHead,
       /* Correction (net minus) — receipt/slip aur history ise adjustment dikhayein,
          normal wasooli nahi. */
       isAdjustment: receivingNow < 0,
@@ -8147,6 +8156,7 @@ function FeeReceivingIndividual({ toast }) {
         isReceiving: true,
         detailRows: rec.detailRows || [],
         perHead: payload.perHead || {},
+        pendByHead: payload.pendByHead || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
         fine: payload.fine || 0,
         /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
@@ -9395,6 +9405,7 @@ function FamilyTreeReceiving({ toast }) {
         isReceiving: true,
         detailRows: rec.detailRows || [],
         perHead: payload.perHead || {},
+        pendByHead: payload.pendByHead || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
         fine: payload.fine || 0,
         /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
@@ -10273,12 +10284,19 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     /* Slip ke liye receiving-time ka per-head previous. */
     const prevByHead = {};
     (selModel?.heads || []).forEach(h => { if (h.prev) prevByHead[h.name] = h.prev; });
+    /* Per-head FINAL pending (+pending / −advance; computeRows: h.net − paid − recvNow)
+       — SP ko seedha bhejo taake (previous + challan − received) par phantom advance na bane. */
+    const pendByHead = {};
+    rowsForSel.forEach(r => {
+      if (r.recvNow !== 0) pendByHead[r.name] = Math.round(r.pending);
+    });
     onSave({
       famKey: family.key, reg: selChild.reg, monthIdx,
       studentName: selChild.name,
       date, method, ref, txn, remarks,
       amount: recvNow,
       perHead,
+      pendByHead,
       prevByHead,
       isAdjustment: recvNow < 0,
       fine: fineOwed,
@@ -17050,6 +17068,26 @@ function feeBankBlockHtml(school, { thermal = false } = {}) {
     </div>`;
 }
 
+/* "Note on Challan" — Fee Settings se aaya custom note (max 50 words). Toggle ON
+   aur text ho to hi print hota hai. A4 (psid-block style) aur thermal dono. */
+function feeChallanNoteHtml(settings, { thermal = false } = {}) {
+  if (!settings || settings.challanNoteEnabled !== true) return '';
+  const note = String(settings.challanNote || '').trim();
+  if (!note) return '';
+  if (thermal) {
+    return `
+  <div class="th-psid" style="margin-top:5px;">
+    <div class="th-psid-top">Note</div>
+    <div style="font-size:9px;color:#333;line-height:1.35;white-space:pre-wrap;word-break:break-word;">${escHtml(note)}</div>
+  </div>`;
+  }
+  return `
+    <div class="psid-block" style="margin-top:5px;">
+      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Note</span></div>
+      <div style="font-size:10.5px;color:#333;line-height:1.4;margin-top:4px;white-space:pre-wrap;word-break:break-word;">${escHtml(note)}</div>
+    </div>`;
+}
+
 function feeReportDate(school) {
   const d = school?.generatedDate ? new Date(school.generatedDate) : new Date();
   return Number.isNaN(d.getTime()) ? new Date().toLocaleDateString('en-GB') : d.toLocaleDateString('en-GB');
@@ -17666,6 +17704,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       </div>
     </div>` : ''}
     ${settings.showBankDetails === true ? feeBankBlockHtml(sch, {}) : ''}
+    ${feeChallanNoteHtml(settings, {})}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -17989,6 +18028,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
   ${settings.showBankDetails === true ? feeBankBlockHtml(sch, { thermal: true }) : ''}
+  ${feeChallanNoteHtml(settings, { thermal: true })}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -18083,6 +18123,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
       </div>
     </div>` : ''}
     ${settings.showBankDetails === true ? feeBankBlockHtml(sch, {}) : ''}
+    ${feeChallanNoteHtml(settings, {})}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -18215,6 +18256,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
   ${settings.showBankDetails === true ? feeBankBlockHtml(sch, { thermal: true }) : ''}
+  ${feeChallanNoteHtml(settings, { thermal: true })}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -18499,6 +18541,51 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ showBankDetails: !value.showBankDetails })}
             />
 
+            {/* Note on Challan — toggle + text (max 50 words) */}
+            <div className="fee-set-card">
+              <div className="fee-set-head">
+                <div className="fee-set-name">Note on Challan</div>
+                <Tooltip text={value.challanNoteEnabled ? 'Disable note on challan' : 'Enable note on challan'}>
+                  <button
+                    className={`fee-switch${value.challanNoteEnabled ? ' on' : ''}`}
+                    onClick={() => set({ challanNoteEnabled: !value.challanNoteEnabled })}
+                    aria-pressed={value.challanNoteEnabled}
+                    aria-label="Toggle note on challan"
+                    type="button"
+                  />
+                </Tooltip>
+              </div>
+              <div className="fee-set-desc">Print a custom note on every newly generated challan (max 50 words).</div>
+              {value.challanNoteEnabled && (() => {
+                const text = value.challanNote || '';
+                const count = text.trim() ? text.trim().split(/\s+/).length : 0;
+                return (
+                  <div className="fee-field-stack" style={{ marginTop: 10, marginBottom: 0 }}>
+                    <label className="fee-mini-label">Note Text</label>
+                    <textarea
+                      className="fee-input"
+                      rows={3}
+                      style={{ resize: 'vertical', minHeight: 64, fontFamily: 'inherit' }}
+                      placeholder="e.g. Please pay before the due date to avoid a late fine."
+                      value={text}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const w = raw.trim() ? raw.trim().split(/\s+/) : [];
+                        /* 50 words se zyada par pehle 50 words tak trim. */
+                        set({ challanNote: w.length > 50 ? w.slice(0, 50).join(' ') : raw });
+                      }}
+                    />
+                    <div
+                      className="fee-mini-label"
+                      style={{ marginTop: 4, textAlign: 'right', color: count >= 50 ? '#B91C1C' : '#64748B' }}
+                    >
+                      {count} / 50 words
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
             {/* Fine — with conditional fields */}
             <div className="fee-set-card">
               <div className="fee-set-head">
@@ -18627,6 +18714,12 @@ function FeeChallanSettings({ toast }) {
                 Default print size: {' '}
                 <strong className="fee-pos">
                   {value.printSize === 'thermal' ? 'Thermal · 80mm receipt' : 'A4 · Full page'}
+                </strong>
+              </li>
+              <li>
+                Note on challan: {' '}
+                <strong className={value.challanNoteEnabled && (value.challanNote || '').trim() ? 'fee-pos' : 'fee-neg'}>
+                  {value.challanNoteEnabled && (value.challanNote || '').trim() ? 'Printed' : 'Not printed'}
                 </strong>
               </li>
             </ul>

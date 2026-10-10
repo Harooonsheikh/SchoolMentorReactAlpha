@@ -49,6 +49,11 @@ export function useSupportChat({
   onReceipt,          // ({ type:'delivered'|'read', sessionId, messageIds, at })
   onSessionClosed,    // (sessionId)
   onError,            // (err)
+  /* () => boolean — false ho to REST fallback poll ka tick kuch nahi karta
+     (koi API call nahi). Support widget isay activity window se deta hai, taake
+     poll sirf aakhri message ke 2 min baad tak chale. Na diya jaye to hamesha
+     chalu (purana behaviour) — doosre consumers par asar nahi. */
+  pollGate = null,
 } = {}) {
   const [status, setStatus] = useState('idle'); // idle|connecting|connected|offline|error — REST reachability
   const [realtime, setRealtime] = useState(false); // SignalR hub up?
@@ -103,6 +108,11 @@ export function useSupportChat({
   // Keep callbacks fresh without re-subscribing handlers.
   const cb = useRef({});
   cb.current = { onInbound, onHistory, onTyping, onReceipt, onSessionClosed, onError };
+
+  /* pollGate har render par naya ho sakta hai — ref se sthir, poll effect ko
+     dobara subscribe kiye baghair taza raho. */
+  const pollGateRef = useRef(pollGate);
+  pollGateRef.current = pollGate;
 
   const outSenderType = role === 'agent' ? SenderType.Agent : SenderType.School;
 
@@ -385,6 +395,8 @@ export function useSupportChat({
     const stopPolling = () => { cancelled = true; if (timer) clearInterval(timer); };
 
     const tick = async () => {
+      /* Activity window band ho to poll khamosh — koi API call nahi. */
+      if (pollGateRef.current && !pollGateRef.current()) return;
       try {
         ticks += 1;
         /* Sasta check: sessions list ek chhoti si row deti hai. Jab tak

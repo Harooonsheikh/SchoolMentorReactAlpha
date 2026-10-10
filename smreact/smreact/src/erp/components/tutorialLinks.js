@@ -21,10 +21,11 @@ export const TUTORIAL_LINKS = {
   academics: {
     title: 'Academics Tutorials',
     items: [
-      { label: 'Subject Setup',  url: '' },
-      { label: 'Term Settings',  url: '' },
-      { label: 'Term Breakups',  url: '' },
-      { label: 'Textbooks',      url: '' },
+      { label: 'Scheme of Studies',               url: 'https://youtu.be/rfX7-vTmTL0' },
+      { label: 'Lesson Plan — Session Setting',   url: 'https://youtu.be/ykR3JKIa-Pw' },
+      { label: 'Lesson Plan — Term Breakup',      url: 'https://youtu.be/LT4JO0BbeUc' },
+      { label: 'Lesson Plan — Create Lesson Plan', url: 'https://youtu.be/0MV6KhL7wGg' },
+      { label: 'Lesson Plan — Submission',        url: 'https://youtu.be/FUxY6UWl7P4' },
     ],
   },
   examination: {
@@ -42,44 +43,44 @@ export const TUTORIAL_LINKS = {
   paperGenerator: {
     title: 'Paper Generator Tutorials',
     items: [
-      { label: 'Paper Setup',        url: '' },
-      { label: 'Choose Template',    url: '' },
-      { label: 'Class Format & Lines', url: '' },
-      { label: 'Generate Paper',     url: '' },
-      { label: 'Download & Preview', url: '' },
+      { label: 'Paper Setup',        url: 'https://youtu.be/_wN6BNGM1SQ' },
+      { label: 'Paper Generator',    url: 'https://youtu.be/34DXZDBgHdA' },
+      { label: 'Download & Preview', url: 'https://youtu.be/8xeFvuNteCQ' },
     ],
   },
   attendance: {
     title: 'Attendance Tutorials',
     items: [
-      { label: 'Holidays Setup',     url: '' },
-      { label: 'Student Attendance', url: '' },
-      { label: 'Staff Attendance',   url: '' },
-      { label: 'Reports',            url: '' },
+      { label: 'Holiday Setup',      url: 'https://youtu.be/BJLDGo2j6nU' },
+      { label: 'Staff Attendance',   url: 'https://youtu.be/15MhiM8nA5k' },
+      { label: 'Student Attendance', url: 'https://youtu.be/HEZZxFHf_Qs' },
     ],
   },
   timeTable: {
     title: 'Timetable Tutorials',
     items: [
-      { label: 'Class Timetable',     url: '' },
-      { label: 'Weekly Auto-Generate', url: '' },
-      { label: 'Day-wise Update',     url: '' },
-      { label: 'Download Reports',    url: '' },
+      { label: 'Auto Generated', url: 'https://youtu.be/K6heCAirzdg' },
+      { label: 'Stats',          url: 'https://youtu.be/rps5Cdn80Mo' },
+      { label: 'Reports',        url: 'https://youtu.be/JW1RkeZF14A' },
     ],
   },
   fee: {
     title: 'Fee Management Tutorials',
     items: [
-      { label: 'Fee Setup & Settings', url: '' },
-      { label: 'Fee Challans',         url: '' },
-      { label: 'Fee Receiving',        url: '' },
-      { label: 'Fee History',          url: '' },
-      { label: 'Reports',              url: '' },
+      { label: 'Fee Challan',                     url: 'https://youtu.be/6gLaNYaaTLw' },
+      { label: 'Fee History',                     url: 'https://youtu.be/3MgbO0ycxw4' },
+      { label: 'Fee Receiving — Individual Fee',  url: 'https://youtu.be/8oJJr69-_iU' },
+      { label: 'Fee Receiving — Family Tree',     url: 'https://youtu.be/rr6dijHNGAk' },
+      { label: 'Setup — Student Fee Setup',       url: 'https://youtu.be/2NRBzvnwxAU' },
+      { label: 'Setup — Transport Fee',           url: 'https://youtu.be/x8d85GxNBPE' },
+      { label: 'Setup — Challan Setting',         url: 'https://youtu.be/8QnCYWK8n6E' },
+      { label: 'Reports',                         url: 'https://youtu.be/ASUbe8uRiS' },
     ],
   },
   accounts: {
     title: 'Accounts Tutorials',
     items: [
+      { label: 'Accounts Overview', url: 'https://youtu.be/Ev_HpgCnrKw' },
       { label: 'Chart of Accounts', url: '' },
       { label: 'Transactions',      url: '' },
       { label: 'Account Books',     url: '' },
@@ -107,19 +108,18 @@ export const TUTORIAL_LINKS = {
   students: {
     title: 'Students Tutorials',
     items: [
-      { label: 'Active Students',   url: '' },
-      { label: 'Inactive Students', url: '' },
-      { label: 'Family Tree',       url: '' },
+      { label: 'Active Students',   url: 'https://youtu.be/IWJ5v7hxFtw' },
+      { label: 'Inactive Students', url: 'https://youtu.be/J5OIGaq-Q60' },
+      { label: 'Family Tree',       url: 'https://youtu.be/yoaTL7MjCKs' },
     ],
   },
   humanResource: {
     title: 'Human Resource Tutorials',
     items: [
-      { label: 'Departments & Designations', url: '' },
-      { label: 'Staff Records',              url: '' },
-      { label: 'Attendance & Leave',         url: '' },
-      { label: 'Payroll',                    url: '' },
-      { label: 'Reports',                    url: '' },
+      { label: 'Basics',              url: 'https://youtu.be/IAWUptT6Lzo' },
+      { label: 'Employee Management', url: 'https://youtu.be/ANcHWr6jV0c' },
+      { label: 'Financials',          url: 'https://youtu.be/sVqy-1uV7ME' },
+      { label: 'Reports',             url: 'https://youtu.be/ZgFUzGp0ZxM' },
     ],
   },
   staffAppraisal: {
@@ -158,17 +158,15 @@ export const TUTORIAL_LINKS = {
   settings: {
     title: 'Settings Tutorials',
     items: [
-      { label: 'Academic Sessions',    url: '' },
-      { label: 'Signature Management', url: '' },
+      { label: 'Academic Session',     url: 'https://youtu.be/0OPZDbZSFP0' },
+      { label: 'Signature Management', url: 'https://youtu.be/yjCFkE7ad00' },
     ],
   },
   userPermissions: {
     title: 'User Permissions Tutorials',
     items: [
-      { label: 'Users',             url: '' },
-      { label: 'Roles',             url: '' },
-      { label: 'Permission Groups', url: '' },
-      { label: 'Audit Log',         url: '' },
+      { label: 'User Permissions', url: 'https://youtu.be/Cv9QTGZjSCs' },
+      { label: 'Roles',            url: 'https://youtu.be/ZzIncYc3oH4' },
     ],
   },
   launchSetup: {

@@ -13,6 +13,7 @@ import {
 import * as api from '../support/api';
 import { playIncomingChime } from '../support/sound';
 import { isViewOnlyAccount } from '../utils/apiConfig';
+import { startSupport, pingSupport, nudgeSupportOnFocus, supportActive } from '../support/activity';
 
 let _attId = 1;
 /* Har "send" ka apna nishan (sirf is screen ke liye — API par nahi jata). */
@@ -152,10 +153,14 @@ function SupportWidgetLive({ toast }) {
         { id: newId(), kind: 'daylabel', text: todayLabel() },
         { id: newId(), kind: 'system', text: 'Welcome to School Mentor Support. We are here to help!' },
       ]),
-    onInbound: (uiMsg) => setMessages(prev =>
-      prev.some(m => m.id === uiMsg.id)
-        ? prev
-        : [...prev.filter(m => m.kind !== 'typing'), uiMsg]),
+    onInbound: (uiMsg) => {
+      /* Koi message aaya ya apna bheja hua echo hua → poll 2 min reset. */
+      pingSupport();
+      setMessages(prev =>
+        prev.some(m => m.id === uiMsg.id)
+          ? prev
+          : [...prev.filter(m => m.kind !== 'typing'), uiMsg]);
+    },
     onTyping: (name) => setRemoteTyping(name),
     onReceipt: ({ type, messageIds }) => setMessages(prev => prev.map(m =>
       messageIds.includes(m.id) ? { ...m, status: type === 'read' ? 3 : 2 } : m)),
@@ -170,6 +175,9 @@ function SupportWidgetLive({ toast }) {
     },
     /* API tak pahunch hi na ho → sirf ek system line, koi banawati guftagu nahi. */
     onError: () => setMessages([{ id: newId(), kind: 'system', text: CONNECT_FAILED_MESSAGE }]),
+    /* REST fallback poll sirf activity window ke andar chale: user ke pehle
+       message se khulti hai, aakhri message ke 2 min baad band. */
+    pollGate: supportActive,
   });
   const liveConnected = chat.connected;
   /* Widget khulne ke baad, jab tak na connect hua na koi error aaya — loader. */
@@ -206,6 +214,9 @@ function SupportWidgetLive({ toast }) {
     let cancelled = false;
 
     const tick = async () => {
+      /* Window band ho to band-widget poll bhi khamosh — support login/
+         browsing par bilkul API nahi maarta. */
+      if (!supportActive()) return;
       try {
         /* Sasta check pehle: sessions list ek chhoti row deti hai. Poora
            transcript sirf tab maangte hain jab `lastMessageAt` badla ho —
@@ -230,7 +241,7 @@ function SupportWidgetLive({ toast }) {
           (m) => m.senderType === SenderType.Agent && m.messageStatus < MessageStatus.Read,
         ).length;
         /* Ginti barhe to ek halki si aawaz — sirf tab jab kuch naya aaya ho. */
-        if (count > lastUnreadRef.current) playIncomingChime();
+        if (count > lastUnreadRef.current) { playIncomingChime(); pingSupport(); }
         lastUnreadRef.current = count;
         setUnread(count);
       } catch (e) { /* transient — agle tick par phir sahi */ }
@@ -241,7 +252,9 @@ function SupportWidgetLive({ toast }) {
        rehta hai — is liye refresh karne par hi badge dikhta tha. Tab par wapas
        aate hi (ya window focus hote hi) foran check kar lete hain, aur tab
        chhupi ho to poll rok dete hain (be-faida requests nahi jatin). */
-    const check = () => { if (!document.hidden) tick(); };
+    /* Tab wapas focus → agar support ek dafa shuru ho chuka ho to choti si
+       grace, taake peechay aaya agent jawab nazar aa jaye. */
+    const check = () => { nudgeSupportOnFocus(); if (!document.hidden) tick(); };
     check();
     const timer = setInterval(check, UNREAD_POLL_MS);
     document.addEventListener('visibilitychange', check);
@@ -267,6 +280,21 @@ function SupportWidgetLive({ toast }) {
     if (liveUnread > lastUnreadRef.current) playIncomingChime();
     lastUnreadRef.current = liveUnread;
   }, [liveUnread, chat.connected, open]);
+
+  /* Tab wapas focus → agar support ek dafa shuru ho chuka ho to choti si grace
+     window: hook ka gated poll ek baar chal kar peechay aaya agent jawab le
+     aata hai (phir onInbound → pingSupport us ko 2 min barha deta hai). Ye
+     effect hamesha chalta hai — background-poll wala focus check pehli baar
+     widget khulne ke baad (chat.connected) band ho jata hai. */
+  useEffect(() => {
+    const onFocus = () => nudgeSupportOnFocus();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, []);
 
   /* Body scroll lock while widget is open */
   useEffect(() => {
@@ -332,6 +360,8 @@ function SupportWidgetLive({ toast }) {
   const sendText = () => {
     const txt = input.trim();
     if (!txt) return;
+    /* User ne message bheja → yahin se support poll shuru (2 min window). */
+    startSupport();
     if (liveConnected) {
       /* Live: POST → server persists → SignalR broadcast (echoed via onInbound).
          Nakaam ho to bubble to dikha do (jo likha wo gum na ho) magar saath
@@ -375,6 +405,8 @@ function SupportWidgetLive({ toast }) {
     if (res && res.blob && res.durationSec > 0) finishVoice(res);
   };
   const finishVoice = async (res) => {
+    /* User ne voice note bheja → support poll shuru (2 min window). */
+    startSupport();
     /* Chrome sirf WebM record karta hai aur API voice ke liye WebM leti nahi
        ("File type '.webm' is not allowed for voice"), is liye zaroorat par
        recording yahin WAV me badalti hai. Nakaam ho to jo hai wahi bhej do —
@@ -509,6 +541,8 @@ function SupportWidgetLive({ toast }) {
      hai (CAPTION_REQUIRED). Pehle khali hone par file ka naam khud caption ban
      jata tha, magar wo user ka likha hua matn nahi hota tha. */
   const sendItemsTogether = (category, items, caption, demoShape) => {
+    /* User ne attachment bheja → support poll shuru (2 min window). */
+    startSupport();
     /* Is ek send ka apna nishan — screen par sirf inhi files ka album banta
        hai. Pehle grouping waqt ke faasle par chalti thi, is liye baad me
        bheji gayi nayi tasveer pichhle album me ja girti thi. */

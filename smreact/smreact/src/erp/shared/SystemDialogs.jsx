@@ -28,22 +28,10 @@ function measureMbps() {
       const mbps = (buf.byteLength * 8) / secs / 1e6;
       lastSpeed = { at: Date.now(), mbps };
       window.__smSpeed = { state: mbps <= SLOW_MBPS ? 'slow' : 'ok', mbps };
-      if (window.__smWasOffline) {
-        window.__smWasOffline = false;
-        try { window.dispatchEvent(new CustomEvent('sm:online')); } catch (e) { /* ignore */ }
-      }
       return mbps;
     })
     .catch((err) => {
-      const browserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      const noNetwork = browserOffline || !err || err.name === 'TypeError';
-      if (noNetwork) {
-        lastSpeed = { at: Date.now(), mbps: null };
-        window.__smSpeed = { state: 'offline', mbps: null };
-        try { window.dispatchEvent(new CustomEvent('sm:offline')); } catch (e) { /* ignore */ }
-        return null;
-      }
-      if (err.name === 'AbortError') {
+      if (err && err.name === 'AbortError') {
         lastSpeed = { at: Date.now(), mbps: 0 };
         window.__smSpeed = { state: 'slow', mbps: 0 };
         return 0;
