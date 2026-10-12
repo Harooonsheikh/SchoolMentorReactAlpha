@@ -274,10 +274,10 @@ function buildInvReportHtml({ title, isBW, accent, innerHtml, school, format = '
 }
 
 const INV_REPORT_TITLES = {
-  inv_total:    'Total Inventory Report',
+  inv_total:    'Total Assets Report',
   inv_status:   'Active vs Inactive Items Report',
-  inv_category: 'Category-wise Inventory Report',
-  inv_location: 'Location-wise Inventory Report',
+  inv_category: 'Category-wise Assets Report',
+  inv_location: 'Location-wise Assets Report',
   pos_daily:    'Daily Sales Report',
   pos_monthly:  'Monthly Sales Report',
   pos_overall:  'Overall Sales Report',
@@ -285,7 +285,7 @@ const INV_REPORT_TITLES = {
   pos_lowstock: 'Low Stock Products Report',
   pos_pvs:      'Purchase vs Sale Summary',
   pos_pnl:      'Profit & Loss Report',
-  pos_invvalue: 'Current Inventory Value Report',
+  pos_invvalue: 'Current Asset Value Report',
 };
 
 /* Per-product aggregation for the Profit & Loss / Purchase-vs-Sale reports.
@@ -339,7 +339,7 @@ function buildInvReportBody(type, opts, ctx) {
     const totQty = list.reduce((a, i) => a + i.qty, 0);
     return `
       <table class="tbl">
-        <thead><tr><th>Inventory #</th><th>Item</th><th>Category</th><th class="c">Qty</th><th>Location</th><th>Status</th></tr></thead>
+        <thead><tr><th>Asset #</th><th>Item</th><th>Category</th><th class="c">Qty</th><th>Location</th><th>Status</th></tr></thead>
         <tbody>${list.map(i => `<tr><td class="mono">${esc(i.code)}</td><td>${esc(i.name)}</td><td>${esc(i.cat)}</td><td class="c">${fmtMoney(i.qty)}</td><td>${esc(i.loc || '—')}</td><td>${esc(i.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No active items.</td></tr>'}</tbody>
         <tfoot><tr class="tot"><td colspan="3">Total Items</td><td class="c">${fmtMoney(totQty)}</td><td colspan="2">${list.length} records</td></tr></tfoot>
       </table>`;
@@ -356,12 +356,12 @@ function buildInvReportBody(type, opts, ctx) {
       </div>
       <div class="secttl">Active Items (${actives.length})</div>
       <table class="tbl">
-        <thead><tr><th>Inventory #</th><th>Item</th><th class="c">Qty</th><th>Status</th></tr></thead>
+        <thead><tr><th>Asset #</th><th>Item</th><th class="c">Qty</th><th>Status</th></tr></thead>
         <tbody>${actives.length ? actives.map(i => `<tr><td class="mono">${esc(i.code)}</td><td>${esc(i.name)}</td><td class="c">${fmtMoney(i.qty)}</td><td>${esc(i.status)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No active items.</td></tr>'}</tbody>
       </table>
       <div class="secttl">Inactive Items (${inactive.length})</div>
       <table class="tbl">
-        <thead><tr><th>Inventory #</th><th>Item</th><th class="c">Qty</th><th>Status</th></tr></thead>
+        <thead><tr><th>Asset #</th><th>Item</th><th class="c">Qty</th><th>Status</th></tr></thead>
         <tbody>${inactive.length ? inactive.map(i => `<tr><td class="mono">${esc(i.code)}</td><td>${esc(i.name)}</td><td class="c">${fmtMoney(i.qty)}</td><td>${esc(i.status)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No inactive items.</td></tr>'}</tbody>
       </table>`;
   }
@@ -375,7 +375,7 @@ function buildInvReportBody(type, opts, ctx) {
       return `
         <div class="secttl">${esc(cat)} — ${fmtMoney(tot)} items</div>
         <table class="tbl">
-          <thead><tr><th>Inventory #</th><th>Item</th><th class="c">Qty</th><th>Location</th></tr></thead>
+          <thead><tr><th>Asset #</th><th>Item</th><th class="c">Qty</th><th>Location</th></tr></thead>
           <tbody>${g.map(i => `<tr><td class="mono">${esc(i.code)}</td><td>${esc(i.name)}</td><td class="c">${fmtMoney(i.qty)}</td><td>${esc(i.loc || '—')}</td></tr>`).join('')}</tbody>
         </table>`;
     }).join('') || '<div class="empty-state">No active items.</div>';
@@ -567,8 +567,8 @@ function buildInvReportBody(type, opts, ctx) {
         <tfoot><tr class="tot"><td colspan="3">Total</td><td class="r">Rs ${fmtMoney(tPur)}</td><td class="r"></td><td class="r">Rs ${fmtMoney(tSale)}</td></tr></tfoot>
       </table>
       <div class="kpi-row" style="margin-top:14px">
-        <div class="kpi a"><div class="l">Inventory Purchase Value</div><div class="v">Rs ${fmtMoney(tPur)}</div><div class="m">at cost</div></div>
-        <div class="kpi b"><div class="l">Inventory Sale Value</div><div class="v">Rs ${fmtMoney(tSale)}</div><div class="m">at retail</div></div>
+        <div class="kpi a"><div class="l">Assets Purchase Value</div><div class="v">Rs ${fmtMoney(tPur)}</div><div class="m">at cost</div></div>
+        <div class="kpi b"><div class="l">Assets Sale Value</div><div class="v">Rs ${fmtMoney(tSale)}</div><div class="m">at retail</div></div>
         <div class="kpi c"><div class="l">Expected Gross Profit</div><div class="v" style="color:${tGross >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tGross)}</div><div class="m">if all stock sells</div></div>
       </div>`;
   }
@@ -687,7 +687,7 @@ function openThermalPrintWindow(sale, school, toast) {
    ═══════════════════════════════════════════════════════════════════ */
 
 const INV_TABS = [
-  { id: 'manage',  icon: 'fa-warehouse',     label: 'Inventory Management' },
+  { id: 'manage',  icon: 'fa-warehouse',     label: 'Assets Management' },
   { id: 'pos',     icon: 'fa-cash-register', label: 'Point of Sale' },
   { id: 'reports', icon: 'fa-chart-column',  label: 'Reports' },
 ];
@@ -708,11 +708,11 @@ export default function Inventory({ toast }) {
             <i className="fa-solid fa-boxes-stacked"></i>
           </div>
           <div>
-            <div className="page-title">Inventory</div>
+            <div className="page-title">School Assets</div>
             <div className="page-sub">School assets, a simple shop counter &amp; printable reports</div>
           </div>
         </div>
-        <Tooltip text="Play a short tutorial for the Inventory module">
+        <Tooltip text="Play a short tutorial for the School Assets module">
           <button
             className="tutorial-btn page-tutorial-btn"
             onClick={() => setTutorialOpen(true)}
@@ -921,7 +921,7 @@ function InventoryManagement({ toast }) {
         <div className="acc-overview-main">
           <div className="acc-overview-icon"><i className="fa-solid fa-warehouse"></i></div>
           <div className="acc-overview-text">
-            <div className="acc-overview-title">Inventory Management</div>
+            <div className="acc-overview-title">Assets Management</div>
             <div className="acc-overview-sub">
               Keep a record of every <strong>physical item</strong> in your school — furniture, equipment, lab &amp; sports gear.
               Generate inventory numbers and print barcode labels to paste on each item.
@@ -982,11 +982,11 @@ function InventoryManagement({ toast }) {
 
       {/* Subbar */}
       <div className="inv-subbar">
-        <div className="inv-subbar-title"><i className="fa-solid fa-boxes-stacked"></i> All Inventory Items</div>
+        <div className="inv-subbar-title"><i className="fa-solid fa-boxes-stacked"></i> All Assets</div>
         <div className="inv-subbar-spacer"></div>
         <Tooltip text="Create a new inventory item">
           <button className="fee-btn fee-btn-primary" onClick={() => setEditCfg({ mode: 'add' })}>
-            <i className="fa-solid fa-plus"></i> Add Inventory Item
+            <i className="fa-solid fa-plus"></i> Add Asset
           </button>
         </Tooltip>
       </div>
@@ -1250,7 +1250,7 @@ function InvItemDetail({ item, onBack, onEdit, onPrintLabel, onToggle, onDelete 
         <div>
           <div className="inv-detail-rows">
             <div className="inv-detail-row">
-              <div className="inv-detail-row-lbl">Inventory Number</div>
+              <div className="inv-detail-row-lbl">Asset Number</div>
               <div className="inv-detail-row-val inv-detail-mono">{item.code}</div>
             </div>
             <div className="inv-detail-row">
@@ -1376,7 +1376,7 @@ function InvItemModal({ cfg, categories, existingItems, onClose, onSave, toast }
           <div className="fee-modal-head-title">
             <div className="fee-modal-head-icon"><i className="fa-solid fa-box"></i></div>
             <div>
-              <div className="fee-modal-title">{isEdit ? 'Edit Inventory Item' : 'Add Inventory Item'}</div>
+              <div className="fee-modal-title">{isEdit ? 'Edit Asset' : 'Add Asset'}</div>
               <div className="fee-modal-sub">{isEdit ? (base?.code || 'Item') : 'Enter the item details below'}</div>
             </div>
           </div>
@@ -1403,7 +1403,7 @@ function InvItemModal({ cfg, categories, existingItems, onClose, onSave, toast }
             </div>
 
             <div className="fee-field">
-              <span className="fee-label">Inventory Number</span>
+              <span className="fee-label">Asset Number</span>
               {/* Auto-assigned — disabled, user edit nahi kar sakta. */}
               <input className="fee-input" value={code} disabled readOnly placeholder="Auto-generated"
                 style={{ background: 'var(--bg-muted, #f1f5f9)', cursor: 'not-allowed', opacity: .7 }} />
@@ -2894,10 +2894,10 @@ function InvBarcodeSizeModal({ target, school, onClose, toast }) {
    Three reports (Monthly / Overall / P&L) open a picker modal first.
    ═══════════════════════════════════════════════════════════════════ */
 const INV_REPORT_TILES = [
-  { id: 'inv_total',    icon: 'fa-boxes-stacked',       title: 'Total Inventory Report', desc: 'Complete list of all items & quantities' },
+  { id: 'inv_total',    icon: 'fa-boxes-stacked',       title: 'Total Assets Report',    desc: 'Complete list of all items & quantities' },
   { id: 'inv_status',   icon: 'fa-toggle-on',           title: 'Active vs Inactive',     desc: 'Items currently in use vs retired' },
-  { id: 'inv_category', icon: 'fa-layer-group',         title: 'Category-wise Inventory', desc: 'Items grouped by category' },
-  { id: 'inv_location', icon: 'fa-location-dot',        title: 'Location-wise Inventory', desc: 'Items grouped by room / location' },
+  { id: 'inv_category', icon: 'fa-layer-group',         title: 'Category-wise Assets',   desc: 'Items grouped by category' },
+  { id: 'inv_location', icon: 'fa-location-dot',        title: 'Location-wise Assets',   desc: 'Items grouped by room / location' },
 ];
 const POS_REPORT_TILES = [
   { id: 'pos_daily',    icon: 'fa-calendar-day',         title: 'Daily Sales Report',     desc: 'All sales for today' },
@@ -2907,7 +2907,7 @@ const POS_REPORT_TILES = [
   { id: 'pos_lowstock', icon: 'fa-triangle-exclamation', title: 'Low Stock Products',     desc: 'Shop products that need restocking' },
   { id: 'pos_pvs',      icon: 'fa-scale-balanced',       title: 'Purchase vs Sale Summary', desc: 'Cost, revenue & profit per product' },
   { id: 'pos_pnl',      icon: 'fa-money-bill-trend-up',  title: 'Profit & Loss Report',   desc: 'Sales, costing & profit between two dates', picker: 'range' },
-  { id: 'pos_invvalue', icon: 'fa-warehouse',            title: 'Current Inventory Value', desc: 'Stock value at purchase & sale price' },
+  { id: 'pos_invvalue', icon: 'fa-warehouse',            title: 'Current Asset Value',    desc: 'Stock value at purchase & sale price' },
 ];
 
 function InvReports({ toast }) {
@@ -2980,7 +2980,7 @@ function InvReports({ toast }) {
       </div>
 
       <div className="inv-rep-group-title">
-        <i className="fa-solid fa-warehouse"></i> Inventory Reports
+        <i className="fa-solid fa-warehouse"></i> Assets Reports
       </div>
       <div className="inv-rep-grid">
         {INV_REPORT_TILES.map(tile => (

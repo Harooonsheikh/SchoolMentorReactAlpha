@@ -2362,6 +2362,7 @@ function PayRollModal({
   /* ── Make Payment form state ── */
   const [payAmount, setPayAmount] = useState('');
   const [payComment, setPayComment] = useState('');
+  const [payChequeId, setPayChequeId] = useState('');   // NEW — Payment Cheques (UI only, API pending)
 
   /* If a record already has payments, jump straight to Make Payment tab. */
   useEffect(() => {
@@ -2895,33 +2896,36 @@ function PayRollModal({
 
                 <PrevPendingNote arrears={arrears} fmtMoney={fmtMoney} />
 
-                <div className="pr-grid">
+                                <div className="pr-grid">
                   <div className="pr-field pr-field-wide">
                     <label>Pay Amount Now <span className="req">*</span></label>
-                    <input
-                      type="number" min={0} step="0.01" placeholder="0"
-                      value={payAmount}
-                      readOnly={isFullyPaid}
-                      onChange={(e) => setPayAmount(e.target.value)}
-                    />
-                    <div className={`pr-field-hint${payError ? ' pr-field-err' : ''}`}>
-                      {isFullyPaid
-                        ? (<><i className="fa-solid fa-circle-check" style={{ color: '#16A34A' }} aria-hidden="true"></i> This payroll is fully settled — no further payments needed</>)
-                        : payError
-                          ? (<><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {payError}</>)
-                          : (<><i className="fa-solid fa-circle-check" style={{ color: '#16A34A' }} aria-hidden="true"></i> Remaining after this payment: PKR {fmtMoney(payAfter)}{totalPaid > 0 ? ` · already paid PKR ${fmtMoney(totalPaid)}` : ''}</>)}
-                    </div>
+                    {/* ...existing... */}
                   </div>
                   <div className="pr-field pr-field-wide">
                     <label>Payment Comment</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Cheque #5421, advance payment, bank transfer ref…"
-                      value={payComment}
-                      readOnly={isFullyPaid}
-                      onChange={(e) => setPayComment(e.target.value)}
-                    />
-                    <div className="pr-field-hint">Optional — appears in payment history</div>
+                    {/* ...existing... */}
+                  </div>
+                </div>
+
+                {/* ── Payment Cheques — same design as Accounts "Received In Wallet" box ── */}
+                <div className="pr-cheque-box">
+                  <span className="pr-cheque-label">
+                    <i className="fa-solid fa-money-check-dollar" aria-hidden="true"></i> Payment Cheques
+                  </span>
+                  <div className="pr-cheque-select-wrap">
+                    <select
+                      className="pr-cheque-select"
+                      value={payChequeId}
+                      onChange={(e) => setPayChequeId(e.target.value)}
+                    >
+                      <option value="">Select cheque for this payment</option>
+                      {/* API integration pending — cheque list will populate here */}
+                    </select>
+                    <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                  </div>
+                  <div className="pr-cheque-hint">
+                    <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                    Choose the cheque this payment will be recorded against. (Backend integration coming soon.)
                   </div>
                 </div>
 
@@ -5690,7 +5694,7 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
   );
 }
 
-/* Small KV helpers used by EmployeeDetailPanel aybove. */
+/* Small KV helpers used by EmployeeDetailPanel above. */
 function ProfSection({ title, icon, children }) {
   return (
     <div className="prof-section">
@@ -10078,7 +10082,118 @@ export const HR_CSS = `
 .pr-field-hint { font: 500 10px/1.3 var(--hr-font); color: var(--tm); font-style: italic; margin-top: 2px; }
 /* Pay Amount ghalat ho to wajah surkh — toast modal ke peeche chhup jata tha. */
 .pr-field-hint.pr-field-err { color: var(--err); font-weight: 700; font-style: normal; font-size: 10.5px; }
-
+/* ── Payment Cheques box — 1:1 look of Accounts' "Received In Wallet" field ── */
+/* ── Payment Cheques box — 1:1 look of Accounts' "Received In Wallet" field ── */
+.pr-cheque-box {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgba(30, 64, 175, .05), rgba(30, 58, 138, .02));
+  border: 1.5px solid rgba(30, 64, 175, .18);
+}
+.pr-cheque-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 700 11px/1.2 var(--hr-font);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--t2);
+  margin-bottom: 8px;
+}
+.pr-cheque-label i { color: var(--brand); }
+.pr-cheque-select-wrap { position: relative; }
+.pr-cheque-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 32px 9px 12px;
+  border: 1.5px solid var(--bl);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  color: var(--t1);
+  font: 600 12.5px/1.2 var(--hr-font);
+  cursor: pointer;
+  transition: var(--tr);
+}
+.pr-cheque-select:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(30, 58, 138, .1);
+}
+.pr-cheque-select-wrap > i {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--tm);
+  pointer-events: none;
+}
+.pr-cheque-hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font: 500 11px/1.4 var(--hr-font);
+  color: var(--tm);
+}
+.pr-cheque-hint i { color: var(--brand); font-size: 11px; }
+.pr-cheque-box {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgba(30, 64, 175, .05), rgba(30, 58, 138, .02));
+  border: 1.5px solid rgba(30, 64, 175, .18);
+}
+.pr-cheque-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 700 11px/1.2 var(--hr-font);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--t2);
+  margin-bottom: 8px;
+}
+.pr-cheque-label i { color: var(--brand); }
+.pr-cheque-select-wrap { position: relative; }
+.pr-cheque-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 32px 9px 12px;
+  border: 1.5px solid var(--bl);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  color: var(--t1);
+  font: 600 12.5px/1.2 var(--hr-font);
+  cursor: pointer;
+  transition: var(--tr);
+}
+.pr-cheque-select:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(30, 58, 138, .1);
+}
+.pr-cheque-select-wrap > i {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--tm);
+  pointer-events: none;
+}
+.pr-cheque-hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font: 500 11px/1.4 var(--hr-font);
+  color: var(--tm);
+}
+.pr-cheque-hint i { color: var(--brand); font-size: 11px; }
 /* Brand-blue Net Payable hero */
 .pr-net-card {
   background: linear-gradient(135deg, #1E40AF, #1E3A8A);

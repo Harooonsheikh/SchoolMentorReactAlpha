@@ -173,6 +173,12 @@ export const MODULE_TREE = [
       { id: 'acc.coa',     label: 'Chart of Accounts' },
       { id: 'acc.txn',     label: 'Transactions' },
       { id: 'acc.books',   label: 'Account Books' },
+      /* Wallet screens. `label` = API subMenuName (jo save/load match me jata hai),
+         `uiLabel` = screen par dikhne wala naam. API ko Wallet / TRANSACTION /
+         TRANSFER jata hai, user ko Wallet / Wallet Transaction / Wallet Transfer. */
+      { id: 'acc.wallet',     label: 'Wallet' },
+      { id: 'acc.walletTxn',  label: 'TRANSACTION', uiLabel: 'Wallet Transaction' },
+      { id: 'acc.walletXfer', label: 'TRANSFER',    uiLabel: 'Wallet Transfer' },
       { id: 'acc.reports', label: 'Reports' },
     ] },
   { id: 'inventory',   label: 'Inventory',         icon: 'fa-boxes-stacked',
@@ -336,6 +342,10 @@ export const MODULE_TREE = [
     wohi string permissions API ko jati hai aur wapsi par match hoti hai — is
     liye render hamesha isi helper se ho, seedhe `m.label` se nahi. */
 export const moduleDisplayLabel = (m) => (m && (m.uiLabel || m.label)) || '';
+
+/* Screen (child) ka dikhne wala naam. Jaise module ka `uiLabel`: `label` API ka
+   subMenuName hai (save/load match), `uiLabel` sirf display ke liye. */
+export const screenDisplayLabel = (c) => (c && (c.uiLabel || c.label)) || '';
 
 /* ─── Filter MODULE_TREE to only modules that are active in the
        given moduleState. moduleState comes from ModuleContext and
@@ -696,6 +706,12 @@ export const MODULE_PERMISSIONS = {
      Real buttons: Open new book, Edit book, Delete book,
                    Record new ledger entry, Download A4 ledger PDF. */
   'acc.books':          ['view', 'create', 'edit', 'delete', 'download'],
+
+  /* L1 → Wallet / Wallet Transaction / Wallet Transfer (under Account Books).
+     No Approve — each supports View / Create / Edit / Delete / Download. */
+  'acc.wallet':         ['view', 'create', 'edit', 'delete', 'download'],
+  'acc.walletTxn':      ['view', 'create', 'edit', 'delete', 'download'],
+  'acc.walletXfer':     ['view', 'create', 'edit', 'delete', 'download'],
 
   /* L1 → Reports
      Accounts.jsx:3475 (Reports)

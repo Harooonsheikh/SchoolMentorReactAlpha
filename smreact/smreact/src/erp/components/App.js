@@ -121,7 +121,7 @@ const NAV_LABELS = {
   paper: 'Paper Generator',
   fee: 'Fee',
   accounts: 'Accounts',
-  inventory: 'Inventory',
+  inventory: 'School Assets',
   students: 'Students',
   hr: 'Human Resource',
   networks: 'Networks',
@@ -164,7 +164,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'fee',       name: 'Fee',       icon: 'fa-money-bill-wave' },
       { id: 'accounts',  name: 'Accounts',  icon: 'fa-landmark' },
-      { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },   /* har branch par live */
+      { id: 'inventory', name: 'School Assets', icon: 'fa-boxes-stacked' },   /* har branch par live */
     ],
   },
   {

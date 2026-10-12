@@ -609,6 +609,34 @@ export async function saveHrPayrollPayment({ payrollID, amount, comment, payment
   return json;
 }
 
+/* Add a manual wallet transaction. POST /api/HR/wallat_transaction_manage.
+   Body matches Swagger: action, id, branchID, wallatID, date, description,
+   credit, debit, createdBy. A debit (out) sets `debit`, a credit (in) sets
+   `credit`; the other stays 0. */
+export async function saveWallatTransaction({ wallatID, amount, kind, description, date } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const amt = Number(amount) || 0;
+  const res = await fetch(buildUrl('/api/HR/wallat_transaction_manage'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'INSERT',
+      id: 0,
+      branchID,
+      wallatID: Number(wallatID) || 0,
+      date: date || new Date().toISOString(),
+      description: description || '',
+      credit: kind === 'credit' ? amt : 0,
+      debit: kind === 'credit' ? 0 : amt,
+      createdBy: userID,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not save the transaction');
+  return json;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    ADVANCE / LOAN — /api/HR/*-employee-loan[-repayment] endpoints.
    ═══════════════════════════════════════════════════════════════════ */

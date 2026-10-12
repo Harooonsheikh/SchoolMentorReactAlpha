@@ -16,6 +16,7 @@ import {
   permsFromApiPermissions,
   apiPermissionsFromKeys,
   moduleDisplayLabel,
+  screenDisplayLabel,
 } from './permissionsData';
 import {
   MOBILE_ROLES,
@@ -943,14 +944,14 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                     >
                       <div
                         className="up-matrix-screen"
-                        title={child.label}
+                        title={screenDisplayLabel(child)}
                         style={screenDataStyle}
                       >
-                        {child.label}
+                        {screenDisplayLabel(child)}
                       </div>
                       {visibleActions.map(a => renderCell(child, a, perms, setPerms, readOnly, applicable.includes(a)))}
                       <div className="up-matrix-cell" style={actionCellStyle}>
-                        <Tooltip text={someOn ? `Clear every applicable permission on the ${child.label} row` : `Toggle every applicable permission on the ${child.label} row`}>
+                        <Tooltip text={someOn ? `Clear every applicable permission on the ${screenDisplayLabel(child)} row` : `Toggle every applicable permission on the ${screenDisplayLabel(child)} row`}>
                           <button
                             type="button"
                             className="up-matrix-row-link"
@@ -1182,7 +1183,7 @@ function renderCell(child, action, perms, setPerms, readOnly, applicable = isPer
           setPerms(p => ({ ...p, [key]: e.target.checked }));
         }}
         disabled={readOnly || !applicable}
-        aria-label={`${ACTION_LABELS[action]} ${child.label}`}
+        aria-label={`${ACTION_LABELS[action]} ${screenDisplayLabel(child)}`}
         style={{
           ...checkboxStyle,
           ...(applicable ? {} : { pointerEvents: 'none', cursor: 'not-allowed' }),

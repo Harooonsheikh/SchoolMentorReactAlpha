@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
+import { saveWallatTransaction } from '../services/hrService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
@@ -79,13 +80,12 @@ export default function Accounts({ toast }) {
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   /* Screen (tab) View permission — jis screen ka View nahi, uska tab hide.
-     Wallets tab (id 'accounts') HAMESHA dikhta hai har branch par — ye ek ported
-     local feature hai jiska koi alag permission screen registry me nahi, is liye
-     governed users ke liye View kabhi grant na hone ki wajah se chhup jaata tha.
-     Visibility sab ke liye khuli; andar ke edit/transfer actions phir bhi module
-     ke readOnly / view-only rules se governed rehte hain. */
+     Wallets tab (id 'accounts') ab "Wallet" screen ki View permission se governed
+     hai (User Permissions → Accounts → Wallet). Baqi tabs apne label ki View se. */
   const { can } = usePermissions();
-  const visibleTabs = ACC_TABS.filter(t => t.id === 'accounts' || can('Accounts', t.label, 'View'));
+  const visibleTabs = ACC_TABS.filter(t => (t.id === 'accounts'
+    ? can('Accounts', 'Wallet', 'View')
+    : can('Accounts', t.label, 'View')));
 
   /* Active tab hide ho jaye to pehle visible tab par snap. */
   useEffect(() => {
@@ -2824,6 +2824,12 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
   // const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const school = useBranchSchool();
+  const { can } = usePermissions();
+  /* Wallet-screen permissions (User Permissions → Accounts → Wallet / Wallet
+     Transaction / Wallet Transfer). subMenuName API labels: Wallet / TRANSACTION
+     / TRANSFER. View off → feature hidden. */
+  const canAddTxn   = can('Accounts', 'TRANSACTION', 'View');
+  const canTransfer = can('Accounts', 'TRANSFER', 'View');
   /* Wallets + transfers come from the Chain-Management API (networkID null,
      current branch). null = still loading; [] = loaded, nothing there. */
   const [accounts, setAccounts] = useState(null);
@@ -2890,6 +2896,7 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
   const [editAccount, setEditAccount] = useState(null); // { mode:'add'|'edit', account? }
   const [transferOpen, setTransferOpen] = useState(false);
   const [statementFor, setStatementFor] = useState(null); // account
+  const [txnFor, setTxnFor] = useState(null); // account → Add Transaction (ledger) modal
   const [confirm, setConfirm] = useState(null);
 
   const filtered = list.filter(a => {
@@ -3029,11 +3036,13 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
+            {canTransfer && (
             <Tooltip text="Move money between two of your own accounts">
               <button className="fee-btn fee-btn-ghost" onClick={() => setTransferOpen(true)} disabled={isOtherSession || activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}>
                 <i className="fa-solid fa-right-left"></i> Transfer Money
               </button>
             </Tooltip>
+            )}
             <Tooltip text="Add a new cash, bank, owner or other account">
               <button className="fee-btn fee-btn-primary" onClick={() => setEditAccount({ mode: 'add' })} disabled={isOtherSession}>
                 <i className="fa-solid fa-plus"></i> Create Account
@@ -3104,6 +3113,13 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                       <i className="fa-solid fa-file-invoice-dollar"></i> View Statement
                     </button>
                   </Tooltip>
+                  {canAddTxn && (
+                  <Tooltip text="Add Transaction">
+                    <button className="fee-iconbtn" onClick={() => setTxnFor(a)} aria-label="Add Transaction">
+                      <i className="fa-solid fa-list-ul"></i>
+                    </button>
+                  </Tooltip>
+                  )}
                   <Tooltip text="Edit this account">
                     <button className="fee-iconbtn" onClick={() => setEditAccount({ mode: 'edit', account: a })} disabled={isOtherSession}>
                       <i className="fa-solid fa-pen"></i>
@@ -3197,8 +3213,173 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
         defaultId={defaultId}
         onClose={() => setStatementFor(null)}
       />
+      <WalletTxnModal account={txnFor} onClose={() => setTxnFor(null)} toast={toast} />
       <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
     </>
+  );
+}
+
+/* ── Add Transaction — wallet ledger from /api/accounts/manage-transactions.
+   View Statement ke sath wala button isay kholta hai; yeh us wallet ki
+   transactions (date / description / type / debit / credit) dikhata hai. ── */
+function WalletTxnModal({ account, onClose, toast }) {
+  const [txns, setTxns] = useState(null); // null = loading
+  const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [drafts, setDrafts] = useState([]); // new transaction rows added via "Add More"
+
+  const newDraft = () => ({ id: `d${Date.now()}${Math.random().toString(36).slice(2, 5)}`, date: new Date().toISOString().slice(0, 10), description: '', kind: 'debit', amount: '' });
+
+  const reload = () => accountsService.getWalletTransactions(account.id)
+    .then((list) => setTxns(Array.isArray(list) ? list : []))
+    .catch(() => { setTxns([]); setErr('Could not load transactions. Please try again.'); });
+
+  useEffect(() => {
+    if (!account) return undefined;
+    let alive = true;
+    setTxns(null); setErr(''); setDrafts([]);
+    accountsService.getWalletTransactions(account.id)
+      .then((list) => { if (alive) setTxns(Array.isArray(list) ? list : []); })
+      .catch(() => { if (alive) { setTxns([]); setErr('Could not load transactions. Please try again.'); } });
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { alive = false; window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, onClose]);
+
+  if (!account) return null;
+
+  const catLabel = (m) => (m.cat === 'transfer' ? 'Transfer' : (m.kind === 'credit' ? 'Credit' : 'Debit'));
+  const tagFor = (m) => (m.cat === 'transfer' ? 'xfer' : (m.kind === 'credit' ? 'credit' : 'debit'));
+
+  /* Running balance from opening: credit adds, debit subtracts. */
+  const ledger = Array.isArray(txns) ? (() => {
+    let run = Number(account.opening) || 0;
+    return txns.map((r) => { run += r.kind === 'credit' ? r.amount : -r.amount; return { ...r, balance: run }; });
+  })() : txns;
+
+  const addDraft = () => setDrafts((ds) => [...ds, newDraft()]);
+  const setDraft = (id, k, v) => setDrafts((ds) => ds.map((d) => (d.id === id ? { ...d, [k]: v } : d)));
+  const removeDraft = (id) => setDrafts((ds) => ds.filter((d) => d.id !== id));
+
+  const persist = (d) => saveWallatTransaction({
+    wallatID: account.id,
+    amount: Number(d.amount),
+    kind: d.kind,
+    description: d.description.trim(),
+    date: d.date ? new Date(d.date).toISOString() : new Date().toISOString(),
+  });
+
+  const saveOne = async (d) => {
+    if (!d.description.trim()) { toast?.('Please enter a description', 'error'); return; }
+    if (!(Number(d.amount) > 0)) { toast?.('Please enter an amount greater than 0', 'error'); return; }
+    setSaving(true);
+    try {
+      await persist(d);
+      removeDraft(d.id);
+      await reload();
+      toast?.('Transaction added', 'success');
+    } catch (e) {
+      toast?.('Could not add the transaction. Please try again.', 'error');
+    } finally { setSaving(false); }
+  };
+
+  const saveAll = async () => {
+    const valid = drafts.filter((d) => d.description.trim() && Number(d.amount) > 0);
+    if (!valid.length) { toast?.('Add at least one row with a description and amount', 'error'); return; }
+    setSaving(true);
+    try {
+      for (const d of valid) { await persist(d); } // eslint-disable-line no-await-in-loop
+      setDrafts([]);
+      await reload();
+      toast?.(`${valid.length} transaction${valid.length === 1 ? '' : 's'} added`, 'success');
+    } catch (e) {
+      toast?.('Could not save all transactions. Please try again.', 'error');
+    } finally { setSaving(false); }
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal lg" style={{ maxWidth: 'min(1120px, 96vw)' }}>
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-list-ul"></i></div>
+            <div>
+              <div className="fee-modal-title">Add Transaction</div>
+              <div className="fee-modal-sub">{account.name} · transactions from the wallet ledger</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="acc-txn-tablewrap acc-stmt-wrap">
+            <table className="acc-txn-table acc-stmt-table">
+              <thead>
+                <tr><th>Date</th><th>Description</th><th>Type</th><th className="r">Debit (Out)</th><th className="r">Credit (In)</th><th className="r">Balance</th></tr>
+              </thead>
+              <tbody>
+                {ledger === null ? (
+                  <tr><td colSpan={6}><div className="acc-txn-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading transactions…</div></td></tr>
+                ) : ledger.length === 0 ? (
+                  <tr><td colSpan={6}><div className="acc-txn-empty"><i className="fa-solid fa-inbox"></i> {err || 'No transactions found for this wallet.'}</div></td></tr>
+                ) : ledger.map((r, i) => (
+                  <tr key={i}>
+                    <td><span className="acc-txn-date">{accFmtDate(r.date)}</span></td>
+                    <td><div className="acc-txn-detail">{r.desc || '—'}</div>{r.ref && <div className="acc-txn-meta"><span>{r.ref}</span></div>}</td>
+                    <td><span className={`acc-stmt-tag ${tagFor(r)}`}><i className={`fa-solid ${r.cat === 'transfer' ? 'fa-right-left' : (r.kind === 'credit' ? 'fa-arrow-down-long' : 'fa-arrow-up-long')}`}></i> {catLabel(r)}</span></td>
+                    <td className={`r${r.kind === 'debit' ? ' acc-stmt-debit' : ''}`}>{r.kind === 'debit' ? fmtMoney(r.amount) : '—'}</td>
+                    <td className={`r${r.kind === 'credit' ? ' acc-stmt-credit' : ''}`}>{r.kind === 'credit' ? fmtMoney(r.amount) : '—'}</td>
+                    <td className="r acc-stmt-bal">{fmtMoney(r.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* New transaction draft rows — appended by "Add More" below. */}
+          {drafts.map((d) => (
+            <div className="acc-txn-draft" key={d.id}>
+              <div className="acc-txn-draft-grid">
+                <div className="fee-field"><span className="fee-label">Date</span>
+                  <input className="fee-input fee-input-sm" type="date" value={d.date} onChange={(e) => setDraft(d.id, 'date', e.target.value)} /></div>
+                <div className="fee-field acc-txn-draft-desc"><span className="fee-label">Description</span>
+                  <input className="fee-input fee-input-sm" value={d.description} onChange={(e) => setDraft(d.id, 'description', e.target.value)} placeholder="e.g. Cash deposit" /></div>
+                <div className="fee-field"><span className="fee-label">Type</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={d.kind} onChange={(e) => setDraft(d.id, 'kind', e.target.value)}>
+                      <option value="debit">Debit (Out)</option>
+                      <option value="credit">Credit (In)</option>
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div></div>
+                <div className="fee-field"><span className="fee-label">Amount</span>
+                  <input className="fee-input fee-input-sm" type="number" min="0" value={d.amount} onChange={(e) => setDraft(d.id, 'amount', e.target.value)} placeholder="0" /></div>
+              </div>
+              <div className="acc-txn-draft-btns">
+                <button className="fee-btn fee-btn-ghost fee-btn-sm acc-txn-draft-rm" onClick={() => removeDraft(d.id)} disabled={saving}><i className="fa-solid fa-trash-can"></i> Remove</button>
+                <button className="fee-btn fee-btn-primary fee-btn-sm" onClick={() => saveOne(d)} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> Save</button>
+              </div>
+            </div>
+          ))}
+
+          <div className="acc-txn-addmore-wrap">
+            <button className="acc-txn-addmore" onClick={addDraft} disabled={saving}>
+              <i className="fa-solid fa-plus"></i> Add More
+            </button>
+          </div>
+        </div>
+
+        <div className="fee-modal-foot" style={{ justifyContent: 'flex-end', gap: 10 }}>
+          <Tooltip text="Close without saving"><button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button></Tooltip>
+          <button className="fee-btn fee-btn-primary" onClick={saveAll} disabled={saving || drafts.length === 0}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> Save Transactions
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -7781,6 +7962,27 @@ const ACC_CSS = `
   display: block;
   margin-bottom: 12px;
 }
+.acc-txn-draft {
+  position: relative; margin-top: 14px; padding: 16px;
+  background: var(--bg-card); border: 1.5px solid rgba(8,145,178,.25); border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(15,23,42,.05);
+}
+.acc-txn-draft-grid { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.acc-txn-draft-grid .fee-field { margin: 0; }
+.acc-txn-draft-desc { flex: 1; min-width: 200px; }
+.acc-txn-draft-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.acc-txn-draft-rm { color: #DC2626; border-color: rgba(220,38,38,.3); }
+.acc-txn-draft-rm:hover { background: rgba(220,38,38,.08); }
+.acc-txn-addmore-wrap { display: flex; justify-content: center; margin-top: 16px; }
+.acc-txn-addmore {
+  display: inline-flex; align-items: center; gap: 8px; padding: 10px 24px; border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #0E7490, #0891B2); color: #fff; border: 0; cursor: pointer;
+  font-size: 13px; font-weight: 700; font-family: var(--font-body); transition: var(--tr);
+  box-shadow: 0 0 20px rgba(8,145,178,.45), 0 4px 14px rgba(14,116,144,.4);
+}
+.acc-txn-addmore:hover { transform: translateY(-1px); box-shadow: 0 0 28px rgba(8,145,178,.6), 0 8px 20px rgba(14,116,144,.5); }
+.acc-txn-addmore:disabled { opacity: .5; cursor: not-allowed; }
+[data-theme="dark"] .acc-txn-draft { background: var(--bg-card); border-color: rgba(8,145,178,.35); }
 
 /* Row meta line + expand button */
 .acc-txn-meta {
