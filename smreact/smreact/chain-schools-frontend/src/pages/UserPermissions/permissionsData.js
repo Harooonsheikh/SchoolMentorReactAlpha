@@ -121,9 +121,9 @@ export const MODULE_TREE = [
       { id: 'attendance.staff',    label: 'Staff Attendance' },
       { id: 'attendance.reports',  label: 'Reports' },
     ] },
-  { id: 'inventory', label: 'Inventory', icon: 'fa-boxes-stacked',
+  { id: 'inventory', label: 'Head Office Assets', icon: 'fa-boxes-stacked',
     children: [
-      { id: 'inventory.manage',  label: 'Inventory Management' },
+      { id: 'inventory.manage',  label: 'Head Office Assets Management' },
       { id: 'inventory.pos',     label: 'Point of Sale' },
       { id: 'inventory.reports', label: 'Reports' },
     ] },
