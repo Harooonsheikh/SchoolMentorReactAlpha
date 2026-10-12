@@ -54,6 +54,18 @@ const EXTRA_NAV_BRANCHES = {};
      networks → ab Settings › Networks tab me. */
 const RETIRED_NAV = new Set(['networks']);
 
+/* Chain Portal (Head Office) dashboard URL — jab ye ERP session chain ke
+   "Switch to View" se khula ho (sm_from_chain='1'), topbar par "Back to Head
+   Office" button isi par wapas le jata hai. Same tab, bina handoff — chain ka
+   apna session (uski origin ki sessionStorage) waise ka waisa mil jata hai. */
+const CHAIN_DASHBOARD_URL = `${String(
+  process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`,
+).replace(/\/+$/, '')}/dashboard`;
+
+const cameFromChain = () => {
+  try { return sessionStorage.getItem('sm_from_chain') === '1'; } catch (e) { return false; }
+};
+
 /* ─── Code-split each ERP module ─────────────────────────────────────
    Chunks still load separately so the login shell stays small, but they
    are fetched once in the background after login. Opening a tab does not
@@ -753,6 +765,14 @@ if (navId === 'mentorai') {
               })()}
             </div>
             <div className="topbar-right" style={{ gap: 10 }}>
+              {cameFromChain() && (
+                <Tooltip text="Return to the Head Office chain portal" placement="bottom">
+                  <button className="tb-btn back-ho-btn" onClick={() => { window.location.assign(CHAIN_DASHBOARD_URL); }}>
+                    <i className="fa-solid fa-arrow-left-long"></i>
+                    <span className="back-ho-txt">Back to Head Office</span>
+                  </button>
+                </Tooltip>
+              )}
               <TopbarSessionPill />
               {/* Global Customer Support chat — trigger on every ERP screen; the
                   chat window + attachment modals portal to <body> (bottom-right). */}
@@ -1163,6 +1183,12 @@ button { font-family:var(--font-body); }
 }
 .tb-btn:hover { background:var(--bg-muted); color:var(--brand-primary); border-color:rgba(30,58,138,.3); }
 .tb-btn.theme-btn { font-size:14px; padding:0; width:34px; }
+.tb-btn.back-ho-btn {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; border-color:transparent;
+  font-weight:700; padding:0 14px; box-shadow:0 2px 8px rgba(30,58,138,.28);
+}
+.tb-btn.back-ho-btn:hover { background:linear-gradient(135deg,#1E40AF,#2563EB); color:#fff; border-color:transparent; }
+@media (max-width: 640px) { .tb-btn.back-ho-btn .back-ho-txt { display:none; } .tb-btn.back-ho-btn { padding:0; width:34px; } }
 
 [data-theme="dark"] .topbar {
   background:rgba(8,13,26,.96);
