@@ -105,8 +105,7 @@ export default function AnnouncementsModal({ items: initialItems = [], onClose, 
                         </div>
                       </div>
                       <div className="an-title">{a.title}</div>
-                      <div className="an-desc">{a.description}</div>
-                      <div className="an-foot">
+<div className="an-desc" style={{ whiteSpace: "pre-line" }}>{a.description}</div>                      <div className="an-foot">
                         <span className="an-sender">
                           <i className="fa-solid fa-paper-plane" aria-hidden="true"></i>
                           {a.sender}

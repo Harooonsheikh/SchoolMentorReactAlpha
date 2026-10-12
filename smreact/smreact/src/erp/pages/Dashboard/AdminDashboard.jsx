@@ -736,8 +736,9 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       const created = a.AnnounceDate || a.announceDate || a.Date || a.date || a.CreatedDate || '';
       const dt = created ? new Date(created) : null;
       const validDt = dt && !Number.isNaN(+dt);
-      const preview = a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '';
-      return {
+      const rawBody = a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '';
+      /* Body rich-text editor se HTML (<ul><li><b>…) aata hai — card pe plain text dikhana hai. */
+      const preview = htmlToPlainText(rawBody);      return {
         id: a.ID ?? a.id ?? `an-${idx}`,
         sender: a.Sender ?? a.sender ?? a.CreatedBy ?? 'School Mentor — HQ',
         title: a.Title ?? a.title ?? a.Subject ?? '',
@@ -2933,9 +2934,8 @@ export const ADM_NEW_CSS = `
 .adm-tc-an-preview {
   font: 500 12px/1.5 var(--dash-font); color: var(--text-secondary, #475569);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow: hidden; white-space: pre-line; word-break: break-word;
 }
-
 /* App status body */
 .adm-tc-stats {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
@@ -4375,3 +4375,18 @@ export const ADM_NEW_CSS = `
 }
 `;
 export { openDashReport } from '../../reports/reportKit';
+
+/* HTML string → plain text (tags hata ke, <li>/<br>/<p> ko line/bullet bana ke). */
+function htmlToPlainText(html) {
+  if (!html || typeof html !== 'string') return html || '';
+  const withBreaks = html
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '\n• ')
+    .replace(/<\s*\/\s*(p|div|li|h[1-6])\s*>/gi, '\n');
+  const doc = new DOMParser().parseFromString(withBreaks, 'text/html');
+  return (doc.body.textContent || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+}
