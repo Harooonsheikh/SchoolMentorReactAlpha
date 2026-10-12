@@ -44,18 +44,16 @@ function measureMbps() {
 
 export default function SystemDialogs({ toast = () => {} }) {
   const [showSlow, setShowSlow] = useState(false);
-  const [showOffline, setShowOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
   const [slowMbps, setSlowMbps] = useState(null);
   const lastServerToastRef = useRef(0);
   const slowDismissedRef = useRef(false);
-  const offlineDismissedRef = useRef(false);
 
   useEffect(() => {
     const main = document.querySelector('.main-content');
     if (!main) return undefined;
-    main.style.paddingTop = (showOffline || showSlow) ? '60px' : '';
+    main.style.paddingTop = showSlow ? '60px' : '';
     return () => { if (main) main.style.paddingTop = ''; };
-  }, [showOffline, showSlow]);
+  }, [showSlow]);
 
   /* Banner sirf jab API 30s se lambi ho (sm:slow) AUR last speed test <= 0.5 Mbps. */
   useEffect(() => {
@@ -84,16 +82,13 @@ export default function SystemDialogs({ toast = () => {} }) {
       lastServerToastRef.current = now;
       toast('Server error (500) — something went wrong. Please try again in a moment.', 'error');
     };
+    /* Offline still suppresses the slow banner. The no-internet banner itself is not shown. */
     const onOffline = () => {
       window.__smWasOffline = true;
       setShowSlow(false);
-      if (offlineDismissedRef.current) return;
-      setShowOffline(true);
     };
     const onOnline = () => {
       window.__smWasOffline = false;
-      offlineDismissedRef.current = false;
-      setShowOffline(false);
     };
     window.addEventListener('sm:slow', onSlow);
     window.addEventListener('sm:slow-end', onSlowEnd);
@@ -135,33 +130,7 @@ export default function SystemDialogs({ toast = () => {} }) {
 
   return (
     <>
-      {showOffline && createPortal(
-        <div className="sys-banner sys-banner--red">
-          <div className="sys-banner-inner">
-            <div className="sys-banner-icon sys-red">
-              <i className="fa-solid fa-wifi" aria-hidden="true"></i>
-            </div>
-            <div className="sys-banner-text">
-              <strong>No Internet Connection</strong>
-              <span>You are offline. Check your connection — pages cannot load until it is back.</span>
-            </div>
-            <button
-              type="button"
-              className="sys-banner-retry"
-              onClick={() => { window.location.reload(); }}
-            >
-              <i className="fa-solid fa-rotate-right" aria-hidden="true"></i> Retry
-            </button>
-            <Tooltip text="Dismiss" placement="bottom">
-              <button className="sys-banner-close" onClick={() => { offlineDismissedRef.current = true; setShowOffline(false); }} aria-label="Dismiss banner">
-                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-              </button>
-            </Tooltip>
-          </div>
-        </div>,
-        document.body
-      )}
-      {showSlow && !showOffline && createPortal(
+      {showSlow && createPortal(
         <div className="sys-banner">
           <div className="sys-banner-inner">
             <div className="sys-banner-icon sys-amber">

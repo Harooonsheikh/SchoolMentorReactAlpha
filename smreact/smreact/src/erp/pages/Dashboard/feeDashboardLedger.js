@@ -52,16 +52,27 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
     netReceivableTotal += m.payable;
     previousDuesTotal  += (m.prevDues || 0);
     currentMonthTotal  += (m.currBilled != null ? m.currBilled : Math.max(0, m.payable - (m.prevDues || 0)));
-    receivedTotal      += m.paid;
+    /* Pending receipt saved as a negative previous/advance (receivedAmount 0)
+       belongs in Fee Received, not Advance Available. */
+    let pendingReceipt = 0;
+    (m.recs || []).forEach((rec) => (rec.detailRows || []).forEach((r) => {
+      const name = String(r.subHead || r.head || '');
+      const billed = Math.max(0, (Number(r.challanAmount) || 0) - (Number(r.discount) || 0));
+      const hp = Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+      const recv = Number(r.receivedAmount) || 0;
+      const duesHead = /old\s*dues|previous\s*dues?|pending\s*dues?|previous\s*pending|arrears?/i.test(name);
+      if ((duesHead || billed <= 0) && hp < 0 && recv <= 0) pendingReceipt += Math.round(-hp);
+    }));
+    receivedTotal      += m.paid + pendingReceipt;
     discountTotal      += m.disc;
     pendingTotal       += m.remaining;
     if (m.remaining > 0) studentsWithDues += 1;
 
-    if (m.paid > 0) {
+    if (m.paid + pendingReceipt > 0) {
       receivedStudentCount += 1;
       receivedRows.push({
         reg: s.reg, studentName: s.name, cls: c.cls, sec: c.sec,
-        amount: round(m.paid), method: '—', receivedBy: '—', date: '', time: '',
+        amount: round(m.paid + pendingReceipt), method: '—', receivedBy: '—', date: '', time: '',
       });
     }
 
@@ -92,8 +103,9 @@ export function computeFeeExtrasFromLedger(allStudents, { month, year, previousM
       else if (give(r) > 0) push(give(r), null);
     }));
 
-    /* Advance Payments Received — mirror ReportPanelAdvanceFee: negative net
-       across all heads = carried-forward credit. */
+    /* Advance Available — only a real credit (paid more than the bill).
+       Money received against pending / previous dues stays in Fee Received.
+       ledgerPendingAsOf already drops that phantom negative. */
     let net = 0;
     try { ledgerPendingAsOf(m.recs, 999999, '9999-12-31').forEach((v) => { net += v; }); } catch { /* ignore */ }
     const adv = Math.max(0, -round(net));
