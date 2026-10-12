@@ -5690,7 +5690,7 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
   );
 }
 
-/* Small KV helpers used by EmployeeDetailPanel above. */
+/* Small KV helpers used by EmployeeDetailPanel aybove. */
 function ProfSection({ title, icon, children }) {
   return (
     <div className="prof-section">

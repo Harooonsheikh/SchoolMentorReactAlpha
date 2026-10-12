@@ -377,11 +377,11 @@ export default function LoginScreen({ onLogin, onSignup }) {
 
       {method === 'phone' ? (
         <>
-          <label className="auth-label">Phone Number</label>
+          <label className="auth-label">Phone Number Registered in ERP</label>
           <div className="auth-phone-row">
-            <span className="auth-phone-code">+92</span>
+            <span className="auth-phone-code"><i className="fa-solid fa-phone" /></span>
             <div className="auth-input-wrap">
-              <input className="auth-input" type="tel" placeholder="3XX XXXXXXX"
+              <input className="auth-input" type="tel" placeholder="XXXX XXXXXXX"
                 value={username} onChange={e => setUsername(normalizePkPhone(e.target.value))}
                 onKeyDown={e => e.key === 'Enter' && handleLogin()} />
             </div>
