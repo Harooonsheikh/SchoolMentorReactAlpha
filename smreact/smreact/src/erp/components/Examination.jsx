@@ -11022,8 +11022,74 @@ async function bmuBuildWorkbook({ examName, className, students, subjects, comme
   return wb;
 }
 
-async function bmuDownloadWorkbook(wb, filename) {
-  const buffer = await wb.xlsx.writeBuffer();
+/* ── Bulk marks APIs (template download + upload) ── */
+function bmuApiParams(ctx) {
+  return {
+    branchId: String(sessionStorage.getItem('branchID') || ''),
+    classId: String(ctx.classID),
+    sectionId: String(ctx.sectionID),
+    termId: String(ctx.termID),
+    examId: String(ctx.selectExam),
+  };
+}
+
+async function bmuApiDownloadTemplate(ctx, commentsMode) {
+  const token = sessionStorage.getItem('token');
+  const qs = new URLSearchParams(bmuApiParams(ctx));
+  const path = commentsMode === 'manual' ? '/api/marks-template-with-comments' : '/api/marks-template';
+  const res = await fetch(buildUrl(`${path}?${qs}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(t ? String(t).slice(0, 160) : `Template download failed (HTTP ${res.status})`);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('content-disposition') || '';
+  const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  const safe = s => String(s || 'Marks').replace(/[^A-Za-z0-9]+/g, '_');
+  const name = m ? decodeURIComponent(m[1])
+    : `Marks_${safe(ctx.className)}_${safe(ctx.examName)}${commentsMode === 'manual' ? '_WithComments' : ''}.xlsx`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function bmuApiUploadMarks(ctx, commentsMode, file) {
+  const token = sessionStorage.getItem('token');
+  const p = bmuApiParams(ctx);
+  console.log('[marks-upload] params', p);
+  const fd = new FormData();
+  fd.append('BranchID', p.branchId);
+  fd.append('TermID', p.termId);
+  fd.append('ExamID', p.examId);
+  fd.append('ClassID', p.classId);
+  fd.append('SectionID', p.sectionId);
+  const withComments = commentsMode === 'manual';
+  // marks-upload → MarksFile ; teacher-remarks → File (dusra field khaali)
+  fd.append('MarksFile', withComments ? '' : file);
+  fd.append('File', withComments ? file : '');
+  const path = withComments ? '/api/marks-upload/teacher-remarks' : '/api/marks-upload';
+  const res = await fetch(buildUrl(path), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, Accept: '*/*' }, // Content-Type browser khud set karega
+    body: fd,
+  });
+  const text = await res.text().catch(() => '');
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { message: text }; }
+  const errs = []
+    .concat(Array.isArray(data?.errors) ? data.errors : [])
+    .concat(Array.isArray(data?.data?.errors) ? data.data.errors : [])
+    .map(e => (typeof e === 'string' ? e : (e?.message || e?.error || JSON.stringify(e))));
+  const ok = res.ok && data?.success !== false && !errs.length;
+  return { ok, status: res.status, message: data?.message || data?.Message || '', errors: errs, data };
+}
+
+async function bmuDownloadWorkbook(wb, filename) {  const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -11357,6 +11423,7 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
   const [fileName, setFileName] = useState('');
   const [parsed, setParsed] = useState(null);
   const [progress, setProgress] = useState(null);
+  const [upFile, setUpFile] = useState(null);
   const fileInputRef = useRef(null);
   const activeSubjects = subjects.filter(s => s.total > 0);
 
@@ -11373,73 +11440,50 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
       toast?.('Set total marks for at least one subject before downloading the sheet.', 'error');
       return;
     }
-    setBusy(true);
+       setBusy(true);
     try {
-      const rows = await ensureLoaded();
-      const wb = await bmuBuildWorkbook({
-        examName: ctx.examName || 'Exam',
-        className: ctx.className || 'Class',
-        students: rows,
-        subjects,
-        commentsMode,
-      });
-      const safe = s => String(s || 'Marks').replace(/[^A-Za-z0-9]+/g, '_');
-      await bmuDownloadWorkbook(wb, `Marks_${safe(ctx.className)}_${safe(ctx.examName)}.xlsx`);
+      await bmuApiDownloadTemplate(ctx, commentsMode);
       toast?.('Template downloaded — fill it in and upload it below.', 'success');
     } catch (e) {
       console.error(e);
-      toast?.('Could not generate the template. Please try again.', 'error');
+      toast?.(e?.message || 'Could not download the template. Please try again.', 'error');
     } finally {
-      setBusy(false);
+            setBusy(false);
     }
   };
+   
 
   const onFile = async e => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    setFileName(file.name);
-    setBusy(true);
-    try {
-      const rows = await ensureLoaded();
-      const buffer = await file.arrayBuffer();
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.load(buffer);
-      setParsed(bmuParseWorkbook(wb, rows, subjects, commentsMode));
-      setStep('validate');
-    } catch (err) {
-      console.error(err);
-      toast?.('Could not read this file — make sure it\'s the .xlsx template downloaded from this screen.', 'error');
-    } finally {
-      setBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+         setFileName(file.name);
+    setUpFile(file);
+    setParsed({ results: [], errors: [], warnings: [] });
+    setStep('validate');
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
-
-  const applyUpload = async () => {
-    if (!parsed || parsed.errors.length || !parsed.results.length) return;
+  /* onFile end */
+   const applyUpload = async () => {
+    if (!upFile) return;
     setBusy(true);
-    setProgress({ done: 0, total: parsed.results.length });
     try {
-      const { savedStudents, failures } = await bmuApplyResults({
-        ctx, subjects, grades, remarksScale, commentsMode,
-        results: parsed.results,
-        onProgress: (done, total) => setProgress({ done, total }),
-      });
-      if (failures.length) {
-        toast?.(`Saved ${savedStudents} of ${parsed.results.length} students. ${failures.length} item(s) failed.`, 'error');
-        setParsed(prev => ({ ...prev, errors: failures, results: [] }));
+      const r = await bmuApiUploadMarks(ctx, commentsMode, upFile);
+      if (!r.ok) {
+        const errs = r.errors.length ? r.errors : [r.message || `Upload failed (HTTP ${r.status}).`];
+        setParsed({ results: [], warnings: [], errors: errs });
+        toast?.('Upload failed — please fix the issues and upload again.', 'error');
         return;
       }
-      toast?.(`Marks uploaded for ${savedStudents} student${savedStudents === 1 ? '' : 's'}.`, 'success');
+       toast?.(r.message || 'Marks uploaded successfully.', 'success');
       onSaved?.();
     } catch (err) {
       console.error(err);
       toast?.('Could not upload marks. Please try again.', 'error');
     } finally {
       setBusy(false);
-      setProgress(null);
     }
   };
+  /* applyUpload end */
 
   const totalStudents = students.length;
 
@@ -11519,9 +11563,9 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
                   <div className="bmu-issue-title"><i className="fa-solid fa-circle-exclamation"></i> {parsed.errors.length} issue{parsed.errors.length === 1 ? '' : 's'} must be fixed before uploading</div>
                   <ul className="bmu-issue-list">{parsed.errors.map((err, i) => <li key={i}>{err}</li>)}</ul>
                 </div>
-              ) : (
+                  ) : (
                 <div className="bmu-issue-box ok">
-                  <div className="bmu-issue-title"><i className="fa-solid fa-circle-check"></i> {parsed.results.length} student{parsed.results.length === 1 ? '' : 's'} ready to update</div>
+                  <div className="bmu-issue-title"><i className="fa-solid fa-circle-check"></i> {fileName} ready to upload</div>
                 </div>
               )}
               {parsed.warnings.length > 0 && (
@@ -11578,8 +11622,7 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
               <Tooltip text="Upload a different file"><button className="exam-cancel-btn" disabled={busy} onClick={() => { setParsed(null); setStep('template'); }}><i className="fa-solid fa-rotate-left"></i> Choose Different File</button></Tooltip>
               <Tooltip text="Close"><button className="exam-cancel-btn" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark"></i> Close</button></Tooltip>
               <Tooltip text="Apply these marks to the class">
-                <button className="exam-submit-btn" disabled={busy || !parsed || parsed.errors.length > 0 || !parsed.results.length} onClick={applyUpload}>
-                  <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {busy ? 'Saving…' : 'Confirm & Apply'}
+                <button className="exam-submit-btn" disabled={busy || !upFile || (parsed && parsed.errors.length > 0)} onClick={applyUpload}>                  <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {busy ? 'Saving…' : 'Confirm & Apply'}
                 </button>
               </Tooltip>
             </>
