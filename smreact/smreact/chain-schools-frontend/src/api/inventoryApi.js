@@ -89,6 +89,7 @@ const mapProduct = (r) => ({
   low: Number(r.lowStock) || 0,
   cost: Number(r.purchasePrice) || 0,
   price: Number(r.salePrice) || 0,
+  vendor: clean(r.vendorName),
 })
 
 const mapSale = (r) => ({
@@ -161,6 +162,7 @@ function inventoryBody(p, { action, isPOS, networkId }) {
     stockQuantity: isPOS ? (Number(p.stock) || 0) : 0,
     purchasePrice: isPOS ? (Number(p.cost) || 0) : 0,
     salePrice: isPOS ? (Number(p.price) || 0) : 0,
+    vendorName: String(p.vendor || '').trim(),
     isPOS,
     createdBy: currentUserId(),
     modifiedBy: currentUserId(),

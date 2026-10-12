@@ -18,7 +18,7 @@ export const TUTORIALS = {
   '/notifications': { icon: 'fa-bell', videos: [v('Sending Notifications')] },
   '/user-permissions': { icon: 'fa-shield-halved', videos: [v('Assign School'), v('User Permission')] },
   '/accounts': { icon: 'fa-file-invoice-dollar', videos: [v('Chart of Accounts'), v('Transactions'), v('Account Books'), v('Reports')] },
-  '/inventory': { icon: 'fa-boxes-stacked', videos: [v('Inventory Management'), v('Point of Sale'), v('Reports')] },
+  '/inventory': { icon: 'fa-boxes-stacked', videos: [v('Head Office Assets Management'), v('Point of Sale'), v('Reports')] },
   '/hr': { icon: 'fa-users-gear', videos: [v('HR Basics'), v('Employee Management'), v('Payroll'), v('Reports')] },
   '/attendance': { icon: 'fa-user-check', videos: [v('Holidays Setup'), v('Staff Attendance'), v('Reports')] },
   '/settings': { icon: 'fa-gear', videos: [v('Chain / Franchise Profile'), v('Connected Schools'), v('Classes & Subjects')] },
