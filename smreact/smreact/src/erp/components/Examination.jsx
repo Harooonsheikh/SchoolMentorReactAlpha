@@ -1002,7 +1002,10 @@ const [subjects, setSubjects] = useState([]);
   const rsAbsentMode = rsAbsentSaved === 'zero' || rsAbsentSaved === 'exclude' ? rsAbsentSaved : '';
   const [rsModalOpen, setRsModalOpen]   = useState(false);
   const [rsReportReq, setRsReportReq]   = useState(null);      // truthy → picker open
-  /* Preschool / Montessori — separate from the Grade 1-12 result state. */
+  /* Preschool / Montessori — separate from the Grade 1-12 result state.
+     Filhaal Preschool sirf branchID 1 par live hai; baqi branches par sirf
+     Grade 1-12 dikhta hai (toggle + per-class Preschool option chhup jata hai). */
+  const isPreschoolBranch = String(sessionStorage.getItem('branchID') || '').trim() === '1';
   const [pResultType, setPResultType] = useState('grade');
   const [pRsL2, setPRsL2] = useState('setup');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
@@ -5139,6 +5142,7 @@ useEffect(() => {
           {/* ── Result Setup sub-panel ── */}
           {rsTab === 'resultsetup' && (
             <>
+              {isPreschoolBranch && (
               <div className="rs-l2-tabs" style={{ marginBottom: 10 }}>
                 <button className={`rs-l2-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
                   <i className="fa-solid fa-graduation-cap" style={{ marginRight: 7 }}></i> Grade 1-12
@@ -5147,7 +5151,8 @@ useEffect(() => {
                   <i className="fa-solid fa-shapes" style={{ marginRight: 7 }}></i> Preschool / Montessori
                 </button>
               </div>
-              {pResultType === 'preschool' ? (
+              )}
+              {isPreschoolBranch && pResultType === 'preschool' ? (
                 <PreschoolResultSetup
                   pRsL2={pRsL2} setPRsL2={setPRsL2}
                   pLearningAreas={pLearningAreas} setPLearningAreas={setPLearningAreas}
@@ -5658,11 +5663,13 @@ onClick={() => {
                             <i className="fa-solid fa-graduation-cap"></i>
                           </button>
                         </Tooltip>
+                        {isPreschoolBranch && (
                         <Tooltip text="Preschool / Montessori (E/M/A/NY)">
                           <button type="button" className={`res-type-btn preschool${isPreschool ? ' active' : ''}`} onClick={() => { if (!isPreschool) setPLevelPickCtx({ key, className }); }}>
                             <i className="fa-solid fa-shapes"></i>
                           </button>
                         </Tooltip>
+                        )}
                       </div>
                     </div>
                     <div className="res-td">
