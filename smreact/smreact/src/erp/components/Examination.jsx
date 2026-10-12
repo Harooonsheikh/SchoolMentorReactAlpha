@@ -17,6 +17,17 @@ import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
 import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
+import useAsync from '../hooks/useAsync';
+import * as preschoolService from '../services/preschoolService';
+import {
+  pProgressForStudent,
+  pTemplateForExam,
+  PreschoolResultSetup,
+  PreschoolLevelPickModal,
+  PreschoolAssessmentModal,
+  PreschoolResultCardViewer,
+  PreschoolTemplatePreviewModal,
+} from './PreschoolExam';
 
 /* ── Shared report-kit glue: header / footer / toolbar come from reportKit.
    School name + academic year stay LIVE — they come from the /report-header
@@ -991,6 +1002,26 @@ const [subjects, setSubjects] = useState([]);
   const rsAbsentMode = rsAbsentSaved === 'zero' || rsAbsentSaved === 'exclude' ? rsAbsentSaved : '';
   const [rsModalOpen, setRsModalOpen]   = useState(false);
   const [rsReportReq, setRsReportReq]   = useState(null);      // truthy → picker open
+  /* Preschool / Montessori — separate from the Grade 1-12 result state. */
+  const [pResultType, setPResultType] = useState('grade');
+  const [pRsL2, setPRsL2] = useState('setup');
+  const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
+  const { data: pGradingScale = [], setData: setPGradingScale } = useAsync(preschoolService.getGradingScale, []);
+  const { data: pSlo = {}, setData: setPSlo } = useAsync(preschoolService.getSloStatements, []);
+  const { data: pPsdFields = [], setData: setPPsdFields } = useAsync(preschoolService.getPsdFields, []);
+  const { data: pLevels = [] } = useAsync(preschoolService.getPreschoolLevels, []);
+  const [pActiveLA, setPActiveLA] = useState(null);
+  const [pActiveLevel, setPActiveLevel] = useState('pg');
+  const { data: pRco = [], setData: setPRco } = useAsync(preschoolService.getPRco, []);
+  const [pPreviewId, setPPreviewId] = useState(null);
+  const [pHelpOpen, setPHelpOpen] = useState(false);
+  const { data: pClassTypes = {}, setData: setPClassTypes } = useAsync(preschoolService.getClassAssessmentTypes, []);
+  const { data: pClassLevels = {}, setData: setPClassLevels } = useAsync(preschoolService.getClassPreschoolLevels, []);
+  const { data: pResultData = {}, setData: setPResultData } = useAsync(preschoolService.getPreschoolResultData, []);
+  const [pAssessCtx, setPAssessCtx] = useState(null);
+  const [pCardCtx, setPCardCtx] = useState(null);
+  const [pConfirmPublish, setPConfirmPublish] = useState(null);
+  const [pLevelPickCtx, setPLevelPickCtx] = useState(null);
 
   /* ── Single Assessment state ── */
   const [resTerm, setResTerm]           = useState('2nd');
@@ -5108,6 +5139,31 @@ useEffect(() => {
           {/* ── Result Setup sub-panel ── */}
           {rsTab === 'resultsetup' && (
             <>
+              <div className="rs-l2-tabs" style={{ marginBottom: 10 }}>
+                <button className={`rs-l2-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
+                  <i className="fa-solid fa-graduation-cap" style={{ marginRight: 7 }}></i> Grade 1-12
+                </button>
+                <button className={`rs-l2-tab${pResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
+                  <i className="fa-solid fa-shapes" style={{ marginRight: 7 }}></i> Preschool / Montessori
+                </button>
+              </div>
+              {pResultType === 'preschool' ? (
+                <PreschoolResultSetup
+                  pRsL2={pRsL2} setPRsL2={setPRsL2}
+                  pLearningAreas={pLearningAreas} setPLearningAreas={setPLearningAreas}
+                  pGradingScale={pGradingScale} setPGradingScale={setPGradingScale}
+                  pSlo={pSlo} setPSlo={setPSlo}
+                  pLevels={pLevels} pActiveLevel={pActiveLevel} setPActiveLevel={setPActiveLevel}
+                  pActiveLA={pActiveLA} setPActiveLA={setPActiveLA}
+                  pPsdFields={pPsdFields} setPPsdFields={setPPsdFields}
+                  pRco={pRco} setPRco={setPRco}
+                  rsSigs={rsSigs}
+                  setPPreviewId={setPPreviewId}
+                  pHelpOpen={pHelpOpen} setPHelpOpen={setPHelpOpen}
+                  toast={toast}
+                />
+              ) : (
+              <>
               {/* Level-2 inner tabs (View permission ke hisaab se) */}
               <div className="rs-l2-tabs">
                 {examView('Result Setup') && (
@@ -5411,6 +5467,8 @@ useEffect(() => {
                   </div>
                 </>
               )}
+              </>
+              )}
             </>
           )}
 {rsTab === 'singleassessment'   && (() => {
@@ -5557,6 +5615,7 @@ const resPickExam = async (id) => {
               <div className="res-th">S. No.</div>
               <div className="res-th">Class Name</div>
               <div className="res-th" >Section</div>
+              <div className="res-th">Type</div>
               <div className="res-th">Status</div>
               <div className="res-th">Publish</div>
               <div className="res-th">Total Marks</div>
@@ -5568,6 +5627,13 @@ const key    = `rcls_${resExamId}_${cls.sectionID}_${i}`;
   const isOpen = resOpenKey === key;
   const isRel  = examVisibilityMap[key] ?? cd.released;  // ← yeh change karo
   const className = `${cls.gradeName} - ${cls.sectionName}`;
+  const isPreschool = pClassTypes[key] === 'preschool';
+  const pcd = pResultData[key] || { released: false, students: [] };
+  const isRelP = !!pcd.released;
+  const shownRel = isPreschool ? isRelP : isRel;
+  const rowLevel = pClassLevels[key] || 'kg';
+  const rowSlo = pSlo[rowLevel] || {};
+  const rowSloTotal = (pLearningAreas || []).reduce((a, la) => a + ((rowSlo[la.id] || []).length), 0);
               return (
                 <div key={key} className="res-row-wrap">
                   <div
@@ -5585,28 +5651,45 @@ onClick={() => {
                       <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
                     </div>
                     <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+                    <div className="res-td" onClick={e => e.stopPropagation()}>
+                      <div className="res-type-pill">
+                        <Tooltip text="Grade 1-12 (marks-based)">
+                          <button type="button" className={`res-type-btn grade${!isPreschool ? ' active' : ''}`} onClick={() => { preschoolService.setClassAssessmentType(key, 'grade').then(setPClassTypes); }}>
+                            <i className="fa-solid fa-graduation-cap"></i>
+                          </button>
+                        </Tooltip>
+                        <Tooltip text="Preschool / Montessori (E/M/A/NY)">
+                          <button type="button" className={`res-type-btn preschool${isPreschool ? ' active' : ''}`} onClick={() => { if (!isPreschool) setPLevelPickCtx({ key, className }); }}>
+                            <i className="fa-solid fa-shapes"></i>
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
                     <div className="res-td">
-                     <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
-  <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
-  {isRel ? 'Released' : 'Not Released'}
+                     <span className={`res-released-badge${shownRel ? ' released' : ' pending'}`}>
+  <i className={`fa-solid ${shownRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+  {shownRel ? 'Released' : 'Not Released'}
 </span>
 
                     </div>
 <div className="res-td" onClick={e => e.stopPropagation()}>
-  <Tooltip text={!canSingleEdit ? 'You do not have permission to publish results' : (isRel ? 'Unpublish this class result' : 'Publish this class result')}>
+  <Tooltip text={!canSingleEdit ? 'You do not have permission to publish results' : (shownRel ? 'Unpublish this class result' : 'Publish this class result')}>
 <button
-  className={`res-publish-btn${isRel ? ' released' : ''}`}
+  className={`res-publish-btn${shownRel ? ' released' : ''}`}
   disabled={isOtherSession || !canSingleEdit}
   style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-  onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } togglePublish(key, className, isRel, cls); }}
+  onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (isPreschool) { setPConfirmPublish({ key, className, released: isRelP }); return; } togglePublish(key, className, isRel, cls); }}
 >
-  <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-  {isRel ? 'Unpublish' : 'Publish Result'}
+  <i className={`fa-solid ${shownRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+  {shownRel ? 'Unpublish' : 'Publish Result'}
 </button>
 
   </Tooltip>
 </div>
                     <div className="res-td" onClick={e => e.stopPropagation()}>
+                   {isPreschool ? (
+                     <span className="res-pms-badge"><i className="fa-solid fa-shapes"></i> {(pGradingScale || []).map(g => g.code).join(' / ')}</span>
+                   ) : (
                    <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Edit total marks for each subject'}>
   <button
     className="res-marks-btn"
@@ -5638,8 +5721,10 @@ setResTotalMarksCtx({
     <i className="fa-solid fa-pen-to-square"></i> Total Marks
   </button>
 </Tooltip>
+                   )}
                     </div>
                     <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
+                      {!isPreschool && <>
                       <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Bulk upload obtained marks for the whole class via Excel'}>
                         <button
                           className="res-bulk-btn"
@@ -5720,6 +5805,7 @@ setResTotalMarksCtx({
                       >
                         <i className="fa-solid fa-trash"></i>
                       </button></Tooltip>
+                      </>}
                       <button
                         className={`ds-expand-btn${isOpen ? ' open' : ''}`}
 onClick={e => { 
@@ -5740,6 +5826,84 @@ onClick={e => {
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
         <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
         Loading student data...
+      </div>
+    ) : isPreschool ? (
+      <div>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+          <i className="fa-solid fa-shapes" style={{ color: '#7C3AED', marginRight: 5 }}></i>
+          Student Results — {className}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+            {(resStudentData[key]?.students || []).length} Students
+          </span>
+        </div>
+        <div className="res-student-scroll">
+          <table className="res-student-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Student Name</th>
+                <th>Father Name</th>
+                <th>Progress</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(resStudentData[key]?.students || []).map((raw, si) => {
+                const st = {
+                  id: raw.id ?? raw.studentID ?? raw.StudentID,
+                  name: raw.studentName || raw.name || '',
+                  father: raw.fatherName || raw.father || '',
+                  rollNo: raw.registrationNumber || raw.rollNo || raw.grNo || '—',
+                  attendance: raw.attendance,
+                };
+                const ad = (pcd.students || []).find(s => String(s.studentId) === String(st.id));
+                const { done, total } = pProgressForStudent(ad, (pLearningAreas || []).length, rowSloTotal);
+                const pct = total ? Math.round((done / total) * 100) : 0;
+                return (
+                  <tr key={st.id || si}>
+                    <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
+                    <td style={{ minWidth: 120 }}>
+                      <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{st.name}</div>
+                      <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{st.rollNo}</div>
+                    </td>
+                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>{st.father}</td>
+                    <td style={{ minWidth: 110 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ flex: 1, height: 6, borderRadius: 999, background: '#E2E8F0', overflow: 'hidden', minWidth: 60 }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: pct >= 100 ? '#16A34A' : '#7C3AED', borderRadius: 3 }}></div>
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: pct >= 100 ? '#16A34A' : '#7C3AED', flexShrink: 0 }}>{done}/{total}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`res-st-badge ${done === 0 ? 'incomplete' : done >= total ? 'complete' : 'incomplete'}`}>
+                        <i className={`fa-solid ${done === 0 ? 'fa-circle-half-stroke' : done >= total ? 'fa-circle-check' : 'fa-circle-half-stroke'}`}></i>
+                        {done === 0 ? 'Not Started' : done >= total ? 'Complete' : 'In Progress'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                        <Tooltip text="Enter/Edit assessment">
+                          <button className="res-action-btn" onClick={() => setPAssessCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '', termLabel: resCurrentExam?.name || '' })}>
+                            <i className="fa-solid fa-pen-to-square"></i> Assess
+                          </button>
+                        </Tooltip>
+                        {ad && (
+                          <Tooltip text="View this student's result card">
+                            <button className="res-action-btn view" onClick={() => setPCardCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '' })}>
+                              <i className="fa-solid fa-eye"></i> Card
+                            </button>
+                          </Tooltip>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     ) : (
 <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
@@ -7533,6 +7697,126 @@ onClick={async () => {
           />
         );
       })()}
+
+      {pLevelPickCtx && (
+        <PreschoolLevelPickModal
+          className={pLevelPickCtx.className}
+          pLevels={pLevels}
+          onClose={() => setPLevelPickCtx(null)}
+          onConfirm={async levelId => {
+            const { key } = pLevelPickCtx;
+            const [freshTypes, freshLevels] = await Promise.all([
+              preschoolService.setClassAssessmentType(key, 'preschool'),
+              preschoolService.setClassPreschoolLevel(key, levelId),
+            ]);
+            setPClassTypes(freshTypes);
+            setPClassLevels(freshLevels);
+            toast('Class switched to Preschool / Montessori', 'success');
+            setPLevelPickCtx(null);
+          }}
+        />
+      )}
+
+      {pAssessCtx && (
+        <PreschoolAssessmentModal
+          assessment={{ name: pAssessCtx.examName, label: pAssessCtx.examName }}
+          cls={{ cls: pAssessCtx.className, sec: '' }}
+          student={pAssessCtx.student}
+          existing={(pResultData[pAssessCtx.key]?.students || []).find(s => String(s.studentId) === String(pAssessCtx.student?.id)) || null}
+          pLearningAreas={pLearningAreas}
+          pSlo={pSlo[pClassLevels[pAssessCtx.key] || 'kg'] || {}}
+          pGradingScale={pGradingScale}
+          pPsdFields={pPsdFields}
+          allClasses={[]}
+          onClose={() => setPAssessCtx(null)}
+          onSave={async (patch, shouldClose) => {
+            await preschoolService.saveStudentAssessment(pAssessCtx.key, pAssessCtx.student.id, patch);
+            setPResultData(await preschoolService.getPreschoolResultData());
+            toast(shouldClose ? 'Assessment saved!' : 'Saved — continue to next section', 'success');
+            if (shouldClose) setPAssessCtx(null);
+          }}
+          toast={toast}
+        />
+      )}
+
+      {pCardCtx && (() => {
+        const ad = (pResultData[pCardCtx.key]?.students || []).find(s => String(s.studentId) === String(pCardCtx.student?.id));
+        if (!ad) return null;
+        return (
+          <PreschoolResultCardViewer
+            assessment={{ name: pCardCtx.examName, label: pCardCtx.examName }}
+            cls={{ cls: pCardCtx.className, sec: '' }}
+            student={pCardCtx.student}
+            ad={ad}
+            template={pTemplateForExam(pCardCtx.examName)}
+            pRco={pRco}
+            pLearningAreas={pLearningAreas}
+            pSlo={pSlo[pClassLevels[pCardCtx.key] || 'kg'] || {}}
+            pGradingScale={pGradingScale}
+            pPsdFields={pPsdFields}
+            rsSigs={rsSigs}
+            previous={null}
+            onClose={() => setPCardCtx(null)}
+            toast={toast}
+          />
+        );
+      })()}
+
+      {pPreviewId && (
+        <PreschoolTemplatePreviewModal
+          templateId={pPreviewId}
+          pRco={pRco}
+          pLearningAreas={pLearningAreas}
+          pSlo={pSlo?.kg || {}}
+          pGradingScale={pGradingScale}
+          pPsdFields={pPsdFields}
+          rsSigs={rsSigs}
+          onClose={() => setPPreviewId(null)}
+          onSelect={() => setPPreviewId(null)}
+        />
+      )}
+
+      {pConfirmPublish && (
+        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setPConfirmPublish(null); }}>
+          <div className="confirm-dialog">
+            <div className="confirm-glow" style={{ background: pConfirmPublish.released
+              ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+              : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+            <div className="confirm-hero">
+              <div className="confirm-ring">
+                <div className="confirm-icon-wrap" style={{
+                  background: pConfirmPublish.released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
+                  color: pConfirmPublish.released ? '#DC2626' : '#1E40AF',
+                }}>
+                  <i className={`fa-solid ${pConfirmPublish.released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                </div>
+              </div>
+            </div>
+            <div className="confirm-body">
+              <div className="confirm-title">{pConfirmPublish.released ? 'Unpublish Preschool Result?' : 'Publish Preschool Result?'}</div>
+              <div className="confirm-msg" dangerouslySetInnerHTML={{
+                __html: pConfirmPublish.released
+                  ? `Hide the Preschool result for <strong>${pConfirmPublish.className}</strong> from students and parents?`
+                  : `Release the Preschool result for <strong>${pConfirmPublish.className}</strong> to students and parents?`,
+              }} />
+            </div>
+            <div className="confirm-footer">
+              <button className="confirm-btn confirm-btn--cancel" onClick={() => setPConfirmPublish(null)}>Cancel</button>
+              <button
+                className={`confirm-btn confirm-btn--confirm${pConfirmPublish.released ? '' : ' primary-style'}`}
+                onClick={async () => {
+                  await preschoolService.publishClass(pConfirmPublish.key, !pConfirmPublish.released);
+                  setPResultData(await preschoolService.getPreschoolResultData());
+                  toast(pConfirmPublish.released ? 'Preschool result unpublished' : 'Preschool result published!', 'success');
+                  setPConfirmPublish(null);
+                }}
+              >
+                {pConfirmPublish.released ? 'Yes, Unpublish' : 'Yes, Publish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Bulk Result Cards (all students of a class) ── */}
       {bulkCardCtx && (
@@ -16921,12 +17205,70 @@ body.dark .rco-row { background:rgba(255,255,255,.02); }
 body.dark .rco-row:hover { background:var(--bg-card); }
 body.dark .rct-pages { background:rgba(255,255,255,.02); }
 
+/* Preschool / Montessori */
+.res-type-pill {
+  display:flex; border:1.5px solid var(--border-light); border-radius:8px;
+  overflow:hidden; width:fit-content; flex-shrink:0;
+}
+.res-type-btn {
+  width:30px; height:26px; display:flex; align-items:center; justify-content:center;
+  background:var(--bg-card); border:none; cursor:pointer; font-size:11.5px;
+  color:var(--text-muted); transition:all .15s ease;
+}
+.res-type-btn + .res-type-btn { border-left:1.5px solid var(--border-light); }
+.res-type-btn:hover { color:#1E40AF; }
+.res-type-btn.active.grade { background:#1E40AF; color:#fff; }
+.res-type-btn.active.preschool { background:#7C3AED; color:#fff; }
+.res-type-btn.active:hover { color:#fff; }
+.res-pms-badge {
+  display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px;
+  font-size:10.5px; font-weight:700; white-space:nowrap; background:rgba(124,58,237,.1);
+  color:#7C3AED; border:1px solid rgba(124,58,237,.25);
+}
+.pms-list-row { display:flex; align-items:center; gap:10px; padding:7px 0; }
+.pms-list-row .rs-input { flex:1; }
+.pms-add-row { display:flex; gap:10px; margin-top:8px; padding-top:12px; border-top:1px dashed var(--border-light); }
+.pms-add-row .rs-input { flex:1; }
+.pms-save-row { display:flex; justify-content:flex-end; margin-top:14px; }
+.pms-slo-list { display:flex; flex-direction:column; gap:4px; max-height:360px; overflow-y:auto; padding:4px 2px; }
+.pms-slo-row {
+  display:flex; align-items:center; justify-content:space-between; gap:14px;
+  padding:10px 12px; border:1px solid var(--border-light); border-radius:10px; background:var(--bg-card);
+}
+.pms-slo-text { font-size:12.5px; color:var(--text-primary); flex:1; }
+.pms-grade-picker { display:flex; gap:8px; flex-shrink:0; }
+.pms-grade-btn {
+  min-width:36px; height:34px; padding:0 8px; border-radius:8px; border:1.5px solid var(--border-light);
+  background:var(--bg-card); color:var(--text-primary); font-size:12.5px; font-weight:800; cursor:pointer;
+}
+.pms-grade-btn.active { background:var(--g-color, #1E40AF); border-color:var(--g-color, #1E40AF); color:#fff; }
+.pms-grading-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:16px; padding-top:14px; border-top:1px solid var(--border-light); }
+.pms-grading-legend span { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted); font-weight:600; }
+.pms-auto-stat {
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  padding:8px 16px; border-radius:10px; background:rgba(124,58,237,.06);
+  border:1px solid rgba(124,58,237,.18); min-width:84px;
+}
+.pms-auto-stat span { font-size:16px; font-weight:800; color:#7C3AED; }
+.rs-field-row { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+.rs-field-label { font-size:11.5px; font-weight:700; color:var(--text-secondary); }
+.acc-link-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  background:none; border:none; padding:0; cursor:pointer;
+  font-family:inherit; font-size:12px; font-weight:700; color:#1E40AF;
+}
+.acc-link-btn:hover { text-decoration:underline; }
+.pms-card-head, .pms-card-head * { color:#fff; }
+[data-theme="dark"] .res-type-btn { background:var(--bg-muted); color:var(--text-muted); }
+[data-theme="dark"] .res-type-pill { border-color:var(--border-light); }
+[data-theme="dark"] .pms-grade-btn { background:var(--bg-muted); color:var(--text-primary); border-color:var(--border-light); }
+
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — class rows + student table + per-row badges
    ═══════════════════════════════════════════════════════════════════ */
 .res-table-head {
   display:grid;
-  grid-template-columns: 56px 1.3fr 80px 120px 150px 130px 130px;
+  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 130px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -16940,7 +17282,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-row-wrap:last-child .res-detail.open { border-radius:0 0 10px 10px; }
 .res-row {
   display:grid;
-  grid-template-columns: 56px 1.3fr 80px 120px 150px 130px 130px;
+  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 130px;
   align-items:center; gap:10px;
   padding:13px 14px;
   background:var(--bg-card);
@@ -17083,7 +17425,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-toggle-wrap input:checked + .res-toggle-slider::before { transform:translateX(18px); }
 
 @media (max-width: 820px) {
-  .res-table-head, .res-row { grid-template-columns: 46px 1.2fr 72px 100px 130px 110px 90px; }
+  .res-table-head, .res-row { grid-template-columns: 46px 1.1fr 60px 70px 90px 120px 110px 90px; }
 }
 @media (max-width: 640px) {
   .res-table-head { display:none; }
@@ -18812,6 +19154,11 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
 
   /* Row 3 — Released / Not Released badge */
   .res-row > .res-td:nth-of-type(4) {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    padding: 0 !important;
+  }
+  .res-row > .res-td:nth-of-type(5) {
     flex: 1 1 100% !important;
     width: 100% !important;
     padding: 0 !important;
@@ -18827,8 +19174,8 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   /* Row 4 — Publish + Total Marks + icon actions in ONE row.
      Publish + Total Marks share ~equal space via flex: 1 1 0; width: 0.
      Cell 7 (download + delete + chevron) sits at the right with 3 fixed icons. */
-  .res-row > .res-td:nth-of-type(5),
-  .res-row > .res-td:nth-of-type(6) {
+  .res-row > .res-td:nth-of-type(6),
+  .res-row > .res-td:nth-of-type(7) {
     flex: 1 1 0 !important;
     width: 0 !important;
     min-width: 0 !important;
@@ -19634,7 +19981,6 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
 
 /* Secondary/tertiary sub-navigation uses canonical ERP pill segments */
 .exam-term-chips,
-.rs-l2-tabs,
 .rs-modal-tabs,
 .syl-subj-tabs {
   display:flex;
@@ -19650,7 +19996,6 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   flex-wrap:nowrap;
 }
 .exam-term-chip,
-.rs-l2-tab,
 .rs-modal-tab,
 .syl-subj-tab {
   flex:1;
@@ -19672,7 +20017,6 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   white-space:nowrap;
 }
 .exam-term-chip:hover:not(.active),
-.rs-l2-tab:hover:not(.active),
 .rs-modal-tab:hover:not(.active),
 .syl-subj-tab:hover:not(.active) {
   background:var(--bg-muted);
@@ -19680,7 +20024,6 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   border-color:transparent;
 }
 .exam-term-chip.active,
-.rs-l2-tab.active,
 .rs-modal-tab.active,
 .syl-subj-tab.active {
   background:linear-gradient(135deg,#1E3A8A,#1E40AF);
@@ -19801,8 +20144,8 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
 @media (max-width:768px) {
   .exam-tabs-row,.res-sub-tabs { padding:4px; gap:3px; margin-bottom:14px; }
   .exam-tab,.res-sub-tab { flex:0 0 auto; padding:9px 12px; font-size:11.5px; gap:5px; }
-  .exam-term-chips,.rs-l2-tabs,.rs-modal-tabs,.syl-subj-tabs { padding:4px; gap:3px; border-radius:14px; }
-  .exam-term-chip,.rs-l2-tab,.rs-modal-tab,.syl-subj-tab { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
+  .exam-term-chips,.rs-modal-tabs,.syl-subj-tabs { padding:4px; gap:3px; border-radius:14px; }
+  .exam-term-chip,.rs-modal-tab,.syl-subj-tab { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
   .exam-submit-btn,.exam-add-btn,.exam-cancel-btn { height:38px; padding:0 14px; font-size:12px; }
 }
 `;
