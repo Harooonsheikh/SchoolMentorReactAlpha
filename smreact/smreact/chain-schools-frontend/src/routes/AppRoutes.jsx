@@ -18,6 +18,7 @@ import Inventory from '../pages/Inventory/Inventory'
 import HumanResource from '../pages/HumanResource/HumanResource'
 import Attendance from '../pages/Attendance/Attendance'
 import Academics from '../pages/Academics/Academics'
+import Examination from '../pages/Examination/Examination'
 import ComingSoon from '../pages/modules/ComingSoon'
 import NotFound from '../pages/NotFound'
 import { COMING_SOON_MODULES } from '../config/nav'
@@ -76,6 +77,7 @@ export default function AppRoutes() {
         <Route path="/hr" element={<HumanResource />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/academics" element={<Academics />} />
+        <Route path="/examination" element={<Examination />} />
 
         {/* Placeholder modules (built in later steps) */}
         {COMING_SOON_MODULES.filter((m) => !['/school-permissions', '/school-progress', '/school-payments', '/sops', '/trainings', '/notifications', '/user-permissions', '/accounts', '/inventory', '/hr', '/attendance', '/academics'].includes(m.path)).map((m) => (

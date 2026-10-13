@@ -1,0 +1,342 @@
+/* ═══════════════════════════════════════════════════════════════════
+   EXAMINATION — chain (head office) ki examination setup, Chain
+   Management API par. UI wahi redesigned Examination page
+   (pages/Examination) — ye file sirf us ki shakal (terms / exams /
+   result grading) me data lati aur save karti hai.
+
+   Controller (POST sab CRUD, GET reads). Base: {CHAIN_API_BASE}/api/Examination
+     POST   /termscrud              { id, branchID, networkID, term,
+                                      sessionYearID, action, startDate, endDate }
+     POST   /addexamcrud            mdlAddExam
+     POST   /gradinguploadercrud    mdlExaminationResultGradingUploader
+     POST   /overallgradingcrud     mdlExaminationResultOverAllGradingSetup
+     GET    /gettermsbynetworkid    ?networkID&branchID&term&pageNo&pageCount
+     GET    /getexams, /getexamsbyclass, /getexamsfordropdown …
+     DELETE /deleteexamdata         ?networkID&id
+
+   Live test (2026-10-13) se maaloom hua:
+     • action sirf: insert | update | delete | get.
+     • Model me startDate/endDate (aur exam me TermID/ClassID/ExamName…)
+       `[Required]` hain — "get"/"delete" ke liye bhi bhejna parta hai,
+       warna 400 validation error. Is liye get/delete me placeholder
+       date chali jati hai.
+     • branchID / sessionYearID network level par 0 (activityCalendarApi
+       jaisa) — head office kisi ek school ka nahi.
+     • ABHI backend ki stored procedures deploy NAHI hui
+       (usp_Net_AddTerms_Crud / _GetPaged, usp_Net_Grades_GetWithSections
+       "Could not find stored procedure" deti hain). Is liye caller ko
+       localStorage fallback rakhna chahiye (HR payroll jaisa): API fail
+       ho to UI local par chalti rahe, SP deploy hote hi sync ho jaye.
+     • Response wrapper { success, message, data } maana gaya hai (baqi
+       chain APIs jaisa) — SP aane par tasdeeq kar lena.
+   Auth header nahi lagta (hrApi / academicsSetupApi jaisa).
+   ═══════════════════════════════════════════════════════════════════ */
+
+import { CHAIN_API_BASE } from '@/config/env'
+import { currentNetworkId } from './networkSchoolsApi'
+
+export { currentNetworkId }
+
+const BASE = `${CHAIN_API_BASE}/api/Examination`
+
+/* Head office = network level — in dono ki jagah 0 jata hai. */
+export const NETWORK_BRANCH_ID = 0
+export const NETWORK_SESSION_YEAR_ID = 0
+
+/* Response wrapper: { success, message, data }. success:false 200 ke saath
+   bhi aa sakta hai, is liye dono check. */
+async function call(path, { method = 'GET', body } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: { Accept: '*/*', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  const json = await res.json().catch(() => null)
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || json?.title || `Request failed (${res.status})`)
+  }
+  return json
+}
+
+const rows = (json) => (Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [])
+const pick = (o, ...keys) => { for (const k of keys) { const v = o?.[k]; if (v !== undefined && v !== null && v !== '') return v } return undefined }
+const dateOnly = (v) => String(v || '').match(/^\d{4}-\d{2}-\d{2}/)?.[0] || ''
+/* Date-only ("YYYY-MM-DD") → UTC-midnight ISO (timezone-safe). Required
+   fields ke liye khaali par aaj ki date (placeholder) bhej dete hain. */
+const toIso = (v) => {
+  const d = dateOnly(v)
+  if (d) return `${d}T00:00:00.000Z`
+  return new Date().toISOString()
+}
+
+/* ════════════════════════════ TERMS ════════════════════════════ */
+
+/* UI term shape: { id, name, start, end }. API row se wahi banata hai —
+   casing/field naam pakka nahi, is liye pick() kai variants par girta hai. */
+export function mapTerm(r = {}) {
+  return {
+    id: Number(pick(r, 'id', 'ID', 'termID', 'TermID')) || 0,
+    name: String(pick(r, 'term', 'Term', 'termName', 'TermName') || '').trim(),
+    start: dateOnly(pick(r, 'startDate', 'StartDate', 'startAt', 'StartAt', 'start')),
+    end: dateOnly(pick(r, 'endDate', 'EndDate', 'endAt', 'EndAt', 'end')),
+    sessionYearID: pick(r, 'sessionYearID', 'SessionYearID'),
+  }
+}
+
+/* UI term → termscrud body. */
+const termBody = (action, t = {}, networkId) => ({
+  id: Number(t.id) || 0,
+  branchID: NETWORK_BRANCH_ID,
+  networkID: Number(networkId) || 0,
+  term: String(t.name ?? t.term ?? '').trim(),
+  sessionYearID: String(t.sessionYearID ?? NETWORK_SESSION_YEAR_ID),
+  action,
+  startDate: toIso(t.start),   // required — khaali par placeholder
+  endDate: toIso(t.end),       // required — khaali par placeholder
+})
+
+/** Poore network ke terms. */
+export async function fetchTerms(networkId = currentNetworkId()) {
+  const json = await call('/termscrud', { method: 'POST', body: termBody('get', {}, networkId) })
+  return rows(json).map(mapTerm).filter((t) => t.id)
+}
+
+/** Term add (id 0) / update (id > 0). Response se naya id wapas. */
+export async function saveTerm(term, networkId = currentNetworkId()) {
+  const action = Number(term.id) > 0 ? 'update' : 'insert'
+  const json = await call('/termscrud', { method: 'POST', body: termBody(action, term, networkId) })
+  const d = json?.data ?? json
+  const id = Array.isArray(d) ? Number(d[0]?.id ?? d[0]?.ID) : Number(d?.id ?? d?.ID ?? d)
+  return { id: id || Number(term.id) || 0, raw: json }
+}
+
+/** Term delete. */
+export async function deleteTerm(id, networkId = currentNetworkId()) {
+  return call('/termscrud', { method: 'POST', body: termBody('delete', { id }, networkId) })
+}
+
+/* Save response se naya id (data: 12 | {id} | [{id}] | bare []). */
+const idOf = (json) => {
+  const d = json?.data ?? json
+  if (Array.isArray(d)) return Number(d[0]?.id ?? d[0]?.ID) || 0
+  if (d && typeof d === 'object') return Number(d.id ?? d.ID) || 0
+  return Number(d) || 0
+}
+
+/* ════════════════════════════ EXAMS ════════════════════════════
+   API row EK class (+ section) ki hoti hai; chain UI ka exam multi-class
+   hai (sections nahi). Is liye: ek UI exam → har class ki ek row.
+     • Read  : addexamcrud `get` (network ki saari rows) → examName+dates par
+               group kar ke { name, from, to, termId, classIds[], serverIds }.
+     • Write : har classId ki insert/update; hataye gaye class ki row delete.
+     • Model me TermID/ClassID/ExamName/TermName/GradeName/SectionID `[Required]`
+       (khaali "" bhi 400) — chain me section/grade nahi, is liye placeholder
+       ('0' / '-') jata hai.
+   Live (2026-10-13): getexams/addexamcrud-get kaam karte hain (SP deployed). */
+
+/* get action ke liye required fields ka placeholder body. */
+const examGetBody = (networkId) => ({
+  id: 0, classID: '0', branchID: NETWORK_BRANCH_ID, networkID: Number(networkId) || 0,
+  sectionID: '0', termID: '0', sectionName: '-', selectExam: '-',
+  dateFrom: toIso(), dateTo: toIso(), termName: '-', examName: '-',
+  gradeName: '-', action: 'get', createdOn: new Date().toISOString(),
+})
+
+const examBody = (action, ex, classId, networkId, term) => ({
+  id: Number(ex.serverIds?.[classId]) || 0,
+  classID: String(classId),                 // asli grade id (e.g. 8189065)
+  branchID: NETWORK_BRANCH_ID,
+  networkID: Number(networkId) || 0,
+  sectionID: '0',                            // network level par sections nahi
+  termID: String(ex.termId ?? term?.id ?? 0),
+  sectionName: '-',
+  /* selectExam = examID (ERP jaisa): naya exam insert par '0' (backend id
+     deta hai), update par us exam ki id. Ye exam ka NAAM nahi — naam examName
+     me jata hai. Pehle galti se yahan ex.name ja raha tha. */
+  selectExam: String(Number(ex.examId) || 0),
+  dateFrom: toIso(ex.from),
+  dateTo: toIso(ex.to),
+  termName: String(term?.name || '').trim() || '-',
+  examName: String(ex.name || '').trim() || '-',
+  gradeName: '-',
+  action,
+  createdOn: new Date().toISOString(),
+})
+
+export function mapExamRow(r = {}) {
+  return {
+    rowId: Number(pick(r, 'id', 'ID', 'examID', 'ExamID')) || 0,
+    /* selectExam read par asal examID hota hai (sab classes me common) —
+       deleteexambyclass isi ko examID ke taur par maangti hai. examName se
+       alag: examName = "1st Term Exam", selectExam = 2938. */
+    examId: Number(pick(r, 'selectExam', 'SelectExam')) || 0,
+    name: String(pick(r, 'examName', 'ExamName', 'name') || '').trim(),
+    classId: String(pick(r, 'classID', 'ClassID', 'classId') ?? ''),
+    termId: String(pick(r, 'termID', 'TermID') ?? ''),
+    from: dateOnly(pick(r, 'dateFrom', 'DateFrom', 'startDate', 'StartDate')),
+    to: dateOnly(pick(r, 'dateTo', 'DateTo', 'endDate', 'EndDate')),
+  }
+}
+
+/** Poore network ke exams → UI shape [{ name, from, to, termId, classIds[], serverIds }]. */
+export async function fetchExams(networkId = currentNetworkId()) {
+  const json = await call('/addexamcrud', { method: 'POST', body: examGetBody(networkId) })
+  const map = new Map()
+  for (const raw of rows(json)) {
+    const r = mapExamRow(raw)
+    if (!r.name) continue
+    const key = `${r.termId}__${r.name}__${r.from}__${r.to}`
+    if (!map.has(key)) map.set(key, { examId: r.examId, name: r.name, from: r.from, to: r.to, termId: r.termId, classIds: [], serverIds: {} })
+    const ex = map.get(key)
+    if (!ex.examId && r.examId) ex.examId = r.examId
+    if (r.classId && !ex.classIds.includes(r.classId)) { ex.classIds.push(r.classId); ex.serverIds[r.classId] = r.rowId }
+  }
+  return [...map.values()]
+}
+
+export async function deleteExamRow(id, networkId = currentNetworkId()) {
+  return call(`/deleteexamdata?networkID=${Number(networkId) || 0}&id=${Number(id) || 0}`, { method: 'DELETE' })
+}
+
+/* Ek class ko exam se hatana (swagger: deleteexambyclass). Ye tab chalti hai
+   jab edit/update modal me se koi class remove ki jaye — Update par us class ki
+   row server se is API se hatti hai. examID = exam ka selectExam (read response
+   wala id), classID = us row ki server class id; branchID/sectionID 0. */
+export async function deleteExamByClass(examId, classId, networkId = currentNetworkId()) {
+  const q = `networkID=${Number(networkId) || 0}&examID=${Number(examId) || 0}&classID=${Number(classId) || 0}&branchID=${NETWORK_BRANCH_ID}&sectionID=0`
+  return call(`/deleteexambyclass?${q}`, { method: 'DELETE' })
+}
+
+/** Exam save — ERP jaisa: (1) pehle hataye gaye classes ko deleteexambyclass se
+    hatao, (2) phir baqi/nayi classes insert/update karo.
+    `ex`: { examId, name, from, to, termId, classIds[], serverIds }, `term`: { id, name }.
+    Har step apne try/catch me — ek fail ho to baqi phir bhi chalein; kitne fail
+    hue + aakhri error wapas, taake caller user ko dikha sake.
+    Return: { serverIds, failed, lastErr }. */
+export async function saveExam(ex, term, networkId = currentNetworkId()) {
+  const serverIds = { ...(ex.serverIds || {}) }
+  const classIds = (ex.classIds || []).map(String)
+  let failed = 0
+  let lastErr = ''
+
+  /* 1) Hataai gayi classes (jo serverIds me thi par ab select me nahi) →
+        deleteexambyclass (examID = selectExam, classID = us class ki id).
+        Agar koi class remove nahi hui to ye loop kuch nahi karta — sirf
+        addexamcrud update chalega (examName/date waghera). */
+  for (const [classId, rowId] of Object.entries(ex.serverIds || {})) {
+    if (!classIds.includes(String(classId)) && Number(rowId) > 0) {
+      try { await deleteExamByClass(ex.examId, classId, networkId); delete serverIds[classId] }
+      catch (e) { failed += 1; lastErr = e?.message || 'class delete failed' }
+    }
+  }
+
+  /* 2) Baqi/nayi classes insert/update (addexamcrud). */
+  for (const classId of classIds) {
+    const action = Number(serverIds[classId]) > 0 ? 'update' : 'insert'
+    try {
+      const json = await call('/addexamcrud', { method: 'POST', body: examBody(action, { ...ex, serverIds }, classId, networkId, term) })
+      const newId = idOf(json)
+      if (newId) serverIds[classId] = newId
+    } catch (e) { failed += 1; lastErr = e?.message || 'exam save failed' }
+  }
+
+  return { serverIds, failed, lastErr }
+}
+
+/** Pura exam delete — deleteexamdata?networkID&id, jahan id = examID
+    (selectExam). Ek hi call us exam ki saari classes hata deti hai (row PK
+    nahi — examID jata hai). networkID aur id dono required (0 par API 400).
+    Sirf-local exam (examId 0) ho aur server rows hon to row PK se fallback. */
+export async function deleteExam(ex, networkId = currentNetworkId()) {
+  if (!Number(networkId)) throw new Error('No network selected — cannot delete on server')
+  const examId = Number(ex.examId) || 0
+  if (examId) {
+    await deleteExamRow(examId, networkId) // id = selectExam → pura exam
+    return { deleted: 1 }
+  }
+  /* examId na mila (reload se pehle bana exam) → har class row apne PK se */
+  const rowIds = Object.values(ex.serverIds || {}).filter((r) => Number(r) > 0)
+  let failed = 0
+  let lastErr = ''
+  for (const rowId of rowIds) {
+    try { await deleteExamRow(rowId, networkId) }
+    catch (e) { failed += 1; lastErr = e?.message || 'delete failed' }
+  }
+  if (failed > 0) throw new Error(`${failed} of ${rowIds.length} class row(s) failed to delete: ${lastErr}`)
+  return { deleted: rowIds.length }
+}
+
+/* ══════════════════ RESULT — SIGNATURES (gradinguploadercrud) ══════════════════
+   UI sig: { id, name, desig, img(base64) } ↔ API { name, designation, signature }.
+   NOTE: letter-grade bands (A+/B…) ki koi API nahi — wo local hi rehti hain. */
+
+export function mapSignature(r = {}) {
+  return {
+    serverId: Number(pick(r, 'id', 'ID')) || 0,
+    name: String(pick(r, 'name', 'Name') || ''),
+    desig: String(pick(r, 'designation', 'Designation') || ''),
+    img: String(pick(r, 'signature', 'Signature') || ''),
+  }
+}
+
+const sigBody = (action, s = {}, networkId) => ({
+  id: Number(s.serverId) || 0,
+  branchID: String(NETWORK_BRANCH_ID),
+  networkID: Number(networkId) || 0,
+  name: String(s.name || '').trim() || '-',
+  designation: String(s.desig || '').trim() || '-',
+  signature: String(s.img || '') || '-',
+  action,
+})
+
+export async function fetchSignatures(networkId = currentNetworkId()) {
+  const json = await call('/gradinguploadercrud', { method: 'POST', body: sigBody('get', {}, networkId) })
+  return rows(json).map(mapSignature)
+}
+
+export async function saveSignature(s, networkId = currentNetworkId()) {
+  const action = Number(s.serverId) > 0 ? 'update' : 'insert'
+  const json = await call('/gradinguploadercrud', { method: 'POST', body: sigBody(action, s, networkId) })
+  return { serverId: idOf(json) || Number(s.serverId) || 0 }
+}
+
+export async function deleteSignature(serverId, networkId = currentNetworkId()) {
+  return call('/gradinguploadercrud', { method: 'POST', body: sigBody('delete', { serverId }, networkId) })
+}
+
+/* ══════════════════ RESULT — FINAL REMARKS (overallgradingcrud) ══════════════════
+   UI remark: { id, cond, pct, text } ↔ API { percentage, finalRemarks }.
+   `cond` (≥ / > …) API me nahi — wo local rehta hai; read par default 'gte'. */
+
+export function mapRemark(r = {}) {
+  return {
+    serverId: Number(pick(r, 'id', 'ID')) || 0,
+    pct: String(pick(r, 'percentage', 'Percentage') ?? ''),
+    text: String(pick(r, 'finalRemarks', 'FinalRemarks') || ''),
+    cond: 'gte',
+  }
+}
+
+const remBody = (action, m = {}, networkId) => ({
+  id: Number(m.serverId) || 0,
+  branchID: String(NETWORK_BRANCH_ID),
+  networkID: Number(networkId) || 0,
+  percentage: String(m.pct ?? '') || '0',
+  finalRemarks: String(m.text || '').trim() || '-',
+  action,
+})
+
+export async function fetchRemarks(networkId = currentNetworkId()) {
+  const json = await call('/overallgradingcrud', { method: 'POST', body: remBody('get', {}, networkId) })
+  return rows(json).map(mapRemark)
+}
+
+export async function saveRemark(m, networkId = currentNetworkId()) {
+  const action = Number(m.serverId) > 0 ? 'update' : 'insert'
+  const json = await call('/overallgradingcrud', { method: 'POST', body: remBody(action, m, networkId) })
+  return { serverId: idOf(json) || Number(m.serverId) || 0 }
+}
+
+export async function deleteRemark(serverId, networkId = currentNetworkId()) {
+  return call('/overallgradingcrud', { method: 'POST', body: remBody('delete', { serverId }, networkId) })
+}

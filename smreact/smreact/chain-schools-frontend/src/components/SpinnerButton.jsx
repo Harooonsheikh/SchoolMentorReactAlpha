@@ -17,6 +17,7 @@ export default function SpinnerButton({
   children,
   disabled = false,
   style,
+  title,
   type = 'button',
 }) {
   const [loading, setLoading] = useState(false)
@@ -38,7 +39,7 @@ export default function SpinnerButton({
 
   const hasLabel = children != null && children !== ''
   return (
-    <button type={type} className={className} style={style} disabled={disabled || loading} onClick={handle}>
+    <button type={type} className={className} style={style} title={title} disabled={disabled || loading} onClick={handle}>
       {loading ? <i className="fa-solid fa-spinner fa-spin" /> : icon ? <i className={`fa-solid ${icon}`} /> : null}
       {hasLabel && ((loading || icon) ? <> {children}</> : children)}
     </button>

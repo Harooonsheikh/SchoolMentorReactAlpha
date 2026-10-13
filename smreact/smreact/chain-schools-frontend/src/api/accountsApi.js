@@ -358,7 +358,7 @@ export function clearAccountHeadCache() {
   for (const k of Object.keys(_segHeadsCache)) delete _segHeadsCache[k]
 }
 
-export async function postAutoAccountEntry(seg, { amount, date, detail } = {}, networkId = currentNetworkId()) {
+export async function postAutoAccountEntry(seg, { amount, date, detail, walletId } = {}, networkId = currentNetworkId()) {
   const amt = Number(amount) || 0
   if (!networkId || amt <= 0) return { posted: false, reason: 'skip' }
   const heads = await segmentHeads(seg, networkId)
@@ -369,7 +369,7 @@ export async function postAutoAccountEntry(seg, { amount, date, detail } = {}, n
     ? /school|payment|revenue|income/i
     : /salary|payroll|wage|staff|\bhr\b|expense/i
   const head = heads.find((h) => kw.test(h.name)) || heads[0]
-  await saveAccountEntry(seg, { headNo: head.no, date, detail, amount: amt }, networkId)
+  await saveAccountEntry(seg, { headNo: head.no, date, detail, amount: amt, walletId }, networkId)
   return { posted: true, head: head.name }
 }
 
