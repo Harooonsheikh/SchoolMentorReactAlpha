@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as hrService from '../services/hrService';
+import * as accountsService from '../services/accountsService';
 import * as attendanceService from '../services/attendanceService';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
@@ -2362,7 +2363,24 @@ function PayRollModal({
   /* ── Make Payment form state ── */
   const [payAmount, setPayAmount] = useState('');
   const [payComment, setPayComment] = useState('');
-  const [payChequeId, setPayChequeId] = useState('');   // NEW — Payment Cheques (UI only, API pending)
+  /* Same branch wallets as Accounts → Wallet → New Entry ("Paid From Wallet"). */
+  const [payWallets, setPayWallets] = useState([]);
+  const [payWalletsLoading, setPayWalletsLoading] = useState(true);
+  const [payWalletId, setPayWalletId] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    setPayWalletsLoading(true);
+    accountsService.getFinAccounts()
+      .then((list) => {
+        if (!alive) return;
+        const active = (Array.isArray(list) ? list : []).filter(w => w.status === 'active');
+        setPayWallets(active);
+      })
+      .catch(() => { if (alive) setPayWallets([]); })
+      .finally(() => { if (alive) setPayWalletsLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   /* If a record already has payments, jump straight to Make Payment tab. */
   useEffect(() => {
@@ -2441,6 +2459,15 @@ function PayRollModal({
       : payAmt > remaining + 0.01
         ? `Amount is more than the remaining balance (PKR ${fmtMoney(remaining)}). Reduce it to PKR ${fmtMoney(remaining)} or less.`
         : ''
+  );
+  const payWalletError = isFullyPaid ? '' : (
+    payWalletsLoading
+      ? ''
+      : payWallets.length === 0
+        ? 'No wallet found for this branch. Add a wallet in Accounts first.'
+        : !payWalletId
+          ? 'Select the wallet this payment is paid from.'
+          : ''
   );
   const payAfter = Math.max(0, remaining - payAmt);
 
@@ -2549,6 +2576,7 @@ function PayRollModal({
       toast(`Amount exceeds remaining balance (PKR ${fmtMoney(remaining)})`, 'error');
       return;
     }
+    if (!payWalletId) { toast('Please select the wallet this payment is paid from', 'error'); return; }
     if (!existingRec.payrollID) { toast('Please save payroll setup first', 'error'); return; }
 
     /* Record the payment on the backend before updating the local record. */
@@ -2559,6 +2587,7 @@ function PayRollModal({
         amount: amt,
         comment: payComment.trim(),
         paymentDate: new Date().toISOString(),
+        wallatID: payWalletId,
       });
     } catch (err) {
       toast(err.message || 'Could not record payment', 'error');
@@ -2614,7 +2643,7 @@ function PayRollModal({
       onClick: makePayment,
       /* Raqam ghalat ho to button hi band — pehle click par sirf toast aata tha
          jo modal ke peeche chhup jata, aur user ko lagta ke kuch hua hi nahi. */
-      disabled: payingNow || !!payError,
+      disabled: payingNow || !!payError || !!payWalletError || payWalletsLoading,
     };
   })();
 
@@ -2899,33 +2928,58 @@ function PayRollModal({
                                 <div className="pr-grid">
                   <div className="pr-field pr-field-wide">
                     <label>Pay Amount Now <span className="req">*</span></label>
-                    {/* ...existing... */}
+                    <input
+                      type="number" min={0} step="0.01" placeholder="0"
+                      value={payAmount}
+                      readOnly={isFullyPaid}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                    />
+                    <div className={`pr-field-hint${payError ? ' pr-field-err' : ''}`}>
+                      {isFullyPaid
+                        ? (<><i className="fa-solid fa-circle-check" style={{ color: '#16A34A' }} aria-hidden="true"></i> This payroll is fully settled — no further payments needed</>)
+                        : payError
+                          ? (<><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {payError}</>)
+                          : (<><i className="fa-solid fa-circle-check" style={{ color: '#16A34A' }} aria-hidden="true"></i> Remaining after this payment: PKR {fmtMoney(payAfter)}{totalPaid > 0 ? ` · already paid PKR ${fmtMoney(totalPaid)}` : ''}</>)}
+                    </div>
                   </div>
                   <div className="pr-field pr-field-wide">
                     <label>Payment Comment</label>
-                    {/* ...existing... */}
+                    <input
+                      type="text"
+                      placeholder="e.g. Cheque #5421, advance payment, bank transfer ref…"
+                      value={payComment}
+                      readOnly={isFullyPaid}
+                      onChange={(e) => setPayComment(e.target.value)}
+                    />
+                    <div className="pr-field-hint">Optional — appears in payment history</div>
                   </div>
                 </div>
 
-                {/* ── Payment Cheques — same design as Accounts "Received In Wallet" box ── */}
+                {/* Branch wallets — same list as Accounts wallet "New Entry". */}
                 <div className="pr-cheque-box">
                   <span className="pr-cheque-label">
-                    <i className="fa-solid fa-money-check-dollar" aria-hidden="true"></i> Payment Cheques
+                    <i className="fa-solid fa-wallet" aria-hidden="true"></i> Payment Wallet <span className="req">*</span>
                   </span>
                   <div className="pr-cheque-select-wrap">
                     <select
                       className="pr-cheque-select"
-                      value={payChequeId}
-                      onChange={(e) => setPayChequeId(e.target.value)}
+                      value={payWalletId}
+                      disabled={isFullyPaid || payWalletsLoading}
+                      onChange={(e) => setPayWalletId(e.target.value)}
+                      required
                     >
-                      <option value="">Select cheque for this payment</option>
-                      {/* API integration pending — cheque list will populate here */}
+                      <option value="">{payWalletsLoading ? 'Loading wallets…' : 'Select wallet for this payment'}</option>
+                      {payWallets.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name}{w.type ? ` — ${String(w.type).charAt(0).toUpperCase()}${String(w.type).slice(1)}` : ''}
+                        </option>
+                      ))}
                     </select>
                     <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
                   </div>
-                  <div className="pr-cheque-hint">
-                    <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-                    Choose the cheque this payment will be recorded against. (Backend integration coming soon.)
+                  <div className={`pr-cheque-hint${payWalletError ? ' pr-field-err' : ''}`}>
+                    <i className={`fa-solid ${payWalletError ? 'fa-circle-exclamation' : 'fa-circle-info'}`} aria-hidden="true"></i>
+                    {payWalletError || 'Choose the wallet this salary payment is paid from. This is required.'}
                   </div>
                 </div>
 
@@ -10194,6 +10248,9 @@ export const HR_CSS = `
   color: var(--tm);
 }
 .pr-cheque-hint i { color: var(--brand); font-size: 11px; }
+.pr-cheque-label .req { color: var(--err); text-transform: none; letter-spacing: 0; }
+.pr-cheque-hint.pr-field-err,
+.pr-cheque-hint.pr-field-err i { color: var(--err); font-style: normal; font-weight: 700; }
 /* Brand-blue Net Payable hero */
 .pr-net-card {
   background: linear-gradient(135deg, #1E40AF, #1E3A8A);
