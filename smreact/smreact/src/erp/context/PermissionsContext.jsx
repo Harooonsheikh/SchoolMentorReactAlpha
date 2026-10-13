@@ -4,7 +4,7 @@ import { MODULE_REGISTRY } from '../config/moduleConfig';
 import { INITIAL_USERS, INITIAL_ROLES } from '../pages/UserPermissions/permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
-   PERMISSIONS CONTEXT — logged-in user ki menu/screen/action access.
+   PERMISSIONS CONTEXT — loggedin user ki menu/screen/action access.
 
    • accountType === "School Head" → poora access (koi API call NAHI).
    • warna GET /get-user-menu-permissions/{branchID}/{UserID} se

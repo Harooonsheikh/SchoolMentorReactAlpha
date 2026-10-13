@@ -1,13 +1,15 @@
+// import React, { useCallback, useEffect, useState } from 'react';
 import React, { useCallback, useEffect, useState } from 'react';
 import * as mentorAiStudioService from '../../services/mentorAiStudioService';
-import * as mentorAIWalletService from '../../services/mentorAIWalletService';
+import * as mentorAIWalletService from './services/mentorAIWalletService';
 import ChatAssistant from './ChatAssistant';
 import LessonPlans from './LessonPlans';
 import Worksheets from './Worksheets';
 import DesignStudio from './DesignStudio';
 import Wallet from './Wallet';
 import Library from './Library';
-
+import { getMentorAIToken } from './services/mentorAIAuthService';
+import { usePermissions } from '../../context/PermissionsContext';
 /* ═══════════════════════════════════════════════════════════════════
    MENTOR AI STUDIO — root module shell.
 
@@ -28,16 +30,26 @@ import Library from './Library';
    ═══════════════════════════════════════════════════════════════════ */
 
 const TABS = [
-  { id: 'chat',         label: 'AI Chat Assistant', icon: 'fa-comments' },
-  { id: 'lessonplans',  label: 'Lesson Plans',   icon: 'fa-chalkboard-user' },
-  { id: 'worksheets',   label: 'Worksheets',     icon: 'fa-file-pen' },
-  { id: 'designstudio', label: 'Design Studio',  icon: 'fa-palette' },
-  { id: 'library',      label: 'Library',        icon: 'fa-folder-open' },
-  { id: 'wallet',       label: 'Wallet',         icon: 'fa-wallet' },
+  { id: 'chat',         label: 'AI Chat Assistant', icon: 'fa-comments',        perm: 'AI Chat Assistant' },
+  { id: 'lessonplans',  label: 'Lesson Plans',   icon: 'fa-chalkboard-user',    perm: 'Lesson Plans' },
+  { id: 'worksheets',   label: 'Worksheets',     icon: 'fa-file-pen',           perm: 'Worksheet Generator' },
+  { id: 'designstudio', label: 'Design Studio',  icon: 'fa-palette',            perm: 'Design Studio' },
+  { id: 'library',      label: 'Library',        icon: 'fa-folder-open',        perm: 'Library' },
+  { id: 'wallet',       label: 'Wallet',         icon: 'fa-wallet',             perm: 'Wallet & Usage' },
 ];
 
 export default function MentorAI({ toast, schoolName = 'Your School' }) {
-  const [tab, setTab] = useState('chat');
+  
+const { canScreen } = usePermissions();
+
+const canGo = (id) =>
+  TABS.some(t => t.id === id && canScreen('Mentor AI', t.perm));
+
+const [rawTab, setTab] = useState('chat');
+
+const tab = TABS.some(t => t.id === rawTab)
+  ? rawTab
+  : 'chat';
   const [wallet, setWallet] = useState(null);
   /* walletData drives the header chip, the Home teaser and the Wallet
      screen itself — sourced from the dedicated mentorAIWalletService
@@ -45,19 +57,92 @@ export default function MentorAI({ toast, schoolName = 'Your School' }) {
      stay wired exactly as before so Chat/Lesson Plans/Worksheets/
      Design Studio's onConsumed callbacks are untouched. */
   const [walletData, setWalletData] = useState(null);
+  const initializeMentorAI = async () => {
+
+    try {
+
+        const user = {
+            id: sessionStorage.getItem("UserID"),
+            branchID: sessionStorage.getItem("branchID"),
+            accountType: sessionStorage.getItem("accountType")
+        };
+
+
+        const response = await getMentorAIToken({
+
+            branch: user.branchID,
+
+            user: user.id,
+
+            principal:
+                user.accountType === "School Head"
+
+        });
+
+
+        localStorage.setItem(
+            "mentor_ai_access",
+            response.access
+        );
+
+
+        localStorage.setItem(
+            "mentor_ai_refresh",
+            response.refresh
+        );
+
+
+        localStorage.setItem(
+            "mentor_ai_user",
+            JSON.stringify(response.user)
+        );
+
+
+        console.log(
+            "Mentor AI Auth Success",
+            response.user
+        );
+
+
+    } catch(error){
+
+        console.log(
+            "Mentor AI Auth Error",
+            error
+        );
+
+    }
+
+};
 
   const refreshWallet = useCallback(() => {
     mentorAiStudioService.getWalletUsage().then(setWallet).catch(() => {});
   }, []);
-  const refreshWalletData = useCallback(() => {
-    mentorAIWalletService.getWalletData().then(setWalletData).catch(() => {});
-  }, []);
+ const refreshWalletData = useCallback(() => {
 
+  console.log("REFRESHING WALLET DATA");
+
+  mentorAIWalletService
+    .getWalletData()
+    .then(data => {
+      console.log("UPDATED WALLET:", data);
+      setWalletData(data);
+    })
+    .catch(error => {
+      console.error("WALLET REFRESH ERROR:", error);
+    });
+
+}, []);
+
+useEffect(() => {
+
+    initializeMentorAI();
+
+}, []);
   useEffect(() => { refreshWallet(); }, [refreshWallet]);
   useEffect(() => { refreshWalletData(); }, [refreshWalletData]);
 
-  const goTo = (id) => setTab(id);
-
+  const goTo = (id) => { if (canGo(id)) setTab(id); };
   return (
     <div className="msai-root">
       <style>{MENTORAI_CSS}</style>
@@ -72,8 +157,9 @@ export default function MentorAI({ toast, schoolName = 'Your School' }) {
             <div className="page-sub" style={{ marginTop: 2 }}>Your AI teaching assistant — chat, lesson plans, worksheets &amp; designs.</div>
           </div>
         </div>
-        {walletData && (() => {
-          const activePlan = walletData.plans.find(p => p.isCurrent);
+        {walletData && canGo('wallet') && (() => {
+                    const activePlan = walletData.plans?.find(p => p.isCurrent);
+          if (!activePlan) return null;
           const left = Math.max(0, activePlan.totals.chatTokens - activePlan.used.chatTokens);
           return (
             <button type="button" className="msai-wallet-chip" onClick={() => goTo('wallet')}>
@@ -85,23 +171,50 @@ export default function MentorAI({ toast, schoolName = 'Your School' }) {
       </div>
 
       <div className="msai-tabs">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            className={`msai-tab${tab === t.id ? ' active' : ''}`}
-            onClick={() => goTo(t.id)}
-          >
-            <i className={`fa-solid ${t.icon}`} aria-hidden="true" /> {t.label}
-          </button>
-        ))}
+    {TABS.map(t => {
+  const enabled = canGo(t.id);
+
+  return (
+    <button
+      key={t.id}
+      type="button"
+      className={`msai-tab${tab === t.id ? ' active' : ''}${!enabled ? ' disabled' : ''}`}
+      onClick={() => {
+        if (enabled) {
+          setTab(t.id);
+        }
+      }}
+      disabled={!enabled}
+      title={!enabled ? 'You do not have permission' : undefined}
+    >
+      <i className={`fa-solid ${t.icon}`} aria-hidden="true" />
+      {t.label}
+      {!enabled && (
+        <i
+          className="fa-solid fa-lock"
+          style={{ marginLeft: 6, fontSize: 10 }}
+          aria-hidden="true"
+        />
+      )}
+    </button>
+  );
+})}
       </div>
 
       <div className="msai-screen">
-        {tab === 'chat' && <ChatAssistant toast={toast} onConsumed={refreshWallet} goTo={goTo} schoolName={schoolName} />}
-        {tab === 'lessonplans' && <LessonPlans toast={toast} onConsumed={refreshWallet} />}
-        {tab === 'worksheets' && <Worksheets toast={toast} onConsumed={refreshWallet} />}
-        {tab === 'designstudio' && <DesignStudio toast={toast} onConsumed={refreshWallet} />}
+{tab === 'chat' && (
+  <ChatAssistant
+    toast={toast}
+    onConsumed={refreshWalletData}
+       goTo={goTo}
+    canGo={canGo}
+    schoolName={schoolName}
+  />
+)}        {/* onConsumed re-reads the live wallet so the header chip updates
+            after every generation / edit on any screen. */}
+        {tab === 'lessonplans' && <LessonPlans toast={toast} onConsumed={refreshWalletData} goTo={goTo} />}
+        {tab === 'worksheets' && <Worksheets toast={toast} onConsumed={refreshWalletData} />}
+        {tab === 'designstudio' && <DesignStudio toast={toast} onConsumed={refreshWalletData} />}
         {tab === 'library' && <Library toast={toast} />}
         {tab === 'wallet' && <Wallet goTo={goTo} />}
       </div>
@@ -161,6 +274,14 @@ const MENTORAI_CSS = `
   cursor:pointer; transition:var(--tr); white-space:nowrap;
 }
 .msai-tab:hover:not(.active) { background:var(--bg-muted); color:var(--text-primary); }
+.msai-tab.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.msai-tab.disabled:hover {
+  background: transparent;
+}
 .msai-tab.active {
   background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
   color:#fff;
@@ -824,6 +945,144 @@ const MENTORAI_CSS = `
 @media (max-width: 560px) {
   .msai-hiw-head, .msai-hiw-tabs, .msai-hiw-body, .msai-hiw-foot { padding-left:16px; padding-right:16px; }
 }
+/* ── Shared ProgressBar (real job progress) ── */
+.msai-pb { width:100%; max-width:420px; display:flex; flex-direction:column; gap:10px; text-align:left; }
+.msai-pb-title { font:800 16px/1.3 var(--font-body); color:var(--text-primary); text-align:center; }
+.msai-pb-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.msai-pb-label { display:flex; align-items:center; gap:7px; min-width:0; font:700 12.5px/1.35 var(--font-body); color:var(--text-primary); }
+.msai-pb-label > span:first-of-type { overflow-wrap:anywhere; }
+.msai-pb-label i { color:var(--brand-primary); flex-shrink:0; }
+.msai-pb-detail { color:var(--text-muted); font-weight:600; }
+.msai-pb-pct { font:800 12px/1 var(--font-body); color:var(--brand-primary); font-variant-numeric:tabular-nums; flex-shrink:0; }
+.msai-pb-track { position:relative; height:6px; border-radius:var(--radius-full); background:var(--border-light); overflow:hidden; }
+.msai-pb-fill { height:100%; background:linear-gradient(90deg,#1E3A8A,#2563EB); border-radius:inherit; transition:width 1s linear; }.msai-pb-track.is-indeterminate::after { content:''; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent); transform:translateX(-100%); }
+@media (prefers-reduced-motion: no-preference) {
+  .msai-pb-track.is-indeterminate::after { animation:msaiPbShimmer 1.4s ease-in-out infinite; }
+}
+@keyframes msaiPbShimmer { to { transform:translateX(100%); } }
+.msai-pb--done .msai-pb-fill { background:#16A34A; }
+.msai-pb--done .msai-pb-label i { color:#16A34A; }
+.msai-pb--error .msai-pb-fill, .msai-pb--timeout .msai-pb-fill { background:#DC2626; }
+.msai-pb--error .msai-pb-label i, .msai-pb--timeout .msai-pb-label i { color:#DC2626; }
+.msai-pb--cancelled .msai-pb-fill { background:var(--text-muted); }
+.msai-pb--cancelled .msai-pb-label i { color:var(--text-muted); }
+.msai-pb-stages { list-style:none; margin:4px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.msai-pb-stage { display:flex; align-items:center; gap:10px; font:600 12.5px/1.2 var(--font-body); color:var(--text-muted); }
+.msai-pb-stage.is-active { color:var(--brand-primary); }
+.msai-pb-stage.is-done { color:#16A34A; }
+.msai-pb-stage.is-failed { color:#DC2626; }
+.msai-pb-stage-dot { width:18px; height:18px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:10px; background:var(--bg-muted); flex-shrink:0; }
+.msai-pb-stage.is-done .msai-pb-stage-dot { background:#16A34A; color:#fff; }
+.msai-pb-stage.is-active .msai-pb-stage-dot { background:var(--brand-light); color:var(--brand-primary); }
+.msai-pb-stage.is-failed .msai-pb-stage-dot { background:#FEE2E2; color:#DC2626; }
+.msai-pb-actions { display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin-top:4px; }
+.msai-pb--compact { max-width:none; gap:6px; margin-top:4px; }
+.msai-pb--compact .msai-pb-actions { justify-content:flex-start; margin-top:0; }
+.msai-pb--compact .msai-pb-btn { padding:5px 11px; font-size:11px; min-height:0; }
+
+/* ── Chat: locked mode badge, message wrapping ── */
+.msai-chip--locked { cursor:default; background:var(--brand-light); color:var(--brand-primary); border-color:transparent; }
+.msai-chip--mode { background:var(--brand-light); color:var(--brand-primary); border-color:transparent; }
+.msai-chip--mode .fa-chevron-down { font-size:10px; opacity:.7; }
+.msai-mode-item:disabled { cursor:not-allowed; opacity:.55; }
+.msai-mode-item:disabled:hover { background:none; }
+.msai-mode-soon { display:inline-flex; align-items:center; gap:5px; font:700 10.5px/1 var(--font-body); color:var(--text-muted); white-space:nowrap; }
+.msai-mode-soon i { font-size:9.5px; }
+.msai-mode-note { font:600 12px/1.5 var(--font-body); color:var(--text-muted); padding:2px 4px 10px; }
+.msai-typing-row { display:flex; align-items:center; gap:10px; }
+.msai-typing--inline { padding:6px 2px 2px; }
+.msai-typing-stop { border:none; background:none; color:var(--text-muted); font:700 11.5px/1 var(--font-body); cursor:pointer; padding:4px 6px; border-radius:6px; display:inline-flex; align-items:center; gap:5px; }
+.msai-typing-stop:hover { color:#DC2626; background:rgba(220,38,38,.06); }
+@media (prefers-reduced-motion: reduce) { .msai-typing span { animation-duration:2.4s; } .msai-pb-fill { transition:none; } }.msai-msg-bubble { min-width:0; overflow-wrap:anywhere; word-break:break-word; }
+.msai-msg-text { white-space:pre-wrap; }
+.msai-msg-bubble.ai { max-width:min(88%, 760px); }
+.msai-msg-errline { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font:600 12.5px/1.45 var(--font-body); }
+.msai-msg-bubble--error .msai-msg-errline i { color:#DC2626; }
+.msai-msg-bubble--cancelled .msai-msg-errline { color:var(--text-muted); }
+.msai-retry:disabled { opacity:.5; cursor:not-allowed; }
+.msai-editai-msg.error { align-self:flex-start; background:#FEF2F2; color:#B91C1C; }
+[data-theme="dark"] .msai-editai-msg.error { background:rgba(220,38,38,.15); color:#FCA5A5; }
+@media (max-width:600px) {
+  .msai-msg-bubble, .msai-msg-bubble.ai { max-width:100%; }
+}
+
+/* ── Markdown (MarkdownMessage) ── */
+.msai-md { font:500 13.5px/1.6 var(--font-body); color:inherit; min-width:0; }
+.msai-md > :first-child { margin-top:0; }
+.msai-md > :last-child { margin-bottom:0; }
+.msai-md-p { margin:0 0 10px; }
+.msai-md-h { color:var(--text-primary); line-height:1.3; margin:16px 0 6px; font-family:var(--font-body); }
+.msai-md-h1 { font-size:18px; font-weight:800; }
+.msai-md-h2 { font-size:16px; font-weight:800; }
+.msai-md-h3 { font-size:14.5px; font-weight:800; }
+.msai-md-h4, .msai-md-h5, .msai-md-h6 { font-size:13.5px; font-weight:800; }
+.msai-md strong { font-weight:800; }
+.msai-md a { color:var(--brand-primary); text-decoration:underline; text-underline-offset:2px; overflow-wrap:anywhere; }
+.msai-md-list { margin:0 0 10px; padding-left:22px; }
+.msai-md-list li { margin:3px 0; }
+.msai-md-list .msai-md-list { margin:4px 0 2px; }
+.msai-md-list--tasks { list-style:none; padding-left:4px; }
+.msai-md-task { margin-right:7px; color:var(--text-muted); }
+.msai-md-task.is-done { color:#16A34A; }
+.msai-md-quote { margin:0 0 10px; padding:6px 12px; border-left:3px solid var(--brand-primary); background:var(--bg-card); border-radius:0 var(--radius-md) var(--radius-md) 0; color:var(--text-secondary); }
+.msai-md-hr { border:none; border-top:1px solid var(--border-light); margin:14px 0; }
+.msai-md-icode { font:600 12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:var(--bg-card); border:1px solid var(--border-light); border-radius:5px; padding:1px 5px; overflow-wrap:anywhere; }
+.msai-md-code { margin:0 0 10px; border:1px solid var(--border-light); border-radius:var(--radius-md); overflow:hidden; background:#0F172A; }
+.msai-md-code-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px; background:#1E293B; color:#CBD5E1; font:700 11px/1 var(--font-body); }
+.msai-md-code-head button { display:inline-flex; align-items:center; gap:5px; border:none; background:transparent; color:#CBD5E1; font:700 11px/1 var(--font-body); cursor:pointer; padding:4px 6px; border-radius:6px; }
+.msai-md-code-head button:hover:not(:disabled) { background:rgba(255,255,255,.08); color:#fff; }
+.msai-md-code-head button:disabled { opacity:.5; cursor:default; }
+.msai-md-code pre { margin:0; padding:12px 14px; overflow-x:auto; max-width:100%; }
+.msai-md-code code { font:500 12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:#E2E8F0; white-space:pre; word-break:normal; overflow-wrap:normal; }
+.msai-tok-comment { color:#64748B; font-style:italic; }
+.msai-tok-string { color:#86EFAC; }
+.msai-tok-number { color:#FDBA74; }
+.msai-tok-keyword { color:#93C5FD; font-weight:700; }
+.msai-tok-fn { color:#F9A8D4; }
+.msai-md-table-wrap { margin:0 0 10px; max-width:100%; overflow-x:auto; border:1px solid var(--border-light); border-radius:var(--radius-md); }
+.msai-md-table { border-collapse:collapse; width:100%; font-size:12.5px; }
+.msai-md-table th, .msai-md-table td { padding:7px 10px; border-bottom:1px solid var(--border-light); text-align:left; vertical-align:top; min-width:80px; }
+.msai-md-table th { background:var(--bg-card); font-weight:800; color:var(--text-primary); white-space:nowrap; }
+.msai-md-table tr:last-child td { border-bottom:none; }
+.msai-md-math { margin:0 0 10px; overflow-x:auto; max-width:100%; }
+.msai-md-math-inline .katex { font-size:1.05em; }
+.msai-md-math-pending { margin:0 0 10px; padding:10px 12px; background:var(--bg-card); border:1px dashed var(--border-med); border-radius:var(--radius-md); font:500 12px/1.5 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; overflow-x:auto; }
+.msai-md-caret { display:inline-block; width:7px; height:14px; margin-left:2px; vertical-align:-2px; background:var(--brand-primary); border-radius:1px; }
+@media (prefers-reduced-motion: no-preference) {
+  .msai-md-caret { animation:msaiCaret 1s steps(2) infinite; }
+}
+@keyframes msaiCaret { 50% { opacity:0; } }
+
+/* Inline markdown inside lesson plans / notebook / worksheets */
+.msai-md.msai-md-inline { display:inline; font:inherit; color:inherit; }
+.msai-md-inline .katex { font-size:1.02em; }
+.msai-lp-section .msai-md, .msai-nb-groups .msai-md:not(.msai-md-inline) { font:inherit; }
+
+/* ── Library: tabs, loading, viewer ── */
+.msai-library .msai-tabs { max-width:none; }
+.msai-lib-count { margin-left:6px; background:var(--bg-muted); color:var(--text-muted); border-radius:999px; padding:1px 7px; font:800 10.5px/1.5 var(--font-body); }
+.msai-tab.active .msai-lib-count { background:rgba(255,255,255,.2); color:inherit; }
+.msai-lib-note { display:flex; align-items:center; gap:8px; font:600 12px/1.4 var(--font-body); color:var(--text-muted); }
+.msai-lib-skeleton { height:78px; background:var(--bg-muted); border-color:transparent; }
+@media (prefers-reduced-motion: no-preference) {
+  .msai-lib-skeleton { animation:msaiPulse 1.2s ease-in-out infinite; }
+}
+@keyframes msaiPulse { 50% { opacity:.55; } }
+button.msai-lib-thumb { border:none; cursor:pointer; padding:0; overflow:hidden; }
+.msai-lib-thumb-img { width:100%; height:100%; object-fit:cover; }
+button.msai-lib-title { display:block; width:100%; border:none; background:none; padding:0; text-align:left; cursor:pointer; }
+button.msai-lib-title:hover { color:var(--brand-primary); }
+.msai-lib-viewer { width:min(860px, 96vw); max-height:90vh; display:flex; flex-direction:column; }
+.msai-lib-viewer .msai-panel-body { overflow-y:auto; }
+.msai-lib-viewer-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.msai-lib-design { display:flex; flex-direction:column; gap:10px; }
+.msai-lib-design img { max-width:100%; height:auto; border-radius:var(--radius-md); border:1px solid var(--border-light); }
+.msai-lib-chat { display:flex; flex-direction:column; gap:12px; }
+@media (max-width:600px) {
+  .msai-lib-card { flex-wrap:wrap; }
+  .msai-lib-actions { width:100%; justify-content:flex-end; }
+}
+
 `;
 
 export { MENTORAI_CSS };

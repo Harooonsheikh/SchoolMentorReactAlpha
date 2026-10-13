@@ -20,7 +20,7 @@
    Modes v2.0" (internal engineering doc). Each mode carries the exact
    persona, temperature range, response-length and reasoning-depth
    guidance, and primary safety note from that document — kept as data
-   here (not rendered to end users, who don't need engineering jargon)
+   here (not rendered to end userS, who don't need engineering jargon)
    so the fields are ready to hand to a real backend/prompt-registry
    later without re-deriving them. `demo` is a typed-block response
    (see ChatAssistant.jsx's renderer: heading | text | bullets |

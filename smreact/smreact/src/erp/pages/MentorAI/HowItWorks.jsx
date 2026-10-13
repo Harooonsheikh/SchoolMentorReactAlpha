@@ -4,7 +4,7 @@ import { HOW_IT_WORKS } from './howItWorksData';
 /* ═══════════════════════════════════════════════════════════════════
    HowItWorks — reusable help layer for the 4 Mentor AI functionalities.
 
-   HowItWorksButton (the pulsing "i")
+   HowItWorksButton (the Pulsing "i")
         ↓
    HowItWorksModal (looks up content by topic key(s), header + optional
         tab switch + steps, reuses the app's existing .modal-overlay/

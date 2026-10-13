@@ -1,19 +1,33 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import * as mentorAiStudioService from '../../services/mentorAiStudioService';
 import mentorAILogo from '../../assets/images/mentorAILogo.png';
-import { CHAT_MODES, CHAT_QUICK_CHIPS } from './mentorAiStudioData';
+import { CHAT_QUICK_CHIPS, CHAT_MODES } from './mentorAiStudioData';
 import { HowItWorksButton } from './HowItWorks';
-
+import MarkdownMessage, { copyText } from './MarkdownMessage';
+import { STAGE_SETS, useJobProgress, isCancelError, isTimeoutError } from './services/aiProgress';
+import {
+  createChatSession,
+  getChatSessions,
+  getChatSession,
+  sendMessage,
+  deleteChatSession as deleteApiChatSession,
+   updateChatSession,
+} from './services/mentorAIChatService';
+import { useMentorAIActions } from './mentorAIPermissions';
 /* ═══════════════════════════════════════════════════════════════════
    ChatAssistant — AI Chat Assistant screen.
 
-   Ported from the prototype's `ai-chat-screen`: message thread with a
-   typed-block AI response renderer, 16 specialist "Mentor modes" (side
-   panel here instead of a mobile bottom sheet — reuses this app's own
-   .modal-overlay/.modal pattern), a chat-history side panel (own
-   localStorage-backed store via mentorAiStudioService — independent of
-   the Dashboard's existing Mentor AI analytics-assistant history), and
-   a simulated voice-input flow (recording → converting → transcript).
+   Mode: locked to Universal. The mode picker has been removed from
+   this screen and every request sends mode=universal (see
+   mentorAIChatService.CHAT_MODE). The other modes' data in
+   mentorAiStudioData.js is left untouched for anything else using it.
+
+   Replies render through <MarkdownMessage> (sanitised Markdown, code,
+   tables, KaTeX), stream in when the server streams, and show the
+   shared <ProgressBar> driven by the real request lifecycle.
+
+   Ported from the prototype's `ai-chat-screen`: message thread, a
+   chat-history side panel backed by the Mentor AI chat-sessions API,
+   and browser speech-recognition voice input.
    ═══════════════════════════════════════════════════════════════════ */
 
 function titleFrom(query) {
@@ -50,11 +64,10 @@ const EXPLORE_FEATURES = [
   { id: 'designstudio', icon: 'fa-palette',         title: 'Design Studio', desc: 'Generate social posts & thumbnails for your school.' },
 ];
 
-export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
-  const [modeId, setModeId] = useState('universal');
-  const [modeOpen, setModeOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [query, setQuery] = useState('');
+export default function ChatAssistant({ toast, onConsumed, goTo, schoolName, canGo = () => true }) {
+  const { canCreate, deny } = useMentorAIActions('chat', toast);
+      const [historyOpen, setHistoryOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);  const [query, setQuery] = useState('');
   const [exchanges, setExchanges] = useState([]);
   const [history, setHistory] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
@@ -67,42 +80,140 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
   const attachIdRef = useRef(0);
   const bodyRef = useRef(null);
   const voiceTimer = useRef(null);
+  const mediaRecorderRef = useRef(null);
+const audioChunksRef = useRef([]);
   const photoInputRef = useRef(null);
-  const pdfInputRef = useRef(null);
+  // const pdfInputRef = useRef(null);
 
-  const mode = CHAT_MODES.find(m => m.id === modeId) || CHAT_MODES[0];
+  const job = useJobProgress();
+  const busy = job.running;
+  const sessionRef = useRef(null);
+  useEffect(() => { sessionRef.current = activeSessionId; }, [activeSessionId]);
+  // Abort an in-flight reply / stop the mic if the user leaves the chat screen.
+  useEffect(() => () => { job.cancel(); clearInterval(voiceTimer.current); voiceActiveRef.current = false; if (recognitionRef.current) recognitionRef.current.onend = null; recognitionRef.current?.abort?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { mentorAiStudioService.getChatHistory().then(setHistory).catch(() => {}); }, []);
-  useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; }, [exchanges]);
-
+  // useEffect(() => { mentorAiStudioService.getChatHistory().then(setHistory).catch(() => {}); }, []);
   useEffect(() => {
-    const settled = exchanges.filter(ex => ex.status !== 'loading');
-    if (!settled.length) return;
-    const id = activeSessionId ?? idRef.current;
-    const session = { id, title: titleFrom(settled[0].query), updatedAt: Date.now(), modeId, exchanges: settled };
-    mentorAiStudioService.saveChatSession(session).then(setHistory);
-    if (activeSessionId == null) setActiveSessionId(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exchanges]);
 
-  const sortedHistory = useMemo(() => [...history].sort((a, b) => b.updatedAt - a.updatedAt), [history]);
+  const loadChatHistory = async () => {
 
-  const runQuery = async (q, exchangeId, atts) => {
     try {
-      const response = await mentorAiStudioService.sendChatMessage(q, modeId, atts);
-      setExchanges(prev => prev.map(ex => (ex.id === exchangeId ? { ...ex, status: 'done', response } : ex)));
-      onConsumed?.();
-    } catch {
-      setExchanges(prev => prev.map(ex => (ex.id === exchangeId ? { ...ex, status: 'error' } : ex)));
+
+      const data = await getChatSessions();
+
+      console.log("CHAT HISTORY:", data);
+
+      setHistory(data);
+
+    } catch (error) {
+
+      console.error(
+        "Failed to load chat history:",
+        error.response?.data || error
+      );
+
     }
+
   };
 
+  loadChatHistory();
+
+}, []);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    // Follow the stream only when the user is already near the bottom.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
+  }, [exchanges, job.progress.stageIndex]);
+
+  // useEffect(() => {
+  //   const settled = exchanges.filter(ex => ex.status !== 'loading');
+  //   if (!settled.length) return;
+  //   const id = activeSessionId ?? idRef.current;
+  //   const session = { id, title: titleFrom(settled[0].query), updatedAt: Date.now(), modeId, exchanges: settled };
+  //   mentorAiStudioService.saveChatSession(session).then(setHistory);
+  //   if (activeSessionId == null) setActiveSessionId(id);
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [exchanges]);
+
+const sortedHistory = useMemo(
+  () =>
+    [...history].sort(
+      (a, b) =>
+        new Date(b.created_at) - new Date(a.created_at)
+    ),
+  [history]
+);
+const patchExchange = (exchangeId, patch) => {
+  setExchanges(prev => prev.map(ex => (ex.id === exchangeId ? { ...ex, ...patch } : ex)));
+};
+
+const runQuery = async (q, exchangeId, atts = []) => {
+  if (!canCreate) { deny('create'); return; }
+  if (job.running) return;
+  const signal = job.start(STAGE_SETS.chat);
+  patchExchange(exchangeId, { status: 'loading', text: '', error: null });
+
+  try {
+    // First message of a fresh chat: create the session before posting
+    // to it (previously this posted to /sessions/null/messages/).
+    let sessionId = sessionRef.current;
+    const isNewSession = !sessionId;
+    if (!sessionId) {
+      const session = await createChatSession(titleFrom(q || atts[0]?.name));
+      sessionId = session.id;
+      sessionRef.current = sessionId;
+      setActiveSessionId(sessionId);
+    }
+
+    const response = await sendMessage(
+      sessionId,
+      q,
+      atts.map(a => a.file).filter(Boolean),
+      {
+        signal,
+        onProgress: job.report,
+        onDelta: (text) => { if (!signal.aborted) patchExchange(exchangeId, { status: 'streaming', text }); },
+      }
+    );
+
+    const text = response?.message?.content;
+    if (!text) throw new Error('Mentor AI returned an empty reply. Please try again.');
+
+    job.report({ stage: 'finalizing' });
+    patchExchange(exchangeId, {
+      status: 'done',
+      text,
+      response: { blocks: [{ type: 'text', text }] },
+    });
+    job.complete();
+    onConsumed?.();
+
+    if (isNewSession && q) {
+      updateChatSession(response?.session_id || sessionId, { title: titleFrom(q) }).catch(() => {});
+    }
+    getChatSessions().then(setHistory).catch(() => {});
+  } catch (error) {
+    console.error("Chat API Error:", error.response?.data || error);
+    const data = error.response?.data;
+    const backendMsg = typeof data === 'string' ? '' : (data?.detail || data?.error || data?.message || '');
+    const message = isCancelError(error)
+      ? 'Stopped.'
+      : isTimeoutError(error)
+        ? 'Mentor AI took too long to reply. Please try again.'
+        : backendMsg || error.message || 'Something went wrong.';
+    const status = job.fail(error, message);
+    patchExchange(exchangeId, { status: status === 'cancelled' ? 'cancelled' : 'error', error: message });
+  }
+};
   const submit = (raw) => {
+    if (!canCreate) { deny('create'); return; }
+    if (busy) return; // one reply at a time — no duplicate submissions
     const q = (raw ?? query).trim();
     const atts = pendingAttachments;
     if (!q && atts.length === 0) return;
     const id = ++idRef.current;
-    setExchanges(prev => [...prev, { id, query: q, attachments: atts, status: 'loading', response: null }]);
+    setExchanges(prev => [...prev, { id, query: q, attachments: atts, status: 'loading', text: '', response: null }]);
     setQuery('');
     setPendingAttachments([]);
     setAttachMenuOpen(false);
@@ -111,14 +222,20 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
 
   /* ── Attachments: Photo / PDF ── */
   const pickPhoto = () => { setAttachMenuOpen(false); photoInputRef.current?.click(); };
-  const pickPdf = () => { setAttachMenuOpen(false); pdfInputRef.current?.click(); };
+  // const pickPdf = () => { setAttachMenuOpen(false); pdfInputRef.current?.click(); };
   const onFilesSelected = (kind) => (e) => {
     const files = Array.from(e.target.files || []);
     files.forEach(file => {
       const id = ++attachIdRef.current;
       const url = kind === 'image' ? URL.createObjectURL(file) : null;
-      setPendingAttachments(prev => [...prev, { id, kind, name: file.name, size: file.size, url }]);
-    });
+setPendingAttachments(prev => [...prev, { 
+    id, 
+    kind, 
+    name: file.name, 
+    size: file.size, 
+    url,
+    file
+}]);  });
     e.target.value = '';
   };
   const removeAttachment = (id) => {
@@ -135,31 +252,198 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const startNewChat = () => {
-    setExchanges([]); setActiveSessionId(null); setQuery(''); setHistoryOpen(false);
-  };
-  const loadSession = (item) => {
-    setExchanges(item.exchanges); setActiveSessionId(item.id); setModeId(item.modeId || 'universal'); setHistoryOpen(false);
-  };
-  const deleteSession = (id) => {
-    mentorAiStudioService.deleteChatSession(id).then(setHistory);
-    if (id === activeSessionId) startNewChat();
-  };
+// const startNewChat = async () => {
+//   if (busy) job.cancel();
+//   try {
+//     const session = await createChatSession('New Chat');
+
+//     console.log('Mentor AI session created:', session);
+
+//     setExchanges([]);
+//     sessionRef.current = session.id;
+//     setActiveSessionId(session.id);
+//     setQuery('');
+//     setHistoryOpen(false);
+//   } catch (error) {
+//     console.error(
+//       'Failed to create Mentor AI chat session:',
+//       error.response?.data || error
+//     );
+
+//     toast?.('Unable to start new chat');
+//   }
+// };
+
+const startNewChat = async () => {
+  if (busy) job.cancel();
+
+  setExchanges([]);
+  sessionRef.current = null;
+  setActiveSessionId(null);
+  setQuery('');
+  setPendingAttachments([]);
+  setHistoryOpen(false);
+};
+
+
+const loadSession = async (item) => {
+  if (busy) job.cancel();
+  try {
+    const data = await getChatSession(item.id);
+
+    console.log("SESSION DETAIL:", data);
+
+    const messages = data?.messages || [];
+
+    const mappedExchanges = [];
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+
+      if (msg.role === "user") {
+        const assistantMsg = messages[i + 1]?.role === "assistant"
+          ? messages[i + 1]
+          : null;
+
+        mappedExchanges.push({
+          id: i + 1,
+          query: msg.content,
+          attachments: [],
+          status: "done",
+          text: assistantMsg?.content || "",
+          response: {
+            blocks: [
+              {
+                type: "text",
+                text: assistantMsg?.content || ""
+              }
+            ]
+          }
+        });
+
+        if (assistantMsg) {
+          i++;
+        }
+      }
+    }
+
+    idRef.current = Math.max(idRef.current, mappedExchanges.length + 1);
+    setExchanges(mappedExchanges);
+    sessionRef.current = data.id || item.id;
+    setActiveSessionId(data.id || item.id);
+    setHistoryOpen(false);
+
+  } catch (error) {
+    console.error(
+      "Failed to load session:",
+      error.response?.data || error
+    );
+  }
+};
+const deleteSession = async (id) => {
+
+  try {
+
+    await deleteApiChatSession(id);
+
+    console.log("CHAT DELETED:", id);
+
+    setHistory(prev =>
+      prev.filter(item => item.id !== id)
+    );
+
+    if (id === activeSessionId) {
+      if (busy) job.cancel();
+      setExchanges([]);
+      sessionRef.current = null;
+      setActiveSessionId(null);
+      setQuery('');
+    }
+
+  } catch (error) {
+
+    console.error(
+      "Failed to delete chat:",
+      error.response?.data || error
+    );
+
+  }
+
+};
 
   /* ── Simulated voice input ── */
-  const startRecording = () => {
-    setVoiceState('recording'); setVoiceSeconds(0);
-    voiceTimer.current = setInterval(() => setVoiceSeconds(s => s + 1), 1000);
+const recognitionRef = useRef(null);
+const voiceActiveRef = useRef(false);
+const voiceFinalRef = useRef('');
+
+
+const finishChatVoice = () => {
+  clearInterval(voiceTimer.current);
+  setVoiceSeconds(0);
+  setVoiceState(null);
+  const text = voiceFinalRef.current.trim();
+  voiceFinalRef.current = '';
+  if (text) setQuery(text);
+};
+
+// Har dafa NAYA recognition object — chup hone pe bhi band nahi hota
+const listenChat = () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SR();
+  recognition.lang = "en-US";
+  recognition.continuous = true;
+  recognition.interimResults = false;
+
+  recognition.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      if (event.results[i].isFinal) voiceFinalRef.current += `${event.results[i][0].transcript} `;
+    }
+    setVoiceText(voiceFinalRef.current.trim());
   };
-  const stopRecording = () => {
-    clearInterval(voiceTimer.current);
-    setVoiceState('converting');
-    setTimeout(() => {
-      setVoiceText('This is a simulated voice transcript — connect a speech-to-text API to enable real transcription.');
-      setVoiceState('transcript');
-    }, 900);
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      voiceActiveRef.current = false;
+      alert('Microphone access is blocked. Allow microphone permission and try again.');
+    }
   };
-  const cancelVoice = () => { clearInterval(voiceTimer.current); setVoiceState(null); setVoiceSeconds(0); setVoiceText(''); };
+  recognition.onend = () => {
+    if (voiceActiveRef.current) {
+      setTimeout(() => { if (voiceActiveRef.current) listenChat(); }, 250);
+    } else {
+      finishChatVoice();
+    }
+  };
+  recognitionRef.current = recognition;
+  try { recognition.start(); } catch (e) { console.warn(e); }
+};
+
+const startRecording = () => {
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+    alert("Speech recognition not supported");
+    return;
+  }
+  voiceFinalRef.current = '';
+  setVoiceText('');
+  voiceActiveRef.current = true;
+  setVoiceState("recording");
+  setVoiceSeconds(0);
+  clearInterval(voiceTimer.current);
+  voiceTimer.current = setInterval(() => setVoiceSeconds(s => s + 1), 1000);
+  listenChat();
+};
+
+// Sirf Stop dabane pe band ho
+const stopRecording = () => {
+  voiceActiveRef.current = false;
+  const rec = recognitionRef.current;
+  if (rec) {
+    rec.onend = null;
+    try { rec.stop(); } catch { /* ignore */ }
+  }
+  setTimeout(finishChatVoice, 800);
+};
+
+  const cancelVoice = () => { voiceActiveRef.current = false; if (recognitionRef.current) { recognitionRef.current.onend = null; try { recognitionRef.current.abort(); } catch { /* ignore */ } } clearInterval(voiceTimer.current); setVoiceState(null); setVoiceSeconds(0); setVoiceText(''); };
   const sendVoiceTranscript = () => { submit(voiceText); cancelVoice(); };
 
   return (
@@ -170,8 +454,8 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
           <HowItWorksButton topicKeys={['chat']} />
         </div>
         <div className="msai-chat-head-r">
-          <button type="button" className="msai-chip" onClick={() => setModeOpen(true)}>
-            <i className="fa-solid fa-sliders" aria-hidden="true" /> {mode.name}
+                   <button type="button" className="msai-chip msai-chip--mode" onClick={() => setModeOpen(true)} aria-haspopup="dialog">
+            <i className="fa-solid fa-sliders" aria-hidden="true" /> Universal <i className="fa-solid fa-chevron-down" aria-hidden="true" />
           </button>
           <button type="button" className="msai-icon-btn" onClick={() => setHistoryOpen(o => !o)} aria-label="Chat history">
             <i className="fa-solid fa-clock-rotate-left" aria-hidden="true" />
@@ -194,15 +478,15 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
               <div className="msai-chat-empty-s">Ask me anything — lesson ideas, classroom strategies, worksheets or designs for {schoolName}.</div>
               <div className="msai-chat-chips">
                 {CHAT_QUICK_CHIPS.map(c => (
-                  <button key={c} type="button" className="msai-chip" onClick={() => submit(c)}>{c}</button>
+                  <button key={c} type="button" className="msai-chip"onClick={() => submit(c)} disabled={busy || !canCreate}>{c}</button>
                 ))}
               </div>
 
-              {goTo && (
-                <div className="msai-chat-explore">
+              {goTo && EXPLORE_FEATURES.some(f => canGo(f.id)) && (
+                                <div className="msai-chat-explore">
                   <div className="msai-chat-explore-lbl">More to Explore</div>
                   <div className="msai-chat-explore-grid">
-                    {EXPLORE_FEATURES.map(f => (
+                                       {EXPLORE_FEATURES.filter(f => canGo(f.id)).map(f => (
                       <button key={f.id} type="button" className="msai-feature-card" onClick={() => goTo(f.id)}>
                         <div className="msai-feature-ic"><i className={`fa-solid ${f.icon}`} aria-hidden="true" /></div>
                         <div className="msai-feature-txt">
@@ -222,17 +506,33 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
               <div className="msai-msg-row user">
                 <div className="msai-msg-bubble user">
                   {ex.attachments?.length > 0 && <AttachmentChips items={ex.attachments} />}
-                  {ex.query && <span>{ex.query}</span>}
+                  {ex.query && <span className="msai-msg-text">{ex.query}</span>}
                 </div>
               </div>
-              {ex.status === 'loading' && (
+              {(ex.status === 'loading' || ex.status === 'streaming') && (
                 <div className="msai-msg-row ai">
-                  <div className="msai-msg-bubble ai msai-typing"><span /><span /><span /></div>
+                  <div className="msai-msg-bubble ai">
+                    {ex.text ? <MarkdownMessage text={ex.text} streaming /> : null}
+                    <div className="msai-typing-row">
+                      <div className={`msai-typing${ex.text ? ' msai-typing--inline' : ''}`} role="status" aria-label="Mentor AI is typing">
+                        <span /><span /><span />
+                      </div>
+                      <button type="button" className="msai-typing-stop" onClick={job.cancel} aria-label="Stop reply">
+                        <i className="fa-solid fa-stop" aria-hidden="true" /> Stop
+                      </button>
+                    </div>                  </div>
                 </div>
               )}
-              {ex.status === 'error' && (
+              {(ex.status === 'error' || ex.status === 'cancelled') && (
                 <div className="msai-msg-row ai">
-                  <div className="msai-msg-bubble ai">Something went wrong. <button type="button" className="msai-retry" onClick={() => { setExchanges(p => p.map(e => (e.id === ex.id ? { ...e, status: 'loading' } : e))); runQuery(ex.query, ex.id); }}>Retry</button></div>
+                  <div className={`msai-msg-bubble ai msai-msg-bubble--${ex.status}`}>
+                    {ex.text ? <MarkdownMessage text={ex.text} /> : null}
+                    <div className="msai-msg-errline">
+                      <i className={`fa-solid ${ex.status === 'cancelled' ? 'fa-ban' : 'fa-triangle-exclamation'}`} aria-hidden="true" />
+                      <span>{ex.error || 'Something went wrong.'}</span>
+                      <button type="button" className="msai-retry" disabled={busy || !canCreate}onClick={() => runQuery(ex.query, ex.id, ex.attachments || [])}>Retry</button>
+                    </div>
+                  </div>
                 </div>
               )}
               {ex.status === 'done' && (
@@ -240,12 +540,10 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
                   <div className="msai-msg-bubble ai">
                     {renderBlocks(ex.response.blocks)}
                     <div className="msai-resp-actions">
-                      <button type="button" className="msai-resp-pill" onClick={() => { navigator.clipboard?.writeText(blocksToText(ex.response.blocks)); toast?.('Copied to clipboard'); }}>
+                      <button type="button" className="msai-resp-pill" onClick={async () => { const ok = await copyText(blocksToText(ex.response.blocks)); toast?.(ok ? 'Copied to clipboard' : 'Copy failed'); }}>
                         <i className="fa-regular fa-copy" aria-hidden="true" /> Copy
                       </button>
-                      <button type="button" className="msai-resp-pill" onClick={() => toast?.('Saved')}>
-                        <i className="fa-regular fa-bookmark" aria-hidden="true" /> Save
-                      </button>
+             
                     </div>
                   </div>
                 </div>
@@ -255,7 +553,7 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
         </div>
 
         <input ref={photoInputRef} type="file" accept="image/*" multiple hidden onChange={onFilesSelected('image')} />
-        <input ref={pdfInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={onFilesSelected('pdf')} />
+        {/* <input ref={pdfInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={onFilesSelected('pdf')} /> */}
 
         {pendingAttachments.length > 0 && (
           <div className="msai-attach-preview">
@@ -287,7 +585,7 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
         ) : (
           <form className="msai-composer" onSubmit={e => { e.preventDefault(); submit(); }}>
             <div className="msai-attach-wrap">
-              <button type="button" className="msai-composer-icon" onClick={() => setAttachMenuOpen(o => !o)} aria-label="Attach photo or PDF">
+              <button type="button" className="msai-composer-icon" onClick={() => setAttachMenuOpen(o => !o)} disabled={!canCreate} aria-label="Attach photo or PDF">
                 <i className="fa-solid fa-paperclip" aria-hidden="true" />
               </button>
               {attachMenuOpen && (
@@ -295,27 +593,33 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
                   <div className="msai-attach-menu-backdrop" onClick={() => setAttachMenuOpen(false)} />
                   <div className="msai-attach-menu">
                     <button type="button" onClick={pickPhoto}><i className="fa-regular fa-image" aria-hidden="true" /> Photo</button>
-                    <button type="button" onClick={pickPdf}><i className="fa-regular fa-file-pdf" aria-hidden="true" /> PDF</button>
+                    {/* <button type="button" onClick={pickPdf}><i className="fa-regular fa-file-pdf" aria-hidden="true" /> PDF</button> */}
                   </div>
                 </>
               )}
             </div>
             <input
               type="text" value={query} onChange={e => setQuery(e.target.value)}
-              placeholder={`Ask ${mode.name}…`} aria-label="Message"
+            disabled={!canCreate}
+placeholder={!canCreate ? 'You have view-only access to AI Chat' : busy ? 'Mentor AI is replying…' : 'Ask Mentor AI…'} aria-label="Message"
             />
             <button type="button" className="msai-composer-icon" onClick={startRecording} aria-label="Voice input">
               <i className="fa-solid fa-microphone" aria-hidden="true" />
             </button>
-            <button type="submit" className="msai-composer-send" disabled={!query.trim() && pendingAttachments.length === 0} aria-label="Send">
+            <button type="submit" className="msai-composer-send" disabled={busy || (!query.trim() && pendingAttachments.length === 0)} aria-label="Send">
               <i className="fa-solid fa-paper-plane" aria-hidden="true" />
             </button>
           </form>
         )}
       </div>
 
-      {historyOpen && (
-        <div className="msai-panel-overlay" onClick={e => { if (e.target === e.currentTarget) setHistoryOpen(false); }}>
+      {modeOpen && (
+        <div className="msai-panel-overlay" onClick={e => { if (e.target === e.currentTarget) setModeOpen(false); }}>
+          <ModeList onClose={() => setModeOpen(false)} />
+        </div>
+      )}
+
+      {historyOpen && (        <div className="msai-panel-overlay" onClick={e => { if (e.target === e.currentTarget) setHistoryOpen(false); }}>
           <aside className="msai-panel msai-panel--right">
             <div className="msai-panel-head">
               <span>Chat History</span>
@@ -334,8 +638,9 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
                     <div key={h.id} className={`msai-hist-item${h.id === activeSessionId ? ' active' : ''}`} onClick={() => loadSession(h)}>
                       <div className="msai-hist-item-t">{h.title}</div>
                       <div className="msai-hist-item-m">
-                        <span>{timeAgo(h.updatedAt)}</span>
-                        <span className="msai-hist-item-mode">{(CHAT_MODES.find(m => m.id === h.modeId) || CHAT_MODES[0]).name}</span>
+<span>
+  {timeAgo(new Date(h.updated_at).getTime())}
+</span>                        <span className="msai-hist-item-mode">Universal</span>
                       </div>
                       <button type="button" className="msai-hist-del" onClick={e => { e.stopPropagation(); deleteSession(h.id); }} aria-label="Delete"><i className="fa-solid fa-trash" aria-hidden="true" /></button>
                     </div>
@@ -347,18 +652,13 @@ export default function ChatAssistant({ toast, onConsumed, goTo, schoolName }) {
         </div>
       )}
 
-      {modeOpen && (
-        <div className="msai-panel-overlay" onClick={e => { if (e.target === e.currentTarget) setModeOpen(false); }}>
-          <ModeSelector currentId={modeId} onSelect={id => { setModeId(id); setModeOpen(false); }} onClose={() => setModeOpen(false)} />
-        </div>
-      )}
     </div>
   );
 }
 
 function groupByDay(sorted) {
   const out = {};
-  sorted.forEach(h => { const g = dayGroup(h.updatedAt); (out[g] = out[g] || []).push(h); });
+  sorted.forEach(h => { const g = dayGroup(new Date(h.updated_at || h.created_at || h.updatedAt || Date.now()).getTime()); (out[g] = out[g] || []).push(h); });
   return out;
 }
 
@@ -395,53 +695,53 @@ function VoiceBar({ state, seconds, text, onChangeText, onStop, onCancel, onSend
   );
 }
 
-function ModeSelector({ currentId, onSelect, onClose }) {
-  const [q, setQ] = useState('');
-  const [highlight, setHighlight] = useState(currentId);
-  const filtered = CHAT_MODES.filter(m => !q.trim() || m.name.toLowerCase().includes(q.toLowerCase()) || m.category.toLowerCase().includes(q.toLowerCase()));
-  const preview = CHAT_MODES.find(m => m.id === highlight) || CHAT_MODES[0];
+function ModeList({ onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const universal = CHAT_MODES.find(m => m.id === 'universal') || CHAT_MODES[0];
 
   return (
-    <aside className="msai-panel msai-panel--right msai-panel--wide" onClick={e => e.stopPropagation()}>
+    <aside className="msai-panel msai-panel--right msai-panel--wide" role="dialog" aria-label="Mentor modes" onClick={e => e.stopPropagation()}>
       <div className="msai-panel-head">
-        <span>Select Mentor Mode</span>
+        <span>Mentor Modes</span>
         <button type="button" className="msai-icon-btn" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
       </div>
       <div className="msai-panel-body">
-        <input className="msai-mode-search" type="text" placeholder="Search modes…" value={q} onChange={e => setQ(e.target.value)} autoFocus />
-
-        <div className="msai-mode-preview" style={{ borderColor: preview.color }}>
-          <span className="msai-mode-tag" style={{ background: `${preview.color}1A`, color: preview.color }}>{preview.name}</span>
-          <div className="msai-mode-preview-desc">{preview.description}</div>
-          <div className="msai-mode-preview-ex"><i className="fa-solid fa-quote-left" aria-hidden="true" /> {preview.example}</div>
+        <div className="msai-mode-preview" style={{ borderColor: universal.color }}>
+          <span className="msai-mode-tag" style={{ background: `${universal.color}1A`, color: universal.color }}>{universal.name}</span>
+          <div className="msai-mode-preview-desc">{universal.description}</div>
+          <div className="msai-mode-preview-ex"><i className="fa-solid fa-quote-left" aria-hidden="true" /> {universal.example}</div>
         </div>
-
+        <div className="msai-mode-note">Universal is active. Other modes are coming soon.</div>
         <div className="msai-mode-list">
-          {filtered.map(m => (
-            <button
-              key={m.id}
-              type="button"
-              className={`msai-mode-item${m.id === currentId ? ' current' : ''}${m.id === highlight ? ' highlighted' : ''}`}
-              onMouseEnter={() => setHighlight(m.id)}
-              onClick={() => onSelect(m.id)}
-            >
-              <span className="msai-mode-dot" style={{ background: m.color }} />
-              <span className="msai-mode-item-txt">
-                <span className="msai-mode-item-name">{m.name}</span>
-                <span className="msai-mode-item-cat">{m.category}</span>
-              </span>
-              {m.id === currentId && <i className="fa-solid fa-check" aria-hidden="true" />}
-            </button>
-          ))}
-          {filtered.length === 0 && <div className="msai-editai-empty">No modes match "{q}".</div>}
+          {CHAT_MODES.map(m => {
+            const isUniversal = m.id === 'universal';
+            return (
+              <button key={m.id} type="button"
+                className={`msai-mode-item${isUniversal ? ' current' : ''}`}
+                disabled={!isUniversal}
+                onClick={isUniversal ? onClose : undefined}>
+                <span className="msai-mode-dot" style={{ background: m.color }} />
+                <span className="msai-mode-item-txt">
+                  <span className="msai-mode-item-name">{m.name}</span>
+                  <span className="msai-mode-item-cat">{m.category}</span>
+                </span>
+                {isUniversal
+                  ? <i className="fa-solid fa-check" aria-hidden="true" />
+                  : <span className="msai-mode-soon"><i className="fa-solid fa-lock" aria-hidden="true" /> Coming soon</span>}
+              </button>
+            );
+          })}
         </div>
       </div>
     </aside>
   );
 }
 
-/* ── Attachment chips — shown on a sent message's own bubble. ── */
-function AttachmentChips({ items }) {
+/* ── Attachment chips — shown on a sent message's own bubble. ── */function AttachmentChips({ items }) {
   return (
     <div className="msai-msg-attachments">
       {items.map(a => (
@@ -456,20 +756,14 @@ function AttachmentChips({ items }) {
   );
 }
 
-/* Wraps [bracket placeholders] in a styled span so unfilled fields
-   (Marketing mode's [insert enrollment number], etc.) are visually
-   flagged before anything gets copied or sent — matches the "clearly
-   mark placeholders" convention from the prompt-engineering guide. */
-function highlightPlaceholders(text) {
-  return text.replace(/\[([^\]]+)\]/g, '<span class="msai-placeholder">[$1]</span>');
-}
-
 /* ── Typed-block response renderer:
    heading | text | bullets | numbered | correction | fields ── */
 function renderBlocks(blocks) {
   return blocks.map((b, i) => {
     if (b.type === 'heading') return <div key={i} className="msai-resp-heading">{b.text}</div>;
-    if (b.type === 'text') return <p key={i} className="msai-resp-text" dangerouslySetInnerHTML={{ __html: highlightPlaceholders(b.text) }} />;
+    // Text blocks are Markdown: rendered as React elements (no innerHTML),
+    // [placeholders] are still highlighted by MarkdownMessage.
+    if (b.type === 'text') return <MarkdownMessage key={i} text={b.text} />;
     if (b.type === 'bullets') return <ul key={i} className="msai-resp-bullets">{b.items.map((it, j) => <li key={j}>{it}</li>)}</ul>;
     if (b.type === 'numbered') return <ol key={i} className="msai-resp-numbered">{b.items.map((it, j) => <li key={j}>{it}</li>)}</ol>;
     if (b.type === 'correction') {
@@ -497,7 +791,7 @@ function renderBlocks(blocks) {
 function blocksToText(blocks) {
   return blocks.map(b => {
     if (b.type === 'heading') return `${b.text}\n`;
-    if (b.type === 'text') return `${b.text.replace(/<\/?b>/g, '')}\n`;
+    if (b.type === 'text') return `${b.text}\n`;
     if (b.type === 'bullets' || b.type === 'numbered') return b.items.map(it => `• ${it}`).join('\n');
     if (b.type === 'correction') return `Original: ${b.original}\nIssue: ${b.issue}\nCorrected: ${b.corrected}\nRule: ${b.rule}`;
     if (b.type === 'fields') return b.items.map(f => `${f.label}: ${f.value}`).join('\n');

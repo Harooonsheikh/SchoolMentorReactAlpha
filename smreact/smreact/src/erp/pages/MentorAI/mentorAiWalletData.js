@@ -5,7 +5,7 @@
    directly from UI components — same convention as every other
    mock/*Data.js file in this project).
 
-   Ported from the Mentor AI mobile app's Wallet screens (reference
+   Ported from the mentor AI mobile app's Wallet screens (reference
    screenshots). Kept in its OWN dedicated data file / service pair —
    separate from mentorAiStudioData.js's PLAN_TIERS (which still backs
    the live per-generation token counters used internally by Chat /

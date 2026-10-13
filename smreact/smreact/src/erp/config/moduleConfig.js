@@ -41,7 +41,7 @@ export const MODULE_REGISTRY = [
      permissions match karna chhor dengi aur gating fail-open ho jayegi. */
   { id: 'school_sops',      label: 'School SOPs',       icon: 'fa-book-open',        group: 'SCHOOL MENTOR',  route: '/school-mentor/sops',      coreLocked: false },
   { id: 'teacher_trainings',label: 'Teacher Trainings', icon: 'fa-chalkboard-user',  group: 'SCHOOL MENTOR',  route: '/school-mentor/trainings', coreLocked: false },
-
+  { id: 'mentor_ai',        label: 'MentorAI',          icon: 'fa-wand-magic-sparkles', group: 'SCHOOL MENTOR', route: '/school-mentor/ai', coreLocked: false },
   /* ── BASICS GROUP — coreLocked entries cannot be disabled ────── */
   { id: 'launch_setup',     label: 'Launch Setup',      icon: 'fa-rocket',           group: 'BASICS',         route: '/launch-setup',       coreLocked: true  },
   { id: 'audit_logs',       label: 'Audit Logs',        icon: 'fa-clipboard-list',   group: 'BASICS',         route: '/audit-logs',         coreLocked: true  },
@@ -89,6 +89,7 @@ export const API_FIELD_TO_MODULE_MAP = {
   staffAppraisals:   'appraisals',
   schoolSOPs:        'school_sops',
   teacherTrainings:  'teacher_trainings',
+  mentorAI:          'mentor_ai',
   auditLogs:         'audit_logs',
   settings:          'settings',
   userPermissions:   'user_permissions',

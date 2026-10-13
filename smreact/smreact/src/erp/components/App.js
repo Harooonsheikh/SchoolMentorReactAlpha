@@ -27,7 +27,7 @@ import feeReferenceAlignment from './feeReferenceAlignment';
 /* Registry module id → uska label (API menuName se match karta hai). */
 const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, m.label]));
 
-/* Extra modules that are shown ONLY on the master branch (branchID === 1) and
+/* Extra Modules that are shown ONLY on the master branch (branchID === 1) and
    stay hidden on every other branch. On branch 1 they still respect the user's
    role/permission. Keyed by sidebar nav id. */
 /* Chat yahan JAAN-BOOJH KAR nahi hai: wo har branch par khulta hai. Uska

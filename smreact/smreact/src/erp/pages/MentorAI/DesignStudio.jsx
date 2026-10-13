@@ -1,19 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import * as mentorAiStudioService from '../../services/mentorAiStudioService';
-import { GeneratingProgress, VersionBadge, AttachmentPicker, revokeAttachments, VoiceDictationButton } from './MentorAIShared';
+import { usePermissions } from '../../context/PermissionsContext';
+import * as designStudioService from './services/mentorraistudioservice';
+import { GeneratingProgress, VersionBadge, AttachmentPicker, revokeAttachments, VoiceDictationButton, SaveToLibraryButton, downloadFile } from './MentorAIShared';import ProgressBar from './ProgressBar';
+import { STAGE_SETS, useJobProgress, isCancelError } from './services/aiProgress';
 import { HowItWorksButton } from './HowItWorks';
-import {
+import { useMentorAIActions } from './mentorAIPermissions';import {
   DS_PLATFORMS, DS_CATEGORIES, DS_QUICK_TAGS, DS_EDIT_CHIPS,
-  GENERATING_FACTS, DESIGN_GENERATING_STEPS,
+  GENERATING_FACTS,
 } from './mentorAiStudioData';
 
 /* ═══════════════════════════════════════════════════════════════════
    DesignStudio — branded social-post generator.
-   Ported from the prototype's design-studio-landing / step1 (category)
-   / step2 (content & branding) / loading / result screens.
+   Now connected to Mentor AI Design Studio API.
    ═══════════════════════════════════════════════════════════════════ */
-
 export default function DesignStudio({ toast, onConsumed }) {
+  const { canCreate, canEdit, canDownload, deny } = useMentorAIActions('designstudio', toast);
+  const { can } = usePermissions();
   const [step, setStep] = useState('landing');
   const [platform, setPlatform] = useState(null);
   const [customSize, setCustomSize] = useState({ w: 1080, h: 1080 });
@@ -28,23 +30,19 @@ export default function DesignStudio({ toast, onConsumed }) {
   const [post, setPost] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [applying, setApplying] = useState(false);
+  const [undoPost, setUndoPost] = useState(null);
+  const genJob = useJobProgress();
+  const editJob = useJobProgress();
+  const applying = editJob.running;
+  const [apiError, setApiError] = useState(null);
 
   const reset = () => {
     revokeAttachments(refImages);
     setStep('landing'); setPlatform(null); setCategory(null); setPrompt(''); setPost(null); setRefImages([]);
-    setBrandColor(''); setColorPickerOpen(false);
+    setBrandColor(''); setColorPickerOpen(false); setApiError(null);
   };
 
   const openColorPicker = () => { setDraftColor(brandColor || '#1E40AF'); setColorPickerOpen(true); };
-  /* Clicking the picker button reveals the popover AND immediately opens
-     the native color slate (hue/saturation picker) on the swatch inside
-     it, so the user can pick a color in one click instead of two. The
-     swatch is scrolled to the vertical center of the viewport first —
-     the browser positions that native picker relative to the swatch,
-     and if the swatch sits near the top/bottom edge the picker can
-     render partly off-screen. Centering it first keeps the picker
-     fully within the visible screen. */
   useEffect(() => {
     if (!colorPickerOpen) return undefined;
     colorInputRef.current?.scrollIntoView({ block: 'center', inline: 'center' });
@@ -70,30 +68,165 @@ export default function DesignStudio({ toast, onConsumed }) {
 
   const toggleTag = (tag) => setPrompt(p => (p.includes(tag) ? p : p ? `${p} ${tag}.` : `${tag}.`));
 
+  /* ─── Generate — calls real API, then polls status if needed ─── */
   const runGenerate = async () => {
-    setStep('generating'); setGenerating(true);
+    if (!canCreate) { deny('create'); return; }
+    if (genJob.running) return;
+    setStep('generating');
+    setGenerating(true);
+    setApiError(null);
+    const signal = genJob.start(STAGE_SETS.design);
+    const opts = { signal, onProgress: genJob.report };
+
     try {
-      /* Brand color is appended to the same `prompt` instruction string
-         already sent to generateDesignPost — no new API/params shape,
-         just an extra sentence when the user has actually picked one. */
       const promptWithBrand = brandColor
         ? `${prompt}\n\nUse the school's selected brand color: ${brandColor}.`
         : prompt;
-      const res = await mentorAiStudioService.generateDesignPost({
-        category: category.id, categoryName: category.name,
+
+      const response = await designStudioService.generateDesignPost({
+        category: category.id,
+        categoryName: category.name,
         platform: platform === 'custom' ? 'custom' : platform.id,
         platformName: platform === 'custom' ? `Custom ${customSize.w}×${customSize.h}` : platform.name,
-        prompt: promptWithBrand, branding, brandColor,
-      });
-      setPost(res); setStep('result');
+        prompt: promptWithBrand,
+        branding,
+        brandColor,
+        customSize: platform === 'custom' ? customSize : null,
+        refImages,
+      }, opts);
+
+      console.log('Design Studio generation response:', response);
+
+      // API returns: { tracking_id, design_post_id, status: 'pending' }
+      const trackingId =
+        response?.tracking_id ||
+        response?.data?.tracking_id;
+
+      const designPostId =
+        response?.design_post_id ||
+        response?.data?.design_post_id;
+
+      // If tracking_id exists AND no image yet, poll for result
+      const hasImageAlready =
+        response?.image_url || response?.imageUrl ||
+        response?.pdf_url || response?.pdfUrl;
+
+      if (trackingId && !hasImageAlready) {
+        const finalPost = await designStudioService.waitForDesignResult(trackingId, designPostId, opts);
+        // Attach display meta that API may not return
+        finalPost.categoryName = finalPost.categoryName || category.name;
+        finalPost.platformName = finalPost.platformName || (platform === 'custom' ? `Custom ${customSize.w}×${customSize.h}` : platform.name);
+        // Ensure design_post_id is available for edit/detail calls
+        finalPost.designPostId = finalPost.designPostId || designPostId;
+        setPost(finalPost);
+        setUndoPost(null);
+        genJob.complete();
+        setStep('result');
+        onConsumed?.();
+        return;
+      }
+
+      // Immediate result — normalize it
+      const normalized = designStudioService.normalizeDesignPost(
+        response?.post || response?.data?.post || response?.data || response
+      );
+
+      if (!normalized) {
+        throw new Error('Design response is incomplete.');
+      }
+
+      // Attach display meta
+      normalized.categoryName = normalized.categoryName || category.name;
+      normalized.platformName = normalized.platformName || (platform === 'custom' ? `Custom ${customSize.w}×${customSize.h}` : platform.name);
+
+      setPost(normalized);
+      setUndoPost(null);
+      genJob.complete();
+      setStep('result');
       onConsumed?.();
-    } finally { setGenerating(false); }
+    } catch (error) {
+      console.error('Design generation failed:', error.response?.data || error.message);
+
+      const backendError = error.response?.data;
+      const message =
+        typeof backendError === 'string'
+          ? backendError
+          : backendError?.error ||
+            backendError?.message ||
+            error.message ||
+            'Design generation failed.';
+
+      // Errors / timeouts keep the progress card with Retry + Back;
+      // Cancel returns straight to the form.
+      if (genJob.fail(error, message) === 'cancelled') { setStep('content'); return; }
+      setApiError(message);
+      toast?.(message);
+    } finally {
+      setGenerating(false);
+    }
   };
 
+  /* ─── Edit via AI — calls real edit endpoint ───
+     Only reports success when a real updated post came back; the
+     previous version is kept for Undo. */
+  const handleEditViaAI = async (instruction) => {
+    if (!canEdit) { deny('edit'); return; }
+    if (editJob.running) return;
+    // Use design_post_id for edit endpoint (NOT tracking_id)
+    const editId = post?.designPostId || post?.design_post_id || post?.id;
+    if (!editId) { toast?.('Post ID not available for editing.'); return; }
+    const signal = editJob.start(STAGE_SETS.design);
+    const opts = { signal, onProgress: editJob.report };
+    try {
+      const response = await designStudioService.editDesignPostViaAI(editId, instruction, opts);
+
+      // Edit also returns { tracking_id, design_post_id, status: 'pending' }
+      // so we need to poll for the result just like generate
+      const trackingId = response?.tracking_id || response?.data?.tracking_id;
+      const editDesignPostId = response?.design_post_id || response?.data?.design_post_id || editId;
+
+      let updated;
+      if (trackingId) {
+        updated = await designStudioService.waitForDesignResult(trackingId, editDesignPostId, opts);
+      } else {
+        const editedData = response?.post || response?.data?.post || response?.data || response;
+        updated = designStudioService.normalizeDesignPost(editedData);
+      }
+      if (!updated || (!updated.imageUrl && !updated.pdfUrl)) {
+        throw new Error('Mentor AI did not return an updated design. Please try again.');
+      }
+      updated.categoryName = updated.categoryName || post.categoryName;
+      updated.platformName = updated.platformName || post.platformName;
+      updated.designPostId = editDesignPostId;
+      updated.version = (post.version || 1) + 1;
+
+      setUndoPost(post);
+      setPost(updated);
+      editJob.complete();
+      setEditOpen(false);
+      onConsumed?.();
+      toast?.('Post updated');
+    } catch (error) {
+      console.error('Edit design failed:', error.response?.data || error.message);
+      const message = error.response?.data?.error || error.response?.data?.message || error.message || 'Edit failed.';
+      editJob.fail(error, isCancelError(error) ? 'Edit cancelled — the post was not changed.' : message);
+    }
+  };
+
+  const closeEdit = () => { editJob.cancel(); editJob.reset(); setEditOpen(false); };
+
+  /* ─── Download handler ─── */
+   const handleDownload = async () => {
+    if (!canDownload) { deny('download'); return; }    const url = post?.imageUrl || post?.pdfUrl;
+    if (!url) { toast?.('Download not available yet.'); return; }
+    toast?.('Downloading HD post…');
+    const result = await downloadFile(url, `design-${post.id || 'post'}${post.imageUrl ? '' : '.pdf'}`);
+    if (result === 'opened') toast?.('Opened in a new tab — use Save there to keep it.');
+  };
   return (
     <div className="msai-ds">
       {step !== 'landing' && (
-        <button type="button" className="msai-back-link" onClick={() => (step === 'result' ? reset() : setStep(step === 'category' ? 'landing' : 'category'))}>
+        <button type="button" className="msai-back-link" onClick={() => { genJob.cancel(); if (step === 'result') reset(); else setStep(step === 'category' ? 'landing' : 'category'); }}>
           <i className="fa-solid fa-arrow-left" aria-hidden="true" /> {step === 'result' ? 'Start Over' : 'Back'}
         </button>
       )}
@@ -159,6 +292,16 @@ export default function DesignStudio({ toast, onConsumed }) {
         <div className="msai-card msai-ds-step">
           <div className="msai-step-title">Content &amp; Branding <span className="msai-step-pill">Step 2 of 2</span></div>
           <span className="msai-mode-tag" style={{ background: 'rgba(21,101,192,.1)', color: '#1E3A8A', alignSelf: 'flex-start' }}>{category.name}</span>
+
+          {/* API error banner */}
+          {apiError && (
+            <div className="msai-ds-error-banner" style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', color: '#991B1B', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <i className="fa-solid fa-circle-exclamation" aria-hidden="true" />
+              <span>{apiError}</span>
+              <button type="button" style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#991B1B' }} onClick={() => setApiError(null)} aria-label="Dismiss"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
+            </div>
+          )}
+
           <Field label={`Describe your post (${prompt.length}/500)`}>
             <div className="msai-field-voice-wrap">
               <textarea rows={4} maxLength={500} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="What should this post say?" />
@@ -167,10 +310,7 @@ export default function DesignStudio({ toast, onConsumed }) {
           </Field>
           <div className="msai-chip-row">{DS_QUICK_TAGS.map(t => <button key={t} type="button" className="msai-chip" onClick={() => toggleTag(t)}>+ {t}</button>)}</div>
 
-          {/* ─── Brand Color Theme ───
-              Feeds into the same `prompt` instruction string already
-              sent to generateDesignPost (see runGenerate) — no new API
-              shape, just an extra sentence appended when a color is set. */}
+          {/* ─── Brand Color Theme ─── */}
           <div className="msai-brandcolor-card">
             <div className="msai-brandcolor-head">
               <span className="msai-brandcolor-ic"><i className="fa-solid fa-palette" aria-hidden="true" /></span>
@@ -249,7 +389,7 @@ export default function DesignStudio({ toast, onConsumed }) {
             <AttachmentPicker items={refImages} onAdd={addRefImage} onRemove={removeRefImage} />
           </div>
 
-          <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} disabled={!prompt.trim()} onClick={runGenerate}>
+          <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} disabled={!canCreate || !prompt.trim()} onClick={runGenerate}>
             <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Generate Post
           </button>
         </div>
@@ -257,7 +397,14 @@ export default function DesignStudio({ toast, onConsumed }) {
 
       {step === 'generating' && (
         <div className="msai-card">
-          <GeneratingProgress title="Crafting your design…" steps={DESIGN_GENERATING_STEPS} facts={GENERATING_FACTS} active={generating} />
+          <GeneratingProgress
+            title="Crafting your design…"
+            progress={genJob.progress}
+            facts={GENERATING_FACTS}
+            onCancel={genJob.cancel}
+            onRetry={runGenerate}
+            onDismiss={() => { genJob.reset(); setStep('content'); }}
+          />
         </div>
       )}
 
@@ -277,37 +424,42 @@ export default function DesignStudio({ toast, onConsumed }) {
           <PostMockup post={post} branding={branding} />
 
           <div className="msai-result-actions">
-            <button type="button" className="msai-btn-secondary" onClick={() => toast?.('Downloading HD post…')}><i className="fa-solid fa-download" aria-hidden="true" /> Download</button>
-            <button type="button" className="msai-btn-secondary" onClick={() => setEditOpen(true)}><i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Edit by AI</button>
-            <button type="button" className="msai-btn-secondary" onClick={async () => { await mentorAiStudioService.saveToLibrary({ kind: 'design', title: post.headline, category: post.categoryName, platform: post.platformName, meta: post }); toast?.('Post saved to Library'); }}>
-              <i className="fa-regular fa-bookmark" aria-hidden="true" /> Save to Library
-            </button>
+                     {canDownload && (
+              <button type="button" className="msai-btn-secondary" onClick={handleDownload}><i className="fa-solid fa-download" aria-hidden="true" /> Download</button>
+            )}
+            {canEdit && (
+              <button type="button" className="msai-btn-secondary" onClick={() => { editJob.reset(); setEditOpen(true); }}><i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Edit by AI</button>
+            )}
+            {canEdit && undoPost && (
+              <button type="button" className="msai-btn-secondary" onClick={() => { setPost(undoPost); setUndoPost(null); toast?.('Reverted to the previous version'); }}>
+                <i className="fa-solid fa-rotate-left" aria-hidden="true" /> Undo AI edit
+              </button>
+            )}
+                 <SaveToLibraryButton
+              perm="Design Studio"
+              toast={toast}
+              resetKey={post.version || 1}
+              build={() => ({
+                type: 'design',
+                title: post.headline || 'Design post',
+                content: { post },
+                sourceKey: `design:${post.designPostId || post.id}`,
+              })}
+            />
           </div>
         </div>
       )}
 
-      {editOpen && post && (
-        <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) setEditOpen(false); }}>
+      {editOpen && post && canEdit && (        <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget && !applying) closeEdit(); }}>
           <div className="modal modal-sm">
             <div className="msai-panel-head">
               <span>Edit by AI</span>
-              <button type="button" className="msai-icon-btn" onClick={() => setEditOpen(false)} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
+              <button type="button" className="msai-icon-btn" onClick={closeEdit} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
             </div>
             <div className="msai-panel-body">
-              <div className="msai-chip-row">{DS_EDIT_CHIPS.map(c => <button key={c} type="button" className="msai-chip" onClick={async () => {
-                setApplying(true);
-                try {
-                  const { post: updated } = await mentorAiStudioService.editDesignPostViaAI(post, c);
-                  setPost(updated); setEditOpen(false); toast?.('Post updated');
-                } finally { setApplying(false); }
-              }} disabled={applying}>{c}</button>)}</div>
-              <EditFreeform disabled={applying} onSend={async (text) => {
-                setApplying(true);
-                try {
-                  const { post: updated } = await mentorAiStudioService.editDesignPostViaAI(post, text);
-                  setPost(updated); setEditOpen(false); toast?.('Post updated');
-                } finally { setApplying(false); }
-              }} />
+              <div className="msai-chip-row">{DS_EDIT_CHIPS.map(c => <button key={c} type="button" className="msai-chip" onClick={() => handleEditViaAI(c)} disabled={applying}>{c}</button>)}</div>
+              <EditFreeform disabled={applying} onSend={(text) => handleEditViaAI(text)} />
+              <ProgressBar progress={editJob.progress} compact onCancel={editJob.cancel} />
             </div>
           </div>
         </div>
@@ -331,19 +483,46 @@ function EditFreeform({ onSend, disabled }) {
   );
 }
 
+/* ─── PostMockup — shows real image if available, else text fallback ─── */
 function PostMockup({ post, branding }) {
+  const imageUrl = post?.imageUrl || post?.pdfUrl;
+
   return (
     <div className="msai-ds-mockup">
-      {branding.logo && <div className="msai-ds-mockup-badge"><i className="fa-solid fa-school" aria-hidden="true" /></div>}
-      <div className="msai-ds-mockup-headline">{post.headline}</div>
-      <div className="msai-ds-mockup-sub">{post.subtext}</div>
-      {(branding.name || branding.contact || branding.address) && (
-        <div className="msai-ds-mockup-bar">
-          {branding.name && <span>Your School</span>}
-          {branding.contact && <span><i className="fa-solid fa-phone" aria-hidden="true" /> 0300 1234567</span>}
-          {branding.address && <span><i className="fa-solid fa-location-dot" aria-hidden="true" /> Lahore, Pakistan</span>}
-        </div>
-      )}
+      {imageUrl ? (
+        /* Real generated image from API */
+        <img
+          src={imageUrl}
+          alt={post.headline || 'Generated design'}
+          style={{
+            width: '100%',
+            maxHeight: 520,
+            objectFit: 'contain',
+            borderRadius: 8,
+            display: 'block',
+          }}
+          onError={(e) => {
+            // Fallback to text mockup on image load error
+            e.target.style.display = 'none';
+            const fallback = e.target.nextSibling;
+            if (fallback) fallback.style.display = '';
+          }}
+        />
+      ) : null}
+
+      {/* Text fallback — shown when no image URL or image fails to load */}
+      <div style={imageUrl ? { display: 'none' } : undefined}>
+        {branding.logo && <div className="msai-ds-mockup-badge"><i className="fa-solid fa-school" aria-hidden="true" /></div>}
+        <div className="msai-ds-mockup-headline">{post.headline}</div>
+        <div className="msai-ds-mockup-sub">{post.subtext}</div>
+        {(branding.name || branding.contact || branding.address) && (
+          <div className="msai-ds-mockup-bar">
+            {branding.name && <span>Your School</span>}
+            {branding.contact && <span><i className="fa-solid fa-phone" aria-hidden="true" /> 0300 1234567</span>}
+            {branding.address && <span><i className="fa-solid fa-location-dot" aria-hidden="true" /> Lahore, Pakistan</span>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -425,8 +425,7 @@ export const MODULE_PERMISSIONS = {
 
   /* Library — view saved worksheets/design posts, download, delete.
      No Create (items only arrive here via Save to Library elsewhere). */
-  'mentorai.library':       ['view', 'download', 'delete'],
-
+'mentorai.library':       ['view', 'edit', 'download', 'delete'],
   /* ─── ACADEMICS — derived from real buttons in Academics.js +
          LessonPlans.js (audited 2026-05-31). Each list contains ONLY
          the actions that have a matching button / handler wired in

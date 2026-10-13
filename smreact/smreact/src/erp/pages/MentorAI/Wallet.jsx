@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import * as mentorAIWalletService from '../../services/mentorAIWalletService';
+import * as mentorAIWalletService from './services/mentorAIWalletService';
 
 /* ═══════════════════════════════════════════════════════════════════
    Wallet — redesigned to match the Mentor AI mobile app's Wallet
@@ -14,22 +14,69 @@ import * as mentorAIWalletService from '../../services/mentorAIWalletService';
 
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function fmtDate(iso) {
-  const [y, m, d] = iso.split('-').map(Number);
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
   return `${String(d).padStart(2, '0')}-${MONTHS_SHORT[m - 1]}-${y}`;
 }
 
+const PLAN_THEMES = {
+  basic:   { gradient: 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%)' }, // light blue
+  pro:     { gradient: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)' }, // dark blue
+  premium: { gradient: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)' }, // purple
+};
+const themeFor = (id) => PLAN_THEMES[id] || PLAN_THEMES.pro;
+
 export default function Wallet({ goTo }) {
+  console.log("WALLET COMPONENT OPENED");
   const [data, setData] = useState(null);
   const [viewPlanId, setViewPlanId] = useState(null);
   const [tooltipKey, setTooltipKey] = useState(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [bank, setBank] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
-    mentorAIWalletService.getWalletData().then(d => { setData(d); setViewPlanId(d.activePlanId); });
-  }, []);
+  /* Live usage from /ai/api/wallet/ — re-read every time the Wallet is
+     opened (this component remounts on each visit). */
+  const load = () => {
+    setLoadError('');
+    mentorAIWalletService.getWalletData()
+      .then((d) => {
+        setData(d);
+        setViewPlanId(prev => prev || d.activePlanId);
+      })
+      .catch((error) => {
+        console.error("WALLET ERROR:", error?.response?.data || error);
+        setLoadError(error?.response?.status === 401
+          ? 'Your Mentor AI session has expired. Please reload the page.'
+          : 'Could not load your wallet. Please try again.');
+      });
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!data) return null;
+  /* Basic → Pro, Pro → Premium (next plan up from the one on screen).
+     Viewing a lower plan than the current one: offer the next plan above
+     the current one instead. Nothing above → no upgrade button. */
+  const upgradeTarget = (() => {
+    if (!data) return null;
+    const idx = (id) => data.plans.findIndex(p => p.id === id);
+    const viewed = data.plans.find(p => p.id === viewPlanId) || data.plans.find(p => p.isCurrent);
+    const current = data.plans.find(p => p.isCurrent);
+    const from = Math.max(idx(viewed?.id), current ? idx(current.id) : -1);
+    return data.plans[from + 1] || null;
+  })();
+
+  if (!data) {
+    return (
+      <div className="mwallet">
+        <div className="msai-card msai-lib-empty">
+          {loadError
+            ? <><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /><div>{loadError}</div>
+                <button type="button" className="msai-btn-primary" onClick={load}><i className="fa-solid fa-rotate-right" aria-hidden="true" /> Try again</button></>
+            : <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /><div>Loading your wallet…</div></>}
+        </div>
+      </div>
+    );
+  }
   const plan = data.plans.find(p => p.id === viewPlanId) || data.plans.find(p => p.isCurrent);
 
   const openUpgrade = () => {
@@ -48,36 +95,46 @@ export default function Wallet({ goTo }) {
 
       <div className="mwallet-plan-tabs">
         {data.plans.map(p => (
-          <button
+      <button
             key={p.id}
             type="button"
             className={`mwallet-plan-tab${p.id === viewPlanId ? ' active' : ''}`}
+            style={p.id === viewPlanId ? { background: themeFor(p.id).gradient, color: '#fff' } : undefined}
             onClick={() => { setViewPlanId(p.id); setTooltipKey(null); }}
           >
-            {p.name}
-          </button>
+                  {p.name}
+{p.isCurrent && (
+  <span style={{
+    marginLeft: 6, padding: '1px 7px', borderRadius: 999,
+    fontSize: 10, fontWeight: 700, background: '#16a34a',
+    color: '#fff', verticalAlign: 'middle'
+  }}>Active</span>
+)}          </button>
         ))}
       </div>
 
-      <div className="mwallet-hero">
+      <div className="mwallet-hero" style={{ background: themeFor(plan.id).gradient, backgroundImage: themeFor(plan.id).gradient }}>
         <div className="mwallet-hero-top">
           <div>
-            <div className="mwallet-hero-name">{plan.name} Plan</div>
-            <div className="mwallet-hero-tagline">{plan.tagline}</div>
+            <div className="mwallet-hero-name">{plan.name}</div>   
+       <div className="mwallet-hero-tagline">{plan.tagline}</div>
           </div>
-          {plan.isCurrent && (
+              {plan.isCurrent ? (
             <span className="mwallet-hero-badge"><span className="mwallet-hero-badge-dot" /> Your Current Plan</span>
-          )}
+          ) : (
+<span className="mwallet-hero-badge" style={{ opacity: 0.85 }}>Preview</span>          )}
         </div>
         <div className="mwallet-hero-price">{plan.price ? <>Rs. {plan.price.toLocaleString()} <span>/ month</span></> : 'Free'}</div>
       </div>
 
       <div className="mwallet-cards">
-        {data.features.map(f => {
-          const total = plan.totals[f.key];
-          const used = plan.used[f.key] || 0;
-          const remaining = Math.max(0, total - used);
-          const pct = total ? Math.min(100, (used / total) * 100) : 0;
+{data.features.map(f => {
+    const currentPlan = data.plans.find(p => p.isCurrent);
+    const total = plan.totals?.[f.key] ?? 0;
+    // Only the current plan has real usage; every other tab shows 0
+    const used = plan.isCurrent ? (plan.used?.[f.key] ?? 0) : 0;
+    const remaining = Math.max(0, total - used);
+    const pct = total ? Math.min(100, (used / total) * 100) : 0;
           return (
             <div key={f.key} className="mwallet-card">
               <div className="mwallet-card-h">
@@ -106,7 +163,12 @@ export default function Wallet({ goTo }) {
                 <div><span>{f.totalLabel}</span><b>{total.toLocaleString()}</b></div>
                 <div><span>{f.usedLabel}</span><b>{used.toLocaleString()}</b></div>
                 <div><span>Remaining</span><b>{remaining.toLocaleString()}</b></div>
-                {plan.isCurrent && <div><span>Due Date</span><b>{fmtDate(plan.dueDate)}</b></div>}
+{currentPlan?.id === plan.id && (
+  <div>
+    <span>Due Date</span>
+    <b>{fmtDate(currentPlan.dueDate)}</b>
+  </div>
+)}
               </div>
 
               <div className="mwallet-bar"><div className="mwallet-bar-fill" style={{ width: `${pct}%` }} /></div>
@@ -119,9 +181,8 @@ export default function Wallet({ goTo }) {
         })}
       </div>
 
-      {!(plan.id === 'premium' && plan.isCurrent) && (
-        <button type="button" className="mwallet-upgrade-btn" onClick={openUpgrade}>
-          <i className="fa-solid fa-crown" aria-hidden="true" /> Upgrade to Premium
+      {upgradeTarget && (
+<button type="button" className="mwallet-upgrade-btn" onClick={openUpgrade} style={{ background: themeFor(upgradeTarget.id).gradient }}>          <i className="fa-solid fa-crown" aria-hidden="true" /> Upgrade to {upgradeTarget.name}
         </button>
       )}
 
@@ -129,12 +190,12 @@ export default function Wallet({ goTo }) {
         <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) setUpgradeOpen(false); }}>
           <div className="modal modal-sm">
             <div className="mwallet-modal-head">
-              <span>Upgrade to Premium</span>
+              <span>Upgrade to {upgradeTarget?.name}</span>
               <button type="button" className="mwallet-info-btn" onClick={() => setUpgradeOpen(false)} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
             </div>
             <div className="mwallet-modal-body">
               <div className="mwallet-modal-plan">
-                <i className="fa-solid fa-crown" aria-hidden="true" /> Premium — Rs. {data.plans.find(p => p.id === 'premium').price.toLocaleString()} / month
+                <i className="fa-solid fa-crown" aria-hidden="true" /> {upgradeTarget?.name}{upgradeTarget?.price ? <> — Rs. {Number(upgradeTarget.price).toLocaleString()} / month</> : null}
               </div>
               <div className="mwallet-modal-steps-h">How to Upgrade — 3 Simple Steps</div>
               <ol className="mwallet-modal-steps">

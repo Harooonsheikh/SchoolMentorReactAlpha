@@ -7,7 +7,7 @@
    Plans tab — see LessonPlans.jsx's class → scan → content-type
    funnel, which is exactly why their guides are grouped together
    behind one button with an internal tab switch), 'worksheets',
-   'designStudio'.
+   'designstudio'.
 
    This is an explanatory layer only — it describes the current mock
    workflow AND the intended ERP-connected behavior (e.g. "class/unit
