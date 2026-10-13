@@ -12,6 +12,7 @@ import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import { staffLeaveAbsent } from '../Attendance/data'
 import * as hrApi from '../../api/hrApi'
 import { postAutoAccountEntry } from '../../api/accountsApi'
+import { fetchWallets } from '../../api/walletsApi'
 import './HumanResource.css'
 
 export default function HumanResource() {
@@ -411,7 +412,7 @@ function Payroll({ hr, commit, fire }) {
     let apiPayrollId = rec.apiPayrollId || 0
     try {
       if (!apiPayrollId) apiPayrollId = hrApi.payrollIdFromResponse(await hrApi.saveHrPayrollSetup(setupPayload(empId, rec))) || 0
-      await hrApi.saveHrPayrollPayment({ payrollID: apiPayrollId, amount: payment.amount, comment: payment.comment, paymentDate: payment.date })
+      await hrApi.saveHrPayrollPayment({ payrollID: apiPayrollId, amount: payment.amount, comment: payment.comment, paymentDate: payment.date, walletId: payment.walletId })
     } catch (err) { fire(err.message || 'Payment saved locally — server sync failed', 'warn') }
     const payments = [...(rec.payments || []), payment]
     const paid = payments.reduce((a, p) => a + Number(p.amount || 0), 0)
@@ -431,6 +432,7 @@ function Payroll({ hr, commit, fire }) {
         amount: payment.amount,
         date: payment.date,
         detail: `Salary payment${emp ? ` — ${fullName(emp)}` : ''} · ${MONTHS[month]} ${year}`,
+        walletId: payment.walletId,
       })
       if (r && !r.posted && r.reason === 'no-head') fire('Payment recorded, but no Expense head exists in Accounts — the entry was not posted', 'warn')
     } catch { /* account posting optional — payment already saved */ }
@@ -620,6 +622,20 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
   const [payComment, setPayComment] = useState('')
 
+  /* Payment wallet — ERP ki tarah har payment kisi wallet se nikalti hai.
+     Sirf active wallets select ho sakte hain; selected kiye baghair payment
+     allowed nahi. */
+  const [wallets, setWallets] = useState([])
+  const [walletId, setWalletId] = useState('')
+  useEffect(() => {
+    let alive = true
+    fetchWallets()
+      .then((list) => { if (alive) setWallets((list || []).filter((w) => w.status === 'active')) })
+      .catch(() => { if (alive) setWallets([]) })
+    return () => { alive = false }
+  }, [])
+  const walletName = (id) => wallets.find((w) => w.id === String(id))?.name || ''
+
   const saveSetup = async () => {
     await onSaveSetup(empId, { basicPay: Number(e.basicSalary || 0), bonus: N(v.bonus), totalGross, stdDeductions: deductions(e), loanDeduct: N(v.loanDeduct), customLoan: N(v.customLoan), fineDeduct: N(v.fineDeduct), fineComment: v.fineComment, leaveCount: N(v.leaveCount), leaveDeduct: N(v.leaveDeduct), leaveComment: v.leaveComment, absentCount: N(v.absentCount), absentDeduct: N(v.absentDeduct), absentComment: v.absentComment, totalDeductions: totalDed, netPayable: net })
     setTab('payment')
@@ -628,7 +644,8 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
     const amt = N(payAmt)
     if (amt <= 0) return onToast('Enter a valid payment amount', 'warn')
     if (amt > remaining + 0.01) return onToast(`Amount cannot exceed remaining ${rs(remaining)}`, 'warn')
-    await onRecordPayment(empId, { amount: amt, date: payDate, comment: payComment.trim() })
+    if (!walletId) return onToast('Select the wallet this payment is paid from', 'warn')
+    await onRecordPayment(empId, { amount: amt, date: payDate, comment: payComment.trim(), walletId, walletName: walletName(walletId) })
     onClose()
   }
 
@@ -636,7 +653,7 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
     <Shell title="Pay Roll" sub={`${fullName(e)} · ${MONTHS[month]} ${year}`} icon="fa-money-check-dollar" onClose={onClose} maxWidth={620}
       foot={tab === 'setup'
         ? <><button className="btn-secondary" onClick={onClose}>Cancel</button><SpinnerButton icon="fa-floppy-disk" onClick={saveSetup}>Save &amp; Next</SpinnerButton></>
-        : <><button className="btn-secondary" onClick={onClose}>Close</button><SpinnerButton disabled={!rec.netPayable && !hasPayments} icon="fa-money-bill-wave" onClick={makePayment}>Make Payment</SpinnerButton></>}>
+        : <><button className="btn-secondary" onClick={onClose}>Close</button><SpinnerButton disabled={(!rec.netPayable && !hasPayments) || !walletId || remaining <= 0} icon="fa-money-bill-wave" onClick={makePayment}>Make Payment</SpinnerButton></>}>
       <div className="hr-mtabs">
         <button className={`hr-mtab${tab === 'setup' ? ' active' : ''}`} onClick={() => setTab('setup')}><i className="fa-solid fa-sliders" /> Setup</button>
         <button className={`hr-mtab${tab === 'payment' ? ' active' : ''}`} onClick={() => { if (rec.netPayable || hasPayments) setTab('payment'); else onToast('Save setup first', 'warn') }}><i className="fa-solid fa-money-bill-wave" /> Make Payment</button>
@@ -682,6 +699,35 @@ function PayRollModal({ empId, hr, month, year, onSaveSetup, onRecordPayment, on
             <div className="hr-field"><label>Comment</label><input className="hr-input" value={payComment} onChange={(ev) => setPayComment(ev.target.value)} placeholder="e.g. Bank transfer" /></div>
           </div>
           {(rec.payments || []).length > 0 && <div style={{ marginTop: 12, fontSize: 12, color: 'var(--tm)' }}>{rec.payments.length} payment(s) recorded. Loan installment auto-deducts on full settlement.</div>}
+
+          <div className="hr-wallet-box">
+            <div className="hr-wallet-head"><i className="fa-solid fa-wallet" /> Payment Wallet <span className="req">*</span></div>
+            <select className="hr-input" value={walletId} onChange={(ev) => setWalletId(ev.target.value)}>
+              <option value="">Select wallet for this payment</option>
+              {wallets.map((w) => <option key={w.id} value={w.id}>{w.name}{w.serverBalance != null ? ` — ${rs(w.serverBalance)}` : ''}</option>)}
+            </select>
+            {!walletId && <div className="hr-wallet-hint"><i className="fa-solid fa-circle-exclamation" /> Select the wallet this payment is paid from.</div>}
+          </div>
+
+          <div className="hr-hist">
+            <div className="hr-hist-head">
+              <span className="t"><i className="fa-solid fa-receipt" /> Payment History</span>
+              <span className="hr-hist-badge">{(rec.payments || []).length} payments</span>
+            </div>
+            {(rec.payments || []).length === 0
+              ? <div className="hr-hist-empty"><i className="fa-solid fa-receipt" />No payments recorded yet. Make the first payment using the form above.</div>
+              : <div className="hr-hist-list">
+                  {[...(rec.payments || [])].reverse().map((p, i) => (
+                    <div className="hr-hist-row" key={i}>
+                      <div>
+                        <div style={{ fontWeight: 700, color: 'var(--t1)' }}>{fmtDate(p.date)}</div>
+                        <div className="meta">{[p.walletName, p.comment].filter(Boolean).join(' · ') || '—'}</div>
+                      </div>
+                      <div className="amt">{rs(p.amount)}</div>
+                    </div>
+                  ))}
+                </div>}
+          </div>
         </>
       )}
     </Shell>

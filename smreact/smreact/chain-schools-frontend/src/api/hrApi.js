@@ -676,6 +676,7 @@ export function saveHrPayrollPayment(p = {}) {
       amount: Number(p.amount) || 0,
       comment: p.comment || '',
       paymentDate: toIso(p.paymentDate),
+      wallatID: Number(p.walletId) || 0,
       createdBy: uid,
     },
   })

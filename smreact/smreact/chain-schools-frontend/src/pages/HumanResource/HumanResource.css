@@ -123,4 +123,24 @@ textarea.hr-input { height: auto; padding: 9px 12px; resize: vertical; }
 .hr-net-bar { display: flex; align-items: center; justify-content: space-around; flex-wrap: wrap; gap: 10px; background: var(--brand-light); border: 1.5px solid var(--bm); border-radius: var(--r-md); padding: 12px 16px; margin-top: 6px; }
 .hr-net-bar .b { text-align: center; } .hr-net-bar .b .l { font-size: 10.5px; color: var(--tm); font-weight: 700; } .hr-net-bar .b .v { font-size: 17px; font-weight: 800; color: var(--brand); }
 
+/* ── Make Payment: Payment Wallet (ERP jaisa) ── */
+.hr-wallet-box { background: var(--brand-light); border: 1.5px solid var(--bm); border-radius: var(--r-md); padding: 13px 15px; margin-top: 14px; }
+.hr-wallet-head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 800; color: var(--brand); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 8px; }
+.hr-wallet-head .req { color: var(--err); }
+.hr-wallet-box .hr-input { background: var(--card); }
+.hr-wallet-hint { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--err); margin-top: 8px; }
+
+/* ── Make Payment: Payment History ── */
+.hr-hist { border: 1px solid var(--bl); border-radius: var(--r-md); margin-top: 14px; overflow: hidden; }
+.hr-hist-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--muted); border-bottom: 1px solid var(--bl); }
+.hr-hist-head .t { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 800; color: var(--t1); text-transform: uppercase; letter-spacing: .3px; }
+.hr-hist-badge { font-size: 11px; font-weight: 700; color: var(--tm); background: var(--card); border: 1px solid var(--bl); border-radius: 999px; padding: 2px 10px; }
+.hr-hist-empty { text-align: center; color: var(--tm); padding: 26px 14px; font-size: 13px; }
+.hr-hist-empty i { font-size: 22px; display: block; margin-bottom: 8px; opacity: .55; }
+.hr-hist-list { max-height: 190px; overflow-y: auto; }
+.hr-hist-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--bl); font-size: 12.5px; }
+.hr-hist-row:first-child { border-top: none; }
+.hr-hist-row .amt { font-weight: 800; color: var(--success); }
+.hr-hist-row .meta { color: var(--tm); font-size: 11.5px; margin-top: 2px; }
+
 @media (max-width: 720px) { .hr-tabs { grid-template-columns: 1fr 1fr; } .hr-grid2, .hr-grid3 { grid-template-columns: 1fr; } .hr-sum-cards { grid-template-columns: 1fr; } .hr-loan-grid { grid-template-columns: 1fr; } }
