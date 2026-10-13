@@ -1906,8 +1906,7 @@ const markOf = (staffIdx, day) => {
       const map = detailByDate[i] || {};
       return base.map((s) => {
         const rec = map[s.id];
-        return { ...s, status: rec?.status || null, inTime: rec?.inTime || "", outTime: rec?.outTime || "" };
-      });
+        return { ...s, status: rec?.status || null, inTime: rec?.inTime || "", outTime: rec?.outTime || "", platform: rec?.platform || "" };      });
     };
 
     return (
@@ -2092,8 +2091,7 @@ const markOf = (staffIdx, day) => {
                                 </td>
                                 <td style={{ fontWeight: 600 }}>{s.inTime  ? fmtTime(s.inTime)  : "—"}</td>
                                 <td style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</td>
-                                <td style={{ fontSize: 11.5, color: T.textMuted }}>{st ? "ERP" : ""}</td>
-                              </tr>
+                                <td style={{ fontSize: 11.5, color: T.textMuted }}>{st ? (s.platform || "ERP") : ""}</td>                              </tr>
                             );
                           })}
                         </tbody>
@@ -2890,9 +2888,10 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             onChange={(e) => setField(j, { from: e.target.value })}
                             style={{ minWidth: 130, height: 34, fontSize: 12 }}
                           >
-                            <option>ERP</option>
+                                          <option>ERP</option>
                             <option>Mobile App</option>
                             <option>Biometric</option>
+                            <option>SmartAttendance</option>
                           </select>
                         </td>
                       </tr>
@@ -4139,7 +4138,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
             const inTime  = timeVal(rec.CheckInTime  ?? rec.checkInTime);
             const outTime = timeVal(rec.CheckOutTime ?? rec.checkOutTime);
             if (sid != null && status) {
-              map[sid] = { status, inTime, outTime };
+              map[sid] = { status, inTime, outTime, platform: String(rec.Platform ?? rec.platform ?? "") };
               if (markerId == null) {
                 markerId = rec.CreatedBy ?? rec.createdBy ?? rec.ModifiedBy ?? rec.modifiedBy ?? null;
               }
@@ -4157,8 +4156,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const markerName = markerId != null ? (employeeNameById[String(markerId)] || "") : "";
       setStudentData((prev) => prev.map((r, i) => {
         if (i !== idx) return r;
-        const students = (r.students || []).map((s) => ({ ...s, status: map[s.id]?.status, inTime: map[s.id]?.inTime || "", outTime: map[s.id]?.outTime || "" }));
-        // Marked only if at least one student in THIS class has a status.
+        const students = (r.students || []).map((s) => ({ ...s, status: map[s.id]?.status, inTime: map[s.id]?.inTime || "", outTime: map[s.id]?.outTime || "", platform: map[s.id]?.platform || "" }));        // Marked only if at least one student in THIS class has a status.
         const anyMarked = students.some((s) => s.status);
         const teacher = assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—";
         return {
@@ -4232,8 +4230,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         teacher: assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—",
         students: (r.students || []).map((st) => {
           const m = studentRows.find((x) => x.id === st.id);
-          return m ? { ...st, status: m.status, inTime: m.status === "present" ? (m.inTime || "") : "", outTime: m.status === "present" ? (m.outTime || "") : "" } : st;
-        }),
+          return m ? { ...st, status: m.status, platform: "ERP", inTime: m.status === "present" ? (m.inTime || "") : "", outTime: m.status === "present" ? (m.outTime || "") : "" } : st;        }),
         markedFrom: "ERP",
         markedTime: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
       } : r));
@@ -4676,7 +4673,8 @@ const loadStaffAttendance = useCallback(async (dateStr) => {
       if (found) {
         return {
           ...s,
-          status:  (found.Status ?? found.status) || "present",
+          // status:  (found.Status ?? found.status) || "present",
+                    status:  (() => { const raw = String((found.Status ?? found.status) || "present").trim().toLowerCase(); return ST_CODE_TO_STATUS[raw] || raw; })(),
           inTime:  timeVal(found.CheckInTime ?? found.checkInTime),
           outTime: timeVal(found.CheckOutTime ?? found.checkOutTime),
           from:    (found.Platform ?? found.platform) || "ERP",
@@ -4723,7 +4721,8 @@ const loadStaffDateAttendance = useCallback(async (dateStr) => {
     return {
       name: s.name, empId: s.empId, desig: s.desig,
       marked: !!found,
-      status:  found ? ((found.Status ?? found.status) || "") : "",
+      // status:  found ? ((found.Status ?? found.status) || "") : "",
+            status:  found ? (() => { const raw = String((found.Status ?? found.status) || "").trim().toLowerCase(); return ST_CODE_TO_STATUS[raw] || raw; })() : "",
       inTime:  found ? timeVal(found.CheckInTime ?? found.checkInTime) : "",
       outTime: found ? timeVal(found.CheckOutTime ?? found.checkOutTime) : "",
       from:    found ? ((found.Platform ?? found.platform) || "") : "",
@@ -4755,7 +4754,8 @@ const fetchDailyStaffReportRows = useCallback(async (dateStr) => {
     return {
       empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
       marked: !!found,
-      status:  found ? String((found.Status ?? found.status) || "").toLowerCase() : "",
+      // status:  found ? String((found.Status ?? found.status) || "").toLowerCase() : "",
+            status:  found ? (() => { const raw = String((found.Status ?? found.status) || "").trim().toLowerCase(); return ST_CODE_TO_STATUS[raw] || raw; })() : "",
       inTime:  found ? timeVal(found.CheckInTime ?? found.checkInTime) : "",
       outTime: found ? timeVal(found.CheckOutTime ?? found.checkOutTime) : "",
       from:    found ? ((found.Platform ?? found.platform) || "") : "",
