@@ -9824,8 +9824,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-  const finalRem = rcRemarkByScale(ovPct, remarks);
-
+const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
@@ -10173,8 +10172,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-  const finalRem = rcRemarkByScale(ovPct, remarks);
-
+const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const barPalette = ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'];
@@ -10426,8 +10424,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-  const finalRem = rcRemarkByScale(ovPct, remarks);
-
+const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const subjData = subjects.map((s, i) => {
     const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
@@ -20199,3 +20196,4 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   .exam-submit-btn,.exam-add-btn,.exam-cancel-btn { height:38px; padding:0 14px; font-size:12px; }
 }
 `;
+    
