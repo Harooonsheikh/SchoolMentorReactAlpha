@@ -2383,7 +2383,11 @@ function challanFigures(rec, byHead = null) {
   /* Head-wise: kisi non-prev head par per-head previousPendingorAdv ho to previous PER-HEAD me
      hai — aise me aggregate "Previous Pending" rows ko SKIP karte hain (warna previous DO baar
      ginta: ek per-head, ek aggregate row → fully-paid par bhi Total Dues 1,500 dikhता tha). */
-  const hasHeadPrev = rows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
+  /* BUG FIX: per-head previous ko feeHeadPrev() se padho (challan print / receiving jaisा) —
+     sirf `previousPendingorAdv` nahi. Kuch challans previous ko doosre field me rakhte hain
+     (print to feeHeadPrev se dikha deta tha, magar ye list narrow check ki wajah se us head
+     ka previous miss kar deti thi — 3 head ke previous me se sirf 1 ginти thi). */
+  const hasHeadPrev = rows.some(r => !isPrevRow(r) && (feeHeadPrev(r) || 0) !== 0);
   const byHeadLookup = (name) => {
     if (!byHead || typeof byHead !== 'object') return null;
     const norm = String(name || '').toLowerCase().trim();
@@ -2392,6 +2396,8 @@ function challanFigures(rec, byHead = null) {
     const n = Number(byHead[key]);
     return Number.isFinite(n) ? n : null;
   };
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const seen = new Set();   // challan me maujood non-prev heads (byHead extra jodte waqt dedup)
   let dues = 0, advance = 0, current = 0;
   let totalNet = 0, totalRecv = 0;
   rows.forEach(r => {
@@ -2400,7 +2406,8 @@ function challanFigures(rec, byHead = null) {
     const recv = Number(r.receivedAmount) || 0;
     const isPrev = isPrevRow(r);
     if (hasHeadPrev && isPrev) return;   // head-wise: aggregate prev row skip (per-head me hai)
-    const hpRaw = hasHeadPrev ? (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) : 0;
+    if (!isPrev) seen.add(norm(r.subHead || r.head));
+    const hpRaw = hasHeadPrev ? (feeHeadPrev(r) || 0) : 0;
     const live = byHeadLookup(r.subHead || r.head);
     /* byHead > 0 ho to usse cap (gross 3000 → 2500); byHead 0/absent ho to challan hp. */
     let prevPart = Math.max(0, hpRaw);
@@ -2422,6 +2429,20 @@ function challanFigures(rec, byHead = null) {
       current += Math.max(0, curNet - recv);
     }
   });
+  /* BUG FIX: byHead (running-ledger) ke jo PRIOR heads is challan ki detailRows me NAHI
+     (e.g. Admission/Others jinke is mahine koi challan amount nahi bana, previous sirf
+     running-ledger me hai) — unka baqaya bhi Dues me jodo, bilkul challan PRINT (applyPrevByHead)
+     jaisा. Warna 3 head ke previous me se sirf challan-wale head (Tuition) ka ginta tha
+     (Total Payable 6,000 jabke print 10,733). hasHeadPrev true ho tab bhi ye zaroori hai —
+     us case me render dues ko byHeadSum se replace nahi karta. */
+  if (byHead && typeof byHead === 'object') {
+    Object.keys(byHead).forEach(k => {
+      if (seen.has(norm(k))) return;
+      const v = Math.round(Number(byHead[k]) || 0);
+      if (v > 0) { dues += v; totalNet += v; }
+      else if (v < 0) advance += -v;
+    });
+  }
   /* Challan ke total se ZYADA wasool ho gaya (over-receiving) → extra raqam student ka
      ADVANCE hai. Isay bhi advance me jodo, warna Fee Challans list par 0 dikhta tha. */
   advance += Math.max(0, totalRecv - totalNet);
@@ -2448,14 +2469,15 @@ function advConsumedOf(rec) {
 function challanOverpaid(rec, byHead = null) {
   if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return 0;
   const isPrevRow = (r) => isAggregateCarryRow(r);
-  const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
+  /* per-head previous feeHeadPrev() se (challan print jaisा) — multi-field. */
+  const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (feeHeadPrev(r) || 0) !== 0);
   const norm = (s) => String(s || '').toLowerCase().trim();
   let outstanding = 0;
   rec.detailRows.forEach(r => {
     if (hasHeadPrev && isPrevRow(r)) return;
     /* Negative advance rows (credit) consume ho kar received −X — un ka net 0 rakho. */
     if (isPrevRow(r) && (Number(r.challanAmount) || 0) < 0) return;
-    let hp = Math.max(0, Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0);
+    let hp = Math.max(0, feeHeadPrev(r) || 0);
     if (byHead && typeof byHead === 'object') {
       const key = Object.keys(byHead).find(k => norm(k) === norm(r.subHead || r.head));
       const live = key != null ? Number(byHead[key]) : null;
@@ -2470,8 +2492,9 @@ function challanFullyPaid(rec, byHead = null) {
   if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return false;
   const isPrevRow = (r) => isAggregateCarryRow(r);
   /* Head-wise: previous per-head hai to aggregate "Previous Pending" row SKIP (double-count na
-     ho — warna fully-paid ke bawajood us row ki wajah se outstanding 1,500 reh jaata tha). */
-  const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
+     ho — warna fully-paid ke bawajood us row ki wajah se outstanding 1,500 reh jaata tha).
+     per-head previous feeHeadPrev() se (challan print jaisा) — multi-field. */
+  const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (feeHeadPrev(r) || 0) !== 0);
   const byHeadLookup = (name) => {
     if (!byHead || typeof byHead !== 'object') return null;
     const norm = String(name || '').toLowerCase().trim();
@@ -2480,19 +2503,45 @@ function challanFullyPaid(rec, byHead = null) {
     const n = Number(byHead[key]);
     return Number.isFinite(n) ? n : null;
   };
+  /* BUG FIX: running-ledger ka live prior (byHead) jab challan ke head par per-head previous
+     NAHI (hpRaw 0) magar student ka purana baqaya byHead me mojood hai — to usay bhi outstanding
+     me gino. Warna is mahine ki fee thori ZYADA receive hone par (current overpay) challan
+     "fully paid" GHALAT samajh li jati thi: list −500 (advance) dikhati thi jabke asal 2000
+     baqaya hai (prior 2500 − current overpay 500). Sirf !hasHeadPrev + byHead wala case badalta
+     hai; head-wise aur bina-byHead callers bilkul pehle jaise. */
+  const hasLiveByHead = byHead && typeof byHead === 'object'
+    && Object.values(byHead).some(v => (Number(v) || 0) > 0);
+  const injectLive = !hasHeadPrev && hasLiveByHead;
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const matched = new Set();
   let outstanding = 0, anyRecv = 0, billed = 0;
   rec.detailRows.forEach(r => {
     if (hasHeadPrev && isPrevRow(r)) return;   // head-wise: aggregate prev row skip
-    const hpRaw = Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+    /* injectLive me previous byHead se aa raha hai → aggregate prev row skip, warna
+       previous DO baar (aggregate + byHead) ginा jata. */
+    if (injectLive && isPrevRow(r)) return;
+    const hpRaw = feeHeadPrev(r) || 0;
     const live = byHeadLookup(r.subHead || r.head);
     let hp = Math.max(0, hpRaw);
-    if (live != null && live > 0) hp = Math.min(hp, live);
+    if (live != null && live > 0) hp = (hpRaw > 0) ? Math.min(hp, live) : (injectLive ? live : hp);
+    if (live != null) matched.add(norm(r.subHead || r.head));
     const net = (Number(r.challanAmount) || 0) - (Number(r.discount) || 0) + hp;
     const recv = Number(r.receivedAmount) || 0;
     billed += Math.max(0, net);
     outstanding += net - recv;
     anyRecv += recv;
   });
+  /* byHead ke jo prior heads is challan ki rows me match nahi hue — unka baqaya bhi outstanding
+     me (render ka byHeadSum / challanFigures isi tarah poora prior ginta hai). hasHeadPrev true
+     ho tab bhi: Qasim jaisे challan me sirf Tuition row hai magar Admission/Others ka previous
+     byHead me hai — warna Tuition pay hote hi "fully paid" samajh leta jabke 4,733 baqaya. */
+  if (byHead && typeof byHead === 'object') {
+    Object.keys(byHead).forEach(k => {
+      if (matched.has(norm(k))) return;
+      const v = Math.max(0, Number(byHead[k]) || 0);
+      if (v > 0) { outstanding += v; billed += v; }
+    });
+  }
   /* outstanding <= 0 = settle (wasooli YA poora discount). anyRecv zaroori nahi —
      warna 100% discount / give-disc par bhi purana byHead 2500 list me wapas aa jata tha. */
   return Math.round(outstanding) <= 0 && (anyRecv !== 0 || billed > 0);
@@ -3670,16 +3719,23 @@ function FeeChallansList({ toast }) {
                           if (rec && challanFullyPaid(rec, prevOut?.byHead || null)) {
                             /* Poora settle — credit head (advance > fee) bhi consume ho chuka.
                                Sab 0 (Current 1,220 / Advance −1,220 ka phantom net-0 nahi).
-                               Magar owed se ZYADA liya ho to wo advance (−3,500) dikhe. */
-                            fig.dues = 0; fig.advance = overAdv; fig.current = 0; fig.payable = -overAdv;
+                               Magar owed se ZYADA liya ho to wo advance (−3,500) dikhe.
+                               BUG FIX: jo overpay PRIOR dues (byHeadSum, running-ledger) me absorb
+                               ho gaya wo ADVANCE nahi — warna poora 5,000 (2,500 prior + 2,500
+                               current) receive karne par bhi −2,500 advance dikhता tha. Sirf prior
+                               se ZYADA overpay hi asli advance. byHeadSum 0 ho (purana case) to
+                               trueAdv == overAdv — koi farq nahi. */
+                            const trueAdv = Math.max(0, overAdv - byHeadSum);
+                            fig.dues = 0; fig.advance = trueAdv; fig.current = 0; fig.payable = -trueAdv;
                           } else if (rec && prevOut) {
                             /* prevOut.advance sirf pichhle mahino ka — is challan me consume ho
                                chuka advance ghata do (warna fully-received par −550 phantom). */
                             const consumed = advConsumedOf(rec);
                             const rows = rec.detailRows || [];
+                            /* per-head previous feeHeadPrev() se (challan print jaisा) — multi-field. */
                             const hasHeadPrev = rows.some(r =>
                               !isAggregateCarryRow(r)
-                              && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0
+                              && (feeHeadPrev(r) || 0) !== 0
                             );
                             /* Head-wise: previous IS challan par bill / receive ho chuka —
                                purane mahine ka byHead yahan mat chipkao (warna fully-received
@@ -3687,7 +3743,13 @@ function FeeChallansList({ toast }) {
                             if (!hasHeadPrev) {
                               fig.dues = byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0);
                             }
-                            fig.advance = Math.max(0, prevOut.advance - consumed) + overAdv;
+                            /* IS challan ka overpay (overAdv) pehle PRIOR dues ko kam kare —
+                               warna ek taraf 2,500 Total Dues aur doosri taraf −500 Advance
+                               dikhta jabke net sirf 2,000 baqaya hai. Jo overpay bache wahi
+                               (prior advance ke saath) Advance column me. */
+                            const overVsDues = Math.min(overAdv, fig.dues);
+                            fig.dues -= overVsDues;
+                            fig.advance = Math.max(0, prevOut.advance - consumed) + (overAdv - overVsDues);
                             fig.payable = (fig.current || 0) + fig.dues - fig.advance;
                           }
                           /* Two Months+: jis month me challan bana → Current Fee;
@@ -6643,9 +6705,21 @@ function FeeSlipModal({ cfg, onClose, toast }) {
      (running-ledger) cfg.prevStd me bhejta hai; mile to prev row ka Std usse override. */
   const prevStdOverride = (typeof cfg.prevStd === 'number') ? Math.round(cfg.prevStd) : null;
   const isPrevLabel = (r) => /previous\s*pending|arrear/.test(String(r.subHead || r.head || '').toLowerCase());
+  /* Receiving ke WAQT ka per-head previous snapshot (model.heads se, running-ledger par bana).
+     Ye slip ka SABSE sahi source hai — receiving screen bhi yahi value head-wise dikhata hai.
+     Fresh receive par payment.prevByHead me hamesha aata hai; warna cfg.prevByHead (as-of ledger). */
+  const snapByHead = (payment && payment.prevByHead && typeof payment.prevByHead === 'object' && Object.keys(payment.prevByHead).length)
+    ? payment.prevByHead
+    : ((cfg.prevByHead && typeof cfg.prevByHead === 'object' && Object.keys(cfg.prevByHead).length) ? cfg.prevByHead : null);
   /* Per-head previous (previousPendingorAdv) available ho to slip HEAD-WISE: aggregate
-     "Previous Pending" row hata kar har head ka previous "Pending" me jodte hain (challan jaisa). */
-  const hasHeadPrev = !cfg.instRows && Array.isArray(chRows) && chRows.some(r => !isPrevLabel(r) && (feeHeadPrev(r) || 0) !== 0);
+     "Previous Pending" row hata kar har head ka previous "Pending" me jodte hain (challan jaisa).
+     BUG FIX: pehle yahan sirf challan ki NON-ZERO previousPendingorAdv dekhi jaati thi. Pehli
+     receiving par us head ki wo value 0 hoti hai (previous 2,500 running-ledger se aata hai),
+     is liye slip head-wise mode me nahi jaata tha → Previous Dues column blank aur Remaining
+     ghalat minus (−500), jabke receiving screen par wahi 2,500 head-wise aur Remaining 2,000
+     dikhta tha. Ab snapshot (snapByHead) mojood ho to bhi head-wise ON, taake slip bilkul screen
+     jaisा Previous Dues aur sahi Remaining dikhaye. */
+  const hasHeadPrev = !cfg.instRows && Array.isArray(chRows) && (!!snapByHead || chRows.some(r => !isPrevLabel(r) && (feeHeadPrev(r) || 0) !== 0));
   /* Installment slip: rows pehle se bane hue (installmentSlipRows) — Std = pehle ka baqaya.
      "Show Discount on Challan" ON ho to head ki PEHLI receiving par Discount Manager wala
      discount bhi: Std = gross (4,000), Discount = manager + give (1,000 + 500). Baad ki
@@ -6669,6 +6743,46 @@ function FeeSlipModal({ cfg, onClose, toast }) {
       })
     : Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, std: Math.round(+amt || 0), disc: 0, recv: Math.round(+amt || 0), prev: 0 }));
 
+  /* ── BUG FIX: installment / single-receiving slip (cfg.instRows) par head-wise Previous Dues ──
+     installmentSlipRows previous SIRF challan ki `feeHeadPrev` (previousPendingorAdv) se
+     nikaalta hai aur normal head par usay Std me FOLD kar deta hai. Jab previous running-ledger
+     se aata hai (challan ke head par 0, jaise pehli receiving ka 2,500), to Previous Dues column
+     blank reh jaata tha aur Remaining ghalat minus (−500) — jabke receiving screen par wahi
+     2,500 head-wise aur Remaining 2,000 dikhta tha. Yahan receiving-time snapshot (snapByHead,
+     = model.heads[].prev, wahi jo screen dikhata hai) se har NORMAL head ka Previous Dues alag
+     column me daalte hain. Jo previous pehle Std me fold hua tha (challan ka feeHeadPrev) usay
+     Std se nikaal dete hain taake double na ho. Previous-dues head (Old/Previous Pending) ki apni
+     line ko haath nahi lagate — uska hisaab installmentSlipRows pehle hi sahi karta hai. */
+  if (cfg.instRows && snapByHead) {
+    const norm = (s) => String(s || '').toLowerCase().trim();
+    const keys = Object.keys(snapByHead);
+    const folded = {};   // head → challan ka feeHeadPrev (jo Std me shaamil tha)
+    (Array.isArray(chRows) ? chRows : []).forEach(r => {
+      if (!isPrevLabel(r)) folded[norm(r.subHead || r.head || '')] = Math.max(0, Math.round(+(feeHeadPrev(r)) || 0));
+    });
+    const used = new Set();
+    baseRows.forEach(r => {
+      /* BUG FIX: matching snapshot key pehle dhoondo aur used me daalo — chahe prev-dues head
+         (Pending Due / Old Dues Till Date) ho — taake neeche push-unmatched use DUBARA na jode.
+         Warna slip me wo head DO baar aa jata tha (ek received-wala, ek sirf-previous-wala). */
+      const key = keys.find(k => norm(k) === norm(r.name));
+      if (key != null) used.add(key);
+      if (isPreviousDuesHead(r.name)) return;   // prev-dues line ka apna hisaab chhedo mat (sirf dedup)
+      if (key == null) return;
+      const snap = Math.round(snapByHead[key]);
+      const fold = folded[norm(r.name)] || 0;
+      if (fold) r.std = Math.max(0, (r.std || 0) - fold);   // Std me fold hua previous nikaalo
+      r.prev = snap;                                        // authoritative per-head previous
+    });
+    /* Snapshot ke wo heads jo is slip ki rows me nahi (sirf-previous head jiska is mahine
+       challan 0) — screen (recStudentModel) unhe apni row bana kar dikhata hai, slip bhi waise. */
+    keys.forEach(k => {
+      if (used.has(k)) return;
+      const p = Math.round(snapByHead[k]);
+      if (p) baseRows.push({ name: k, std: 0, disc: 0, recv: 0, prev: p });
+    });
+  }
+
   /* Slip par per-head previous = challan ki apni `previousPendingorAdv` (feeHeadPrev) — ye
      RECEIPT hai, is liye jitna previous BILL hua tha (aur ab received me shamil) wahi sahi
      source hai. Running-ledger byHead post-receiving 0 ho jaati hai (previous pay ho gaya),
@@ -6681,15 +6795,22 @@ function FeeSlipModal({ cfg, onClose, toast }) {
        receiving ke WAQT ka original per-head previous (payment.prevByHead — save ke waqt model
        se store hua) mile to us head ka Prev usi se set karo. Jahan mile wahi override — warna
        feeHeadPrev jaisा hai waisा (kabhi zero nahi). */
-    const srcByHead = (payment && payment.prevByHead && typeof payment.prevByHead === 'object' && Object.keys(payment.prevByHead).length)
-      ? payment.prevByHead
-      : ((cfg.prevByHead && typeof cfg.prevByHead === 'object') ? cfg.prevByHead : null);
+    const srcByHead = snapByHead;
     if (srcByHead) {
       const norm = (s) => String(s || '').toLowerCase().trim();
       const keys = Object.keys(srcByHead);
+      const used = new Set();
       baseRows.forEach(r => {
         const key = keys.find(k => norm(k) === norm(r.name));
-        if (key != null) r.prev = Math.round(srcByHead[key]);   // mile → use; warna feeHeadPrev
+        if (key != null) { r.prev = Math.round(srcByHead[key]); used.add(key); }   // mile → use; warna feeHeadPrev
+      });
+      /* Snapshot ke wo heads jo is challan ki rows me nahi (e.g. sirf-previous head jiska is
+         mahine challan 0) — screen (recStudentModel) unhe apni row bana kar dikhata hai, slip
+         bhi waisе dikhaye warna wo previous slip se gayab ho jaata. */
+      keys.forEach(k => {
+        if (used.has(k)) return;
+        const p = Math.round(srcByHead[k]);
+        if (p) baseRows.push({ name: k, std: 0, disc: 0, recv: 0, prev: p });
       });
     }
     let hasCredit = false;
@@ -19038,7 +19159,9 @@ function FeeBusyOverlay({ message }) {
       style={{
         position: 'fixed', inset: 0, zIndex: 10000, display: 'flex',
         alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(15,23,42,.35)', cursor: 'wait',
+        /* cursor:'wait' hata diya — center spinner kaafi hai; mouse par dobara wait/spinner
+           loader (double loader) na dikhe. */
+        background: 'rgba(15,23,42,.35)', cursor: 'default',
       }}
     >
       <div

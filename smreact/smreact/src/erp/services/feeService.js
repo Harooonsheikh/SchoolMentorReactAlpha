@@ -2704,12 +2704,16 @@ export async function deleteChallanById(id) {
    Response: { success, message: "Bulk delete done: 5 challans, …", data: null } */
 export async function bulkDeleteChallansByClass({ gradeId, sectionId, month, year } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  /* Logged-in user ki employeeId (login par 'employee_ID' me store hoti hai) — API update
+     ke mutabiq ab delete ke saath bhejni hai (kaun delete kar raha, audit). */
+  const employeeId = Number(sessionStorage.getItem('employee_ID')) || 0;
   const qs = new URLSearchParams({
     branchId: String(branchID),
     gradeId: String(Number(gradeId) || 0),
     sectionId: String(Number(sectionId) || 0),
     month: String(Number(month) || 0),
     year: String(Number(year) || 0),
+    employeeId: String(employeeId),
   });
   const res = await fetch(
     buildUrl(`/api/BranchLedger/bulk-delete-by-class?${qs}`),
@@ -2724,8 +2728,11 @@ export async function bulkDeleteChallansByClass({ gradeId, sectionId, month, yea
 }
 
 export async function deleteChallanInstallment(ledgerId) {
+  /* Logged-in user ki employeeId (login par 'employee_ID' me store) — API update ke
+     mutabiq ab single delete ke saath bhejni hai. */
+  const employeeId = Number(sessionStorage.getItem('employee_ID')) || 0;
   const res = await fetch(
-    buildUrl(`/api/BranchLedger/delete-challan-installment/${ledgerId}`),
+    buildUrl(`/api/BranchLedger/delete-challan-installment/${ledgerId}?employeeId=${employeeId}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },
   );
   const json = await res.json().catch(() => null);
