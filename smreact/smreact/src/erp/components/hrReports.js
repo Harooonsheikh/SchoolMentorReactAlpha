@@ -944,7 +944,15 @@ export const HR_DIRECTORY_FIELDS = [
   { key: 'province',   label: 'Province',              group: 'Official', get: (e) => e.province || '—' },
   { key: 'city',       label: 'City',                  group: 'Official', get: (e) => e.city || '—' },
   { key: 'role',       label: 'Job Role',              group: 'Official', get: (e) => e.role || '—' },
-  { key: 'basicSalary',label: 'Basic Salary',          group: 'Salary',   get: (e, ctx) => e.basicSalary ? ctx.fmtMoney(e.basicSalary) : '—' },
+  // { key: 'basicSalary',label: 'Basic Salary',          group: 'Salary',   get: (e, ctx) => e.basicSalary ? ctx.fmtMoney(e.basicSalary) : '—' },
+    { key: 'basicSalary',label: 'Total Gross Salary',    group: 'Salary',   get: (e, ctx) => {
+      /* Total Gross = Basic + saare allowances (payroll wala same formula). */
+      const gross = ctx.getEmpTotalGross
+        ? ctx.getEmpTotalGross(e, 0)
+        : (Number(e.basicSalary) || 0) + (e.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
+      return gross ? ctx.fmtMoney(gross) : '—';
+    } },
+  
   { key: 'payMethod',  label: 'Payment Method',        group: 'Salary',   get: (e) => e.payMethod || '—' },
   { key: 'bankName',   label: 'Bank Name',             group: 'Salary',   get: (e) => e.bankName || '—' },
   { key: 'bankAcc',    label: 'Bank Account',          group: 'Salary',   get: (e) => e.bankAcc || '—' },
@@ -967,9 +975,13 @@ const HR_DIR_COL_WEIGHT = {
   role: 0.9, basicSalary: 0.9, payMethod: 1, bankName: 1, bankAcc: 1.3,
 };
 
+// export function generateHrDirectoryReport(ctx, selectedKeys = HR_DIRECTORY_DEFAULT_KEYS, includePrintScript = true) {
+//   const { emps, depts, getFullName } = ctx;
+//   const active = emps.filter(e => e.status === 'Active').length;
 export function generateHrDirectoryReport(ctx, selectedKeys = HR_DIRECTORY_DEFAULT_KEYS, includePrintScript = true) {
-  const { emps, depts, getFullName } = ctx;
-  const active = emps.filter(e => e.status === 'Active').length;
+  const { depts, getFullName } = ctx;
+  /* Employee Directory me sirf Active staff — Inactive shamil nahi. */
+  const emps = (ctx.emps || []).filter(e => e.status === 'Active');
   const fields = HR_DIRECTORY_FIELDS.filter(f => selectedKeys.includes(f.key));
   /* Always landscape */
   const orientation = 'landscape';
@@ -995,7 +1007,9 @@ export function generateHrDirectoryReport(ctx, selectedKeys = HR_DIRECTORY_DEFAU
     <td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
     ${fields.map(f => `<td>${f.get(e, ctx)}</td>`).join('')}
   </tr>`).join('');
-  const filters = `<span><b>Total Staff:</b> ${emps.length}</span><span><b>Active:</b> ${active}</span><span><b>Inactive:</b> ${emps.length-active}</span><span><b>Departments:</b> ${depts.length}</span><span><b>Columns:</b> ${fields.length + 2}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
+  // const filters = `<span><b>Total Staff:</b> ${emps.length}</span><span><b>Active:</b> ${active}</span><span><b>Inactive:</b> ${emps.length-active}</span><span><b>Departments:</b> ${depts.length}</span><span><b>Columns:</b> ${fields.length + 2}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
+  const filters = `<span><b>Active Staff:</b> ${emps.length}</span><span><b>Departments:</b> ${depts.length}</span><span><b>Columns:</b> ${fields.length + 2}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
+
   const inner = `<div class="rep-secttl">Full Staff Directory</div>
     <table class="rep-tbl fit" style="--fs:${fs}px;--pad:${pad}">
       ${colgroup}

@@ -1170,16 +1170,35 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
   const clearAll = () => setSelected(new Set());
   const selectedKeys = useMemo(() => HR_DIRECTORY_FIELDS.filter(f => selected.has(f.key)).map(f => f.key), [selected]);
   const willBeLandscape = selectedKeys.length > 6;
+  /* Employee Directory me sirf Active staff — Inactive shamil nahi. */
+  const activeEmps = useMemo(() => emps.filter(e => e.status === 'Active'), [emps]);
 
+  /* Popup screen se lamba ho kar kat raha tha — dialog ko 92vh tak band karke andar scroll. */
+  const pickerBodyRef = useRef(null);
+  useEffect(() => {
+    const el = pickerBodyRef.current;
+    if (!el) return undefined;
+    let overlay = el.parentElement;
+    while (overlay && overlay !== document.body && getComputedStyle(overlay).position !== 'fixed') overlay = overlay.parentElement;
+    if (!overlay || overlay === document.body) return undefined;
+    let dialog = el;
+    while (dialog.parentElement && dialog.parentElement !== overlay) dialog = dialog.parentElement;
+    const prevD = { maxHeight: dialog.style.maxHeight, overflowY: dialog.style.overflowY, margin: dialog.style.margin };
+    const prevO = { alignItems: overlay.style.alignItems, padding: overlay.style.padding };
+    Object.assign(dialog.style, { maxHeight: '92vh', overflowY: 'auto', margin: 'auto' });
+    Object.assign(overlay.style, { alignItems: 'center', padding: '4vh 0' });
+    return () => { Object.assign(dialog.style, prevD); Object.assign(overlay.style, prevO); };
+  }, []);
   /* ctx the directory generator needs: live employees + department /
      designation lookups + the /report-header branch (name, logo, address,
      session, generated date) — same shape the other HR reports build.
      `style` / `format` only drive the report's Colorful/Colorless look and
      its header Format chip. */
   const buildCtx = async (style = 'color', format = 'pdf') => ({
-    emps, depts,
+    emps: activeEmps, depts,
     fmtMoney, fmtDate, getFullName,
     getDeptName, getDesigName,
+    getEmpTotalGross,
     branch: await fetchReportHeader(),
     style,
     format,
@@ -1236,7 +1255,7 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
       const headerRow = ws.getRow(2);
       headerRow.values = headers;
       headerRow.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } }; c.alignment = { vertical: 'middle' }; });
-      emps.forEach((e, i) => {
+      activeEmps.forEach((e, i) => {
         ws.addRow([i + 1, getFullName(e), e.eid, ...fields.map(f => f.get(e, ctx))]);
       });
       ws.columns.forEach((col, i) => { col.width = i === 0 ? 6 : i === 1 ? 22 : 16; });
