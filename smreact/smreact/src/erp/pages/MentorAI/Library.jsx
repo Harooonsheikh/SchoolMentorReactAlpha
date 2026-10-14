@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { usePermissions } from '../../context/PermissionsContext';import {
-  listLibraryItems, getLibraryItem, renameLibraryItem, deleteLibraryItem,
-  onLibraryChange, getLibraryBackend,
+  listLibraryPage, getLibraryItem, renameLibraryItem, deleteLibraryItem,  onLibraryChange, getLibraryBackend,
 } from './services/mentorAILibraryService';
 import MarkdownMessage, { InlineMarkdown } from './MarkdownMessage';
 import { WorksheetPages } from './Worksheets';
@@ -16,8 +15,12 @@ import { secureMentorUrl } from './services/mentorAiApi';
    "Open" re-reads the stored item so it shows exactly what was saved.
    ═══════════════════════════════════════════════════════════════════ */
 
-const TABS = [
-  { id: 'lessonplan', label: 'Lesson Plans', icon: 'fa-chalkboard-user', from: 'Lesson Plans' },
+const PAGE_SIZE = 20;
+
+// Works with: plain array (local backend) OR paginated server response
+const normalizeList = (res) => ({ items: res?.items || [], total: res?.total ?? 0 });
+
+const TABS = [  { id: 'lessonplan', label: 'Lesson Plans', icon: 'fa-chalkboard-user', from: 'Lesson Plans' },
   { id: 'worksheet', label: 'Worksheets', icon: 'fa-file-pen', from: 'Worksheets' },
   { id: 'design', label: 'Designs', icon: 'fa-palette', from: 'Design Studio' },
 ];
@@ -29,6 +32,10 @@ export default function Library({ toast }) {
   const canDelete = can('Mentor AI', 'Library', 'delete');
   const [tab, setTab] = useState('lessonplan');
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [tabTotals, setTabTotals] = useState({});
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
@@ -38,28 +45,48 @@ export default function Library({ toast }) {
   const [savingName, setSavingName] = useState(false);
   const [viewer, setViewer] = useState(null);     // { status, item, error }
 
+  // search debounce
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // tab ya search badle to page 1 par jao
+  useEffect(() => { setPage(1); }, [tab, debouncedSearch]);
+
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setStatus('loading');
     try {
-      const rows = await listLibraryItems();
-      setItems(rows);
+      const res = await listLibraryPage({ type: tab, page, limit: PAGE_SIZE, search: debouncedSearch });
+      const data = normalizeList(res);
+      const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+      if (page > pages) { setPage(pages); return; }
+      setItems(data.items);
+      setTotal(data.total);
+      if (!debouncedSearch) setTabTotals(t => ({ ...t, [tab]: data.total }));
       setStatus('ready');
     } catch (e) {
       setLoadError(e?.message || 'Could not load your Library.');
       setStatus('error');
     }
+  }, [tab, page, debouncedSearch]);
+
+  const loadTabTotals = useCallback(async () => {
+    try {
+      const results = await Promise.all(TABS.map(t =>
+        listLibraryPage({ type: t.id, page: 1, limit: 1 })
+          .then(r => [t.id, normalizeList(r).total])
+      ));
+      setTabTotals(Object.fromEntries(results));
+    } catch { /* badges optional */ }
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => onLibraryChange(() => load({ quiet: true })), [load]);
+  useEffect(() => { loadTabTotals(); }, [loadTabTotals]);
+  useEffect(() => onLibraryChange(() => { load({ quiet: true }); loadTabTotals(); }), [load, loadTabTotals]);
 
-  const counts = useMemo(() => TABS.reduce((m, t) => ({ ...m, [t.id]: items.filter(i => i.type === t.id).length }), {}), [items]);
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return items.filter(i => i.type === tab && (!q || i.title?.toLowerCase().includes(q)));
-  }, [items, tab, search]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const activeTab = TABS.find(t => t.id === tab);
-
   const open = async (item) => {
     setViewer({ status: 'loading', item });
     try {
@@ -74,10 +101,11 @@ export default function Library({ toast }) {
     if (deleting) return;
     setDeleting(true);
     try {
-      await deleteLibraryItem(id);
-      setItems(prev => prev.filter(i => i.id !== id));
+       await deleteLibraryItem(id);
       setConfirmId(null);
       if (viewer?.item?.id === id) setViewer(null);
+      load({ quiet: true });
+      loadTabTotals();
       toast?.('Deleted from Library');
     } catch (e) {
       toast?.(e?.message || 'Could not delete. Please try again.');
@@ -110,13 +138,12 @@ export default function Library({ toast }) {
         {TABS.map(t => (
           <button key={t.id} type="button" className={`msai-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
             <i className={`fa-solid ${t.icon}`} aria-hidden="true" /> {t.label}
-            {status === 'ready' && counts[t.id] > 0 ? <span className="msai-lib-count">{counts[t.id]}</span> : null}
-          </button>
+{tabTotals[t.id] > 0 ? <span className="msai-lib-count">{tabTotals[t.id]}</span> : null}          </button>
         ))}
       </div>
 
       <div className="msai-lib-toolbar">
-        <span>{status === 'ready' ? `${filtered.length} saved` : ' '}</span>
+<span>{status === 'ready' ? `${total} saved` : ' '}</span>
         <input type="text" placeholder="Search library…" value={search} onChange={e => setSearch(e.target.value)} aria-label="Search library" />
       </div>
 
@@ -138,8 +165,8 @@ export default function Library({ toast }) {
         </div>
       )}
 
-      {status === 'ready' && filtered.length === 0 && (
-        <div className="msai-card msai-lib-empty">
+      {status === 'ready' && items.length === 0 && (
+                <div className="msai-card msai-lib-empty">
           <i className="fa-regular fa-folder-open" aria-hidden="true" />
           <div>{search.trim()
             ? `No saved ${activeTab.label.toLowerCase()} match “${search.trim()}”.`
@@ -147,9 +174,9 @@ export default function Library({ toast }) {
         </div>
       )}
 
-      {status === 'ready' && filtered.length > 0 && (
+      {status === 'ready' && items.length > 0 && (
         <div className="msai-lib-list">
-          {filtered.map(item => (
+          {items.map(item => (
             <div key={item.id} className="msai-lib-card">
               <button type="button" className="msai-lib-thumb" onClick={() => open(item)} aria-label={`Open ${item.title}`}>
                 <Thumb item={item} icon={activeTab.icon} />
@@ -169,6 +196,18 @@ export default function Library({ toast }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {status === 'ready' && totalPages > 1 && (
+        <div className="msai-lib-pager">
+          <button type="button" className="msai-btn-secondary" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
+            <i className="fa-solid fa-chevron-left" aria-hidden="true" /> Prev
+          </button>
+          <span>Page {page} of {totalPages} · Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}</span>
+          <button type="button" className="msai-btn-secondary" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
+            Next <i className="fa-solid fa-chevron-right" aria-hidden="true" />
+          </button>
         </div>
       )}
 

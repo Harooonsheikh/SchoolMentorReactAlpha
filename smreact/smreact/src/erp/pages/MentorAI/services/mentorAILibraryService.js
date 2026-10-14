@@ -124,17 +124,49 @@ export function contentHash(value) {
 }
 
 /* ─── public API ─── */
-export async function listLibraryItems() {
+const PAGE_LIMIT = 20;
+
+/* Paginated list. Returns { items, total }.
+   opts: { type, page = 1, limit = 20, search } */
+export async function listLibraryPage({ type, page = 1, limit = PAGE_LIMIT, search } = {}) {
+  const q = (search || '').trim().toLowerCase();
   return withBackend(
     async () => {
-      const { data } = await mentorAiApi.get(LIBRARY_URL);
-      const rows = Array.isArray(data) ? data : (data?.results || data?.data || []);
-      return rows.map(normalize).filter(Boolean);
+      const params = { page, page_size: limit, per_page: limit, limit, offset: (page - 1) * limit };      if (type) params.item_type = type;
+      if (q) params.search = q;
+      const { data } = await mentorAiApi.get(LIBRARY_URL, { params });
+      if (Array.isArray(data)) {
+        // server ignored pagination: filter + slice here
+        const all = data.map(normalize).filter(Boolean)
+          .filter(i => (!type || i.type === type) && (!q || i.title.toLowerCase().includes(q)));
+        return { items: all.slice((page - 1) * limit, page * limit), total: all.length };
+      }
+      const rows = data?.results || data?.data || data?.items || [];
+      const total = data?.count ?? data?.total ?? data?.pagination?.total ?? rows.length;
+      // debug: remove after confirming
+      console.log('[Library] page', page, 'rows', rows.length, 'total', total, 'raw keys', Object.keys(data || {}));      return { items: rows.map(normalize).filter(Boolean), total };
     },
-    () => readLocal().map(normalize),
-  ).then(items => items.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)));
+    () => {
+      const all = readLocal().map(normalize)
+        .filter(i => (!type || i.type === type) && (!q || i.title.toLowerCase().includes(q)))
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      return { items: all.slice((page - 1) * limit, page * limit), total: all.length };
+    },
+  );
 }
 
+/* Every item (walks all pages). Used for duplicate detection on save. */
+export async function listLibraryItems() {
+  const out = [];
+  let page = 1;
+  for (;;) {
+    const { items, total } = await listLibraryPage({ page, limit: 100 });
+    out.push(...items);
+    if (!items.length || out.length >= total || page >= 50) break;
+    page += 1;
+  }
+  return out.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+}
 export async function getLibraryItem(id) {
   return withBackend(
     async () => normalize((await mentorAiApi.get(`${LIBRARY_URL}${id}/`)).data),

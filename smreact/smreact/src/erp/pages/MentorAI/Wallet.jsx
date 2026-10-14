@@ -26,6 +26,9 @@ const PLAN_THEMES = {
 };
 const themeFor = (id) => PLAN_THEMES[id] || PLAN_THEMES.pro;
 
+const PLAN_PRICE_OVERRIDE = { premium: 7000 };
+const priceFor = (p) => PLAN_PRICE_OVERRIDE[p?.id] ?? p?.price;
+
 export default function Wallet({ goTo }) {
   console.log("WALLET COMPONENT OPENED");
   const [data, setData] = useState(null);
@@ -80,10 +83,8 @@ export default function Wallet({ goTo }) {
   const plan = data.plans.find(p => p.id === viewPlanId) || data.plans.find(p => p.isCurrent);
 
   const openUpgrade = () => {
-    if (!bank) mentorAIWalletService.getBankDetails().then(setBank);
     setUpgradeOpen(true);
   };
-
   return (
     <div className="mwallet">
       <div className="mwallet-header">
@@ -124,8 +125,7 @@ export default function Wallet({ goTo }) {
           ) : (
 <span className="mwallet-hero-badge" style={{ opacity: 0.85 }}>Preview</span>          )}
         </div>
-        <div className="mwallet-hero-price">{plan.price ? <>Rs. {plan.price.toLocaleString()} <span>/ month</span></> : 'Free'}</div>
-      </div>
+<div className="mwallet-hero-price">{priceFor(plan) ? <>Rs. {Number(priceFor(plan)).toLocaleString()} <span>/ month</span></> : 'Free'}</div>      </div>
 
       <div className="mwallet-cards">
 {data.features.map(f => {
@@ -195,33 +195,26 @@ export default function Wallet({ goTo }) {
             </div>
             <div className="mwallet-modal-body">
               <div className="mwallet-modal-plan">
-                <i className="fa-solid fa-crown" aria-hidden="true" /> {upgradeTarget?.name}{upgradeTarget?.price ? <> — Rs. {Number(upgradeTarget.price).toLocaleString()} / month</> : null}
+                <i className="fa-solid fa-crown" aria-hidden="true" /> {upgradeTarget?.name}{priceFor(upgradeTarget) ? <> — Rs. {Number(priceFor(upgradeTarget)).toLocaleString()} / month</> : null}
               </div>
-              <div className="mwallet-modal-steps-h">How to Upgrade — 3 Simple Steps</div>
+                  <div className="mwallet-modal-steps-h">How to Upgrade — 4 Simple Steps</div>
+              <p style={{ margin: '0 0 12px', fontSize: 13, opacity: 0.8, lineHeight: 1.5 }}>
+                Plan upgrades are handled securely through the Mentor AI mobile app (Admin account).
+              </p>
               <ol className="mwallet-modal-steps">
-                <li>Transfer the plan amount to the bank account below.</li>
-                <li>Send your payment screenshot on WhatsApp.</li>
-                <li>Our team activates your new plan within 24 hours.</li>
+                <li>Open the <b>Mentor AI</b> mobile app and sign in with your <b>Admin</b> account.</li>
+                <li>Tap <b>Wallet</b> from the menu.</li>
+                <li>Select the <b>{upgradeTarget?.name}</b> plan.</li>
+                <li>Tap <b>Purchase</b> and complete the payment. Your new plan activates automatically.</li>
               </ol>
-              {bank && (
-                <div className="mwallet-bank-card">
-                  <div><span>Bank Name</span><b>{bank.bankName}</b></div>
-                  <div><span>Account Title</span><b>{bank.accountTitle}</b></div>
-                  <div><span>Account No.</span><b>{bank.accountNo}</b></div>
-                  <div><span>IBAN</span><b>{bank.iban}</b></div>
-                </div>
-              )}
-              {bank && (
-                <a
-                  className="mwallet-upgrade-btn"
-                  style={{ textDecoration: 'none' }}
-                  href={`https://wa.me/${bank.whatsapp.replace(/[^0-9]/g, '')}`}
-                  target="_blank" rel="noreferrer"
-                >
-                  <i className="fa-brands fa-whatsapp" aria-hidden="true" /> WhatsApp School Mentor
-                </a>
-              )}
-              <button type="button" className="msai-btn-secondary" onClick={() => setUpgradeOpen(false)}>Maybe Later</button>
+              <div style={{
+                display: 'flex', gap: 8, alignItems: 'flex-start', padding: '10px 12px',
+                borderRadius: 10, background: 'rgba(139,92,246,0.08)', fontSize: 12.5, lineHeight: 1.5, margin: '12px 0'
+              }}>
+                <i className="fa-solid fa-circle-info" aria-hidden="true" style={{ marginTop: 3, color: '#7c3aed' }} />
+                <span>Once purchased, your upgraded limits will appear here the next time you open the Wallet.</span>
+              </div>
+              <button type="button" className="msai-btn-primary" onClick={() => setUpgradeOpen(false)}>Got It</button>
             </div>
           </div>
         </div>

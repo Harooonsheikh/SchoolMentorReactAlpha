@@ -122,17 +122,33 @@ function decorate(items) {
 }
 
 /* ─── operations ─── */
+function totalOf(d, fallback) {
+  if (!d || Array.isArray(d)) return fallback;
+  const n = d.count ?? d.total ?? d.pagination?.total;
+  return typeof n === 'number' ? n : fallback;
+}
+
+/* One type, one server page. Returns { results, count }. */
+async function listType(type, { page = 1, limit = 20, search } = {}) {
+  const params = { page, page_size: limit, per_page: limit };
+  if (search) params.search = search;
+  if (type === 'lessonplan') params.lessonplan_type = 'classwork';
+  const url = { lessonplan: LP_LIST, worksheet: WS_LIST, design: DS_LIST }[type];
+  const { data } = await mentorAiApi.get(url, { params });
+  const rows = rowsOf(data);
+  let out = [];
+  if (type === 'lessonplan') rows.forEach(r => out.push(...lessonPlanItems(r)));
+  if (type === 'worksheet') rows.forEach(r => { const i = worksheetItem(r); if (i) out.push(i); });
+  if (type === 'design') rows.forEach(r => { const i = designItem(r); if (i) out.push(i); });
+  return { results: decorate(out), count: totalOf(data, rows.length) };
+}
+
 async function listAll() {
-  const [lp, ws, ds] = await Promise.allSettled([
-    mentorAiApi.get(LP_LIST, { params: { lessonplan_type: 'classwork' } }),
-    mentorAiApi.get(WS_LIST),
-    mentorAiApi.get(DS_LIST),
-  ]);
-  if ([lp, ws, ds].every(r => r.status === 'rejected')) throw lp.reason;   // surfaces 401 / network / 404
+  const types = ['lessonplan', 'worksheet', 'design'];
+  const res = await Promise.allSettled(types.map(t => listType(t, { page: 1, limit: 100 })));
+  if (res.every(r => r.status === 'rejected')) throw res[0].reason;
   const out = [];
-  if (lp.status === 'fulfilled') rowsOf(lp.value.data).forEach(r => out.push(...lessonPlanItems(r)));
-  if (ws.status === 'fulfilled') rowsOf(ws.value.data).forEach(r => { const i = worksheetItem(r); if (i) out.push(i); });
-  if (ds.status === 'fulfilled') rowsOf(ds.value.data).forEach(r => { const i = designItem(r); if (i) out.push(i); });
+  res.forEach(r => { if (r.status === 'fulfilled') out.push(...r.value.results); });
   return decorate(out);
 }
 
@@ -208,9 +224,14 @@ async function syncToServer(body) {
 const idFrom = (url) => String(url).replace(BASE, '').replace(/\/$/, '');
 
 const libraryApi = {
-  async get(url) {
+  async get(url, config = {}) {
     const id = idFrom(url);
-    return { data: id ? await getOne(id) : await listAll() };
+    if (id) return { data: await getOne(id) };
+    const p = config.params || {};
+    if (p.item_type) {
+      return { data: await listType(p.item_type, { page: p.page || 1, limit: p.limit || p.page_size || 20, search: p.search }) };
+    }
+    return { data: await listAll() };
   },
   async post(url, body = {}) {
     /* Everything generated is already stored server-side; just echo it back
