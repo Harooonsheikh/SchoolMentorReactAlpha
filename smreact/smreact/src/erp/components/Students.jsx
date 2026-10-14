@@ -12,6 +12,8 @@ import { buildStandardReportHtml, StandardReportPicker, downloadReportHtmlAsExce
 import { qrSVG } from '../utils/qrcode';
 import { rankedMatches, studentMatches } from '../utils/studentSearch';
 import { activeSessionName } from '../../utils/apiConfig';
+import IdCardDesigner from '../id-cards/IdCardDesigner';
+import IdCardQuickView from '../id-cards/IdCardQuickView';
 
 /* ─── Module-wide helpers ─── */
 const MONTHS_SHORT_STU = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1414,8 +1416,11 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
      The dues modal + settle handler live there now. */
 
   /* Per-student action modals */
-  const [idCardCfg, setIdCardCfg]     = useState(null);   // {cKey, reg}
-  const [bulkIdCfg, setBulkIdCfg]     = useState(null);   // {cKey}
+  const [idCardCfg, setIdCardCfg]     = useState(null);   // {cKey, id} — quick view
+  const [idcDesignerCfg, setIdcDesignerCfg] = useState(null);
+  const [idcMenuOpen, setIdcMenuOpen] = useState(false);
+  const [idcClassPickerOpen, setIdcClassPickerOpen] = useState(false);
+  const idcMenuRef = useRef(null);
   const [certCfg, setCertCfg]         = useState(null);   // {cKey, reg, type}
   const [addFamCfg, setAddFamCfg]     = useState(null);   // {cKey, reg}
   const [rpCfg, setRpCfg]             = useState(null);   // {kind, cKey?, reg?, title, sub}
@@ -1429,6 +1434,15 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
   }, [searchOpen]);
+
+  useEffect(() => {
+    if (!idcMenuOpen) return undefined;
+    const onClick = (e) => {
+      if (idcMenuRef.current && !idcMenuRef.current.contains(e.target)) setIdcMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [idcMenuOpen]);
 
   /* KPI computations */
   const stats = useMemo(() => {
@@ -1497,8 +1511,24 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   const openMarkInactive   = (cKey, id) => setInactiveCfg({ cKey, id });
 
   /* Per-student action openers */
-  const openIdCard         = (cKey, id) => setIdCardCfg({ cKey, id });
-  const openBulkId         = (cKey)      => setBulkIdCfg({ cKey });
+  const idCardEntity = (c, s) => ({ entity: s, ctx: { cls: c }, idValue: s.reg || String(s._id), displayName: stuFullName(s) });
+  const openIdCard = (cKey, id) => {
+    const c = list.find(x => x.key === cKey);
+    const s = c?.students.find(x => x._id === id);
+    if (!s) return;
+    setIdcDesignerCfg({ entities: [idCardEntity(c, s)] });
+  };
+  const openIdCardView = (cKey, id) => {
+    const c = list.find(x => x.key === cKey);
+    const s = c?.students.find(x => x._id === id);
+    if (!s) return;
+    setIdCardCfg({ cKey, id, ...idCardEntity(c, s) });
+  };
+  const openBulkId = (cKey) => {
+    const c = list.find(x => x.key === cKey);
+    if (!c || c.students.length === 0) { toast('This class has no students yet', 'error'); return; }
+    setIdcDesignerCfg({ entities: c.students.map(s => idCardEntity(c, s)) });
+  };
   const openCert           = (cKey, id, type) => setCertCfg({ cKey, id, type });
   const openAddToFamily    = (cKey, id) => setAddFamCfg({ cKey, id });
   const openProfilePicker  = (cKey, id) => {
@@ -1567,26 +1597,6 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     setRpCfg(null);
   };
 
-  /* ID card / certificate generators just print and toast */
-  const doIdCard = (template, theme, session, role) => {
-    const c = list.find(x => x.key === idCardCfg.cKey);
-    const s = c?.students.find(x => x._id === idCardCfg.id);
-    if (!s) return;
-    const { css, html } = buildStuIdCardHTML(s, c, school, template, theme, session, role);
-    stuOpenPrintWindow(`ID Card — ${stuFullName(s)}`, css, html, toast);
-    toast('ID card generated', 'success');
-    setIdCardCfg(null);
-  };
-  const doBulkId = (selectedIds, template, theme, session) => {
-    const c = list.find(x => x.key === bulkIdCfg.cKey);
-    if (!c) return;
-    const studs = c.students.filter(s => selectedIds.includes(s._id));
-    if (studs.length === 0) { toast('Pick at least one student first', 'error'); return; }
-    const { css, html } = buildStuBulkIdHTML(studs, c, school, template, theme, session);
-    stuOpenPrintWindow(`Class ID Cards — ${c.cls} (${c.sec})`, css, html, toast);
-    toast(`${studs.length} ID card(s) generated`, 'success');
-    setBulkIdCfg(null);
-  };
   const doCert = (style, opts, format = 'pdf') => {
     const c = list.find(x => x.key === certCfg.cKey);
     const s = c?.students.find(x => x._id === certCfg.id);
@@ -1908,6 +1918,26 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         </div>
 
         <div className="stu-toolbar-actions">
+          {canStuPrint && (
+          <div ref={idcMenuRef} style={{ position: 'relative' }}>
+            <Tooltip text="ID card designer settings and classwise/bulk generation">
+              <button type="button" className="stu-rowbtn" onClick={() => setIdcMenuOpen(o => !o)} aria-haspopup="menu" aria-expanded={idcMenuOpen}>
+                <i className="fa-solid fa-id-card-clip"></i> ID Cards
+                <i className="fa-solid fa-chevron-down" style={{ fontSize: 11, marginLeft: 6 }}></i>
+              </button>
+            </Tooltip>
+            {idcMenuOpen && (
+              <div className="stu-actmenu" style={{ right: 0, left: 'auto', width: 280 }}>
+                <button type="button" className="stu-actitem" onClick={() => { setIdcMenuOpen(false); setIdcDesignerCfg({ entities: [], settingsOnly: true }); }}>
+                  <i className="fa-solid fa-gear" style={{ color: '#0E7490' }}></i> Settings
+                </button>
+                <button type="button" className="stu-actitem" onClick={() => { setIdcMenuOpen(false); setIdcClassPickerOpen(true); }}>
+                  <i className="fa-solid fa-people-group" style={{ color: '#1E3A8A' }}></i> Classwise and Bulk Cards Generation
+                </button>
+              </div>
+            )}
+          </div>
+          )}
           {canStuDownload && (
           <Tooltip text="Download whole-school student report">
             <button className="stu-iconbtn" onClick={openSchoolPicker} aria-label="Download whole-school student report">
@@ -1958,6 +1988,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             onStudentMarkInactive={(id) => openMarkInactive(c.key, id)}
             onStudentProfile={(id) => openProfilePicker(c.key, id)}
             onStudentIdCard={(id) => openIdCard(c.key, id)}
+            onStudentIdCardView={(id) => openIdCardView(c.key, id)}
             onStudentCert={(id, type) => openCert(c.key, id, type)}
             onStudentAddFamily={(id) => openAddToFamily(c.key, id)}
             isInFamilyTree={isInFamilyTree}
@@ -2019,22 +2050,35 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         />
       )}
 
-      {idCardCfg && (
-        <StuIdCardModal
-          student={list.find(c => c.key === idCardCfg.cKey)?.students.find(s => s._id === idCardCfg.id)}
-          cls={list.find(c => c.key === idCardCfg.cKey)}
+      {idcDesignerCfg && (
+        <IdCardDesigner
+          kind="student"
+          entities={idcDesignerCfg.entities}
+          settingsOnly={!!idcDesignerCfg.settingsOnly}
           school={school}
-          onClose={() => setIdCardCfg(null)}
-          onDownload={doIdCard}
+          onClose={() => setIdcDesignerCfg(null)}
+          toast={toast}
         />
       )}
 
-      {bulkIdCfg && (
-        <StuBulkIdModal
-          cls={list.find(c => c.key === bulkIdCfg.cKey)}
+      {idcClassPickerOpen && (
+        <IdcClassPickerModal
+          classes={list}
+          onClose={() => setIdcClassPickerOpen(false)}
+          onSelect={(cKey) => { setIdcClassPickerOpen(false); openBulkId(cKey); }}
+        />
+      )}
+
+      {idCardCfg && (
+        <IdCardQuickView
+          kind="student"
+          entity={idCardCfg.entity}
+          ctx={idCardCfg.ctx}
+          idValue={idCardCfg.idValue}
+          displayName={idCardCfg.displayName}
           school={school}
-          onClose={() => setBulkIdCfg(null)}
-          onDownload={doBulkId}
+          onClose={() => setIdCardCfg(null)}
+          toast={toast}
         />
       )}
 
@@ -2063,8 +2107,53 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   );
 }
 
+function IdcClassPickerModal({ classes, onClose, onSelect }) {
+  const [q, setQ] = useState('');
+  const filtered = classes.filter(c => !q.trim() || `${c.cls} ${c.sec}`.toLowerCase().includes(q.toLowerCase().trim()));
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="stu-modal-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="stu-modal" style={{ maxWidth: 520 }}>
+        <div className="stu-modal-head">
+          <div className="stu-modal-head-title">
+            <div className="stu-modal-head-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#2563EB)' }}>
+              <i className="fa-solid fa-id-card-clip"></i>
+            </div>
+            <div>
+              <div className="stu-modal-title">Classwise and Bulk Cards Generation</div>
+              <div className="stu-modal-sub">Select a class to generate ID cards for every student in it</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="stu-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+          </Tooltip>
+        </div>
+        <div className="stu-modal-body">
+          <input className="stu-finput" placeholder="Search class or section…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus style={{ marginBottom: 12 }} />
+          {filtered.length === 0 ? (
+            <div className="stu-empty-sub" style={{ padding: '18px 0', textAlign: 'center' }}>No classes match your search.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+              {filtered.map(c => (
+                <button key={c.key} type="button" className="stu-rowbtn" style={{ width: '100%', justifyContent: 'space-between' }} onClick={() => onSelect(c.key)}>
+                  <span><i className="fa-solid fa-layer-group" style={{ marginRight: 8 }}></i>{c.cls} · {c.sec}</span>
+                  <span style={{ opacity: 0.7, fontWeight: 500 }}>{c.students.length} student{c.students.length === 1 ? '' : 's'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Class header row + collapsible student list ─── */
-function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily, isInFamilyTree,
+function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentIdCardView, onStudentCert, onStudentAddFamily, isInFamilyTree,
   canStuCreate = true, canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
@@ -2159,6 +2248,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   onMarkInactive={() => onStudentMarkInactive(s._id)}
                   onProfile={() => onStudentProfile(s._id)}
                   onIdCard={() => onStudentIdCard(s._id)}
+                  onIdCardView={() => onStudentIdCardView(s._id)}
                   onCert={(type) => onStudentCert(s._id, type)}
                   onAddFamily={() => onStudentAddFamily(s._id)}
                   isLinkedToFamily={isInFamilyTree ? isInFamilyTree(s) : false}
@@ -2175,7 +2265,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
 }
 
 /* ─── Per-student row + 3-dot floating menu ─── */
-function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onCert, onAddFamily, isLinkedToFamily,
+function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onIdCardView, onCert, onAddFamily, isLinkedToFamily,
   canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [certOpen, setCertOpen] = useState(false);
@@ -2246,11 +2336,14 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
               <i className="fa-solid fa-file-arrow-down" style={{ color: '#7C3AED' }}></i> Download Student Profile
             </button>
             )}
-            {canStuPrint && (
+            {canStuPrint && (<>
             <button className="stu-actitem" onClick={() => fire(onIdCard)}>
               <i className="fa-solid fa-id-badge" style={{ color: '#0E7490' }}></i> Generate Student ID Card
             </button>
-            )}
+            <button className="stu-actitem" onClick={() => fire(onIdCardView)}>
+              <i className="fa-solid fa-address-card" style={{ color: '#16A34A' }}></i> View / Download ID Card
+            </button>
+            </>)}
             {canStuPrint && (<>
             <button className="stu-actitem stu-actitem--sub" onClick={() => setCertOpen(!certOpen)}>
               <span><i className="fa-solid fa-award" style={{ color: '#D97706' }}></i> Certificates</span>
