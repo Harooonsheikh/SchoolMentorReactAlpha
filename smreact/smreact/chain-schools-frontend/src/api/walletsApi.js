@@ -20,7 +20,7 @@
      badalte hain: balance = opening + credits − debits ± transfers.
    ════════════════════════════════════════════════════════════════════ */
 
-import { CHAIN_API_BASE } from '@/config/env'
+import { CHAIN_API_BASE, ERP_API_BASE } from '@/config/env'
 import { getStoredUser } from '@/auth/tokenStorage'
 import { currentNetworkId } from './networkSchoolsApi'
 
@@ -232,6 +232,38 @@ export async function fetchWalletTransactions(accountId, networkId = currentNetw
     networkID: Number(networkId) || 0, branchID: BRANCH_ID, accountID: Number(accountId) || 0,
   })
   return rowsOf(json).map(mapWalletTxn).filter((t) => !t.isOpening && !t.isTransfer)
+}
+
+/* Wallet me manual transaction add (ERP WalletTxnModal jaisa). kind 'credit' (In) →
+   credit, warna debit.
+
+   Endpoint: ERP_API_BASE/api/HR/wallat_transaction_manage (ERP server par; chain ke
+   /SchoolmentorChainManagementAPI prefix par NAHI). Action lowercase 'insert' (live-tested
+   curl), network scope (networkID + branchID null). credit/debit se transaction record. */
+export async function saveWalletTransaction({ walletId, amount, kind, description, date } = {}, networkId = currentNetworkId()) {
+  const uid = currentUserId()
+  const amt = Number(amount) || 0
+  const u = getStoredUser?.() || {}
+  const token = u.token || u.accessToken || u.access_token || u.jwt
+  const res = await fetch(`${ERP_API_BASE}/api/HR/wallat_transaction_manage`, {
+    method: 'POST',
+    headers: { accept: '*/*', 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({
+      action: 'insert',
+      id: 0,
+      branchID: BRANCH_ID,
+      networkID: Number(networkId) || 0,
+      wallatID: Number(walletId) || 0,
+      date: date ? new Date(date).toISOString() : new Date().toISOString(),
+      description: description || '',
+      credit: kind === 'credit' ? amt : 0,
+      debit: kind === 'credit' ? 0 : amt,
+      createdBy: uid,
+    }),
+  })
+  const json = await res.json().catch(() => null)
+  if (!res.ok || json?.success === false) throw new Error(json?.message || json?.title || `Request failed (${res.status})`)
+  return json
 }
 
 /* Wallet ki credits − debits (opening shamil NAHI). Current balance =

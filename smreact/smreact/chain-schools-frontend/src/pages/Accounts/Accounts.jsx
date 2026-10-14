@@ -8,7 +8,8 @@ import {
 } from './data'
 import {
   fetchWallets, fetchTransfers, saveWallet, setWalletStatus,
-  saveTransfer as apiSaveTransfer, deleteTransfer as apiDeleteTransfer, fetchWalletTransactions, fetchWalletNet,} from '../../api/walletsApi'
+  saveTransfer as apiSaveTransfer, deleteTransfer as apiDeleteTransfer, fetchWalletTransactions, fetchWalletNet,
+  saveWalletTransaction,} from '../../api/walletsApi'
 import {
   fetchAccountTypes, fetchAccountEntriesByMonth, fetchAllAccountEntries,
   saveAccountEntry, deleteAccountEntry,
@@ -1039,6 +1040,7 @@ function AccountsManagementTab({ acc, fire, reload, loading }) {
   const [editAccount, setEditAccount] = useState(null) // { mode:'add'|'edit', account? }
   const [transferOpen, setTransferOpen] = useState(false)
   const [statementFor, setStatementFor] = useState(null)
+  const [txnFor, setTxnFor] = useState(null) // account → Add Transaction modal
   const [toggleTarget, setToggleTarget] = useState(null) // account being disabled (confirm)
   const [delTransfer, setDelTransfer] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -1141,6 +1143,7 @@ function AccountsManagementTab({ acc, fire, reload, loading }) {
                 </div>
                 <div className="acc-wallet-foot">
                   <button className="btn-sm acc-wallet-stmtbtn" style={{ height: 28 }} onClick={() => setStatementFor(a)}><i className="fa-solid fa-file-invoice-dollar" /> View Statement</button>
+                  <button className="btn-sm" title="Add Transaction" style={{ height: 28 }} onClick={() => setTxnFor(a)}><i className="fa-solid fa-list-ul" /></button>
                   <button className="btn-sm" style={{ height: 28 }} onClick={() => setEditAccount({ mode: 'edit', account: a })}><i className="fa-solid fa-pen" /></button>
                   {!a.isDefault && (
                     <button
@@ -1184,6 +1187,7 @@ function AccountsManagementTab({ acc, fire, reload, loading }) {
       {editAccount && <FinAccountModal cfg={editAccount} onClose={() => setEditAccount(null)} onSave={onSaveAccount} onToast={fire} />}
       {transferOpen && <TransferModal accounts={activeAccounts} balanceOf={balanceOf} onClose={() => setTransferOpen(false)} onSave={onSaveTransfer} onToast={fire} />}
       {statementFor && <FinAccountStatementModal account={statementFor} acc={acc} onClose={() => setStatementFor(null)} onToast={fire} />}
+      {txnFor && <FinAccountTxnModal account={txnFor} onClose={() => setTxnFor(null)} onSaved={reload} onToast={fire} />}
       {toggleTarget && (
         <ConfirmModal
           title="Disable this account?"
@@ -1314,6 +1318,100 @@ function TransferModal({ accounts, balanceOf, onClose, onSave, onToast }) {
           )}
         </div>
       )}
+    </Shell>
+  )
+}
+
+/* ── Add Transaction — wallet ledger (ERP WalletTxnModal jaisa). Wallet ki
+   transactions GET (/api/accounts/manage-transactions, sirf GET/DELETE) se dikhata hai,
+   aur "Add More" se naye credit/debit rows ERP wale endpoint par save karta hai
+   (saveWalletTransaction → /api/HR/wallat_transaction_manage, action INSERT, networkID). ── */
+function FinAccountTxnModal({ account, onClose, onSaved, onToast }) {
+  const tm = finTypeMeta(account.type)
+  const [txns, setTxns] = useState(null) // null = loading
+  const [saving, setSaving] = useState(false)
+  const [drafts, setDrafts] = useState([])
+
+  const newDraft = () => ({ id: `d${Date.now()}${Math.random().toString(36).slice(2, 5)}`, date: todayISO(), description: '', kind: 'credit', amount: '' })
+
+  const reload = () => fetchWalletTransactions(account.walletID)
+    .then((r) => setTxns(Array.isArray(r) ? r : []))
+    .catch((e) => { setTxns([]); onToast(e?.message || 'Could not load transactions', 'error') })
+
+  useEffect(() => { reload() }, [account.walletID]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Running balance opening se: credit +, debit −. */
+  const ledger = Array.isArray(txns)
+    ? (() => { let run = Number(account.opening) || 0; return txns.map((r) => { run += r.kind === 'credit' ? r.amount : -r.amount; return { ...r, balance: run } }) })()
+    : null
+
+  const addDraft = () => setDrafts((ds) => [...ds, newDraft()])
+  const setDraft = (id, k, v) => setDrafts((ds) => ds.map((d) => (d.id === id ? { ...d, [k]: v } : d)))
+  const removeDraft = (id) => setDrafts((ds) => ds.filter((d) => d.id !== id))
+
+  const persist = (d) => saveWalletTransaction({ walletId: account.walletID, amount: Number(d.amount), kind: d.kind, description: d.description.trim(), date: d.date })
+
+  const saveOne = async (d) => {
+    if (!d.description.trim()) return onToast('Please enter a description', 'error')
+    if (!(Number(d.amount) > 0)) return onToast('Please enter an amount greater than 0', 'error')
+    setSaving(true)
+    try { await persist(d); removeDraft(d.id); await reload(); onSaved?.(); onToast('Transaction added', 'success') }
+    catch (e) { onToast(e?.message || 'Could not add the transaction', 'error') }
+    finally { setSaving(false) }
+    return undefined
+  }
+  const saveAll = async () => {
+    const valid = drafts.filter((d) => d.description.trim() && Number(d.amount) > 0)
+    if (!valid.length) return onToast('Add at least one row with a description and amount', 'error')
+    setSaving(true)
+    try { for (const d of valid) { await persist(d) } setDrafts([]); await reload(); onSaved?.(); onToast(`${valid.length} transaction${valid.length === 1 ? '' : 's'} added`, 'success') }
+    catch (e) { onToast(e?.message || 'Could not save all transactions', 'error') }
+    finally { setSaving(false) }
+    return undefined
+  }
+
+  const catLabel = (m) => (m.kind === 'credit' ? 'Credit' : 'Debit')
+
+  return (
+    <Shell title={`Add Transaction — ${account.name}`} icon="fa-list-ul" maxWidth={1000} onClose={onClose}
+      foot={<><button className="btn-secondary" onClick={onClose}>Close</button><SpinnerButton icon="fa-floppy-disk" disabled={!drafts.length || saving} onClick={saveAll}>Save Transactions</SpinnerButton></>}>
+      <div style={{ fontSize: 12.5, color: 'var(--tm)', marginBottom: 12 }}>{tm.label} wallet · transactions from the wallet ledger</div>
+      <div className="tbl-wrap">
+        <table className="acc-table">
+          <thead><tr><th>Date</th><th>Description</th><th>Type</th><th className="r">Debit (Out)</th><th className="r">Credit (In)</th><th className="r">Balance</th></tr></thead>
+          <tbody>
+            {ledger === null ? (
+              <tr><td colSpan={6}><div className="acc-empty"><i className="fa-solid fa-spinner fa-spin" /><div style={{ fontSize: 13, fontWeight: 700 }}>Loading transactions…</div></div></td></tr>
+            ) : ledger.length === 0 ? (
+              <tr><td colSpan={6}><div className="acc-empty"><i className="fa-solid fa-inbox" /><div style={{ fontSize: 13, fontWeight: 700 }}>No transactions yet</div><div style={{ fontSize: 12, marginTop: 4 }}>Use “Add More” below to record one.</div></div></td></tr>
+            ) : ledger.map((r, i) => (
+              <tr key={i}>
+                <td>{fmtDate(r.date)}</td>
+                <td>{r.desc || '—'}</td>
+                <td><span className={`acc-stmt-tag ${r.kind === 'credit' ? 'credit' : 'debit'}`}><i className={`fa-solid ${r.kind === 'credit' ? 'fa-arrow-down-long' : 'fa-arrow-up-long'}`} /> {catLabel(r)}</span></td>
+                <td className="r">{r.kind === 'debit' ? num(r.amount) : '—'}</td>
+                <td className="r">{r.kind === 'credit' ? num(r.amount) : '—'}</td>
+                <td className="r" style={{ fontWeight: 700 }}>{num(r.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {drafts.map((d) => (
+        <div key={d.id} style={{ display: 'grid', gridTemplateColumns: '150px 1fr 150px 120px auto', gap: 10, alignItems: 'end', marginTop: 12, padding: 12, border: '1px solid var(--bl)', borderRadius: 'var(--r-md)', background: 'var(--muted)' }}>
+          <div className="acc-field"><label>Date</label><input className="acc-input" type="date" value={d.date} onChange={(e) => setDraft(d.id, 'date', e.target.value)} /></div>
+          <div className="acc-field"><label>Description</label><input className="acc-input" value={d.description} onChange={(e) => setDraft(d.id, 'description', e.target.value)} placeholder="e.g. Cash deposit" /></div>
+          <div className="acc-field"><label>Type</label><select className="acc-input" value={d.kind} onChange={(e) => setDraft(d.id, 'kind', e.target.value)}><option value="credit">Credit (In)</option><option value="debit">Debit (Out)</option></select></div>
+          <div className="acc-field"><label>Amount</label><input className="acc-input" type="number" min="0" value={d.amount} onChange={(e) => setDraft(d.id, 'amount', e.target.value)} placeholder="0" /></div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn-sm" title="Remove" style={{ height: 38, borderColor: 'var(--err)', color: 'var(--err)' }} onClick={() => removeDraft(d.id)}><i className="fa-solid fa-trash-can" /></button>
+            <SpinnerButton className="btn-sm" style={{ height: 38 }} icon="fa-check" disabled={saving} onClick={() => saveOne(d)}>Save</SpinnerButton>
+          </div>
+        </div>
+      ))}
+
+      <button className="btn-secondary" style={{ marginTop: 12 }} onClick={addDraft} disabled={saving}><i className="fa-solid fa-plus" /> Add More</button>
     </Shell>
   )
 }
