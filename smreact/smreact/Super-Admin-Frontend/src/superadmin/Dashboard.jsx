@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fmt } from './dashboardData';
 import { DASHBOARD_GATES } from './userMgmtData';
-import { fetchDashboard, schoolPermissionsApi, paymentsApi } from './api';
-import OneLinkOverviewSection, { Modal } from './OneLinkSection';
-import BugsReport from './BugsReport';
+import { fetchDashboard, schoolPermissionsApi, paymentsApi, schoolProgressApi } from './api';
+import SchoolListReport from './SchoolListReport';
+import OneLinkOverviewSection, { Modal } from './OneLinkSection';import BugsReport from './BugsReport';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD — platform overview (permission-aware)
@@ -187,7 +187,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const [feePeriod, setFeePeriod] = useState('thisMonth');
   /* Khuli hui report: { kind, status } — null matlab koi nahi. */
   const [report, setReport] = useState(null);
-  /* branchId → school ka naam, report ki "School" column ke liye. Yeh
+  const [schoolReport, setSchoolReport] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [progressErr, setProgressErr] = useState(null);
+  /* branchId → IS MAHINE ke logins (usertimespend-report: ERP + Mobile) */
+  const [monthLogins, setMonthLogins] = useState(null); /* branchId → school ka naam, report ki "School" column ke liye. Yeh
      directory sirf tab mangwai jati hai jab pehli report khulti hai —
      dashboard ke apne load par ek extra call nahi jati. */
   const [branchNames, setBranchNames] = useState(null);
@@ -248,7 +252,58 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
     });
   }, []);
 
-  /* Current Month Details ki rows — pehle period, phir search.
+  /* Har school ke IS MAHINE ke logins — ERP + Mobile dono ka totalEntries. */
+  const loadMonthLogins = useCallback((prog) => {
+    const all = [...prog.launch, ...prog.erp, ...prog.inactive];
+    const month = schoolProgressApi.formatMonthYm();
+    /* usertimespend-report ka data.totalEntries = is mahine ke logins (sirf ERP). */
+    Promise.all(all.map(async (s) => {
+      const rep = await schoolProgressApi
+        .listUserTimeSpendReport({ branchId: s.id, month, type: 'erp' })
+        .catch(() => null);
+      return [s.id, Number(rep?.totalEntries ?? rep?.TotalEntries ?? 0) || 0];
+    })).then((pairs) => setMonthLogins(Object.fromEntries(pairs)));
+  }, []);
+
+  const openSchoolReport = useCallback((key, title, description, count) => {
+    setSchoolReport({ key, title, description, count });
+    const needLogins = key === 'activeLogin' || key === 'zeroLogin';
+    if (progress) {
+      if (needLogins && !monthLogins) loadMonthLogins(progress);
+      return;
+    }
+    setProgressErr(null);
+    schoolProgressApi.listSchoolProgress()
+      .then((p) => { setProgress(p); if (needLogins) loadMonthLogins(p); })
+      .catch((e) => setProgressErr(e));
+  }, [progress, monthLogins, loadMonthLogins]);
+
+  const schoolLists = useMemo(() => {
+    if (!progress) return null;
+    const toRow = (r) => ({ id: r.id, name: r.name, date: r.signupDate || '',
+      note: `Students: ${r.students} · Staff: ${r.staff}` });
+    const all = [...progress.launch, ...progress.erp, ...progress.inactive];
+    return {
+      active:      [...progress.launch, ...progress.erp].map(toRow),
+      erp:         progress.erp.map(toRow),
+      launch:      progress.launch.map(toRow),
+      inactive:    progress.inactive.map(toRow),
+      /* Login wali dono lists sirf IS MAHINE ke logins par (monthLogins).
+         Jab tak load na ho, undefined → report "Loading" dikhati hai. */
+      zeroLogin: monthLogins
+        ? all.filter((r) => !monthLogins[r.id]).map((r) => ({ ...toRow(r), logins: 0 }))
+        : undefined,
+      activeLogin: monthLogins
+        ? all.filter((r) => monthLogins[r.id] > 0)
+            .sort((a, b) => monthLogins[b.id] - monthLogins[a.id])
+            .map((r) => ({ ...toRow(r), logins: monthLogins[r.id] }))
+        : undefined,
+      students:    all.filter((r) => r.students > 0).map((r) => ({ ...toRow(r), note: `Students: ${r.students}` })),
+      staff:       all.filter((r) => r.staff > 0).map((r) => ({ ...toRow(r), note: `Staff: ${r.staff}` })),
+    };
+   }, [progress, monthLogins]);
+
+  /* Current Month Details ki rows— pehle period, phir search.
 
      API sirf CHALTE mahine ki rows deti hai (route par koi from/to nahi),
      is liye kisi bhi doosre arse par table khali rehti hai: us arse ka
@@ -463,18 +518,23 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             <div className="section-hdr-title">School Overview</div>
           </div>
           <div className="overview-grid" style={{ marginBottom: 14 }}>
-            <OvCard label="Active Schools"         val={d.schools.active} sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue"   icon="fa-circle-check" />
-            <OvCard label="ERP Schools"            val={d.schools.erp}    sub={<><b>↑ {d.schools.newErp}</b> &nbsp;New this month</>}    badge="teal"   icon="fa-database" />
-            <OvCard label="Launch Set-Up Schools"  val={d.schools.launch} sub={<><b>↑ {d.schools.newLaunch}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket" />
+                     <OvCard label="Active Schools"         val={d.schools.active} sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue"   icon="fa-circle-check"
+              onClick={() => openSchoolReport('active', 'Active Schools', 'ERP + Launch Set-Up schools', d.schools.active)} />
+            <OvCard label="ERP Schools"            val={d.schools.erp}    sub={<><b>↑ {d.schools.newErp}</b> &nbsp;New this month</>}    badge="teal"   icon="fa-database"
+              onClick={() => openSchoolReport('erp', 'ERP Schools', 'Active schools running on ERP', d.schools.erp)} />
+            <OvCard label="Launch Set-Up Schools"  val={d.schools.launch} sub={<><b>↑ {d.schools.newLaunch}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
+              onClick={() => openSchoolReport('launch', 'Launch Set-Up Schools', 'Active schools in launch set-up', d.schools.launch)} />
           </div>
           <div className="overview-grid" style={{ marginBottom: 28 }}>
-            <div className="ov-card">
+              <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
+              onClick={() => openSchoolReport('zeroLogin', 'Inactive Schools', 'Registered schools with 0 logins', d.schools.inactive)}>
               <div className="ov-lbl red">Inactive Schools</div>
               <div className="ov-val red">{d.schools.inactive}</div>
               <div className="ov-sub">Registered but <b className="red">0 logins</b> from 1st of this month to today</div>
               <div className="ov-badge ov-badge-red"><i className="fa-solid fa-user-slash" /></div>
             </div>
-            <div className="ov-card">
+            <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
+              onClick={() => openSchoolReport('activeLogin', 'Active Login Schools', 'Schools that logged in at least once', d.schools.activeLogin)}>
               <div className="ov-lbl green">Active Login Schools</div>
               <div className="ov-val" style={{ color: '#16A34A' }}>{d.schools.activeLogin}</div>
               <div className="ov-sub">Logged in <b style={{ color: '#16A34A' }}>at least once</b> from 1st of this month to today</div>
@@ -513,9 +573,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           {/* Total Students + Total Staff */}
           <div className="detail-2col" style={{ marginBottom: 28 }}>
             <UserCard label="Total Students" iconTone="teal" icon="fa-user-graduate"
-              overall={totalStudents} newSignup={d.students.newSignup} signupColor="#DC2626" />
+      overall={totalStudents} newSignup={d.students.newSignup} signupColor="#DC2626"
+              onClick={() => openSchoolReport('students', 'Total Students — school wise', 'Students per school', totalStudents)} />
             <UserCard label="Total Staff" iconTone="blue" icon="fa-user-tie"
-              overall={totalStaff} newSignup={d.staff.newSignup} signupColor="#D97706" />
+ overall={totalStaff} newSignup={d.staff.newSignup} signupColor="#D97706"
+              onClick={() => openSchoolReport('staff', 'Total Staff — school wise', 'Staff per school', totalStaff)} />
           </div>
 
                </>
@@ -720,6 +782,32 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           Chhe "View Report" buttons isi ek modal ko kholte hain; kis card se
           khula, wo `report` me hai. Rows wahi hain jo card ne ginin — koi
           alag call nahi jati. */}
+      {schoolReport && (
+        <Modal title={schoolReport.title} sub={schoolReport.description} icon="fa-school" large
+          bodyStyle={{ padding: 0, background: '#F0F4FF' }} onClose={() => setSchoolReport(null)}
+          footer={<>
+            <button className="btn-secondary" onClick={() => setSchoolReport(null)}>Close</button>
+            <button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button>
+          </>}>
+          <div style={{ padding: 20 }}>
+            {progressErr ? (
+              <div className="db-block" style={{ margin: 0 }}>
+                <i className="fa-solid fa-triangle-exclamation" />
+                <div className="db-block-ttl">Couldn't load schools</div>
+                <div className="db-block-sub">{progressErr.message}</div>
+                <button className="db-retry" onClick={() => { setProgressErr(null); schoolProgressApi.listSchoolProgress().then(setProgress).catch(setProgressErr); }}>Retry</button>
+              </div>
+                 ) : (!schoolLists || schoolLists[schoolReport.key] === undefined) ? (
+              <div style={{ textAlign: 'center', padding: 30, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</div>
+            ) : (
+              <SchoolListReport title={schoolReport.title} description={schoolReport.description}
+                count={['students', 'staff'].includes(schoolReport.key) ? schoolLists[schoolReport.key].length : schoolReport.count}
+                rows={schoolLists[schoolReport.key]} />
+            )}
+          </div>
+        </Modal>
+      )}
+
       {report && (() => {
         const isBug = report.kind === 'bug';
         const stats = isBug ? bugStats : impStats;
@@ -766,9 +854,9 @@ function FeeCard({ tone, icon, label, val }) {
   );
 }
 
-function OvCard({ label, val, sub, badge, icon }) {
+function OvCard({ label, val, sub, badge, icon, onClick }) {
   return (
-    <div className="ov-card">
+    <div className="ov-card" onClick={onClick} style={onClick ? { cursor: 'pointer' } : undefined} title={onClick ? 'Click to view schools' : undefined}>
       <div className="ov-lbl">{label}</div>
       <div className="ov-val">{fmt(val)}</div>
       <div className="ov-sub">{sub}</div>
@@ -777,9 +865,9 @@ function OvCard({ label, val, sub, badge, icon }) {
   );
 }
 
-function UserCard({ label, iconTone, icon, overall, newSignup, signupColor }) {
+function UserCard({ label, iconTone, icon, overall, newSignup, signupColor, onClick }) {
   return (
-    <div className="user-card">
+    <div className="user-card" onClick={onClick} style={onClick ? { cursor: 'pointer' } : undefined} title={onClick ? 'Click to view school-wise report' : undefined}>
       <div className="user-card-hdr">
         <div className="user-card-lbl">{label}</div>
         <div className={`user-card-icon user-card-icon-${iconTone}`}><i className={`fa-solid ${icon}`} /></div>

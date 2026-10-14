@@ -176,6 +176,12 @@ export const SA_CSS = `
     max-width:none !important;animation:none !important}
   /* chhapte waqt scroll ka koi matlab nahi — poori table dikhni chahiye */
   .sa-root .tbl-wrap{overflow:visible !important}
+  /* Dashboard ki school report modal me hai — print par modal ko khol do */
+  .sa-root .ov,.sa-root .modal,.sa-root .modal-body{
+    position:static !important;overflow:visible !important;max-height:none !important;
+    max-width:none !important;height:auto !important;background:none !important;
+    backdrop-filter:none !important;padding:0 !important;box-shadow:none !important;
+    border:none !important;animation:none !important;transform:none !important;opacity:1 !important}
     /* ↓↓↓ NAYA CODE ↓↓↓ */
   .sa-root :not(:has(.sa-print-area)):not(.sa-print-area):not(.sa-print-area *){display:none !important}
   html,body{height:auto !important;min-height:0 !important;overflow:visible !important;background:#fff !important}
