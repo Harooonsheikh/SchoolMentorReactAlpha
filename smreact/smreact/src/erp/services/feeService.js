@@ -3,6 +3,27 @@ import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
+/* Logged-in UserID — login par casing badalti rehti hai, is liye common keys try karo.
+   Challan delete (single + bulk) ke employeeId param me yahi jaati hai (approvals_by_user
+   ?userId= isi UserID par match hota hai). */
+function currentUserId() {
+  for (const k of ['UserID', 'userID', 'userId', 'user_id']) {
+    const v = Number(sessionStorage.getItem(k));
+    if (v) return v;
+  }
+  return 0;
+}
+
+/* Approval-gated response? Backend kabhi { success:true, pendingApproval:true } deta hai
+   (delete/create) aur kabhi { success:false, message:"…sent for approval (Request RF-…)" }
+   (receiving). Dono ko pending maano taake caller error na samjhe. */
+function isApprovalPending(json) {
+  if (!json) return false;
+  if (json.pendingApproval === true || json.PendingApproval === true) return true;
+  const msg = String(json.message || json.Message || '');
+  return /sent for approval/i.test(msg);
+}
+
 /* ── 1Link PSID ──────────────────────────────────────────────────────
    PSID har challan ka apna hota hai — backend `create-challan` par usay
    generate/store karta hai aur get-by-month / get-all me wapas bhejta hai.
@@ -274,7 +295,10 @@ export async function saveFeeHead({ feeStructureID = 0, gradeId, name, amt }) {
     }),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not save fee head');
+  if (!res.ok) {
+    if (isApprovalPending(json)) return json; // approval-gated → caller pending badge dikhaye
+    throw new Error(apiMessage(json) || 'Could not save fee head');
+  }
   return json;
 }
 
@@ -284,7 +308,10 @@ export async function deleteFeeHead(feeStructureID) {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete fee head');
+  if (!res.ok) {
+    if (isApprovalPending(json)) return json;
+    throw new Error(apiMessage(json) || 'Could not delete fee head');
+  }
   return json;
 }
 
@@ -1498,6 +1525,20 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
       });
       continue;
     }
+    /* Approval ON ho to challan banta nahi — backend { pendingApproval, approvalID,
+       requestNo } (delete/create) YA { success:false, message:"…sent for approval (Request …)" }
+       (receiving-style) lauta sakta hai. Pending ko failed/created mat ginno — raw json
+       wapas do; component pendingFromResp se approvalId/requestNo (message se bhi) nikaalega. */
+    if (isApprovalPending(json)) {
+      results.push({
+        pending: true,
+        resp: json,
+        reg: student.reg,
+        studentID: student.studentID,
+        student: student.name || student.reg || '',
+      });
+      continue;
+    }
     if (!res.ok || json?.success === false) {
       results.push({
         failed: true,
@@ -1507,14 +1548,15 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
       });
       continue;
     }
-    results.push({ ...json, created: true });
+    results.push({ ...json, created: true, reg: student.reg, studentID: student.studentID });
   }
 
   invalidateMonthChallans();
   const created = results.filter(r => r.created).length;
   const alreadyGenerated = results.filter(r => r.alreadyGenerated).length;
   const failed = results.filter(r => r.failed);
-  return { classKey, regs, monthIdx, results, created, alreadyGenerated, failed };
+  const pending = results.filter(r => r.pending);
+  return { classKey, regs, monthIdx, results, created, alreadyGenerated, failed, pending };
 }
 export async function deleteChallan(classKey, reg, monthIdx) {
   await delay();
@@ -2112,6 +2154,10 @@ export async function receivePaymentInstallment(body) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
+    /* Approval-gated: backend success:false + "…sent for approval" message deta hai
+       (pendingApproval flag false aa sakta hai). Ise error na samjho — json wapas do
+       taake UI "Pending Approval" badge + Withdraw dikhaye. */
+    if (isApprovalPending(json)) return json;
     throw new Error(apiMessage(json) || 'Could not record payment');
   }
   invalidateMonthChallans();
@@ -2129,6 +2175,8 @@ export async function receiveInstallment(body) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
+    /* Approval-gated: success:false + "…sent for approval" → error nahi, pending (UI badge). */
+    if (isApprovalPending(json)) return json;
     throw new Error(apiMessage(json) || 'Could not record installment');
   }
   invalidateMonthChallans();
@@ -2665,6 +2713,9 @@ export async function clearReceiving(ledgerId) {
   );
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
+    /* Approval-gated: success:false + "…sent for approval" → error nahi, pending (UI badge).
+       Receiving abhi clear nahi hui — local give-disc cache ko mat chhedo. */
+    if (isApprovalPending(json)) return json;
     throw new Error(apiMessage(json) || 'Could not clear the receiving');
   }
   /* Give Discount local cache bhi saaf — warna Remaining 0 / zombie disc reh jata. */
@@ -2693,7 +2744,8 @@ export async function deleteReceivingDetailInstallment(detailId) {
 }
 
 /* Delete a single challan voucher (installment API).
-   DELETE /api/BranchLedger/delete-challan-installment/{ledgerId} */
+   DELETE /api/BranchLedger/delete-challan-installment/{ledgerId}
+   employeeId param me logged-in UserID jaati hai (approval isi user ke against). */
 export async function deleteChallanById(id) {
   return deleteChallanInstallment(id);
 }
@@ -2704,9 +2756,8 @@ export async function deleteChallanById(id) {
    Response: { success, message: "Bulk delete done: 5 challans, …", data: null } */
 export async function bulkDeleteChallansByClass({ gradeId, sectionId, month, year } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
-  /* Logged-in user ki employeeId (login par 'employee_ID' me store hoti hai) — API update
-     ke mutabiq ab delete ke saath bhejni hai (kaun delete kar raha, audit). */
-  const employeeId = Number(sessionStorage.getItem('employee_ID')) || 0;
+  /* employeeId param me logged-in UserID (6803 jaisi) jaati hai — approval isi user ke against. */
+  const employeeId = currentUserId();
   const qs = new URLSearchParams({
     branchId: String(branchID),
     gradeId: String(Number(gradeId) || 0),
@@ -2728,9 +2779,9 @@ export async function bulkDeleteChallansByClass({ gradeId, sectionId, month, yea
 }
 
 export async function deleteChallanInstallment(ledgerId) {
-  /* Logged-in user ki employeeId (login par 'employee_ID' me store) — API update ke
-     mutabiq ab single delete ke saath bhejni hai. */
-  const employeeId = Number(sessionStorage.getItem('employee_ID')) || 0;
+  /* employeeId param me logged-in UserID (6803 jaisi) jaati hai — approval isi user ke
+     against bane (approvals_by_user?userId= wahi UserID). */
+  const employeeId = currentUserId();
   const res = await fetch(
     buildUrl(`/api/BranchLedger/delete-challan-installment/${ledgerId}?employeeId=${employeeId}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },

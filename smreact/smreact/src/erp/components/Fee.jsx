@@ -285,6 +285,64 @@ function StudentFeeSetup({ toast }) {
   const [confirm, setConfirm] = useState(null);  // { title, message, hint?, onConfirm }
   const [reportHtml, setReportHtml] = useState(null);  // { title, html }
 
+  /* Fee-structure (fee-head) changes jo approval ka intezaar kar rahe hain. save/delete-grade-feehead
+     ke "sent for approval" response par set — class row ke Update ke paas "Pending Approval" badge
+     + Withdraw. Fee structure class-level (gradeID) hai, is liye server map gradeID par. */
+  const [pendingStructSession, setPendingStructSession] = useState({}); // classKey -> {approvalId, requestNo}
+  const [pendingStructServer, setPendingStructServer] = useState({});   // gradeID  -> {approvalId, requestNo}
+  const loadStructApprovals = useCallback(async () => {
+    try {
+      const rows = await feeService.getUserApprovalRequests();
+      const map = {};
+      rows.forEach(r => {
+        if (String(r.status).toLowerCase() !== 'pending') return;
+        const mod = String(r.module || '');
+        const reqNo = String(r.requestNo || '');
+        /* Fee head / structure update: module 'FeeHeadUpdate' ya requestNo 'FH-' (class-level). */
+        const isStruct = mod === 'FeeHeadUpdate' || /feehead|fee.?head|fee.?structure/i.test(mod) || /^fh-/i.test(reqNo);
+        if (!isStruct) return;
+        const gid = String(r.gradeID ?? r.gradeId ?? '');
+        if (!gid) return;
+        const prev = map[gid];
+        if (!prev || Number(r.id) > Number(prev.approvalId)) map[gid] = { approvalId: r.id, requestNo: r.requestNo };
+      });
+      setPendingStructServer(map);
+    } catch (e) { /* optional */ }
+  }, []);
+  useEffect(() => { loadStructApprovals(); }, [loadStructApprovals, grades]);
+
+  const structPendOf = useCallback((c) => (
+    pendingStructSession[c.key] || pendingStructServer[String(c._gradeId)]
+  ), [pendingStructSession, pendingStructServer]);
+
+  const requestWithdrawStruct = (c) => {
+    const cands = [pendingStructSession[c.key], pendingStructServer[String(c._gradeId)]].filter(Boolean);
+    const pend = cands.find(p => p.approvalId) || cands[0];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: 'The fee structure change will not be applied.',
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingStructSession(prev => { const n = { ...prev }; delete n[c.key]; return n; });
+          setPendingStructServer(prev => {
+            const g = String(c._gradeId); if (!prev[g]) return prev;
+            const n = { ...prev }; delete n[g]; return n;
+          });
+          toast('Request withdrawn', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not withdraw request', 'error');
+        }
+      },
+    });
+  };
+
   /* Fee structure is per grade; the table reads classes + a key→heads map. */
   const classes = grades;
   const headsMap = useMemo(
@@ -337,7 +395,31 @@ function StudentFeeSetup({ toast }) {
               >
                 <div className="fee-td" data-label="#"><span className="fee-row-icon">{i + 1}</span></div>
                 <div className="fee-td fee-name" data-label="Class">{c.cls}</div>
-                <div className="fee-td" data-label="Section"><span className="fee-tag">{c.sec}</span></div>
+                <div className="fee-td" data-label="Section" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span className="fee-tag">{c.sec}</span>
+                  {(() => {
+                    /* Fee structure change jo approval ka intezaar kar raha hai — Pending + Withdraw.
+                       Section column (chaudi) me rakha hai taake sab ek hi row me rahe. */
+                    const ps = structPendOf(c);
+                    if (!ps) return null;
+                    return (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+                        <Tooltip text={`Fee structure request ${ps.requestNo || ''} awaiting approval`.trim()}>
+                          <span className="fee-pending-badge" role="status">
+                            <i className="fa-solid fa-hourglass-half"></i>
+                            <span>Pending Approval</span>
+                            {ps.approvalId != null && <b className="fee-pending-id">#{ps.approvalId}</b>}
+                          </span>
+                        </Tooltip>
+                        <Tooltip text="Withdraw this request">
+                          <button className="fee-iconbtn fee-withdraw-btn" onClick={() => requestWithdrawStruct(c)}>
+                            <i className="fa-solid fa-rotate-left"></i>
+                          </button>
+                        </Tooltip>
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div className="fee-td fee-center" data-label="Total Heads">
                   <span className="fee-count">{heads.length} <small>head{heads.length === 1 ? '' : 's'}</small></span>
                 </div>
@@ -420,6 +502,15 @@ function StudentFeeSetup({ toast }) {
         cls={editClass}
         onClose={closeEdit}
         onChanged={reloadGrades}
+        onPending={(info) => {
+          if (!editClass) return;
+          setPendingStructSession(prev => ({
+            ...prev,
+            [editClass.key]: { approvalId: info.approvalId ?? null, requestNo: info.requestNo || '' },
+          }));
+          /* approvalID kabhi null — server se asli id le aao taake Withdraw chale. */
+          loadStructApprovals();
+        }}
         toast={toast}
       />
 
@@ -2718,27 +2809,60 @@ function FeeChallansList({ toast }) {
      badge (ApprovalID ke saath) + Withdraw icon isi se render hota hai.
      keyOf(classKey, reg) -> { approvalId, requestNo } */
   const [pendingDiscounts, setPendingDiscounts] = useState({});
+  /* Challan deletes jo approval ka intezaar kar rahe hain — delete-challan API ke
+     `PendingApproval:true` response par set. ACTION column me wahi "Pending Approval"
+     badge + Withdraw icon (discount jaisa) render hota hai. Withdraw wahi
+     /api/Approvals/withdraw call karta hai jo discount use karta hai.
+     keyOf(classKey, reg) -> { approvalId, requestNo } */
+  const [pendingDeletes, setPendingDeletes] = useState({});
+  /* Challan CREATE jo approval ka intezaar kar rahe hain — generate API ke pendingApproval
+     response par set. ACTION column me wahi "Pending Approval" badge + Withdraw.
+     keyOf(classKey, reg) -> { approvalId, requestNo } */
+  const [pendingGenerates, setPendingGenerates] = useState({});
   /* List open par server se aayi pending FeeDiscount requests (page reload ke baad bhi
      badge dikhe). approvals_by_user se filter: module=FeeDiscount, status=Pending.
      studentID -> { approvalId, requestNo }. Render dono (session + server) ko dekhta hai. */
   const [pendingByStudent, setPendingByStudent] = useState({});
+  /* Isi tarah server se aayi pending DELETE-CHALLAN requests (refresh ke baad bhi badge).
+     approvals_by_user me delete-challan ki requestNo "DC-" se shuru hoti hai (discount "FD-"),
+     is liye prefix se chhaant lete hain. studentID -> { approvalId, requestNo }. */
+  const [pendingDeleteByStudent, setPendingDeleteByStudent] = useState({});
+  /* Server-loaded challan-CREATE pending requests (refresh ke baad bhi badge). */
+  const [pendingGenerateByStudent, setPendingGenerateByStudent] = useState({});
   const loadPendingDiscountApprovals = useCallback(async () => {
     try {
       const rows = await feeService.getUserApprovalRequests();
       const map = {};
-      rows
-        .filter(r => String(r.module) === 'FeeDiscount'
-          && String(r.status).toLowerCase() === 'pending'
-          && r.studentID != null)
-        .forEach(r => {
-          const sid = String(r.studentID);
-          /* Ek student ke multiple pending heads — sab se naya (bada id) badge me. */
-          const prev = map[sid];
-          if (!prev || Number(r.id) > Number(prev.approvalId)) {
-            map[sid] = { approvalId: r.id, requestNo: r.requestNo };
-          }
-        });
+      const delMap = {};
+      const genMap = {};
+      rows.forEach(r => {
+        if (String(r.status).toLowerCase() !== 'pending' || r.studentID == null) return;
+        const sid = String(r.studentID);
+        const reqNo = String(r.requestNo || '');
+        const mod = String(r.module || '');
+        const action = String(r.requestAction || '').toUpperCase();
+        /* Teen per-student approval kism: discount (FeeDiscount / FD-), delete-challan
+           (DeleteFeeChallan / DC-), aur create-challan (baaqi — studentID ke saath INSERT,
+           na FeeDiscount na delete). */
+        const isDelete = /^dc-/i.test(reqNo) || (/challan/i.test(mod) && action === 'DELETE');
+        const isDiscount = mod === 'FeeDiscount' || /^fd-/i.test(reqNo);
+        /* Receiving alag module ('receiv…') / prefix RF- — ye create ke genMap me na aaye. */
+        const isReceive = /^(rf|rc|rv|fr)-/i.test(reqNo) || /receiv/i.test(mod);
+        let target = null;
+        if (isDelete) target = delMap;
+        else if (isDiscount) target = map;
+        else if (isReceive) target = null; // receiving ka badge Receiving tab me (alag component)
+        else target = genMap; // create-challan
+        if (!target) return;
+        /* Ek student ke multiple pending — sab se naya (bada id) badge me. */
+        const prev = target[sid];
+        if (!prev || Number(r.id) > Number(prev.approvalId)) {
+          target[sid] = { approvalId: r.id, requestNo: r.requestNo };
+        }
+      });
       setPendingByStudent(map);
+      setPendingDeleteByStudent(delMap);
+      setPendingGenerateByStudent(genMap);
     } catch (e) { /* optional — na mile to sirf session-saved badges dikhenge */ }
   }, []);
   /* Mount par aur roster badalne par (tab/branch switch) refresh. */
@@ -2947,14 +3071,65 @@ function FeeChallansList({ toast }) {
     }
     setBulkGen({ classMeta: c, students, heads });
   };
-  const handleBulkGenerated = (classKey, regs) => {
+  const handleBulkGenerated = (classKey, regs, result) => {
+    /* Approval-gated students — unka challan abhi bana nahi; "Pending Approval" badge
+       + Withdraw unke row par. Baaki (jo sach-much ban gaye) genSet me add. */
+    const pendingList = Array.isArray(result?.pending) ? result.pending : [];
+    const pendingRegs = new Set(pendingList.map(p => String(p.reg)));
+    if (pendingList.length) {
+      setPendingGenerates(prev => {
+        const next = { ...prev };
+        pendingList.forEach(p => {
+          const info = pendingFromResp(p.resp, 'Challan request sent for approval') || {};
+          next[keyOf(classKey, p.reg)] = { approvalId: info.approvalId ?? null, requestNo: info.requestNo || '' };
+        });
+        return next;
+      });
+      /* approvalID response me kabhi null hota hai (receiving-style) — server se
+         asli id/requestNo le aao taake Withdraw chal sake. */
+      loadPendingDiscountApprovals();
+    }
     setGenSet(prev => {
       const n = new Set(prev);
-      regs.forEach(reg => n.add(keyOf(classKey, reg)));
+      regs.forEach(reg => { if (!pendingRegs.has(String(reg))) n.add(keyOf(classKey, reg)); });
       return n;
     });
     /* Re-pull from the API so the new challans carry their real ids (needed for delete). */
     loadChallans();
+  };
+
+  /* ACTION column ke "Withdraw this challan request" icon se — wahi /api/Approvals/withdraw. */
+  const requestWithdrawGenerate = (c, s) => {
+    const key = keyOf(c.key, s.reg);
+    const sid = String(s.studentID);
+    const aid = String(s.applicantsID);
+    const pend = pendingGenerates[key] || pendingGenerateByStudent[sid] || pendingGenerateByStudent[aid];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: 'The challan will not be created.',
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        setBusyMsg('Withdrawing request…');
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingGenerates(prev => { const next = { ...prev }; delete next[key]; return next; });
+          setPendingGenerateByStudent(prev => {
+            if (!prev[sid] && !prev[aid]) return prev;
+            const next = { ...prev }; delete next[sid]; delete next[aid]; return next;
+          });
+          toast('Challan request withdrawn', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not withdraw request', 'error');
+        } finally {
+          setBusyMsg('');
+        }
+      },
+    });
   };
   const openIndivGen = (c, s) => {
     const lock = challanMonthLock(monthIdx, appliedYear, settings);
@@ -3352,6 +3527,61 @@ function FeeChallansList({ toast }) {
     });
   };
 
+  /* Approval ON ho to delete backend turant nahi hota — server { PendingApproval,
+     ApprovalID, RequestNo } lauta deta hai (save-fee-discount jaisi convention,
+     casing backend ke hisaab se badalti hai). Pending nikle to uska { approvalId,
+     requestNo, message }, warna null. */
+  const extractPending = (resp) => {
+    /* Pending fields kabhi `data` ke andar aate hain (save-fee-discount) aur kabhi
+       response ke ROOT par (delete-challan-installment: { pendingApproval, approvalID,
+       requestNo, data:null }). Dono ko merge kar ke dekho. */
+    const d = (resp?.data && typeof resp.data === 'object') ? resp.data
+      : (resp?.Data && typeof resp.Data === 'object') ? resp.Data : {};
+    const src = { ...(resp || {}), ...d };
+    const isPending = src.PendingApproval ?? src.pendingApproval ?? src.isPending;
+    if (!isPending) return null;
+    return {
+      approvalId: src.ApprovalID ?? src.approvalID ?? src.approvalId ?? null,
+      requestNo:  src.RequestNo ?? src.requestNo ?? '',
+      message:    resp?.message || resp?.Message || 'Delete request sent for approval',
+    };
+  };
+
+  /* ACTION column ke "Withdraw this delete request" icon se — discount withdraw
+     jaisa confirm, aur wahi /api/Approvals/withdraw (withdrawFeeDiscount) chalta hai. */
+  const requestWithdrawDelete = (c, s) => {
+    const key = keyOf(c.key, s.reg);
+    const sid = String(s.studentID);
+    const aid = String(s.applicantsID);
+    const pend = pendingDeletes[key] || pendingDeleteByStudent[sid] || pendingDeleteByStudent[aid];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: 'The challan will not be deleted.',
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        setBusyMsg('Withdrawing request…');
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingDeletes(prev => { const next = { ...prev }; delete next[key]; return next; });
+          setPendingDeleteByStudent(prev => {
+            if (!prev[sid] && !prev[aid]) return prev;
+            const next = { ...prev }; delete next[sid]; delete next[aid]; return next;
+          });
+          toast('Delete request withdrawn', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not withdraw request', 'error');
+        } finally {
+          setBusyMsg('');
+        }
+      },
+    });
+  };
+
   /* Confirm-driven delete — DELETE /delete-challan-installment/{ledgerId}.
      README §3.3: warn when any head has receivedAmount > 0. */
   const requestDeleteClassChallans = (c) => {
@@ -3376,7 +3606,23 @@ function FeeChallansList({ toast }) {
           const res = await feeService.bulkDeleteChallansByClass({
             gradeId: c._gradeId, sectionId: c._sectionId, month: monthIdx + 1, year: Number(appliedYear),
           });
-          toast(res?.message || 'Generated challans removed', 'success');
+          const pending = extractPending(res);
+          if (pending) {
+            /* Poori class ke delete par ek hi approval request — har generated student
+               ke row par wahi badge + Withdraw (ek hi approvalId). */
+            setPendingDeletes(prev => {
+              const next = { ...prev };
+              (studentsMap[c.key] || []).forEach(s => {
+                if (challanMap[keyOf(c.key, s.reg)]) {
+                  next[keyOf(c.key, s.reg)] = { approvalId: pending.approvalId, requestNo: pending.requestNo };
+                }
+              });
+              return next;
+            });
+            toast(pending.message, 'info');
+          } else {
+            toast(res?.message || 'Generated challans removed', 'success');
+          }
         } catch (e) {
           toast(e.message || 'Could not delete challans', 'error');
         } finally {
@@ -3401,8 +3647,26 @@ function FeeChallansList({ toast }) {
         if (!rec?.id) { toast('No challan found to delete', 'warning'); return; }
         setBusyMsg('Deleting challan…');
         try {
-          await feeService.deleteChallanById(rec.id);
-          toast(`Challan removed for ${s.name}`, 'success');
+          /* employeeId param me logged-in UserID jaati hai (feeService ke andar) —
+             approval isi user ke against bane. */
+          const res = await feeService.deleteChallanById(rec.id);
+          const pending = extractPending(res);
+          if (pending) {
+            /* Challan delete nahi hua — approval ka intezaar. Badge + Withdraw is key par. */
+            setPendingDeletes(prev => ({
+              ...prev,
+              [keyOf(c.key, s.reg)]: { approvalId: pending.approvalId, requestNo: pending.requestNo },
+            }));
+            toast(pending.message, 'info');
+          } else {
+            /* Seedha delete ho gaya — purani pending (agar ho) hata do. */
+            setPendingDeletes(prev => {
+              const k = keyOf(c.key, s.reg);
+              if (!prev[k]) return prev;
+              const next = { ...prev }; delete next[k]; return next;
+            });
+            toast(`Challan removed for ${s.name}`, 'success');
+          }
         } catch (e) {
           toast(e.message || 'Could not delete challan', 'error');
         } finally {
@@ -3887,6 +4151,65 @@ function FeeChallansList({ toast }) {
                                     </>
                                   );
                                 })()}
+                                {(() => {
+                                  /* Delete-challan jo approval ka intezaar kar raha hai — wahi
+                                     Pending Approval badge + Withdraw (discount jaisa). Session
+                                     (abhi delete hua) YA server (approvals_by_user, DC-) dono se. */
+                                  const pd = pendingDeletes[keyOf(c.key, s.reg)]
+                                    || pendingDeleteByStudent[String(s.studentID)]
+                                    || pendingDeleteByStudent[String(s.applicantsID)];
+                                  if (!pd) return null;
+                                  return (
+                                    <>
+                                      <Tooltip text={`Challan delete request ${pd.requestNo || ''} awaiting approval`.trim()}>
+                                        <span className="fee-pending-badge" role="status">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          <span>Pending Approval</span>
+                                          {pd.approvalId != null && (
+                                            <b className="fee-pending-id">#{pd.approvalId}</b>
+                                          )}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this delete request">
+                                        <button
+                                          className="fee-iconbtn fee-withdraw-btn"
+                                          onClick={() => requestWithdrawDelete(c, s)}
+                                        >
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </>
+                                  );
+                                })()}
+                                {(() => {
+                                  /* Challan CREATE jo approval ka intezaar kar raha hai — wahi
+                                     Pending Approval badge + Withdraw. Session YA server se. */
+                                  const pg = pendingGenerates[keyOf(c.key, s.reg)]
+                                    || pendingGenerateByStudent[String(s.studentID)]
+                                    || pendingGenerateByStudent[String(s.applicantsID)];
+                                  if (!pg) return null;
+                                  return (
+                                    <>
+                                      <Tooltip text={`Challan request ${pg.requestNo || ''} awaiting approval`.trim()}>
+                                        <span className="fee-pending-badge" role="status">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          <span>Pending Approval</span>
+                                          {pg.approvalId != null && (
+                                            <b className="fee-pending-id">#{pg.approvalId}</b>
+                                          )}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this challan request">
+                                        <button
+                                          className="fee-iconbtn fee-withdraw-btn"
+                                          onClick={() => requestWithdrawGenerate(c, s)}
+                                        >
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </>
+                                  );
+                                })()}
                               </td>
                             </tr>
                           );
@@ -4152,14 +4475,16 @@ function BulkGenerateModal({
           singleMode,
         }).then((result) => {
           setProgress({ done, total: targets.length, label: 'Completed' });
-          onGenerated(classMeta.key, regs);
+          onGenerated(classMeta.key, regs, result);
           /* README §3.2 — toast: Created X, already generated Y, failed Z. */
           const created = Number(result?.created) || 0;
           const already = Number(result?.alreadyGenerated) || 0;
           const failed = Array.isArray(result?.failed) ? result.failed : [];
+          const pendingN = Array.isArray(result?.pending) ? result.pending.length : 0;
           const failN = failed.length;
           const parts = [];
           if (created > 0) parts.push(`Created ${created}`);
+          if (pendingN > 0) parts.push(`${pendingN} sent for approval`);
           if (already > 0) parts.push(`already generated ${already}`);
           if (failN > 0) parts.push(`failed ${failN}`);
           if (skipCount > 0 && already === 0) parts.push(`${skipCount} skipped — already existed`);
@@ -7655,6 +7980,33 @@ function FeeReceivingTab({ toast }) {
   );
 }
 
+/* Approval-gated save ka pending detector — pending fields kabhi `data` ke andar
+   (save-fee-discount) aur kabhi response ke ROOT par (delete/create/receive:
+   { pendingApproval, approvalID, requestNo, data:null }) aate hain. Dono merge
+   kar ke dekho. Pending ho to { approvalId, requestNo, message }, warna null. */
+function pendingFromResp(resp, fallbackMsg = 'Request sent for approval') {
+  const d = (resp?.data && typeof resp.data === 'object') ? resp.data
+    : (resp?.Data && typeof resp.Data === 'object') ? resp.Data : {};
+  const src = { ...(resp || {}), ...d };
+  const msg = String(resp?.message || resp?.Message || '');
+  /* Receiving backend pendingApproval:false + success:false deta hai aur asli signal
+     sirf message me hota hai ("…sent for approval (Request RF-…)"), approvalID/requestNo
+     null. Is liye message text ko bhi pending maano, aur requestNo message se nikaalo. */
+  const msgSaysPending = /sent for approval/i.test(msg);
+  const isPending = (src.PendingApproval ?? src.pendingApproval ?? src.isPending) || msgSaysPending;
+  if (!isPending) return null;
+  let requestNo = src.RequestNo ?? src.requestNo ?? '';
+  if (!requestNo && msg) {
+    const m = msg.match(/Request\s+([A-Za-z]{2,5}-\d{6,}-\d+)/i) || msg.match(/\b([A-Za-z]{2,5}-\d{6,}-\d+)\b/);
+    if (m) requestNo = m[1];
+  }
+  return {
+    approvalId: src.ApprovalID ?? src.approvalID ?? src.approvalId ?? null,
+    requestNo,
+    message:    msg || fallbackMsg,
+  };
+}
+
 function FeeReceivingIndividual({ toast }) {
   const { can } = usePermissions();
   const canRcvCreate = can('Fee', 'Fee Receiving', 'Create');
@@ -7720,6 +8072,105 @@ function FeeReceivingIndividual({ toast }) {
     } catch (e) { /* pending optional — na mile to purana behaviour */ }
   }, []);
   useEffect(() => { loadPending(); }, [loadPending]);
+
+  /* ── Receiving APPROVAL (pending + withdraw) ──
+     Jab receive-installment ka response "request sent for approval" de, us student ke
+     row par "Pending Approval" badge + Withdraw. Session + server (approvals_by_user). */
+  const [pendingReceiveSession, setPendingReceiveSession] = useState({});   // receiving (payment) — keyOf -> {approvalId, requestNo}
+  const [pendingReceiveServer, setPendingReceiveServer] = useState({});     // receiving (payment) — studentID -> {…}
+  const [pendingRcvDelSession, setPendingRcvDelSession] = useState({});     // receiving DELETE — keyOf -> {…}
+  const [pendingRcvDelServer, setPendingRcvDelServer] = useState({});       // receiving DELETE — studentID -> {…}
+  const loadReceiveApprovals = useCallback(async () => {
+    try {
+      const rows = await feeService.getUserApprovalRequests();
+      const map = {};
+      const delMap = {};
+      rows.forEach(r => {
+        if (String(r.status).toLowerCase() !== 'pending' || r.studentID == null) return;
+        const mod = String(r.module || '');
+        const reqNo = String(r.requestNo || '');
+        const action = String(r.requestAction || '').toUpperCase();
+        /* Receiving family: payment approval (RF-…) aur delete-receiving approval.
+           Module me "receiv" ya requestNo prefix se pehchano; delete ko action=DELETE
+           (ya DR-/CR- prefix) se payment se alag karo. */
+        const isReceive = /^(rf|rc|rv|fr|dr|cr)-/i.test(reqNo) || /receiv/i.test(mod);
+        if (!isReceive) return;
+        const isDel = action === 'DELETE' || /^(dr|cr)-/i.test(reqNo);
+        const target = isDel ? delMap : map;
+        const sid = String(r.studentID);
+        const prev = target[sid];
+        if (!prev || Number(r.id) > Number(prev.approvalId)) target[sid] = { approvalId: r.id, requestNo: r.requestNo };
+      });
+      setPendingReceiveServer(map);
+      setPendingRcvDelServer(delMap);
+    } catch (e) { /* optional */ }
+  }, []);
+  useEffect(() => { loadReceiveApprovals(); }, [loadReceiveApprovals, studentsMap]);
+
+  const requestWithdrawReceive = (c, s) => {
+    const key = keyOf(c.key, s.reg);
+    const sid = String(s.studentID);
+    const aid = String(s.applicantsID);
+    /* approvalID response me kabhi null hota hai — server-loaded entry (jisme asli id hai)
+       ko tarjeeh do taake Withdraw API chale. */
+    const cands = [pendingReceiveSession[key], pendingReceiveServer[sid], pendingReceiveServer[aid]].filter(Boolean);
+    const pend = cands.find(p => p.approvalId) || cands[0];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: 'The payment will not be recorded.',
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingReceiveSession(prev => { const n = { ...prev }; delete n[key]; return n; });
+          setPendingReceiveServer(prev => {
+            if (!prev[sid] && !prev[aid]) return prev;
+            const n = { ...prev }; delete n[sid]; delete n[aid]; return n;
+          });
+          toast('Receiving request withdrawn', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not withdraw request', 'error');
+        }
+      },
+    });
+  };
+
+  const requestWithdrawRcvDel = (c, s) => {
+    const key = keyOf(c.key, s.reg);
+    const sid = String(s.studentID);
+    const aid = String(s.applicantsID);
+    const cands = [pendingRcvDelSession[key], pendingRcvDelServer[sid], pendingRcvDelServer[aid]].filter(Boolean);
+    const pend = cands.find(p => p.approvalId) || cands[0];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: 'The received payment will not be deleted.',
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingRcvDelSession(prev => { const n = { ...prev }; delete n[key]; return n; });
+          setPendingRcvDelServer(prev => {
+            if (!prev[sid] && !prev[aid]) return prev;
+            const n = { ...prev }; delete n[sid]; delete n[aid]; return n;
+          });
+          toast('Delete request withdrawn', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not withdraw request', 'error');
+        }
+      },
+    });
+  };
+
   /* Aaj ke mahine se PEHLE ka view = previous month → wahan Receive band (baqaya
      current view me Pending se wasool hota hai). */
   const isPastView = (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
@@ -8128,7 +8579,7 @@ function FeeReceivingIndividual({ toast }) {
     }
   };
 
-  const handleSaveReceipt = (payload) => {
+  const handleSaveReceipt = async (payload) => {
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
     const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
@@ -8140,12 +8591,15 @@ function FeeReceivingIndividual({ toast }) {
       toast('Receiving amount must not be zero', 'warning');
       return;
     }
+    /* Optimistic receipt ka id — approval pending nikle to isi se revert karte hain. */
+    const receiptId = `rcv-${Date.now()}`;
+    let receivePending = null;
     /* Append payment to receipts state */
     setReceipts(prev => {
       const next = [...(prev || [])];
       const idx = next.findIndex(r => r.classKey === payload.classKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx);
       const pay = {
-        id: `rcv-${Date.now()}`,
+        id: receiptId,
         date: payload.date,
         time: payload.time || nowHHMM(),
         method: payload.method,
@@ -8288,9 +8742,39 @@ function FeeReceivingIndividual({ toast }) {
         toast('Enter at least one head amount to receive', 'warning');
         return;
       }
-      feeService.receiveInstallment(recvBody)
-        .then(() => { loadChallans(); loadPending(true); })
-        .catch(e => toast(e.message || 'Could not record payment', 'error'));
+      /* Receive ko AWAIT karo taake approval-gated response (pending) par galat
+         slip/receipt na bane. Pending → optimistic receipt revert + badge. */
+      let recvRes = null;
+      try {
+        recvRes = await feeService.receiveInstallment(recvBody);
+      } catch (e) {
+        toast(e.message || 'Could not record payment', 'error');
+        setReceipts(prev => (prev || []).map(r => (
+          r.classKey === payload.classKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx
+            ? { ...r, payments: r.payments.filter(p => p.id !== receiptId) } : r
+        )));
+        setReceiveCtx(null);
+        await loadChallans(); loadPending(true);
+        return;
+      }
+      receivePending = pendingFromResp(recvRes, 'Receiving sent for approval');
+      if (receivePending) {
+        /* Payment hui nahi — approval ka intezaar. Optimistic receipt hata do aur
+           us student ke row par "Pending Approval" badge + Withdraw. */
+        setReceipts(prev => (prev || []).map(r => (
+          r.classKey === payload.classKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx
+            ? { ...r, payments: r.payments.filter(p => p.id !== receiptId) } : r
+        )));
+        setPendingReceiveSession(prev => ({
+          ...prev,
+          [keyOf(payload.classKey, payload.reg)]: { approvalId: receivePending.approvalId, requestNo: receivePending.requestNo },
+        }));
+        setReceiveCtx(null);
+        toast(receivePending.message, 'info');
+        await loadChallans(); loadPending(true); loadReceiveApprovals();
+        return;
+      }
+      loadChallans(); loadPending(true);
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
         detailRows: detailRowsForUi,
@@ -8360,7 +8844,21 @@ function FeeReceivingIndividual({ toast }) {
           return;
         }
         try {
-          await feeService.deleteReceiving(rec.id);
+          const res = await feeService.deleteReceiving(rec.id);
+          const pending = pendingFromResp(res, 'Receiving deletion sent for approval');
+          if (pending) {
+            /* Receiving delete nahi hui — approval ka intezaar. Receipt waise hi rehta
+               hai (abhi delete nahi hua); us student ke row par Pending + Withdraw. */
+            setPendingRcvDelSession(prev => ({
+              ...prev,
+              [keyOf(c.key, s.reg)]: { approvalId: pending.approvalId, requestNo: pending.requestNo },
+            }));
+            toast(pending.message, 'info');
+            await loadChallans();
+            loadPending(true);
+            loadReceiveApprovals();
+            return;
+          }
           feeService.clearStoredGiveDisc(rec.id);
           setReceipts(prev => (prev || []).map(r => (
             r.classKey === c.key && r.reg === s.reg && r.monthIdx === monthIdx
@@ -8697,6 +9195,55 @@ function FeeReceivingIndividual({ toast }) {
                                   hone ke baad wo m.remaining me khud shamil ho jaati hai. */}
                               <td className="fee-right">{money(pv ? pv.remaining : m.remaining)}</td>
                               <td className="fee-center">
+                                <div className="fee-recv-cell" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
+                                {(() => {
+                                  /* Receiving jo approval ka intezaar kar raha hai — Pending Approval
+                                     badge + Withdraw (discount/delete/create jaisa). Session YA server se.
+                                     Inline span taake status ("Not Received") ke saath ek hi line me rahe. */
+                                  const pr = pendingReceiveSession[keyOf(c.key, s.reg)]
+                                    || pendingReceiveServer[String(s.studentID)]
+                                    || pendingReceiveServer[String(s.applicantsID)];
+                                  if (!pr) return null;
+                                  return (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                      <Tooltip text={`Receiving request ${pr.requestNo || ''} awaiting approval`.trim()}>
+                                        <span className="fee-pending-badge" role="status">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          <span>Pending Approval</span>
+                                          {pr.approvalId != null && <b className="fee-pending-id">#{pr.approvalId}</b>}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this receiving request">
+                                        <button className="fee-iconbtn fee-withdraw-btn" onClick={() => requestWithdrawReceive(c, s)}>
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </span>
+                                  );
+                                })()}
+                                {(() => {
+                                  /* Receiving DELETE jo approval ka intezaar kar raha hai — Pending + Withdraw. */
+                                  const pd = pendingRcvDelSession[keyOf(c.key, s.reg)]
+                                    || pendingRcvDelServer[String(s.studentID)]
+                                    || pendingRcvDelServer[String(s.applicantsID)];
+                                  if (!pd) return null;
+                                  return (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                      <Tooltip text={`Receiving delete request ${pd.requestNo || ''} awaiting approval`.trim()}>
+                                        <span className="fee-pending-badge" role="status">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          <span>Pending Approval</span>
+                                          {pd.approvalId != null && <b className="fee-pending-id">#{pd.approvalId}</b>}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this delete request">
+                                        <button className="fee-iconbtn fee-withdraw-btn" onClick={() => requestWithdrawRcvDel(c, s)}>
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </span>
+                                  );
+                                })()}
                                 {!m.generated ? (
                                   pv ? (
                                     /* Pichhle challan ka status — generated challan jaisa. */
@@ -8718,6 +9265,7 @@ function FeeReceivingIndividual({ toast }) {
                                     {m.onelink && <span className="fee-onelink-tag"><i className="fa-solid fa-building-columns"></i> OneLink</span>}
                                   </div>
                                 )}
+                                </div>
                               </td>
                               <td className="fee-center">
                                 <div className="fee-recv-acts">
@@ -18886,7 +19434,7 @@ function SettingCard({ name, desc, on, onToggle, info }) {
    mirroring the Launch Setup Classes tab. Each operation persists
    immediately, then re-pulls this grade's heads and notifies the parent
    so the table count stays in sync. */
-function StructEditModal({ open, cls, onClose, onChanged, toast }) {
+function StructEditModal({ open, cls, onClose, onChanged, onPending, toast }) {
   const [rows, setRows] = useState([]);   // [{ feeStructureID, name, amt }]
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -18929,10 +19477,11 @@ function StructEditModal({ open, cls, onClose, onChanged, toast }) {
     if (newAmt === '' || Number.isNaN(+newAmt) || +newAmt < 0) { toast('Enter a valid amount', 'error'); return; }
     setBusy(true);
     try {
-      await feeService.saveFeeHead({ feeStructureID: 0, gradeId, name: newName.trim(), amt: Number(newAmt) });
+      const res = await feeService.saveFeeHead({ feeStructureID: 0, gradeId, name: newName.trim(), amt: Number(newAmt) });
+      const pending = pendingFromResp(res, 'Fee structure change sent for approval');
       setNewName(''); setNewAmt('');
-      await refresh();
-      toast('Fee head added', 'success');
+      if (pending) { onPending?.(pending); toast(pending.message, 'info'); }
+      else { await refresh(); toast('Fee head added', 'success'); }
     } catch (e) { toast(e.message || 'Could not add fee head', 'error'); }
     finally { setBusy(false); }
   };
@@ -18944,10 +19493,11 @@ function StructEditModal({ open, cls, onClose, onChanged, toast }) {
     if (editAmt === '' || Number.isNaN(+editAmt) || +editAmt < 0) { toast('Enter a valid amount', 'error'); return; }
     setBusy(true);
     try {
-      await feeService.saveFeeHead({ feeStructureID: h.feeStructureID, gradeId, name: editName.trim(), amt: Number(editAmt) });
+      const res = await feeService.saveFeeHead({ feeStructureID: h.feeStructureID, gradeId, name: editName.trim(), amt: Number(editAmt) });
+      const pending = pendingFromResp(res, 'Fee structure change sent for approval');
       cancelEdit();
-      await refresh();
-      toast('Fee head updated', 'success');
+      if (pending) { onPending?.(pending); toast(pending.message, 'info'); }
+      else { await refresh(); toast('Fee head updated', 'success'); }
     } catch (e) { toast(e.message || 'Could not update fee head', 'error'); }
     finally { setBusy(false); }
   };
@@ -18958,9 +19508,10 @@ function StructEditModal({ open, cls, onClose, onChanged, toast }) {
     if (!f) return;
     setBusy(true);
     try {
-      await feeService.deleteFeeHead(f.feeStructureID);
-      await refresh();
-      toast('Fee head removed', 'success');
+      const res = await feeService.deleteFeeHead(f.feeStructureID);
+      const pending = pendingFromResp(res, 'Fee structure change sent for approval');
+      if (pending) { onPending?.(pending); toast(pending.message, 'info'); }
+      else { await refresh(); toast('Fee head removed', 'success'); }
     } catch (e) { toast(e.message || 'Could not remove fee head', 'error'); }
     finally { setBusy(false); }
   };
