@@ -249,18 +249,32 @@ function ItemModal({ modal, inv, onClose, onSave, onToast }) {
   )
 }
 
-/* ════════ POINT OF SALE ════════ */
+/* ════════ POINT OF SALE ════════
+   POS ke andar do tabs — Internal Sale aur External Sale — dono ka design
+   bilkul same (New Sale / Products / Sales History) aur data bhi shared
+   (ek hi products + sales pool); sirf upar wala toggle aur banner ka
+   title/subtitle badalta hai. */
+const POS_MODES = {
+  internal: { label: 'Internal Sale', icon: 'fa-building-user', title: 'Internal Sale', sub: 'Sell to your own campuses & staff — books, uniforms & stationery, then print a receipt. Stock reduces automatically.' },
+  external: { label: 'External Sale', icon: 'fa-store', title: 'External Sale', sub: 'Sell to outside buyers & walk-in customers, then print a receipt. Stock reduces automatically.' },
+}
+
 function POS({ inv, reload, fire }) {
+  const [mode, setMode] = useState('internal')
   const [pt, setPt] = useState('sell')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState([])
   const [buyer, setBuyer] = useState('')
   const [prodModal, setProdModal] = useState(null)
   const [del, setDel] = useState(null)
+  const mi = POS_MODES[mode]
+
+  /* Is tab (Internal/External) ke products — inHouse se. Internal → inHouse true. */
+  const modeProducts = inv.products.filter((p) => (mode === 'internal' ? p.inHouse : !p.inHouse))
 
   const today = todayISO()
   const todaySales = inv.sales.filter((s) => s.date === today)
-  const lowCount = inv.products.filter((p) => p.stock <= p.low).length
+  const lowCount = modeProducts.filter((p) => p.stock <= p.low).length
   const total = cart.reduce((a, l) => a + l.qty * l.price, 0)
 
   const addToCart = (p) => {
@@ -288,7 +302,8 @@ function POS({ inv, reload, fire }) {
 
   const saveProd = async (data, id) => {
     try {
-      await saveNetworkProduct({ ...data, id: id || 0 })
+      /* inHouse is tab se: Internal Sale → true, External Sale → false. */
+      await saveNetworkProduct({ ...data, id: id || 0, inHouse: mode === 'internal' })
       setProdModal(null); fire(id ? 'Product updated' : 'Product added')
       await reload()
     } catch (e) { fire(e.message || 'Could not save product', 'warn') }
@@ -301,13 +316,19 @@ function POS({ inv, reload, fire }) {
     } catch (e) { fire(e.message || 'Could not delete product', 'warn') }
   }
 
-  const prodList = inv.products.filter((p) => { const q = search.trim().toLowerCase(); return !q || `${p.name}${p.barcode}`.toLowerCase().includes(q) })
+  const prodList = modeProducts.filter((p) => { const q = search.trim().toLowerCase(); return !q || `${p.name}${p.barcode}`.toLowerCase().includes(q) })
 
   return (
     <>
+      <div className="inv-tabs" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        {Object.entries(POS_MODES).map(([k, m]) => (
+          <button key={k} className={`inv-tab${mode === k ? ' active' : ''}`} onClick={() => { setMode(k); setPt('sell'); setCart([]); setBuyer(''); setSearch('') }}><i className={`fa-solid ${m.icon}`} /> {m.label}</button>
+        ))}
+      </div>
+
       <div className="inv-overview">
         <div className="inv-ov-ic" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }}><i className="fa-solid fa-cash-register" /></div>
-        <div><div className="inv-ov-title">Point of Sale</div><div className="inv-ov-sub">A simple school shop counter. Sell books, uniforms &amp; stationery, then print a receipt — stock reduces automatically.</div></div>
+        <div><div className="inv-ov-title">{mi.title}</div><div className="inv-ov-sub">{mi.sub}</div></div>
       </div>
 
       <div className="inv-kpis">
@@ -367,7 +388,7 @@ function POS({ inv, reload, fire }) {
             <table className="inv-table">
               <thead><tr><th>Product</th><th>Category</th><th>Vendor</th><th>Barcode</th><th className="c">Stock</th><th className="r">Cost</th><th className="r">Price</th><th className="c">Action</th></tr></thead>
               <tbody>
-                {inv.products.map((p) => (
+                {modeProducts.map((p) => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 700, color: 'var(--t1)' }}>{p.name}</td>
                     <td>{p.cat}</td>
@@ -459,6 +480,8 @@ const INV_REPORTS = [
   { key: 'pos_monthly',  icon: 'fa-calendar-days',        title: 'Monthly Sales Report',    desc: 'Day-by-day sales for a selected month',       ctrl: 'month' },
   { key: 'pos_overall',  icon: 'fa-calendar-week',        title: 'Overall Sales Report',    desc: 'All sales between two selected dates',         ctrl: 'range' },
   { key: 'pos_product',  icon: 'fa-box-open',             title: 'Product-wise Sales',      desc: 'Units & revenue sold per product',            ctrl: 'none' },
+  { key: 'pos_internal', icon: 'fa-building-user',        title: 'Internal Sale Report',    desc: 'Internal-sale products — stock, units & revenue', ctrl: 'none' },
+  { key: 'pos_external', icon: 'fa-store',                title: 'External Sale Report',    desc: 'External-sale products — stock, units & revenue', ctrl: 'none' },
   { key: 'pos_lowstock', icon: 'fa-triangle-exclamation', title: 'Low Stock Products',      desc: 'Shop products that need restocking',           ctrl: 'none' },
   { key: 'pos_pvs',      icon: 'fa-scale-balanced',       title: 'Purchase vs Sale Summary', desc: 'Cost, revenue & profit per product',          ctrl: 'none' },
   { key: 'pos_pnl',      icon: 'fa-money-bill-trend-up',  title: 'Profit & Loss Report',    desc: 'Sales, costing & profit between two dates',   ctrl: 'range' },
@@ -636,6 +659,22 @@ function buildInvReport(inv, type, ctrl) {
     return { title: 'Product-wise Sales Report', period: 'All sales', filters: [['Products', String(keys.length)]],
       kpis: [{ label: 'Units Sold', value: num(keys.reduce((a, k) => a + agg[k].qty, 0)), icon: 'fa-box', cls: 'amber' }, { label: 'Revenue', value: rs(keys.reduce((a, k) => a + agg[k].rev, 0)), icon: 'fa-sack-dollar', cls: 'green' }],
       sections: [{ columns: [C('Product'), C('Units Sold', 'c'), C('Revenue', 'r')], rows: keys.map((k) => [k, num(agg[k].qty), num(agg[k].rev)]), totals: ['Total', num(keys.reduce((a, k) => a + agg[k].qty, 0)), num(keys.reduce((a, k) => a + agg[k].rev, 0))] }] }
+  }
+  if (type === 'pos_internal' || type === 'pos_external') {
+    /* Internal (inHouse true) / External (inHouse false) sale report — us tab ke products
+       aur un ki sales (inv.sales lines name se match, kyunke sale rows inHouse-tagged nahi). */
+    const wantIn = type === 'pos_internal'
+    const label = wantIn ? 'Internal' : 'External'
+    const prods = inv.products.filter((p) => !!p.inHouse === wantIn).slice().sort((a, b) => (a.name < b.name ? -1 : 1))
+    const names = new Set(prods.map((p) => p.name))
+    const agg = {}
+    inv.sales.forEach((s) => s.lines.forEach((l) => { if (!names.has(l.name)) return; const a = agg[l.name] = agg[l.name] || { qty: 0, rev: 0 }; a.qty += l.qty; a.rev += l.qty * l.price }))
+    const tUnits = Object.values(agg).reduce((x, a) => x + a.qty, 0)
+    const tRev = Object.values(agg).reduce((x, a) => x + a.rev, 0)
+    return { title: `${label} Sale Report`, period: `${prods.length} ${label.toLowerCase()} product(s)`,
+      filters: [['Products', String(prods.length)], ['Units Sold', num(tUnits)], ['Revenue', rs(tRev)]],
+      kpis: [{ label: 'Products', value: prods.length, icon: 'fa-box-open', cls: 'info' }, { label: 'Units Sold', value: num(tUnits), icon: 'fa-box', cls: 'amber' }, { label: 'Revenue', value: rs(tRev), icon: 'fa-sack-dollar', cls: 'green' }],
+      sections: [{ columns: [C('Product'), C('Category'), C('Stock', 'c'), C('Units Sold', 'c'), C('Revenue', 'r')], rows: prods.map((p) => { const a = agg[p.name] || { qty: 0, rev: 0 }; return [p.name, p.cat, num(p.stock), num(a.qty), num(a.rev)] }), totals: ['', '', '', num(tUnits), num(tRev)] }] }
   }
   if (type === 'pos_lowstock') {
     const list = inv.products.filter((p) => p.stock <= p.low)

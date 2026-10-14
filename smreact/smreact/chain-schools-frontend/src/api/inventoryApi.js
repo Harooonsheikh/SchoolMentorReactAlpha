@@ -90,6 +90,8 @@ const mapProduct = (r) => ({
   cost: Number(r.purchasePrice) || 0,
   price: Number(r.salePrice) || 0,
   vendor: clean(r.vendorName),
+  /* inHouse: Internal Sale (true) vs External Sale (false). Casing dono padho. */
+  inHouse: (r.inHouse ?? r.InHouse) === true,
 })
 
 const mapSale = (r) => ({
@@ -113,26 +115,35 @@ function fetchItems(isActive, networkId) {
   return call('/manage', { method: 'POST', body: inventoryBody({ active: isActive }, { action: 'get', isPOS: false, networkId }) })
 }
 
-/* POS products (isPOS true) ab /manage action:get se aate hain — sirf active
-   (isActive:true). Pehle GET /list?isPos=true use hoti thi; usay hata diya
-   (items ki tarah ab sab kuch manage/get par unified hai). */
-function fetchProducts(networkId) {
-  return call('/manage', { method: 'POST', body: inventoryBody({ active: true }, { action: 'get', isPOS: true, networkId }) })
+/* POS products (isPOS true) /manage action:get se — sirf active (isActive:true).
+   inHouse se Internal (true) / External (false) sale ke products alag aate hain. */
+function fetchProducts(networkId, inHouse) {
+  return call('/manage', { method: 'POST', body: inventoryBody({ active: true, inHouse }, { action: 'get', isPOS: true, networkId }) })
 }
 
 /* Load the whole inventory store the page needs in one go. */
 export async function fetchInventory(networkId = currentNetworkId()) {
   if (!networkId) return { items: [], products: [], sales: [], categories: DEFAULT_CATS }
-  const [activeJson, inactiveJson, prodJson, salesJson] = await Promise.all([
+  const [activeJson, inactiveJson, prodInJson, prodExJson, salesJson] = await Promise.all([
     fetchItems(true, networkId),
     fetchItems(false, networkId),
-    fetchProducts(networkId),
+    fetchProducts(networkId, true),   // Internal Sale  (inHouse:true)
+    fetchProducts(networkId, false),  // External Sale  (inHouse:false)
     call(`/list-sales?networkId=${networkId}`).catch(() => ({ data: [] })),
   ])
   const byId = new Map()
   ;[...rows(activeJson), ...rows(inactiveJson)].forEach((r) => { if (r && !byId.has(r.id)) byId.set(r.id, r) })
   const items = [...byId.values()].map(mapItem)
-  const products = rows(prodJson).map(mapProduct)
+  /* Internal + External products ek saath; inHouse response se, warna request wale
+     flag se (taake backend filter kare to bhi, aur na kare to bhi, tag sahi rahe).
+     id par dedupe — agar backend inHouse filter na kare to double na ho. */
+  const prodById = new Map()
+  rows(prodInJson).forEach((r) => { if (r && !prodById.has(r.id)) prodById.set(r.id, { r, req: true }) })
+  rows(prodExJson).forEach((r) => { if (r && !prodById.has(r.id)) prodById.set(r.id, { r, req: false }) })
+  const products = [...prodById.values()].map(({ r, req }) => {
+    const resp = r.inHouse ?? r.InHouse
+    return { ...mapProduct(r), inHouse: resp != null ? resp === true : req }
+  })
   const sales = rows(salesJson).map(mapSale)
   const categories = Array.from(new Set([...DEFAULT_CATS, ...items.map((i) => i.cat).filter(Boolean)]))
   return { items, products, sales, categories }
@@ -164,6 +175,9 @@ function inventoryBody(p, { action, isPOS, networkId }) {
     salePrice: isPOS ? (Number(p.price) || 0) : 0,
     vendorName: String(p.vendor || '').trim(),
     isPOS,
+    /* inHouse: POS product ke liye Internal(true)/External(false) sale. GET par filter,
+       save par us product ka flag. Non-POS items ke liye bemaani — default false. */
+    inHouse: isPOS ? (p.inHouse === true) : false,
     createdBy: currentUserId(),
     modifiedBy: currentUserId(),
     isActive: p.active !== false,
