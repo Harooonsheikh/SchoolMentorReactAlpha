@@ -6065,7 +6065,8 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                     </div>
                     <div className="idc-r-h-right">
                       <div className="idc-r-h-school">
-                        {schoolLogo ? <img src={schoolLogo} alt="" className="idc-r-h-logo" /> : <i className="fa-solid fa-school"></i>} {schoolName}
+                        {schoolLogo ? <img src={schoolLogo} alt="" className="idc-r-h-logo" /> : <i className="fa-solid fa-school"></i>}
+                        <span className="idc-r-h-school-txt">{schoolName}</span>
                       </div>
                       <div className="idc-r-name">{fullName}</div>
                       <div className="idc-r-desig">{desigName} · {deptName}</div>
@@ -9224,6 +9225,86 @@ export const HR_CSS = `
 .idc-r-sign-line { height: 1px; background: #94A3B8; margin-bottom: 4px; }
 .idc-r-sign-lbl  { font: 700 9.5px/1.2 var(--hr-font); color: #475569; text-align: center; }
 
+/* ── ID CARD FORMATTING FIX (vertical + horizontal) ── */
+.idc-r-qr svg, .idc-r-h-qr svg { width: 100%; height: 100%; display: block; }
+.idc-render b, .idc-render p { overflow-wrap: anywhere; word-break: break-word; }
+
+/* Vertical front */
+.idc-render--v .idc-r-head { padding: 10px 12px 36px; }
+.idc-render--v .idc-r-logo { width: 28px; height: 28px; font-size: 13px; margin-bottom: 4px; }
+.idc-render--v .idc-r-school,
+.idc-render--v .idc-r-name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.idc-render--v .idc-r-school { font-size: 12.5px; }
+.idc-render--v .idc-r-photo-v { width: 68px; height: 68px; font-size: 22px; margin: -30px auto 5px; }
+.idc-render--v .idc-r-name { font-size: 13.5px; line-height: 1.15; flex: none; }
+.idc-render--v .idc-r-desig { flex: none; max-width: 90%; margin: 4px auto 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idc-render--v .idc-r-kv { flex: none; gap: 5px; padding: 0 14px 6px; }
+.idc-render--v .idc-r-kv > div { min-width: 0; padding: 4px 8px; }
+.idc-render--v .idc-r-kv b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idc-render--v .idc-r-foot { padding: 6px 12px; }
+.idc-r-qr { width: 44px; height: 44px; padding: 3px; }
+
+/* Vertical back: signature hamesha neeche */
+.idc-render--v.idc-render--back .idc-r-back-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.idc-render--v.idc-render--back .idc-r-back-body p {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+}
+
+/* Back (dono): label/value saaf column mein */
+.idc-r-back-kv span { min-width: 54px; flex: none; padding-top: 1px; }
+.idc-r-back-kv b { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.idc-render--back .idc-r-sign { margin-top: auto; padding-top: 10px; }
+.idc-r-sign-line { width: 60%; margin: 0 auto 4px; }
+
+/* Horizontal front: photo strip | details, QR neeche right corner */
+.idc-render--h { grid-template-columns: 100px 1fr; }
+.idc-render--h .idc-r-h-right { padding: 14px 14px 12px; gap: 3px; min-width: 0; justify-content: flex-start; }
+.idc-r-h-school {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; line-height: 1.2; letter-spacing: .2px;
+  padding-bottom: 6px; margin-bottom: 4px;
+  border-bottom: 2px solid #F59E0B;
+}
+.idc-r-h-school-txt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.idc-r-h-logo { width: 16px; height: 16px; flex: none; }
+.idc-render--h .idc-r-name { text-align: left; margin: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idc-render--h .idc-r-desig { text-align: left; margin: 0 0 6px; color: #1E40AF; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idc-r-kv--h { grid-template-columns: 1fr; gap: 5px; margin-top: 2px; padding-right: 62px; }
+.idc-r-kv--h > div { flex-direction: row; align-items: baseline; gap: 6px; min-width: 0; }
+.idc-r-kv--h span { min-width: 46px; flex: none; }
+.idc-r-kv--h b { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idc-render--h .idc-r-h-qr {
+  position: absolute; right: 12px; bottom: 12px;
+  width: 54px; height: 54px; padding: 3px;
+  background: #fff; border: 1px solid #E2E8F0; border-radius: 7px;
+  box-shadow: 0 1px 3px rgba(15,23,42,.08);
+}
+
+/* Horizontal back: upar heading band, signature neeche */
+.idc-render--h.idc-render--back .idc-r-back-body { height: 100%; display: flex; flex-direction: column; padding: 0 16px 12px; }
+.idc-render--h.idc-render--back .idc-r-tag {
+  margin: 0 -16px 10px; padding: 9px 16px;
+  background: linear-gradient(135deg, #475569, #334155); color: #fff;
+  font-size: 9px; opacity: 1; text-align: center;
+}
+.idc-render--h.idc-render--back .idc-r-back-body p { margin-bottom: 8px; }
+.idc-render--h .idc-r-back-kv { gap: 4px; margin-bottom: 0; }
+
+/* Horizontal back header = front ki left patti wala blue */
+.idc-render--h.idc-render--back .idc-r-tag { background: linear-gradient(160deg, #1E3A8A, #1E40AF); }
+
+/* Logo bara */
+.idc-render--v .idc-r-head { padding-top: 8px; }
+.idc-render--v .idc-r-logo { width: 40px; height: 40px; font-size: 17px; }
+.idc-r-h-logo { width: 26px; height: 26px; border-radius: 5px; }
+.idc-r-h-school > i { font-size: 18px; flex: none; }
+
+@media print {
+  .idc-preview { gap: 16px !important; background: none !important; }
+  .idc-render { box-shadow: none !important; break-inside: avoid; page-break-inside: avoid; }
+}
 /* ═══════════════════════════════════════════════════════════════════
    LETTER GENERATOR MODAL — 1:1 CSS port from "Human Resource .html".
    ═══════════════════════════════════════════════════════════════════ */
