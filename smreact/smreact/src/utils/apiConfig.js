@@ -164,6 +164,19 @@ export function apiMessage(json) {
   return json.message || json.Message || json.title || json.error || json.Error || null;
 }
 
+/** Approvals envelope shared by the 8 ERP Accounts save/delete APIs.
+    Each returns { success, message, approval: { pendingApproval, approvalID,
+    requestNo } }. When pendingApproval is true the change was NOT applied —
+    it was queued for Super Admin review — so callers must show an info toast
+    with the message and leave the list/row on screen unchanged (do NOT
+    refresh or remove the row). Returns false for any non-approval response. */
+export function approvalPending(json) {
+  const a = json && typeof json === 'object' && (json.approval || json.Approval);
+  if (!a || typeof a !== 'object') return false;
+  const flag = a.pendingApproval ?? a.PendingApproval;
+  return flag === true || flag === 'true' || flag === 1;
+}
+
 /** The active session id: user-switched (changeSessionId) → login session. */
 export function activeSessionId() {
   return sessionStorage.getItem('changeSessionId')
