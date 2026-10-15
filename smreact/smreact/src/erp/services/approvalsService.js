@@ -17,6 +17,22 @@ const MODULE_TO_ACTION = {
   FeeDiscount: 'fee_discount',
 };
 
+/* ERP Accounts requests carry module + requestAction (INSERT/UPDATE/DELETE);
+   map the pair to the matching Approvals action type so the list row gets
+   the right "Accounts" module label + icon. */
+const ACCOUNT_MODULE_ACTIONS = {
+  AccountHead:  { INSERT: 'accounts_head',       UPDATE: 'accounts_head',       DELETE: 'accounts_head' },
+  AccountEntry: { INSERT: 'accounts_add_entry',  UPDATE: 'accounts_edit_entry', DELETE: 'accounts_delete_entry' },
+  AccountBook:  { INSERT: 'accounts_book',       UPDATE: 'accounts_book',       DELETE: 'accounts_book' },
+  BookPayment:  { INSERT: 'accounts_book_payment', UPDATE: 'accounts_book_payment', DELETE: 'accounts_book_payment' },
+  /* Wallet module strings are best-guess (README doesn't cover wallets);
+     harmless if the backend sends different names — the row then falls back
+     to the generic label/module. */
+  WalletAccount:     { INSERT: 'wallet_account',     UPDATE: 'wallet_account',     DELETE: 'wallet_account' },
+  WalletTransaction: { INSERT: 'wallet_transaction', UPDATE: 'wallet_transaction', DELETE: 'wallet_transaction' },
+  WalletTransfer:    { INSERT: 'wallet_transfer',    UPDATE: 'wallet_transfer',    DELETE: 'wallet_transfer' },
+};
+
 /* NOTE: login ke baad userId sessionStorage mein jis key se save hota hai
    wahi yahan rakhein — neeche common names try ho rahe hain. */
 function currentUserId() {
@@ -29,24 +45,124 @@ function currentUserId() {
 
 const fmtRs = (n) => `Rs. ${Number(n || 0).toLocaleString('en-PK')}`;
 
+/* Record fields that are plumbing (ids, audit stamps), not meaningful
+   "change details" — hidden from the detail card so it stays readable. */
+const XML_SKIP_FIELDS = new Set([
+  'id', 'branchid', 'createdby', 'modifiedby', 'createdat', 'modifiedat',
+  'enteredby', 'isactive', 'isdeleted', 'recordid', 'approvalid', 'requestno',
+]);
+
+/* Hide raw identifier fields from the detail card — the user wants names,
+   not ids (Ledger Id, Student ID, Grade ID, Section ID …). Matches a
+   PascalCase/UPPER "…Id"/"…ID" suffix only, so real words that merely end
+   in "id" (Paid, Valid) are kept. Friendly names (studentName / className /
+   sectionName) are added from the request row instead (see mapApiRequest). */
+function isSkippableTag(tag) {
+  const raw = String(tag || '');
+  return XML_SKIP_FIELDS.has(raw.toLowerCase()) || /(?:Id|ID)$/.test(raw);
+}
+
+/* "AccountHead" / "chequeNo" → "Account Head" / "Cheque No" for labels. */
+function humanizeTag(tag) {
+  return String(tag || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+function xmlNodeToValue(el) {
+  const kids = Array.from(el.children || []);
+  if (kids.length === 0) return (el.textContent || '').trim();
+  const obj = {};
+  kids.forEach((c) => {
+    if (isSkippableTag(c.tagName)) return;
+    const v = xmlNodeToValue(c);
+    if (v !== '' && v != null && String(v).toLowerCase() !== 'null') obj[humanizeTag(c.tagName)] = v;
+  });
+  return obj;
+}
+
+/* Parse a request's detailsXml / currentStatusXml (the real record the
+   backend ships) into a {label: value} object the detail modal can render.
+   Returns null when there's nothing usable, so callers can fall back. */
+function parseXmlDetails(xml) {
+  if (!xml || typeof xml !== 'string') return null;
+  if (typeof window === 'undefined' || !window.DOMParser) return null;
+  let doc;
+  try { doc = new window.DOMParser().parseFromString(xml, 'application/xml'); }
+  catch { return null; }
+  if (!doc || doc.getElementsByTagName('parsererror').length || !doc.documentElement) return null;
+  const val = xmlNodeToValue(doc.documentElement);
+  return val && typeof val === 'object' && Object.keys(val).length ? val : null;
+}
+
+/* Requester's display name. The approvals_list API ships only a numeric
+   requestedBy id, so: use a name field if the backend ever sends one; else
+   if the request is the signed-in user's own, use their session name; else
+   fall back to "User #id". (Resolving OTHER users' names needs the backend
+   to include requestedByName.) */
+function resolveRequesterName(r) {
+  const name = r.requestedByName || r.RequestedByName || r.requestedByUser
+    || r.requesterName || r.createdByName;
+  if (name) return name;
+  const myId = currentUserId();
+  if (myId && Number(r.requestedBy) === myId) {
+    try {
+      const myName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName');
+      if (myName) return myName;
+    } catch (e) { /* no session */ }
+  }
+  return r.requestedBy != null ? `User #${r.requestedBy}` : '—';
+}
+
 function mapApiRequest(r) {
-  const actionType = MODULE_TO_ACTION[r.module] || String(r.module || '').toLowerCase();
+  const action = String(r.requestAction || '').toUpperCase();
+  const acctMap = ACCOUNT_MODULE_ACTIONS[r.module];
+  const actionType = MODULE_TO_ACTION[r.module]
+    || (acctMap && (acctMap[action] || acctMap.UPDATE))
+    || String(r.module || '').toLowerCase();
   const meta = APPROVAL_ACTION_META[actionType] || {};
   const status = String(r.status || 'pending').toLowerCase();
   const reviewed = status !== 'pending';
-  const headName = r.headName || (r.headID ? `Head #${r.headID}` : '—');
 
-  const payload = {
-    Student: r.studentName,
-    Class: [r.className, r.sectionName && `(${r.sectionName})`].filter(Boolean).join(' '),
-    'Fee Head': headName,
-    'Discount Amount': fmtRs(r.discountAmount),
-  };
-  if (r.changedFields) payload['Changed Fields'] = r.changedFields;
+  let payload;
+  let before;
+  if (actionType === 'fee_discount') {
+    /* Fee discount is the one request whose rich shape the list columns
+       carry directly (student / class / head / amount). */
+    const headName = r.headName || (r.headID ? `Head #${r.headID}` : '—');
+    payload = {
+      Student: r.studentName,
+      Class: [r.className, r.sectionName && `(${r.sectionName})`].filter(Boolean).join(' '),
+      'Fee Head': headName,
+      'Discount Amount': fmtRs(r.discountAmount),
+    };
+    if (r.changedFields) payload['Changed Fields'] = r.changedFields;
+    before = action === 'UPDATE' ? { 'Discount Amount': fmtRs(r.oldDiscountAmount) } : null;
+  } else {
+    /* Every other module (Receive/Create/Delete challan, Grade fee head,
+       all Accounts & Wallet actions, HR, Inventory, Students…): build the
+       card from the real record the API ships — detailsXml = requested
+       values, currentStatusXml = values before. The human-readable summary
+       is already shown above the card, so it isn't repeated here. Falls back
+       to the changed-fields list + record id when no XML is available. */
+    /* Friendly names from the row, shown first in place of the raw ids the
+       XML carries (Student name, not Student ID; Class/Section names, etc.). */
+    const friendly = {};
+    if (r.studentName) friendly.Student = r.studentName;
+    if (r.className)   friendly.Class = r.className;
+    if (r.sectionName) friendly.Section = r.sectionName;
 
-  const before = r.requestAction === 'UPDATE'
-    ? { 'Discount Amount': fmtRs(r.oldDiscountAmount) }
-    : null;
+    const xmlPayload = parseXmlDetails(r.detailsXml);
+    payload = { ...friendly, ...(xmlPayload || {}) };
+    before  = parseXmlDetails(r.currentStatusXml);
+    if (!Object.keys(payload).length) {
+      if (r.changedFields) payload['Changed Fields'] = r.changedFields;
+      if (r.recordID != null) payload['Record ID'] = r.recordID;
+    }
+  }
 
   return {
     id: r.requestNo || String(r.id),      // UI mein "Request" column mein yahi dikhega
@@ -56,7 +172,7 @@ function mapApiRequest(r) {
     actionLabel: meta.label || `${r.module} — ${r.requestAction}`,
     entityId: r.recordID,
     entitySummary: r.summary || '',
-    requestedBy: r.requestedByName || `User #${r.requestedBy}`,
+    requestedBy: resolveRequesterName(r),
     requestedAt: r.requestedAt,
     status,
     requestComment: '',
@@ -72,8 +188,15 @@ const ACTION_TO_API = {
   fee_discount:             'feeDiscount',
   fee_delete_challan:       'deleteFeeChallan',
   fee_heads_update:         'feeHeadUpdate',
+  accounts_head:            'accountHead',
+  accounts_add_entry:       'addAccountEntry',
   accounts_edit_entry:      'editAccoutEntry',
   accounts_delete_entry:    'deleteAccountEntry',
+  accounts_book:            'accountBook',
+  accounts_book_payment:    'bookPayment',
+  wallet_account:           'walletAccount',
+  wallet_transaction:       'walletTransaction',
+  wallet_transfer:          'walletTransfer',
   hr_deduction_waiver:      'payRollDeductionWaiver',
   hr_bonus_award:           'payRollBonusAward',
   hr_salary_update:         'salaryDetailsUpdate',
@@ -85,6 +208,25 @@ const ACTION_TO_API = {
   students_discount:        'studentFeeDiscount',
   students_dues_discount:   'duesSettelmentDiscount',
 };
+
+/* Every approval switch the backend stores (swagger
+   Mdl_AHM_Settings_Approvals). SAVE OVERWRITES the whole row, so any
+   switch left out of the body is persisted as false. Several of these
+   (createFeeChallan, receiveFeeChallan, clearFeeReceiving, gradeFeeHead,
+   wallet*) aren't surfaced as toggles in this UI yet — we still round-trip
+   whatever GET returned for them (see lastLoadedFlags) so a SAVE from the
+   Approvals settings screen never silently turns them off. */
+const ALL_API_FLAGS = [
+  'feeDiscount', 'deleteFeeChallan', 'feeHeadUpdate', 'editAccoutEntry', 'deleteAccountEntry',
+  'payRollDeductionWaiver', 'payRollBonusAward', 'salaryDetailsUpdate', 'leavePolicyUpdate', 'employeeLoanApproval',
+  'inventoryPriceEdit', 'deleteInventoryProduct', 'markStudentInactive', 'studentFeeDiscount', 'duesSettelmentDiscount',
+  'createFeeChallan', 'receiveFeeChallan', 'clearFeeReceiving', 'gradeFeeHead', 'walletTransaction', 'walletAccount',
+  'walletTransfer', 'accountHead', 'addAccountEntry', 'accountBook', 'bookPayment',
+];
+
+/* Full flag set from the last GET, so SAVE can preserve switches this UI
+   doesn't manage. Reset on every getApprovalSettings(). */
+let lastLoadedFlags = {};
 
 function currentBranchId() {
   return Number(sessionStorage.getItem('branchID')) || 0;
@@ -120,7 +262,7 @@ function boolFlag(v, fallback = false) {
 }
 
 function emptyApiFlags(value = false) {
-  return Object.values(ACTION_TO_API).reduce((acc, k) => {
+  return ALL_API_FLAGS.reduce((acc, k) => {
     acc[k] = Boolean(value);
     return acc;
   }, {});
@@ -202,6 +344,28 @@ function resolveApprover() {
 export async function getCurrentApprover() { await delay(); return clone(resolveApprover()); }
 export async function getCurrentUser()     { await delay(); return mockApprovalCurrentUser; }
 
+/* Real "Approver on record" = the branch's School Head (the principal in
+   the employee list). Returns '' when it can't be resolved, so the caller
+   can fall back. */
+export async function getApproverName() {
+  try {
+    const branchID = currentBranchId();
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}`),
+      { method: 'GET', headers: settingsAuthHeaders() },
+    );
+    const json = await res.json().catch(() => null);
+    const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+    const p = rows.find((e) => e?.isPrinciple === true || e?.IsPrinciple === true);
+    if (!p) return '';
+    return p.employeeName || p.EmployeeName || p.name || p.Name || p.fullName || p.FullName
+      || [p.firstName || p.FirstName, p.lastName || p.LastName].filter(Boolean).join(' ')
+      || '';
+  } catch (e) {
+    return '';
+  }
+}
+
 /* ── Configurable behaviour ────────────────────────────────────────────
    Settings → Approvals reads/writes this. Every module's gated action
    would call isActionEnabled(actionType) before deciding whether to
@@ -214,6 +378,10 @@ export async function getApprovalSettings() {
   );
   const rows = extractRows(json);
   const row = rows.find((r) => Number(pick(r, ['branchID', 'BranchID'], 0)) === branchID) || rows[0];
+  /* Remember every stored flag so a later SAVE can replay the ones this UI
+     doesn't expose, instead of letting SAVE's overwrite reset them to false. */
+  lastLoadedFlags = {};
+  if (row) ALL_API_FLAGS.forEach((k) => { lastLoadedFlags[k] = boolFlag(pick(row, [k]), false); });
   const settings = row
     ? rowToSettings(row)
     : {
@@ -228,7 +396,9 @@ export async function getApprovalSettings() {
 
 export async function saveApprovalSettings({ enabled, actionTypeEnabled, id = 0 } = {}) {
   const branchID = currentBranchId();
-  const flags = flagsFromActionTypes(actionTypeEnabled);
+  /* Start from the full set last loaded so unmanaged switches round-trip,
+     then override with the ones this screen controls. SAVE sends all 26. */
+  const flags = { ...lastLoadedFlags, ...flagsFromActionTypes(actionTypeEnabled) };
   const json = await postSettingsApprovals(
     {
       action: 'SAVE',
@@ -277,7 +447,12 @@ export async function getMyRequests() {
   if (!res.ok || (json && json.success === false)) {
     throw new Error((json && (json.message || json.Message)) || 'Could not load your requests');
   }
-  const rows = Array.isArray(json?.data) ? json.data : [];
+  /* Defensive: keep only rows this user actually raised, so a requester's
+     "My Requests" (and the History/stats a non-approver derives from it)
+     can never show other people's requests even if the endpoint returns
+     more than asked. Rows whose requestedBy can't be read are kept. */
+  const rows = (Array.isArray(json?.data) ? json.data : [])
+    .filter((r) => !userId || r.requestedBy == null || Number(r.requestedBy) === userId);
   return rows.map(mapApiRequest);
 }
 
@@ -303,9 +478,32 @@ async function fetchApprovalsList(status) {
 }
 
 export async function getPendingApprovals() { return fetchApprovalsList('pending'); }
+
+/* History = everything that's no longer pending. The no-status variant of
+   approvals_list was returning an error here, so instead we ask for each
+   terminal status explicitly (the status-filtered call is the same one
+   Pending uses, which works) and merge them. Each is tolerant: if one
+   status fails or is empty, the others still show. */
 export async function getApprovalHistory() {
-  const rows = await fetchApprovalsList('');
-  return rows.filter((r) => r.status !== 'pending');
+  const one = (s) => fetchApprovalsList(s).catch(() => []);
+  const [approved, rejected, withdrawn] = await Promise.all([
+    one('approved'),
+    one('rejected'),
+    one('withdrawn'),
+  ]);
+  const merged = [...approved, ...rejected, ...withdrawn].filter((r) => r.status !== 'pending');
+  /* De-dup by request id in case a status appears in more than one list. */
+  const seen = new Set();
+  const deduped = merged.filter((r) => (seen.has(r.id) ? false : seen.add(r.id)));
+  /* Newest decision first, so a just-approved/rejected request lands on top. */
+  return deduped.sort((a, b) => historyTime(b) - historyTime(a));
+}
+
+/* Most-recent timestamp for History ordering: when it was decided, else raised. */
+export function historyTime(r) {
+  const raw = r && (r.reviewedAt || r.requestedAt);
+  const t = raw ? new Date(String(raw).replace(' ', 'T')).getTime() : 0;
+  return Number.isFinite(t) ? t : 0;
 }
 
 /* Duplicate-pending-request protection — source modules call this

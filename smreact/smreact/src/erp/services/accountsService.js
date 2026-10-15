@@ -216,9 +216,12 @@ export async function saveAccBook(payload) {
   return json;
 }
 
-/* Delete a book — the backend cascades, removing all its payments first. */
+/* Delete a book — the backend cascades, removing all its payments first.
+   modifiedBy (the logged-in user) is required; when book-delete approval is
+   on, the API returns approval.pendingApproval and nothing is removed yet. */
 export async function deleteAccBook(bookId) {
-  const res  = await fetch(buildUrl(`/delete-account-book/${bookId}`), { method: 'DELETE', headers: { Accept: '*/*' } });
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/delete-account-book/${bookId}?modifiedBy=${userID}`), { method: 'DELETE', headers: { Accept: '*/*' } });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete account book');
   return json;
@@ -254,9 +257,12 @@ export async function saveAccBookTxn({ bookId, id = 0, type, amount, date, notes
   return json;
 }
 
-/* Delete a single ledger entry / payment by its record id. */
+/* Delete a single ledger entry / payment by its record id. modifiedBy (the
+   logged-in user) is required; with payment-delete approval on, the API
+   returns approval.pendingApproval and the entry stays until approved. */
 export async function deleteAccBookTxn(txnId) {
-  const res  = await fetch(buildUrl(`/delete-book-entry-payment/${txnId}`), { method: 'DELETE', headers: { Accept: '*/*' } });
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/delete-book-entry-payment/${txnId}?modifiedBy=${userID}`), { method: 'DELETE', headers: { Accept: '*/*' } });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete transaction');
   return json;
@@ -488,7 +494,9 @@ export async function saveTransfer(payload) {
 }
 
 export async function deleteTransfer({ id }) {
-  await chainPost('/api/accounts/manage-transfers', {
+  /* Return the server json (not a synthetic {deleted}) so the caller can see
+     approval.pendingApproval when transfer-delete approval is on. */
+  return chainPost('/api/accounts/manage-transfers', {
     action: WALLET_ACTIONS.transferDelete,
     id: Number(id),
     ...scope(),
@@ -499,7 +507,6 @@ export async function deleteTransfer({ id }) {
     enteredBy: sessNum('UserID'),
     note: '',
   });
-  return { id, deleted: true };
 }
 
 /* ── Wallet transactions (statement ledger) ──

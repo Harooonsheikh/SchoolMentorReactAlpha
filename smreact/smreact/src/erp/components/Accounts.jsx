@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
+import * as approvalsService from '../services/approvalsService';
 import { saveWallatTransaction } from '../services/hrService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession, hasStoredActiveSessionCheck, apiMessage, approvalPending } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel } from '../reports/reportKit';
@@ -266,6 +267,84 @@ function AccLoader({ title }) {
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   Shared row-level approval badge plumbing, reused by every Accounts tab
+   (Chart of Accounts, Transactions, Account Books, Wallets).
+
+   usePendingApprovals(actionTypes) → [pendingMap, reload]: this user's
+   PENDING approvals for those action type(s), keyed by the record id they
+   target (approvals_by_user). A record whose id is in the map is awaiting
+   review, so its row shows <PendingBadge> instead of the edit/delete
+   actions. The map auto-clears once a request is approved/rejected (it
+   then leaves approvals_by_user) — reload() is also called right after a
+   save/delete returns pendingApproval so the badge appears immediately.
+   ═══════════════════════════════════════════════════════════════════ */
+function usePendingApprovals(actionTypes) {
+  const [pendingMap, setPendingMap] = useState({});
+  const key = Array.isArray(actionTypes) ? actionTypes.join('|') : String(actionTypes);
+  const reload = useCallback(async () => {
+    const set = new Set(key.split('|'));
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        if (r.status === 'pending' && set.has(r.actionType) && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id, actionType: r.actionType };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal — badge just won't show */ }
+  }, [key]);
+  useEffect(() => { reload(); }, [reload]);
+  return [pendingMap, reload];
+}
+
+function PendingBadge({ pend, onWithdraw, disabled }) {
+  return (
+    <>
+      <Tooltip text={`Request ${pend.requestNo || ''} awaiting approval`.trim()}>
+        <span role="status" className="acc-pending-badge">
+          <i className="fa-solid fa-hourglass-half"></i>
+          Pending Approval
+          {pend.approvalId != null && <b>#{pend.approvalId}</b>}
+        </span>
+      </Tooltip>
+      <Tooltip text="Withdraw this request">
+        <button
+          className="fee-iconbtn"
+          onClick={onWithdraw}
+          disabled={disabled}
+          style={disabled ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+        >
+          <i className="fa-solid fa-rotate-left"></i>
+        </button>
+      </Tooltip>
+    </>
+  );
+}
+
+/* Confirm + withdraw (POST /api/Approvals/withdraw) for a pending request,
+   then refresh the badge map. */
+function confirmWithdraw({ pend, label, setConfirm, toast, onDone }) {
+  if (!pend) return;
+  setConfirm({
+    title: 'Withdraw this request?',
+    message: <span>The pending change for <strong>{label}</strong> (request {pend.requestNo || `#${pend.approvalId}`}) will be withdrawn and not applied.</span>,
+    hint: 'You can raise it again later if needed.',
+    confirmLabel: 'Yes, Withdraw',
+    onConfirm: async () => {
+      try {
+        await approvalsService.withdrawRequest(pend.approvalId);
+      } catch (e) {
+        toast(e?.message || 'Could not withdraw request', 'error');
+        return;
+      }
+      toast('Request withdrawn', 'success');
+      onDone && onDone();
+    },
+  });
+}
+
 function ChartOfAccounts({ toast, isOtherSession }) {
   const { can } = usePermissions();
   const canCoaCreate = can('Accounts', 'Chart of Accounts', 'Create');
@@ -323,6 +402,47 @@ function ChartOfAccounts({ toast, isOtherSession }) {
   const [openKey, setOpenKey] = useState(null);
   const [edit, setEdit]       = useState(null); // { typeKey, mode:'add'|'edit', head? }
   const [confirm, setConfirm] = useState(null);
+  /* Head recordId → pending approval ({ approvalId, requestNo }) for this
+     user, so edited/deleted heads awaiting review show a badge + Withdraw
+     (mirrors the Fee module). Cleared automatically once a request is
+     approved/rejected, since it then leaves approvals_by_user. */
+  const [pendingMap, setPendingMap] = useState({});
+
+  const loadPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        if (r.status === 'pending' && r.actionType === 'accounts_head' && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal — badge just won't show */ }
+  }, []);
+
+  useEffect(() => { loadPending(); }, [loadPending]);
+
+  const requestWithdrawHead = (h) => {
+    const pend = pendingMap[String(h.recordId)];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: <span>The pending change for <strong>{h.name}</strong> (request {pend.requestNo || `#${pend.approvalId}`}) will be withdrawn and not applied.</span>,
+      hint: 'You can raise it again later if needed.',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        try {
+          await approvalsService.withdrawRequest(pend.approvalId);
+        } catch (e) {
+          toast(e?.message || 'Could not withdraw request', 'error');
+          return;
+        }
+        toast('Request withdrawn', 'success');
+        loadPending();
+      },
+    });
+  };
 
   const totalTypes  = list.length;
   const expCount    = list.find(t => t.cls === 'exp')?.heads.length || 0;
@@ -351,6 +471,14 @@ function ChartOfAccounts({ toast, isOtherSession }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { toast(data?.message || 'Could not save account head', 'error'); return; }
+      /* Approval on: the change is queued, not saved — close the form but
+         DON'T refresh, so the head only appears once it's approved. */
+      if (approvalPending(data)) {
+        toast(apiMessage(data) || 'Account head sent for approval', 'info');
+        setEdit(null);
+        loadPending();
+        return;
+      }
       toast(mode === 'edit' ? 'Account head updated' : 'Account head added', 'success');
       setEdit(null);
       load();
@@ -368,12 +496,23 @@ function ChartOfAccounts({ toast, isOtherSession }) {
       hint:    'This action cannot be undone. Transactions already recorded under this head will keep their data.',
       onConfirm: async () => {
         try {
-          const res = await fetch(buildUrl(`/delete-branch-accountHead/${head.recordId}`), {
+          const res = await fetch(buildUrl(`/delete-branch-accountHead/${head.recordId}?modifiedBy=${userID}`), {
             method: 'DELETE',
             headers: { Accept: '*/*' },
           });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) { toast(data?.message || 'Could not delete account head', 'error'); return; }
+          if (!res.ok) {
+            const raw = String(data?.message || data?.Message || '');
+            /* API is sentence Roman Urdu me bhejti hai — toaster English me. */
+            const hasEntries = /entr|maujood|delete nahi/i.test(raw);
+            toast(
+              hasEntries ? 'This head has entries against it and cannot be deleted.' : (raw || 'Could not delete account head'),
+              'error',
+            );
+            return;
+          }
+          /* Approval on: nothing removed yet — leave the list as-is. */
+          if (approvalPending(data)) { toast(apiMessage(data) || 'Delete sent for approval', 'info'); loadPending(); return; }
           toast('Account head deleted', 'success');
           load();
         } catch (e) {
@@ -536,6 +675,28 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                               <td className="acc-head-desc" data-label="Description">{h.desc || '—'}</td>
                               <td className="r" data-label="Action">
                                 <div className="acc-heads-actions">
+                                  {pendingMap[String(h.recordId)] ? (
+                                    <>
+                                      <Tooltip text={`Request ${pendingMap[String(h.recordId)].requestNo || ''} awaiting approval`.trim()}>
+                                        <span role="status" className="acc-pending-badge">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          Pending Approval
+                                          {pendingMap[String(h.recordId)].approvalId != null && <b>#{pendingMap[String(h.recordId)].approvalId}</b>}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this request">
+                                        <button
+                                          className="fee-iconbtn"
+                                          onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } requestWithdrawHead(h); }}
+                                          disabled={isOtherSession}
+                                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                        >
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </>
+                                  ) : (
+                                  <>
                                   {canCoaEdit && (
                                   <Tooltip text={`Edit ${h.name}`}>
                                     <button
@@ -561,6 +722,8 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </Tooltip>
+                                  )}
+                                  </>
                                   )}
                                 </div>
                               </td>
@@ -950,6 +1113,8 @@ function Transactions({ toast, isOtherSession }) {
   const [confirm, setConfirm]   = useState(null);
   const [slip, setSlip]         = useState(null);
   const [dlReport, setDlReport] = useState(null);
+  /* Entries awaiting approval (edit / delete) → row badge + Withdraw. */
+  const [entryPending, reloadEntryPending] = usePendingApprovals(['accounts_edit_entry', 'accounts_delete_entry']);
 
   const segLabel  = seg === 'rev' ? 'Revenue'      : 'Expenditure';
   const segLabelP = seg === 'rev' ? 'Revenues'     : 'Expenditures';
@@ -1054,6 +1219,14 @@ function Transactions({ toast, isOtherSession }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { toast(data?.message || 'Could not save entry', 'error'); return; }
+      /* Approval on (addAccountEntry / editAccoutEntry): queued, not saved —
+         close the form but DON'T reload, so the month list is unchanged. */
+      if (approvalPending(data)) {
+        toast(apiMessage(data) || 'Entry sent for approval', 'info');
+        setEntry(null);
+        reloadEntryPending();
+        return;
+      }
       toast(form.id ? 'Entry updated' : 'Entry added', 'success');
       setEntry(null);
       loadSeg(seg, month);
@@ -1069,15 +1242,19 @@ function Transactions({ toast, isOtherSession }) {
       message: <span>The {seg === 'rev' ? 'revenue' : 'expenditure'} entry of <strong>{fmtMoney(x.amount)}</strong> dated {accFmtDate(x.date)} will be permanently removed.</span>,
       hint:    'This action cannot be undone.',
       onConfirm: async () => {
-        /* DELETE /delete-account-entry/{id} — same endpoint for revenue & expense. */
+        /* DELETE /delete-account-entry/{id} — same endpoint for revenue & expense.
+           modifiedBy (logged-in user) is required. */
         const id = x.recordId ?? x.id;
+        const userID = Number(sessionStorage.getItem('UserID')) || 1;
         try {
-          const res = await fetch(buildUrl(`/delete-account-entry/${id}`), {
+          const res = await fetch(buildUrl(`/delete-account-entry/${id}?modifiedBy=${userID}`), {
             method: 'DELETE',
             headers: { Accept: '*/*' },
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) { toast(data?.message || 'Could not delete transaction', 'error'); return; }
+          /* Approval on (deleteAccountEntry): nothing removed yet — keep the row. */
+          if (approvalPending(data)) { toast(apiMessage(data) || 'Delete sent for approval', 'info'); reloadEntryPending(); return; }
           setTxns(prev => ({ ...prev, [seg]: (prev[seg] || []).filter(r => r.id !== x.id) }));
           toast('Transaction deleted', 'success');
         } catch (e) {
@@ -1321,6 +1498,14 @@ function Transactions({ toast, isOtherSession }) {
                       <td className="r"><span className="acc-txn-amt">{fmtMoney(x.amount)}</span></td>
                       <td className="c" onClick={e => e.stopPropagation()}>
                         <div className="acc-txn-actions">
+                          {entryPending[String(x.recordId)] ? (
+                            <PendingBadge
+                              pend={entryPending[String(x.recordId)]}
+                              onWithdraw={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } confirmWithdraw({ pend: entryPending[String(x.recordId)], label: `${x.head || 'Entry'} — ${fmtMoney(x.amount)}`, setConfirm, toast, onDone: reloadEntryPending }); }}
+                              disabled={isOtherSession}
+                            />
+                          ) : (
+                          <>
                           {canTxnDelete && (
                             <Tooltip text={isSalaryLocked ? 'This entry can only be deleted from the HR module’s Financial tab' : (isFeeLocked ? 'This entry can only be deleted from the Fee module' : 'Delete entry')}>
                             <button
@@ -1364,6 +1549,8 @@ function Transactions({ toast, isOtherSession }) {
                               <i className="fa-solid fa-pen"></i>
                             </button>
                           </Tooltip>
+                          )}
+                          </>
                           )}
                           {canTxnDownload && (
                           <Tooltip text="Download voucher">
@@ -2911,6 +3098,9 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
   const [statementFor, setStatementFor] = useState(null); // account
   const [txnFor, setTxnFor] = useState(null); // account → Add Transaction (ledger) modal
   const [confirm, setConfirm] = useState(null);
+  /* Wallet accounts / transfers awaiting approval → row badge + Withdraw. */
+  const [walletPending, reloadWalletPending] = usePendingApprovals('wallet_account');
+  const [transferPending, reloadTransferPending] = usePendingApprovals('wallet_transfer');
 
   const filtered = list.filter(a => {
     const q = search.trim().toLowerCase();
@@ -2931,10 +3121,19 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
   const saveAccount = async (payload) => {
     const isEdit = editAccount?.mode === 'edit';
     const id = isEdit ? editAccount.account.id : undefined;
+    let resp;
     try {
-      await accountsService.saveFinAccount(payload, id);
+      resp = await accountsService.saveFinAccount(payload, id);
     } catch (e) {
       toast(e?.message || 'Could not save this account. Please try again.', 'error');
+      return;
+    }
+    /* Approval on (walletAccount): queued, not saved — close the form but
+       DON'T reload, so the wallet list stays unchanged until approved. */
+    if (approvalPending(resp)) {
+      toast(apiMessage(resp) || 'Wallet account sent for approval', 'info');
+      setEditAccount(null);
+      reloadWalletPending();
       return;
     }
     await reloadAccounts().catch(() => {});
@@ -2947,7 +3146,8 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
     const next = a.status === 'active' ? 'inactive' : 'active';
     if (next === 'active') {
       accountsService.setFinAccountStatus({ id: a.id, status: 'active' })
-        .then(() => {
+        .then((resp) => {
+          if (approvalPending(resp)) { toast(apiMessage(resp) || 'Change sent for approval', 'info'); reloadWalletPending(); return; }
           setAccounts(prev => (prev || []).map(x => (x.id === a.id ? { ...x, status: 'active' } : x)));
           toast(`${a.name} re-enabled`, 'success');
         })
@@ -2959,12 +3159,15 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       message: <span><strong>{a.name}</strong> will be hidden from account pickers. Its balance and history are kept, and it can be re-enabled any time.</span>,
       confirmLabel: 'Yes, Disable',
       onConfirm: async () => {
+        let resp;
         try {
-          await accountsService.setFinAccountStatus({ id: a.id, status: 'inactive' });
+          resp = await accountsService.setFinAccountStatus({ id: a.id, status: 'inactive' });
         } catch (e) {
           toast(e?.message || 'Could not disable this account', 'error');
           return;
         }
+        /* Approval on: nothing changed yet — leave the wallet active. */
+        if (approvalPending(resp)) { toast(apiMessage(resp) || 'Change sent for approval', 'info'); reloadWalletPending(); return; }
         setAccounts(prev => (prev || []).map(x => (x.id === a.id ? { ...x, status: 'inactive' } : x)));
         toast(`${a.name} disabled`, 'info');
       },
@@ -2977,10 +3180,19 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       toast('Insufficient balance in the source account', 'error');
       return;
     }
+    let resp;
     try {
-      await accountsService.saveTransfer(payload);
+      resp = await accountsService.saveTransfer(payload);
     } catch (e) {
       toast(e?.message || 'Could not save this transfer. Please try again.', 'error');
+      return;
+    }
+    /* Approval on (walletTransfer): queued, not saved — close the form but
+       DON'T move balances / reload until it's approved. */
+    if (approvalPending(resp)) {
+      toast(apiMessage(resp) || 'Transfer sent for approval', 'info');
+      setTransferOpen(false);
+      reloadTransferPending();
       return;
     }
     /* Balances can change server-side, so refresh both lists. */
@@ -2999,12 +3211,15 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       message: <span>The transfer of <strong>{fmtMoney(t.amount)}</strong> from <strong>{fromName}</strong> to <strong>{toName}</strong> will be removed. Both balances will recalculate.</span>,
       hint: 'This action cannot be undone.',
       onConfirm: async () => {
+        let resp;
         try {
-          await accountsService.deleteTransfer({ id: t.id });
+          resp = await accountsService.deleteTransfer({ id: t.id });
         } catch (e) {
           toast(e?.message || 'Could not delete this transfer', 'error');
           return;
         }
+        /* Approval on: nothing removed yet — keep the transfer & balances. */
+        if (approvalPending(resp)) { toast(apiMessage(resp) || 'Delete sent for approval', 'info'); reloadTransferPending(); return; }
         await Promise.all([reloadTransfers(), reloadAccounts()]).catch(() => {});
         toast('Transfer deleted', 'success');
       },
@@ -3130,6 +3345,14 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                     </button>
                   </Tooltip>
                   )}
+                  {walletPending[String(a.id)] ? (
+                    <PendingBadge
+                      pend={walletPending[String(a.id)]}
+                      onWithdraw={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } confirmWithdraw({ pend: walletPending[String(a.id)], label: a.name, setConfirm, toast, onDone: reloadWalletPending }); }}
+                      disabled={isOtherSession}
+                    />
+                  ) : (
+                  <>
                   <Tooltip text="Edit this account">
                     <button className="fee-iconbtn" onClick={() => setEditAccount({ mode: 'edit', account: a })} disabled={isOtherSession}>
                       <i className="fa-solid fa-pen"></i>
@@ -3145,6 +3368,8 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                         <i className={`fa-solid ${a.status === 'active' ? 'fa-ban' : 'fa-circle-check'}`}></i>
                       </button>
                     </Tooltip>
+                  )}
+                  </>
                   )}
                 </div>
               </div>
@@ -3194,11 +3419,20 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                       <td className="r"><span className="acc-txn-amt">{fmtMoney(t.amount)}</span></td>
                       <td><span className="acc-rep-user"><i className="fa-solid fa-user-pen"></i> {t.by || '—'}</span></td>
                       <td className="c">
-                        <Tooltip text="Delete this transfer">
-                          <button className="fee-iconbtn danger" onClick={() => requestDeleteTransfer(t)}>
-                            <i className="fa-solid fa-trash-can"></i>
-                          </button>
-                        </Tooltip>
+                        <div className="acc-heads-actions">
+                          {transferPending[String(t.id)] ? (
+                            <PendingBadge
+                              pend={transferPending[String(t.id)]}
+                              onWithdraw={() => confirmWithdraw({ pend: transferPending[String(t.id)], label: `transfer of ${fmtMoney(t.amount)}`, setConfirm, toast, onDone: reloadTransferPending })}
+                            />
+                          ) : (
+                            <Tooltip text="Delete this transfer">
+                              <button className="fee-iconbtn danger" onClick={() => requestDeleteTransfer(t)}>
+                                <i className="fa-solid fa-trash-can"></i>
+                              </button>
+                            </Tooltip>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -3290,8 +3524,10 @@ function WalletTxnModal({ account, onClose, toast }) {
     if (!(Number(d.amount) > 0)) { toast?.('Please enter an amount greater than 0', 'error'); return; }
     setSaving(true);
     try {
-      await persist(d);
+      const resp = await persist(d);
       removeDraft(d.id);
+      /* Approval on (walletTransaction): queued, not posted — don't reload. */
+      if (approvalPending(resp)) { toast?.(apiMessage(resp) || 'Transaction sent for approval', 'info'); return; }
       await reload();
       toast?.('Transaction added', 'success');
     } catch (e) {
@@ -3304,10 +3540,16 @@ function WalletTxnModal({ account, onClose, toast }) {
     if (!valid.length) { toast?.('Add at least one row with a description and amount', 'error'); return; }
     setSaving(true);
     try {
-      for (const d of valid) { await persist(d); } // eslint-disable-line no-await-in-loop
+      let anyPending = false;
+      for (const d of valid) {
+        const resp = await persist(d); // eslint-disable-line no-await-in-loop
+        if (approvalPending(resp)) anyPending = true;
+      }
       setDrafts([]);
       await reload();
-      toast?.(`${valid.length} transaction${valid.length === 1 ? '' : 's'} added`, 'success');
+      /* Approval on (walletTransaction): the queued ones won't show until approved. */
+      if (anyPending) toast?.('Transactions sent for approval', 'info');
+      else toast?.(`${valid.length} transaction${valid.length === 1 ? '' : 's'} added`, 'success');
     } catch (e) {
       toast?.('Could not save all transactions. Please try again.', 'error');
     } finally { setSaving(false); }
@@ -3999,6 +4241,9 @@ function AccountBooks({ toast, isOtherSession }) {
   const [editBook, setEditBook]           = useState(null); // { mode:'add'|'edit', book? }
   const [editTxn, setEditTxn]             = useState(null); // { mode:'add'|'edit', txn? }
   const [confirm, setConfirm]             = useState(null);
+  /* Books / book-payments awaiting approval → row badge + Withdraw. */
+  const [bookPending, reloadBookPending]       = usePendingApprovals('accounts_book');
+  const [paymentPending, reloadPaymentPending] = usePendingApprovals('accounts_book_payment');
   const [helpOpen, setHelpOpen]           = useState(false);
   const [ledgerSearch, setLedgerSearch]   = useState('');
   const [ledgerFilter, setLedgerFilter]   = useState('all');
@@ -4042,10 +4287,19 @@ function AccountBooks({ toast, isOtherSession }) {
      open book's ledger) reflect the server's recalculated balances. */
   const handleSaveBook = async (form) => {
     const wasEdit = editBook.mode === 'edit';
+    let resp;
     try {
-      await accountsService.saveAccBook(form);
+      resp = await accountsService.saveAccBook(form);
     } catch (err) {
       toast(err?.message || 'Could not save account book', 'error');
+      return;
+    }
+    /* Approval on (accountBook): queued, not saved — close the form but
+       DON'T refetch, so the book list stays unchanged until approved. */
+    if (approvalPending(resp)) {
+      toast(apiMessage(resp) || 'Account book sent for approval', 'info');
+      setEditBook(null);
+      reloadBookPending();
       return;
     }
     toast(wasEdit ? 'Book updated' : 'Account book created', 'success');
@@ -4056,10 +4310,19 @@ function AccountBooks({ toast, isOtherSession }) {
 
   const handleSaveBookTxn = async (form) => {
     if (!currentBookId) return;
+    let resp;
     try {
-      await accountsService.saveAccBookTxn({ bookId: currentBookId, ...form });
+      resp = await accountsService.saveAccBookTxn({ bookId: currentBookId, ...form });
     } catch (err) {
       toast(err?.message || 'Could not save transaction', 'error');
+      return;
+    }
+    /* Approval on (bookPayment): queued, not saved — close the form but
+       DON'T reload, so the ledger stays unchanged until approved. */
+    if (approvalPending(resp)) {
+      toast(apiMessage(resp) || 'Payment sent for approval', 'info');
+      setEditTxn(null);
+      reloadPaymentPending();
       return;
     }
     toast(editTxn.mode === 'edit' ? 'Transaction updated' : 'Transaction added', 'success');
@@ -4074,12 +4337,15 @@ function AccountBooks({ toast, isOtherSession }) {
       message: <span><strong>{b.name}</strong> and all <strong>{b.txns?.length || 0}</strong> ledger entries will be permanently removed.</span>,
       hint:    'This action cannot be undone.',
       onConfirm: async () => {
+        let resp;
         try {
-          await accountsService.deleteAccBook(b.bookID);
+          resp = await accountsService.deleteAccBook(b.bookID);
         } catch (err) {
           toast(err?.message || 'Could not delete account book', 'error');
           return;
         }
+        /* Approval on: nothing removed yet — leave the book & its ledger. */
+        if (approvalPending(resp)) { toast(apiMessage(resp) || 'Delete sent for approval', 'info'); reloadBookPending(); return; }
         setCurrentBookId(null);
         setCurrentBook(null);
         toast('Account book deleted', 'success');
@@ -4094,12 +4360,15 @@ function AccountBooks({ toast, isOtherSession }) {
       message: <span>The <strong>{t.type}</strong> entry of <strong>{fmtMoney(Math.abs(t.amount))}</strong> on {accFmtDate(t.date)} will be permanently removed.</span>,
       hint:    'The running balance will be re-calculated automatically.',
       onConfirm: async () => {
+        let resp;
         try {
-          await accountsService.deleteAccBookTxn(t.id);
+          resp = await accountsService.deleteAccBookTxn(t.id);
         } catch (err) {
           toast(err?.message || 'Could not delete transaction', 'error');
           return;
         }
+        /* Approval on: nothing removed yet — keep the ledger entry. */
+        if (approvalPending(resp)) { toast(apiMessage(resp) || 'Delete sent for approval', 'info'); reloadPaymentPending(); return; }
         toast('Ledger entry deleted', 'success');
         loadDetail(currentBookId);
         refetchBooks();
@@ -4284,7 +4553,9 @@ function AccountBooks({ toast, isOtherSession }) {
                       </div>
                     </div>
                     <div className="acc-book-card-foot">
-                      <span className="acc-book-card-meta"><i className="fa-regular fa-clock"></i> {accFmtDate(c.lastDate)}</span>
+                      {bookPending[String(b.bookID)]
+                        ? <span className="acc-pending-badge"><i className="fa-solid fa-hourglass-half"></i> Pending Approval{bookPending[String(b.bookID)].approvalId != null && <b>#{bookPending[String(b.bookID)].approvalId}</b>}</span>
+                        : <span className="acc-book-card-meta"><i className="fa-regular fa-clock"></i> {accFmtDate(c.lastDate)}</span>}
                       <div className="acc-book-card-foot-r">
                         {b.includeInCash
                           ? <span className="acc-book-cashtag"><i className="fa-solid fa-wallet"></i> In Cash</span>
@@ -4331,6 +4602,10 @@ function AccountBooks({ toast, isOtherSession }) {
           onAddTxn={() => setEditTxn({ mode: 'add' })}
           onEditTxn={(t) => setEditTxn({ mode: 'edit', txn: t })}
           onDeleteTxn={requestDeleteTxn}
+          bookPend={currentBook ? bookPending[String(currentBook.bookID)] : null}
+          onWithdrawBook={() => confirmWithdraw({ pend: bookPending[String(currentBook.bookID)], label: currentBook.name, setConfirm, toast, onDone: reloadBookPending })}
+          paymentPending={paymentPending}
+          onWithdrawTxn={(t) => confirmWithdraw({ pend: paymentPending[String(t.id)], label: `${t.type} ${fmtMoney(Math.abs(t.amount))}`, setConfirm, toast, onDone: reloadPaymentPending })}
           canBkCreate={canBkCreate} canBkEdit={canBkEdit} canBkDelete={canBkDelete} canBkDownload={canBkDownload}
           toast={toast}
           isOtherSession={isOtherSession}
@@ -4360,6 +4635,7 @@ function BookDetail({
   book, users, ledgerSearch, setLedgerSearch, ledgerFilter, setLedgerFilter,
   ledgerSort, setLedgerSort, onBack, onEditBook, onDeleteBook, onDownloadReport,
   onAddTxn, onEditTxn, onDeleteTxn, isOtherSession,
+  bookPend, onWithdrawBook, paymentPending = {}, onWithdrawTxn,
   canBkCreate = true, canBkEdit = true, canBkDelete = true, canBkDownload = true,
 }) {
   const [openLedgerId, setOpenLedgerId] = useState(null);
@@ -4391,6 +4667,16 @@ function BookDetail({
             </button>
           </Tooltip>
           )}
+          {bookPend ? (
+            <span className="acc-heads-actions">
+              <PendingBadge
+                pend={bookPend}
+                onWithdraw={() => onWithdrawBook && onWithdrawBook()}
+                disabled={isOtherSession}
+              />
+            </span>
+          ) : (
+          <>
           {canBkEdit && (
           <Tooltip text="Edit book details">
             <button
@@ -4416,6 +4702,8 @@ function BookDetail({
               <i className="fa-solid fa-trash-can"></i> Delete Book
             </button>
           </Tooltip>
+          )}
+          </>
           )}
         </div>
       </div>
@@ -4628,6 +4916,14 @@ function BookDetail({
                       )}
 
                       <div className="acc-ledger-actions-row">
+                        {paymentPending[String(t.id)] ? (
+                          <PendingBadge
+                            pend={paymentPending[String(t.id)]}
+                            onWithdraw={() => onWithdrawTxn && onWithdrawTxn(t)}
+                            disabled={isOtherSession}
+                          />
+                        ) : (
+                        <>
                         {canBkEdit && (
                         <Tooltip text="Edit this ledger entry">
                           <button
@@ -4653,6 +4949,8 @@ function BookDetail({
                             <i className="fa-solid fa-trash-can"></i> Delete
                           </button>
                         </Tooltip>
+                        )}
+                        </>
                         )}
                       </div>
                     </div>
@@ -7195,7 +7493,18 @@ const ACC_CSS = `
 }
 .acc-head-name { font-weight: 700; color: var(--text-primary); }
 .acc-head-desc { color: var(--text-muted); }
-.acc-heads-actions { display: inline-flex; gap: 7px; }
+.acc-heads-actions { display: inline-flex; gap: 7px; align-items: center; }
+
+/* Row-level "Pending Approval #id" chip (mirrors the Fee module). */
+.acc-pending-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  background: rgba(234,88,12,.10); color: #C2410C;
+  border: 1px solid rgba(234,88,12,.25);
+  font-family: var(--st-font); font-size: 11.5px; font-weight: 800; white-space: nowrap;
+}
+.acc-pending-badge b { font-weight: 800; }
+[data-theme="dark"] .acc-pending-badge { background: rgba(251,146,60,.14); color: #FDBA74; border-color: rgba(251,146,60,.3); }
 
 .acc-heads-empty {
   padding: 28px 18px;

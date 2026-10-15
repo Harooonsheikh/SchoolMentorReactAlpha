@@ -11,8 +11,15 @@ const ACTION_DESCRIPTIONS = {
   fee_discount: 'A discount applied to a student’s fee head (flat or percentage) won’t reduce what they owe until a Super Admin approves it.',
   fee_delete_challan: 'Deleting an already-generated fee challan — for one student or a whole class — removes it only after approval, preventing accidental loss of billing records.',
   fee_heads_update: 'Adding, editing or removing a class’s fee heads (via Update Fee Structure or Copy to All Classes) needs approval before the new structure applies to future challans.',
+  accounts_head: 'Adding, editing or deleting an account head (Chart of Accounts) needs approval before it’s saved or removed.',
+  accounts_add_entry: 'Adding a new Accounts ledger entry (revenue or expense) needs approval before it’s posted to the books.',
   accounts_edit_entry: 'Editing an existing Accounts ledger entry — amount, date, detail, etc. — requires approval before the change is saved.',
   accounts_delete_entry: 'Deleting an Accounts ledger entry requires approval before it’s removed from the books.',
+  accounts_book: 'Adding, editing or deleting an account book (Payable / Receivable) needs approval before it takes effect. Deleting a book also removes all its payments, so that too waits for review.',
+  accounts_book_payment: 'Adding, editing or deleting a payment recorded against a book entry needs approval before it’s saved or removed.',
+  wallet_account: 'Creating, editing, enabling or disabling a wallet (Cash / Bank / Owner account) needs approval before it takes effect.',
+  wallet_transaction: 'Recording a manual credit or debit on a wallet needs approval before it posts to that wallet’s balance.',
+  wallet_transfer: 'Transferring money between two wallets — or deleting a transfer — needs approval before the balances move.',
   hr_deduction_waiver: 'Waiving a payroll fine or deduction for an employee needs approval before the deduction is cleared.',
   hr_bonus_award: 'Awarding a payroll bonus to an employee needs approval before it’s added to their payroll record.',
   hr_salary_update: 'Changing an employee’s Salary Details — basic salary, bank info, or any allowance/deduction head — needs approval before it takes effect. Other edits made in the same form (personal info, employment details, etc.) still save immediately.',
@@ -69,7 +76,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
   const dirty = enabled !== saved.enabled
     || JSON.stringify(actionTypeEnabled) !== JSON.stringify(saved.actionTypeEnabled);
 
-  /* Group the 12 action types by module without hardcoding the list. */
+  /* Group the action types by module without hardcoding the list —
+     a new entry in APPROVAL_ACTION_META appears here automatically. */
   const groups = useMemo(() => {
     const byModule = {};
     Object.keys(APPROVAL_ACTION_META).forEach((key) => {

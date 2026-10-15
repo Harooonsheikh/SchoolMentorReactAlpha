@@ -159,23 +159,30 @@ export default function Approvals({ toast = () => {} }) {
   const reload = async () => {
     setLoading(true);
     try {
-      const user = await approvalsService.getCurrentUser();
       const safe = (p, label) => p.catch((e) => {
         toast(e.message || `Failed to load ${label}`, 'error');
         return [];
       });
-      
-      const [mine, pend, hist, appr] = await Promise.all([
-        safe(approvalsService.getMyRequests(), 'your requests'),
-        safe(approvalsService.getPendingApprovals(), 'pending approvals'),
-        safe(approvalsService.getApprovalHistory(), 'history'),
-        approvalsService.getCurrentApprover(),
-      ]);
-      setCurrentUser(user);
+
+      const mine = await safe(approvalsService.getMyRequests(), 'your requests');
+      /* Approvers (users with the Approve right) review the whole branch.
+         Everyone else only ever sees their OWN requests — their History is
+         just their own decided requests, and they have no pending queue, so
+         a teacher never sees other people's records like a School Head does. */
+      let pend = [];
+      let hist;
+      if (canDecide) {
+        [pend, hist] = await Promise.all([
+          safe(approvalsService.getPendingApprovals(), 'pending approvals'),
+          safe(approvalsService.getApprovalHistory(), 'history'),
+        ]);
+      } else {
+        hist = mine.filter((r) => r.status !== 'pending')
+          .sort((a, b) => approvalsService.historyTime(b) - approvalsService.historyTime(a));
+      }
       setMyRequests(mine);
       setPending(pend);
       setHistory(hist);
-      setApprover(appr);
     } catch (e) {
       toast(e.message || 'Failed to load approvals', 'error');
     } finally {
@@ -183,7 +190,21 @@ export default function Approvals({ toast = () => {} }) {
     }
   };
 
-  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { reload(); }, [canDecide]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Header identity chips (real, not mock):
+     • "Requesting as"      — the signed-in user (session).
+     • "Approver on record" — the branch's School Head (principal). Falls back
+       to the signed-in user when they themselves can approve, else a label. */
+  useEffect(() => {
+    const myName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || '';
+    setCurrentUser(myName);
+    let alive = true;
+    approvalsService.getApproverName()
+      .then((name) => { if (alive) setApprover({ name: name || (canDecide ? myName : 'School Head') }); })
+      .catch(() => { if (alive) setApprover({ name: canDecide ? myName : 'School Head' }); });
+    return () => { alive = false; };
+  }, [canDecide]);
 
   /* Snap to the first permitted tab if the current one isn't visible
      (e.g. default 'pending' when the user only has My Requests View). */
@@ -201,7 +222,7 @@ export default function Approvals({ toast = () => {} }) {
     const byId = new Map(all.map(r => [r.id, r]));
     const unique = Array.from(byId.values());
     return {
-      pending: pending.length,
+      pending: unique.filter(r => r.status === 'pending').length,
       approved: unique.filter(r => r.status === 'approved').length,
       rejected: unique.filter(r => r.status === 'rejected').length,
       total: unique.length,
@@ -246,7 +267,7 @@ export default function Approvals({ toast = () => {} }) {
           </div>
         </div>
         <div className="ap-header-meta">
-          <Tooltip text="This mock environment has no real login — 'My Requests' shows what this demo user has raised.">
+          <Tooltip text="You're signed in as this user. Requests you raise are listed under My Requests.">
             <div className="ap-approver-chip">
               <span className="up-avatar">{initialsOf(currentUser)}</span>
               <div>
@@ -255,7 +276,7 @@ export default function Approvals({ toast = () => {} }) {
               </div>
             </div>
           </Tooltip>
-          <Tooltip text="This mock environment has no real login — approver identity is derived from whoever holds the Super Admin role in User Permissions.">
+          <Tooltip text="The School Head who reviews and decides on requests raised for this branch.">
             <div className="ap-approver-chip">
               <span className="up-avatar">{initialsOf(approver?.name || '')}</span>
               <div>
@@ -341,7 +362,7 @@ export default function Approvals({ toast = () => {} }) {
                       </span>
                     </td>
                     <td className="al-td-details">{r.entitySummary}</td>
-                    <td>{r.requestedBy}</td>
+                    <td style={{ fontWeight: 700 }}>{r.requestedBy}</td>
                     <td className="al-td-time">{fmtDateTime(r.requestedAt)}</td>
                     <td><span className={`up-badge up-badge--${statusBadgeTone(r.status)}`}>{r.status}</span></td>
                     {tab !== 'pending' && <td>{r.reviewedBy || '—'}</td>}
@@ -470,7 +491,7 @@ function ApprovalDetailModal({ request, mode, onClose, onDecide }) {
             </div>
             <div className="al-detail-cell">
               <span className="al-detail-lbl">Requested By</span>
-              <span className="al-detail-val">{request.requestedBy}</span>
+              <span className="al-detail-val" style={{ fontWeight: 700 }}>{request.requestedBy}</span>
             </div>
             <div className="al-detail-cell">
               <span className="al-detail-lbl">Requested At</span>
