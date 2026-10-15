@@ -1,11 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { SA_ADMIN_API_BASE, getSuperAdminToken } from './api/config';
+import {
+  AUDIENCES, SUB_AUDIENCES, NOTIF_TYPES, CLASSES, SECTIONS,
+  defaultSub, buildAudienceLabel,
+} from './notificationsData';
 
-// const API_BASE = process.env.REACT_APP_SUPERADMIN_API || 'https://your-superadmin-api';
-const API_BASE = "http://50.190.164.42:4100/SchoolMentorSuperAdminAPI";
+const API_BASE = `${SA_ADMIN_API_BASE}/SchoolMentorSuperAdminAPI`;
 const apiGet = async (url) => {
 
-  const token = localStorage.getItem("mentor_ai_access");
-
+  // const token = localStorage.getItem("mentor_ai_access");
+  const token = getSuperAdminToken();
   const response = await fetch(`${API_BASE}${url}`, {
 
     headers: {
@@ -28,7 +32,7 @@ const apiGet = async (url) => {
 
 const apiPost = async (url, body) => {
 
-  const token = localStorage.getItem("mentor_ai_access");
+  const token = getSuperAdminToken();
 
   const response = await fetch(`${API_BASE}${url}`, {
 
@@ -84,10 +88,10 @@ const mapNotification = (n) => ({
   sentBy: n.sentBy || 'Admin',
 });
 
-import {
-  AUDIENCES, SUB_AUDIENCES, NOTIF_TYPES, CLASSES, SECTIONS, INITIAL_NOTIFS,
-  defaultSub, estimateRecipients, buildAudienceLabel, nowDateTime,
-} from './notificationsData';
+// import {
+//   AUDIENCES, SUB_AUDIENCES, NOTIF_TYPES, CLASSES, SECTIONS, INITIAL_NOTIFS,
+//   defaultSub, estimateRecipients, buildAudienceLabel, nowDateTime,
+// } from './notificationsData';
 
 /* ═══════════════════════════════════════════════════════════════════
    NOTIFICATIONS — Super Admin module (frontend only)
@@ -221,15 +225,20 @@ function Composer({ onReview, toast }) {
 
   useEffect(() => {
     loadEstimate();
-  }, [aud]);
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aud, sub]);
   const loadEstimate = async () => {
     const res = await apiGet(
       `/api/AHM_Notification/estimate?audienceType=${mapAudience(aud)}`
     );
 
+     console.log('Estimate API response:', res);
     if (res.success) {
-      setRecipients(res.data.estimatedCount || 0);
+      const d = res.data ?? {};
+      setRecipients(
+        typeof d === 'number' ? d
+          : d.estimatedCount ?? d.count ?? d.recipientCount ?? d.totalCount ?? 0
+      );
     } else {
       setRecipients(0);
       console.warn('Estimate API unavailable:', res.message);

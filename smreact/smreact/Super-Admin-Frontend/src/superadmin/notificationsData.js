@@ -15,7 +15,7 @@ export const AUDIENCES = [
   { id: 'parents',   label: 'Parents',   icon: 'fa-users' },
 ];
 
-/* Per-audience sub-groups (All + Principal have none). */
+/* Per-audience sub-groups (all + Principal have none). */
 export const SUB_AUDIENCES = {
   teachers: [
     { id: 'all-teachers',     label: 'All Teachers' },
