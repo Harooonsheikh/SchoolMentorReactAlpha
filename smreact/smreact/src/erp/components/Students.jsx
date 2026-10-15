@@ -745,7 +745,8 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
     *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
     html,body{background:#F1F3F8}body{padding:14px 0}
     .sheet{display:flex;flex-direction:column;align-items:center;gap:20px;padding:14px}
-    .card{${isV ? 'width:54mm;height:86mm;' : 'width:86mm;height:54mm;'}border-radius:4mm;overflow:hidden;background:#fff;box-shadow:0 6px 18px rgba(15,23,42,.18);display:flex;flex-direction:column}
+    .card{break-inside:avoid;page-break-inside:avoid}
+    .card{${isV ? 'width:54mm;min-height:86mm;' : 'width:86mm;min-height:54mm;'}height:auto;border-radius:4mm;overflow:hidden;background:#fff;display:flex;flex-direction:column}
     .card-top{padding:3mm 4mm 2mm;color:#fff;display:flex;align-items:center;gap:2mm;position:relative}
     .logo-wrap{width:7mm;height:7mm;flex-shrink:0;background:#fff;border-radius:1.5mm;padding:0.4mm;display:flex;align-items:center;justify-content:center}
     .logo-wrap svg,.logo-wrap img{width:100%;height:100%;object-fit:contain;display:block}
@@ -775,7 +776,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
     .back-rows{display:grid;grid-template-columns:1fr 1fr;gap:1.4mm 3mm;margin-top:1mm;padding-top:1.5mm;border-top:0.6px dashed #CBD5E1}
     .back-row{display:flex;flex-direction:column;gap:0.3mm}
     .back-row .lbl{font-size:6px;color:#64748B;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
-    .back-row b{font-size:8.5px;color:#0F172A;font-weight:700;line-height:1.15}
+    .back-row b{font-size:8.5px;color:#0F172A;font-weight:700;line-height:1.15;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
     .back-row b.mono{font-family:ui-monospace,Menlo,monospace}
     .addr{margin-top:auto;padding-top:1.5mm;font-size:6.5px;color:#475569;text-align:center;line-height:1.3;font-weight:600;border-top:0.6px dashed #CBD5E1}
     @page{size:A4 portrait;margin:10mm}
@@ -802,7 +803,8 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
           <div class="photo">${s.photo ? `<img src="${s.photo}" alt=""/>` : `<span>${stuEsc(initials)}</span>`}</div>
           <div class="lbl">Student Name</div>
           <div class="val val-name" style="color:${theme.ink}">${stuEsc(stuFullName(s))}</div>
-          <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '—')}</div></div></div>
+             <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Designation</div><div class="val">Student</div></div></div>
+          <div class="kv-row"><div><div class="lbl">Date of Birth</div><div class="val">${stuFmtDate(s.dob)}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '—')}</div></div></div>
         </div>
         <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-f-foot`)}<span class="card-foot-txt">If found, please return to the school office.</span></div>
       </div>`;
@@ -821,6 +823,7 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
             <div class="back-row"><span class="lbl">D.O.B.</span><b>${stuFmtDate(s.dob)}</b></div>
             <div class="back-row"><span class="lbl">Adm No</span><b class="mono">${stuEsc(s.adm || '—')}</b></div>
              <div class="back-row"><span class="lbl">Applicant ID</span><b class="mono">${stuEsc(s._id || '—')}</b></div>
+            ${s.bform ? `<div class="back-row"><span class="lbl">B-Form</span><b class="mono">${stuEsc(s.bform)}</b></div>` : ''}
           </div>
         </div>
         <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>
@@ -857,8 +860,9 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
     .back-rows{display:grid;grid-template-columns:1fr 1fr;gap:1mm 2.5mm;margin-top:0.8mm;padding-top:1.2mm;border-top:0.6px dashed #CBD5E1}
     .back-row{display:flex;flex-direction:column;gap:0.2mm}
     .back-row .lbl{font-size:5.5px;color:#64748B;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
-    .back-row b{font-size:7.5px;color:#0F172A;font-weight:700;line-height:1.15}
+       .back-row b{font-size:7.5px;color:#0F172A;font-weight:700;line-height:1.15;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
     .back-row b.mono{font-family:ui-monospace,Menlo,monospace}
+    .back-row.full{grid-column:1 / -1}
     @page{size:A4 portrait;margin:0}
     @media print{body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet{box-shadow:none;width:auto;margin:0}}
   `;
@@ -1220,7 +1224,7 @@ const STU_TABS = [
 export default function Students({ toast, focus = null, onFocusHandled }) {
   /* Shared data — fetched once at the module level so the Active,
      Inactive and Family Tree tabs see the same students. */
-  const { data: serverClasses = [] }   = useAsync(studentService.getStuClasses, []);
+  const { data: serverClasses = [], loading: classesFetching } = useAsync(studentService.getStuClasses, []);
   const { data: serverFamilies = [] }  = useAsync(studentService.getStuFamilies, []);
   const { data: school = {} }          = useAsync(studentService.getStuSchool, {});
 
@@ -1230,8 +1234,11 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
   const [inactive, setInactive]   = useState(null);
   const [families, setFamilies]   = useState(null);
   useEffect(() => { if (serverClasses.length  && classes  == null) setClasses(serverClasses);   }, [serverClasses, classes]);
-  useEffect(() => { if (serverFamilies.length && families == null) setFamilies(serverFamilies); }, [serverFamilies, families]);
+  /* API khatam ho gayi magar koi class nahi mili → khali list set karo taake loader band ho. */
+  useEffect(() => { if (classesFetching === false && classes == null && !serverClasses.length) setClasses([]); }, [classesFetching, serverClasses, classes]);  useEffect(() => { if (serverFamilies.length && families == null) setFamilies(serverFamilies); }, [serverFamilies, families]);
   const classList = classes  || [];
+  /* classes null = abhi tak server se load nahi hue → loader dikhao. */
+  const classesLoading = classes == null;
   const inactList = inactive || [];
   const famList   = families || [];
 
@@ -1300,6 +1307,7 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
         />
       ) : tab === 'active' ? (
         <ActiveStudents
+          loading={classesLoading}
           classes={classList}
           setClasses={setClasses}
           inactive={inactList}
@@ -1350,7 +1358,7 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
    toolbar + expandable class table with per-class actions and
    nested student rows that carry a 3-dot action menu.
    ═══════════════════════════════════════════════════════════════════ */
-function ActiveStudents({ classes, setClasses, inactive, setInactive, families, setFamilies, school, toast, focusReg = null, onFocusHandled }) {
+function ActiveStudents({ loading = false, classes, setClasses, inactive, setInactive, families, setFamilies, school, toast, focusReg = null, onFocusHandled }) {
   const { can } = usePermissions();
   const canStuCreate   = can('Students', 'Active Students', 'Create');
   const canStuEdit     = can('Students', 'Active Students', 'Edit');
@@ -1713,7 +1721,8 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         id:        existing?._id || 0,
         gradeId:   row?._gradeId || 0,
         sectionId: row?._sectionId || 0,
-        reg:       payload.reg,
+               reg:       payload.reg,
+        isManualReg: !!payload.isManualReg,
         adm:       payload.adm,
         family:    payload.family,
         admdate:   payload.admdate,
@@ -1757,7 +1766,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         if (!studentId) {
           const fresh = await studentService.getStuClasses();
           for (const c of fresh) {
-            const found = c.students.find(s => s.reg === String(payload.reg));
+                    const found = payload.reg ? c.students.find(s => s.reg === String(payload.reg)) : null;
             if (found) { studentId = found._id; break; }
           }
         }
@@ -1834,7 +1843,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         <div className="stu-stat">
           <div className="stu-stat-icon blue"><i className="fa-solid fa-user-graduate"></i></div>
           <div>
-            <div className="stu-stat-val">{stats.total}</div>
+              <div className="stu-stat-val">{loading ? '…' : stats.total}</div>
             <div className="stu-stat-lbl">Active Students</div>
           </div>
         </div>
@@ -1966,7 +1975,12 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
           <div className="th">Actions</div>
           <div className="th c">Details</div>
         </div>
-        {filteredClasses.length === 0 ? (
+        {loading ? (
+          <div className="stu-empty">
+            <div className="stu-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+            <div className="stu-empty-title">Loading students…</div>
+          </div>
+        ) : filteredClasses.length === 0 ? (
           <div className="stu-empty">
             <div className="stu-empty-ic"><i className="fa-solid fa-magnifying-glass"></i></div>
             <div className="stu-empty-title">No classes match your search</div>
@@ -2468,7 +2482,8 @@ const allSections = useMemo(() => {
   const [nat,      setNat]      = useState(init.nat      || 'Pakistani');
   const [reg,      setReg]      = useState(isEdit ? (init.reg || '') : (requireAdmissionFields ? suggestedReg : ''));
   const [adm,      setAdm]      = useState(isEdit ? (init.adm || '') : (requireAdmissionFields ? suggestedAdm : ''));
-  /* Family No ab Family Tree ka dropdown hai: value = family tree id (string).
+  /* Manual Registration No — tick na ho to reg auto rehta hai, user edit nahi kar sakta. */
+  const [manualReg, setManualReg] = useState(isEdit ? Boolean(init.isManualReg) : false);  /* Family No ab Family Tree ka dropdown hai: value = family tree id (string).
      Edit par student ki mojooda family pehle tree membership (family.members[])
      se resolve hoti hai — asli link wahin hota hai — aur agar wahan na mile to
      record ki stored FamilyNo par fallback. Purani free-text FamilyNo jo kisi
@@ -2639,14 +2654,13 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
     if (!first.trim())  { toast('First name is required', 'error');     setTab('general'); return; }
     if (!father.trim()) { toast('Father name is required', 'error');    setTab('general'); return; }
     if (!mobile.trim()) { toast('Mobile number is required', 'error');  setTab('general'); return; }
-    if (requireAdmissionFields && !reg.trim()) { toast('Registration No is required', 'error'); setTab('general'); return; }
-    if (!cls)           { toast('Class is required', 'error');           setTab('general'); return; }
+    if (requireAdmissionFields && manualReg && !reg.trim()) { toast('Registration No is required', 'error'); setTab('general'); return; }    if (!cls)           { toast('Class is required', 'error');           setTab('general'); return; }
     if (!sec)           { toast('Section is required', 'error');         setTab('general'); return; }
     /* Registration No must be unique across the branch. Compare normalised
        (trimmed/lower-cased), skip blanks, and ignore this student's own record
        when editing — so a reg can never be attached to two students. */
-    const regKey = reg.trim().toLowerCase();
-    const clash  = (existingRegs || []).find(r => r.reg && r.reg === regKey && r.id !== cfg.id);
+       const regKey = reg.trim().toLowerCase();
+    const clash  = manualReg && (existingRegs || []).find(r => r.reg && r.reg === regKey && r.id !== cfg.id);
     if (clash) {
       toast(`Registration No ${reg.trim()} is already taken by another student`, 'error');
       setTab('general'); return;
@@ -2676,7 +2690,7 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
     try {
       await onSave({
         first: first.trim(), last: last.trim(), gender, dob,
-        cls, sec, bform, nat, reg, adm, family, admdate,
+         cls, sec, bform, nat, reg: manualReg ? reg.trim() : '', isManualReg: manualReg, adm, family, admdate,
         father: father.trim(), fcnic, focc, mobile: mobile.trim(),
         mother, mcnic, guardian, gcontact, email, address,
         pschool, pgrade, pcontact,
@@ -2817,8 +2831,29 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
 
                   <div className="stu-fgrid stu-fgrid-2">
                     {requireAdmissionFields ? (<>
-                    <Field label="Registration No *" hint="Auto-suggested; must be unique.">
-                      <input className="stu-finput" value={reg} onChange={(e) => setReg(e.target.value)} placeholder="245-00000" />
+                                     <Field label="Registration No *" hint={manualReg ? 'Enter your own registration number; must be unique.' : 'Auto-generated; tick the box below to enter your own.'}>
+                      <input
+                        className="stu-finput"
+                        value={reg}
+                        onChange={(e) => setReg(e.target.value)}
+                        placeholder="245-00000"
+                        disabled={!manualReg}
+                        style={!manualReg ? { background: '#F1F5F9', cursor: 'not-allowed', color: '#475569' } : undefined}
+                      />
+                      <label className="stu-checkrow" style={{ marginTop: 8, padding: '7px 10px' }}>
+                        <input
+                          type="checkbox"
+                          checked={manualReg}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            setManualReg(on);
+                            /* Untick par wapis auto-suggested reg. */
+                            if (!on && !isEdit) setReg(suggestedReg);
+                            if (on && !isEdit) setReg('');
+                          }}
+                        />
+                        <span>Manual Registration Number (check this if you want to give Registration Number of your choice to students)</span>
+                      </label>
                     </Field>
                     <Field label="Admission No">
                       <input className="stu-finput" value={adm} onChange={(e) => setAdm(e.target.value)} placeholder="Enter Here" />
@@ -4333,32 +4368,25 @@ function StuIdCardPreview({ student: s, cls, school, template, theme, session, r
   const isBack = face === 'back';
   return (
     <div className={`stu-id-card-prv stu-id-card-prv--${isV ? 'v' : 'h'}`}>
-      <div className="stu-id-card-top" style={{ background: `linear-gradient(135deg,${theme.c1},${theme.c2})` }}>
+         <div className="stu-id-card-top" style={{ background: `linear-gradient(135deg,${theme.c1},${theme.c2})` }}>
+        <div style={{ width: '7mm', height: '7mm', flexShrink: 0, background: '#fff', borderRadius: '1.5mm', padding: '0.4mm', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '2mm' }}
+          dangerouslySetInnerHTML={{ __html: stuLogoImg(school) }} />
         <div className="stu-id-card-school">{school?.name || 'School'}</div>
         <div className="stu-id-card-face">{isBack ? 'Back' : 'Front'}</div>
       </div>
       {isBack ? (
         <div className="stu-id-card-back">
-          <div className="stu-id-card-qr">
-            {/* Asli QR — student id encode hota hai (pehle sirf CSS mock tha). */}
-            <div className="stu-id-card-qr-mock" style={{ borderColor: theme.c1 }}
-              dangerouslySetInnerHTML={{ __html: stuQrSVG(stuQrValue(s)) }} />
-         <div className="stu-id-card-qr-text">
-  <div className="stu-id-card-qr-lbl">Scan to verify</div>
-  <div className="stu-id-card-qr-reg" style={{ color: theme.c1 }}>{s._id}</div>
-</div>
-          </div>
           <div className="stu-id-card-back-rows">
-             <div><span>Guardian</span><b>{s.father || '—'}</b></div>
-               <div><span>Mobile</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.mobile || '—'}</b></div>
-               <div><span>D.O.B.</span><b>{stuFmtDate(s.dob)}</b></div>
-               <div><span>Blood Grp</span><b>—</b></div>
-              <div><span>Adm No</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.adm || '—'}</b></div>
-               <div><span>Applicant ID</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s._id || '—'}</b></div>
-</div>
-          <div className="stu-id-card-school-addr">
-            {school?.address && <div>{school.address}</div>}
-            {school?.phone && <div>☎ {school.phone}</div>}
+            <div><span>Guardian</span><b>{s.father || '—'}</b></div>
+            <div><span>Mobile</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.mobile || '—'}</b></div>
+            <div><span>D.O.B.</span><b>{stuFmtDate(s.dob)}</b></div>
+            <div><span>Adm No</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.adm || '—'}</b></div>
+            <div><span>Applicant ID</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s._id || '—'}</b></div>
+            {s.bform && <div><span>B-Form</span><b style={{ fontFamily: 'ui-monospace,monospace' }}>{s.bform}</b></div>}
+          </div>   <div className="stu-id-card-school-addr">
+              {(school?.address || school?.phone) && (
+              <div>{school?.address || ''}{school?.phone ? ` · ☎ ${school.phone}` : ''}</div>
+            )}
           </div>
         </div>
       ) : (
@@ -4368,12 +4396,11 @@ function StuIdCardPreview({ student: s, cls, school, template, theme, session, r
           </div>
           <div className="stu-id-card-info">
             <div className="stu-id-card-name" style={{ color: theme.ink }}>{stuFullName(s)}</div>
-            <div className="stu-id-card-kv">
-             <span>Class</span><b>{cls?.cls} · {cls?.sec}</b>
-             <span>Applicant ID</span><b style={{ color: theme.c1, fontFamily: 'ui-monospace,monospace' }}>{s._id}</b>
+                  <div className="stu-id-card-kv">
              <span>Father</span><b>{s.father || '—'}</b>
-             <span>Role</span><b>{role}</b>
-             <span>Session</span><b>{session}</b>
+             <span>Designation</span><b>{role || 'Student'}</b>
+             <span>Date of Birth</span><b>{stuFmtDate(s.dob)}</b>
+             <span>Session</span><b>{session || '—'}</b>
             </div>
           </div>
         </div>
@@ -8658,18 +8685,20 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 8px 24px rgba(15,23,42,.18);
-  overflow: hidden;
+  overflow: visible;
   display: flex; flex-direction: column;
 }
-.stu-id-card-prv--v { width: 220px; height: 348px; }
-.stu-id-card-prv--h { width: 360px; height: 224px; }
-.stu-id-card-top { color: #fff; padding: 9px 12px; display: flex; align-items: center; }
-.stu-id-card-school { font-size: 11px; font-weight: 800; flex: 1; line-height: 1.1; }
+.stu-id-card-prv > .stu-id-card-top { border-radius: 14px 14px 0 0; }
+.stu-id-card-prv > .stu-id-card-foot { border-radius: 0 0 14px 14px; }
+.stu-id-card-prv--v { width: 54mm; min-height: 86mm; height: auto; border-radius: 4mm; }
+.stu-id-card-prv--h { width: 86mm; min-height: 54mm; height: auto; border-radius: 4mm; }
+.stu-id-card-top { color: #fff; padding: 3mm 4mm 2mm; display: flex; align-items: center; }
+.stu-id-card-school { font-size: 9.5px; font-weight: 800; letter-spacing: .3px; flex: 1; line-height: 1.1; }
 .stu-id-card-body {
-  flex: 1; padding: 12px;
-  display: flex; flex-direction: column; gap: 8px;
+  flex: 1; padding: 3mm 4mm;
+  display: flex; flex-direction: column; gap: 2mm;
 }
-.stu-id-card-prv--h .stu-id-card-body { flex-direction: row; gap: 12px; }
+.stu-id-card-prv--h .stu-id-card-body { flex-direction: row; gap: 2mm; }
 .stu-id-card-photo {
   border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
@@ -8678,27 +8707,27 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   overflow: hidden;
   flex-shrink: 0;
 }
-.stu-id-card-prv--v .stu-id-card-photo { width: 88px; height: 108px; align-self: center; }
-.stu-id-card-prv--h .stu-id-card-photo { width: 80px; height: 100%; }
+.stu-id-card-prv--v .stu-id-card-photo { width: 24mm; height: 28mm; align-self: center; border-radius: 2mm; }
+.stu-id-card-prv--h .stu-id-card-photo { width: 24mm; height: 32mm; border-radius: 2mm; }
 .stu-id-card-photo img { width: 100%; height: 100%; object-fit: cover; }
 .stu-id-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.stu-id-card-name { font-size: 14px; font-weight: 800; letter-spacing: -.01em; line-height: 1.2; }
+.stu-id-card-name { font-size: 11px; font-weight: 800; letter-spacing: -.01em; line-height: 1.15; }
 .stu-id-card-kv {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 3px 9px;
-  font-size: 10px;
+  font-size: 9px;
   align-items: baseline;
 }
 .stu-id-card-kv span {
   text-transform: uppercase;
   letter-spacing: .3px;
   font-weight: 800;
-  font-size: 8px;
+  font-size: 6px;
   color: #64748B;
 }
-.stu-id-card-kv b { font-weight: 700; color: #0F172A; font-size: 10px; }
-.stu-id-card-foot { color: #fff; padding: 5px 10px; font-size: 8.5px; text-align: center; font-weight: 700; letter-spacing: .3px; }
+.stu-id-card-kv b { font-weight: 700; color: #0F172A; font-size: 9px; }
+.stu-id-card-foot { color: #fff; padding: 1.5mm 3mm; font-size: 6.5px; text-align: center; font-weight: 700; letter-spacing: .3px; }
 .stu-id-cardwrap--pair {
   flex-wrap: wrap; gap: 18px; padding: 22px;
 }
@@ -8716,11 +8745,11 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
 }
 .stu-id-card-back {
   flex: 1;
-  padding: 11px 12px;
-  display: flex; flex-direction: column; gap: 9px;
+  padding: 3mm 4mm;
+  display: flex; flex-direction: column; gap: 2mm;
   background: #fff;
 }
-.stu-id-card-prv--h .stu-id-card-back { padding: 10px 12px; }
+.stu-id-card-prv--h .stu-id-card-back { padding: 3mm 4mm; }
 .stu-id-card-qr {
   display: flex; align-items: center; gap: 11px;
   padding-bottom: 8px;
@@ -8753,19 +8782,21 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
 .stu-id-card-back-rows {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 14px;
-  font-size: 9.5px;
+  gap: 1.4mm 3mm;
+  margin-top: 1mm; padding-top: 1.5mm;
+  border-top: 0.6px dashed #CBD5E1;
+  font-size: 8.5px;
 }
 .stu-id-card-back-rows > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .stu-id-card-back-rows span {
-  font-size: 7.5px;
+  font-size: 6px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .3px;
   color: #64748B;
 }
 .stu-id-card-back-rows b {
-  font-size: 9.5px;
+  font-size: 8.5px;
   color: #0F172A;
   font-weight: 700;
   line-height: 1.2;

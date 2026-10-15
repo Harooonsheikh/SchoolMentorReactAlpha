@@ -567,6 +567,7 @@ export async function saveStuStudent(p = {}) {
   set('SectionId',                   p.sectionId ?? 0);
   set('BranchId',                    Number(sessionStorage.getItem('branchID')) || 0);
   set('RegisterNo',                  p.reg);
+  set('IsManualReg',                 !!p.isManualReg);
   set('PreviousRegistrationNo',      p.prevReg);
   set('FamilyNo',                    p.family);
   set('DateOfAdmission',             p.admdate);
