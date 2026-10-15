@@ -2223,7 +2223,16 @@ export function buildReceiveInstallmentRequest({
     const headName = r.subHead ?? r.head;
     const recvNow = Math.round(Number(perHead?.[headName]) || 0);
     const disc = isReceiving ? Math.max(0, Math.round(Number(giveDisc?.[headName]) || 0)) : 0;
-    if (recvNow <= 0 && disc <= 0) return;
+    /* Discount Manager ne is head ki poori amount pehle hi discount kar di
+       (challan 1000, discount 1000). Give Discount ki tarah receiving 0
+       bhejo taake head settle ho — manager discount dobara mat bhejo. */
+    const billed = Math.round(Number(r.challanAmount) || 0);
+    const storedDisc = Math.max(0, Math.round(Number(r.discount) || 0));
+    const alreadyRecv = Math.round(Number(r.receivedAmount) || 0);
+    const pendSet = !!(pendByHead && Object.prototype.hasOwnProperty.call(pendByHead, headName));
+    const fullyMgrDisc = billed > 0 && storedDisc >= billed && alreadyRecv <= 0
+      && pendSet && recvNow <= 0 && disc <= 0;
+    if (recvNow <= 0 && disc <= 0 && !fullyMgrDisc) return;
     rows.push({
       id: Number(r.id) || 0,
       installmentId: 0,
@@ -2695,6 +2704,35 @@ export function clearStoredGiveDisc(ledgerId) {
   writeGiveDiscStore(store);
 }
 
+/* Discount Manager ne head ko 100% discount diya aur cashier ne receive modal
+   me 0 likh kar receive kiya. Ye local mark Fully Received + challan-delete lock
+   ke liye hai. Sirf discount se mark nahi lagta. */
+const ZERO_RECV_KEY = 'sm-fee-zero-recv';
+function readZeroRecvStore() {
+  try { return JSON.parse(localStorage.getItem(ZERO_RECV_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+export function markZeroReceive(ledgerId) {
+  const id = String(ledgerId || '');
+  if (!id) return;
+  const store = readZeroRecvStore();
+  store[id] = 1;
+  try { localStorage.setItem(ZERO_RECV_KEY, JSON.stringify(store)); } catch { /* ignore */ }
+}
+export function hasZeroReceiveMark(ledgerId) {
+  const id = String(ledgerId || '');
+  if (!id) return false;
+  return !!readZeroRecvStore()[id];
+}
+export function clearZeroReceiveMark(ledgerId) {
+  const id = String(ledgerId || '');
+  if (!id) return;
+  const store = readZeroRecvStore();
+  if (!(id in store)) return;
+  delete store[id];
+  try { localStorage.setItem(ZERO_RECV_KEY, JSON.stringify(store)); } catch { /* ignore */ }
+}
+
 /* Reverse the receiving recorded against a challan — the challan itself stays.
    DELETE /api/BranchLedger/clear-receiving/{ledgerId}?modifiedBy=
    (Receiving tab trash). Challan voucher delete = deleteChallanInstallment. */
@@ -2720,6 +2758,7 @@ export async function clearReceiving(ledgerId) {
   }
   /* Give Discount local cache bhi saaf — warna Remaining 0 / zombie disc reh jata. */
   clearStoredGiveDisc(id);
+  clearZeroReceiveMark(id);
   invalidateMonthChallans();
   return json;
 }

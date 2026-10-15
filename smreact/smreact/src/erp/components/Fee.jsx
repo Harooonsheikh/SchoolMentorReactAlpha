@@ -6109,7 +6109,18 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
        Sirf Give Discount (bina nayi cash) bhi valid receive hai. */
    const anyHeadRecv = rows.some(r => r.recvNow !== 0) || prevRecv !== 0 || fineOwed !== 0;
    const anyGiveDisc = showGiveDisc && (rows.some(r => (r.giveDisc || 0) > 0) || fineGive > 0);
-if (!anyHeadRecv && !anyGiveDisc) {
+   /* Discount Manager ne head ki poori amount discount kar di (1000 par 1000) —
+      Give Discount ki tarah is par bhi receiving 0 allow hai. */
+   const mgrZeroHead = (r) => {
+     if (r.isCredit) return false;
+     const std = Math.round(+r.std || 0);
+     const mgr = Math.round(+r.disc || 0);
+     return std > 0 && mgr >= std && Math.round(+r.headPrev || 0) <= 0
+       && Math.round(r.finalNetPayable || 0) <= 0 && Math.round(r.paid || 0) <= 0;
+   };
+   const anyZeroSettle = rows.some(mgrZeroHead);
+   const zeroSettleOnly = anyZeroSettle && !anyHeadRecv && !anyGiveDisc;
+if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
   toast('Enter at least one head amount to receive', 'error');
   return;
 }
@@ -6139,7 +6150,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
     const pendByHead = {};
     rows.forEach(r => {
       if (r.isCredit) return;
-      if (r.recvNow !== 0 || (r.giveDisc || 0) > 0) pendByHead[r.name] = Math.round(r.remaining);
+      if (r.recvNow !== 0 || (r.giveDisc || 0) > 0 || mgrZeroHead(r)) pendByHead[r.name] = Math.round(r.remaining);
     });
     const payload = {
       reg: student.reg, monthIdx,
@@ -6151,6 +6162,8 @@ if (!anyHeadRecv && !anyGiveDisc) {
       /* Correction (net minus) — receipt/slip aur history ise adjustment dikhayein,
          normal wasooli nahi. */
       isAdjustment: receivingNow < 0,
+      /* Sirf Discount Manager ke full discount par 0 receive — status/delete isi se. */
+      zeroSettle: zeroSettleOnly,
       /* Fine alag se — receipt/slip par apni line banti hai, aur `amount` me
          pehle se shamil hai (receivingNow me joda gaya). */
       fine: fineOwed,
@@ -7589,6 +7602,9 @@ const REGEN_BTN_STYLE = { color: '#A16207', background: '#FEF3C7', borderColor: 
 /* Challan par koi RECEIVING hai? (wasooli ya receiving-time discount) — hai to challan delete
    band; pehle Fee Receiving se receiving delete karein, phir delete khulta hai. */
 function challanHasReceiving(rec) {
+  /* Rs. 0 receive (full Discount Manager discount) bhi receiving hai —
+     challan delete band, voucher khud delete nahi hota. */
+  if (feeService.hasZeroReceiveMark(rec?.id)) return true;
   return (rec?.detailRows || []).some(r =>
     Math.abs(Number(r.receivedAmount) || 0) > 0 || Math.max(0, Number(r.recvDiscount) || 0) > 0);
 }
@@ -7915,7 +7931,10 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
 const hasRecvActivity = (challan && Array.isArray(challan.detailRows))
   ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0)
   : (paidFromPayments !== 0);
-if (generated && (paid > 0 || hasRecvActivity)) {
+/* Full Discount Manager discount apne aap Fully Received NAHI banata — cashier
+   receive modal me 0 likh kar receive kare. Us ke baad hi (zero-receive mark). */
+const zeroReceived = !!(challan?.id && feeService.hasZeroReceiveMark(challan.id));
+if (generated && (paid > 0 || hasRecvActivity || zeroReceived)) {
   status = remaining <= 0 ? 'full' : 'partial';
 }
   /* Only payments explicitly tagged as OneLink/bank-pull are protected
@@ -8587,7 +8606,8 @@ function FeeReceivingIndividual({ toast }) {
     );
     const hasGiveDisc = !!payload.isReceiving && payload.giveDisc
       && Object.keys(payload.giveDisc).some(k => Number(payload.giveDisc[k]) > 0);
-    if (!Number(payload.amount) && !hasPerHead && !hasGiveDisc) {
+    /* Full Discount Manager discount (net 0) par receiving 0 allow — warna yahi toast rokta tha. */
+    if (!Number(payload.amount) && !hasPerHead && !hasGiveDisc && !payload.zeroSettle) {
       toast('Receiving amount must not be zero', 'warning');
       return;
     }
@@ -8758,6 +8778,7 @@ function FeeReceivingIndividual({ toast }) {
         return;
       }
       receivePending = pendingFromResp(recvRes, 'Receiving sent for approval');
+      if (payload.zeroSettle && rec?.id && !receivePending) feeService.markZeroReceive(rec.id);
       if (receivePending) {
         /* Payment hui nahi — approval ka intezaar. Optimistic receipt hata do aur
            us student ke row par "Pending Approval" badge + Withdraw. */
@@ -9947,7 +9968,8 @@ function FamilyTreeReceiving({ toast }) {
     );
     const hasGiveDisc = !!payload.isReceiving && payload.giveDisc
       && Object.keys(payload.giveDisc).some(k => Number(payload.giveDisc[k]) > 0);
-    if (!Number(payload.amount) && !hasPerHead && !hasGiveDisc) {
+    /* Full Discount Manager discount (net 0) par receiving 0 allow — warna yahi toast rokta tha. */
+    if (!Number(payload.amount) && !hasPerHead && !hasGiveDisc && !payload.zeroSettle) {
       toast('Receiving amount must not be zero', 'warning');
       return;
     }
@@ -10086,7 +10108,10 @@ function FamilyTreeReceiving({ toast }) {
         return;
       }
       feeService.receiveInstallment(recvBody)
-        .then(() => { loadFamilyChallans(); loadPending(true); })
+        .then((recvRes) => {
+          if (payload.zeroSettle && rec?.id && !pendingFromResp(recvRes, '')) feeService.markZeroReceive(rec.id);
+          loadFamilyChallans(); loadPending(true);
+        })
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
@@ -18208,6 +18233,33 @@ const fmtChallanDate = (iso) => {
   return `${d}-${m[(+mo - 1) || 0]}-${y.slice(2)}`;
 };
 
+/* "Payable After Due Date" box challan bante hi dikhe — due date guzarne ka
+   intezar nahi. Due ke baad asal jami fine (pehle jaisa). Due se pehle fixed
+   fine ka amount pata hai (payable + fine); daily par /day rate label me. */
+function afterDueBoxHtml(payable, { fine, fineAmt, fineType, accruedFine, lateDays, settled, billedFine, thermal = false }) {
+  if (!fine || settled || (billedFine || 0) > 0) return '';
+  const amt = Number(fineAmt) || 0;
+  const late = accruedFine > 0;
+  if (!late && amt <= 0) return '';
+  const add = late ? accruedFine : (fineType === 'daily' ? 0 : amt);
+  const total = (Number(payable) || 0) + add;
+  const money = total.toLocaleString('en-PK');
+  if (thermal) {
+    const short = late
+      ? `After Due (incl. ${lateDays}d fine)`
+      : (fineType === 'daily'
+        ? `After Due (+ Rs. ${amt.toLocaleString('en-PK')}/day)`
+        : 'After Due (incl. fine)');
+    return `<div class="th-net"><span>${short}</span><span>Rs. ${money}</span></div>`;
+  }
+  const label = late
+    ? `Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)`
+    : (fineType === 'daily'
+      ? `Payable After Due Date (+ Rs. ${amt.toLocaleString('en-PK')}/day)`
+      : 'Payable After Due Date (incl. fine)');
+  return `<div class="net-box"><div class="nb-lbl">${label}</div><div class="nb-val">Rs. ${money}</div></div>`;
+}
+
 function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school, installmentSlip = false }) {
   const showDisc = !installmentSlip && settings.showDiscount !== false;
   const showPsd = oneLinkIntegrationOn() && settings.showPsd !== false;
@@ -18359,9 +18411,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       : `<div class="outline-box"><div class="ob-lbl">Fine</div><div class="ob-val">—</div></div>`}
     </div>
     <div class="net-box"><div class="nb-lbl">Net Payable Before Due Date</div><div class="nb-val">Rs. ${payable.toLocaleString('en-PK')}</div></div>
-    ${accruedFine > 0
-      ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</div></div>`
-      : ''}
+    ${afterDueBoxHtml(payable, { fine, fineAmt, fineType, accruedFine, lateDays, settled, billedFine })}
     ${fine && !settled ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
     ${showPsd && psidPlain ? `
     <div class="psid-block">
@@ -18684,10 +18734,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <span>Net Payable</span>
     <span>Rs. ${payable.toLocaleString('en-PK')}</span>
   </div>
-  ${accruedFine > 0 ? `<div class="th-net">
-    <span>After Due (incl. ${lateDays}d fine)</span>
-    <span>Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</span>
-  </div>` : ''}
+  ${afterDueBoxHtml(payable, { fine, fineAmt, fineType, accruedFine, lateDays, settled, billedFine, thermal: true })}
   ${fine ? `<div class="th-fine">After due: Rs. ${payable.toLocaleString('en-PK')} + (days × ${fineAmt})</div>` : ''}
   ${showPsd && psidPlain ? `
   <div class="th-psid">
@@ -18779,9 +18826,15 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   </div>
   <div class="bottom-section">
     <div class="net-box"><div class="nb-lbl">Total Family Payable</div><div class="nb-val">Rs. ${famPay.toLocaleString('en-PK')}</div></div>
-    ${famFine > 0
-      ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${famLateDays} day${famLateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(famPay + famFine).toLocaleString('en-PK')}</div></div>`
-      : ''}
+    ${afterDueBoxHtml(famPay, {
+      fine: !!settings?.fineEnabled,
+      fineAmt: +settings?.fineAmt || 0,
+      fineType: settings?.fineType || 'fixed',
+      accruedFine: famFine,
+      lateDays: famLateDays,
+      settled: false,
+      billedFine: 0,
+    })}
     ${showPsd && psidPlain ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
@@ -18913,10 +18966,16 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <span>Total Family Payable</span>
     <span>Rs. ${famPay.toLocaleString('en-PK')}</span>
   </div>
-  ${famFine > 0 ? `<div class="th-net">
-    <span>After Due (incl. ${famLateDays}d fine)</span>
-    <span>Rs. ${(famPay + famFine).toLocaleString('en-PK')}</span>
-  </div>` : ''}
+  ${afterDueBoxHtml(famPay, {
+    fine: !!settings?.fineEnabled,
+    fineAmt: +settings?.fineAmt || 0,
+    fineType: settings?.fineType || 'fixed',
+    accruedFine: famFine,
+    lateDays: famLateDays,
+    settled: false,
+    billedFine: 0,
+    thermal: true,
+  })}
   ${showPsd && psidPlain ? `
   <div class="th-psid">
     <div class="th-psid-top">1Link PSID</div>
