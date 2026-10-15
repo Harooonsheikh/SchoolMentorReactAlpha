@@ -621,9 +621,11 @@ export default function TimeTable({ toast = () => {} }) {
   const [day, setDay] = useState(0);          // 0 = Monday
   const [expandedKey, setExpandedKey] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const { data = {}, setData, refetch: reloadTimeTable } = useAsync(timeTableService.getTimeTable, []);
+  const { data = {}, setData, refetch: reloadTimeTable, loading: ttLoading } = useAsync(timeTableService.getTimeTable, []);
   /* Real class×section rows and branch teachers (no more dummy data). */
-  const { data: classes = [] }  = useAsync(timeTableService.getTimeTableClasses, []);
+  const { data: classes = [], loading: classesLoading } = useAsync(timeTableService.getTimeTableClasses, []);
+  /* Loader sirf pehli load par dikhe. Save ke baad reload par table chhupna nahi chahiye. */
+  const ttBusy = classesLoading || (ttLoading && Object.keys(data || {}).length === 0);
   const { data: teachers = [] } = useAsync(timeTableService.getTeachers, []);
   /* Branch report header (school name + logo + address) for report header/footer. */
   const { data: reportHeader = {} } = useAsync(timeTableService.getReportHeader, []);
@@ -766,8 +768,20 @@ export default function TimeTable({ toast = () => {} }) {
           <div className="tt-th">Actions</div>
           <div className="tt-th" style={{ textAlign: 'center' }}>Details</div>
         </div>
-
-        {classes.map((cls, i) => {
+        {ttBusy && (
+          <div className="tt-loader">
+            <div className="tt-loader-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+            <div className="tt-loader-title">Loading timetable…</div>
+          </div>
+        )}
+        {!ttBusy && classes.length === 0 && (
+          <div className="tt-loader">
+            <div className="tt-loader-ic"><i className="fa-solid fa-chalkboard"></i></div>
+            <div className="tt-loader-title">No classes found</div>
+            <div className="tt-loader-sub">Add classes &amp; sections in Launch Setup first.</div>
+          </div>
+        )}
+        {!ttBusy && classes.map((cls, i) => {
           const key = `${cls.id}_${cls.sectionID}`;
           const periods = dayData[key] || [];
           const isExp = expandedKey === key;
@@ -3330,7 +3344,12 @@ function WizStep5({ w, update, validation, wizSlotsFor, totalWeekPeriods, select
    ═══════════════════════════════════════════════════════════════════ */
 const TT_CSS = `
 /* Toolbar */
-.tt-toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; background:var(--bg-card); border:1.5px solid var(--border-light); border-radius:14px; padding:14px 18px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.tt-loader { display:flex; flex-direction:column; align-items:center; text-align:center; padding:42px 20px; gap:12px; }
+.tt-loader-ic { width:60px; height:60px; border-radius:16px; background:linear-gradient(135deg, rgba(30,58,138,.08), rgba(124,58,237,.08)); border:1.5px dashed rgba(30,58,138,.32); color:#1E3A8A; display:flex; align-items:center; justify-content:center; font-size:22px; }
+.tt-loader-title { font-size:15px; font-weight:800; color:var(--text-primary); }
+.tt-loader-sub { font-size:12.5px; color:var(--text-muted); max-width:380px; line-height:1.55; }
+[data-theme="dark"] .tt-loader-ic { background:linear-gradient(135deg, rgba(59,130,246,.10), rgba(167,139,250,.10)); border-color:rgba(59,130,246,.40); color:#93C5FD; }
+.tt-toolbar { display:flex; align-items:center;justify-content:space-between; gap:14px; flex-wrap:wrap; background:var(--bg-card); border:1.5px solid var(--border-light); border-radius:14px; padding:14px 18px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
 .tt-toolbar-title { font-size:15px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; }
 .tt-toolbar-sub { font-size:11.5px; color:var(--text-muted); margin-top:2px; }
 .tt-toolbar-right { display:flex; gap:10px; flex-wrap:wrap; }

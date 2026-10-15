@@ -98,9 +98,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
      loader jo baqi ERP modules par chalta hai — "Loading Academics…" jaisa.
      Heads aur manuals ke alag alag spinner nahi: ek hi loader, aur dono API
      mukammal hote hi screen poori bhari hui aati hai. */
-  if (loading) {
-    return <RouteFallback label="Loading Policy Manuals…" sub="Loading manuals and forms — please wait." />;
-  }
+  /* Ab full-page loader nahi: header aur tabs dikhte rahenge, list ki jagah loader aayega. */
 
   return (
     <>
@@ -207,7 +205,13 @@ export default function SchoolSOPs({ toast = () => {} }) {
       </div>
 
       {/* ── Manual list ── */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="sops-empty">
+          <div className="sops-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="sops-empty-title">Loading Policy Manuals…</div>
+          <div className="sops-empty-sub">Loading manuals and forms — please wait.</div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="sops-empty">
           <div className="sops-empty-ic"><i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i></div>
           <div className="sops-empty-title">No manuals found</div>

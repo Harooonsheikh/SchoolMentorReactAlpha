@@ -239,7 +239,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   /* ─── Tab 1: Holidays Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false }) {
     const { can } = usePermissions();
     const canHolCreate   = can("Attendance", "Holidays Setup", "Create");
     const canHolEdit     = can("Attendance", "Holidays Setup", "Edit");
@@ -295,7 +295,13 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
               <i className="fa-solid fa-circle-info"></i>
               <span>Weekly off days will automatically appear as holidays in all attendance calendars.</span>
             </div>
-            <div className="att-days-grid">
+                     {weeklyOffLoading && (
+              <div className="att-empty">
+                <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+                <div className="att-empty-title">Loading weekly off days…</div>
+              </div>
+            )}
+            <div className="att-days-grid" style={weeklyOffLoading ? { display: "none" } : undefined}>
               {DAYS_F.map((day, i) => {
                 const off = weeklyOff.includes(i);
                 return (
@@ -1858,7 +1864,7 @@ const markOf = (staffIdx, day) => {
   /* ─── Tab 2: Student Attendance ─────────────────────────────────────────────
     HTML-faithful: att-section, att-st-row table, expandable detail panels,
     per-class Mark/Update Attendance button, calendar with date detail. */
-  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false, prevDaysAttendance = false }) {
+  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false, prevDaysAttendance = false, studentLoading = false }) {
     const { can } = usePermissions();
     const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
     const canStDownload = can("Attendance", "Student Attendance", "Download");
@@ -2003,7 +2009,13 @@ const markOf = (staffIdx, day) => {
           </div>
 
           {/* Rows — follow the calendar-selected date (studentData when in today mode). */}
-          {displayData.map((r, i) => {
+                   {studentLoading && (
+            <div className="att-empty">
+              <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+              <div className="att-empty-title">Loading classes…</div>
+            </div>
+          )}
+          {!studentLoading && displayData.map((r, i) => {
             const isOpen = openClassIdx === i;
             const isMarked = r.marked;
             return (
@@ -2434,7 +2446,7 @@ const markOf = (staffIdx, day) => {
   /* ─── Tab 3: Staff Attendance ─────────────────────────────────────────────
     HTML-faithful: filter bar, calendar with date-detail (top mark CTA),
     staff list table with expandable per-staff detail rows. */
-  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false, prevDaysAttendance = false }) {
+  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false, prevDaysAttendance = false, staffLoading = false }) {
     const { can } = usePermissions();
     const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
     const canSfDownload = can("Attendance", "Staff Attendance", "Download");
@@ -2560,7 +2572,13 @@ const markOf = (staffIdx, day) => {
             <div className="att-th att-sf-chev"></div>
           </div>
 
-          {displayStaff.map((s, i) => {
+                    {staffLoading && (
+            <div className="att-empty">
+              <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+              <div className="att-empty-title">Loading staff…</div>
+            </div>
+          )}
+          {!staffLoading && displayStaff.map((s, i) => {
             const isOpen = openIdx === i;
             const stClass  = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : "off") : "pending";
             const stLabel  = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "On Leave" : "Pending") : "Not Marked";
@@ -3568,7 +3586,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     /* Modal state for Tab 2 (Student) */
     const [markStIdx, setMarkStIdx]       = useState(null); // class index pending mark/update
     const [markStDate, setMarkStDate]     = useState(null); // selected date for student mark modal (null → today)
-    const { data: studentData = [], setData: setStudentData } = useAsync(() => attendanceService.getClassStudentList(), []);
+    const { data: studentData = [], setData: setStudentData, loading: studentLoading } = useAsync(() => attendanceService.getClassStudentList(), []);
 
     /* Modal state for Tab 3 (Staff) */
     const [markSfOpen, setMarkSfOpen]     = useState(false);
@@ -3601,6 +3619,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [employees, setEmployees]       = useState([]); // real employees (with assignments)
     const [staffData, setStaffData]       = useState([]); // derived staff-attendance rows
     const [staffTodayMarked, setStaffTodayMarked] = useState(true);
+    const [staffLoading, setStaffLoading] = useState(true);
 
     // Student/Staff Attendance → real employees from the branch.
     useEffect(() => {
@@ -3618,8 +3637,10 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
             phone: e.phone || "",
             status: "", inTime: "", outTime: "", from: "", marked: false,
           })));
-        } catch (err) {
+               } catch (err) {
           console.error("Could not load employees:", err);
+        } finally {
+          setStaffLoading(false);
         }
       })();
     }, []);
@@ -5092,7 +5113,8 @@ const saveHoliday = useCallback(async (payload) => {
             requestDeleteHoliday={requestDeleteHoliday}
             openReportPicker={openReportPicker}
             toast={toast}
-                onSaveWeeklyOff={onSaveWeeklyOff}  // ← YEH ADD KARO
+                          onSaveWeeklyOff={onSaveWeeklyOff}
+            weeklyOffLoading={weeklyOffLoading}
             onExpandMonth={loadMonthHolidays}
             loadingMonth={loadingMonth}
             isOtherSession={isOtherSession}
@@ -5110,8 +5132,9 @@ const saveHoliday = useCallback(async (payload) => {
             toast={toast}
             onExpandClass={loadStudentMarks}
             teacherMap={teacherMap}
-            onSelectDate={loadDateAttendance}
+                onSelectDate={loadDateAttendance}
             dateAttendance={dateAttendance}
+            studentLoading={studentLoading}
             isOtherSession={isOtherSession}
             prevDaysAttendance={prevDaysAttendance}
           />
@@ -5126,8 +5149,9 @@ const saveHoliday = useCallback(async (payload) => {
             openReportPicker={openReportPicker}
             toast={toast}
             onExpandStaff={() => loadStaffAttendance()}
-            onSelectDate={loadStaffDateAttendance}
+                 onSelectDate={loadStaffDateAttendance}
             staffDateAttendance={staffDateAttendance}
+            staffLoading={staffLoading}
             isOtherSession={isOtherSession}
             prevDaysAttendance={prevDaysAttendance}
           />
@@ -5264,7 +5288,12 @@ const saveHoliday = useCallback(async (payload) => {
 
   /* ─── Attendance module CSS (ported from HTML reference) ─────────────────── */
   const ATT_CSS = `
-  .att-tabs-row { display:flex; gap:4px; background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:5px; margin-bottom:20px; box-shadow:0 2px 6px rgba(30,58,138,.18),0 1px 2px rgba(0,0,0,.05); overflow-x:auto; flex-wrap:nowrap; }
+  .att-empty { display:flex; flex-direction:column; align-items:center; text-align:center; padding:42px 20px; gap:12px; }
+  .att-empty-ic { width:60px; height:60px; border-radius:16px; background:linear-gradient(135deg, rgba(30,58,138,.08), rgba(124,58,237,.08)); border:1.5px dashed rgba(30,58,138,.32); color:#1E3A8A; display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .att-empty-title { font-size:15px; font-weight:800; color:#0F172A; }
+  [data-theme="dark"] .att-empty-ic { background:linear-gradient(135deg, rgba(59,130,246,.10), rgba(167,139,250,.10)); border-color:rgba(59,130,246,.40); color:#93C5FD; }
+  [data-theme="dark"] .att-empty-title { color:var(--text-primary); }
+  .att-tabs-row { display:flex;gap:4px; background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:5px; margin-bottom:20px; box-shadow:0 2px 6px rgba(30,58,138,.18),0 1px 2px rgba(0,0,0,.05); overflow-x:auto; flex-wrap:nowrap; }
   .att-tab { display:flex; align-items:center; justify-content:center; gap:7px; padding:11px 18px; border-radius:10px; border:none; background:transparent; font-family:inherit; font-size:13px; font-weight:600; color:#64748B; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); white-space:nowrap; flex:1; }
   .att-tab:hover:not(.active) { background:#EFF6FF; color:#0F172A; }
   .att-tab.active { background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%); color:#fff; box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2); }

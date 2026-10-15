@@ -257,6 +257,15 @@ export default function Accounts({ toast }) {
    chevron reveal the heads table; row actions edit / delete each
    head, with a hero-style confirm for destructive ops.
    ═══════════════════════════════════════════════════════════════════ */
+function AccLoader({ title }) {
+  return (
+    <div className="acc-loader">
+      <div className="acc-loader-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+      <div className="acc-loader-title">{title}</div>
+    </div>
+  );
+}
+
 function ChartOfAccounts({ toast, isOtherSession }) {
   const { can } = usePermissions();
   const canCoaCreate = can('Accounts', 'Chart of Accounts', 'Create');
@@ -455,8 +464,10 @@ function ChartOfAccounts({ toast, isOtherSession }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {list.length === 0 ? (
-          <div className="fee-empty">{loading || types == null ? 'Loading account types…' : 'No account types found.'}</div>
+             {(loading && list.length === 0) || types == null ? (
+          <AccLoader title="Loading account types…" />
+        ) : list.length === 0 ? (
+          <div className="fee-empty">No account types found.</div>
         ) : list.map((t, i) => {
           const isOpen = openKey === t.key;
           return (
@@ -1268,7 +1279,9 @@ function Transactions({ toast, isOtherSession }) {
               </tr>
             </thead>
             <tbody>
-              {monthList.length === 0 ? (
+                {txns[seg] == null || loadingSeg ? (
+                <tr><td colSpan="7"><AccLoader title="Loading transactions…" /></td></tr>
+              ) : monthList.length === 0 ? (
                 <tr><td colSpan="7">
                   <div className="acc-txn-empty">
                     <i className="fa-solid fa-inbox"></i>
@@ -3059,10 +3072,7 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
         </div>
       )}
       {accounts == null ? (
-        <div className="acc-ledger-empty">
-          <i className="fa-solid fa-spinner fa-spin"></i>
-          Loading accounts…
-        </div>
+        <AccLoader title="Loading accounts…" />
       ) : filtered.length === 0 ? (
         <div className="acc-ledger-empty">
           <i className="fa-solid fa-wallet"></i>
@@ -3156,7 +3166,11 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
         </div>
         <div className="acc-txn-tablewrap">
           <table className="acc-txn-table">
-            {transferList.length === 0 ? (
+                  {transfers == null ? (
+              <tbody>
+                <tr><td><AccLoader title="Loading transfers…" /></td></tr>
+              </tbody>
+            ) : transferList.length === 0 ? (
               <tbody>
                 <tr><td><div className="acc-txn-empty"><i className="fa-solid fa-right-left"></i>No transfers yet.<br/>Use <strong>Transfer Money</strong> to move a balance between accounts.</div></td></tr>
               </tbody>
@@ -3971,7 +3985,7 @@ function AccountBooks({ toast, isOtherSession }) {
   const canBkEdit     = can('Accounts', 'Account Books', 'Edit');
   const canBkDelete   = can('Accounts', 'Account Books', 'Delete');
   const canBkDownload = can('Accounts', 'Account Books', 'Download');
-  const { data: serverBooks = [], refetch: refetchBooks } = useAsync(accountsService.getAccBooks, []);
+  const { data: serverBooks = [], refetch: refetchBooks, loading: booksLoading } = useAsync(accountsService.getAccBooks, []);
   const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
   const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
   const school = useBranchSchool();
@@ -4225,7 +4239,9 @@ function AccountBooks({ toast, isOtherSession }) {
             </div>
           </div>
 
-          {filteredBooks.length === 0 ? (
+          {booksLoading && list.length === 0 ? (
+            <AccLoader title="Loading account books…" />
+          ) : filteredBooks.length === 0 ? (
             <div className="acc-ledger-empty">
               <i className="fa-solid fa-book-open"></i>
               No account books found.<br/>
@@ -9097,6 +9113,10 @@ const ACC_CSS = `
 .acc-ledger-del { color: #DC2626; }
 .acc-ledger-del:hover { background: rgba(220,38,38,.06); color: #B91C1C; border-color: rgba(220,38,38,.3) !important; }
 
+.acc-loader { display:flex; flex-direction:column; align-items:center; text-align:center; padding:42px 20px; gap:12px; }
+.acc-loader-ic { width:60px; height:60px; border-radius:16px; background:linear-gradient(135deg, rgba(30,58,138,.08), rgba(124,58,237,.08)); border:1.5px dashed rgba(30,58,138,.32); color:#1E3A8A; display:flex; align-items:center; justify-content:center; font-size:22px; }
+.acc-loader-title { font-size:15px; font-weight:800; color:var(--text-primary); }
+[data-theme="dark"] .acc-loader-ic { background:linear-gradient(135deg, rgba(59,130,246,.10), rgba(167,139,250,.10)); border-color:rgba(59,130,246,.40); color:#93C5FD; }
 .acc-ledger-empty {
   padding: 38px 20px;
   text-align: center;

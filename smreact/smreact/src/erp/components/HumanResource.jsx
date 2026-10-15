@@ -127,9 +127,9 @@ export default function HumanResource({ toast = () => { } }) {
 
   /* Shared data hoisted to the module so the rebuilt screens can
      reuse it later without re-fetching. */
-  const { data: serverDepts = [] } = useAsync(hrService.getHrDepts, []);
+  const { data: serverDepts = [], loading: deptsLoading } = useAsync(hrService.getHrDepts, []);
   const { data: serverDesigs = [] } = useAsync(hrService.getHrDesigs, []);
-  const { data: serverEmps = [] } = useAsync(hrService.getHrEmployees, []);
+  const { data: serverEmps = [], loading: empsLoading } = useAsync(hrService.getHrEmployees, []);
   const { data: serverNextDeptId = 5 } = useAsync(hrService.getHrNextDeptId, 5);
   const { data: serverNextDesigId = 9 } = useAsync(hrService.getHrNextDesigId, 9);
   const { data: serverNextEmpId = 7 } = useAsync(hrService.getHrNextEmpId, 7);
@@ -215,7 +215,8 @@ export default function HumanResource({ toast = () => { } }) {
           nextDesigId={nextDesigId || 9}
           setNextDeptId={setNextDeptId}
           setNextDesigId={setNextDesigId}
-          reload={reloadHrBasics}
+            reload={reloadHrBasics}
+          loading={deptsLoading}
           toast={toast}
           canCreate={canBasicsCreate}
           canEdit={canBasicsEdit}
@@ -230,6 +231,7 @@ export default function HumanResource({ toast = () => { } }) {
           desigs={desigList}
           nextEmpId={nextEmpId || 7}
           setNextEmpId={setNextEmpId}
+          loading={empsLoading}
           toast={toast}
           canCreate={canEmpCreate}
           canEdit={canEmpEdit}
@@ -240,6 +242,7 @@ export default function HumanResource({ toast = () => { } }) {
       )}
       {tab === 'finance' && (
         <Financials
+          loading={empsLoading}
           emps={empList}
           depts={deptList}
           desigs={desigList}
@@ -283,7 +286,7 @@ export default function HumanResource({ toast = () => { } }) {
    ═══════════════════════════════════════════════════════════════════ */
 function HrBasics({
   depts, setDepts, desigs, setDesigs, emps,
-  nextDeptId, nextDesigId, setNextDeptId, setNextDesigId, reload, toast,
+  nextDeptId, nextDesigId, setNextDeptId, setNextDesigId, reload, toast, loading = false,
   canCreate = true, canEdit = true, canDelete = true,
 }) {
   const [openDeptId, setOpenDeptId] = useState(null);   // id of currently-expanded dept
@@ -469,7 +472,9 @@ function HrBasics({
           <div className="th" style={{ textAlign: 'center' }}>▾</div>
         </div>
 
-        {depts.length === 0 ? (
+            {loading ? (
+          <HrLoader title="Loading departments…" />
+        ) : depts.length === 0 ? (
           <EmptyState
             icon="fa-building"
             title="No Departments"
@@ -645,6 +650,16 @@ function HrBasics({
           onClose={() => setConfirmCfg(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ── Data loading loader (Students module jaisa) ── */
+function HrLoader({ title }) {
+  return (
+    <div className="hr-loader">
+      <div className="hr-loader-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+      <div className="hr-loader-title">{title}</div>
     </div>
   );
 }
@@ -1442,7 +1457,7 @@ function DeletePayrollModal({ open, mode = 'confirm', empName, month, year, mess
   ), document.body);
 }
 
-function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
+function Financials({ loading = false, emps, depts = [], desigs, toast, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
   const now = new Date();
   const [month, setMonth] = useState(PAY_MONTHS[now.getMonth()]);
   const [year, setYear] = useState(String(now.getFullYear()));
@@ -1932,7 +1947,9 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
         </div>
 
         {/* ─── Rows / empty state ─── */}
-        {activeEmps.length === 0 ? (
+              {loading ? (
+          <HrLoader title="Loading employees…" />
+        ) : activeEmps.length === 0 ? (
           <EmptyState
             icon="fa-users"
             title="No Active Employees"
@@ -3623,7 +3640,7 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
    to a placeholder, the 3-dots button opens an empty dropdown placeholder,
    and Add Employee toasts a "coming soon" message.
    ═══════════════════════════════════════════════════════════════════ */
-function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEmpId, toast, canCreate = true, canEdit = true, canDelete = true, canDownload = true, canAssign = true }) {
+function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nextEmpId, setNextEmpId, toast, canCreate = true, canEdit = true, canDelete = true, canDownload = true, canAssign = true }) {
   const [sub, setSub] = useState('active');
   const [q, setQ] = useState('');
   const [fDept, setFDept] = useState('');
@@ -3919,7 +3936,9 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
         </div>
 
         {/* ─── Employee rows / empty state ─── */}
-        {list.length === 0 ? (
+        {loading ? (
+          <HrLoader title="Loading employees…" />
+        ) : list.length === 0 ? (
           <EmptyState
             icon={sub === 'inactive' ? 'fa-user-slash' : 'fa-users'}
             title={sub === 'inactive' ? 'No Inactive Employees' : 'No Active Employees Found'}
@@ -7569,6 +7588,20 @@ export const HR_CSS = `
 .desig-row-name { font: 700 13px/1.2 var(--hr-font); color: var(--t1); }
 .desig-row-qual { font: 500 10.5px/1.2 var(--hr-font); color: var(--tm); }
 .desig-row-actions { gap: 6px; justify-content: flex-end; }
+
+/* Data loader (Students module jaisa) */
+.hr-loader { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 42px 20px; gap: 12px; }
+.hr-loader-ic {
+  width: 60px; height: 60px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(30,58,138,.08), rgba(124,58,237,.08));
+  border: 1.5px dashed rgba(30,58,138,.32);
+  color: #1E3A8A;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+}
+.hr-loader-title { font: 800 15px/1.2 var(--hr-font); color: var(--t1); }
+[data-theme="dark"] .hr-loader-ic { background: linear-gradient(135deg, rgba(59,130,246,.10), rgba(167,139,250,.10)); border-color: rgba(59,130,246,.40); color: #93C5FD; }
 
 /* Empty state inside HR Basics (port of emptyState()) */
 .hrb-empty-ic {
