@@ -5832,6 +5832,45 @@ export default function Examination({ toast = () => { } }) {
                                           toast('This class already has preschool assessment records. Remove them before switching to Grade 1-12 (marks-based).', 'error');
                                           return;
                                         }
+                                        /* Grade 1-12 par wapas → server ko isPreSchooling:false
+                                           bhejo (addexam-preschooling-crud), jaise preschool par
+                                           jaate waqt true jaata hai — warna reload par class dubara
+                                           preschool dikhti thi. */
+                                        const branchID = Number(sessionStorage.getItem('branchID') || 0);
+                                        const token = sessionStorage.getItem('token');
+                                        const payload = {
+                                          id: 0,
+                                          branchID,
+                                          termID: Number(resCurrentExam?.termID ?? selectedTermId),
+                                          selectExam: String(resCurrentExam?.selectExam ?? ''),
+                                          classID: String(cls?.classID ?? cls?.gradeID ?? ''),
+                                          sectionID: String(cls?.sectionID ?? ''),
+                                          dateFrom: new Date().toISOString(),
+                                          dateTo: new Date().toISOString(),
+                                          isPreSchooling: false,
+                                          changePreSchoolingClassName: '',
+                                          action: 'save',
+                                        };
+                                        if (!payload.branchID || !payload.termID || !payload.selectExam || !payload.classID || !payload.sectionID) {
+                                          toast('Missing exam, term, class, or section details', 'error');
+                                          return;
+                                        }
+                                        try {
+                                          const response = await fetch(buildUrl('/api/addexam-preschooling-crud'), {
+                                            method: 'POST',
+                                            headers: { Authorization: `Bearer ${token}`, Accept: '*/*', 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(payload),
+                                          });
+                                          const responseText = await response.text();
+                                          let result = null;
+                                          try { result = responseText ? JSON.parse(responseText) : null; } catch { /* non-JSON */ }
+                                          if (!response.ok || result?.success === false || result?.status === false) {
+                                            throw new Error(result?.message || result?.Message || responseText || 'Could not switch to Grade 1-12');
+                                          }
+                                        } catch (err) {
+                                          toast(err.message || 'Could not switch to Grade 1-12 (marks-based)', 'error');
+                                          return;
+                                        }
                                       }
                                       /* Local persist + SIRF isi class ka key badlo (merge) —
                                          setPClassTypes ko poora local map mat do warna baqi
