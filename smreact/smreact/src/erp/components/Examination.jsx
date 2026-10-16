@@ -1079,12 +1079,14 @@ export default function Examination({ toast = () => { } }) {
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
       const data = await r.json();
       const arr = Array.isArray(data) ? data : (data?.data || []);
+      /* Promote To me SIRF classes dikhao (sections nahi) — har class ek dafa,
+         aur idMap className → class (grade) id rakhta hai taake API ko class ka
+         id jaaye. */
       const names = [];
       const idMap = {};
       arr.forEach(g => {
-        if ((g.sections || []).length) {
-          g.sections.forEach(s => { const nm = `${g.name} - ${s.sectionName}`; names.push(nm); idMap[nm] = Number(g.id) || 0; });
-        } else { names.push(g.name); idMap[g.name] = Number(g.id) || 0; }
+        const nm = g.name;
+        if (nm && !(nm in idMap)) { names.push(nm); idMap[nm] = Number(g.id) || 0; }
       });
       pPromoteIdMap.current = idMap;
       setPPromoteClasses(names);
@@ -5652,13 +5654,29 @@ export default function Examination({ toast = () => { } }) {
                 // changePreSchoolingClassName se. Reload/navigate par bhi sahi
                 // (backend saved state, mock nahi).
                 if (isPreschoolBranch && classes.length) {
+                  /* Preschool TYPE/level ka authoritative source dedicated API
+                     (addexam-preschooling-crud) hai — preschool toggle wahin save hota
+                     hai. getclassesinexam ka isPreSchooling (c.isPreSchooling) kabhi stale
+                     ho to preschool class galti se marks (grade) list dikhati thi; ab dono
+                     ko OR karte hain taake preschool class HAMESHA preschool list dikhaye. */
+                  let apiTypes = {}, apiLevels = {};
+                  try {
+                    const r = await preschoolService.getClassAssessmentTypesForExam(
+                      classes, termID, selectExamId, (c, i) => `rcls_${id}_${c.sectionID}_${i}`
+                    );
+                    apiTypes = r?.types || {};
+                    apiLevels = r?.levels || {};
+                  } catch (e) {
+                    console.error('Could not load preschool class types for exam', e);
+                  }
                   const types = {};
                   const levels = {};
                   classes.forEach((c, i) => {
                     const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
-                    types[key] = c.isPreSchooling ? 'preschool' : 'grade';
-                    if (c.isPreSchooling) {
-                      const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
+                    const isPre = apiTypes[key] === 'preschool' || c.isPreSchooling === true;
+                    types[key] = isPre ? 'preschool' : 'grade';
+                    if (isPre) {
+                      const levelId = apiLevels[key] || preschoolService.levelIdFromApiName(c.preLevelName);
                       if (levelId) levels[key] = levelId;
                     }
                   });
@@ -5800,7 +5818,31 @@ export default function Examination({ toast = () => { } }) {
                               <div className="res-td" onClick={e => e.stopPropagation()}>
                                 <div className="res-type-pill">
                                   <Tooltip text="Grade 1-12 (marks-based)">
-                                    <button type="button" className={`res-type-btn grade${!isPreschool ? ' active' : ''}`} onClick={() => { preschoolService.setClassAssessmentType(key, 'grade').then(setPClassTypes); }}>
+                                    <button type="button" className={`res-type-btn grade${!isPreschool ? ' active' : ''}`} onClick={async () => {
+                                      /* Preschool → Grade 1-12 switch: agar is class ke kisi student ki
+                                         preschool assessment record (rated SLO) mojood hai to switch mat
+                                         karne do — pehle record hatao. Local pMarkCounts se fast check,
+                                         warna authoritative API se. */
+                                      if (isPreschool) {
+                                        let hasRecords = Object.values(pMarkCounts[key] || {}).some(n => Number(n) > 0);
+                                        if (!hasRecords) {
+                                          try {
+                                            const counts = await preschoolService.getClassPreschoolMarkCounts({
+                                              gradeId: cls.classID,
+                                              sectionId: cls.sectionID,
+                                              examId: resCurrentExam?.selectExam,
+                                              termId: resCurrentExam?.termID || selectedTermId,
+                                            });
+                                            hasRecords = Object.values(counts || {}).some(n => Number(n) > 0);
+                                          } catch { /* check fail → switch allow (block na karo) */ }
+                                        }
+                                        if (hasRecords) {
+                                          toast('This class already has preschool assessment records. Remove them before switching to Grade 1-12 (marks-based).', 'error');
+                                          return;
+                                        }
+                                      }
+                                      preschoolService.setClassAssessmentType(key, 'grade').then(setPClassTypes);
+                                    }}>
                                       <i className="fa-solid fa-graduation-cap"></i>
                                     </button>
                                   </Tooltip>
@@ -6105,6 +6147,10 @@ export default function Examination({ toast = () => { } }) {
                                     </span>
                                   </div>)}
 
+                                {/* Marks-based (Grade 1-12) student list — SIRF non-preschool class ke
+                                    liye. Preschool class apni Assess list upar (ternary) me dikhati hai,
+                                    is liye ye yahan render na ho warna dono lists ek saath aati thin. */}
+                                {!isPreschool && (
                                 <div className="res-student-scroll">
                                   <table className="res-student-table">
                                     <thead>
@@ -6284,6 +6330,7 @@ export default function Examination({ toast = () => { } }) {
                                     </tbody>
                                   </table>
                                 </div>
+                                )}
                               </div>
                             </div>
                           </div>

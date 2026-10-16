@@ -7,7 +7,6 @@ import { findRole, initialsOf } from '../UserPermissions/permissionsData';
 import { CURRENT_SESSION } from './dashboardData';
 import { useSettings } from '../Settings/settingsStore';
 import { buildUrl } from '../../../utils/apiConfig';
-import { getUserRole } from '../../services/rolesService';
 import AdminDashboard from './AdminDashboard';
 import SystemDialogs from '../../shared/SystemDialogs';
 
@@ -45,22 +44,6 @@ export default function Dashboard({
     catch { return currentUser.name; }
   })();
 
-  /* Assigned ROLE — GET /get-user-role/{employeeId} (User Permissions jaisa). */
-  const [ownerRole, setOwnerRole] = useState('');
-  useEffect(() => {
-    const empId = sessionStorage.getItem('employee_ID');
-    if (!empId) return undefined;
-    let alive = true;
-    getUserRole(empId)
-      .then((d) => {
-        const row = Array.isArray(d) ? d[0] : d;
-        const name = row ? (row.roleName ?? row.RoleName ?? row.name ?? '') : '';
-        if (alive) setOwnerRole(name);
-      })
-      .catch(() => { if (alive) setOwnerRole(''); });
-    return () => { alive = false; };
-  }, []);
-
   /* Real school/branch — report-header API (sidebar jaisa source). */
   const [branchInfo, setBranchInfo] = useState(null);
   useEffect(() => {
@@ -82,6 +65,19 @@ export default function Dashboard({
     try { return (sessionStorage.getItem('accountType') || '').trim(); }
     catch { return ''; }
   })();
+
+  /* Designation line — sidebar footer (App.js userRole) jaisa HI source/logic:
+     School Head ko "School Head"; baqi account ko unki designation (warna
+     account type, warna "User"). Taake dashboard header ka badge aur sidebar
+     ek hi value dikhayein. */
+  const designationName = (() => {
+    try { return (sessionStorage.getItem('designationName') || '').trim(); }
+    catch { return ''; }
+  })();
+  const userRole =
+    accountType === 'School Head'
+      ? (accountType || 'User')
+      : (designationName || accountType || 'User');
 
   /* Real active session (Settings → Sessions) — mock CURRENT_SESSION ki jagah. */
   const { currentSession } = useSettings();
@@ -148,7 +144,7 @@ export default function Dashboard({
             <div className="dash-impersonate">
               <span className="up-avatar dash-impersonate-av">{initialsOf(ownerName)}</span>
               <span style={{ font: '700 12px/1 var(--dash-font)', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{ownerName}</span>
-              <span style={{ font: '700 9.5px/1 var(--dash-font)', color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '.4px', background: 'rgba(30,64,175,.10)', border: '1px solid rgba(30,64,175,.20)', padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap' }}>{ownerRole || accountType || '—'}</span>
+              <span style={{ font: '700 9.5px/1 var(--dash-font)', color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '.4px', background: 'rgba(30,64,175,.10)', border: '1px solid rgba(30,64,175,.20)', padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap' }}>{userRole}</span>
             </div>
           </Tooltip>
           <Tooltip text="Open Dashboard tutorials">
