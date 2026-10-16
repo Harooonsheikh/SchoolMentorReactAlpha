@@ -1023,9 +1023,11 @@ export default function Examination({ toast = () => { } }) {
   const [rsModalOpen, setRsModalOpen] = useState(false);
   const [rsReportReq, setRsReportReq] = useState(null);      // truthy → picker open
   /* Preschool / Montessori — separate from the Grade 1-12 result state.
-     Filhaal Preschool sirf branchID 1 par live hai; baqi branches par sirf
-     Grade 1-12 dikhta hai (toggle + per-class Preschool option chhup jata hai). */
-  const isPreschoolBranch = String(sessionStorage.getItem('branchID') || '').trim() === '1';
+     Preschool in branchon par live hai (toggle + per-class Preschool option +
+     Result Setup tab); baqi branches par sirf Grade 1-12 dikhta hai. Nayi branch
+     yahin add karo. */
+  const PRESCHOOL_BRANCH_IDS = new Set(['1', '15']);
+  const isPreschoolBranch = PRESCHOOL_BRANCH_IDS.has(String(sessionStorage.getItem('branchID') || '').trim());
   const [pResultType, setPResultType] = useState('grade');
   const [pRsL2, setPRsL2] = useState('setup');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
@@ -5653,30 +5655,20 @@ export default function Examination({ toast = () => { } }) {
                 // true → Preschool checked, false → marks-based (grade). Level
                 // changePreSchoolingClassName se. Reload/navigate par bhi sahi
                 // (backend saved state, mock nahi).
-                if (isPreschoolBranch && classes.length) {
-                  /* Preschool TYPE/level ka authoritative source dedicated API
-                     (addexam-preschooling-crud) hai — preschool toggle wahin save hota
-                     hai. getclassesinexam ka isPreSchooling (c.isPreSchooling) kabhi stale
-                     ho to preschool class galti se marks (grade) list dikhati thi; ab dono
-                     ko OR karte hain taake preschool class HAMESHA preschool list dikhaye. */
-                  let apiTypes = {}, apiLevels = {};
-                  try {
-                    const r = await preschoolService.getClassAssessmentTypesForExam(
-                      classes, termID, selectExamId, (c, i) => `rcls_${id}_${c.sectionID}_${i}`
-                    );
-                    apiTypes = r?.types || {};
-                    apiLevels = r?.levels || {};
-                  } catch (e) {
-                    console.error('Could not load preschool class types for exam', e);
-                  }
+                if (classes.length) {
+                  /* TYPE/level har class ke APNE getclassesinexam isPreSchooling /
+                     changePreSchoolingClassName se: isPreSchooling === true → preschool,
+                     warna grade. Branch ki shart nahi — API jis class ko preschool bataye
+                     wahi preschool. Sirf is exam ke keys MERGE karte hain (replace nahi),
+                     taake kisi doosri class/exam ki state na badle. */
                   const types = {};
                   const levels = {};
                   classes.forEach((c, i) => {
                     const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
-                    const isPre = apiTypes[key] === 'preschool' || c.isPreSchooling === true;
+                    const isPre = c.isPreSchooling === true;
                     types[key] = isPre ? 'preschool' : 'grade';
                     if (isPre) {
-                      const levelId = apiLevels[key] || preschoolService.levelIdFromApiName(c.preLevelName);
+                      const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
                       if (levelId) levels[key] = levelId;
                     }
                   });
@@ -5841,7 +5833,11 @@ export default function Examination({ toast = () => { } }) {
                                           return;
                                         }
                                       }
-                                      preschoolService.setClassAssessmentType(key, 'grade').then(setPClassTypes);
+                                      /* Local persist + SIRF isi class ka key badlo (merge) —
+                                         setPClassTypes ko poora local map mat do warna baqi
+                                         classes ki (API-detected) state wipe ho jaati hai. */
+                                      preschoolService.setClassAssessmentType(key, 'grade');
+                                      setPClassTypes(prev => ({ ...prev, [key]: 'grade' }));
                                     }}>
                                       <i className="fa-solid fa-graduation-cap"></i>
                                     </button>
@@ -8012,14 +8008,15 @@ export default function Examination({ toast = () => { } }) {
               }
               // ── NAYA HISSA KHATAM ──
 
-              // Save ho chuka hai backend pe — ab usi backend se fresh types/levels
-              // wapis le aao, taake UI aur DB hamesha sync rahein (mock mat use karo).
-              const [freshTypes, freshLevels] = await Promise.all([
+              // Local persist — magar UI me SIRF isi class ka key badlo (merge), poora
+              // local map replace mat karo warna baqi classes ki (API-detected) state wipe
+              // ho jaati thi aur sab classes ka toggle ek saath badalta dikhta tha.
+              await Promise.all([
                 preschoolService.setClassAssessmentType(key, 'preschool'),
                 preschoolService.setClassPreschoolLevel(key, levelId),
               ]);
-              setPClassTypes(freshTypes);
-              setPClassLevels(freshLevels);
+              setPClassTypes(prev => ({ ...prev, [key]: 'preschool' }));
+              setPClassLevels(prev => ({ ...prev, [key]: levelId }));
               toast('Preschool exam setup saved', 'success');
               setPLevelPickCtx(null);
             } catch (error) {
