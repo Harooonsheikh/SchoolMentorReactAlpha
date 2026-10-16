@@ -5781,6 +5781,29 @@ setResTotalMarksCtx({
                           <i className="fa-solid fa-file-excel"></i>
                         </button>
                       </Tooltip>
+                                  <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : "Generate all students' result cards (bulk)"}>
+                        <button
+                          className="res-bulk-btn"
+                          disabled={!canSingleDownload}
+                          style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (!canSingleDownload) return;
+                            loadCardOptions(true);
+                            setBulkCardCtx({
+                              classID: cls.classID,
+                              sectionID: cls.sectionID,
+                              selectExam: resCurrentExam?.selectExam || 0,
+                              termID: resCurrentExam?.termID ?? selectedTermId,
+                              className,
+                              examName: resCurrentExam?.name || '',
+                              students: resStudentData[key]?.students || [],
+                            });
+                          }}
+                        >
+                          <i className="fa-solid fa-id-card"></i>
+                        </button>
+                      </Tooltip>
                       <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : 'Download class result report'}>
                         <button
                           className="res-download-btn"
@@ -17315,7 +17338,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
    ═══════════════════════════════════════════════════════════════════ */
 .res-table-head {
   display:grid;
-  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 130px;
+  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 190px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -17329,7 +17352,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-row-wrap:last-child .res-detail.open { border-radius:0 0 10px 10px; }
 .res-row {
   display:grid;
-  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 130px;
+  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 190px;
   align-items:center; gap:10px;
   padding:13px 14px;
   background:var(--bg-card);
