@@ -3562,14 +3562,14 @@ function WalletTxnModal({ account, onClose, toast }) {
           <div className="fee-modal-head-title">
             <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-list-ul"></i></div>
             <div>
-              <div className="fee-modal-title">Add Transaction</div>
-              <div className="fee-modal-sub">{account.name} · transactions from the wallet ledger</div>
+                     <div className="fee-modal-title">Add Transaction</div>
+              <div className="fee-modal-sub">{account.name} · {account.description?.trim() || 'transactions from the wallet ledger'}</div>
             </div>
           </div>
           <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
 
-        <div className="fee-modal-body">
+         <div className="fee-modal-body">
           <div className="acc-txn-tablewrap acc-stmt-wrap">
             <table className="acc-txn-table acc-stmt-table">
               <thead>
@@ -4066,8 +4066,8 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
           <div className="fee-modal-head-title">
             <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className={`fa-solid ${tm.icon}`}></i></div>
             <div>
-              <div className="fee-modal-title">{account.name}</div>
-              <div className="fee-modal-sub">Bank-style statement with running balance</div>
+                 <div className="fee-modal-title">{account.name}</div>
+              <div className="fee-modal-sub">{account.description?.trim() || 'Bank-style statement with running balance'}</div>
             </div>
           </div>
           <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
@@ -4075,7 +4075,7 @@ function FinAccountStatementModal({ account, accounts, txns, transfers, defaultI
 
         <div className="fee-modal-body">
           <div className="acc-book-summary">
-            <div className="acc-bsum b-opening"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Opening Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-flag"></i></span></div><div className="acc-bsum-val">{fmtMoney(account.opening)}</div><div className="acc-bsum-meta">{account.type === 'bank' && account.bankName ? account.bankName : `${tm.label} account`}</div></div>
+            <div className="acc-bsum b-opening"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Opening Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-flag"></i></span></div><div className="acc-bsum-val">{fmtMoney(account.opening)}</div><div className="acc-bsum-meta">{account.type === 'bank' && account.bankName ? account.bankName : (account.description?.trim() || `${tm.label} account`)}</div></div>
             <div className="acc-bsum b-balance"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Current Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-scale-balanced"></i></span></div><div className="acc-bsum-val">{fmtMoney(current)}</div><div className="acc-bsum-meta">available now</div></div>
             <div className="acc-bsum b-in"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Income Received</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-down"></i></span></div><div className="acc-bsum-val">{fmtMoney(income)}</div><div className="acc-bsum-meta">into this account</div></div>
             <div className="acc-bsum b-out"><div className="acc-bsum-top"><span className="acc-bsum-lbl">Expenses Paid</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-up"></i></span></div><div className="acc-bsum-val">{fmtMoney(expense)}</div><div className="acc-bsum-meta">from this account</div></div>
@@ -4186,7 +4186,7 @@ function buildFinStatementHTML({ account, from, to, openLabel, openDate, brought
     .meta{margin-left:auto;font-size:10px;color:#64748B;text-align:right;line-height:1.55}    table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:7px 8px;border-bottom:1px solid #e2e8f0;text-align:left}
     th{background:${thBg};color:${thFg};font-size:10.5px;text-transform:uppercase;${thBdr}} td.r,th.r{text-align:right}
     .open td{background:${openBg};font-weight:700} tfoot td{font-weight:800;border-top:2px solid ${tfBdr}}
-  </style></head><body>
+    .desc{font-size:12px;color:#334155;margin:-10px 0 14px;padding:8px 12px;border:1px solid #E2E8F0;border-radius:8px;background:${isBW ? '#fff' : '#F8FAFC'}}  </style></head><body>
   <div class="head">
     <div class="logo">${logoHtml}</div>
     <div>
@@ -4196,7 +4196,8 @@ function buildFinStatementHTML({ account, from, to, openLabel, openDate, brought
     </div>
     <div class="meta">Generated: ${new Date().toLocaleDateString('en-GB')}<br/>By: ${escHtmlAcc(school?.generatedBy || 'Accounts')}</div>
   </div>
-  <h1>${escHtmlAcc(account.name)} — Account Statement</h1>  <div class="sub">${from ? accFmtDate(from) : 'All time'} to ${to ? accFmtDate(to) : 'today'}</div>
+  <h1>${escHtmlAcc(account.name)} — Account Statement</h1>    <div class="sub">${from ? accFmtDate(from) : 'All time'} to ${to ? accFmtDate(to) : 'today'}</div>
+  ${account.description?.trim() ? `<div class="desc"><b>Description:</b> ${escHtmlAcc(account.description.trim())}</div>` : ''}
   <table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead>
   <tbody>
     <tr class="open"><td>${openDate ? accFmtDate(openDate) : '—'}</td><td>${escHtmlAcc(openLabel)}</td><td>Opening</td><td class="r">—</td><td class="r">—</td><td class="r">${broughtForward.toLocaleString('en-PK')}</td></tr>
@@ -4212,6 +4213,7 @@ function buildFinStatementCSV({ account, from, to, openLabel, openDate, broughtF
   const lines = [
     `${account.name} Statement`,
     `${from || 'All time'} to ${to || 'today'}`,
+    ...(account.description?.trim() ? [esc(`Description: ${account.description.trim()}`)] : []),
     '',
     ['Date', 'Description', 'Type', 'Debit', 'Credit', 'Balance'].join(','),
     [accFmtDate(openDate), esc(openLabel), 'Opening', '', '', broughtForward].join(','),    ...rows.map(r => [accFmtDate(r.date), esc(r.desc), r.cat === 'transfer' ? 'Transfer' : (r.kind === 'credit' ? 'Credit' : 'Debit'), r.kind === 'debit' ? r.amount : '', r.kind === 'credit' ? r.amount : '', r.balance].join(',')),
