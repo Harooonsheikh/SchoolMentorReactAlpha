@@ -1293,14 +1293,14 @@ function FeeChallansTab({ toast }) {
 
   return (
     <>
-      {/* Sub-segments: Fee Challans / Family Tree Challans */}
+      {/* Sub-segments: Individual Fee Challans / Family Tree Challans */}
       <div className="fee-seg">
         <Tooltip text="Single-student challans grouped by class">
           <button
             className={`fee-seg-btn${seg === 'challan' ? ' active' : ''}`}
             onClick={() => setSeg('challan')}
           >
-            <i className="fa-solid fa-file-invoice"></i> Fee Challans
+            <i className="fa-solid fa-file-invoice"></i> Individual Fee Challans
           </button>
         </Tooltip>
         <Tooltip text="Combine siblings into a single guardian challan">
@@ -5959,6 +5959,18 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
     setFineRecvInput(Math.max(finePaid, fineDueNet - g));
   };
   const fineDays = feeService.daysLate(challan?.dueDate, fineBaseDate);
+  /* Receiving Date badle to fine ka Pay Now NAYI fine ke hisaab se dobara bharo. Pehle due
+     date se pehle ki date chunne par Fine row chhup jaati thi magar purana 20 input me reh
+     kar Receiving Now / Remaining (−20) me gina jata tha. Billed fine date se nahi badalti. */
+  const changeDate = (v) => {
+    setDate(v);
+    if (viewOnly || fineBilled > 0) return;
+    const calc = feeService.computeFine({ dueDate: challan?.dueDate, receivingDate: v, settings });
+    const dueNet = Math.max(0, calc + prevFine - fineDiscPrev);
+    const give = (showGiveDisc ? Math.max(0, Math.min(+fineGiveInput || 0, Math.max(0, dueNet - finePaid))) : 0);
+    if (showGiveDisc && give !== (+fineGiveInput || 0)) setFineGiveInput(give);
+    setFineRecvInput(Math.max(0, finePaid) + Math.max(0, dueNet - give - Math.max(0, finePaid)));
+  };
   /* Fine ki wasooli bilkul baaki heads jaisi: input KUL wasooli rakhta hai, aur
      ab ka naya paisa = input − pehle se paid. Seed sirf ALREADY PAID hai (banti
      hui fine nahi) — modal khulte hi fine PENDING me nazar aati hai aur Receiving
@@ -6240,7 +6252,7 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
               </div>
               <div className="fee-field">
                 <span className="fee-label">Receiving Date</span>
-                <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+                <input className="fee-input" type="date" value={date} onChange={e => changeDate(e.target.value)} />
               </div>
               <div className="fee-field">
                 <span className="fee-label">Payment Method</span>
@@ -14344,8 +14356,12 @@ export function ledgerModel(recs, settings = null) {
        chala jata hai: (a) agle par Late Fine row ho → fine wahan bill (yahan skip, double nahi);
        (b) na ho → fine SIRF agle challan ke banne ki tareekh tak (freeze), aaj tak nahi. */
     const carriedBy = list[recIdx + 1] && challanCarriesPrev(list[recIdx + 1]) ? list[recIdx + 1] : null;
-    const fineInLater = !!(carriedBy && (carriedBy.detailRows || []).some(feeService.isLateFineRow));
-    if (settings?.fineEnabled && !rows.some(feeService.isLateFineRow) && !fineInLater) {
+    /* Sirf ASLI fine row (bill ya wasooli wali) reconstruction rokti hai — stale row (normalize
+       ne bill 0 kiya: receiving delete / time par wasooli) projected fine na roke. */
+    const liveFineRow = (r) => feeService.isLateFineRow(r)
+      && ((+r.challanAmount || 0) > 0 || Math.abs(+r.receivedAmount || 0) > 0);
+    const fineInLater = !!(carriedBy && (carriedBy.detailRows || []).some(liveFineRow));
+    if (settings?.fineEnabled && !rows.some(liveFineRow) && !fineInLater) {
       const collected = received > 0;
       const base = collected
         ? String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10)

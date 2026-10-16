@@ -1627,6 +1627,20 @@ export async function getMonthChallans(month, year) {
 /* Null amounts → 0 so UI math (reduce / Math.max) NaN na ho. */
 export function normalizeLedgerInstallments(challan) {
   if (!challan || typeof challan !== 'object') return challan;
+  /* BEKAAR (stale) Late Fine bill — row par na wasooli na discount, aur:
+       a) challan par koi receiving hi baqi nahi (receiving delete hui, fine ka bill reh gaya), ya
+       b) receiving DUE DATE tak ho gayi (time par — fine banti hi nahi).
+     Aisa bill 0 maano: date badalne par fine recompute ho, aur time par wasooli ke baad
+     Remaining me phantom fine (20) na reh jaye. Due ke BAAD receiving me cashier ki chhodi
+     (unpaid) fine asli hai — wo rehti hai. Server data nahi badalta. */
+  const rowsIn = Array.isArray(challan.detailRows) ? challan.detailRows : [];
+  const anyLiveRecv = rowsIn.some(r => Math.abs(Number(r.receivedAmount) || 0) > 0);
+  const dueISO = String(challan.dueDate || '').slice(0, 10);
+  const recvISO = String(challan.receivedDate || '').slice(0, 10);
+  const staleFine = (row) => isLateFineRow(row)
+    && !(Math.abs(Number(row.receivedAmount) || 0) > 0)
+    && !((Number(row.discount) || 0) > 0) && !((Number(row.recvDiscount) || 0) > 0)
+    && (!anyLiveRecv || (!!dueISO && !!recvISO && recvISO <= dueISO));
   const detailRows = Array.isArray(challan.detailRows) ? challan.detailRows.map(row => {
     const installments = Array.isArray(row.installments)
       ? row.installments.map(inst => ({
@@ -1647,9 +1661,17 @@ export function normalizeLedgerInstallments(challan) {
        API ko `discount` wapas kabhi nahi jaata (receive-installment sirf delta bhejta hai). */
     const mgrDisc = Number(row.discount) || 0;
     const recvDisc = Math.max(0, Number(row.recvDiscount) || 0);
+    /* Purane records: Late Fine row "billed 0, received 200" save hui thi (bill nahi jaata
+       tha) → har screen par −200 Advance. Fine ka bill kabhi (wasooli + discount) se kam
+       nahi ho sakta — display ke liye wahi maan lo. Data server par nahi badalta. */
+    const fineFloor = isLateFineRow(row)
+      ? Math.max(0, Number(row.receivedAmount) || 0) + (row._recvFolded ? mgrDisc : mgrDisc + recvDisc)
+      : 0;
     return {
       ...row,
-      challanAmount: Number(row.challanAmount) || 0,
+      challanAmount: isLateFineRow(row)
+        ? (staleFine(row) ? 0 : Math.max(Number(row.challanAmount) || 0, fineFloor))
+        : (Number(row.challanAmount) || 0),
       discount: row._recvFolded ? mgrDisc : mgrDisc + recvDisc,
       _mgrDisc: row._recvFolded ? row._mgrDisc : mgrDisc,
       _recvFolded: row._recvFolded || recvDisc > 0,
@@ -2263,9 +2285,10 @@ export function buildReceiveInstallmentRequest({
         discount: fineGive,
         head: LATE_FINE_HEAD,
         subHead: LATE_FINE_HEAD,
-        /* Nayi fine row: kul banti fine (bill) bhi bhejo — sirf wasooli bhejne par discount
-           ke saath baqaya minus (advance) ban sakta tha. */
-        ...(fineGive > 0 && fineBilled > 0 ? { challanAmount: Math.round(fineBilled) } : {}),
+        /* Nayi fine row: kul banti fine (bill) HAMESHA bhejo. Pehle sirf Give Discount par
+           jaati thi — bina discount server row "billed 0, received 200" banata aur refresh ke
+           baad wahi 200 Advance (−200) dikhti. Bill kabhi wasooli + discount se kam nahi. */
+        challanAmount: Math.max(Math.round(Number(fineBilled) || 0), fineAmt + fineGive),
       });
     }
   }
