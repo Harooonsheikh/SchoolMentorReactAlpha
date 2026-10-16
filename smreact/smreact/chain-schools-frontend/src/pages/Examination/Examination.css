@@ -325,7 +325,7 @@
 .exm-tl-dot { position: absolute; left: -6px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--brand-mid); border: 2px solid var(--bg-card); }
 
 /* Toast */
-.exm-toast-wrap { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 20px); left: 50%; transform: translateX(-50%); z-index: 1300; max-width: calc(100vw - 32px); }
+.exm-toast-wrap { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 20px); right: 20px; z-index: 1300; max-width: calc(100vw - 32px); }
 .exm-toast {
   display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-radius: var(--radius-md); box-shadow: var(--shadow-md);
   background: var(--text-primary); color: var(--bg-card); font: 700 13px var(--font-body);
