@@ -2,12 +2,9 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   TXN_RATE_CONFIG_INITIAL, marginOf, pkr, pkr2,
   periodFromQuick, periodFromCustom, previousPeriodOf, percentChange,
-  filterTransactions, calculateTotalTransactions, calculateTotalCollections,
-  calculateActiveSchools, calculateAvgTransactionValue,
-  calculateCustomerCharges, calculateProviderPayable, calculateSchoolMentorRevenue,
-  calculateSchoolWiseSummary, todayISO,
+  periodToRange, todayISO,
 } from './transactionData';
-import { useApi, transactionsApi, schoolPermissionsApi } from './api';
+import { useApi, transactionsApi, schoolProgressApi } from './api';
 import { TransactionReport, RevenueReport } from './OneLinkReports';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -37,19 +34,6 @@ const CUSTOM_MODES = [
 ];
 
 export default function OneLinkOverviewSection({ toast }) {
-  const load = useCallback(() => transactionsApi.listTransactions(), []);
-  const { data: allTransactions, loading } = useApi(load);
-  const transactions = useMemo(() => allTransactions || [], [allTransactions]);
-
-  /* School roster — wohi LIVE branch directory jo School Permissions screen
-     dikhati hai (GET .../SchoolPermissions/get-branches-with-permissions).
-     Pehle yahan paymentData ki PAY_SCHOOLS (demo list) thi, is liye
-     School-Wise Performance aur "out of N schools" dono ek jhoote roster par
-     chal rahe thay. Ab poora network isi aik live source se aata hai. */
-  const loadSchools = useCallback(() => schoolPermissionsApi.listPermissionBranches(), []);
-  const { data: branchData } = useApi(loadSchools);
-  const schools = useMemo(() => branchData?.schools || [], [branchData]);
-
   /* ── Global period filter (shared by both cards + reports) ── */
   const today = todayISO();
   const [quick, setQuick] = useState('thisMonth');
@@ -59,33 +43,50 @@ export default function OneLinkOverviewSection({ toast }) {
   const [customTo, setCustomTo] = useState(today);
   const [customMonth, setCustomMonth] = useState(today.slice(0, 7));
 
-  const period = quick === 'custom'
+  /* Memoized — warna har render par naya object banta aur loader loop karta. */
+  const period = useMemo(() => (quick === 'custom'
     ? periodFromCustom(customMode, { date: customDate, from: customFrom, to: customTo, month: customMonth })
-    : periodFromQuick(quick);
+    : periodFromQuick(quick)), [quick, customMode, customDate, customFrom, customTo, customMonth]);
 
-  /* ── Transaction rate configuration (Customer Charge / Provider Cost) ── */
+  /* ── Transaction rate configuration (Customer Charge / Provider Cost) —
+     Rates modal isi ko padhta/likhta hai. Report ki per-txn rates isi se
+     match karti hain, magar effectiveFrom sirf yahin se aati hai. ── */
   const [rateConfig, setRateConfig] = useState(TXN_RATE_CONFIG_INITIAL);
   useEffect(() => { transactionsApi.getRateConfig().then(setRateConfig).catch(() => {}); }, []);
 
-  /* ── Derived figures — pure calculation helpers from transactionData.js ── */
-  const rows = useMemo(() => filterTransactions(transactions, period), [transactions, period]);
-  const prevRows = useMemo(() => filterTransactions(transactions, previousPeriodOf(period)), [transactions, period]);
+  /* ── 1LINK report: server khud totals + per-school breakdown deta hai.
+     Current + previous period dono EK saath (previous sirf "vs" badges ke
+     liye). Period badalte hi dobara load hota hai. ── */
+  const loadReport = useCallback(() => {
+    const cur = periodToRange(period);
+    const prev = periodToRange(previousPeriodOf(period));
+    return Promise.all([
+      schoolProgressApi.getOnelinkReport(cur),
+      schoolProgressApi.getOnelinkReport(prev).catch(() => null),
+    ]).then(([current, previous]) => ({ current, previous }));
+  }, [period]);
+  const { data: reportData, loading } = useApi(loadReport);
 
-  const totalTxns = calculateTotalTransactions(rows);
-  const totalCollection = calculateTotalCollections(rows);
-  const activeSchools = calculateActiveSchools(rows);
-  const avgTxn = calculateAvgTransactionValue(rows);
-  const txnChange = percentChange(totalTxns, calculateTotalTransactions(prevRows));
-  const collectionChange = percentChange(totalCollection, calculateTotalCollections(prevRows));
+  const current = reportData?.current || null;
+  const totals = current?.totals || {};
+  const prevTotals = reportData?.previous?.totals || {};
 
-  const customerCharges = calculateCustomerCharges(rows, rateConfig);
-  const providerPayable = calculateProviderPayable(rows, rateConfig);
-  const smRevenue = calculateSchoolMentorRevenue(rows, rateConfig);
-  const margin = marginOf(rateConfig);
+  const totalTxns = totals.totalTransactions || 0;
+  const totalCollection = totals.totalCollection || 0;
+  const activeSchools = totals.schoolsReceivingPayments || 0;
+  const totalEnabled = totals.totalEnabledSchools || 0;
+  const avgTxn = totals.avgTransactionValue || 0;
+  const txnChange = percentChange(totalTxns, prevTotals.totalTransactions || 0);
+  const collectionChange = percentChange(totalCollection, prevTotals.totalCollection || 0);
 
-  /* Roster pass karne se network ki HAR school ka row banta hai — jis school
-     ki is period me koi transaction nahi, wo bhi 0 ke saath table me aati hai. */
-  const schoolWise = useMemo(() => calculateSchoolWiseSummary(rows, rateConfig, schools), [rows, rateConfig, schools]);
+  const customerCharges = totals.customerCharges || 0;
+  const providerPayable = totals.providerPayable || 0;
+  const smRevenue = totals.schoolMentorRevenue || 0;
+  /* Margin / txn: report deta hai to wahi, warna saved rate se nikaal lo. */
+  const margin = totals.marginPerTxn || marginOf(rateConfig);
+
+  const schoolWise = useMemo(() => current?.schoolWise || [], [current]);
+  const transactions = useMemo(() => current?.transactions || [], [current]);
 
   /* ── Modals / drill-down state ── */
   const [showBreakdown, setShowBreakdown] = useState(false);
@@ -95,8 +96,8 @@ export default function OneLinkOverviewSection({ toast }) {
   const [drillSchool, setDrillSchool] = useState(null);
 
   const drillRows = useMemo(
-    () => (drillSchool ? rows.filter((t) => t.schoolId === drillSchool.schoolId) : []),
-    [rows, drillSchool],
+    () => (drillSchool ? transactions.filter((t) => t.schoolId === drillSchool.schoolId) : []),
+    [transactions, drillSchool],
   );
 
   return (
@@ -164,7 +165,7 @@ export default function OneLinkOverviewSection({ toast }) {
                 <div className="rpt-stat-lbl">Total Collection</div>
                 <Comparison val={collectionChange} />
               </div>
-              <ClickableStat label="Schools Receiving Payments" val={`${activeSchools} / ${schools.length}`} onClick={() => setShowBreakdown(true)} tone="s-info" />
+              <ClickableStat label="Schools Receiving Payments" val={`${activeSchools} / ${totalEnabled}`} onClick={() => setShowBreakdown(true)} tone="s-info" />
               <div className="rpt-stat s-warn">
                 <div className="rpt-stat-val">{pkr2(avgTxn)}</div>
                 <div className="rpt-stat-lbl">Avg. Transaction Value</div>
@@ -172,7 +173,7 @@ export default function OneLinkOverviewSection({ toast }) {
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>
               <i className="fa-solid fa-school" style={{ marginRight: 5, color: 'var(--brand)' }} />
-              {activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {schools.length} schools in the network.
+              {activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {totalEnabled} schools in the network.
             </div>
           </div>
         </div>
@@ -235,10 +236,15 @@ export default function OneLinkOverviewSection({ toast }) {
           rateConfig={rateConfig}
           onClose={() => setShowRateConfig(false)}
           onSave={async (payload) => {
-            const saved = await transactionsApi.updateRateConfig(payload);
-            setRateConfig(saved);
-            setShowRateConfig(false);
-            toast?.('Transaction rate configuration updated', 'success');
+            try {
+              const saved = await transactionsApi.updateRateConfig(payload);
+              setRateConfig(saved);
+              setShowRateConfig(false);
+              toast?.('Transaction rate configuration updated', 'success');
+            } catch (err) {
+              toast?.(err?.message || 'Could not save rate configuration', 'error');
+              throw err;   // modal apna "Save Rates" button dobara enable kar le
+            }
           }}
         />
       )}
@@ -247,7 +253,7 @@ export default function OneLinkOverviewSection({ toast }) {
         <Modal title="1LINK / 1Bill Payment Report" sub={period.label} icon="fa-file-invoice" large bodyStyle={{ padding: 0, background: '#F0F4FF' }}
           onClose={() => setShowTxnReport(false)}
           footer={<><button className="btn-secondary" onClick={() => setShowTxnReport(false)}>Close</button><button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button></>}>
-          <div style={{ padding: 20 }}><TransactionReport period={period} rows={rows} schoolWise={schoolWise} /></div>
+          <div style={{ padding: 20 }}><TransactionReport period={period} rows={transactions} schoolWise={schoolWise} /></div>
         </Modal>
       )}
 
@@ -259,7 +265,7 @@ export default function OneLinkOverviewSection({ toast }) {
         </Modal>
       )}
 
-      {loading && rows.length === 0 && (
+      {loading && totalTxns === 0 && (
         <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: -6, marginBottom: 14 }}><i className="fa-solid fa-circle-notch fa-spin" style={{ marginRight: 6 }} />Loading 1LINK transactions…</div>
       )}
     </>
@@ -447,14 +453,33 @@ function SchoolTransactionsTable({ rows }) {
 
 function RateConfigModal({ rateConfig, onClose, onSave }) {
   const [f, setF] = useState({ ...rateConfig });
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const margin = (parseFloat(f.customerCharge) || 0) - (parseFloat(f.providerCost) || 0);
 
+  /* Save par button foran disable — double-submit na ho; save kamyab hone par
+     parent modal band kar deta hai (ye component unmount), nakaam hone par
+     dobara enable. */
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSave({ ...f, customerCharge: parseFloat(f.customerCharge) || 0, providerCost: parseFloat(f.providerCost) || 0 });
+    } catch {
+      setSaving(false);
+    }
+  };
+
+  /* Save chalte waqt modal band na ho (backdrop/X/Cancel sab guarded). */
+  const guardedClose = () => { if (!saving) onClose(); };
+
   return (
-    <Modal title="Transaction Rate Configuration" sub="Applies to future revenue calculations" icon="fa-gear" onClose={onClose}
+    <Modal title="Transaction Rate Configuration" sub="Applies to future revenue calculations" icon="fa-gear" onClose={guardedClose} closeDisabled={saving}
       footer={<>
-        <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-        <button className="btn-primary" onClick={() => onSave({ ...f, customerCharge: parseFloat(f.customerCharge) || 0, providerCost: parseFloat(f.providerCost) || 0 })}><i className="fa-solid fa-floppy-disk" /> Save Rates</button>
+        <button className="btn-secondary" onClick={guardedClose} disabled={saving} style={saving ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-xmark" /> Cancel</button>
+        <button className="btn-primary" onClick={handleSave} disabled={saving} style={saving ? { opacity: 0.7, cursor: 'not-allowed' } : undefined}>
+          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Rates'}
+        </button>
       </>}>
       <div className="pay-info-box">
         <i className="fa-solid fa-circle-info" />
@@ -489,16 +514,16 @@ function RateConfigModal({ rateConfig, onClose, onSave }) {
 
 /* Dashboard bhi isi modal me Bugs / Improvements report kholta hai, is liye
    export hai — har report ek hi chrome me khule. */
-export function Modal({ title, sub, icon, large, onClose, footer, children, bodyStyle }) {
+export function Modal({ title, sub, icon, large, onClose, footer, children, bodyStyle, closeDisabled }) {
   return (
-    <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !closeDisabled) onClose(); }}>
       <div className={`modal${large ? ' lg' : ''}`}>
         <div className="modal-head">
           <div>
             <div className="modal-title"><i className={`fa-solid ${icon}`} /> {title}</div>
             {sub && <div className="modal-sub">{sub}</div>}
           </div>
-          <button className="modal-close" onClick={onClose} data-tip="Close" data-tip-pos="left"><i className="fa-solid fa-xmark" /></button>
+          <button className="modal-close" onClick={onClose} disabled={closeDisabled} style={closeDisabled ? { opacity: 0.45, cursor: 'not-allowed' } : undefined} data-tip="Close" data-tip-pos="left"><i className="fa-solid fa-xmark" /></button>
         </div>
         <div className="modal-body" style={bodyStyle}>{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}

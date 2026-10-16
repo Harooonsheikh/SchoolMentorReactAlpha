@@ -10,7 +10,8 @@
    ledger to the client). */
 import { resolve, request } from '../client';
 import EP from '../endpoints';
-import { INITIAL_TRANSACTIONS, TXN_RATE_CONFIG_INITIAL } from '../../transactionData';
+import { INITIAL_TRANSACTIONS } from '../../transactionData';
+import { getTransactionRateConfig, saveTransactionRateConfig } from './schoolProgress';
 
 /* NOTE: dono mock factories ab KHALI hain — INITIAL_TRANSACTIONS = [] aur
    rates 0/0. Pehle yahan ek generated demo ledger aata tha jis se dashboard
@@ -19,11 +20,11 @@ import { INITIAL_TRANSACTIONS, TXN_RATE_CONFIG_INITIAL } from '../../transaction
 export const listTransactions = (filters) =>
   resolve(() => INITIAL_TRANSACTIONS, () => request(EP.transactions.list(), { query: filters }));
 
-export const getRateConfig = () =>
-  resolve(() => TXN_RATE_CONFIG_INITIAL, () => request(EP.transactions.rateConfig()));
+/* Rate config ab LIVE SchoolMentorSuperAdminAPI par hai — AHM_School_Progress
+   controller ke get/save routes (dekho schoolProgress service). Baqi Schools
+   Progress screen ki tarah ye hamesha asli API par jata hai: GET se saved rate
+   mapped UI shape me aati hai, aur save ke baad wahi (naya id samet) wapas
+   milti hai, taake modal dobara khulne par fields us data se bhari hui aayein. */
+export const getRateConfig = () => getTransactionRateConfig();
 
-/* Mock mode just echoes the payload back (the owning component keeps the
-   authoritative copy in state, same pattern SchoolPayment.jsx uses for
-   payStore after saveSetup()) — live mode persists it via the API. */
-export const updateRateConfig = (payload) =>
-  resolve(() => payload, () => request(EP.transactions.rateConfig(), { method: 'PUT', body: payload }));
+export const updateRateConfig = (payload) => saveTransactionRateConfig(payload);

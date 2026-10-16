@@ -81,6 +81,22 @@ export function periodFromCustom(customMode, { date, from, to, month }) {
   return { mode: 'range', from, to, label: `${fmtDateLong(from)} to ${fmtDateLong(to)}` };
 }
 
+/* period object → API ke fromDate/toDate (ISO) range. Din ki shuruaat se
+   aakhir tak (00:00:00 → 23:59:59), taake us din/mahine/range ki saari
+   transactions aa jayein. get_onelink_Report isi range par filter karta hai. */
+export function periodToRange(period) {
+  const startOf = (d) => `${d}T00:00:00`;
+  const endOf = (d) => `${d}T23:59:59`;
+  if (!period) { const t = todayISO(); return { fromDate: startOf(t), toDate: endOf(t) }; }
+  if (period.mode === 'date') return { fromDate: startOf(period.date), toDate: endOf(period.date) };
+  if (period.mode === 'month') {
+    const [y, m] = period.month.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();           // m = 1-based → agle mahine ka din 0 = is mahine ka aakhri
+    return { fromDate: startOf(`${period.month}-01`), toDate: endOf(`${period.month}-${String(lastDay).padStart(2, '0')}`) };
+  }
+  return { fromDate: startOf(period.from), toDate: endOf(period.to) };
+}
+
 export function matchesPeriod(t, period) {
   if (!t.date || !period) return false;
   if (period.mode === 'date') return t.date === period.date;

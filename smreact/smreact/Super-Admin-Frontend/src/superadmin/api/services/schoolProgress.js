@@ -851,8 +851,193 @@ export async function getUserTimeSpend({ branchId, date, type = 'erp' } = {}) {
   return { today: rowsToUsage(todayRows), month: reportToUsage(report) };
 }
 
+/* ═══════════════════ TRANSACTION RATE CONFIG ═══════════════════
+   Dashboard → "Transaction Revenue" card → "Rates" button.
+   Ek hi active rate record, AHM_School_Progress controller par:
+     GET  /api/AHM_School_Progress/get   → { success, data: {…} | null }
+     POST /api/AHM_School_Progress/save  → wahi row (id 0 = naya, warna update)
+
+   API fields (PascalCase/camelCase jaisa swagger deta hai):
+     customerTransactionCharge, costPerTransaction, effectiveFrom,
+     schoolMentorMargin (= customerTransactionCharge − costPerTransaction),
+     createdBy, createAt, updatedBy, updatedAt, isActive.
+
+   UI (RateConfigModal / OneLinkSection) in naamon par chalta hai:
+     customerCharge, providerCost, effectiveFrom (YYYY-MM-DD).
+   Mapping dono taraf yahin hoti hai, taake screen jaisi hai waisi chale. */
+
+/* API DateTime ("2026-10-15T00:00:00") → <input type=date> ka YYYY-MM-DD. */
+const dateOnly = (v) => String(v || '').slice(0, 10);
+/* YYYY-MM-DD → ISO jo .NET DateTime parse kar le (din ki shuruaat). */
+const toIsoDate = (v) => {
+  const d = dateOnly(v);
+  return d ? `${d}T00:00:00` : null;
+};
+
+/** Ek API rate row → wohi shape jo RateConfigModal padhta hai. */
+export function txnRateToUi(d) {
+  const customerCharge = Number(d?.customerTransactionCharge ?? 0) || 0;
+  const providerCost   = Number(d?.costPerTransaction ?? 0) || 0;
+  return {
+    id:            Number(d?.id ?? d?.ID) || 0,
+    customerCharge,
+    providerCost,
+    effectiveFrom: dateOnly(d?.effectiveFrom),
+    /* API ki margin lo; na ho to khud nikaal lo (UI bhi yahi hisaab karti hai). */
+    schoolMentorMargin: Number(d?.schoolMentorMargin ?? (customerCharge - providerCost)),
+    createdBy:     Number(d?.createdBy ?? 0) || 0,
+    isActive:      d?.isActive !== false,
+    raw: d,
+  };
+}
+
+/** GET — abhi mojood rate config (record na ho to sab 0/khali). */
+export async function getTransactionRateConfig() {
+  const url = `${SA_ADMIN_API_BASE}${EP.schoolProgress.txnRateGet()}`;
+  const json = await getJson(url, 'transaction rate config');
+  const data = json?.data ?? json?.Data ?? null;
+  return txnRateToUi(data || {});
+}
+
+/**
+ * POST /save — rate config persist. id 0 ho to naya record, warna update.
+ * @param {{id?, customerCharge, providerCost, effectiveFrom, createdBy?}} ui
+ * @returns {Promise<object>} dobara mapped UI shape (naya id samet)
+ */
+export async function saveTransactionRateConfig(ui = {}) {
+  const token = getSuperAdminToken();
+  const me = currentUserId();
+  const id = Number(ui.id) || 0;
+  const customerCharge = Number(ui.customerCharge) || 0;
+  const providerCost   = Number(ui.providerCost) || 0;
+  const nowIso = new Date().toISOString();
+  const body = {
+    id,
+    customerTransactionCharge: customerCharge,
+    costPerTransaction:        providerCost,
+    effectiveFrom:             toIsoDate(ui.effectiveFrom),
+    schoolMentorMargin:        customerCharge - providerCost,
+    /* naye record par createdBy = abhi wala user; update par purana rakho. */
+    createdBy:  id > 0 ? (Number(ui.createdBy) || me) : me,
+    createAt:   nowIso,
+    updatedBy:  id > 0 ? me : 0,
+    updatedAt:  nowIso,
+    isActive:   true,
+  };
+  let res;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.txnRateSave()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || 'Could not save rate config', res.status);
+  }
+  /* /save sirf { id } wapas karta hai (poori row NAHI) — "Rate updated
+     successfully." Is liye jo bheja wahi UI shape banata hai, bas naya id
+     jawab se le lo. (Thin jawab ko map karne par sab 0 ho kar card/modal
+     khali ho jate the.) */
+  const saved = json?.data ?? json?.Data ?? null;
+  const savedId = Number(saved?.id ?? saved?.ID) || id;
+  return txnRateToUi({ ...body, id: savedId });
+}
+
+/* ═══════════════════ 1LINK OVERVIEW REPORT ═══════════════════
+   GET /api/AHM_School_Progress/get_onelink_Report?fromDate=&toDate=&period=
+   Server khud totals + per-school breakdown deta hai, is liye client-side
+   koi hisaab nahi — seedha map kar ke cards/table/reports ko de dete hain. */
+
+/** Ek API branch row → wohi shape jo School-Wise table / reports padhte hain. */
+export function onelinkBranchToRow(b) {
+  const txns = Number(b?.totalTransactions) || 0;
+  const id = Number(b?.schoolID ?? b?.schoolId) || 0;
+  return {
+    schoolId:        id,
+    schoolName:      String(b?.schoolName || 'Unnamed Branch').trim(),
+    schoolCode:      String(b?.schoolCode ?? id),
+    branch:          String(b?.branch || b?.campus || ''),
+    transactions:    txns,
+    collection:      Number(b?.totalCollection) || 0,
+    customerCharges: Number(b?.customerCharges) || 0,
+    providerPayable: Number(b?.providerPayable) || 0,
+    smRevenue:       Number(b?.schoolMentorRevenue) || 0,
+  };
+}
+
+/* Ek transaction row → drill-down modal / detailed report ka shape. API abhi
+   khaali list deti hai; populate hone par ye best-effort mapping chalti hai
+   (field naam jo mil jaye wahi, warna mehfooz fallback). */
+export function onelinkTxnToRow(t, i = 0) {
+  return {
+    id:          t?.id ?? t?.transactionId ?? t?.txnId ?? `txn-${i}`,
+    schoolId:    Number(t?.schoolID ?? t?.schoolId) || 0,
+    schoolName:  String(t?.schoolName ?? ''),
+    date:        String(t?.date ?? t?.transactionDate ?? '').slice(0, 10),
+    time:        String(t?.time ?? ''),
+    txnId:       String(t?.txnId ?? t?.transactionId ?? t?.id ?? ''),
+    oneLinkRef:  String(t?.oneLinkRef ?? t?.reference ?? t?.ref ?? ''),
+    studentName: String(t?.studentName ?? ''),
+    admissionNo: String(t?.admissionNo ?? ''),
+    className:   String(t?.className ?? t?.class ?? ''),
+    feeType:     String(t?.feeType ?? ''),
+    invoiceNo:   String(t?.invoiceNo ?? ''),
+    amount:      Number(t?.amount ?? t?.collection ?? 0) || 0,
+    channel:     String(t?.channel ?? '1LINK'),
+    status:      String(t?.status ?? 'Successful'),
+    raw: t,
+  };
+}
+
+/** Poora report payload → { totals, schoolWise, transactions }. */
+export function onelinkReportToUi(data) {
+  const t = data?.totals || {};
+  const branches = Array.isArray(data?.branches) ? data.branches : [];
+  const txns = Array.isArray(data?.transactions) ? data.transactions : [];
+  return {
+    totals: {
+      totalTransactions:        Number(t.totalTransactions) || 0,
+      totalCollection:          Number(t.totalCollection) || 0,
+      schoolsReceivingPayments: Number(t.schoolsReceivingPayments) || 0,
+      totalEnabledSchools:      Number(t.totalEnabledSchools) || 0,
+      avgTransactionValue:      Number(t.avgTransactionValue) || 0,
+      customerCharges:          Number(t.customerCharges) || 0,
+      providerPayable:          Number(t.providerPayable) || 0,
+      schoolMentorRevenue:      Number(t.schoolMentorRevenue) || 0,
+      customerChargePerTxn:     Number(t.customerChargePerTxn) || 0,
+      providerCostPerTxn:       Number(t.providerCostPerTxn) || 0,
+      marginPerTxn:             Number(t.marginPerTxn) || 0,
+    },
+    schoolWise:   branches.map(onelinkBranchToRow).filter((r) => r.schoolId),
+    transactions: txns.map(onelinkTxnToRow),
+    raw: data,
+  };
+}
+
+/**
+ * 1LINK Overview — ek period ka poora report (totals + branches + txns).
+ * @param {{ fromDate?:string, toDate?:string, period?:string }} params
+ */
+export async function getOnelinkReport({ fromDate, toDate, period } = {}) {
+  const url = `${SA_ADMIN_API_BASE}${EP.schoolProgress.onelinkReport()}`
+    + buildQuery({ fromDate, toDate, period: period || '' });
+  const json = await getJson(url, '1LINK report');
+  const data = json?.data ?? json?.Data ?? null;
+  return onelinkReportToUi(data || {});
+}
+
 const schoolProgressService = {
   listSchoolProgress, listBranchReport, branchReportToRow,
+  getTransactionRateConfig, saveTransactionRateConfig, txnRateToUi,
+  getOnelinkReport, onelinkReportToUi, onelinkBranchToRow, onelinkTxnToRow,
   saveCardAction, listCardActions, deleteCardAction, cardRowToUi,
   saveTrainingSession, listTrainingSessions, deleteTrainingSession, trainingRowToUi,
   saveEnquiry, listEnquiries, setEnquirySolved, deleteEnquiry, enquiryRowToUi,
