@@ -56,9 +56,9 @@ export {
 };
 
 const P_TEMPLATES = [
-  { id: 'monthly', name: 'Preschool Monthly Assessment', desc: 'One month\'s achievement snapshot per learning area.', icon: 'fa-calendar-day',  accent: '#1E40AF' },
-  { id: 'term',    name: 'Preschool Term Report',         desc: 'Achievement summary across the whole term.',          icon: 'fa-calendar-week', accent: '#7C3AED' },
-  { id: 'annual',  name: 'Preschool Annual Report',       desc: 'Full-year achievement & development overview.',       icon: 'fa-calendar',      accent: '#D97706' },
+  { id: 'monthly', name: 'Preschool Monthly Assessment', desc: 'One month\'s achievement snapshot per learning area.', icon: 'fa-calendar-day', accent: '#1E40AF' },
+  { id: 'term', name: 'Preschool Term Report', desc: 'Achievement summary across the whole term.', icon: 'fa-calendar-week', accent: '#7C3AED' },
+  { id: 'annual', name: 'Preschool Annual Report', desc: 'Full-year achievement & development overview.', icon: 'fa-calendar', accent: '#D97706' },
 ];
 
 /* ─── Sample/fallback data for template previews (no real assessment
@@ -115,9 +115,9 @@ function pProgressForStudent(ad, learningAreasCount, sloTotal) {
    an editable, auto-suggested summary based on the child's most frequent
    achievement level across everything rated so far. ────────────────── */
 const P_FINAL_REMARKS_SETUP = {
-  E:  'Outstanding progress across most learning areas. Keep encouraging this enthusiasm at home.',
-  M:  'Consistently meeting expectations. Continue building on this steady progress.',
-  A:  'Approaching expectations — with a little more practice, will catch up quickly.',
+  E: 'Outstanding progress across most learning areas. Keep encouraging this enthusiasm at home.',
+  M: 'Consistently meeting expectations. Continue building on this steady progress.',
+  A: 'Approaching expectations — with a little more practice, will catch up quickly.',
   NY: 'Needs additional support and practice. Please work closely with the teacher.',
 };
 function pGetFinalRemarks(gradingScale, ad) {
@@ -173,7 +173,7 @@ function pParseExamDate(dmy) {
 function pTemplateForExam(examName) {
   const n = (examName || '').toLowerCase();
   if (n.includes('annual')) return 'annual';
-  if (n.includes('term'))   return 'term';
+  if (n.includes('term')) return 'term';
   return 'monthly';
 }
 /* Finds the most recent EARLIER Preschool-toggled assessment for the
@@ -381,11 +381,18 @@ function PreschoolTemplateHero({ id, large = false }) {
 function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, showIcons }) {
   const [draft, setDraft] = useState(items || []);
   const [newLabel, setNewLabel] = useState('');
-  useEffect(() => { setDraft(items || []); }, [items]);
+  const [removedDbIds, setRemovedDbIds] = useState([]);
+  useEffect(() => { setDraft(items || []); setRemovedDbIds([]); }, [items]);
 
   const rename = (id, name) => setDraft(d => d.map(x => (x.id === id ? { ...x, name } : x)));
   const relabel = (id, label) => setDraft(d => d.map(x => (x.id === id ? { ...x, label } : x)));
-  const remove = id => setDraft(d => d.filter(x => x.id !== id));
+  const remove = id => {
+    setDraft(d => {
+      const item = d.find(x => x.id === id);
+      if (item?.dbId) setRemovedDbIds(r => [...r, item.dbId]);
+      return d.filter(x => x.id !== id);
+    });
+  };
   const add = () => {
     const v = newLabel.trim();
     if (!v) { toast('Enter a name first', 'error'); return; }
@@ -394,11 +401,11 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
     setNewLabel('');
   };
   const save = async () => {
-    const saved = await service(draft);
+    const saved = await service(draft, removedDbIds);
     onSaved(saved);
+    setRemovedDbIds([]);
     toast('Saved successfully!', 'success');
   };
-
   return (
     <div className="rs-card">
       <div className="rs-card-head">
@@ -531,14 +538,25 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
   const levelSlo = pSlo[activeLevel] || {};
   const [draft, setDraft] = useState(levelSlo[activeId] || []);
   const [newText, setNewText] = useState('');
-  useEffect(() => { setDraft(pSlo[activeLevel]?.[activeId] || []); setNewText(''); }, [activeLevel, activeId, pSlo]);
+  const [removedDbIds, setRemovedDbIds] = useState([]);
+  useEffect(() => {
+    setDraft(pSlo[activeLevel]?.[activeId] || []);
+    setNewText('');
+    setRemovedDbIds([]);
+  }, [activeLevel, activeId, pSlo]);
 
   const activeLevelIdx = pLevels.findIndex(l => l.id === activeLevel);
   const prevLevel = activeLevelIdx > 0 ? pLevels[activeLevelIdx - 1] : null;
   const activeLevelObj = pLevels[activeLevelIdx];
 
   const change = (id, text) => setDraft(d => d.map(s => (s.id === id ? { ...s, text } : s)));
-  const remove = id => setDraft(d => d.filter(s => s.id !== id));
+  const remove = id => {
+    setDraft(d => {
+      const item = d.find(s => s.id === id);
+      if (item?.dbId) setRemovedDbIds(r => [...r, item.dbId]);
+      return d.filter(s => s.id !== id);
+    });
+  };
   const add = () => {
     const v = newText.trim();
     if (!v) { toast('Enter an assessment statement first', 'error'); return; }
@@ -546,8 +564,9 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
     setNewText('');
   };
   const save = async () => {
-    await preschoolService.saveSloStatements(activeLevel, activeId, draft);
+    await preschoolService.saveSloStatements(activeLevel, activeId, draft, removedDbIds);
     onSaved({ ...pSlo, [activeLevel]: { ...levelSlo, [activeId]: draft } });
+    setRemovedDbIds([]);
     toast('Assessment points saved!', 'success');
   };
   const copyFromPrevious = async () => {
@@ -619,6 +638,7 @@ function PreschoolResultSetup({
   pActiveLA, setPActiveLA,
   pPsdFields, setPPsdFields,
   pRco, setPRco,
+  pReportType, setPReportType,   // ← NAYI LINE
   rsSigs,
   setPPreviewId,
   pHelpOpen, setPHelpOpen,
@@ -685,13 +705,33 @@ function PreschoolResultSetup({
         <>
           <div className="rct-grid">
             {P_TEMPLATES.map(t => (
-              <div key={t.id} className="rct-card" style={{ '--rct-accent': t.accent, '--rct-accent-light': `${t.accent}22`, '--rct-accent-bg': `${t.accent}14` }}>
+              <div
+                key={t.id}
+                className="rct-card"
+                style={{
+                  '--rct-accent': t.accent, '--rct-accent-light': `${t.accent}22`, '--rct-accent-bg': `${t.accent}14`,
+                  cursor: 'pointer',
+                  border: pReportType === t.id ? `2px solid ${t.accent}` : '2px solid transparent',
+                  borderRadius: 12,
+                }}
+                onClick={() => setPReportType(t.id)}
+              >
                 <div className="rct-preview"><PreschoolTemplateHero id={t.id} /></div>
                 <div className="rct-body">
-                  <div className="rct-title-row"><div className="rct-title">{t.name}</div></div>
+                  <div className="rct-title-row">
+                    <div className="rct-title">{t.name}</div>
+                    {pReportType === t.id && (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: t.accent, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <i className="fa-solid fa-circle-check"></i> Selected
+                      </span>
+                    )}
+                  </div>
                   <div className="rct-desc">{t.desc}</div>
                   <Tooltip text="Preview this Preschool report">
-                    <button type="button" className="rct-preview-btn" onClick={() => setPPreviewId(t.id)}>
+                    <button
+                      type="button" className="rct-preview-btn"
+                      onClick={e => { e.stopPropagation(); setPPreviewId(t.id); }}
+                    >
                       <i className="fa-solid fa-eye"></i> Preview
                     </button>
                   </Tooltip>
@@ -733,7 +773,7 @@ function PreschoolResultSetup({
                   <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
                   Applies to Monthly, Term &amp; Annual Preschool report cards.
                 </div>
-                <button className="rco-save-btn" onClick={async () => { await preschoolService.savePRco(pRco); toast('Preferences saved!', 'success'); }}>
+                <button className="rco-save-btn" onClick={async () => { await preschoolService.savePRco(pRco, pReportType); toast('Preferences saved!', 'success'); }}>
                   <i className="fa-solid fa-floppy-disk"></i> Save Preferences
                 </button>
               </div>
@@ -776,10 +816,73 @@ function PreschoolAssessmentModal({ assessment, cls, student, existing, pLearnin
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRowId } }
+  const [sloSaving, setSloSaving] = useState({});  // { 'laId_sloId': true } jab tak save ho raha ho
+
+  // Modal khulte hi is student ki asal (real API) SLO ratings load karo —
+  // taake pehle se save hui selection buttons par highlighted dikhe.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const map = await preschoolService.getStudentSloAssessments({
+          gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
+        });
+        if (cancelled) return;
+        setAchievements(prev => {
+          const next = { ...prev };
+          Object.keys(map).forEach(laId => {
+            next[laId] = { ...(next[laId] || {}) };
+            Object.keys(map[laId]).forEach(sloId => {
+              if (next[laId][sloId] == null) next[laId][sloId] = map[laId][sloId].code;
+            });
+          });
+          return next;
+        });
+        setSloDbIds(prev => {
+          const next = { ...prev };
+          Object.keys(map).forEach(laId => {
+            next[laId] = { ...(next[laId] || {}) };
+            Object.keys(map[laId]).forEach(sloId => { next[laId][sloId] = map[laId][sloId].id; });
+          });
+          return next;
+        });
+      } catch (e) {
+        console.error('Could not load existing SLO assessments:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const activeTab = areaTabs[tabIdx];
-  const setSlo = (laId, sloId, code) => setAchievements(a => ({ ...a, [laId]: { ...(a[laId] || {}), [sloId]: code } }));
   const setPsdCode = (fieldId, code) => setPsd(p => ({ ...p, [fieldId]: code }));
+   const setSlo = (laId, sloId, code) => {
+    setAchievements(a => ({ ...a, [laId]: { ...(a[laId] || {}), [sloId]: code } }));
+
+    // Agar Learning Area / SLO abhi tak backend par save hi nahi hua (local-only
+    // id jaisa "la_171234"), to real DB id nahi milegi — asli assessment API
+    // call skip kar do (warna galat subjectId/sloId=0 save ho jayega).
+    const subIdNum = Number(laId);
+    const sloIdNum = Number(sloId);
+    if (Number.isNaN(subIdNum) || Number.isNaN(sloIdNum)) return;
+
+    const rowId = sloDbIds[laId]?.[sloId] || 0;
+    const key = `${laId}_${sloId}`;
+    setSloSaving(s => ({ ...s, [key]: true }));
+    preschoolService.saveSloAssessment({
+      id: rowId,
+      gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
+      preSubjectId: subIdNum, preSLOId: sloIdNum, code,
+    }).then(newId => {
+      if (!rowId && newId) setSloDbIds(prev => ({ ...prev, [laId]: { ...(prev[laId] || {}), [sloId]: newId } }));
+    }).catch(e => {
+      console.error('Could not save SLO assessment:', e);
+      toast('Could not save this rating — please try again', 'error');
+    }).finally(() => {
+      setSloSaving(s => { const n = { ...s }; delete n[key]; return n; });
+    });
+  };
 
   const buildPayload = () => ({ achievements, psd, attendance, teacherRemarks, finalRemarks, ptm, promotion });
   /* shouldClose lets the footer tell onSave whether this was "Save & Next"
@@ -948,17 +1051,24 @@ function PreschoolAssessmentModal({ assessment, cls, student, existing, pLearnin
                 </div>
               ))}
             </div>
-          ) : (
+          ):(
             <div className="pms-slo-list">
               {(pSlo[activeTab.id] || []).map(s => (
                 <div key={s.id} className="pms-slo-row">
                   <span className="pms-slo-text">{s.text}</span>
                   <div className="pms-grade-picker">
                     {pGradingScale.map(g => (
-                      <button key={g.code} type="button" className={`pms-grade-btn${achievements[activeTab.id]?.[s.id] === g.code ? ' active' : ''}`} style={{ '--g-color': g.color }} onClick={() => setSlo(activeTab.id, s.id, g.code)}>
-                        {g.code}
-                      </button>
-                    ))}
+  <button
+    key={g.code}
+    type="button"
+    className={`pms-grade-btn${achievements[activeTab.id]?.[s.id] === g.code ? ' active' : ''}`}
+    style={{ '--g-color': g.color }}
+    disabled={!!sloSaving[`${activeTab.id}_${s.id}`]}
+    onClick={() => setSlo(activeTab.id, s.id, g.code)}
+  >
+    {g.code}
+  </button>
+))}
                   </div>
                 </div>
               ))}
@@ -1015,10 +1125,10 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
   const overallInfo = overall.code ? pGradeInfo(gradingScale, overall.code) : null;
   const delta = previous ? overall.pct - previous.pct : null;
 
-  const accentBg  = `${t.accent}0D`;
+  const accentBg = `${t.accent}0D`;
   const accentBdr = `${t.accent}33`;
-  const textMut   = '#64748B';
-  const rowAlt    = '#F8FAFF';
+  const textMut = '#64748B';
+  const rowAlt = '#F8FAFF';
 
   // Document-style section heading — accent bar + icon + uppercase label,
   // matching the shared report vocabulary used across the ERP's other

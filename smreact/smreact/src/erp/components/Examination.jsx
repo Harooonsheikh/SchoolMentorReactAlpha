@@ -87,11 +87,11 @@ const ALL_SUBJECTS = [
 /* ── Syllabus seed (HTML #syllabusData) ── */
 /* Syllabus poora API se aata hai — koi seed nahi. */
 function sylClassStatus(data) {
-  if (!data || !data.length) return { label:'Not Added', cls:'notadded', icon:'fa-circle-xmark' };
-  const withContent = data.filter(s => s.content && s.content.replace(/<[^>]+>/g,'').trim().length > 0);
-  if (withContent.length === 0)            return { label:'Not Added',       cls:'notadded', icon:'fa-circle-xmark' };
-  if (withContent.length === data.length)  return { label:'Added',           cls:'added',    icon:'fa-circle-check' };
-  return                                          { label:'Partially Added', cls:'partial',  icon:'fa-circle-half-stroke' };
+  if (!data || !data.length) return { label: 'Not Added', cls: 'notadded', icon: 'fa-circle-xmark' };
+  const withContent = data.filter(s => s.content && s.content.replace(/<[^>]+>/g, '').trim().length > 0);
+  if (withContent.length === 0) return { label: 'Not Added', cls: 'notadded', icon: 'fa-circle-xmark' };
+  if (withContent.length === data.length) return { label: 'Added', cls: 'added', icon: 'fa-circle-check' };
+  return { label: 'Partially Added', cls: 'partial', icon: 'fa-circle-half-stroke' };
 }
 
 /* Date sheets poori API se aati hain — koi seed nahi. */
@@ -99,16 +99,16 @@ function sylClassStatus(data) {
 /* ── Helpers ── */
 function parseDDMMYYYY(s) {
   if (!s) return null;
-  
+
   // If it's already a Date object
   if (s instanceof Date) return s;
-  
+
   // Handle ISO format (YYYY-MM-DD)
   if (s.includes('-')) {
     const [y, m, d] = s.split('T')[0].split('-');
     return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
   }
-  
+
   // Handle DD/MM/YYYY format
   const [d, m, y] = s.split('/');
   return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
@@ -128,7 +128,7 @@ function ddmmyyyyToInput(s) {
 function getExamStatus(ex) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const start = parseDDMMYYYY(ex.from);
-  const end   = parseDDMMYYYY(ex.to);
+  const end = parseDDMMYYYY(ex.to);
   if (!start) return { label: 'Upcoming', cls: 'upcoming', icon: 'fa-clock' };
   if (today < start) return { label: 'Upcoming', cls: 'upcoming', icon: 'fa-clock' };
   if (!end || today <= end) return { label: 'Current', cls: 'current', icon: 'fa-circle-dot' };
@@ -136,54 +136,54 @@ function getExamStatus(ex) {
 }
 function calcDuration(from, to) {
   if (!from || !to) return '—';
-  
+
   // Parse dates that could be in either ISO format or DD/MM/YYYY format
   const parseDate = (dateStr) => {
     // If it's already a Date object
     if (dateStr instanceof Date) return dateStr;
-    
+
     // Try ISO format (YYYY-MM-DD)
     if (dateStr.includes('-')) {
       const [y, m, d] = dateStr.split('T')[0].split('-');
       return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
     }
-    
+
     // Try DD/MM/YYYY format
     if (dateStr.includes('/')) {
       const [d, m, y] = dateStr.split('/');
       return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
     }
-    
+
     // Try creating Date directly as fallback
     const date = new Date(dateStr);
     return isNaN(date.getTime()) ? null : date;
   };
-  
+
   const fromDate = parseDate(from);
   const toDate = parseDate(to);
-  
+
   if (!fromDate || !toDate) return '—';
-  
+
   const diff = Math.round((toDate - fromDate) / 86400000);
   const days = diff + 1;
-  
+
   return days + ' Day' + (days !== 1 ? 's' : '');
 }
 /* Grade / condition ki lists SCREEN ka dhancha hain (dropdown ke options),
    data nahi — asli grades aur remarks API se aate hain. */
-const RS_GRADE_LIST = ['A+','A','B+','B','C+','C','D+','D','E+','E','F'];
+const RS_GRADE_LIST = ['A+', 'A', 'B+', 'B', 'C+', 'C', 'D+', 'D', 'E+', 'E', 'F'];
 const RS_COND_LIST = [
-  { v:'gte',     l:'Greater than or equal to (>=)' },
-  { v:'gt',      l:'Greater than (>)' },
-  { v:'lte',     l:'Less than or equal to (<=)' },
-  { v:'lt',      l:'Less than (<)' },
-  { v:'eq',      l:'Equal to (=)' },
-  { v:'between', l:'Between' },
+  { v: 'gte', l: 'Greater than or equal to (>=)' },
+  { v: 'gt', l: 'Greater than (>)' },
+  { v: 'lte', l: 'Less than or equal to (<=)' },
+  { v: 'lt', l: 'Less than (<)' },
+  { v: 'eq', l: 'Equal to (=)' },
+  { v: 'between', l: 'Between' },
 ];
-const RS_COND_MAP = { gte:'≥', gt:'>', lte:'≤', lt:'<', eq:'=', between:'~' };
+const RS_COND_MAP = { gte: '≥', gt: '>', lte: '≤', lt: '<', eq: '=', between: '~' };
 const RS_GRADE_COLORS = {
-  'A+':'#16A34A', 'A':'#0284C7', 'B+':'#2563EB', 'B':'#6366F1',
-  'C+':'#7C3AED', 'C':'#D97706', 'D':'#EA580C',  'E':'#9333EA', 'F':'#DC2626',
+  'A+': '#16A34A', 'A': '#0284C7', 'B+': '#2563EB', 'B': '#6366F1',
+  'C+': '#7C3AED', 'C': '#D97706', 'D': '#EA580C', 'E': '#9333EA', 'F': '#DC2626',
 };
 
 /* ── Result Card Options ki lakeerein ─────────────────────────────────
@@ -194,47 +194,47 @@ const RS_GRADE_COLORS = {
    aane se pehle screen wo toggle "on" dikha deti thi jo shayad on tha hi
    nahi. Pehle ye list mock/exams.js me thi, jahan iska koi kaam nahi tha. */
 const RCO_GENERAL_OPTIONS = [
-  { label: 'Show School Logo',         icon: 'fa-school',         on: false },
-  { label: 'Show School Name',         icon: 'fa-heading',        on: false },
-  { label: 'Show Student Photo',       icon: 'fa-user',           on: false },
-  { label: 'Show Student Roll Number', icon: 'fa-hashtag',        on: false },
-  { label: 'Show Class and Section',   icon: 'fa-chalkboard',     on: false },
-  { label: 'Show Subject-wise Marks',  icon: 'fa-book',           on: false },
-  { label: 'Show Total Marks',         icon: 'fa-calculator',     on: false },
-  { label: 'Show Obtained Marks',      icon: 'fa-circle-check',   on: false },
-  { label: 'Show Percentage',          icon: 'fa-percent',        on: false },
-  { label: 'Show Grade',               icon: 'fa-star',           on: false },
-  { label: 'Show Position in Class',   icon: 'fa-trophy',         on: false },
-  { label: 'Show Attendance',          icon: 'fa-calendar-check', on: false },
+  { label: 'Show School Logo', icon: 'fa-school', on: false },
+  { label: 'Show School Name', icon: 'fa-heading', on: false },
+  { label: 'Show Student Photo', icon: 'fa-user', on: false },
+  { label: 'Show Student Roll Number', icon: 'fa-hashtag', on: false },
+  { label: 'Show Class and Section', icon: 'fa-chalkboard', on: false },
+  { label: 'Show Subject-wise Marks', icon: 'fa-book', on: false },
+  { label: 'Show Total Marks', icon: 'fa-calculator', on: false },
+  { label: 'Show Obtained Marks', icon: 'fa-circle-check', on: false },
+  { label: 'Show Percentage', icon: 'fa-percent', on: false },
+  { label: 'Show Grade', icon: 'fa-star', on: false },
+  { label: 'Show Position in Class', icon: 'fa-trophy', on: false },
+  { label: 'Show Attendance', icon: 'fa-calendar-check', on: false },
 ];
 
 const RCO_SIG_OPTIONS = [
-  { label: 'Show Principal Signature', icon: 'fa-pen-nib',      on: false },
-  { label: 'Show Parent Signature',    icon: 'fa-handshake',    on: false },
-  { label: 'Show Final Remarks',       icon: 'fa-comment-dots', on: false },
+  { label: 'Show Principal Signature', icon: 'fa-pen-nib', on: false },
+  { label: 'Show Parent Signature', icon: 'fa-handshake', on: false },
+  { label: 'Show Final Remarks', icon: 'fa-comment-dots', on: false },
 ];
 
 /* Result Card toggle label → examselectionsettings API field name.
    GET (getexamselectionsettingsbybranchid) ke boolean fields se toggles set hote hain,
    aur Save Preferences par inhi se POST (examselectionsettingscrud) payload banta hai. */
 const RCO_GENERAL_FIELD = {
-  'Show School Logo':         'showSchoolLogo',
-  'Show School Name':         'showSchoolName',
-  'Show Student Photo':       'showStudentPhoto',
+  'Show School Logo': 'showSchoolLogo',
+  'Show School Name': 'showSchoolName',
+  'Show Student Photo': 'showStudentPhoto',
   'Show Student Roll Number': 'showRollNumber',
-  'Show Class and Section':   'showClassAndSection',
-  'Show Subject-wise Marks':  'showSubjectWiseMarks',
-  'Show Total Marks':         'showTotalMarks',
-  'Show Obtained Marks':      'showObtainedMarks',
-  'Show Percentage':          'showPercentage',
-  'Show Grade':               'showGrade',
-  'Show Position in Class':   'showPositionInClass',
-  'Show Attendance':          'showAttendance',
+  'Show Class and Section': 'showClassAndSection',
+  'Show Subject-wise Marks': 'showSubjectWiseMarks',
+  'Show Total Marks': 'showTotalMarks',
+  'Show Obtained Marks': 'showObtainedMarks',
+  'Show Percentage': 'showPercentage',
+  'Show Grade': 'showGrade',
+  'Show Position in Class': 'showPositionInClass',
+  'Show Attendance': 'showAttendance',
 };
 const RCO_SIG_FIELD = {
   'Show Principal Signature': 'showPrincipalSignature',
-  'Show Parent Signature':    'showParentSignature',
-  'Show Final Remarks':       'showFinalRemarks',
+  'Show Parent Signature': 'showParentSignature',
+  'Show Final Remarks': 'showFinalRemarks',
 };
 
 /* Session API abhi chal rahi hai (terms uske baad aate hain) → term chips ki jagah
@@ -247,8 +247,8 @@ const TermChipsSkeleton = () => (
 
 /* ── Result Card preview seed data + helpers ── */
 const RES_SUBJECTS = [
-  'English','Urdu','Mathematics','Science','Islamiyat',
-  'Computer','Social Studies','Quran','Art & Craft','Physical Education',
+  'English', 'Urdu', 'Mathematics', 'Science', 'Islamiyat',
+  'Computer', 'Social Studies', 'Quran', 'Art & Craft', 'Physical Education',
 ];
 
 /* A subject counts as ABSENT when its marks weren't entered — no marks record,
@@ -458,7 +458,7 @@ function RcAvatar({ src, initials, size, fontSize, border, bg, color, extraStyle
     }}>
       {src && !failed
         ? <img src={src} alt={initials || 'student'} onError={() => setFailed(true)}
-               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         : initials}
     </div>
   );
@@ -519,12 +519,12 @@ function rcNormalizeSubjects(rawSubs, nameMap = {}) {
 }
 
 const RC_GRADE_SETUP = [
-  { min:90, grade:'A+', comment:'Excellent Work Done' },
-  { min:80, grade:'A',  comment:'Very Good Work Done' },
-  { min:70, grade:'B',  comment:'Good Work Done' },
-  { min:60, grade:'C',  comment:'Satisfactory Work Done' },
-  { min:50, grade:'D',  comment:'Needs Improvement' },
-  { min:0,  grade:'F',  comment:'Unsatisfactory' },
+  { min: 90, grade: 'A+', comment: 'Excellent Work Done' },
+  { min: 80, grade: 'A', comment: 'Very Good Work Done' },
+  { min: 70, grade: 'B', comment: 'Good Work Done' },
+  { min: 60, grade: 'C', comment: 'Satisfactory Work Done' },
+  { min: 50, grade: 'D', comment: 'Needs Improvement' },
+  { min: 0, grade: 'F', comment: 'Unsatisfactory' },
 ];
 /* Branch ke apne grade bands — /api/gradingcrud se (fetchGradeSetup bharta hai).
    Module-level cache taake rcGetGrade (jise component state nahi milti) bhi inhi
@@ -533,12 +533,12 @@ const RC_GRADE_SETUP = [
    hardcoded scale fallback hai. */
 let RC_API_GRADES = null;
 const RC_FINAL_REMARKS_SETUP = [
-  { min:90, remark:'Outstanding performance. Keep it up. Wishing you continued success.' },
-  { min:80, remark:'Very Good Work Done. Keep Working Hard to Maintain Your Position.' },
-  { min:70, remark:'Good Work Done. Keep Working Hard to Maintain Your Position.' },
-  { min:60, remark:'Satisfactory performance. Work harder to improve your grades.' },
-  { min:50, remark:'Needs improvement. Please focus more on your studies.' },
-  { min:0,  remark:'Unsatisfactory performance. Please consult your teachers for guidance.' },
+  { min: 90, remark: 'Outstanding performance. Keep it up. Wishing you continued success.' },
+  { min: 80, remark: 'Very Good Work Done. Keep Working Hard to Maintain Your Position.' },
+  { min: 70, remark: 'Good Work Done. Keep Working Hard to Maintain Your Position.' },
+  { min: 60, remark: 'Satisfactory performance. Work harder to improve your grades.' },
+  { min: 50, remark: 'Needs improvement. Please focus more on your studies.' },
+  { min: 0, remark: 'Unsatisfactory performance. Please consult your teachers for guidance.' },
 ];
 function rcGetGrade(obt, tot) {
   if (!tot || !obt) return null;
@@ -558,11 +558,11 @@ function rcGradeByScale(pct, grades) {
   const test = (g) => {
     const t = Number(g.pct);
     switch (g.cond) {
-      case 'gt':  return v > t;
+      case 'gt': return v > t;
       case 'lte': return v <= t;
-      case 'lt':  return v < t;
-      case 'eq':  return v === t;
-      default:    return v >= t; // gte
+      case 'lt': return v < t;
+      case 'eq': return v === t;
+      default: return v >= t; // gte
     }
   };
   const sorted = [...grades].sort((a, b) => Number(b.pct) - Number(a.pct));
@@ -588,11 +588,11 @@ function rcRemarkByScale(pct, remarks) {
   const test = (r) => {
     const t = Number(r.pct);
     switch (r.cond) {
-      case 'gt':  return v > t;
+      case 'gt': return v > t;
       case 'lte': return v <= t;
-      case 'lt':  return v < t;
-      case 'eq':  return v === t;
-      default:    return v >= t; // gte
+      case 'lt': return v < t;
+      case 'eq': return v === t;
+      default: return v >= t; // gte
     }
   };
   const sorted = [...remarks].sort((a, b) => Number(b.pct) - Number(a.pct));
@@ -603,16 +603,16 @@ function rcRemarkByScale(pct, remarks) {
 const SAMPLE_RC_STUDENT = {
   id: 1, rollNo: '245-00072', name: 'Ali Khan', father: 'Ahmed Khan',
   obtained: {
-    English:18, Urdu:16, Mathematics:20, Science:17, Islamiyat:14,
-    Computer:0, 'Social Studies':0, Quran:16, 'Art & Craft':18, 'Physical Education':19,
+    English: 18, Urdu: 16, Mathematics: 20, Science: 17, Islamiyat: 14,
+    Computer: 0, 'Social Studies': 0, Quran: 16, 'Art & Craft': 18, 'Physical Education': 19,
   },
   absentSubjects: ['Computer', 'Social Studies'],
   attendance: '92%',
 };
 const SAMPLE_RC_RD = {
   totalMarks: {
-    English:20, Urdu:20, Mathematics:20, Science:20, Islamiyat:20,
-    Computer:20, 'Social Studies':20, Quran:20, 'Art & Craft':20, 'Physical Education':20,
+    English: 20, Urdu: 20, Mathematics: 20, Science: 20, Islamiyat: 20,
+    Computer: 20, 'Social Studies': 20, Quran: 20, 'Art & Craft': 20, 'Physical Education': 20,
   },
 };
 const SAMPLE_RC_EX = { name: 'Term Examination', classes: ['Class V (A)'] };
@@ -630,9 +630,9 @@ const SAMPLE_RC_EX = { name: 'Term Examination', classes: ['Class V (A)'] };
    Ab `preview` prop faisla karta hai: gallery preview par sample, asli card
    par yeh khali shapes (khali naam / khali marks), taake ghalat aankra kabhi
    asli natije ki jagah na le. */
-const EMPTY_RC_STUDENT  = { id: 0, rollNo: '', name: '', father: '', obtained: {}, absentSubjects: [], attendance: '' };
-const EMPTY_RC_RD       = { totalMarks: {} };
-const EMPTY_RC_EX       = { name: '', classes: [] };
+const EMPTY_RC_STUDENT = { id: 0, rollNo: '', name: '', father: '', obtained: {}, absentSubjects: [], attendance: '' };
+const EMPTY_RC_RD = { totalMarks: {} };
+const EMPTY_RC_EX = { name: '', classes: [] };
 const EMPTY_RC_COMBINED = { grandTotal: 0, grandObt: 0, ovPct: 0, mainExName: '', mainTotal: 0, mainObt: 0, subBreakdown: [] };
 /* ── Single Assessment Result ─────────────────────────────────────────
    Yahan pehle do seed pade thay:
@@ -674,26 +674,46 @@ function rhMakeRes(id, exam, type, pct, date, year, rank) {
   return { id, exam, type, pct, date, year, rank, subjects: type === 'single' ? rhMakeSubjects(pct) : null };
 }
 const RH_INITIAL_STUDENTS = [
-  { id:1,  name:'Ahmed Raza',     father:'Muhammad Raza',  rollNo:'1001-2026', admission:'ADM-1001', cls:'Grade 1 - Section A', section:'A', session:'2025-26', attendance:92,
-    results:[ rhMakeRes('r1a','Mid Term','single',74,'10-03-2026','2025-26',2), rhMakeRes('r1b','Final Term','single',78,'10-05-2026','2025-26',2), rhMakeRes('r1c','Mid + Final Combined','combined',76,'15-05-2026','2025-26',2) ] },
-  { id:2,  name:'Sara Hussain',   father:'Ghulam Hussain', rollNo:'1002-2026', admission:'ADM-1002', cls:'Grade 1 - Section A', section:'A', session:'2025-26', attendance:88,
-    results:[ rhMakeRes('r2a','Mid Term','single',68,'10-03-2026','2025-26',3), rhMakeRes('r2b','Final Term','single',71,'10-05-2026','2025-26',3), rhMakeRes('r2c','Mid + Final Combined','combined',72,'15-05-2026','2025-26',3) ] },
-  { id:3,  name:'Usman Tariq',    father:'Tariq Mehmood',  rollNo:'1003-2026', admission:'ADM-1003', cls:'Grade 1 - Section A', section:'A', session:'2025-26', attendance:95,
-    results:[ rhMakeRes('r3a','Mid Term','single',65,'10-03-2026','2025-26',4), rhMakeRes('r3b','Final Term','single',62,'10-05-2026','2025-26',4), rhMakeRes('r3c','Term Performance Evaluation','combined',60,'12-05-2026','2025-26',4) ] },
-  { id:4,  name:'Fatima Noor',    father:'Noor Ahmad',     rollNo:'1004-2026', admission:'ADM-1004', cls:'Grade 1 - Section A', section:'A', session:'2025-26', attendance:94,
-    results:[ rhMakeRes('r4a','Mid Term','single',84,'10-03-2026','2025-26',1), rhMakeRes('r4b','Final Term','single',90,'10-05-2026','2025-26',1), rhMakeRes('r4c','Mid + Final Combined','combined',88,'15-05-2026','2025-26',1) ] },
-  { id:5,  name:'Bilal Sheikh',   father:'Khalid Sheikh',  rollNo:'1005-2026', admission:'ADM-1005', cls:'Grade 1 - Section A', section:'A', session:'2025-26', attendance:78,
-    results:[ rhMakeRes('r5a','Mid Term','single',55,'10-03-2026','2025-26',5), rhMakeRes('r5b','Final Term','single',58,'10-05-2026','2025-26',5) ] },
-  { id:6,  name:'Ali Khan',       father:'Ahmed Khan',     rollNo:'2001-2026', admission:'ADM-2001', cls:'Grade 2 - Section A', section:'A', session:'2025-26', attendance:90,
-    results:[ rhMakeRes('r6a','Mid Term','single',80,'10-03-2026','2025-26',2), rhMakeRes('r6b','Final Term','single',74,'10-05-2026','2025-26',2), rhMakeRes('r6c','Mid + Final Combined','combined',78,'15-05-2026','2025-26',2) ] },
-  { id:7,  name:'Haroon Sheikh',  father:'Abdul Rauf',     rollNo:'2002-2026', admission:'ADM-2002', cls:'Grade 2 - Section A', section:'A', session:'2025-26', attendance:86,
-    results:[ rhMakeRes('r7a','Mid Term','single',60,'10-03-2026','2025-26',4), rhMakeRes('r7b','Final Term','single',65,'10-05-2026','2025-26',4), rhMakeRes('r7c','Term Performance Evaluation','combined',64,'12-05-2026','2025-26',4) ] },
-  { id:8,  name:'Amna Malik',     father:'Tariq Malik',    rollNo:'3001-2026', admission:'ADM-3001', cls:'Grade 3 - Section A', section:'A', session:'2025-26', attendance:96,
-    results:[ rhMakeRes('r8a','Mid Term','single',91,'10-03-2026','2025-26',1), rhMakeRes('r8b','Final Term','single',89,'10-05-2026','2025-26',1), rhMakeRes('r8c','Mid + Final Combined','combined',90,'15-05-2026','2025-26',1) ] },
-  { id:9,  name:'Zara Ahmed',     father:'Imran Ahmed',    rollNo:'4001-2026', admission:'ADM-4001', cls:'Grade 4 - Section A', section:'A', session:'2025-26', attendance:80,
-    results:[ rhMakeRes('r9a','Mid Term','single',48,'10-03-2026','2025-26',5), rhMakeRes('r9b','Final Term','single',54,'10-05-2026','2025-26',5) ] },
-  { id:10, name:'Bilal Hussain',  father:'Riaz Hussain',   rollNo:'5001-2026', admission:'ADM-5001', cls:'Grade 5 - Section A', section:'A', session:'2025-26', attendance:73,
-    results:[ rhMakeRes('r10a','Mid Term','single',52,'10-03-2026','2025-26',5), rhMakeRes('r10b','Final Term','single',58,'10-05-2026','2025-26',5), rhMakeRes('r10c','Mid + Final Combined','combined',56,'15-05-2026','2025-26',5) ] },
+  {
+    id: 1, name: 'Ahmed Raza', father: 'Muhammad Raza', rollNo: '1001-2026', admission: 'ADM-1001', cls: 'Grade 1 - Section A', section: 'A', session: '2025-26', attendance: 92,
+    results: [rhMakeRes('r1a', 'Mid Term', 'single', 74, '10-03-2026', '2025-26', 2), rhMakeRes('r1b', 'Final Term', 'single', 78, '10-05-2026', '2025-26', 2), rhMakeRes('r1c', 'Mid + Final Combined', 'combined', 76, '15-05-2026', '2025-26', 2)]
+  },
+  {
+    id: 2, name: 'Sara Hussain', father: 'Ghulam Hussain', rollNo: '1002-2026', admission: 'ADM-1002', cls: 'Grade 1 - Section A', section: 'A', session: '2025-26', attendance: 88,
+    results: [rhMakeRes('r2a', 'Mid Term', 'single', 68, '10-03-2026', '2025-26', 3), rhMakeRes('r2b', 'Final Term', 'single', 71, '10-05-2026', '2025-26', 3), rhMakeRes('r2c', 'Mid + Final Combined', 'combined', 72, '15-05-2026', '2025-26', 3)]
+  },
+  {
+    id: 3, name: 'Usman Tariq', father: 'Tariq Mehmood', rollNo: '1003-2026', admission: 'ADM-1003', cls: 'Grade 1 - Section A', section: 'A', session: '2025-26', attendance: 95,
+    results: [rhMakeRes('r3a', 'Mid Term', 'single', 65, '10-03-2026', '2025-26', 4), rhMakeRes('r3b', 'Final Term', 'single', 62, '10-05-2026', '2025-26', 4), rhMakeRes('r3c', 'Term Performance Evaluation', 'combined', 60, '12-05-2026', '2025-26', 4)]
+  },
+  {
+    id: 4, name: 'Fatima Noor', father: 'Noor Ahmad', rollNo: '1004-2026', admission: 'ADM-1004', cls: 'Grade 1 - Section A', section: 'A', session: '2025-26', attendance: 94,
+    results: [rhMakeRes('r4a', 'Mid Term', 'single', 84, '10-03-2026', '2025-26', 1), rhMakeRes('r4b', 'Final Term', 'single', 90, '10-05-2026', '2025-26', 1), rhMakeRes('r4c', 'Mid + Final Combined', 'combined', 88, '15-05-2026', '2025-26', 1)]
+  },
+  {
+    id: 5, name: 'Bilal Sheikh', father: 'Khalid Sheikh', rollNo: '1005-2026', admission: 'ADM-1005', cls: 'Grade 1 - Section A', section: 'A', session: '2025-26', attendance: 78,
+    results: [rhMakeRes('r5a', 'Mid Term', 'single', 55, '10-03-2026', '2025-26', 5), rhMakeRes('r5b', 'Final Term', 'single', 58, '10-05-2026', '2025-26', 5)]
+  },
+  {
+    id: 6, name: 'Ali Khan', father: 'Ahmed Khan', rollNo: '2001-2026', admission: 'ADM-2001', cls: 'Grade 2 - Section A', section: 'A', session: '2025-26', attendance: 90,
+    results: [rhMakeRes('r6a', 'Mid Term', 'single', 80, '10-03-2026', '2025-26', 2), rhMakeRes('r6b', 'Final Term', 'single', 74, '10-05-2026', '2025-26', 2), rhMakeRes('r6c', 'Mid + Final Combined', 'combined', 78, '15-05-2026', '2025-26', 2)]
+  },
+  {
+    id: 7, name: 'Haroon Sheikh', father: 'Abdul Rauf', rollNo: '2002-2026', admission: 'ADM-2002', cls: 'Grade 2 - Section A', section: 'A', session: '2025-26', attendance: 86,
+    results: [rhMakeRes('r7a', 'Mid Term', 'single', 60, '10-03-2026', '2025-26', 4), rhMakeRes('r7b', 'Final Term', 'single', 65, '10-05-2026', '2025-26', 4), rhMakeRes('r7c', 'Term Performance Evaluation', 'combined', 64, '12-05-2026', '2025-26', 4)]
+  },
+  {
+    id: 8, name: 'Amna Malik', father: 'Tariq Malik', rollNo: '3001-2026', admission: 'ADM-3001', cls: 'Grade 3 - Section A', section: 'A', session: '2025-26', attendance: 96,
+    results: [rhMakeRes('r8a', 'Mid Term', 'single', 91, '10-03-2026', '2025-26', 1), rhMakeRes('r8b', 'Final Term', 'single', 89, '10-05-2026', '2025-26', 1), rhMakeRes('r8c', 'Mid + Final Combined', 'combined', 90, '15-05-2026', '2025-26', 1)]
+  },
+  {
+    id: 9, name: 'Zara Ahmed', father: 'Imran Ahmed', rollNo: '4001-2026', admission: 'ADM-4001', cls: 'Grade 4 - Section A', section: 'A', session: '2025-26', attendance: 80,
+    results: [rhMakeRes('r9a', 'Mid Term', 'single', 48, '10-03-2026', '2025-26', 5), rhMakeRes('r9b', 'Final Term', 'single', 54, '10-05-2026', '2025-26', 5)]
+  },
+  {
+    id: 10, name: 'Bilal Hussain', father: 'Riaz Hussain', rollNo: '5001-2026', admission: 'ADM-5001', cls: 'Grade 5 - Section A', section: 'A', session: '2025-26', attendance: 73,
+    results: [rhMakeRes('r10a', 'Mid Term', 'single', 52, '10-03-2026', '2025-26', 5), rhMakeRes('r10b', 'Final Term', 'single', 58, '10-05-2026', '2025-26', 5), rhMakeRes('r10c', 'Mid + Final Combined', 'combined', 56, '15-05-2026', '2025-26', 5)]
+  },
 ];
 /* Session labels come from the data; expand the short form the API stores
    ("2026-27") to the long one the reports print ("2026–2027"). It used to be a
@@ -706,8 +726,8 @@ const rhSessionLabel = (v) => {
 };
 const RH_SECTIONS = ['A'];
 const RH_EXAM_TYPES = [
-  { v:'single',   l:'Single Assessment' },
-  { v:'combined', l:'Combined Assessment' },
+  { v: 'single', l: 'Single Assessment' },
+  { v: 'combined', l: 'Combined Assessment' },
 ];
 
 /* Derive per-subject obtained marks for the result card preview from a combined student's mainObt. */
@@ -731,53 +751,53 @@ const SAMPLE_RC_COMBINED = {
   grandTotal: 235, grandObt: 165.65, ovPct: 70.49,
   mainExName: 'Term Examination', mainTotal: 200, mainObt: 138,
   subBreakdown: [
-    { name:'Monthly Test', origT:100, subObt:82, weight:20, conv:16.4 },
-    { name:'Mid Term',     origT:100, subObt:75, weight:15, conv:11.25 },
+    { name: 'Monthly Test', origT: 100, subObt: 82, weight: 20, conv: 16.4 },
+    { name: 'Mid Term', origT: 100, subObt: 75, weight: 15, conv: 11.25 },
   ],
 };
 
 const RC_TEMPLATES = [
   {
-    id:'classic',
-    name:'Classic Result Card',
-    desc:'Clean, compact layout with subject marks table.',
-    badge:{ label:'Default', cls:'default' },
-    accent:'#1E40AF',
-    accentLight:'#DBEAFE',
-    accentBg:'rgba(30,64,175,.08)',
-    pages:{ single:'1 Page', combined:'2 Pages', combinedCol:'#7C3AED' },
-    tags:[
-      { i:'fa-table', label:'Marks Table' },
-      { i:'fa-print', label:'Print Ready' },
+    id: 'classic',
+    name: 'Classic Result Card',
+    desc: 'Clean, compact layout with subject marks table.',
+    badge: { label: 'Default', cls: 'default' },
+    accent: '#1E40AF',
+    accentLight: '#DBEAFE',
+    accentBg: 'rgba(30,64,175,.08)',
+    pages: { single: '1 Page', combined: '2 Pages', combinedCol: '#7C3AED' },
+    tags: [
+      { i: 'fa-table', label: 'Marks Table' },
+      { i: 'fa-print', label: 'Print Ready' },
     ],
   },
   {
-    id:'insight',
-    name:'Insight Result Card',
-    desc:'Performance bars with visual grade summary.',
-    badge:{ label:'New', cls:'new' },
-    accent:'#7C3AED',
-    accentLight:'rgba(124,58,237,.08)',
-    accentBg:'rgba(124,58,237,.08)',
-    pages:{ single:'1 Page', combined:'2 Pages', combinedCol:'#7C3AED' },
-    tags:[
-      { i:'fa-chart-bar', label:'Performance Bars' },
-      { i:'fa-star',      label:'Visual Summary'   },
+    id: 'insight',
+    name: 'Insight Result Card',
+    desc: 'Performance bars with visual grade summary.',
+    badge: { label: 'New', cls: 'new' },
+    accent: '#7C3AED',
+    accentLight: 'rgba(124,58,237,.08)',
+    accentBg: 'rgba(124,58,237,.08)',
+    pages: { single: '1 Page', combined: '2 Pages', combinedCol: '#7C3AED' },
+    tags: [
+      { i: 'fa-chart-bar', label: 'Performance Bars' },
+      { i: 'fa-star', label: 'Visual Summary' },
     ],
   },
   {
-    id:'portfolio',
-    name:'Portfolio Report',
-    desc:'Premium academic report with cover, performance bars and strengths.',
-    badge:null,
-    accent:'#D97706',
-    accentLight:'rgba(217,119,6,.09)',
-    accentBg:'rgba(217,119,6,.09)',
-    pages:{ single:'2 Pages', singleCol:'#D97706', combined:'3 Pages', combinedCol:'#7C3AED' },
-    tags:[
-      { i:'fa-file-lines', label:'Cover Page' },
-      { i:'fa-chart-bar',  label:'Perf. Bars' },
-      { i:'fa-trophy',     label:'Strengths'  },
+    id: 'portfolio',
+    name: 'Portfolio Report',
+    desc: 'Premium academic report with cover, performance bars and strengths.',
+    badge: null,
+    accent: '#D97706',
+    accentLight: 'rgba(217,119,6,.09)',
+    accentBg: 'rgba(217,119,6,.09)',
+    pages: { single: '2 Pages', singleCol: '#D97706', combined: '3 Pages', combinedCol: '#7C3AED' },
+    tags: [
+      { i: 'fa-file-lines', label: 'Cover Page' },
+      { i: 'fa-chart-bar', label: 'Perf. Bars' },
+      { i: 'fa-trophy', label: 'Strengths' },
     ],
   },
 ];
@@ -800,7 +820,7 @@ const rcSafeTemplate = (id) =>
 /* Date-sheet date/time helpers.
    API `date` is a DateTime; `timeFrom`/`timeTo` are strings — but GET kabhi ISO
    datetime, TimeSpan ("08:00:00"), ya "8:00 AM" bhejta hai, aur UTC `Z` par
-   `toISOString()` PK (UTC+5) me din/waqt shift kar deta hai. */ 
+   `toISOString()` PK (UTC+5) me din/waqt shift kar deta hai. */
 function dsPad2(n) {
   return String(n).padStart(2, '0');
 }
@@ -909,7 +929,7 @@ function dsMapApiRow(item) {
   }
   let rawDate = dsPickField(item, 'date', 'Date');
   let rawFrom = dsPickField(item, 'timeFrom', 'TimeFrom');
-  let rawTo   = dsPickField(item, 'timeTo', 'TimeTo');
+  let rawTo = dsPickField(item, 'timeTo', 'TimeTo');
   /* GET kabhi date column me time aur timeFrom me date bhej deta hai. */
   if (!dsLooksLikeDate(rawDate) && dsLooksLikeTimeOnly(rawDate) && dsLooksLikeDate(rawFrom)) {
     const swapped = rawDate;
@@ -928,40 +948,40 @@ function dsMapApiRow(item) {
 /* ═══════════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
-export default function Examination({ toast = () => {} }) {
+export default function Examination({ toast = () => { } }) {
   /* Logged-in user ki action-level permissions (School Head → sab true). */
   const { can } = usePermissions();
-  const canExamCreate   = can('Examination', 'Exam Setup', 'Create');
-  const canExamEdit     = can('Examination', 'Exam Setup', 'Edit');
-  const canExamDelete   = can('Examination', 'Exam Setup', 'Delete');
+  const canExamCreate = can('Examination', 'Exam Setup', 'Create');
+  const canExamEdit = can('Examination', 'Exam Setup', 'Edit');
+  const canExamDelete = can('Examination', 'Exam Setup', 'Delete');
   const canExamDownload = can('Examination', 'Exam Setup', 'Download');
 
   /* Screen (tab) level View — jis screen ka View nahi, uska tab hi hide. */
   const examView = (sub) => can('Examination', sub, 'View');
-  const showSetupTab     = examView('Exam Setup');
+  const showSetupTab = examView('Exam Setup');
   const showDatesheetTab = examView('Date Sheet');
-  const showSyllabusTab  = examView('Syllabus');
-  const showResultsTab   = ['Result Setup', 'Result Card Options', 'Single Assessment', 'Combined Assessment', 'Result History'].some(examView);
+  const showSyllabusTab = examView('Syllabus');
+  const showResultsTab = ['Result Setup', 'Result Card Options', 'Single Assessment', 'Combined Assessment', 'Result History'].some(examView);
 
   /* Date Sheet screen actions */
-  const canDsCreate   = can('Examination', 'Date Sheet', 'Create');
-  const canDsEdit     = can('Examination', 'Date Sheet', 'Edit');
-  const canDsDelete   = can('Examination', 'Date Sheet', 'Delete');
+  const canDsCreate = can('Examination', 'Date Sheet', 'Create');
+  const canDsEdit = can('Examination', 'Date Sheet', 'Edit');
+  const canDsDelete = can('Examination', 'Date Sheet', 'Delete');
   const canDsDownload = can('Examination', 'Date Sheet', 'Download');
   /* Syllabus screen actions */
-  const canSylEdit     = can('Examination', 'Syllabus', 'Edit');
-  const canSylDelete   = can('Examination', 'Syllabus', 'Delete');
+  const canSylEdit = can('Examination', 'Syllabus', 'Edit');
+  const canSylDelete = can('Examination', 'Syllabus', 'Delete');
   const canSylDownload = can('Examination', 'Syllabus', 'Download');
   /* Results screens actions */
-  const canRsEdit         = can('Examination', 'Result Setup', 'Edit');
-  const canRsDownload     = can('Examination', 'Result Setup', 'Download');
-  const canRcoEdit        = can('Examination', 'Result Card Options', 'Edit');
-  const canSingleEdit     = can('Examination', 'Single Assessment', 'Edit');
+  const canRsEdit = can('Examination', 'Result Setup', 'Edit');
+  const canRsDownload = can('Examination', 'Result Setup', 'Download');
+  const canRcoEdit = can('Examination', 'Result Card Options', 'Edit');
+  const canSingleEdit = can('Examination', 'Single Assessment', 'Edit');
   const canSingleDownload = can('Examination', 'Single Assessment', 'Download');
   const canCombinedCreate = can('Examination', 'Combined Assessment', 'Create');
 
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [tab, setTab]               = useState('setup'); // setup | datesheet | syllabus | results
+  const [tab, setTab] = useState('setup'); // setup | datesheet | syllabus | results
 
   /* Agar active tab ka View permission nahi, to pehle visible tab par snap karo. */
   useEffect(() => {
@@ -970,38 +990,38 @@ export default function Examination({ toast = () => {} }) {
     const first = ['setup', 'datesheet', 'syllabus', 'results'].find((t) => visible[t]);
     if (first && first !== tab) setTab(first);
   }, [showSetupTab, showDatesheetTab, showSyllabusTab, showResultsTab, tab]);
-  const [term, setTerm]             = useState('');
+  const [term, setTerm] = useState('');
   const [openExamId, setOpenExamId] = useState(null);
-  const [editing, setEditing]       = useState(null);     // null = closed, { id?, ... } = open
+  const [editing, setEditing] = useState(null);     // null = closed, { id?, ... } = open
   const [confirmDel, setConfirmDel] = useState(null);     // exam to delete
-  const [reportReq, setReportReq]   = useState(null);     // { scope:'all'|<examId>, name }
-const [exams, setExams] = useState([]);
+  const [reportReq, setReportReq] = useState(null);     // { scope:'all'|<examId>, name }
+  const [exams, setExams] = useState([]);
   /* ── Date Sheet state ── */
-  const [dsTerm, setDsTerm]           = useState('2nd');
-  const [dsExamId, setDsExamId]       = useState(null);
-  const [dsOpenKey, setDsOpenKey]     = useState(null);
+  const [dsTerm, setDsTerm] = useState('2nd');
+  const [dsExamId, setDsExamId] = useState(null);
+  const [dsOpenKey, setDsOpenKey] = useState(null);
   /* Khali se shuru — date sheets API se aati hain. Pehle yahan mock ki
      bani banai date sheets (subject + tareekh + waqt) padi hoti thin. */
   const [dateSheets, setDateSheets] = useState({});
-  const [dsEditing, setDsEditing]     = useState(null);   // { examId, classKey, className, rows }
+  const [dsEditing, setDsEditing] = useState(null);   // { examId, classKey, className, rows }
   const [dsConfirmDel, setDsConfirmDel] = useState(null); // { examId, classKey, className }
   const [dsConfirmCopy, setDsConfirmCopy] = useState(null); // { examId, sourceKey, count, examName }
   const [dsReportReq, setDsReportReq] = useState(null);   // { classKey:'all'|key }
-const [subjects, setSubjects] = useState([]);
+  const [subjects, setSubjects] = useState([]);
   /* ── Result Setup state ── */
-  const [rsTab, setRsTab]               = useState('resultsetup'); // resultsetup | singleassessment | combinedassessment | resulthistory
-  const [rsL2, setRsL2]                 = useState('setup');       // setup | cardoptions (cardoptions = Coming Soon for now)
+  const [rsTab, setRsTab] = useState('resultsetup'); // resultsetup | singleassessment | combinedassessment | resulthistory
+  const [rsL2, setRsL2] = useState('setup');       // setup | cardoptions (cardoptions = Coming Soon for now)
   /* Result Setup grades / signatures / remarks — start EMPTY and fill only
      from the real APIs (fetchGradeSetup / fetchSignatureSetup / fetchRemarksSetup).
      No static/mock seed, so nothing flashes before the API responds. */
-  const [rsGrades, setRsGrades]   = useState([]);
-  const [rsSigs, setRsSigs]       = useState([]);
+  const [rsGrades, setRsGrades] = useState([]);
+  const [rsSigs, setRsSigs] = useState([]);
   const [rsRemarks, setRsRemarks] = useState([]);
   /* localStorage — logout / dubara login ke baad bhi wahi Absent Handling selected rahe. */
   const [rsAbsentSaved, setRsAbsentMode] = useUiPref(RS_ABSENT_PREF_KEY, '');
   const rsAbsentMode = rsAbsentSaved === 'zero' || rsAbsentSaved === 'exclude' ? rsAbsentSaved : '';
-  const [rsModalOpen, setRsModalOpen]   = useState(false);
-  const [rsReportReq, setRsReportReq]   = useState(null);      // truthy → picker open
+  const [rsModalOpen, setRsModalOpen] = useState(false);
+  const [rsReportReq, setRsReportReq] = useState(null);      // truthy → picker open
   /* Preschool / Montessori — separate from the Grade 1-12 result state.
      Filhaal Preschool sirf branchID 1 par live hai; baqi branches par sirf
      Grade 1-12 dikhta hai (toggle + per-class Preschool option chhup jata hai). */
@@ -1015,7 +1035,15 @@ const [subjects, setSubjects] = useState([]);
   const { data: pLevels = [] } = useAsync(preschoolService.getPreschoolLevels, []);
   const [pActiveLA, setPActiveLA] = useState(null);
   const [pActiveLevel, setPActiveLevel] = useState('pg');
-  const { data: pRco = [], setData: setPRco } = useAsync(preschoolService.getPRco, []);
+  const { data: pRcoData = { toggles: [], reportType: 'monthly' }, setData: setPRcoData } =
+    useAsync(preschoolService.getPRco, { toggles: [], reportType: 'monthly' });
+  const pRco = pRcoData.toggles;
+  const pReportType = pRcoData.reportType;
+  const setPRco = updater => setPRcoData(prev => ({
+    ...prev,
+    toggles: typeof updater === 'function' ? updater(prev.toggles) : updater,
+  }));
+  const setPReportType = val => setPRcoData(prev => ({ ...prev, reportType: val }));
   const [pPreviewId, setPPreviewId] = useState(null);
   const [pHelpOpen, setPHelpOpen] = useState(false);
   const { data: pClassTypes = {}, setData: setPClassTypes } = useAsync(preschoolService.getClassAssessmentTypes, []);
@@ -1027,28 +1055,28 @@ const [subjects, setSubjects] = useState([]);
   const [pLevelPickCtx, setPLevelPickCtx] = useState(null);
 
   /* ── Single Assessment state ── */
-  const [resTerm, setResTerm]           = useState('2nd');
-  const [resExamId, setResExamId]       = useState(null);
-  const [resOpenKey, setResOpenKey]     = useState(null);
+  const [resTerm, setResTerm] = useState('2nd');
+  const [resExamId, setResExamId] = useState(null);
+  const [resOpenKey, setResOpenKey] = useState(null);
   /* Khali se shuru — nataij API se aate hain, koi seed scaffold nahi. */
   const [resultData, setResultData] = useState({});
   const [resUpdateCtx, setResUpdateCtx] = useState(null); // { examId, key, studentId }
-  const [resCardCtx, setResCardCtx]     = useState(null); // { examId, key, studentId }
+  const [resCardCtx, setResCardCtx] = useState(null); // { examId, key, studentId }
   const [resCardMarks, setResCardMarks] = useState(null); // real per-subject marks for the single card
   const [resConfirmPublish, setResConfirmPublish] = useState(null); // { key, className, released }
   /* Date Sheet / Syllabus publish — abhi UI-only (frontend state). Backend
      publish/visibility endpoint milne par in toggles ko wahan wire kar dena
      (Result ke handleConfirmPublish ki tarah). Key = row key. */
-  const [dsReleased, setDsReleased]   = useState({}); // { [dsRowKey]: true }
+  const [dsReleased, setDsReleased] = useState({}); // { [dsRowKey]: true }
   const [sylReleased, setSylReleased] = useState({}); // { [sylRowKey]: true }
   const [dsSylConfirmPublish, setDsSylConfirmPublish] = useState(null); // { kind:'datesheet'|'syllabus', key, className, released }
-  const [resTotalMarksCtx, setResTotalMarksCtx]   = useState(null); // { examId, key, className }
-  const [resConfirmDelete, setResConfirmDelete]   = useState(null); // { examId, key, className }
-  const [resRemarksCtx, setResRemarksCtx]         = useState(null); // { examId, key, studentId }
+  const [resTotalMarksCtx, setResTotalMarksCtx] = useState(null); // { examId, key, className }
+  const [resConfirmDelete, setResConfirmDelete] = useState(null); // { examId, key, className }
+  const [resRemarksCtx, setResRemarksCtx] = useState(null); // { examId, key, studentId }
   const [resClassReportReq, setResClassReportReq] = useState(null); // { examId, key, className }
   const [bulkCardCtx, setBulkCardCtx] = useState(null); // { classID, sectionID, selectExam, termID, className, examName } — bulk result cards
   const [resBulkUploadCtx, setResBulkUploadCtx] = useState(null); // class-wide Excel marks upload
-  const [bulkCbrCtx, setBulkCbrCtx]   = useState(null); // { grp, termID } — bulk COMBINED result cards
+  const [bulkCbrCtx, setBulkCbrCtx] = useState(null); // { grp, termID } — bulk COMBINED result cards
 
   /* Branch header (name / logo / address / academic session) for result cards —
      from the same /report-header API used elsewhere. */
@@ -1066,11 +1094,11 @@ const [subjects, setSubjects] = useState([]);
             name: d.branchName || '',
             logo: resolveMediaUrl(d.branchLogo),
             address: d.address || '',
-    /* The ERP's own active session wins over the branch header's
-       `academicSession` string: the header is a branch-profile field that is
-       not updated when the school rolls over to a new session (or when the
-       user switches sessions), so trusting it first is how a report ends up
-       stamped with last year's session. */
+            /* The ERP's own active session wins over the branch header's
+               `academicSession` string: the header is a branch-profile field that is
+               not updated when the school rolls over to a new session (or when the
+               user switches sessions), so trusting it first is how a report ends up
+               stamped with last year's session. */
             session: activeSessionName() || d.academicSession || '',
           });
         } else if (!cancelled) {
@@ -1112,9 +1140,9 @@ const [subjects, setSubjects] = useState([]);
   const rhLoadedOnce = useRef(false);
   const loadResultHistoryData = async () => {
     const branchID = sessionStorage.getItem('branchID');
-    const empID    = sessionStorage.getItem('employee_ID');
-    const headers  = { Accept: '*/*', Authorization: `Bearer ${sessionStorage.getItem('token') || ''}` };
-    const getJson  = async (url) => {
+    const empID = sessionStorage.getItem('employee_ID');
+    const headers = { Accept: '*/*', Authorization: `Bearer ${sessionStorage.getItem('token') || ''}` };
+    const getJson = async (url) => {
       try { const r = await fetch(buildUrl(url), { method: 'GET', headers }); return await r.json(); }
       catch (e) { console.error('Result History load failed:', url, e); return null; }
     };
@@ -1128,7 +1156,7 @@ const [subjects, setSubjects] = useState([]);
     setRhData({ classes, classSection, sessions, branchSession });
     // Active session ko dropdown mein default-select karo (active-sessions API se).
     const sessList = sessions?.data || [];
-    const active   = (Array.isArray(branchSession?.data) ? branchSession.data[0] : branchSession?.data) || {};
+    const active = (Array.isArray(branchSession?.data) ? branchSession.data[0] : branchSession?.data) || {};
     const activeName = active.SessionName
       || sessList.find(s => String(s.ID ?? s.SessionID) === String(active.ID ?? active.SessionID))?.SessionName;
     if (activeName) setRhFilterSession(activeName);
@@ -1173,7 +1201,7 @@ const [subjects, setSubjects] = useState([]);
         const sList = Array.isArray(sData) ? sData : (sData?.data || []);
         sList.forEach(s => {
           nameMap[s.id ?? s.studentID ?? s.StudentID] = {
-            name:   (s.studentName ?? s.StudentName ?? '').trim(),
+            name: (s.studentName ?? s.StudentName ?? '').trim(),
             father: (s.fatherName ?? s.FatherName ?? '').trim(),
             rollNo: s.registrationNumber ?? s.RegistrationNumber ?? '',
           };
@@ -1181,30 +1209,30 @@ const [subjects, setSubjects] = useState([]);
       } catch (e) { console.error('Could not load student names for CBR:', e); }
       const students = cards.filter(Boolean).map(c => {
         const sid = c.studentID ?? c.StudentID;
-        const nm  = nameMap[sid] || {};
+        const nm = nameMap[sid] || {};
         const main = c.mainExam ?? c.MainExam ?? {};
         const subArr = c.subExams ?? c.SubExams ?? [];
         return {
           studentID: c.studentID ?? c.StudentID,
           // name/father/rollNo student-list API (nameMap) se lo — CA cards mein ye empty aate
           // hain, is liye kuch students ke naam ghaayab the. nameMap na ho to c par fallback.
-          rollNo:    nm.rollNo || c.registrationNumber || c.RegistrationNumber || c.studentID || c.StudentID,
-          name:      nm.name   || c.studentName || c.StudentName || '',
-          father:    nm.father || c.fatherName || c.FatherName || '',
-          mainObt:   num(main.obtainedMarks ?? main.ObtainedMarks),
+          rollNo: nm.rollNo || c.registrationNumber || c.RegistrationNumber || c.studentID || c.StudentID,
+          name: nm.name || c.studentName || c.StudentName || '',
+          father: nm.father || c.fatherName || c.FatherName || '',
+          mainObt: num(main.obtainedMarks ?? main.ObtainedMarks),
           mainTotal: num(main.totalMarks ?? main.TotalMarks),
           subs: subArr.map(s => ({
-            name:   s.examName ?? s.ExamName ?? '',
+            name: s.examName ?? s.ExamName ?? '',
             subObt: num(s.originalObtained ?? s.OriginalObtained),
-            origT:  num(s.originalTotal ?? s.OriginalTotal),
-            conv:   num(s.convertedObtained ?? s.ConvertedObtained),
+            origT: num(s.originalTotal ?? s.OriginalTotal),
+            conv: num(s.convertedObtained ?? s.ConvertedObtained),
             weight: num(s.weightage ?? s.Weightage),
           })),
-          grandObt:   num(c.grandObtained ?? c.GrandObtained),
+          grandObt: num(c.grandObtained ?? c.GrandObtained),
           grandTotal: num(c.grandTotal ?? c.GrandTotal),
-          pct:        num(c.percentage ?? c.Percentage),
-          grade:      c.grade ?? c.Grade ?? '—',
-          rank:       String(c.ranking ?? c.Ranking ?? '—'),
+          pct: num(c.percentage ?? c.Percentage),
+          grade: c.grade ?? c.Grade ?? '—',
+          rank: String(c.ranking ?? c.Ranking ?? '—'),
         };
       });
       setCbrResults(prev => prev.map(g => g.id === cr.id ? { ...g, students, studentsLoaded: true } : g));
@@ -1271,15 +1299,15 @@ const [subjects, setSubjects] = useState([]);
     } catch (e) { console.error('Error loading all-term exams:', e); return []; }
   };
   const [cbrFilterClass, setCbrFilterClass] = useState('');
-  const [cbrClassList, setCbrClassList]     = useState([]); // [{ id, name, sections }] — class dropdown ke liye
+  const [cbrClassList, setCbrClassList] = useState([]); // [{ id, name, sections }] — class dropdown ke liye
   const cbrClassesLoaded = useRef(false);
 
   // Combined tab par class list (get-classlist-...) fetch karke dropdown bharo.
   const loadCbrClassList = async () => {
     try {
       const branchID = sessionStorage.getItem('branchID');
-      const empID    = sessionStorage.getItem('employee_ID');
-      const token    = sessionStorage.getItem('token');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
       const r = await fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
       const data = await r.json();
@@ -1299,12 +1327,12 @@ const [subjects, setSubjects] = useState([]);
   }, [tab, rsTab]);
 
   const [cbrActiveGroup, setCbrActiveGroup] = useState(null);
-  const [cbrOpenKey, setCbrOpenKey]       = useState(null);
-  const [cbrCardCtx, setCbrCardCtx]       = useState(null); // { groupId, classId, studentRollNo }
+  const [cbrOpenKey, setCbrOpenKey] = useState(null);
+  const [cbrCardCtx, setCbrCardCtx] = useState(null); // { groupId, classId, studentRollNo }
   const [cbrConfirmPublish, setCbrConfirmPublish] = useState(null); // { classId, className, published }
-  const [cbrConfirmDelete, setCbrConfirmDelete]   = useState(null); // { classId, className }
-  const [cbrCreateOpen, setCbrCreateOpen]         = useState(false);
-  const [cbrReportReq, setCbrReportReq]           = useState(null); // { classId, className }
+  const [cbrConfirmDelete, setCbrConfirmDelete] = useState(null); // { classId, className }
+  const [cbrCreateOpen, setCbrCreateOpen] = useState(false);
+  const [cbrReportReq, setCbrReportReq] = useState(null); // { classId, className }
 
   /* When a class row expands, lazy-load its students (card-per-student). */
   useEffect(() => {
@@ -1360,7 +1388,7 @@ const [subjects, setSubjects] = useState([]);
         const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
         records.forEach(({ su, rec }) => {
           obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
-          totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+          totals[su.subjectName] = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
           if (rec?.remarks) remarks[su.subjectName] = rec.remarks;   // saved remarks → Comment column
           if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
         });
@@ -1396,7 +1424,7 @@ const [subjects, setSubjects] = useState([]);
     if (!cbrCardCtx) { setCbrCardMarks(null); return undefined; }
     setCbrCardMarks(null); // pehle clear — sirf API data dikhe, static/stale flash na ho
     const grp = cbrResults.find(g => g.id === cbrCardCtx.classId);
-    const st  = grp?.students.find(s => s.rollNo === cbrCardCtx.studentRollNo);
+    const st = grp?.students.find(s => s.rollNo === cbrCardCtx.studentRollNo);
     if (!grp || !st) return undefined;
     let cancelled = false;
     (async () => {
@@ -1442,7 +1470,7 @@ const [subjects, setSubjects] = useState([]);
               const d = await r.json();
               const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
               obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
-              totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+              totals[su.subjectName] = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
               if (rec?.remarks) remarks[su.subjectName] = rec.remarks;
               if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
             } catch { obtained[su.subjectName] = 0; totals[su.subjectName] = Number(su.totalMarks ?? 0); absentSubjects.push(su.subjectName); }
@@ -1478,24 +1506,24 @@ const [subjects, setSubjects] = useState([]);
   }, [cbrCardCtx]);
 
   /* ── Result History state ── */
-  const [rhSearchQ, setRhSearchQ]             = useState('');
+  const [rhSearchQ, setRhSearchQ] = useState('');
   const [rhFilterSession, setRhFilterSession] = useState('');
-  const [rhFilterClass, setRhFilterClass]     = useState('');
+  const [rhFilterClass, setRhFilterClass] = useState('');
   const [rhFilterSection, setRhFilterSection] = useState('');
-  const [rhFilterExam, setRhFilterExam]       = useState('');
+  const [rhFilterExam, setRhFilterExam] = useState('');
   const [rhSearchFocused, setRhSearchFocused] = useState(false);
   const [rhActiveStudent, setRhActiveStudent] = useState(null); // student object
   /* Search/card se khola gaya student — wapas "All Students" par us ka card
      Fee module jaisa hara highlight rehta hai, agli search type karne tak. */
-  const [rhHighlightId, setRhHighlightId]     = useState(null);
-  const [rhCardCtx, setRhCardCtx]             = useState(null); // { student, result }
-  const [rhReportReq, setRhReportReq]         = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
-  const [rhExams, setRhExams]                 = useState([]);   // student-click par fetched exams (examName/termName)
-  const [rhExamsLoading, setRhExamsLoading]   = useState(false);
-  const [rhCombined, setRhCombined]           = useState([]);   // student ki class/section ke combined assessments (combinedassessmentcrud)
-  const [rhCardMarks, setRhCardMarks]         = useState(null); // View card ke liye real per-subject marks
-  const [rhExamScores, setRhExamScores]       = useState({});   // { [exam.id]: overall % } exam history ke liye
-  const [rhExamRanks, setRhExamRanks]         = useState({});   // { [exam.id]: "1st" } getstudentsrankings se
+  const [rhHighlightId, setRhHighlightId] = useState(null);
+  const [rhCardCtx, setRhCardCtx] = useState(null); // { student, result }
+  const [rhReportReq, setRhReportReq] = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
+  const [rhExams, setRhExams] = useState([]);   // student-click par fetched exams (examName/termName)
+  const [rhExamsLoading, setRhExamsLoading] = useState(false);
+  const [rhCombined, setRhCombined] = useState([]);   // student ki class/section ke combined assessments (combinedassessmentcrud)
+  const [rhCardMarks, setRhCardMarks] = useState(null); // View card ke liye real per-subject marks
+  const [rhExamScores, setRhExamScores] = useState({});   // { [exam.id]: overall % } exam history ke liye
+  const [rhExamRanks, setRhExamRanks] = useState({});   // { [exam.id]: "1st" } getstudentsrankings se
   const [rhCombinedRanks, setRhCombinedRanks] = useState({});   // { [combined.id]: { rank:"1st", pct } } getstudentsrankings(mainExamID) se
   const [rhStudentSummaries, setRhStudentSummaries] = useState({}); // { [studentId]: { avgPct, best, count, trend, grade } } card list ke liye
   const [rhAttendance, setRhAttendance] = useState(null); // active student ki REAL attendance: { pct, monthly:[{label,pct}] }
@@ -1514,9 +1542,9 @@ const [subjects, setSubjects] = useState([]);
     setRhAttnLoading(true);
     setRhAttendance(null);
     try {
-      const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
-      const token     = sessionStorage.getItem('token');
-      const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
+      const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+      const token = sessionStorage.getItem('token');
+      const classID = st.gradeId ?? st.classID ?? st.classId ?? '';
       const sectionID = st.sectionId ?? st.sectionID ?? '';
       const studentId = st.id;
 
@@ -1527,7 +1555,7 @@ const [subjects, setSubjects] = useState([]);
 
       // Session ka date range (sessionStorage se) — start se aaj (ya end, jo pehle aaye) tak.
       const startStr = sessionStorage.getItem('sessionStartDate');
-      const endStr   = sessionStorage.getItem('sessionEndDate');
+      const endStr = sessionStorage.getItem('sessionEndDate');
       const start = startStr ? new Date(startStr) : null;
       const today = new Date(); today.setHours(0, 0, 0, 0);
       let end = endStr ? new Date(endStr) : null;
@@ -1601,9 +1629,9 @@ const [subjects, setSubjects] = useState([]);
       // warna naye student ke neeche purane (stale) exams/scores flash karte hain.
       setRhExams([]);
       setRhExamScores({});
-      const branchID  = sessionStorage.getItem('branchID');
-      const token     = sessionStorage.getItem('token');
-      const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const classID = st.gradeId ?? st.classID ?? st.classId ?? '';
       const sectionID = st.sectionId ?? st.sectionID ?? '';
       const url = buildUrl(`/api/getexamsbybranchclassidsectionid?branchID=${branchID}&classID=${classID}&sectionID=${sectionID}&pageNo=1`);
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: '*/*' } });
@@ -1622,9 +1650,9 @@ const [subjects, setSubjects] = useState([]);
   const loadStudentCombined = async (st) => {
     try {
       setRhCombined([]);
-      const branchID  = sessionStorage.getItem('branchID');
-      const token     = sessionStorage.getItem('token');
-      const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const classID = st.gradeId ?? st.classID ?? st.classId ?? '';
       const sectionID = st.sectionId ?? st.sectionID ?? '';
       const res = await fetch(buildUrl('/api/combinedassessmentcrud'), {
         method: 'POST',
@@ -1666,11 +1694,11 @@ const [subjects, setSubjects] = useState([]);
     setRhCardMarks(null); // pehle clear karo taa-ke purana/static data flash na ho (sirf API data dikhe)
     const { result, student } = rhCardCtx;
     const isCombined = result?.type === 'combined' || result?.combinedId != null;
-    const classID    = result?.classID   ?? student?.gradeId   ?? student?.classID;
-    const sectionID  = result?.sectionID ?? student?.sectionId ?? student?.sectionID;
+    const classID = result?.classID ?? student?.gradeId ?? student?.classID;
+    const sectionID = result?.sectionID ?? student?.sectionId ?? student?.sectionID;
     // Combined ka koi selectExam nahi hota — uski jagah mainExamID exam ke tor par use hota hai.
-    const examID     = isCombined ? result?.mainExamID : result?.selectExam;
-    const studentId  = student?.id;
+    const examID = isCombined ? result?.mainExamID : result?.selectExam;
+    const studentId = student?.id;
     if (!classID || !sectionID || !examID) { setRhCardMarks({ subjects: [], totals: {}, obtained: {} }); return undefined; }
     let cancelled = false;
     (async () => {
@@ -1727,7 +1755,7 @@ const [subjects, setSubjects] = useState([]);
         records.forEach(({ su, rec }) => {
           const name = su.subjectName;
           obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
-          totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+          totals[name] = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
           if (rec?.remarks) remarks[name] = rec.remarks;   // saved remarks → Comment column
           if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(name);
         });
@@ -1883,8 +1911,8 @@ const [subjects, setSubjects] = useState([]);
     (async () => {
       try {
         const branchID = sessionStorage.getItem('branchID');
-        const token    = sessionStorage.getItem('token');
-        const headers  = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        const token = sessionStorage.getItem('token');
+        const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
         for (const cls of cs) {
           for (const sec of (cls.sections || [])) {
             if (cancelled) return;
@@ -1919,8 +1947,8 @@ const [subjects, setSubjects] = useState([]);
                 if (tot > 0) pcts.push(Math.round((obt / tot) * 100));
               }
               const avgPct = pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length * 10) / 10 : 0;
-              const best   = pcts.length ? Math.max(...pcts) : 0;
-              const trend  = pcts.length >= 2 ? (pcts[pcts.length - 1] > pcts[0] ? 'up' : pcts[pcts.length - 1] < pcts[0] ? 'down' : 'flat') : 'flat';
+              const best = pcts.length ? Math.max(...pcts) : 0;
+              const trend = pcts.length >= 2 ? (pcts[pcts.length - 1] > pcts[0] ? 'up' : pcts[pcts.length - 1] < pcts[0] ? 'down' : 'flat') : 'flat';
               const g = rcGetGrade(avgPct, 100);
               if (!cancelled) {
                 setRhStudentSummaries(prev => ({ ...prev, [stu.id]: { avgPct, best, count: exams.length, trend, grade: g ? g.grade : '—' } }));
@@ -1944,92 +1972,92 @@ const [subjects, setSubjects] = useState([]);
   const rcTemplate = rcSafeTemplate(rcTemplateSaved);
   const [rcoGeneral, setRcoGeneral] = useState(RCO_GENERAL_OPTIONS);
   const [rcoSig, setRcoSig] = useState(RCO_SIG_OPTIONS);
-  const [rcoSettings, setRcoSettings]   = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
-  const [rcPreviewId, setRcPreviewId]   = useState(null);      // template id being previewed
+  const [rcoSettings, setRcoSettings] = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
+  const [rcPreviewId, setRcPreviewId] = useState(null);      // template id being previewed
 
   /* ── Syllabus state ── */
-  const [sylTerm, setSylTerm]               = useState('2nd');
-  const [sylExamId, setSylExamId]           = useState(null);
-  const [sylOpenKey, setSylOpenKey]         = useState(null);
+  const [sylTerm, setSylTerm] = useState('2nd');
+  const [sylExamId, setSylExamId] = useState(null);
+  const [sylOpenKey, setSylOpenKey] = useState(null);
   /* Khali se shuru — syllabus API se aata hai. Pehle mock me har class ka
      banawata syllabus para tha ("Unit 1: Grammar & Comprehension"). */
   const [syllabusData, setSyllabusData] = useState({});
-  const [sylEditing, setSylEditing]         = useState(null);   // { examId, classKey, className, subjects }
-  const [sylConfirmDel, setSylConfirmDel]   = useState(null);   // { examId, classKey, className }
-  const [sylReportReq, setSylReportReq]     = useState(null);   // { classKey, name }
-  const [sessionList, setSessionList]   = useState([]);
-  const [branchSession, setBranchSession]         = useState([]);
+  const [sylEditing, setSylEditing] = useState(null);   // { examId, classKey, className, subjects }
+  const [sylConfirmDel, setSylConfirmDel] = useState(null);   // { examId, classKey, className }
+  const [sylReportReq, setSylReportReq] = useState(null);   // { classKey, name }
+  const [sessionList, setSessionList] = useState([]);
+  const [branchSession, setBranchSession] = useState([]);
   /* null = active-session check abhi pending; true = active session set hai (module dikhao);
      false = koi active session nahi → "set session" popup dikhao. */
-  const [hasActiveSession, setHasActiveSession]   = useState(null);
-const [terms, setTerms] = useState([]);
-/* Mount par session API pehle chalti hai, terms baad me — tab tak chips/guards ko
-   "koi term nahi" nahi, "load ho raha hai" dikhana hai. */
-const [termsLoading, setTermsLoading] = useState(true);
-const [filtered, setFiltered] = useState([]);
-const [selectedTermId, setSelectedTermId] = useState(null);
-const [examClasses, setExamClasses] = useState([]);
-const [loadingGrades, setLoadingGrades] = useState(false);
-const [loadingSigs, setLoadingSigs] = useState(false);
-const [loadingRemarks, setLoadingRemarks] = useState(false);
-const [examVisibilityMap, setExamVisibilityMap] = useState({});
+  const [hasActiveSession, setHasActiveSession] = useState(null);
+  const [terms, setTerms] = useState([]);
+  /* Mount par session API pehle chalti hai, terms baad me — tab tak chips/guards ko
+     "koi term nahi" nahi, "load ho raha hai" dikhana hai. */
+  const [termsLoading, setTermsLoading] = useState(true);
+  const [filtered, setFiltered] = useState([]);
+  const [selectedTermId, setSelectedTermId] = useState(null);
+  const [examClasses, setExamClasses] = useState([]);
+  const [loadingGrades, setLoadingGrades] = useState(false);
+  const [loadingSigs, setLoadingSigs] = useState(false);
+  const [loadingRemarks, setLoadingRemarks] = useState(false);
+  const [examVisibilityMap, setExamVisibilityMap] = useState({});
   const [resStudentData, setResStudentData] = useState({}); // key → { students, subjects, marks, rankings }
-const [resLoadingKey, setResLoadingKey] = useState(null);
+  const [resLoadingKey, setResLoadingKey] = useState(null);
 
-    /* Load the session (academic-year) dropdown. Default-selects the session whose
-       id matches sessionStorage.sessionID — the active session for the logged-in user. */
-    const loadSessionList = async () => {
-      try {
-        const res = await fetch(buildUrl(`/api/Setting/get-academic-sessions-by-branch/${termsBranchID()}`), { method: 'GET', headers: termsAuthHeaders() });
-        const json = await res.json();
-        setSessions(json?.data || []);
-        const stored = termsSessionYearID();
-        if (stored) setSessionId(String(stored));
-      } catch (e) {
-        console.error('Error loading sessions:', e);
-      }
-    };
-  
-    /* Module khulte hi ORDER zaruri hai: pehle session API (active session →
-       sessionStorage.sessionID), phir terms. Pehle dono saath chalti thin, is liye
-       termscrud ko sessionYearID khali milta tha (jab tak session storage me pehle se
-       na ho) aur term/exam data khali aa jata tha. */
-    useEffect(() => {
-      let cancelled = false;
-      (async () => {
-        setTermsLoading(true);
-        // 1) Session — ye sessionStorage me sessionID/dates set karti hai
-        const hasSession = await loadSessionDates();
-        if (cancelled) return;
-        // Session dropdown terms par depend nahi karta, isko saath chalne do
-        loadSessionList();
-        // 2) Terms — ab sessionYearID mojood hai
-        if (hasSession) await getTerms();
-        else setTerms([]);
-        if (!cancelled) setTermsLoading(false);
-      })();
-      return () => { cancelled = true; };
-    }, []);
-  
-    const loadSessionDates = async () => {
-      /* Dates and status were stored at login (and refreshed when a session
-         is saved). Opening this tab does not call the active-session API. */
-      if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return false; }
-      const row = readStoredActiveSession();
-      if (!row) { setHasActiveSession(false); return false; }
-      setHasActiveSession(true);
-      const start = row.sessionStart || row.StartDate || sessionStorage.getItem('sessionStartDate') || '';
-      const end = row.sessionEnd || row.EndDate || sessionStorage.getItem('sessionEndDate') || '';
-      if (start) setStart(String(start).slice(0, 10));
-      if (end) setEnd(String(end).slice(0, 10));
-      return true;
-    };
-  
+  /* Load the session (academic-year) dropdown. Default-selects the session whose
+     id matches sessionStorage.sessionID — the active session for the logged-in user. */
+  const loadSessionList = async () => {
+    try {
+      const res = await fetch(buildUrl(`/api/Setting/get-academic-sessions-by-branch/${termsBranchID()}`), { method: 'GET', headers: termsAuthHeaders() });
+      const json = await res.json();
+      setSessions(json?.data || []);
+      const stored = termsSessionYearID();
+      if (stored) setSessionId(String(stored));
+    } catch (e) {
+      console.error('Error loading sessions:', e);
+    }
+  };
+
+  /* Module khulte hi ORDER zaruri hai: pehle session API (active session →
+     sessionStorage.sessionID), phir terms. Pehle dono saath chalti thin, is liye
+     termscrud ko sessionYearID khali milta tha (jab tak session storage me pehle se
+     na ho) aur term/exam data khali aa jata tha. */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setTermsLoading(true);
+      // 1) Session — ye sessionStorage me sessionID/dates set karti hai
+      const hasSession = await loadSessionDates();
+      if (cancelled) return;
+      // Session dropdown terms par depend nahi karta, isko saath chalne do
+      loadSessionList();
+      // 2) Terms — ab sessionYearID mojood hai
+      if (hasSession) await getTerms();
+      else setTerms([]);
+      if (!cancelled) setTermsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const loadSessionDates = async () => {
+    /* Dates and status were stored at login (and refreshed when a session
+       is saved). Opening this tab does not call the active-session API. */
+    if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return false; }
+    const row = readStoredActiveSession();
+    if (!row) { setHasActiveSession(false); return false; }
+    setHasActiveSession(true);
+    const start = row.sessionStart || row.StartDate || sessionStorage.getItem('sessionStartDate') || '';
+    const end = row.sessionEnd || row.EndDate || sessionStorage.getItem('sessionEndDate') || '';
+    if (start) setStart(String(start).slice(0, 10));
+    if (end) setEnd(String(end).slice(0, 10));
+    return true;
+  };
+
   const getSessionData = async () => {
     try {
       const branchID = sessionStorage.getItem("branchID");
       const empID = sessionStorage.getItem("employee_ID");
-  
+
       const res = await fetch(
         buildUrl(`api/Setting/get-branch-session/${branchID}`),
         {
@@ -2039,1598 +2067,1598 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
           },
         }
       );
-          const json = await res.json();   // ✅ ADD THIS LINE
+      const json = await res.json();   // ✅ ADD THIS LINE
 
-     const session = json.data[0];
-    
-    sessionStorage.setItem('sessionID', session.SessionID);
-    sessionStorage.setItem('sessionStatus', session.Status);        // ✅ ADD THIS
-    sessionStorage.setItem('sessionStartDate', session.StartDate);  // ✅ ADD THIS
-    sessionStorage.setItem('sessionEndDate', session.EndDate);      // ✅ ADD THIS
-    
-    notifySessionChange();
+      const session = json.data[0];
+
+      sessionStorage.setItem('sessionID', session.SessionID);
+      sessionStorage.setItem('sessionStatus', session.Status);        // ✅ ADD THIS
+      sessionStorage.setItem('sessionStartDate', session.StartDate);  // ✅ ADD THIS
+      sessionStorage.setItem('sessionEndDate', session.EndDate);      // ✅ ADD THIS
+
+      notifySessionChange();
     } catch (error) {
       console.error("Error loading classes:", error);
     }
   };
 
- const changeSession = async (id) => {
-  setSessionId(id);
-  /* Provisional: id now, name as soon as the row arrives below. Without the
-     name this switcher left every label in the app on the PREVIOUS session. */
-  storeSwitchedSession(id, sessionStorage.getItem('changeSessionName'));
+  const changeSession = async (id) => {
+    setSessionId(id);
+    /* Provisional: id now, name as soon as the row arrives below. Without the
+       name this switcher left every label in the app on the PREVIOUS session. */
+    storeSwitchedSession(id, sessionStorage.getItem('changeSessionName'));
 
-  // User ne session change kiya hai, toh us session ki details bhi load karo
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const res = await fetch(
-      buildUrl(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
-      { headers: { Accept: '*/*' } }
-    );
-    const json = await res.json();
-    const sessions = json?.data || [];
-    const selected = sessions.find(s => String(s.ID) === String(id));
-    
-    if (selected) {
-      sessionStorage.setItem('sessionStatus', selected.Status);
-      sessionStorage.setItem('sessionStartDate', selected.StartDate);
-      sessionStorage.setItem('sessionEndDate', selected.EndDate);
-      storeSwitchedSession(id, selected.SessionName);
-      return;
-    }
-  } catch (e) {
-    console.error('Error loading session details:', e);
-  }
-  
-  notifySessionChange();
-};
-  
-    /* Terms mount par upar wale bootstrap effect se load hote hain (session ke baad),
-       is liye yahan alag se getTerms() nahi chalta. */
-  
-    /* Re-run the term/session calls whenever a session key changes (same-tab event)
-       or another tab edits sessionStorage. */
-    useEffect(() => {
-      const reload = async () => {
-        // Yahan bhi wahi tarteeb: session pehle, terms baad me.
-        setTermsLoading(true);
-        const hasSession = await loadSessionDates();
-        if (hasSession) await getTerms();
-        else setTerms([]);
-        setTermsLoading(false);
-      };
-      window.addEventListener(SESSION_CHANGE_EVENT, reload);
-      window.addEventListener('storage', reload);
-      return () => {
-        window.removeEventListener(SESSION_CHANGE_EVENT, reload);
-        window.removeEventListener('storage', reload);
-      };
-    }, []);
-    const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
-/* Prefer the user-switched session (changeSessionId); fall back to the session
-   set at login (SessionID / sessionID). Sent as sessionYearID on term calls. */
-const termsSessionYearID = () =>
-  sessionStorage.getItem('changeSessionId')
-  || sessionStorage.getItem('SessionID')
-  || sessionStorage.getItem('sessionID')
-  || '';
-
-/* sessionStorage writes don't fire the native 'storage' event in the same tab,
-   so we broadcast our own event after changing a session key. Loaders listen for
-   it (and the native cross-tab 'storage' event) to re-run their term/calendar calls. */
-const SESSION_CHANGE_EVENT = 'sm-session-change';
-const notifySessionChange = () => {
-  try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
-};
-
-
-/* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
-const termsAuthHeaders = (extra = {}) => ({
-  Accept: '*/*',
-  Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
-  ...extra,
-});
-  const [sessions,  setSessions]  = useState([]);
-  const [sessionId, setSessionId] = useState(() => termsSessionYearID());
-  const [start,  setStart]  = useState('2026-01-01');
-  const [end,    setEnd]    = useState('2026-12-31');
-   const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
-   /* Examination module checkbox OFF in the current session → view-only. */
-   const examModuleReadOnly = useModuleReadOnly('exam');
-const isOtherSession = examModuleReadOnly || (() => {
-  // 1️⃣ Session ID mismatch check
-  if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
-    return true; // ❌ Disable - different session
-  }
-
-  // 2️⃣ Session Status check
-  const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
-  if (sessionStatus !== 'Current') {
-    return true; // ❌ Disable - session not active
-  }
-
-  // 3️⃣ Date Range check
-  const now = new Date();
-  const start = new Date(sessionStorage.getItem('sessionStartDate'));
-  const end = new Date(sessionStorage.getItem('sessionEndDate'));
-  
-  if (now < start || now > end) {
-    return true; // ❌ Disable - outside date range
-  }
-
-  return false; // ✅ Enable - sab check pass
-})();
-async function getTerms() {
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = Number(sessionStorage.getItem('branchID'));
-
-    const response = await fetch(buildUrl('/api/termscrud'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        id: 0,
-        branchID,
-        term: '',
-        sessionYearID: termsSessionYearID(),
-        action: 'get'
-      })
-    });
-
-    const data = await response.json();
-
-    // FIX: Ensure data is an array before setting state
-    if (Array.isArray(data)) {
-      setTerms(data);
-    } else if (data && Array.isArray(data.data)) {
-      // If API returns { data: [...] }
-      setTerms(data.data);
-    } else if (data && data.length !== undefined) {
-      // If data is array-like
-      setTerms(Array.from(data));
-    } else {
-      // Fallback to empty array
-      console.warn('Unexpected terms data format:', data);
-      setTerms([]);
-    }
-  } catch (error) {
-    console.log('Could not load terms', error);
-    setTerms([]); // Set empty array on error
-  }
-} 
-
-  
-// Update fetchGradeSetup function
-async function fetchGradeSetup() {
-  try {
-    setLoadingGrades(true);
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-
-    const response = await fetch(buildUrl('/api/gradingcrud'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json'
-      },
-      body: JSON.stringify({
-        id: 0,
-        branchID: branchID || "1",
-        percentage: "",
-        grade: "",
-        remarks: "",
-        percentageNo: "",
-        action: "get"
-      })
-    });
-
-    const data = await response.json();
-    console.log("Grade Setup API Response:", data);
-
-    // Response bare array hota hai; kuch environments { data:[…] } / { Data:[…] }
-    // me lapet kar deti hain — dono surat me rows nikaal lo.
-    const rows = Array.isArray(data) ? data
-      : Array.isArray(data?.data) ? data.data
-      : Array.isArray(data?.Data) ? data.Data : [];
-
-    // API returns: { id, branchID, percentage: "≥90", grade: "A+", remarks: "good" }
-    const transformedGrades = rows.map(item => {
-      // "≥90" / ">=90" / "<40" / "=50" → cond + numeric pct.
-      // AHEM: pehle ">=90" galat parse hota tha ('>' branch chalta aur pct
-      // "=90" reh jaata jo NaN ban jaata) — ab ≤/<= pehle, phir ≥/>=, phir
-      // akele < > =, aur number raw string se seedha nikaal liya jaata hai.
-      const rawPct = String(item.percentage ?? '').trim();
-      let cond = 'gte';
-      if (/≤|<=/.test(rawPct))      cond = 'lte';
-      else if (/</.test(rawPct))    cond = 'lt';
-      else if (/≥|>=/.test(rawPct)) cond = 'gte';
-      else if (/>/.test(rawPct))    cond = 'gt';
-      else if (/=/.test(rawPct))    cond = 'eq';
-      const m = rawPct.match(/-?\d+(?:\.\d+)?/);
-      const pct = m ? m[0] : (item.percentageNo != null && item.percentageNo !== '' ? String(item.percentageNo) : '');
-
-      return {
-        id: item.id,
-        grade: item.grade || '',
-        cond,
-        pct,
-        comment: item.remarks || ''
-      };
-    }).filter(g => g.grade && g.pct !== '');
-
-    setRsGrades(transformedGrades);
-    /* Module cache bhi set — rcGetGrade (per-subject / history / trends) isi se
-       chalta hai, taake poore result card par ek hi scale ho. */
-    RC_API_GRADES = transformedGrades;
-    return transformedGrades;
-  } catch (error) {
-    console.log("Could not load grade setup", error);
-    toast('Could not load grade setup', 'error');
-    return [];
-  } finally {
-    setLoadingGrades(false);
-  }
-}
-// Single Assessment visibility (publish/release state) GET API se reload — button state update.
-const loadResVisibility = async (examId = resExamId, classes = examClasses) => {
-  const selectedExam = filtered.find(ex => ex.id === examId);
-  if (!selectedExam) return;
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
-    const params = new URLSearchParams({
-      termID: String(selectedExam.termID), examID: String(selectedExam.selectExam), branchID: String(branchID),
-    });
-    const response = await fetch(buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
-      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    const data = await response.json();
-    const visMap = {};
-    if (Array.isArray(data)) {
-      data.forEach(item => {
-        (classes || []).forEach((cls, i) => {
-          if (Number(cls.sectionID) === Number(item.sectionID) && Number(cls.classID) === Number(item.classID)) {
-            visMap[`rcls_${examId}_${cls.sectionID}_${i}`] = item.isResultVisibleToParents;
-          }
-        });
-      });
-    }
-    setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
-  } catch (error) { console.error('Error fetching visibility:', error); }
-};
-
-const handleConfirmPublish = async () => {
-  if (!resConfirmPublish) return;
-  if (isOtherSession) { toast('Method not allowed', 'error'); setResConfirmPublish(null); return; }
-  const { key, released, cls } = resConfirmPublish;
-  const selectedExam = filtered.find(e => e.id === resExamId);
-const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
-
-  try {
-    const payload = {
-      classID: cls.classID,
-      sectionID: cls.sectionID,
-      examID: selectedExam?.selectExam || 0,
-      termID: selectedExam?.termID || 0,
-      branchID: branchID,
-      isResultVisibleToParents: !released,
-    };
-
-    const res = await fetch( buildUrl('/api/sauploadmarksUpdatevissibility'), {
-      method: 'POST',
- headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json'
-      },
-            body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) throw new Error('API failed');
-
-    setResultData(prev => {
-      const next = { ...prev };
-      const examMap = { ...(next[resExamId] || {}) };
-      const oldCd = examMap[key] || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
-      examMap[key] = { ...oldCd, released: !oldCd.released };
-      next[resExamId] = examMap;
-      return next;
-    });
-
-    // Publish/unpublish ke baad visibility GET API se fresh state lo — button (Released/Publish) turant update.
-    await loadResVisibility();
-
-    toast(released ? 'Result unpublished' : 'Result published!', 'success');
-  } catch (err) {
-    toast('Failed to update visibility. Please try again.', 'error');
-  } finally {
-    setResConfirmPublish(null);
-  }
-};
-
-/* Date Sheet / Syllabus publish toggle — backend release API call karta hai
-   (query params, isRelease true/false), phir local badge state update. */
-const handleDsSylConfirmPublish = async () => {
-  if (!dsSylConfirmPublish) return;
-  if (isOtherSession) { toast('Method not allowed', 'error'); setDsSylConfirmPublish(null); return; }
-  const { kind, key, released, classID, sectionID, selectExam, term } = dsSylConfirmPublish;
-  const next = !released;   // true = publish, false = unpublish
-  const noun = kind === 'syllabus' ? 'Syllabus' : 'Date sheet';
-  try {
-    if (kind === 'syllabus') {
-      await postSylRelease(classID, sectionID, selectExam, term, next);
-    } else {
-      await postDsRelease(classID, sectionID, selectExam, term, next);
-    }
-  } catch (err) {
-    console.error('Publish update failed:', err);
-    toast(`Could not update ${noun.toLowerCase()} publish status. Please try again.`, 'error');
-    setDsSylConfirmPublish(null);
-    return;
-  }
-  const setReleased = kind === 'syllabus' ? setSylReleased : setDsReleased;
-  setReleased(prev => ({ ...prev, [key]: next }));
-  toast(released ? `${noun} unpublished` : `${noun} published!`, 'success');
-  setDsSylConfirmPublish(null);
-};
-
-// Update fetchSignatureSetup function
-async function fetchSignatureSetup() {
-  try {
-    setLoadingSigs(true);
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-
-    const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json'
-      },
-      body: JSON.stringify({
-        id: 0,
-        branchID: branchID || "1",
-        name: "",
-        designation: "",
-        signature: "",
-        action: "get"
-      })
-    });
-
-    const data = await response.json();
-    console.log("Signature Setup API Response:", data);
-    
-    // Transform API response to match the expected format
-    // API returns: { id, branchID, name: "Sawaira", designation: "principle", signature: "sawairaG" }
-    // `on` = ye signature result card par dikhani hai ya nahi (max 2 — saved
-    // signature1 / signature2 se restore).
-    const sig1 = rcoSettings?.signature1, sig2 = rcoSettings?.signature2;
-    const transformedSigs = (data || []).map(item => ({
-      id: item.id,
-      name: item.name || '',
-      desig: item.designation || '',
-      img: item.signature || '',  // signature field contains the name/signature text
-      on: !!(sig1 && item.id === sig1) || !!(sig2 && item.id === sig2),
-    }));
-    
-    setRsSigs(transformedSigs);
-    return transformedSigs;
-  } catch (error) {
-    console.log("Could not load signature setup", error);
-    toast('Could not load signature setup', 'error');
-    return [];
-  } finally {
-    setLoadingSigs(false);
-  }
-}
-
-// Update fetchRemarksSetup function
-async function fetchRemarksSetup() {
-  try {
-    setLoadingRemarks(true);
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-
-    const response = await fetch(buildUrl('/api/overallgradingcrud'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json'
-      },
-      body: JSON.stringify({
-        id: 0,
-        branchID: branchID || "1",
-        percentage: "",
-        finalRemarks: "",
-        action: "get"
-      })
-    });
-
-    const data = await response.json();
-    console.log("Remarks Setup API Response:", data);
-    
-    // Transform API response to match the expected format
-    // API returns: { id, branchID, percentage: "≥ 90", finalRemarks: "Outstanding" }
-    const transformedRemarks = (data || []).map(item => {
-      // Extract the condition and percentage value from "≥ 90" format
-      let cond = 'gte';
-      let pct = '';
-      
-      if (item.percentage) {
-        if (item.percentage.includes('≥')) {
-          cond = 'gte';
-          pct = item.percentage.replace('≥', '').trim();
-        } else if (item.percentage.includes('>')) {
-          cond = 'gt';
-          pct = item.percentage.replace('>', '').trim();
-        } else if (item.percentage.includes('≤')) {
-          cond = 'lte';
-          pct = item.percentage.replace('≤', '').trim();
-        } else if (item.percentage.includes('<')) {
-          cond = 'lt';
-          pct = item.percentage.replace('<', '').trim();
-        } else if (item.percentage.includes('=')) {
-          cond = 'eq';
-          pct = item.percentage.replace('=', '').trim();
-        } else {
-          pct = item.percentage;
-        }
-      }
-      
-      return {
-        id: item.id,
-        cond: cond,
-        pct: pct,
-        text: item.finalRemarks || ''
-      };
-    });
-    
-    setRsRemarks(transformedRemarks);
-    return transformedRemarks;
-  } catch (error) {
-    console.log("Could not load remarks setup", error);
-    toast('Could not load remarks setup', 'error');
-    return [];
-  } finally {
-    setLoadingRemarks(false);
-  }
-}
-
-// ── Result Card Options: GET settings + toggles set ──
-async function loadCardOptions(notifyIfMissing = false) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token    = sessionStorage.getItem('token');
-    const res = await fetch(buildUrl(`/api/getexamselectionsettingsbybranchid?branchID=${branchID}`), {
-      headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
-    });
-    const data = await res.json();
-    // Response bare object/array dono ho sakta hai
-    const s = Array.isArray(data) ? data[0] : (data?.data || data);
-    // Is branch ki koi setting save nahi ({"message":"No settings found for branch X"})
-    // → result card generate karte waqt user ko toaster se bata do.
-    const hasSettings = !!s && typeof s === 'object' && !Array.isArray(s) && (s.id != null || s.branchID != null);
-    if (!hasSettings) {
-      setRcoSettings(null);
-      if (notifyIfMissing) {
-        toast('Result card options are not enabled for this branch. Enable them from Result Setup → Result Card Options.', 'warning');
-      }
-      return;
-    }
-    setRcoSettings(s);
-    // API ke boolean fields se toggles ka on/off set karo
-    setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
-    setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
-    // Signature selection (max 2) → saved signature1 / signature2 se restore karo.
-    setRsSigs(list => list.map(sg => ({ ...sg, on: (s.signature1 && sg.id === s.signature1) || (s.signature2 && sg.id === s.signature2) })));
-    // Record mojood hai magar saare toggles band hain → card khaali chhapega,
-    // is liye generate/open karte waqt user ko toaster se batao.
-    const anyOn = [...Object.values(RCO_GENERAL_FIELD), ...Object.values(RCO_SIG_FIELD)].some(f => !!s[f]);
-    if (!anyOn && notifyIfMissing) {
-      toast('All result card options are disabled. Enable them from Result Setup → Result Card Options.', 'warning');
-    }
-  } catch (err) {
-    console.error('Could not load result card options', err);
-    if (notifyIfMissing) toast('Could not load result card options. Check them in Result Setup → Result Card Options.', 'warning');
-  }
-}
-
-// Exam History row ke Download icon ke liye: View jaise REAL data (subjects/marks/remarks/finalRemark)
-// load karke us se report banao (mock nahi).
-const rhDownloadCardReport = async (st, r) => {
-  loadCardOptions(true);
-  const isCombined = r?.type === 'combined' || r?.combinedId != null;
-  const classID   = r?.classID   ?? st?.gradeId   ?? st?.classID;
-  const sectionID = r?.sectionID ?? st?.sectionId ?? st?.sectionID;
-  // Combined ke liye mainExamID exam ki tarah use hota hai (selectExam nahi hota).
-  const examID    = isCombined ? r?.mainExamID : r?.selectExam;
-  let   termID    = r?.termID;
-  const studentId = st?.id;
-  const token     = sessionStorage.getItem('token');
-  const branchID  = sessionStorage.getItem('branchID');
-  const headers   = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-  let subjectNames = [], totals = {}, obtained = {}, remarks = {}, finalRemark = '';
-  try {
-    // Combined tab jaisा subject-resolution: mainExam ke subjects → na milein to sub-exam ke.
-    let subs;
-    if (isCombined) {
-      let pool = cbrAllExams;
-      if (!pool.length) pool = (await loadAllTermExams().catch(() => [])) || [];
-      const mainEx = (pool || []).find(e => String(e.selectExam) === String(examID))
-        || (pool || []).find(e => e.name === r?.mainExamName);
-      termID = mainEx?.termID ?? termID ?? selectedTermId;
-      let ms = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
-      if ((!ms || !ms.length) && (r?.subExamIDs || []).length) {
-        const subExamId = r.subExamIDs[0];
-        const subTermID = (pool || []).find(e => String(e.selectExam) === String(subExamId))?.termID ?? termID;
-        ms = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: subTermID, examID: subExamId }).catch(() => []);
-      }
-      ms = ms || [];
-      let syl = [];
-      try { syl = (await getSyllabusSubjects(classID, sectionID)) || []; } catch { /* keep going */ }
-      const nameMap = {};
-      syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
-      subs = rcNormalizeSubjects(ms, nameMap);
-      if (!subs.length) subs = rcNormalizeSubjects(syl, nameMap);
-    } else {
-      const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
-      subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
-    }
-    subjectNames = subs.map(s => s.subjectName);
-    await Promise.all(subs.map(async su => {
-      try {
-        const p = new URLSearchParams({
-          classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
-          SubjectID: String(su.subjectID), StudentID: String(studentId), sectionID: String(sectionID), pageNo: '1',
-        });
-        const rr = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
-        const d = await rr.json();
-        const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
-        const name = su.subjectName;
-        obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
-        totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
-        if (rec?.remarks) remarks[name] = rec.remarks;
-      } catch { /* skip subject */ }
-    }));
+    // User ne session change kiya hai, toh us session ki details bhi load karo
     try {
-      const fp = new URLSearchParams({
-        branchID: String(branchID), classID: String(classID), sectionID: String(sectionID),
-        examID: String(examID), termID: String(termID ?? ''), studentID: String(studentId), pageNo: '1', pageCount: '20',
-      });
-      const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
-      const fd = await fr.json();
-      const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : null);
-      finalRemark = frec?.remarks || '';
-    } catch { /* no final remark */ }
-  } catch (e) { console.error('Could not load report data', e); }
-  // Report builders branch info (header/footer) ke liye branchSchool set karo, phir REAL data se report.
-  rhReportSchool = branchSchool || null;
-  rhBuildSingleCardReport(st, r, true, { subjects: subjectNames, totals, obtained, remarks, finalRemark });
-};
+      const branchID = sessionStorage.getItem('branchID');
+      const res = await fetch(
+        buildUrl(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
+        { headers: { Accept: '*/*' } }
+      );
+      const json = await res.json();
+      const sessions = json?.data || [];
+      const selected = sessions.find(s => String(s.ID) === String(id));
 
-// ── Result Card Options: Save Preferences → POST ──
-/* Result card par kaunsi signatures dikhen — designation-wise toggle. Max 2
-   signatures (signature1 / signature2). 3rd on karne par rok do. */
-const toggleSigShow = (id) => {
-  // Check + toast updater ke BAHAR — warna StrictMode me updater do baar chalta hai
-  // aur toast do dafa aata hai.
-  const target = (rsSigs || []).find(s => s.id === id);
-  if (!target) return;
-  if (!target.on && rsSigs.filter(s => s.on).length >= 2) {
-    toast('You can show a maximum of 2 signatures on the result card.', 'warning');
-    return;
-  }
-  setRsSigs(list => list.map(s => s.id === id ? { ...s, on: !s.on } : s));
-};
-
-async function saveCardOptions() {
-  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-  // 2 se ziada signature result card par allow nahi.
-  const selectedSigIds = (rsSigs || []).filter(s => s.on).map(s => s.id);
-  if (selectedSigIds.length > 2) {
-    toast('You can show a maximum of 2 signatures on the result card.', 'error');
-    return;
-  }
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token    = sessionStorage.getItem('token');
-    // Existing record (id) yaqeeni banao: agar load nahi hua / id nahi mili to abhi GET kar lo.
-    // Is se id hone par hamesha UPDATE jaye (INSERT nahi) — chahe loadCardOptions na chala ho.
-    let prev = rcoSettings;
-    if (!prev || !prev.id) {
-      try {
-        const r = await fetch(buildUrl(`/api/getexamselectionsettingsbybranchid?branchID=${branchID}`), {
-          headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
-        });
-        const d = await r.json();
-        const s = Array.isArray(d) ? d[0] : (d?.data || d);
-        if (s && typeof s === 'object') prev = s;
-      } catch { /* GET fail ho to insert hi sahi */ }
+      if (selected) {
+        sessionStorage.setItem('sessionStatus', selected.Status);
+        sessionStorage.setItem('sessionStartDate', selected.StartDate);
+        sessionStorage.setItem('sessionEndDate', selected.EndDate);
+        storeSwitchedSession(id, selected.SessionName);
+        return;
+      }
+    } catch (e) {
+      console.error('Error loading session details:', e);
     }
-    prev = prev || {};
-    const nowIso = new Date().toISOString();
-    const payload = {
-      id: prev.id || 0,
-      action: prev.id ? 'update' : 'insert',
-      // includeX fields ka UI toggle nahi — loaded value preserve karo (warna false)
-      includeComments:          !!prev.includeComments,
-      includeRemarks:           !!prev.includeRemarks,
-      includeOverallGrade:      !!prev.includeOverallGrade,
-      includeOverallPercentage: !!prev.includeOverallPercentage,
-      includeSectionRanking:    !!prev.includeSectionRanking,
-      // General toggles
-      ...Object.fromEntries(rcoGeneral.map(it => [RCO_GENERAL_FIELD[it.label], !!it.on])),
-      // Signatures & Remarks toggles
-      ...Object.fromEntries(rcoSig.map(it => [RCO_SIG_FIELD[it.label], !!it.on])),
-      // Selected signatures (designation-wise, max 2) → signature1 / signature2.
-      signature1: selectedSigIds[0] || 0,
-      signature2: selectedSigIds[1] || 0,
-      branchID: parseInt(branchID),
-      createdAt: prev.createdAt || nowIso,
-      updatedAt: nowIso,
-    };
-    const res = await fetch(buildUrl('/api/examselectionsettingscrud'), {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: '*/*' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && (data.success || data.message?.toLowerCase?.().includes('success') || data.id || true)) {
-      toast('Preferences saved!', 'success');
-      // saved values ko state mein rakho taa-ke agla save update kare (insert nahi)
-      setRcoSettings({ ...prev, ...payload, id: data.id ?? data.recordId ?? prev.id ?? 0 });
-    } else {
-      toast(data.message || 'Failed to save preferences', 'error');
-    }
-  } catch (err) {
-    console.error('Could not save result card options', err);
-    toast('Error saving preferences', 'error');
-  }
-}
 
-// Result Setup ka data tab load karo jab user Results par aaye.
-// Grades / signatures / remarks branch-level config hai — ise Results main-tab
-// khulte hi (kisi bhi sub-tab par) EK baar real API se load karte hain (ref guard),
-// taake Result Setup grid + sab result cards par real data aaye, koi static nahi.
-const rsSetupLoadedOnce = useRef(false);
-useEffect(() => {
-  if (tab === 'results' && !rsSetupLoadedOnce.current) {
-    rsSetupLoadedOnce.current = true;
-    fetchGradeSetup();
-    fetchSignatureSetup();
-    fetchRemarksSetup();
-  }
-  // Result Card Options tab par aate hi saved preferences GET karke toggles set karo
-  if (tab === 'results' && rsTab === 'resultsetup' && rsL2 === 'cardoptions') {
-    loadCardOptions();
-  }
-}, [tab, rsTab, rsL2]);
-
-const openAdd = () => {
-  setEditing({ name: '', classes: [], from: '', to: '', termID: selectedTermId });
-};
-  // Replace your current openEdit function with this:
-const openEdit = (exam) => {
-  console.log("Editing exam:", exam);
-  
-  // Make sure we have all the data needed for editing
-  const examToEdit = {
-    id: exam.id,
-    name: exam.name,
-    termID: exam.termID,
-    termName: exam.termName,
-    selectExam: exam.selectExam,
-    from: exam.from,
-    to: exam.to,
-    classes: exam.classes || [] // Make sure classes array exists
+    notifySessionChange();
   };
-  
-  setEditing(examToEdit);
-};
-async function getExamClasses(examId, termId) {
-  try {
+
+  /* Terms mount par upar wale bootstrap effect se load hote hain (session ke baad),
+     is liye yahan alag se getTerms() nahi chalta. */
+
+  /* Re-run the term/session calls whenever a session key changes (same-tab event)
+     or another tab edits sessionStorage. */
+  useEffect(() => {
+    const reload = async () => {
+      // Yahan bhi wahi tarteeb: session pehle, terms baad me.
+      setTermsLoading(true);
+      const hasSession = await loadSessionDates();
+      if (hasSession) await getTerms();
+      else setTerms([]);
+      setTermsLoading(false);
+    };
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
+  const termsBranchID = () => Number(sessionStorage.getItem('branchID')) || 0;
+  /* Prefer the user-switched session (changeSessionId); fall back to the session
+     set at login (SessionID / sessionID). Sent as sessionYearID on term calls. */
+  const termsSessionYearID = () =>
+    sessionStorage.getItem('changeSessionId')
+    || sessionStorage.getItem('SessionID')
+    || sessionStorage.getItem('sessionID')
+    || '';
+
+  /* sessionStorage writes don't fire the native 'storage' event in the same tab,
+     so we broadcast our own event after changing a session key. Loaders listen for
+     it (and the native cross-tab 'storage' event) to re-run their term/calendar calls. */
+  const SESSION_CHANGE_EVENT = 'sm-session-change';
+  const notifySessionChange = () => {
+    try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
+  };
+
+
+  /* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
+  const termsAuthHeaders = (extra = {}) => ({
+    Accept: '*/*',
+    Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+    ...extra,
+  });
+  const [sessions, setSessions] = useState([]);
+  const [sessionId, setSessionId] = useState(() => termsSessionYearID());
+  const [start, setStart] = useState('2026-01-01');
+  const [end, setEnd] = useState('2026-12-31');
+  const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
+  /* Examination module checkbox OFF in the current session → view-only. */
+  const examModuleReadOnly = useModuleReadOnly('exam');
+  const isOtherSession = examModuleReadOnly || (() => {
+    // 1️⃣ Session ID mismatch check
+    if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
+      return true; // ❌ Disable - different session
+    }
+
+    // 2️⃣ Session Status check
+    const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
+    if (sessionStatus !== 'Current') {
+      return true; // ❌ Disable - session not active
+    }
+
+    // 3️⃣ Date Range check
+    const now = new Date();
+    const start = new Date(sessionStorage.getItem('sessionStartDate'));
+    const end = new Date(sessionStorage.getItem('sessionEndDate'));
+
+    if (now < start || now > end) {
+      return true; // ❌ Disable - outside date range
+    }
+
+    return false; // ✅ Enable - sab check pass
+  })();
+  async function getTerms() {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = Number(sessionStorage.getItem('branchID'));
+
+      const response = await fetch(buildUrl('/api/termscrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          id: 0,
+          branchID,
+          term: '',
+          sessionYearID: termsSessionYearID(),
+          action: 'get'
+        })
+      });
+
+      const data = await response.json();
+
+      // FIX: Ensure data is an array before setting state
+      if (Array.isArray(data)) {
+        setTerms(data);
+      } else if (data && Array.isArray(data.data)) {
+        // If API returns { data: [...] }
+        setTerms(data.data);
+      } else if (data && data.length !== undefined) {
+        // If data is array-like
+        setTerms(Array.from(data));
+      } else {
+        // Fallback to empty array
+        console.warn('Unexpected terms data format:', data);
+        setTerms([]);
+      }
+    } catch (error) {
+      console.log('Could not load terms', error);
+      setTerms([]); // Set empty array on error
+    }
+  }
+
+
+  // Update fetchGradeSetup function
+  async function fetchGradeSetup() {
+    try {
+      setLoadingGrades(true);
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+
+      const response = await fetch(buildUrl('/api/gradingcrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          id: 0,
+          branchID: branchID || "1",
+          percentage: "",
+          grade: "",
+          remarks: "",
+          percentageNo: "",
+          action: "get"
+        })
+      });
+
+      const data = await response.json();
+      console.log("Grade Setup API Response:", data);
+
+      // Response bare array hota hai; kuch environments { data:[…] } / { Data:[…] }
+      // me lapet kar deti hain — dono surat me rows nikaal lo.
+      const rows = Array.isArray(data) ? data
+        : Array.isArray(data?.data) ? data.data
+          : Array.isArray(data?.Data) ? data.Data : [];
+
+      // API returns: { id, branchID, percentage: "≥90", grade: "A+", remarks: "good" }
+      const transformedGrades = rows.map(item => {
+        // "≥90" / ">=90" / "<40" / "=50" → cond + numeric pct.
+        // AHEM: pehle ">=90" galat parse hota tha ('>' branch chalta aur pct
+        // "=90" reh jaata jo NaN ban jaata) — ab ≤/<= pehle, phir ≥/>=, phir
+        // akele < > =, aur number raw string se seedha nikaal liya jaata hai.
+        const rawPct = String(item.percentage ?? '').trim();
+        let cond = 'gte';
+        if (/≤|<=/.test(rawPct)) cond = 'lte';
+        else if (/</.test(rawPct)) cond = 'lt';
+        else if (/≥|>=/.test(rawPct)) cond = 'gte';
+        else if (/>/.test(rawPct)) cond = 'gt';
+        else if (/=/.test(rawPct)) cond = 'eq';
+        const m = rawPct.match(/-?\d+(?:\.\d+)?/);
+        const pct = m ? m[0] : (item.percentageNo != null && item.percentageNo !== '' ? String(item.percentageNo) : '');
+
+        return {
+          id: item.id,
+          grade: item.grade || '',
+          cond,
+          pct,
+          comment: item.remarks || ''
+        };
+      }).filter(g => g.grade && g.pct !== '');
+
+      setRsGrades(transformedGrades);
+      /* Module cache bhi set — rcGetGrade (per-subject / history / trends) isi se
+         chalta hai, taake poore result card par ek hi scale ho. */
+      RC_API_GRADES = transformedGrades;
+      return transformedGrades;
+    } catch (error) {
+      console.log("Could not load grade setup", error);
+      toast('Could not load grade setup', 'error');
+      return [];
+    } finally {
+      setLoadingGrades(false);
+    }
+  }
+  // Single Assessment visibility (publish/release state) GET API se reload — button state update.
+  const loadResVisibility = async (examId = resExamId, classes = examClasses) => {
+    const selectedExam = filtered.find(ex => ex.id === examId);
+    if (!selectedExam) return;
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const params = new URLSearchParams({
+        termID: String(selectedExam.termID), examID: String(selectedExam.selectExam), branchID: String(branchID),
+      });
+      const response = await fetch(buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      const data = await response.json();
+      const visMap = {};
+      if (Array.isArray(data)) {
+        data.forEach(item => {
+          (classes || []).forEach((cls, i) => {
+            if (Number(cls.sectionID) === Number(item.sectionID) && Number(cls.classID) === Number(item.classID)) {
+              visMap[`rcls_${examId}_${cls.sectionID}_${i}`] = item.isResultVisibleToParents;
+            }
+          });
+        });
+      }
+      setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
+    } catch (error) { console.error('Error fetching visibility:', error); }
+  };
+
+  const handleConfirmPublish = async () => {
+    if (!resConfirmPublish) return;
+    if (isOtherSession) { toast('Method not allowed', 'error'); setResConfirmPublish(null); return; }
+    const { key, released, cls } = resConfirmPublish;
+    const selectedExam = filtered.find(e => e.id === resExamId);
     const branchID = sessionStorage.getItem('branchID');
-    const empID = sessionStorage.getItem('employee_ID');
     const token = sessionStorage.getItem('token');
 
-    const response = await fetch(
-      buildUrl(
-        `/api/getclassesinexam?branchID=${branchID}&selectExam=${examId}&termID=${termId}&empID=${empID}`
-      ),
-      {
-        method: "GET",
+    try {
+      const payload = {
+        classID: cls.classID,
+        sectionID: cls.sectionID,
+        examID: selectedExam?.selectExam || 0,
+        termID: selectedExam?.termID || 0,
+        branchID: branchID,
+        isResultVisibleToParents: !released,
+      };
+
+      const res = await fetch(buildUrl('/api/sauploadmarksUpdatevissibility'), {
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
-          Accept: "application/json"
-        }
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error('API failed');
+
+      setResultData(prev => {
+        const next = { ...prev };
+        const examMap = { ...(next[resExamId] || {}) };
+        const oldCd = examMap[key] || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+        examMap[key] = { ...oldCd, released: !oldCd.released };
+        next[resExamId] = examMap;
+        return next;
+      });
+
+      // Publish/unpublish ke baad visibility GET API se fresh state lo — button (Released/Publish) turant update.
+      await loadResVisibility();
+
+      toast(released ? 'Result unpublished' : 'Result published!', 'success');
+    } catch (err) {
+      toast('Failed to update visibility. Please try again.', 'error');
+    } finally {
+      setResConfirmPublish(null);
+    }
+  };
+
+  /* Date Sheet / Syllabus publish toggle — backend release API call karta hai
+     (query params, isRelease true/false), phir local badge state update. */
+  const handleDsSylConfirmPublish = async () => {
+    if (!dsSylConfirmPublish) return;
+    if (isOtherSession) { toast('Method not allowed', 'error'); setDsSylConfirmPublish(null); return; }
+    const { kind, key, released, classID, sectionID, selectExam, term } = dsSylConfirmPublish;
+    const next = !released;   // true = publish, false = unpublish
+    const noun = kind === 'syllabus' ? 'Syllabus' : 'Date sheet';
+    try {
+      if (kind === 'syllabus') {
+        await postSylRelease(classID, sectionID, selectExam, term, next);
+      } else {
+        await postDsRelease(classID, sectionID, selectExam, term, next);
       }
-    );
+    } catch (err) {
+      console.error('Publish update failed:', err);
+      toast(`Could not update ${noun.toLowerCase()} publish status. Please try again.`, 'error');
+      setDsSylConfirmPublish(null);
+      return;
+    }
+    const setReleased = kind === 'syllabus' ? setSylReleased : setDsReleased;
+    setReleased(prev => ({ ...prev, [key]: next }));
+    toast(released ? `${noun} unpublished` : `${noun} published!`, 'success');
+    setDsSylConfirmPublish(null);
+  };
 
-    const data = await response.json();
-    console.log("API Response:", data); // Debug log
-    
-    // Transform the data to match your component structure
-    const transformedData = (data || []).map(item => ({
-  id: item.id,
-  classID: item.gradeID,
-  sectionID: item.sectionID,
-  sectionName: item.sectionName,
-  gradeName: item.name,
-  className: `${item.name} - ${item.sectionName}`.trim()
-}));
+  // Update fetchSignatureSetup function
+  async function fetchSignatureSetup() {
+    try {
+      setLoadingSigs(true);
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
 
-// Duplicate sectionID hataao — ek section ek baar dikhe
-const seen = new Set();
-const uniqueData = transformedData.filter(item => {
-  const key = `${item.classID}_${item.sectionID}`;
-  if (seen.has(key)) return false;
-  seen.add(key);
-  return true;
-});
+      const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          id: 0,
+          branchID: branchID || "1",
+          name: "",
+          designation: "",
+          signature: "",
+          action: "get"
+        })
+      });
 
-// Launch Setup (student module) jaisi sequence — classID (gradeID) phir sectionID
-// ke numeric order par sort. Isse "Grade 10 before Grade 2" jaisa string-sort issue
-// nahi hota aur classes wahi tarteeb me aati hain jaise launch setup me.
-uniqueData.sort((a, b) => {
-  const g = (Number(a.classID) || 0) - (Number(b.classID) || 0);
-  if (g !== 0) return g;
-  return (Number(a.sectionID) || 0) - (Number(b.sectionID) || 0);
-});
+      const data = await response.json();
+      console.log("Signature Setup API Response:", data);
 
-console.log("Transformed Data (unique, sorted):", uniqueData);
-setExamClasses(uniqueData);
-return uniqueData;
-  } catch (error) {
-    console.log("Could not load exam classes", error);
-    setExamClasses([]);
-    return [];
+      // Transform API response to match the expected format
+      // API returns: { id, branchID, name: "Sawaira", designation: "principle", signature: "sawairaG" }
+      // `on` = ye signature result card par dikhani hai ya nahi (max 2 — saved
+      // signature1 / signature2 se restore).
+      const sig1 = rcoSettings?.signature1, sig2 = rcoSettings?.signature2;
+      const transformedSigs = (data || []).map(item => ({
+        id: item.id,
+        name: item.name || '',
+        desig: item.designation || '',
+        img: item.signature || '',  // signature field contains the name/signature text
+        on: !!(sig1 && item.id === sig1) || !!(sig2 && item.id === sig2),
+      }));
+
+      setRsSigs(transformedSigs);
+      return transformedSigs;
+    } catch (error) {
+      console.log("Could not load signature setup", error);
+      toast('Could not load signature setup', 'error');
+      return [];
+    } finally {
+      setLoadingSigs(false);
+    }
   }
-}
+
+  // Update fetchRemarksSetup function
+  async function fetchRemarksSetup() {
+    try {
+      setLoadingRemarks(true);
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+
+      const response = await fetch(buildUrl('/api/overallgradingcrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          id: 0,
+          branchID: branchID || "1",
+          percentage: "",
+          finalRemarks: "",
+          action: "get"
+        })
+      });
+
+      const data = await response.json();
+      console.log("Remarks Setup API Response:", data);
+
+      // Transform API response to match the expected format
+      // API returns: { id, branchID, percentage: "≥ 90", finalRemarks: "Outstanding" }
+      const transformedRemarks = (data || []).map(item => {
+        // Extract the condition and percentage value from "≥ 90" format
+        let cond = 'gte';
+        let pct = '';
+
+        if (item.percentage) {
+          if (item.percentage.includes('≥')) {
+            cond = 'gte';
+            pct = item.percentage.replace('≥', '').trim();
+          } else if (item.percentage.includes('>')) {
+            cond = 'gt';
+            pct = item.percentage.replace('>', '').trim();
+          } else if (item.percentage.includes('≤')) {
+            cond = 'lte';
+            pct = item.percentage.replace('≤', '').trim();
+          } else if (item.percentage.includes('<')) {
+            cond = 'lt';
+            pct = item.percentage.replace('<', '').trim();
+          } else if (item.percentage.includes('=')) {
+            cond = 'eq';
+            pct = item.percentage.replace('=', '').trim();
+          } else {
+            pct = item.percentage;
+          }
+        }
+
+        return {
+          id: item.id,
+          cond: cond,
+          pct: pct,
+          text: item.finalRemarks || ''
+        };
+      });
+
+      setRsRemarks(transformedRemarks);
+      return transformedRemarks;
+    } catch (error) {
+      console.log("Could not load remarks setup", error);
+      toast('Could not load remarks setup', 'error');
+      return [];
+    } finally {
+      setLoadingRemarks(false);
+    }
+  }
+
+  // ── Result Card Options: GET settings + toggles set ──
+  async function loadCardOptions(notifyIfMissing = false) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(buildUrl(`/api/getexamselectionsettingsbybranchid?branchID=${branchID}`), {
+        headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+      });
+      const data = await res.json();
+      // Response bare object/array dono ho sakta hai
+      const s = Array.isArray(data) ? data[0] : (data?.data || data);
+      // Is branch ki koi setting save nahi ({"message":"No settings found for branch X"})
+      // → result card generate karte waqt user ko toaster se bata do.
+      const hasSettings = !!s && typeof s === 'object' && !Array.isArray(s) && (s.id != null || s.branchID != null);
+      if (!hasSettings) {
+        setRcoSettings(null);
+        if (notifyIfMissing) {
+          toast('Result card options are not enabled for this branch. Enable them from Result Setup → Result Card Options.', 'warning');
+        }
+        return;
+      }
+      setRcoSettings(s);
+      // API ke boolean fields se toggles ka on/off set karo
+      setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
+      setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
+      // Signature selection (max 2) → saved signature1 / signature2 se restore karo.
+      setRsSigs(list => list.map(sg => ({ ...sg, on: (s.signature1 && sg.id === s.signature1) || (s.signature2 && sg.id === s.signature2) })));
+      // Record mojood hai magar saare toggles band hain → card khaali chhapega,
+      // is liye generate/open karte waqt user ko toaster se batao.
+      const anyOn = [...Object.values(RCO_GENERAL_FIELD), ...Object.values(RCO_SIG_FIELD)].some(f => !!s[f]);
+      if (!anyOn && notifyIfMissing) {
+        toast('All result card options are disabled. Enable them from Result Setup → Result Card Options.', 'warning');
+      }
+    } catch (err) {
+      console.error('Could not load result card options', err);
+      if (notifyIfMissing) toast('Could not load result card options. Check them in Result Setup → Result Card Options.', 'warning');
+    }
+  }
+
+  // Exam History row ke Download icon ke liye: View jaise REAL data (subjects/marks/remarks/finalRemark)
+  // load karke us se report banao (mock nahi).
+  const rhDownloadCardReport = async (st, r) => {
+    loadCardOptions(true);
+    const isCombined = r?.type === 'combined' || r?.combinedId != null;
+    const classID = r?.classID ?? st?.gradeId ?? st?.classID;
+    const sectionID = r?.sectionID ?? st?.sectionId ?? st?.sectionID;
+    // Combined ke liye mainExamID exam ki tarah use hota hai (selectExam nahi hota).
+    const examID = isCombined ? r?.mainExamID : r?.selectExam;
+    let termID = r?.termID;
+    const studentId = st?.id;
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+    let subjectNames = [], totals = {}, obtained = {}, remarks = {}, finalRemark = '';
+    try {
+      // Combined tab jaisा subject-resolution: mainExam ke subjects → na milein to sub-exam ke.
+      let subs;
+      if (isCombined) {
+        let pool = cbrAllExams;
+        if (!pool.length) pool = (await loadAllTermExams().catch(() => [])) || [];
+        const mainEx = (pool || []).find(e => String(e.selectExam) === String(examID))
+          || (pool || []).find(e => e.name === r?.mainExamName);
+        termID = mainEx?.termID ?? termID ?? selectedTermId;
+        let ms = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
+        if ((!ms || !ms.length) && (r?.subExamIDs || []).length) {
+          const subExamId = r.subExamIDs[0];
+          const subTermID = (pool || []).find(e => String(e.selectExam) === String(subExamId))?.termID ?? termID;
+          ms = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: subTermID, examID: subExamId }).catch(() => []);
+        }
+        ms = ms || [];
+        let syl = [];
+        try { syl = (await getSyllabusSubjects(classID, sectionID)) || []; } catch { /* keep going */ }
+        const nameMap = {};
+        syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+        subs = rcNormalizeSubjects(ms, nameMap);
+        if (!subs.length) subs = rcNormalizeSubjects(syl, nameMap);
+      } else {
+        const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
+        subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
+      }
+      subjectNames = subs.map(s => s.subjectName);
+      await Promise.all(subs.map(async su => {
+        try {
+          const p = new URLSearchParams({
+            classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
+            SubjectID: String(su.subjectID), StudentID: String(studentId), sectionID: String(sectionID), pageNo: '1',
+          });
+          const rr = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+          const d = await rr.json();
+          const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+          const name = su.subjectName;
+          obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
+          totals[name] = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+          if (rec?.remarks) remarks[name] = rec.remarks;
+        } catch { /* skip subject */ }
+      }));
+      try {
+        const fp = new URLSearchParams({
+          branchID: String(branchID), classID: String(classID), sectionID: String(sectionID),
+          examID: String(examID), termID: String(termID ?? ''), studentID: String(studentId), pageNo: '1', pageCount: '20',
+        });
+        const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
+        const fd = await fr.json();
+        const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : null);
+        finalRemark = frec?.remarks || '';
+      } catch { /* no final remark */ }
+    } catch (e) { console.error('Could not load report data', e); }
+    // Report builders branch info (header/footer) ke liye branchSchool set karo, phir REAL data se report.
+    rhReportSchool = branchSchool || null;
+    rhBuildSingleCardReport(st, r, true, { subjects: subjectNames, totals, obtained, remarks, finalRemark });
+  };
+
+  // ── Result Card Options: Save Preferences → POST ──
+  /* Result card par kaunsi signatures dikhen — designation-wise toggle. Max 2
+     signatures (signature1 / signature2). 3rd on karne par rok do. */
+  const toggleSigShow = (id) => {
+    // Check + toast updater ke BAHAR — warna StrictMode me updater do baar chalta hai
+    // aur toast do dafa aata hai.
+    const target = (rsSigs || []).find(s => s.id === id);
+    if (!target) return;
+    if (!target.on && rsSigs.filter(s => s.on).length >= 2) {
+      toast('You can show a maximum of 2 signatures on the result card.', 'warning');
+      return;
+    }
+    setRsSigs(list => list.map(s => s.id === id ? { ...s, on: !s.on } : s));
+  };
+
+  async function saveCardOptions() {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    // 2 se ziada signature result card par allow nahi.
+    const selectedSigIds = (rsSigs || []).filter(s => s.on).map(s => s.id);
+    if (selectedSigIds.length > 2) {
+      toast('You can show a maximum of 2 signatures on the result card.', 'error');
+      return;
+    }
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      // Existing record (id) yaqeeni banao: agar load nahi hua / id nahi mili to abhi GET kar lo.
+      // Is se id hone par hamesha UPDATE jaye (INSERT nahi) — chahe loadCardOptions na chala ho.
+      let prev = rcoSettings;
+      if (!prev || !prev.id) {
+        try {
+          const r = await fetch(buildUrl(`/api/getexamselectionsettingsbybranchid?branchID=${branchID}`), {
+            headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+          });
+          const d = await r.json();
+          const s = Array.isArray(d) ? d[0] : (d?.data || d);
+          if (s && typeof s === 'object') prev = s;
+        } catch { /* GET fail ho to insert hi sahi */ }
+      }
+      prev = prev || {};
+      const nowIso = new Date().toISOString();
+      const payload = {
+        id: prev.id || 0,
+        action: prev.id ? 'update' : 'insert',
+        // includeX fields ka UI toggle nahi — loaded value preserve karo (warna false)
+        includeComments: !!prev.includeComments,
+        includeRemarks: !!prev.includeRemarks,
+        includeOverallGrade: !!prev.includeOverallGrade,
+        includeOverallPercentage: !!prev.includeOverallPercentage,
+        includeSectionRanking: !!prev.includeSectionRanking,
+        // General toggles
+        ...Object.fromEntries(rcoGeneral.map(it => [RCO_GENERAL_FIELD[it.label], !!it.on])),
+        // Signatures & Remarks toggles
+        ...Object.fromEntries(rcoSig.map(it => [RCO_SIG_FIELD[it.label], !!it.on])),
+        // Selected signatures (designation-wise, max 2) → signature1 / signature2.
+        signature1: selectedSigIds[0] || 0,
+        signature2: selectedSigIds[1] || 0,
+        branchID: parseInt(branchID),
+        createdAt: prev.createdAt || nowIso,
+        updatedAt: nowIso,
+      };
+      const res = await fetch(buildUrl('/api/examselectionsettingscrud'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: '*/*' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && (data.success || data.message?.toLowerCase?.().includes('success') || data.id || true)) {
+        toast('Preferences saved!', 'success');
+        // saved values ko state mein rakho taa-ke agla save update kare (insert nahi)
+        setRcoSettings({ ...prev, ...payload, id: data.id ?? data.recordId ?? prev.id ?? 0 });
+      } else {
+        toast(data.message || 'Failed to save preferences', 'error');
+      }
+    } catch (err) {
+      console.error('Could not save result card options', err);
+      toast('Error saving preferences', 'error');
+    }
+  }
+
+  // Result Setup ka data tab load karo jab user Results par aaye.
+  // Grades / signatures / remarks branch-level config hai — ise Results main-tab
+  // khulte hi (kisi bhi sub-tab par) EK baar real API se load karte hain (ref guard),
+  // taake Result Setup grid + sab result cards par real data aaye, koi static nahi.
+  const rsSetupLoadedOnce = useRef(false);
+  useEffect(() => {
+    if (tab === 'results' && !rsSetupLoadedOnce.current) {
+      rsSetupLoadedOnce.current = true;
+      fetchGradeSetup();
+      fetchSignatureSetup();
+      fetchRemarksSetup();
+    }
+    // Result Card Options tab par aate hi saved preferences GET karke toggles set karo
+    if (tab === 'results' && rsTab === 'resultsetup' && rsL2 === 'cardoptions') {
+      loadCardOptions();
+    }
+  }, [tab, rsTab, rsL2]);
+
+  const openAdd = () => {
+    setEditing({ name: '', classes: [], from: '', to: '', termID: selectedTermId });
+  };
+  // Replace your current openEdit function with this:
+  const openEdit = (exam) => {
+    console.log("Editing exam:", exam);
+
+    // Make sure we have all the data needed for editing
+    const examToEdit = {
+      id: exam.id,
+      name: exam.name,
+      termID: exam.termID,
+      termName: exam.termName,
+      selectExam: exam.selectExam,
+      from: exam.from,
+      to: exam.to,
+      classes: exam.classes || [] // Make sure classes array exists
+    };
+
+    setEditing(examToEdit);
+  };
+  async function getExamClasses(examId, termId) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
+
+      const response = await fetch(
+        buildUrl(
+          `/api/getclassesinexam?branchID=${branchID}&selectExam=${examId}&termID=${termId}&empID=${empID}`
+        ),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        }
+      );
+
+      const data = await response.json();
+      console.log("API Response:", data); // Debug log
+
+      // Transform the data to match your component structure
+      const transformedData = (data || []).map(item => ({
+        id: item.id,
+        classID: item.gradeID,
+        sectionID: item.sectionID,
+        sectionName: item.sectionName,
+        gradeName: item.name,
+        className: `${item.name} - ${item.sectionName}`.trim()
+      }));
+
+      // Duplicate sectionID hataao — ek section ek baar dikhe
+      const seen = new Set();
+      const uniqueData = transformedData.filter(item => {
+        const key = `${item.classID}_${item.sectionID}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      // Launch Setup (student module) jaisi sequence — classID (gradeID) phir sectionID
+      // ke numeric order par sort. Isse "Grade 10 before Grade 2" jaisa string-sort issue
+      // nahi hota aur classes wahi tarteeb me aati hain jaise launch setup me.
+      uniqueData.sort((a, b) => {
+        const g = (Number(a.classID) || 0) - (Number(b.classID) || 0);
+        if (g !== 0) return g;
+        return (Number(a.sectionID) || 0) - (Number(b.sectionID) || 0);
+      });
+
+      console.log("Transformed Data (unique, sorted):", uniqueData);
+      setExamClasses(uniqueData);
+      return uniqueData;
+    } catch (error) {
+      console.log("Could not load exam classes", error);
+      setExamClasses([]);
+      return [];
+    }
+  }
 
   /* ── Date Sheet helpers ── */
-  const dsTermExams   = exams.filter(e => e.term === dsTerm);
+  const dsTermExams = exams.filter(e => e.term === dsTerm);
   const dsCurrentExam = dsExamId ? exams.find(e => e.id === dsExamId) : null;
-  const dsExamSheets  = (dsExamId && dateSheets[dsExamId]) || {};
+  const dsExamSheets = (dsExamId && dateSheets[dsExamId]) || {};
 
   const dsPickTerm = t => {
     setDsTerm(t);
     setDsExamId(null);
     setDsOpenKey(null);
   };
- // For Date Sheet
-// Replace your existing dsPickExam function with this one
-const dsPickExam = async (id) => {
-  setDsExamId(id);
-  setDsOpenKey(null);
-  setExamClasses([]); // Clear previous classes while loading
-  
-  // Find the selected exam to get its selectExam ID and termID
-  const selectedExam = filtered.find(ex => ex.id === id);
-  console.log("Selected Exam:", selectedExam);
-  
-  if (selectedExam) {
-    const selectExamId = selectedExam.selectExam;
-    const termID = selectedExam.termID;
-    console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
-    
-    // First, get the classes for this exam
-    const classes = await getExamClasses(selectExamId, termID);
-    setExamClasses(classes);
-    
-    // Then, load date sheet data for ALL classes at once
-    const dateSheetsMap = {};
-    
-    for (const cls of classes) {
-      const key = `cls_${id}_${cls.sectionID}_${classes.indexOf(cls)}`;
-      
-      // Fetch date sheet data for this class
-      const rows = await getDateSheetData(cls.classID, cls.sectionID, id, termID);
-      
-      console.log(`Loaded ${rows.length} subjects for class ${cls.gradeName} - ${cls.sectionName}`);
-      
-      dateSheetsMap[key] = rows;
-    }
-    
-    // Update date sheets state with all loaded data
-    setDateSheets(prev => ({
-      ...prev,
-      [id]: { ...(prev[id] || {}), ...dateSheetsMap },
-    }));
+  // For Date Sheet
+  // Replace your existing dsPickExam function with this one
+  const dsPickExam = async (id) => {
+    setDsExamId(id);
+    setDsOpenKey(null);
+    setExamClasses([]); // Clear previous classes while loading
 
-    // Publish (release) state — har class ke liye forStudent GET se (data = published)
-    const dsRelEntries = await Promise.all(classes.map(async (cls, idx) => {
-      const key = `cls_${id}_${cls.sectionID}_${idx}`;
-      const released = await fetchDsReleaseState(cls.classID, cls.sectionID, selectExamId, termID);
-      return [key, released];
-    }));
-    setDsReleased(prev => ({ ...prev, ...Object.fromEntries(dsRelEntries) }));
-  }
-};
-const sylPickExam = async (id) => {
-  setSylExamId(id);
-  setSylOpenKey(null);
-  setExamClasses([]); // Clear previous classes while loading
-  
-  // Find the selected exam to get its selectExam ID and termID
-  const selectedExam = filtered.find(ex => ex.id === id);
-  console.log("Selected Exam:", selectedExam);
-  
-  if (selectedExam) {
-    const selectExamId = selectedExam.selectExam;
-    const termID = selectedExam.termID;
-    console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
-    
-    // First, get the classes for this exam
-    const classes = await getExamClasses(selectExamId, termID);
-    setExamClasses(classes);
-    
-    // Load syllabus data for ALL classes at once (in parallel)
-    if (classes && classes.length > 0) {
-      // Create an array of promises to load syllabus for all classes
-      const loadPromises = classes.map(async (cls, index) => {
-        const key = `scls_${id}_${cls.sectionID}_${index}`;
-        
-        // Fetch syllabus for this class
-        const rows = await getExamSyllabusByClassAndTerms(
-          cls.classID,
-          cls.sectionID,
-          selectExamId,
-          termID,
-          1
-        );
-        
-        // Map API rows -> { subject, content, updatedAt } shape; subject (id) par dedupe (API duplicate deti hai)
-        const seen = new Set();
-        const mapped = (rows || []).reduce((acc, r) => {
-          const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
-          if (seen.has(dk)) return acc;
-          seen.add(dk);
-          acc.push({
-            subject: r.subjectDisplayName || '',
-            content: r.subjectDetails || '',
-            updatedAt: r.updatedAt || r.UpdatedOn || '—',
-          });
-          return acc;
-        }, []);
+    // Find the selected exam to get its selectExam ID and termID
+    const selectedExam = filtered.find(ex => ex.id === id);
+    console.log("Selected Exam:", selectedExam);
 
-        return { key, mapped };
-      });
-      
-      // Wait for all promises to complete
-      const results = await Promise.all(loadPromises);
-      
-      // Update syllabus data state with all loaded data
-      const syllabusMap = {};
-      results.forEach(({ key, mapped }) => {
-        syllabusMap[key] = mapped;
-      });
-      
-      setSyllabusData(prev => ({
+    if (selectedExam) {
+      const selectExamId = selectedExam.selectExam;
+      const termID = selectedExam.termID;
+      console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
+
+      // First, get the classes for this exam
+      const classes = await getExamClasses(selectExamId, termID);
+      setExamClasses(classes);
+
+      // Then, load date sheet data for ALL classes at once
+      const dateSheetsMap = {};
+
+      for (const cls of classes) {
+        const key = `cls_${id}_${cls.sectionID}_${classes.indexOf(cls)}`;
+
+        // Fetch date sheet data for this class
+        const rows = await getDateSheetData(cls.classID, cls.sectionID, id, termID);
+
+        console.log(`Loaded ${rows.length} subjects for class ${cls.gradeName} - ${cls.sectionName}`);
+
+        dateSheetsMap[key] = rows;
+      }
+
+      // Update date sheets state with all loaded data
+      setDateSheets(prev => ({
         ...prev,
-        [id]: { ...(prev[id] || {}), ...syllabusMap },
+        [id]: { ...(prev[id] || {}), ...dateSheetsMap },
       }));
 
       // Publish (release) state — har class ke liye forStudent GET se (data = published)
-      const sylRelEntries = await Promise.all(classes.map(async (cls, idx) => {
-        const key = `scls_${id}_${cls.sectionID}_${idx}`;
-        const released = await fetchSylReleaseState(cls.classID, cls.sectionID, selectExamId, termID);
+      const dsRelEntries = await Promise.all(classes.map(async (cls, idx) => {
+        const key = `cls_${id}_${cls.sectionID}_${idx}`;
+        const released = await fetchDsReleaseState(cls.classID, cls.sectionID, selectExamId, termID);
         return [key, released];
       }));
-      setSylReleased(prev => ({ ...prev, ...Object.fromEntries(sylRelEntries) }));
-
-      console.log(`Loaded syllabus for ${classes.length} classes`);
+      setDsReleased(prev => ({ ...prev, ...Object.fromEntries(dsRelEntries) }));
     }
-  }
-};
-const loadResClassData = async (key, cls, force = false) => {
-  if (!force && resStudentData[key]) return resStudentData[key]; // already loaded (force=true par dobara fetch)
-  setResLoadingKey(key);
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
-    const selectedExam = filtered.find(e => e.id === resExamId);
-    const selectExamValue = selectedExam?.selectExam || 0;
-    const termID = selectedExam?.termID || selectedTermId;
+  };
+  const sylPickExam = async (id) => {
+    setSylExamId(id);
+    setSylOpenKey(null);
+    setExamClasses([]); // Clear previous classes while loading
 
-    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+    // Find the selected exam to get its selectExam ID and termID
+    const selectedExam = filtered.find(ex => ex.id === id);
+    console.log("Selected Exam:", selectedExam);
 
-    // 1. Students
-    const studentsRes = await fetch(
-      buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
-      { method: 'GET', headers }
-    );
-    const studentsData = await studentsRes.json();
-    const students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
+    if (selectedExam) {
+      const selectExamId = selectedExam.selectExam;
+      const termID = selectedExam.termID;
+      console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
 
-    // 2. Subject totals
-    const subjParams = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(cls.classID),
-      termID: String(termID),
-      ExamID: String(selectExamValue),
-      sectionID: String(cls.sectionID),
-      pageNo: '1'
-    });
-    const subjRes = await fetch(
-      buildUrl(`/api/getsasubjectbybranchclassandtermtotalsum?${subjParams}`),
-      { method: 'GET', headers }
-    );
-    const subjData = await subjRes.json();
-    const subjects = Array.isArray(subjData) ? subjData : (subjData?.data || []);
+      // First, get the classes for this exam
+      const classes = await getExamClasses(selectExamId, termID);
+      setExamClasses(classes);
 
-    // 3. Student marks
-    const marksParams = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(cls.classID),
-      termID: String(termID),
-      ExamID: String(selectExamValue),
-      sectionID: String(cls.sectionID),
-      pageNo: '1'
-    });
-    const marksRes = await fetch(
-      buildUrl(`/api/getsauploadmarksbystudentbranchsum?${marksParams}`),
-      { method: 'GET', headers }
-    );
-    const marksData = await marksRes.json();
-const marks = Array.isArray(marksData)
-  ? marksData
-  : (marksData?.data || marksData?.Data || []);
+      // Load syllabus data for ALL classes at once (in parallel)
+      if (classes && classes.length > 0) {
+        // Create an array of promises to load syllabus for all classes
+        const loadPromises = classes.map(async (cls, index) => {
+          const key = `scls_${id}_${cls.sectionID}_${index}`;
 
-    // 3b. Launch-Setup mapped subjects for THIS class (subject-against-class).
-    //     getsasubjectbybranchclassandtermtotalsum me kabhi purane/unmapped subjects
-    //     bhi aa jate hain jo Total/Subject-count ko inflate karte the. Isliye sirf
-    //     inhi mapped subjectIDs ko render me count karenge. (FIX 1)
-    let mappedSubjectIDs = [];
+          // Fetch syllabus for this class
+          const rows = await getExamSyllabusByClassAndTerms(
+            cls.classID,
+            cls.sectionID,
+            selectExamId,
+            termID,
+            1
+          );
+
+          // Map API rows -> { subject, content, updatedAt } shape; subject (id) par dedupe (API duplicate deti hai)
+          const seen = new Set();
+          const mapped = (rows || []).reduce((acc, r) => {
+            const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+            if (seen.has(dk)) return acc;
+            seen.add(dk);
+            acc.push({
+              subject: r.subjectDisplayName || '',
+              content: r.subjectDetails || '',
+              updatedAt: r.updatedAt || r.UpdatedOn || '—',
+            });
+            return acc;
+          }, []);
+
+          return { key, mapped };
+        });
+
+        // Wait for all promises to complete
+        const results = await Promise.all(loadPromises);
+
+        // Update syllabus data state with all loaded data
+        const syllabusMap = {};
+        results.forEach(({ key, mapped }) => {
+          syllabusMap[key] = mapped;
+        });
+
+        setSyllabusData(prev => ({
+          ...prev,
+          [id]: { ...(prev[id] || {}), ...syllabusMap },
+        }));
+
+        // Publish (release) state — har class ke liye forStudent GET se (data = published)
+        const sylRelEntries = await Promise.all(classes.map(async (cls, idx) => {
+          const key = `scls_${id}_${cls.sectionID}_${idx}`;
+          const released = await fetchSylReleaseState(cls.classID, cls.sectionID, selectExamId, termID);
+          return [key, released];
+        }));
+        setSylReleased(prev => ({ ...prev, ...Object.fromEntries(sylRelEntries) }));
+
+        console.log(`Loaded syllabus for ${classes.length} classes`);
+      }
+    }
+  };
+  const loadResClassData = async (key, cls, force = false) => {
+    if (!force && resStudentData[key]) return resStudentData[key]; // already loaded (force=true par dobara fetch)
+    setResLoadingKey(key);
     try {
-      const empID = sessionStorage.getItem('employee_ID');
-      const mapRes = await fetch(
-        buildUrl(`/get-subjects_byEmployeeID/${cls.classID}/${cls.sectionID}/${empID}`),
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const selectedExam = filtered.find(e => e.id === resExamId);
+      const selectExamValue = selectedExam?.selectExam || 0;
+      const termID = selectedExam?.termID || selectedTermId;
+
+      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+      // 1. Students
+      const studentsRes = await fetch(
+        buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
         { method: 'GET', headers }
       );
-      const mapJson = await mapRes.json();
-      const mapRows = mapJson?.data || (Array.isArray(mapJson) ? mapJson : []) || [];
-      mappedSubjectIDs = mapRows
-        .map(s => Number(s.subjectID ?? s.SubjectID ?? 0))
-        .filter(Boolean);
-    } catch (e) {
-      // API fail → khaali; render fallback (koi filter nahi, purana behavior).
-      mappedSubjectIDs = [];
-    }
+      const studentsData = await studentsRes.json();
+      const students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
 
-    // 3c. Scoped OBTAINED (numerator) — SIRF mapped subjects ka.
-    //     getsauploadmarksbystudentbranchsum har student ke liye ek PRE-SUMMED
-    //     obtainedMarks deta hai jo SAARE subjects (unmapped included) ka jod hai —
-    //     isi wajah se numerator scoped total (mapped) se bada ho kar >100% aa raha
-    //     tha (e.g. 879/625). Yahan har mapped subject ke against poori class ke
-    //     obtained fetch kar ke per-student sum banate hain, taake obtained bhi
-    //     mapped subjects tak scope ho jaye. Ek call PER mapped subject (StudentID
-    //     omit → poori class), Promise.all se batch (student-count par calls nahi
-    //     barhte). obtainedMarks field getsauploadmarksbyclassandtermandexamandsubject
-    //     par confirmed (card bhi wahi use karta hai).
-    /* Per-student obtained SCOPED to mapped subjects. Branch-sum obtained
-       (getsauploadmarksbystudentbranchsum) saare subjects jodta hai (unmapped
-       samet) → obtained > mapped-total (e.g. 879/625). getsauploadmarksbyclass
-       andtermandexamandsubject StudentID ke BAGHAIR khaali deta hai (isi liye
-       purana all-students attempt fail hota tha), is liye har student × har
-       MAPPED subject ke against StudentID ke sath fetch kar ke sum karte hain.
-       Concurrency cap ke liye students ko chhoti batches me chalate hain. */
-    let scopedObtained = {};      // { [studentID]: mapped subjects ka obtained sum }
-    let scopedObtainedOk = false;
-    const studentIds = (students || [])
-      .map(s => s.id ?? s.studentID ?? s.StudentID ?? s.studentId)
-      .filter(v => v != null);
-    if (mappedSubjectIDs.length && studentIds.length) {
+      // 2. Subject totals
+      const subjParams = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(cls.classID),
+        termID: String(termID),
+        ExamID: String(selectExamValue),
+        sectionID: String(cls.sectionID),
+        pageNo: '1'
+      });
+      const subjRes = await fetch(
+        buildUrl(`/api/getsasubjectbybranchclassandtermtotalsum?${subjParams}`),
+        { method: 'GET', headers }
+      );
+      const subjData = await subjRes.json();
+      const subjects = Array.isArray(subjData) ? subjData : (subjData?.data || []);
+
+      // 3. Student marks
+      const marksParams = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(cls.classID),
+        termID: String(termID),
+        ExamID: String(selectExamValue),
+        sectionID: String(cls.sectionID),
+        pageNo: '1'
+      });
+      const marksRes = await fetch(
+        buildUrl(`/api/getsauploadmarksbystudentbranchsum?${marksParams}`),
+        { method: 'GET', headers }
+      );
+      const marksData = await marksRes.json();
+      const marks = Array.isArray(marksData)
+        ? marksData
+        : (marksData?.data || marksData?.Data || []);
+
+      // 3b. Launch-Setup mapped subjects for THIS class (subject-against-class).
+      //     getsasubjectbybranchclassandtermtotalsum me kabhi purane/unmapped subjects
+      //     bhi aa jate hain jo Total/Subject-count ko inflate karte the. Isliye sirf
+      //     inhi mapped subjectIDs ko render me count karenge. (FIX 1)
+      let mappedSubjectIDs = [];
       try {
-        let rowCount = 0;
-        const BATCH = 6; // ek waqt me itne students (peak concurrency = BATCH × mappedSubjects)
-        for (let i = 0; i < studentIds.length; i += BATCH) {
-          const slice = studentIds.slice(i, i + BATCH);
-          // eslint-disable-next-line no-await-in-loop
-          await Promise.all(slice.map(async (stid) => {
-            const perSubj = await Promise.all(mappedSubjectIDs.map(async (sid) => {
-              const p = new URLSearchParams({
-                classID: String(cls.classID), termID: String(termID), ExamID: String(selectExamValue),
-                SubjectID: String(sid), StudentID: String(stid), sectionID: String(cls.sectionID), pageNo: '1',
-              });
-              try {
-                const r = await fetch(
-                  buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`),
-                  { method: 'GET', headers }
-                );
-                const d = await r.json();
-                const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
-                return rec ? (Number(rec.obtainedMarks ?? rec.obtainMarks ?? rec.marks ?? rec.ObtainedMarks ?? 0) || 0) : null;
-              } catch { return null; }
-            }));
-            let sum = 0, got = false;
-            perSubj.forEach(v => { if (v != null) { sum += v; got = true; } });
-            if (got) { scopedObtained[String(stid)] = sum; rowCount += 1; }
-          }));
-        }
-        // Kisi student ka bhi scoped obtained mila → reliable. Bilkul na mila →
-        // fallback pre-summed obtainedMarks (safety, taake list blank na ho).
-        scopedObtainedOk = rowCount > 0;
+        const empID = sessionStorage.getItem('employee_ID');
+        const mapRes = await fetch(
+          buildUrl(`/get-subjects_byEmployeeID/${cls.classID}/${cls.sectionID}/${empID}`),
+          { method: 'GET', headers }
+        );
+        const mapJson = await mapRes.json();
+        const mapRows = mapJson?.data || (Array.isArray(mapJson) ? mapJson : []) || [];
+        mappedSubjectIDs = mapRows
+          .map(s => Number(s.subjectID ?? s.SubjectID ?? 0))
+          .filter(Boolean);
       } catch (e) {
-        scopedObtained = {};
-        scopedObtainedOk = false;
+        // API fail → khaali; render fallback (koi filter nahi, purana behavior).
+        mappedSubjectIDs = [];
       }
-    }
 
-    // 4. Rankings
-    // const rankParams = new URLSearchParams({
-    //   sectionID: String(cls.sectionID),
-    //   termID: String(termID),
-    //   examID: String(selectExamValue)
-    // });
-    // const rankRes = await fetch(
-    //   buildUrl(`/api/getstudentsrankings?${rankParams}`),
-    //   { method: 'GET', headers }
-    // );
-    // const rankData = await rankRes.json();
-    // const rankings = Array.isArray(rankData) ? rankData : (rankData?.data || []);
-
-    // // 5. Update rankings
-    // await fetch(
-    //   buildUrl(`/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`),
-    //   { method: 'GET', headers }
-    // );
-// 4. Update rankings first
-await fetch(
-  buildUrl(
-    `/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`
-  ),
-  { method: 'GET', headers }
-);
-
-// 5. Get updated rankings
-const rankParams = new URLSearchParams({
-  sectionID: String(cls.sectionID),
-  termID: String(termID),
-  examID: String(selectExamValue)
-});
-
-const rankRes = await fetch(
-  buildUrl(`/api/getstudentsrankings?${rankParams}`),
-  { method: 'GET', headers }
-);
-
-const rankData = await rankRes.json();
-
-const rankings = Array.isArray(rankData)
-  ? rankData
-  : (rankData?.data || []);
-    // Store everything
-    const pack = { students, subjects, marks, rankings, mappedSubjectIDs, scopedObtained, scopedObtainedOk };
-    setResStudentData(prev => ({
-      ...prev,
-      [key]: pack
-    }));
-    return pack;
-console.log('SUBJECTS:', subjects);
-console.log('MARKS:', marks);
-console.log('totalMarksSum:', subjects[0]?.totalMarksSum);
-  } catch (err) {
-    console.error('Error loading class data:', err);
-  } finally {
-    setResLoadingKey(null);
-  }
-};
-async function getDateSheetData(classID, sectionID, examId, termId) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const empID = sessionStorage.getItem('employee_ID');
-    const token = sessionStorage.getItem('token');
-    
-    // Find the selected exam to get the selectExam value
-    const selectedExam = filtered.find(ex => ex.id === examId);
-    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
-    
-    console.log("Fetching date sheet with:", {
-      branchID,
-      classID,
-      termID: termId,
-      ExamID: selectExamValue,  // ← Use selectExam value (27) instead of examId (38)
-      sectionID,
-      empID
-    });
-
-    const params = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(classID),
-      termID: String(termId),
-      ExamID: String(selectExamValue),  // ← This is the key fix
-      sectionID: String(sectionID),
-      empID: String(empID)
-    });
-
-    const response = await fetch(
-      buildUrl(`/api/getdatesheetbybranchclassidtermid?${params.toString()}`),
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json"
+      // 3c. Scoped OBTAINED (numerator) — SIRF mapped subjects ka.
+      //     getsauploadmarksbystudentbranchsum har student ke liye ek PRE-SUMMED
+      //     obtainedMarks deta hai jo SAARE subjects (unmapped included) ka jod hai —
+      //     isi wajah se numerator scoped total (mapped) se bada ho kar >100% aa raha
+      //     tha (e.g. 879/625). Yahan har mapped subject ke against poori class ke
+      //     obtained fetch kar ke per-student sum banate hain, taake obtained bhi
+      //     mapped subjects tak scope ho jaye. Ek call PER mapped subject (StudentID
+      //     omit → poori class), Promise.all se batch (student-count par calls nahi
+      //     barhte). obtainedMarks field getsauploadmarksbyclassandtermandexamandsubject
+      //     par confirmed (card bhi wahi use karta hai).
+      /* Per-student obtained SCOPED to mapped subjects. Branch-sum obtained
+         (getsauploadmarksbystudentbranchsum) saare subjects jodta hai (unmapped
+         samet) → obtained > mapped-total (e.g. 879/625). getsauploadmarksbyclass
+         andtermandexamandsubject StudentID ke BAGHAIR khaali deta hai (isi liye
+         purana all-students attempt fail hota tha), is liye har student × har
+         MAPPED subject ke against StudentID ke sath fetch kar ke sum karte hain.
+         Concurrency cap ke liye students ko chhoti batches me chalate hain. */
+      let scopedObtained = {};      // { [studentID]: mapped subjects ka obtained sum }
+      let scopedObtainedOk = false;
+      const studentIds = (students || [])
+        .map(s => s.id ?? s.studentID ?? s.StudentID ?? s.studentId)
+        .filter(v => v != null);
+      if (mappedSubjectIDs.length && studentIds.length) {
+        try {
+          let rowCount = 0;
+          const BATCH = 6; // ek waqt me itne students (peak concurrency = BATCH × mappedSubjects)
+          for (let i = 0; i < studentIds.length; i += BATCH) {
+            const slice = studentIds.slice(i, i + BATCH);
+            // eslint-disable-next-line no-await-in-loop
+            await Promise.all(slice.map(async (stid) => {
+              const perSubj = await Promise.all(mappedSubjectIDs.map(async (sid) => {
+                const p = new URLSearchParams({
+                  classID: String(cls.classID), termID: String(termID), ExamID: String(selectExamValue),
+                  SubjectID: String(sid), StudentID: String(stid), sectionID: String(cls.sectionID), pageNo: '1',
+                });
+                try {
+                  const r = await fetch(
+                    buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`),
+                    { method: 'GET', headers }
+                  );
+                  const d = await r.json();
+                  const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
+                  return rec ? (Number(rec.obtainedMarks ?? rec.obtainMarks ?? rec.marks ?? rec.ObtainedMarks ?? 0) || 0) : null;
+                } catch { return null; }
+              }));
+              let sum = 0, got = false;
+              perSubj.forEach(v => { if (v != null) { sum += v; got = true; } });
+              if (got) { scopedObtained[String(stid)] = sum; rowCount += 1; }
+            }));
+          }
+          // Kisi student ka bhi scoped obtained mila → reliable. Bilkul na mila →
+          // fallback pre-summed obtainedMarks (safety, taake list blank na ho).
+          scopedObtainedOk = rowCount > 0;
+        } catch (e) {
+          scopedObtained = {};
+          scopedObtainedOk = false;
         }
       }
-    );
-const data = await response.json();
-console.log("Date Sheet API Response:", data);
 
-// API returns a plain array (or sometimes {success,data}) — handle both
-const rows = Array.isArray(data) ? data : (data?.data || []);
+      // 4. Rankings
+      // const rankParams = new URLSearchParams({
+      //   sectionID: String(cls.sectionID),
+      //   termID: String(termID),
+      //   examID: String(selectExamValue)
+      // });
+      // const rankRes = await fetch(
+      //   buildUrl(`/api/getstudentsrankings?${rankParams}`),
+      //   { method: 'GET', headers }
+      // );
+      // const rankData = await rankRes.json();
+      // const rankings = Array.isArray(rankData) ? rankData : (rankData?.data || []);
 
-if (rows.length) {
-  console.log("Transformed Date Sheet Rows:", rows); // Debug log 
-  const transformedRows = rows.map(dsMapApiRow);
-  return transformedRows;
-}
+      // // 5. Update rankings
+      // await fetch(
+      //   buildUrl(`/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`),
+      //   { method: 'GET', headers }
+      // );
+      // 4. Update rankings first
+      await fetch(
+        buildUrl(
+          `/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`
+        ),
+        { method: 'GET', headers }
+      );
 
-return [];
-  } catch (error) {
-    console.log("Could not load date sheet data", error);
-    return [];
+      // 5. Get updated rankings
+      const rankParams = new URLSearchParams({
+        sectionID: String(cls.sectionID),
+        termID: String(termID),
+        examID: String(selectExamValue)
+      });
+
+      const rankRes = await fetch(
+        buildUrl(`/api/getstudentsrankings?${rankParams}`),
+        { method: 'GET', headers }
+      );
+
+      const rankData = await rankRes.json();
+
+      const rankings = Array.isArray(rankData)
+        ? rankData
+        : (rankData?.data || []);
+      // Store everything
+      const pack = { students, subjects, marks, rankings, mappedSubjectIDs, scopedObtained, scopedObtainedOk };
+      setResStudentData(prev => ({
+        ...prev,
+        [key]: pack
+      }));
+      return pack;
+      console.log('SUBJECTS:', subjects);
+      console.log('MARKS:', marks);
+      console.log('totalMarksSum:', subjects[0]?.totalMarksSum);
+    } catch (err) {
+      console.error('Error loading class data:', err);
+    } finally {
+      setResLoadingKey(null);
+    }
+  };
+  async function getDateSheetData(classID, sectionID, examId, termId) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
+
+      // Find the selected exam to get the selectExam value
+      const selectedExam = filtered.find(ex => ex.id === examId);
+      const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+
+      console.log("Fetching date sheet with:", {
+        branchID,
+        classID,
+        termID: termId,
+        ExamID: selectExamValue,  // ← Use selectExam value (27) instead of examId (38)
+        sectionID,
+        empID
+      });
+
+      const params = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(classID),
+        termID: String(termId),
+        ExamID: String(selectExamValue),  // ← This is the key fix
+        sectionID: String(sectionID),
+        empID: String(empID)
+      });
+
+      const response = await fetch(
+        buildUrl(`/api/getdatesheetbybranchclassidtermid?${params.toString()}`),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        }
+      );
+      const data = await response.json();
+      console.log("Date Sheet API Response:", data);
+
+      // API returns a plain array (or sometimes {success,data}) — handle both
+      const rows = Array.isArray(data) ? data : (data?.data || []);
+
+      if (rows.length) {
+        console.log("Transformed Date Sheet Rows:", rows); // Debug log 
+        const transformedRows = rows.map(dsMapApiRow);
+        return transformedRows;
+      }
+
+      return [];
+    } catch (error) {
+      console.log("Could not load date sheet data", error);
+      return [];
+    }
   }
-}
-/* ═══════════════════════════════════════════════════════════════════
-   Date Sheet / Syllabus — PUBLISH (release) wiring.
+  /* ═══════════════════════════════════════════════════════════════════
+     Date Sheet / Syllabus — PUBLISH (release) wiring.
+  
+     Publish state GET se pata chalta hai: "forStudent" API me data aaya →
+     published (released), khali → unpublished. (Student/parent ko wahi dikhta
+     hai jo release ho.)
+       GET  /api/getdatesheetbybranchclassidtermidforStudent   → array
+       GET  /api/getexamsyllabusbybranchclassandtermsforStudent → paged {data}
+     Publish/unpublish POST (query params, koi body nahi):
+       POST /api/updateexamdatesheetrelease?...&isRelease=true|false
+       POST /api/updateexamsyllabusrelease?...&isRelease=true|false
+     Params existing (non-student) GET calls jaise hi: datesheet→termID,
+     syllabus→Terms (dono ke liye exam ka termID bhejte hain, ExamID=selectExam). */
+  async function fetchDsReleaseState(classID, sectionID, selectExam, termID) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const params = new URLSearchParams({
+        branchID: String(branchID), classID: String(classID), termID: String(termID),
+        ExamID: String(selectExam), sectionID: String(sectionID),
+      });
+      const res = await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermidforStudent?${params.toString()}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      const data = await res.json().catch(() => null);
+      const rows = Array.isArray(data) ? data : (data?.data || data?.result || []);
+      return (rows || []).length > 0;   // data hai → published
+    } catch (e) { return false; }
+  }
 
-   Publish state GET se pata chalta hai: "forStudent" API me data aaya →
-   published (released), khali → unpublished. (Student/parent ko wahi dikhta
-   hai jo release ho.)
-     GET  /api/getdatesheetbybranchclassidtermidforStudent   → array
-     GET  /api/getexamsyllabusbybranchclassandtermsforStudent → paged {data}
-   Publish/unpublish POST (query params, koi body nahi):
-     POST /api/updateexamdatesheetrelease?...&isRelease=true|false
-     POST /api/updateexamsyllabusrelease?...&isRelease=true|false
-   Params existing (non-student) GET calls jaise hi: datesheet→termID,
-   syllabus→Terms (dono ke liye exam ka termID bhejte hain, ExamID=selectExam). */
-async function fetchDsReleaseState(classID, sectionID, selectExam, termID) {
-  try {
+  async function fetchSylReleaseState(classID, sectionID, selectExam, termName) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const params = new URLSearchParams({
+        branchID: String(branchID), classID: String(classID), Terms: String(termName),
+        ExamID: String(selectExam), sectionID: String(sectionID), pageNo: '1',
+      });
+      const res = await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandtermsforStudent?${params.toString()}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      const data = await res.json().catch(() => null);
+      const rows = data?.data || data?.result || (Array.isArray(data) ? data : []);
+      return (rows || []).length > 0;   // data hai → published
+    } catch (e) { return false; }
+  }
+
+  async function postDsRelease(classID, sectionID, selectExam, termID, isRelease) {
     const branchID = sessionStorage.getItem('branchID');
     const token = sessionStorage.getItem('token');
     const params = new URLSearchParams({
       branchID: String(branchID), classID: String(classID), termID: String(termID),
-      ExamID: String(selectExam), sectionID: String(sectionID),
+      ExamID: String(selectExam), sectionID: String(sectionID), isRelease: String(!!isRelease),
     });
-    const res = await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermidforStudent?${params.toString()}`),
-      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    const data = await res.json().catch(() => null);
-    const rows = Array.isArray(data) ? data : (data?.data || data?.result || []);
-    return (rows || []).length > 0;   // data hai → published
-  } catch (e) { return false; }
-}
+    const res = await fetch(buildUrl(`/api/updateexamdatesheetrelease?${params.toString()}`),
+      { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    if (!res.ok) throw new Error('Could not update date sheet publish status');
+    return res.json().catch(() => null);
+  }
 
-async function fetchSylReleaseState(classID, sectionID, selectExam, termName) {
-  try {
+  async function postSylRelease(classID, sectionID, selectExam, termName, isRelease) {
     const branchID = sessionStorage.getItem('branchID');
     const token = sessionStorage.getItem('token');
     const params = new URLSearchParams({
       branchID: String(branchID), classID: String(classID), Terms: String(termName),
-      ExamID: String(selectExam), sectionID: String(sectionID), pageNo: '1',
+      ExamID: String(selectExam), sectionID: String(sectionID), isRelease: String(!!isRelease),
     });
-    const res = await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandtermsforStudent?${params.toString()}`),
-      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    const data = await res.json().catch(() => null);
-    const rows = data?.data || data?.result || (Array.isArray(data) ? data : []);
-    return (rows || []).length > 0;   // data hai → published
-  } catch (e) { return false; }
-}
-
-async function postDsRelease(classID, sectionID, selectExam, termID, isRelease) {
-  const branchID = sessionStorage.getItem('branchID');
-  const token = sessionStorage.getItem('token');
-  const params = new URLSearchParams({
-    branchID: String(branchID), classID: String(classID), termID: String(termID),
-    ExamID: String(selectExam), sectionID: String(sectionID), isRelease: String(!!isRelease),
-  });
-  const res = await fetch(buildUrl(`/api/updateexamdatesheetrelease?${params.toString()}`),
-    { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-  if (!res.ok) throw new Error('Could not update date sheet publish status');
-  return res.json().catch(() => null);
-}
-
-async function postSylRelease(classID, sectionID, selectExam, termName, isRelease) {
-  const branchID = sessionStorage.getItem('branchID');
-  const token = sessionStorage.getItem('token');
-  const params = new URLSearchParams({
-    branchID: String(branchID), classID: String(classID), Terms: String(termName),
-    ExamID: String(selectExam), sectionID: String(sectionID), isRelease: String(!!isRelease),
-  });
-  const res = await fetch(buildUrl(`/api/updateexamsyllabusrelease?${params.toString()}`),
-    { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-  if (!res.ok) throw new Error('Could not update syllabus publish status');
-  return res.json().catch(() => null);
-}
-
-const dsOpenEdit = async (classKey, className, classID, sectionID) => {
-  // Fetch existing date sheet data from API
-  const existingRows = await getDateSheetData(classID, sectionID, dsExamId, selectedTermId);
-  
-  // Use fetched data if available, otherwise use local data or create empty row
-  const rows = existingRows.length 
-    ? existingRows.map(r => ({ ...r })) 
-    : (dateSheets[dsExamId]?.[classKey] || [{ subject: '', date: '', timeFrom: '', timeTo: '' }]);
-  
-  // Fetch subjects for this class for the dropdown
-  const fetchedSubjects = await getSyllabusSubjects(classID, sectionID);
-  
-  // Transform subjects to the format needed for the datalist
-  const subjectList = fetchedSubjects.map(s => s.subjectName);
-  setDsEditing({
-    // examId = dsExamId (exam id) rakho — table dateSheets[dsExamId] se read karta hai.
-    // (selectExam getDateSheetData/save ke andar id se resolve ho jata hai.)
-    examId: dsExamId,
-    classKey,
-    className,
-    rows,
-    termID: selectedTermId  ,
-    subjects: subjectList,
-    classID: classID,
-    sectionID: sectionID
-  });
-};
-
-const dsSaveEdit = async (payload) => {
-  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-  const cleaned = payload.rows
-    .filter(r => r.subject && r.subject.trim())
-    .map(r => ({ 
-            id: r.id,  // ← Make sure this is being passed
-      subject: r.subject.trim(),
-      date: r.date,
-      timeFrom: r.timeFrom,
-      timeTo: r.timeTo
-    }));
-  
-  if (!cleaned.length) {
-    toast('Please add at least one subject', 'warning');
-    return;
+    const res = await fetch(buildUrl(`/api/updateexamsyllabusrelease?${params.toString()}`),
+      { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    if (!res.ok) throw new Error('Could not update syllabus publish status');
+    return res.json().catch(() => null);
   }
 
-  /* Session-date guard: har exam date current session ki UTC window ke andar honi
-     chahiye. Bahar ho to toaster (session start/end ke saath) aur save block. */
-  for (const r of cleaned) {
-    const check = validateSessionDateFromStorage(r.date, `${r.subject} exam date`);
-    if (!check.ok) { toast(check.message, 'error'); return; }
-  }
+  const dsOpenEdit = async (classKey, className, classID, sectionID) => {
+    // Fetch existing date sheet data from API
+    const existingRows = await getDateSheetData(classID, sectionID, dsExamId, selectedTermId);
 
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-    
-    // Find the selected exam to get the selectExam value
-    const selectedExam = filtered.find(ex => ex.id === payload.examId);
-    const selectExamValue = selectedExam ? selectedExam.selectExam : payload.examId;
-    
-    console.log("Saving date sheet with ExamID:", selectExamValue);
-    
-    // Prepare payload for each subject row
-    const savePromises = cleaned.map(async (row) => {
-     const requestPayload = {
-  id: row.id || 0,
-  branchID: Number(branchID),
-  classID: Number(payload.classID),
-  sectionID: Number(payload.sectionID),
-  examID: Number(selectExamValue),
-  termID: selectedTermId,
-  subjectName: row.subject,
-  date: row.date,
-  timeFrom: row.timeFrom,
-  timeTo: row.timeTo,
-  action: row.id && row.id !== 0 ? "update" : "insert"
-};
-      
-      console.log("Saving row payload:", requestPayload);
-      
-      const response = await fetch(buildUrl('/api/datesheetcrud'), {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify(requestPayload)
-      });
-      
-      return response.json();
+    // Use fetched data if available, otherwise use local data or create empty row
+    const rows = existingRows.length
+      ? existingRows.map(r => ({ ...r }))
+      : (dateSheets[dsExamId]?.[classKey] || [{ subject: '', date: '', timeFrom: '', timeTo: '' }]);
+
+    // Fetch subjects for this class for the dropdown
+    const fetchedSubjects = await getSyllabusSubjects(classID, sectionID);
+
+    // Transform subjects to the format needed for the datalist
+    const subjectList = fetchedSubjects.map(s => s.subjectName);
+    setDsEditing({
+      // examId = dsExamId (exam id) rakho — table dateSheets[dsExamId] se read karta hai.
+      // (selectExam getDateSheetData/save ke andar id se resolve ho jata hai.)
+      examId: dsExamId,
+      classKey,
+      className,
+      rows,
+      termID: selectedTermId,
+      subjects: subjectList,
+      classID: classID,
+      sectionID: sectionID
     });
-    
-    await Promise.all(savePromises);
+  };
 
-    /* Published date sheet edit hone par release hata do, taake naya data
-       dubara Publish se student/parent ko jaye. */
-    let unpublished = false;
-    if (dsReleased[payload.classKey]) {
-      try {
-        const termID = selectedExam?.termID ?? selectedTermId;
-        await postDsRelease(payload.classID, payload.sectionID, selectExamValue, termID, false);
-        setDsReleased(prev => ({ ...prev, [payload.classKey]: false }));
-        unpublished = true;
-      } catch (e) {
-        console.error('Date sheet unpublish after edit failed:', e);
-      }
-    }
-
-    // Save ke baad GET API se FRESH data lo (backend IDs + status turant update) — page refresh ni karna parta.
-    let freshRows = cleaned;
-    try {
-      const r = await getDateSheetData(payload.classID, payload.sectionID, payload.examId, selectedTermId);
-      if (Array.isArray(r) && r.length) freshRows = r;
-    } catch (e) { console.error('Datesheet refresh failed:', e); }
-    setDateSheets(prev => ({
-      ...prev,
-      [payload.examId]: {
-        ...(prev[payload.examId] || {}),
-        [payload.classKey]: freshRows
-      },
-    }));
-
-    toast(unpublished
-      ? 'Date sheet saved. It is unpublished — publish again to show the changes.'
-      : 'Date sheet saved successfully!', 'success');
-    setDsEditing(null);
-  } catch (error) {
-    console.error('Error saving date sheet:', error);
-    toast('Failed to save date sheet', 'error');
-  }
-};
-const dsRunDelete = async ({ examId, classKey, className, classID, sectionID }) => {
-  if (isOtherSession) { toast('Method not allowed', 'error'); setDsConfirmDel(null); return; }
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-    
-    // Find the selected exam to get the selectExam value
-    const selectedExam = filtered.find(ex => ex.id === examId);
-    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
-    
-    console.log("Deleting date sheet with ExamID:", selectExamValue);
-    
-    // Call the delete API
-    const params = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(classID),
-      termID: String(selectedTermId),
-      ExamID: String(selectExamValue),  // ← Use selectExam value (27) instead of examId (38)
-      sectionID: String(sectionID)
-    });
-    
-    const response = await fetch(
-      buildUrl(`/api/deletedatesheetbyfilters?${params.toString()}`),
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json"
-        }
-      }
-    );
-    
-    const data = await response.json();
-    
-    if (response.ok) {
-      // Delete ke baad GET API se FRESH data lo (status turant update) — page refresh ni karna parta.
-      let freshRows = [];
-      try { freshRows = await getDateSheetData(classID, sectionID, examId, selectedTermId); } catch (e) { console.error('Datesheet delete-refresh failed:', e); }
-      setDateSheets(prev => ({
-        ...prev,
-        [examId]: { ...(prev[examId] || {}), [classKey]: Array.isArray(freshRows) ? freshRows : [] },
+  const dsSaveEdit = async (payload) => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    const cleaned = payload.rows
+      .filter(r => r.subject && r.subject.trim())
+      .map(r => ({
+        id: r.id,  // ← Make sure this is being passed
+        subject: r.subject.trim(),
+        date: r.date,
+        timeFrom: r.timeFrom,
+        timeTo: r.timeTo
       }));
 
-      toast('Date sheet deleted successfully!', 'success');
-    } else {
-      toast(data.message || 'Failed to delete date sheet', 'error');
+    if (!cleaned.length) {
+      toast('Please add at least one subject', 'warning');
+      return;
     }
-  } catch (error) {
-    console.error('Error deleting date sheet:', error);
-    toast('Failed to delete date sheet', 'error');
-  }
-  
-  setDsConfirmDel(null);
-};
-// Update the dsRunCopy function to only copy missing subjects
-const dsRunCopy = async () => {
-  if (!dsConfirmCopy) return;
-  if (isOtherSession) { toast('Method not allowed', 'error'); setDsConfirmCopy(null); return; }
-  const { examId, sourceKey } = dsConfirmCopy;
-  const sourceRows = dateSheets[examId]?.[sourceKey];
-  
-  if (!sourceRows || sourceRows.length === 0) { 
-    setDsConfirmCopy(null);
-    toast('No source date sheet to copy from', 'warning');
-    return;
-  }
-  
-  const ex = exams.find(e => e.id === examId);
-  if (!ex) { 
-    setDsConfirmCopy(null);
-    return;
-  }
-  
-  try {
-    // Show loading toast
-    toast('Copying date sheets to other classes...', 'info');
-    
-    // Process each target class
-    const copyPromises = [];
-    const results = [];
-    
-    for (let i = 0; i < examClasses.length; i++) {
-      const targetCls = examClasses[i];
-      const targetKey = `cls_${examId}_${targetCls.sectionID}_${i}`;
-      
-      // Skip the source class
-      if (targetKey === sourceKey) continue;
-      
-      // Get existing date sheet for target class
-      const existingRows = await getDateSheetData(
-        targetCls.classID, 
-        targetCls.sectionID, 
-        examId, 
-        selectedTermId
-      );
-      
-      // Target ke datesheet mein pehle se maujood subjects (duplicate na ho)
-      const existingSubjectsMap = new Map();
-      existingRows.forEach(row => {
-        existingSubjectsMap.set(row.subject.toLowerCase().trim(), true);
-      });
 
-      // Target class ke apne subjects (curriculum). Copy SIRF un subjects ka jo target class
-      // mein bhi maujood hain (same subject name). Jaise: source Science+KG, target Science+English
-      // → sirf Science copy hogi (KG target mein nahi hai).
-      let targetSubjectSet = new Set();
-      try {
-        const empID = sessionStorage.getItem('employee_ID');
-        const subjRes = await fetch(
-          buildUrl(`/get-subjects_byEmployeeID/${targetCls.classID}/${targetCls.sectionID}/${empID}`),
-          { headers: { Authorization: `Bearer ${sessionStorage.getItem('token')}`, Accept: 'application/json' } }
-        );
-        const subjData = await subjRes.json();
-        const subjArr = subjData?.data || (Array.isArray(subjData) ? subjData : []);
-        targetSubjectSet = new Set(subjArr.map(s => (s.subjectName || '').toLowerCase().trim()).filter(Boolean));
-      } catch (e) { console.error('Could not load target class subjects', e); }
+    /* Session-date guard: har exam date current session ki UTC window ke andar honi
+       chahiye. Bahar ho to toaster (session start/end ke saath) aur save block. */
+    for (const r of cleaned) {
+      const check = validateSessionDateFromStorage(r.date, `${r.subject} exam date`);
+      if (!check.ok) { toast(check.message, 'error'); return; }
+    }
 
-      // Copy karo sirf: (a) subject target class mein hai, AUR (b) target ke datesheet mein abhi nahi.
-      const rowsToCopy = sourceRows.filter(sourceRow => {
-        const sn = sourceRow.subject.toLowerCase().trim();
-        return targetSubjectSet.has(sn) && !existingSubjectsMap.has(sn);
-      });
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
 
-      if (rowsToCopy.length === 0) {
-        results.push({
-          className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
-          copiedCount: 0,
-          skippedCount: sourceRows.length,
-          reason: 'No matching subjects in this class (or already added)'
-        });
-        continue;
-      }
-      
-      // Save each missing subject to the target class
-      const savePromises = rowsToCopy.map(async (row) => {
-        const selectedExam = filtered.find(ex => ex.id === examId);
-        const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
-        
+      // Find the selected exam to get the selectExam value
+      const selectedExam = filtered.find(ex => ex.id === payload.examId);
+      const selectExamValue = selectedExam ? selectedExam.selectExam : payload.examId;
+
+      console.log("Saving date sheet with ExamID:", selectExamValue);
+
+      // Prepare payload for each subject row
+      const savePromises = cleaned.map(async (row) => {
         const requestPayload = {
-          id: 0,
-          branchID: Number(sessionStorage.getItem('branchID')),
-          classID: Number(targetCls.classID),
-          sectionID: Number(targetCls.sectionID),
+          id: row.id || 0,
+          branchID: Number(branchID),
+          classID: Number(payload.classID),
+          sectionID: Number(payload.sectionID),
           examID: Number(selectExamValue),
           termID: selectedTermId,
           subjectName: row.subject,
           date: row.date,
           timeFrom: row.timeFrom,
           timeTo: row.timeTo,
-          action: "insert"
+          action: row.id && row.id !== 0 ? "update" : "insert"
         };
-        
+
+        console.log("Saving row payload:", requestPayload);
+
         const response = await fetch(buildUrl('/api/datesheetcrud'), {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
             Accept: 'application/json'
           },
           body: JSON.stringify(requestPayload)
         });
-        
+
         return response.json();
       });
-      
-      try {
-        await Promise.all(savePromises);
 
-        // Copy ke baad target class ka FRESH datesheet GET karo (backend IDs + status turant update).
-        let freshRows = null;
+      await Promise.all(savePromises);
+
+      /* Published date sheet edit hone par release hata do, taake naya data
+         dubara Publish se student/parent ko jaye. */
+      let unpublished = false;
+      if (dsReleased[payload.classKey]) {
         try {
-          freshRows = await getDateSheetData(targetCls.classID, targetCls.sectionID, examId, selectedTermId);
-        } catch (e) { console.error('Datesheet copy-refresh failed:', e); }
-        setDateSheets(prev => {
-          const next = { ...prev };
-          const examData = { ...(next[examId] || {}) };
-          if (Array.isArray(freshRows) && freshRows.length) {
-            examData[targetKey] = freshRows;
-          } else {
-            // fallback: local merge (avoid duplicates)
-            const mergedRows = [...(examData[targetKey] || [])];
-            rowsToCopy.forEach(rowToCopy => {
-              const exists = mergedRows.some(r => r.subject.toLowerCase().trim() === rowToCopy.subject.toLowerCase().trim());
-              if (!exists) mergedRows.push({ ...rowToCopy });
-            });
-            examData[targetKey] = mergedRows;
+          const termID = selectedExam?.termID ?? selectedTermId;
+          await postDsRelease(payload.classID, payload.sectionID, selectExamValue, termID, false);
+          setDsReleased(prev => ({ ...prev, [payload.classKey]: false }));
+          unpublished = true;
+        } catch (e) {
+          console.error('Date sheet unpublish after edit failed:', e);
+        }
+      }
+
+      // Save ke baad GET API se FRESH data lo (backend IDs + status turant update) — page refresh ni karna parta.
+      let freshRows = cleaned;
+      try {
+        const r = await getDateSheetData(payload.classID, payload.sectionID, payload.examId, selectedTermId);
+        if (Array.isArray(r) && r.length) freshRows = r;
+      } catch (e) { console.error('Datesheet refresh failed:', e); }
+      setDateSheets(prev => ({
+        ...prev,
+        [payload.examId]: {
+          ...(prev[payload.examId] || {}),
+          [payload.classKey]: freshRows
+        },
+      }));
+
+      toast(unpublished
+        ? 'Date sheet saved. It is unpublished — publish again to show the changes.'
+        : 'Date sheet saved successfully!', 'success');
+      setDsEditing(null);
+    } catch (error) {
+      console.error('Error saving date sheet:', error);
+      toast('Failed to save date sheet', 'error');
+    }
+  };
+  const dsRunDelete = async ({ examId, classKey, className, classID, sectionID }) => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); setDsConfirmDel(null); return; }
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+
+      // Find the selected exam to get the selectExam value
+      const selectedExam = filtered.find(ex => ex.id === examId);
+      const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+
+      console.log("Deleting date sheet with ExamID:", selectExamValue);
+
+      // Call the delete API
+      const params = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(classID),
+        termID: String(selectedTermId),
+        ExamID: String(selectExamValue),  // ← Use selectExam value (27) instead of examId (38)
+        sectionID: String(sectionID)
+      });
+
+      const response = await fetch(
+        buildUrl(`/api/deletedatesheetbyfilters?${params.toString()}`),
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
           }
-          next[examId] = examData;
-          return next;
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Delete ke baad GET API se FRESH data lo (status turant update) — page refresh ni karna parta.
+        let freshRows = [];
+        try { freshRows = await getDateSheetData(classID, sectionID, examId, selectedTermId); } catch (e) { console.error('Datesheet delete-refresh failed:', e); }
+        setDateSheets(prev => ({
+          ...prev,
+          [examId]: { ...(prev[examId] || {}), [classKey]: Array.isArray(freshRows) ? freshRows : [] },
+        }));
+
+        toast('Date sheet deleted successfully!', 'success');
+      } else {
+        toast(data.message || 'Failed to delete date sheet', 'error');
+      }
+    } catch (error) {
+      console.error('Error deleting date sheet:', error);
+      toast('Failed to delete date sheet', 'error');
+    }
+
+    setDsConfirmDel(null);
+  };
+  // Update the dsRunCopy function to only copy missing subjects
+  const dsRunCopy = async () => {
+    if (!dsConfirmCopy) return;
+    if (isOtherSession) { toast('Method not allowed', 'error'); setDsConfirmCopy(null); return; }
+    const { examId, sourceKey } = dsConfirmCopy;
+    const sourceRows = dateSheets[examId]?.[sourceKey];
+
+    if (!sourceRows || sourceRows.length === 0) {
+      setDsConfirmCopy(null);
+      toast('No source date sheet to copy from', 'warning');
+      return;
+    }
+
+    const ex = exams.find(e => e.id === examId);
+    if (!ex) {
+      setDsConfirmCopy(null);
+      return;
+    }
+
+    try {
+      // Show loading toast
+      toast('Copying date sheets to other classes...', 'info');
+
+      // Process each target class
+      const copyPromises = [];
+      const results = [];
+
+      for (let i = 0; i < examClasses.length; i++) {
+        const targetCls = examClasses[i];
+        const targetKey = `cls_${examId}_${targetCls.sectionID}_${i}`;
+
+        // Skip the source class
+        if (targetKey === sourceKey) continue;
+
+        // Get existing date sheet for target class
+        const existingRows = await getDateSheetData(
+          targetCls.classID,
+          targetCls.sectionID,
+          examId,
+          selectedTermId
+        );
+
+        // Target ke datesheet mein pehle se maujood subjects (duplicate na ho)
+        const existingSubjectsMap = new Map();
+        existingRows.forEach(row => {
+          existingSubjectsMap.set(row.subject.toLowerCase().trim(), true);
         });
 
-        results.push({
-          className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
-          copiedCount: rowsToCopy.length,
-          skippedCount: sourceRows.length - rowsToCopy.length,
-          reason: rowsToCopy.length === 0 ? 'All subjects exist' : 'Success'
+        // Target class ke apne subjects (curriculum). Copy SIRF un subjects ka jo target class
+        // mein bhi maujood hain (same subject name). Jaise: source Science+KG, target Science+English
+        // → sirf Science copy hogi (KG target mein nahi hai).
+        let targetSubjectSet = new Set();
+        try {
+          const empID = sessionStorage.getItem('employee_ID');
+          const subjRes = await fetch(
+            buildUrl(`/get-subjects_byEmployeeID/${targetCls.classID}/${targetCls.sectionID}/${empID}`),
+            { headers: { Authorization: `Bearer ${sessionStorage.getItem('token')}`, Accept: 'application/json' } }
+          );
+          const subjData = await subjRes.json();
+          const subjArr = subjData?.data || (Array.isArray(subjData) ? subjData : []);
+          targetSubjectSet = new Set(subjArr.map(s => (s.subjectName || '').toLowerCase().trim()).filter(Boolean));
+        } catch (e) { console.error('Could not load target class subjects', e); }
+
+        // Copy karo sirf: (a) subject target class mein hai, AUR (b) target ke datesheet mein abhi nahi.
+        const rowsToCopy = sourceRows.filter(sourceRow => {
+          const sn = sourceRow.subject.toLowerCase().trim();
+          return targetSubjectSet.has(sn) && !existingSubjectsMap.has(sn);
         });
-        
-      } catch (error) {
-        console.error(`Error copying to class ${targetCls.className}:`, error);
-        results.push({
-          className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
-          copiedCount: 0,
-          skippedCount: sourceRows.length,
-          reason: 'Error occurred'
+
+        if (rowsToCopy.length === 0) {
+          results.push({
+            className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
+            copiedCount: 0,
+            skippedCount: sourceRows.length,
+            reason: 'No matching subjects in this class (or already added)'
+          });
+          continue;
+        }
+
+        // Save each missing subject to the target class
+        const savePromises = rowsToCopy.map(async (row) => {
+          const selectedExam = filtered.find(ex => ex.id === examId);
+          const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+
+          const requestPayload = {
+            id: 0,
+            branchID: Number(sessionStorage.getItem('branchID')),
+            classID: Number(targetCls.classID),
+            sectionID: Number(targetCls.sectionID),
+            examID: Number(selectExamValue),
+            termID: selectedTermId,
+            subjectName: row.subject,
+            date: row.date,
+            timeFrom: row.timeFrom,
+            timeTo: row.timeTo,
+            action: "insert"
+          };
+
+          const response = await fetch(buildUrl('/api/datesheetcrud'), {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+              'Content-Type': 'application/json',
+              Accept: 'application/json'
+            },
+            body: JSON.stringify(requestPayload)
+          });
+
+          return response.json();
         });
+
+        try {
+          await Promise.all(savePromises);
+
+          // Copy ke baad target class ka FRESH datesheet GET karo (backend IDs + status turant update).
+          let freshRows = null;
+          try {
+            freshRows = await getDateSheetData(targetCls.classID, targetCls.sectionID, examId, selectedTermId);
+          } catch (e) { console.error('Datesheet copy-refresh failed:', e); }
+          setDateSheets(prev => {
+            const next = { ...prev };
+            const examData = { ...(next[examId] || {}) };
+            if (Array.isArray(freshRows) && freshRows.length) {
+              examData[targetKey] = freshRows;
+            } else {
+              // fallback: local merge (avoid duplicates)
+              const mergedRows = [...(examData[targetKey] || [])];
+              rowsToCopy.forEach(rowToCopy => {
+                const exists = mergedRows.some(r => r.subject.toLowerCase().trim() === rowToCopy.subject.toLowerCase().trim());
+                if (!exists) mergedRows.push({ ...rowToCopy });
+              });
+              examData[targetKey] = mergedRows;
+            }
+            next[examId] = examData;
+            return next;
+          });
+
+          results.push({
+            className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
+            copiedCount: rowsToCopy.length,
+            skippedCount: sourceRows.length - rowsToCopy.length,
+            reason: rowsToCopy.length === 0 ? 'All subjects exist' : 'Success'
+          });
+
+        } catch (error) {
+          console.error(`Error copying to class ${targetCls.className}:`, error);
+          results.push({
+            className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
+            copiedCount: 0,
+            skippedCount: sourceRows.length,
+            reason: 'Error occurred'
+          });
+        }
       }
-    }
-    
-    // Show summary toast
-    const successful = results.filter(r => r.copiedCount > 0);
-    const skipped = results.filter(r => r.copiedCount === 0);
-    
-    if (successful.length > 0) {
-      toast(`Successfully copied to ${successful.length} class(es)`, 'success');
-    }
-    if (skipped.length > 0) {
-      toast(`${skipped.length} class(es) had all subjects already`, 'info');
-    }
-    
-    // Reload the current class's date sheet to reflect changes
-    if (dsExamId && examClasses.length > 0) {
-      const currentClass = examClasses.find((_, idx) => 
-        `cls_${dsExamId}_${examClasses[idx].sectionID}_${idx}` === sourceKey
-      );
-      if (currentClass) {
-        await dsLoadClassDateSheet(sourceKey, currentClass);
+
+      // Show summary toast
+      const successful = results.filter(r => r.copiedCount > 0);
+      const skipped = results.filter(r => r.copiedCount === 0);
+
+      if (successful.length > 0) {
+        toast(`Successfully copied to ${successful.length} class(es)`, 'success');
       }
+      if (skipped.length > 0) {
+        toast(`${skipped.length} class(es) had all subjects already`, 'info');
+      }
+
+      // Reload the current class's date sheet to reflect changes
+      if (dsExamId && examClasses.length > 0) {
+        const currentClass = examClasses.find((_, idx) =>
+          `cls_${dsExamId}_${examClasses[idx].sectionID}_${idx}` === sourceKey
+        );
+        if (currentClass) {
+          await dsLoadClassDateSheet(sourceKey, currentClass);
+        }
+      }
+
+    } catch (error) {
+      console.error('Error in copy operation:', error);
+      toast('Error copying date sheets', 'error');
     }
-    
-  } catch (error) {
-    console.error('Error in copy operation:', error);
-    toast('Error copying date sheets', 'error');
-  }
-  
-  setDsConfirmCopy(null);
-};
+
+    setDsConfirmCopy(null);
+  };
 
   /* ── Syllabus helpers ── */
-  const sylTermExams   = exams.filter(e => e.term === sylTerm);
+  const sylTermExams = exams.filter(e => e.term === sylTerm);
   const sylCurrentExam = sylExamId ? exams.find(e => e.id === sylExamId) : null;
-  const sylExamData    = (sylExamId && syllabusData[sylExamId]) || {};
+  const sylExamData = (sylExamId && syllabusData[sylExamId]) || {};
 
   const sylPickTerm = t => { setSylTerm(t); setSylExamId(null); setSylOpenKey(null); };
- const sylOpenEdit = (classKey, className, classID, sectionID) => {
-  const existing = syllabusData[sylExamId]?.[classKey] || [];
-  const subjects = existing.length
-    ? existing.map(s => ({ ...s }))
-    : ALL_SUBJECTS.slice(0, 5).map(s => ({ subject: s, content: '', updatedAt: '—' }));
-  setSylEditing({ examId: sylExamId, classKey, className, classID, sectionID, subjects });
-};
+  const sylOpenEdit = (classKey, className, classID, sectionID) => {
+    const existing = syllabusData[sylExamId]?.[classKey] || [];
+    const subjects = existing.length
+      ? existing.map(s => ({ ...s }))
+      : ALL_SUBJECTS.slice(0, 5).map(s => ({ subject: s, content: '', updatedAt: '—' }));
+    setSylEditing({ examId: sylExamId, classKey, className, classID, sectionID, subjects });
+  };
   const sylSaveEdit = async subjects => {
     const ed = sylEditing;
     if (!ed) return;
@@ -3681,682 +3709,682 @@ const dsRunCopy = async () => {
       : 'Syllabus saved successfully!', 'success');
     setSylEditing(null);
   };
-const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
-  if (isOtherSession) { toast('Method not allowed', 'error'); setSylConfirmDel(null); return; }
-  if (sylCurrentExam) {
-    const { ok } = await deleteSyllabusByAllIds(
-      classID,
-      sectionID,
-      sylCurrentExam.selectExam,
-      selectedTermId,                       // term name string (set via setTerm)
-    );
-    if (!ok) {
-      toast('Could not delete syllabus', 'error');
-      setSylConfirmDel(null);
-      return;
-    }
-  }
-  // Delete ke baad GET API se FRESH syllabus lo (status turant update) — page refresh ni karna parta.
-  let freshRows = [];
-  try {
-    const rows = await getExamSyllabusByClassAndTerms(classID, sectionID, sylCurrentExam?.selectExam, selectedTermId, 1);
-    if (Array.isArray(rows) && rows.length) {
-      const seen = new Set();
-      freshRows = rows.reduce((acc, r) => {
-        const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
-        if (seen.has(dk)) return acc;
-        seen.add(dk);
-        acc.push({ subject: r.subjectDisplayName || '', content: r.subjectDetails || '', updatedAt: r.updatedAt || r.UpdatedOn || '—' });
-        return acc;
-      }, []);
-    }
-  } catch (e) { console.error('Syllabus delete-refresh failed:', e); }
-  setSyllabusData(prev => ({
-    ...prev,
-    [examId]: { ...(prev[examId] || {}), [classKey]: freshRows },
-  }));
-  setSylConfirmDel(null);
-  toast('Syllabus deleted', 'info');
-};
-// Component ke bahar, ya useEffect se pehle
-const fetchSASubjects = async (classID, sectionID, examId, termId) => {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
-
-    const selectedExam = filtered.find(ex => ex.id === examId);
-    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
-
-    const params = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(classID),
-      termID: String(selectedTermId),
-      ExamID: String(selectExamValue),
-      sectionID: String(sectionID),
-      pageNo: '1'
-    });
-
-    const response = await fetch(
-      buildUrl(`/api/getsasubjectbybranchclassandterm?${params.toString()}`),
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json'
-        }
+  const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); setSylConfirmDel(null); return; }
+    if (sylCurrentExam) {
+      const { ok } = await deleteSyllabusByAllIds(
+        classID,
+        sectionID,
+        sylCurrentExam.selectExam,
+        selectedTermId,                       // term name string (set via setTerm)
+      );
+      if (!ok) {
+        toast('Could not delete syllabus', 'error');
+        setSylConfirmDel(null);
+        return;
       }
-    );
-
-    const data = await response.json();
-    const classSubs = await (async () => {
-      try {
-        const empID = sessionStorage.getItem('employee_ID');
-        const sylRes = await fetch(
-          buildUrl(`/get-subjects_byEmployeeID/${classID}/${sectionID}/${empID}`),
-          { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-        );
-        const sylJson = await sylRes.json();
-        return sylJson?.data || (Array.isArray(sylJson) ? sylJson : []) || [];
-      } catch { return []; }
-    })();
-    /* Subject list = SAARE Launch-Setup mapped subjects (subject-against-class) —
-       yehi authoritative hai (e.g. Book List "16/16"). getsasubjectbybranchclassandterm
-       sirf un subjects ko deti hai jinke exam me total configure ho chuke (kam ho
-       sakte hain, e.g. 15), aur kabhi unmapped/stale bhi. Isliye mapping se list
-       banate hain aur SA se sirf per-subject total + naam merge karte hain: jo
-       mapped subject exam me abhi tak set nahi (e.g. "Social Studies Spoken") wo
-       bhi 0 total ke saath aata hai (drop nahi hota). */
-    const saList = cbrApi.saAttachDisplayNames(
-      saUnwrapList(data).map(saNormSubject).filter(Boolean),
-      classSubs
-    );
-    const saById = new Map();
-    saList.forEach(s => { const id = Number(s.subjectID); if (id) saById.set(id, s); });
-    if ((classSubs || []).length) {
-      return (classSubs || [])
-        .map(cs => {
-          const id = Number(cs.subjectID ?? cs.SubjectID ?? 0);
-          const sa = id ? saById.get(id) : null;
-          return {
-            id: sa?.id ?? 0,
-            subjectID: id,
-            subjectName: (sa?.subjectName || String(cs.subjectName ?? cs.SubjectName ?? cs.name ?? '').trim()),
-            totalMarks: sa ? (Number(sa.totalMarks ?? 0) || 0) : 0,
-          };
-        })
-        .filter(s => s.subjectID);
     }
-    /* Launch Setup mapping khaali (API fail) → SA list jaisa hai (purana behavior). */
-    return saList;
-  } catch (error) {
-    console.error('Error fetching SA subjects:', error);
-    return [];
-  }
-};
-const formatDate = (dateStr) => {
-  if (!dateStr) return "—";
-  
-  let date;
-  if (dateStr.includes('-')) {
-    // ISO format
-    const [y, m, d] = dateStr.split('T')[0].split('-');
-    date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-  } else if (dateStr.includes('/')) {
-    // DD/MM/YYYY format
-    const [d, m, y] = dateStr.split('/');
-    date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-  } else {
-    date = new Date(dateStr);
-  }
-  
-  if (isNaN(date.getTime())) return "—";
-  
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = date.getFullYear();
-  
-  return `${day}/${month}/${year}`;
-};
-
-async function getExamsByTerm(termID) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const empID = sessionStorage.getItem('employee_ID');
-    const token = sessionStorage.getItem('token');
-
-    const response = await fetch(
-      buildUrl(
-        `/api/getexamsbybranchidtermid?branchID=${branchID}&termID=${termID}&empID=${empID}`
-      ),
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json"
-        }
+    // Delete ke baad GET API se FRESH syllabus lo (status turant update) — page refresh ni karna parta.
+    let freshRows = [];
+    try {
+      const rows = await getExamSyllabusByClassAndTerms(classID, sectionID, sylCurrentExam?.selectExam, selectedTermId, 1);
+      if (Array.isArray(rows) && rows.length) {
+        const seen = new Set();
+        freshRows = rows.reduce((acc, r) => {
+          const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+          if (seen.has(dk)) return acc;
+          seen.add(dk);
+          acc.push({ subject: r.subjectDisplayName || '', content: r.subjectDetails || '', updatedAt: r.updatedAt || r.UpdatedOn || '—' });
+          return acc;
+        }, []);
       }
-    );
+    } catch (e) { console.error('Syllabus delete-refresh failed:', e); }
+    setSyllabusData(prev => ({
+      ...prev,
+      [examId]: { ...(prev[examId] || {}), [classKey]: freshRows },
+    }));
+    setSylConfirmDel(null);
+    toast('Syllabus deleted', 'info');
+  };
+  // Component ke bahar, ya useEffect se pehle
+  const fetchSASubjects = async (classID, sectionID, examId, termId) => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
 
-    const data = await response.json();
+      const selectedExam = filtered.find(ex => ex.id === examId);
+      const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
 
-    const mapped = (data || []).reduce((acc, ex) => {
-      // ek exam ko uniquely identify karne ke liye examName + termID
-      const key = `${ex.examName}_${ex.termID}`;
-
-      if (!acc[key]) {
-        acc[key] = {
-          // exam-level common fields
-          name: ex.examName,
-          termID: ex.termID,
-          termName: ex.termName,
-          selectExam: ex.selectExam,
-          from: ex.dateFrom,
-          to: ex.dateTo,
-          gradeName: ex.gradeName,
-
-          // store full class objects (keyed by sectionID to avoid dupes)
-          classes: new Map()
-        };
-      }
-
-      // har class/section ka apna record id + section info store karo
-      // key sectionID rakho (yahi unique row hai class+section ke liye)
-      acc[key].classes.set(String(ex.sectionID), {
-        id: ex.id,                 // per-row id (UPDATE ke liye zaruri)
-        classID: ex.classID,
-        sectionID: ex.sectionID,
-        sectionName: ex.sectionName,
-        gradeName: ex.gradeName,
-        // display label: grade + section
-        className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim()
+      const params = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(classID),
+        termID: String(selectedTermId),
+        ExamID: String(selectExamValue),
+        sectionID: String(sectionID),
+        pageNo: '1'
       });
 
-      return acc;
-    }, {});
-
-    const finalData = Object.values(mapped).map(ex => ({
-      ...ex,
-      classes: Array.from(ex.classes.values())
-    }));
-
-    setFiltered(finalData);
-    setExams(finalData);
-
-  } catch (error) {
-    console.log("Could not load exams", error);
-  }
-}
-// Parent component me onSave aise handle karo:
-
-// Update handleSaveExam function
-async function handleSaveExam({ payloads, name, from, to, classes, deletedCount }) {
-  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-  try {
-    const token = sessionStorage.getItem('token');
-    
-    // Process insert and update operations
-    const results = await Promise.all(
-      payloads.map(p =>
-        fetch(buildUrl('/api/addexamcrud'), {
-          method: 'POST',
+      const response = await fetch(
+        buildUrl(`/api/getsasubjectbybranchclassandterm?${params.toString()}`),
+        {
+          method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
             Accept: 'application/json'
-          },
-          body: JSON.stringify(p)
-        }).then(r => r.json())
-      )
-    );
-    
-    console.log('Exam CRUD results:', results);
-    
-    let message = 'Exam saved successfully';
-    if (deletedCount > 0) {
-      message += `, ${deletedCount} class(es) removed`;
-    }
-    toast(message, 'success');
-    
-    // Close modal
-    setEditing(null);
-    
-    // Refresh the exam list
-    if (selectedTermId) {
-      await getExamsByTerm(selectedTermId);
-    }
-  } catch (error) {
-    console.log('Could not save exam', error);
-    toast('Could not save exam', 'error');
-  }
-}
-
-// Make sure getExamsByTerm is properly defined to handle multiple classes
-async function getExamsByTerm(termID) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const empID = sessionStorage.getItem('employee_ID');
-    const token = sessionStorage.getItem('token');
-
-    const response = await fetch(
-      buildUrl(
-        `/api/getexamsbybranchidtermid?branchID=${branchID}&termID=${termID}&empID=${empID}`
-      ),
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json"
+          }
         }
+      );
+
+      const data = await response.json();
+      const classSubs = await (async () => {
+        try {
+          const empID = sessionStorage.getItem('employee_ID');
+          const sylRes = await fetch(
+            buildUrl(`/get-subjects_byEmployeeID/${classID}/${sectionID}/${empID}`),
+            { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+          );
+          const sylJson = await sylRes.json();
+          return sylJson?.data || (Array.isArray(sylJson) ? sylJson : []) || [];
+        } catch { return []; }
+      })();
+      /* Subject list = SAARE Launch-Setup mapped subjects (subject-against-class) —
+         yehi authoritative hai (e.g. Book List "16/16"). getsasubjectbybranchclassandterm
+         sirf un subjects ko deti hai jinke exam me total configure ho chuke (kam ho
+         sakte hain, e.g. 15), aur kabhi unmapped/stale bhi. Isliye mapping se list
+         banate hain aur SA se sirf per-subject total + naam merge karte hain: jo
+         mapped subject exam me abhi tak set nahi (e.g. "Social Studies Spoken") wo
+         bhi 0 total ke saath aata hai (drop nahi hota). */
+      const saList = cbrApi.saAttachDisplayNames(
+        saUnwrapList(data).map(saNormSubject).filter(Boolean),
+        classSubs
+      );
+      const saById = new Map();
+      saList.forEach(s => { const id = Number(s.subjectID); if (id) saById.set(id, s); });
+      if ((classSubs || []).length) {
+        return (classSubs || [])
+          .map(cs => {
+            const id = Number(cs.subjectID ?? cs.SubjectID ?? 0);
+            const sa = id ? saById.get(id) : null;
+            return {
+              id: sa?.id ?? 0,
+              subjectID: id,
+              subjectName: (sa?.subjectName || String(cs.subjectName ?? cs.SubjectName ?? cs.name ?? '').trim()),
+              totalMarks: sa ? (Number(sa.totalMarks ?? 0) || 0) : 0,
+            };
+          })
+          .filter(s => s.subjectID);
       }
-    );
-
-    const data = await response.json();
-
-    const mapped = (data || []).reduce((acc, ex) => {
-      // ek exam ko uniquely identify karne ke liye examName + termID
-      const key = `${ex.examName}_${ex.termID}`;
-
-      if (!acc[key]) {
-        acc[key] = {
-          // exam-level common fields
-          id: ex.id,
-          name: ex.examName,
-          termID: ex.termID,
-          termName: ex.termName,
-          selectExam: ex.selectExam,
-          from: ex.dateFrom,
-          to: ex.dateTo,
-          gradeName: ex.gradeName,
-
-          // store full class objects (keyed by sectionID to avoid dupes)
-          classes: new Map()
-        };
-      }
-
-      // har class/section ka apna record id + section info store karo
-      // key sectionID rakho (yahi unique row hai class+section ke liye)
-      acc[key].classes.set(String(ex.sectionID), {
-        id: ex.id,                 // per-row id (UPDATE ke liye zaruri)
-        classID: ex.classID,
-        sectionID: ex.sectionID,
-        sectionName: ex.sectionName,
-        gradeName: ex.gradeName,
-        // display label: grade + section
-        className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim()
-      });
-
-      return acc;
-    }, {});
-
-    const finalData = Object.values(mapped).map(ex => ({
-      ...ex,
-      classes: Array.from(ex.classes.values())
-    }));
-
-    setFiltered(finalData);
-    setExams(finalData);
-
-  } catch (error) {
-    console.log("Could not load exams", error);
-  }
-}
-const handleDeleteExam = async (exam) => {
-  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-  console.log("Deleting exam:", exam);
-
-  try {
-    const branchID = Number(sessionStorage.getItem("branchID"));
-    const token = sessionStorage.getItem("token");
-    const empID = sessionStorage.getItem("employee_ID");
-    const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
-    const selectExam = Number(exam.selectExam);
-
-    // Guard: agar is exam ke against datesheet ya syllabus bana hua hai → delete block.
-    let hasDatesheet = false, hasSyllabus = false;
-    await Promise.all((exam.classes || []).map(async (cls) => {
-      try {
-        const dp = new URLSearchParams({
-          branchID: String(branchID), classID: String(cls.classID), termID: String(exam.termID),
-          ExamID: String(selectExam), sectionID: String(cls.sectionID), empID: String(empID),
-        });
-        const dd = await (await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermid?${dp}`), { headers })).json();
-        if ((Array.isArray(dd) ? dd : (dd?.data || [])).length) hasDatesheet = true;
-      } catch (e) { /* ignore */ }
-      try {
-        const sp = new URLSearchParams({
-          branchID: String(branchID), classID: String(cls.classID), Terms: String(exam.termID),
-          ExamID: String(selectExam), sectionID: String(cls.sectionID), pageNo: "1", empID: String(empID),
-        });
-        const sd = await (await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandterms?${sp}`), { headers })).json();
-        if ((sd?.data || sd?.result || (Array.isArray(sd) ? sd : [])).length) hasSyllabus = true;
-      } catch (e) { /* ignore */ }
-    }));
-
-    if (hasDatesheet || hasSyllabus) {
-      const parts = [];
-      if (hasDatesheet) parts.push("datesheet");
-      if (hasSyllabus)  parts.push("syllabus");
-      toast(`There is record of ${parts.join(" and ")}, so you cannot delete this exam.`, "error");
-      setConfirmDel(null);
-      return;
-    }
-
-    const url = buildUrl(
-      `/api/deleteexamdata?branchID=${branchID}&id=${selectExam}`
-    );
-
-    const response = await fetch(url, {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "*/*",
-      },
-    });
-
-    const data = await response.json();
-
-    if (data.status || data.message) {
-      setConfirmDel(null);
-      getExamsByTerm(exam.termID);
-    } else {
-      console.log(data.message || "Delete failed");
-    }
-  } catch (error) {
-    console.error(error);
-  }
-};
-async function getSyllabusSubjects(gradeId, sectionID) {
-  try {
-    const branchID = sessionStorage.getItem("branchID");
-    const empID = sessionStorage.getItem("employee_ID");
-    const token = sessionStorage.getItem("token");
-
-    const response = await fetch(
-      buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionID}/${empID}`),
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      }
-    );
-
-    const data = await response.json();
-
-    if (data && data.success && data.data) {
-      const subjectList = data.data.map(subject => ({
-        subjectID: subject.subjectID,
-        subjectName: subject.subjectName,
-        subject: subject.subjectName,
-        content: '',
-        updatedAt: '—'
-      }));
-      setSubjects(subjectList);
-      return subjectList; // Return the subjects array
-    } else if (data && Array.isArray(data)) {
-      const subjectList = data.map(subject => ({
-        subjectID: subject.subjectID,
-        subjectName: subject.subjectName,
-        subject: subject.subjectName,
-        content: '',
-        updatedAt: '—'
-      }));
-      setSubjects(subjectList);
-      return subjectList; // Return the subjects array
-    } else {
-      setSubjects([]);
+      /* Launch Setup mapping khaali (API fail) → SA list jaisa hai (purana behavior). */
+      return saList;
+    } catch (error) {
+      console.error('Error fetching SA subjects:', error);
       return [];
     }
-  } catch (err) {
-    console.error("Error fetching syllabus subjects:", err);
-    setSubjects([]);
-    return [];
-  }
-}
-async function getExamSyllabusBySubject(classID, sectionID, subjectID, selectExam, termName, pageNo = 1) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
+  };
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "—";
 
-    const params = new URLSearchParams({
-      classID: String(classID),
-      Terms: termName,
-      pageNo: String(pageNo),
-      branchID: String(branchID),
-      subjectName: String(subjectID),     // ← key bhi subjectID; agar API subjectName key chahti hai to: subjectName: String(subjectID)
-      ExamID: String(selectExam),       // ← ab selectExam (27) ja raha hai
-      sectionID: String(sectionID),
-    });
+    let date;
+    if (dateStr.includes('-')) {
+      // ISO format
+      const [y, m, d] = dateStr.split('T')[0].split('-');
+      date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    } else if (dateStr.includes('/')) {
+      // DD/MM/YYYY format
+      const [d, m, y] = dateStr.split('/');
+      date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    } else {
+      date = new Date(dateStr);
+    }
 
-    const response = await fetch(
-      buildUrl(`/api/getexamsyllabusbyclasstermsbranchsubject?${params.toString()}`),
-      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-    );
+    if (isNaN(date.getTime())) return "—";
 
-    const data = await response.json();
-    return data?.data || data?.result || (Array.isArray(data) ? data : []);
-  } catch (error) {
-    console.log('Could not load subject syllabus', error);
-    return [];
-  }
-}
-const sylLoadClassSyllabus = async (key, cls) => {
-  if (!sylCurrentExam) return;
-  
-  // Check if we already have the data in state
-  const existingData = syllabusData[sylExamId]?.[key];
-  
-  if (existingData && existingData.length > 0) {
-    // Data already loaded, no need to fetch again
-    console.log('Using cached syllabus data for:', cls.gradeName);
-    return;
-  }
-  
-  // Only fetch if we don't have data (fallback)
-  const rows = await getExamSyllabusByClassAndTerms(
-    cls.classID,
-    cls.sectionID,
-    sylCurrentExam.selectExam,
-    selectedTermId,
-    1
-  );
-  
-  // Map API rows -> { subject, content, updatedAt } shape; subject (id) par dedupe (API duplicate deti hai)
-  const seen = new Set();
-  const mapped = (rows || []).reduce((acc, r) => {
-    const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
-    if (seen.has(dk)) return acc;
-    seen.add(dk);
-    acc.push({
-      subject: r.subjectDisplayName || '',
-      content: r.subjectDetails || '',
-      updatedAt: r.updatedAt || r.UpdatedOn || '—',
-    });
-    return acc;
-  }, []);
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
 
-  setSyllabusData(prev => ({
-    ...prev,
-    [sylExamId]: { ...(prev[sylExamId] || {}), [key]: mapped },
-  }));
-};
-const fetchStudentRemarks = async (cls, st , key) => {
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-    const selectedExam = filtered.find(ex => ex.id === resExamId);
-    const selectExamValue = selectedExam?.selectExam || 0;
+    return `${day}/${month}/${year}`;
+  };
 
-    const params = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(cls.classID),
-      sectionID: String(cls.sectionID),
-      examID: String(selectExamValue),
-      termID: String(selectedTermId),
-      studentID: String(st.id),
-      pageNo: '1',
-      pageCount: '20'
-    });
+  async function getExamsByTerm(termID) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
 
-    const res = await fetch(
-      buildUrl(`/api/getremarksbystudentfilters?${params}`),
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json'
+      const response = await fetch(
+        buildUrl(
+          `/api/getexamsbybranchidtermid?branchID=${branchID}&termID=${termID}&empID=${empID}`
+        ),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
         }
+      );
+
+      const data = await response.json();
+
+      const mapped = (data || []).reduce((acc, ex) => {
+        // ek exam ko uniquely identify karne ke liye examName + termID
+        const key = `${ex.examName}_${ex.termID}`;
+
+        if (!acc[key]) {
+          acc[key] = {
+            // exam-level common fields
+            name: ex.examName,
+            termID: ex.termID,
+            termName: ex.termName,
+            selectExam: ex.selectExam,
+            from: ex.dateFrom,
+            to: ex.dateTo,
+            gradeName: ex.gradeName,
+
+            // store full class objects (keyed by sectionID to avoid dupes)
+            classes: new Map()
+          };
+        }
+
+        // har class/section ka apna record id + section info store karo
+        // key sectionID rakho (yahi unique row hai class+section ke liye)
+        acc[key].classes.set(String(ex.sectionID), {
+          id: ex.id,                 // per-row id (UPDATE ke liye zaruri)
+          classID: ex.classID,
+          sectionID: ex.sectionID,
+          sectionName: ex.sectionName,
+          gradeName: ex.gradeName,
+          // display label: grade + section
+          className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim()
+        });
+
+        return acc;
+      }, {});
+
+      const finalData = Object.values(mapped).map(ex => ({
+        ...ex,
+        classes: Array.from(ex.classes.values())
+      }));
+
+      setFiltered(finalData);
+      setExams(finalData);
+
+    } catch (error) {
+      console.log("Could not load exams", error);
+    }
+  }
+  // Parent component me onSave aise handle karo:
+
+  // Update handleSaveExam function
+  async function handleSaveExam({ payloads, name, from, to, classes, deletedCount }) {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    try {
+      const token = sessionStorage.getItem('token');
+
+      // Process insert and update operations
+      const results = await Promise.all(
+        payloads.map(p =>
+          fetch(buildUrl('/api/addexamcrud'), {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              Accept: 'application/json'
+            },
+            body: JSON.stringify(p)
+          }).then(r => r.json())
+        )
+      );
+
+      console.log('Exam CRUD results:', results);
+
+      let message = 'Exam saved successfully';
+      if (deletedCount > 0) {
+        message += `, ${deletedCount} class(es) removed`;
       }
-    );
+      toast(message, 'success');
 
-    const data = await res.json();
-    const existingRemark = Array.isArray(data) ? data[0] : (data?.data?.[0] || null);
-    console.log('Existing remark:', existingRemark);
+      // Close modal
+      setEditing(null);
 
-    setResRemarksCtx({ 
-  examId: resExamId, 
-  key,
-  studentId: st.id,
-  classID: cls.classID,
-  sectionID: cls.sectionID,
-  examID: selectExamValue,
-  termID: selectedTermId,
-  existingRemark: existingRemark || null
-});
-  } catch (err) {
-    console.error('Error fetching remarks:', err);
-    setResRemarksCtx({ 
-      examId: resExamId, 
-      key, 
-      studentId: st.id, 
-      existingRemark: null 
-    });
+      // Refresh the exam list
+      if (selectedTermId) {
+        await getExamsByTerm(selectedTermId);
+      }
+    } catch (error) {
+      console.log('Could not save exam', error);
+      toast('Could not save exam', 'error');
+    }
   }
-};
-  async function getExamSyllabusByClassAndTerms(classID, sectionID, selectExam, termName, pageNo = 1) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const empID = sessionStorage.getItem('employee_ID');
-    const token = sessionStorage.getItem('token');
 
-    const params = new URLSearchParams({
-      branchID: String(branchID),
-      classID: String(classID),
-      Terms: termName,
-      ExamID: String(selectExam),
-      sectionID: String(sectionID),
-      pageNo: String(pageNo),
-      empID: String(empID),
-    });
+  // Make sure getExamsByTerm is properly defined to handle multiple classes
+  async function getExamsByTerm(termID) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
 
-    const response = await fetch(
-      buildUrl(`/api/getexamsyllabusbybranchclassandterms?${params.toString()}`),
-      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-    );
+      const response = await fetch(
+        buildUrl(
+          `/api/getexamsbybranchidtermid?branchID=${branchID}&termID=${termID}&empID=${empID}`
+        ),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        }
+      );
 
-    const data = await response.json();
-    return data?.data || data?.result || (Array.isArray(data) ? data : []);
-  } catch (error) {
-    console.log('Could not load class syllabus', error);
-    return [];
+      const data = await response.json();
+
+      const mapped = (data || []).reduce((acc, ex) => {
+        // ek exam ko uniquely identify karne ke liye examName + termID
+        const key = `${ex.examName}_${ex.termID}`;
+
+        if (!acc[key]) {
+          acc[key] = {
+            // exam-level common fields
+            id: ex.id,
+            name: ex.examName,
+            termID: ex.termID,
+            termName: ex.termName,
+            selectExam: ex.selectExam,
+            from: ex.dateFrom,
+            to: ex.dateTo,
+            gradeName: ex.gradeName,
+
+            // store full class objects (keyed by sectionID to avoid dupes)
+            classes: new Map()
+          };
+        }
+
+        // har class/section ka apna record id + section info store karo
+        // key sectionID rakho (yahi unique row hai class+section ke liye)
+        acc[key].classes.set(String(ex.sectionID), {
+          id: ex.id,                 // per-row id (UPDATE ke liye zaruri)
+          classID: ex.classID,
+          sectionID: ex.sectionID,
+          sectionName: ex.sectionName,
+          gradeName: ex.gradeName,
+          // display label: grade + section
+          className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim()
+        });
+
+        return acc;
+      }, {});
+
+      const finalData = Object.values(mapped).map(ex => ({
+        ...ex,
+        classes: Array.from(ex.classes.values())
+      }));
+
+      setFiltered(finalData);
+      setExams(finalData);
+
+    } catch (error) {
+      console.log("Could not load exams", error);
+    }
   }
-}
-async function deleteSyllabusByAllIds(classID, sectionID, selectExam, termName) {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
+  const handleDeleteExam = async (exam) => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    console.log("Deleting exam:", exam);
 
-    const params = new URLSearchParams({
-      classID: String(classID),
-      Terms: termName,
-      branchID: String(branchID),
-      ExamID: String(selectExam),
-      sectionID: String(sectionID),
-    });
+    try {
+      const branchID = Number(sessionStorage.getItem("branchID"));
+      const token = sessionStorage.getItem("token");
+      const empID = sessionStorage.getItem("employee_ID");
+      const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+      const selectExam = Number(exam.selectExam);
 
-    const response = await fetch(
-      buildUrl(`/api/deleteSyllabusbyALLIds?${params.toString()}`),
-      { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: '*/*' } }
-    );
+      // Guard: agar is exam ke against datesheet ya syllabus bana hua hai → delete block.
+      let hasDatesheet = false, hasSyllabus = false;
+      await Promise.all((exam.classes || []).map(async (cls) => {
+        try {
+          const dp = new URLSearchParams({
+            branchID: String(branchID), classID: String(cls.classID), termID: String(exam.termID),
+            ExamID: String(selectExam), sectionID: String(cls.sectionID), empID: String(empID),
+          });
+          const dd = await (await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermid?${dp}`), { headers })).json();
+          if ((Array.isArray(dd) ? dd : (dd?.data || [])).length) hasDatesheet = true;
+        } catch (e) { /* ignore */ }
+        try {
+          const sp = new URLSearchParams({
+            branchID: String(branchID), classID: String(cls.classID), Terms: String(exam.termID),
+            ExamID: String(selectExam), sectionID: String(cls.sectionID), pageNo: "1", empID: String(empID),
+          });
+          const sd = await (await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandterms?${sp}`), { headers })).json();
+          if ((sd?.data || sd?.result || (Array.isArray(sd) ? sd : [])).length) hasSyllabus = true;
+        } catch (e) { /* ignore */ }
+      }));
 
-    const data = await response.json().catch(() => ({}));
-    return { ok: response.ok, data };
-  } catch (error) {
-    console.log('Could not delete syllabus', error);
-    return { ok: false, data: null };
-  }
-}
-const dsLoadClassDateSheet = async (key, cls) => {
-  // Check if we already have the data in state
-  const existingRows = dateSheets[dsExamId]?.[key];
-  
-  if (existingRows && existingRows.length > 0) {
-    // Data already loaded, no need to fetch again
-    console.log('Using cached date sheet data');
-    return;
-  }
-  
-  // Only fetch if we don't have data (fallback)
-  const rows = await getDateSheetData(cls.classID, cls.sectionID, dsExamId, selectedTermId);
-  setDateSheets(prev => ({
-    ...prev,
-    [dsExamId]: { ...(prev[dsExamId] || {}), [key]: rows },
-  }));
-};
-const deleteSingleAssessment = async (examId, classID, sectionID, termId) => {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
-    
-    // Find the selected exam to get the selectExam value
-    const selectedExam = filtered.find(ex => ex.id === examId);
-    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
-    
-    const params = new URLSearchParams({
-      classID: String(classID),
-      sectionID: String(sectionID),
-      termID: String(termId),
-      examID: String(selectExamValue)
-    });
-    
-    console.log("Deleting single assessment with params:", {
-      classID,
-      sectionID,
-      termID: termId,
-      examID: selectExamValue
-    });
-    
-    const response = await fetch(
-      buildUrl(`/api/deletesingleassessment?${params.toString()}`),
-      {
+      if (hasDatesheet || hasSyllabus) {
+        const parts = [];
+        if (hasDatesheet) parts.push("datesheet");
+        if (hasSyllabus) parts.push("syllabus");
+        toast(`There is record of ${parts.join(" and ")}, so you cannot delete this exam.`, "error");
+        setConfirmDel(null);
+        return;
+      }
+
+      const url = buildUrl(
+        `/api/deleteexamdata?branchID=${branchID}&id=${selectExam}`
+      );
+
+      const response = await fetch(url, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
-          Accept: "application/json"
-        }
+          Accept: "*/*",
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.status || data.message) {
+        setConfirmDel(null);
+        getExamsByTerm(exam.termID);
+      } else {
+        console.log(data.message || "Delete failed");
       }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+  async function getSyllabusSubjects(gradeId, sectionID) {
+    try {
+      const branchID = sessionStorage.getItem("branchID");
+      const empID = sessionStorage.getItem("employee_ID");
+      const token = sessionStorage.getItem("token");
+
+      const response = await fetch(
+        buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionID}/${empID}`),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (data && data.success && data.data) {
+        const subjectList = data.data.map(subject => ({
+          subjectID: subject.subjectID,
+          subjectName: subject.subjectName,
+          subject: subject.subjectName,
+          content: '',
+          updatedAt: '—'
+        }));
+        setSubjects(subjectList);
+        return subjectList; // Return the subjects array
+      } else if (data && Array.isArray(data)) {
+        const subjectList = data.map(subject => ({
+          subjectID: subject.subjectID,
+          subjectName: subject.subjectName,
+          subject: subject.subjectName,
+          content: '',
+          updatedAt: '—'
+        }));
+        setSubjects(subjectList);
+        return subjectList; // Return the subjects array
+      } else {
+        setSubjects([]);
+        return [];
+      }
+    } catch (err) {
+      console.error("Error fetching syllabus subjects:", err);
+      setSubjects([]);
+      return [];
+    }
+  }
+  async function getExamSyllabusBySubject(classID, sectionID, subjectID, selectExam, termName, pageNo = 1) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+
+      const params = new URLSearchParams({
+        classID: String(classID),
+        Terms: termName,
+        pageNo: String(pageNo),
+        branchID: String(branchID),
+        subjectName: String(subjectID),     // ← key bhi subjectID; agar API subjectName key chahti hai to: subjectName: String(subjectID)
+        ExamID: String(selectExam),       // ← ab selectExam (27) ja raha hai
+        sectionID: String(sectionID),
+      });
+
+      const response = await fetch(
+        buildUrl(`/api/getexamsyllabusbyclasstermsbranchsubject?${params.toString()}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+      );
+
+      const data = await response.json();
+      return data?.data || data?.result || (Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.log('Could not load subject syllabus', error);
+      return [];
+    }
+  }
+  const sylLoadClassSyllabus = async (key, cls) => {
+    if (!sylCurrentExam) return;
+
+    // Check if we already have the data in state
+    const existingData = syllabusData[sylExamId]?.[key];
+
+    if (existingData && existingData.length > 0) {
+      // Data already loaded, no need to fetch again
+      console.log('Using cached syllabus data for:', cls.gradeName);
+      return;
+    }
+
+    // Only fetch if we don't have data (fallback)
+    const rows = await getExamSyllabusByClassAndTerms(
+      cls.classID,
+      cls.sectionID,
+      sylCurrentExam.selectExam,
+      selectedTermId,
+      1
     );
-    
-    const data = await response.json();
-    console.log("Delete API Response:", data);
-    
-    return { success: response.ok, data };
-  } catch (error) {
-    console.error("Error deleting single assessment:", error);
-    return { success: false, error };
+
+    // Map API rows -> { subject, content, updatedAt } shape; subject (id) par dedupe (API duplicate deti hai)
+    const seen = new Set();
+    const mapped = (rows || []).reduce((acc, r) => {
+      const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+      if (seen.has(dk)) return acc;
+      seen.add(dk);
+      acc.push({
+        subject: r.subjectDisplayName || '',
+        content: r.subjectDetails || '',
+        updatedAt: r.updatedAt || r.UpdatedOn || '—',
+      });
+      return acc;
+    }, []);
+
+    setSyllabusData(prev => ({
+      ...prev,
+      [sylExamId]: { ...(prev[sylExamId] || {}), [key]: mapped },
+    }));
+  };
+  const fetchStudentRemarks = async (cls, st, key) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      const selectedExam = filtered.find(ex => ex.id === resExamId);
+      const selectExamValue = selectedExam?.selectExam || 0;
+
+      const params = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(cls.classID),
+        sectionID: String(cls.sectionID),
+        examID: String(selectExamValue),
+        termID: String(selectedTermId),
+        studentID: String(st.id),
+        pageNo: '1',
+        pageCount: '20'
+      });
+
+      const res = await fetch(
+        buildUrl(`/api/getremarksbystudentfilters?${params}`),
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json'
+          }
+        }
+      );
+
+      const data = await res.json();
+      const existingRemark = Array.isArray(data) ? data[0] : (data?.data?.[0] || null);
+      console.log('Existing remark:', existingRemark);
+
+      setResRemarksCtx({
+        examId: resExamId,
+        key,
+        studentId: st.id,
+        classID: cls.classID,
+        sectionID: cls.sectionID,
+        examID: selectExamValue,
+        termID: selectedTermId,
+        existingRemark: existingRemark || null
+      });
+    } catch (err) {
+      console.error('Error fetching remarks:', err);
+      setResRemarksCtx({
+        examId: resExamId,
+        key,
+        studentId: st.id,
+        existingRemark: null
+      });
+    }
+  };
+  async function getExamSyllabusByClassAndTerms(classID, sectionID, selectExam, termName, pageNo = 1) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
+
+      const params = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(classID),
+        Terms: termName,
+        ExamID: String(selectExam),
+        sectionID: String(sectionID),
+        pageNo: String(pageNo),
+        empID: String(empID),
+      });
+
+      const response = await fetch(
+        buildUrl(`/api/getexamsyllabusbybranchclassandterms?${params.toString()}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+      );
+
+      const data = await response.json();
+      return data?.data || data?.result || (Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.log('Could not load class syllabus', error);
+      return [];
+    }
   }
-};
-useEffect(() => {
-  if (terms && terms.length > 0 && !selectedTermId) {
-    // Select the first term by default
-    const firstTerm = terms[0];
-    setTerm(firstTerm.term);
-    setSelectedTermId(firstTerm.id);
-    // Fetch exams for the first term
-    getExamsByTerm(firstTerm.id);
+  async function deleteSyllabusByAllIds(classID, sectionID, selectExam, termName) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+
+      const params = new URLSearchParams({
+        classID: String(classID),
+        Terms: termName,
+        branchID: String(branchID),
+        ExamID: String(selectExam),
+        sectionID: String(sectionID),
+      });
+
+      const response = await fetch(
+        buildUrl(`/api/deleteSyllabusbyALLIds?${params.toString()}`),
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: '*/*' } }
+      );
+
+      const data = await response.json().catch(() => ({}));
+      return { ok: response.ok, data };
+    } catch (error) {
+      console.log('Could not delete syllabus', error);
+      return { ok: false, data: null };
+    }
   }
-}, [terms]);
+  const dsLoadClassDateSheet = async (key, cls) => {
+    // Check if we already have the data in state
+    const existingRows = dateSheets[dsExamId]?.[key];
+
+    if (existingRows && existingRows.length > 0) {
+      // Data already loaded, no need to fetch again
+      console.log('Using cached date sheet data');
+      return;
+    }
+
+    // Only fetch if we don't have data (fallback)
+    const rows = await getDateSheetData(cls.classID, cls.sectionID, dsExamId, selectedTermId);
+    setDateSheets(prev => ({
+      ...prev,
+      [dsExamId]: { ...(prev[dsExamId] || {}), [key]: rows },
+    }));
+  };
+  const deleteSingleAssessment = async (examId, classID, sectionID, termId) => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+
+      // Find the selected exam to get the selectExam value
+      const selectedExam = filtered.find(ex => ex.id === examId);
+      const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+
+      const params = new URLSearchParams({
+        classID: String(classID),
+        sectionID: String(sectionID),
+        termID: String(termId),
+        examID: String(selectExamValue)
+      });
+
+      console.log("Deleting single assessment with params:", {
+        classID,
+        sectionID,
+        termID: termId,
+        examID: selectExamValue
+      });
+
+      const response = await fetch(
+        buildUrl(`/api/deletesingleassessment?${params.toString()}`),
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        }
+      );
+
+      const data = await response.json();
+      console.log("Delete API Response:", data);
+
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error deleting single assessment:", error);
+      return { success: false, error };
+    }
+  };
+  useEffect(() => {
+    if (terms && terms.length > 0 && !selectedTermId) {
+      // Select the first term by default
+      const firstTerm = terms[0];
+      setTerm(firstTerm.term);
+      setSelectedTermId(firstTerm.id);
+      // Fetch exams for the first term
+      getExamsByTerm(firstTerm.id);
+    }
+  }, [terms]);
   /* No active session set for this branch → block the module and ask the user
      to configure it in Settings first. */
   if (hasActiveSession === false) {
@@ -4419,46 +4447,46 @@ useEffect(() => {
       {/* ── Module tabs ── */}
       <div className="exam-tabs-row">
         {showSetupTab && (
-        <button className={`exam-tab${tab === 'setup' ? ' active' : ''}`} onClick={() => setTab('setup')}>
-          <i className="fa-solid fa-gear"></i> Exam Setup
-        </button>
+          <button className={`exam-tab${tab === 'setup' ? ' active' : ''}`} onClick={() => setTab('setup')}>
+            <i className="fa-solid fa-gear"></i> Exam Setup
+          </button>
         )}
         {showDatesheetTab && (
-        <button className={`exam-tab${tab === 'datesheet' ? ' active' : ''}`} onClick={() => setTab('datesheet')}>
-          <i className="fa-solid fa-calendar-days"></i> Date Sheet
-        </button>
+          <button className={`exam-tab${tab === 'datesheet' ? ' active' : ''}`} onClick={() => setTab('datesheet')}>
+            <i className="fa-solid fa-calendar-days"></i> Date Sheet
+          </button>
         )}
         {showSyllabusTab && (
-        <button className={`exam-tab${tab === 'syllabus' ? ' active' : ''}`} onClick={() => setTab('syllabus')}>
-          <i className="fa-solid fa-book-open"></i> Syllabus
-        </button>
+          <button className={`exam-tab${tab === 'syllabus' ? ' active' : ''}`} onClick={() => setTab('syllabus')}>
+            <i className="fa-solid fa-book-open"></i> Syllabus
+          </button>
         )}
         {showResultsTab && (
-        <button className={`exam-tab${tab === 'results' ? ' active' : ''}`} onClick={() => setTab('results')}>
-          <i className="fa-solid fa-chart-bar"></i> Results
-        </button>
+          <button className={`exam-tab${tab === 'results' ? ' active' : ''}`} onClick={() => setTab('results')}>
+            <i className="fa-solid fa-chart-bar"></i> Results
+          </button>
         )}
       </div>
- 
+
       {/* ── Exam Setup ── */}
       {tab === 'setup' && (
         <>
 
-<div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
-  {terms.map((t) => (
-    <button
-      key={t.id}
-      className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
-      onClick={() => {
-        setTerm(t.term);
-        setSelectedTermId(t.id);
-        getExamsByTerm(t.id);
-      }}
-    >
-      {t.term}
-    </button>
-  ))}
-</div>
+          <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
+            {terms.map((t) => (
+              <button
+                key={t.id}
+                className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+                onClick={() => {
+                  setTerm(t.term);
+                  setSelectedTermId(t.id);
+                  getExamsByTerm(t.id);
+                }}
+              >
+                {t.term}
+              </button>
+            ))}
+          </div>
           <div className="exam-action-bar">
             <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (termsLoading ? 'Loading terms…' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term'))}>
               <button className="exam-add-btn"
@@ -4471,26 +4499,26 @@ useEffect(() => {
                 }}
                 disabled={isOtherSession || !canExamCreate}
                 title={!canExamCreate ? 'You do not have permission to create exams'
-                     : isOtherSession ? 'Editing is only allowed for the current session'
-                     : termsLoading ? 'Loading terms…'
-                     : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
+                  : isOtherSession ? 'Editing is only allowed for the current session'
+                    : termsLoading ? 'Loading terms…'
+                      : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
                 style={(isOtherSession || termsLoading || !terms.length || !canExamCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
             {canExamDownload && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Tooltip text="Download a PDF report of all exams in this term">
-                <button className="export-btn pdf" onClick={() => setReportReq({ scope: 'all', name: 'All Exams' })}>
-                  <i className="fa-solid fa-file-pdf"></i> PDF
-                </button>
-              </Tooltip>
-              <Tooltip text="Download a Word report of all exams in this term">
-                <button className="export-btn word" onClick={() => setReportReq({ scope: 'all', name: 'All Exams', format: 'word' })}>
-                  <i className="fa-brands fa-microsoft"></i> Word
-                </button>
-              </Tooltip>
-            </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Tooltip text="Download a PDF report of all exams in this term">
+                  <button className="export-btn pdf" onClick={() => setReportReq({ scope: 'all', name: 'All Exams' })}>
+                    <i className="fa-solid fa-file-pdf"></i> PDF
+                  </button>
+                </Tooltip>
+                <Tooltip text="Download a Word report of all exams in this term">
+                  <button className="export-btn word" onClick={() => setReportReq({ scope: 'all', name: 'All Exams', format: 'word' })}>
+                    <i className="fa-brands fa-microsoft"></i> Word
+                  </button>
+                </Tooltip>
+              </div>
             )}
           </div>
 
@@ -4510,7 +4538,7 @@ useEffect(() => {
               </div>
             ) : (
               filtered.map((ex, i) => {
-                const st  = getExamStatus(ex);
+                const st = getExamStatus(ex);
                 const dur = calcDuration(ex.from, ex.to);
                 const isOpen = openExamId === ex.id;
                 return (
@@ -4542,29 +4570,29 @@ useEffect(() => {
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()} style={{ gap: 6 }}>
                         {canExamDownload && (<>
-                        <Tooltip text={`Download PDF for ${ex.name}`}>
-                          <button className="export-btn pdf" onClick={() => setReportReq({ scope: ex.id, name: ex.name })}>
-                            <i className="fa-solid fa-file-pdf"></i> PDF
-                          </button>
-                        </Tooltip>
-                        <Tooltip text={`Download Word for ${ex.name}`}>
-                          <button className="export-btn word" onClick={() => setReportReq({ scope: ex.id, name: ex.name, format: 'word' })}>
-                            <i className="fa-brands fa-microsoft"></i> Word
-                          </button>
-                        </Tooltip>
+                          <Tooltip text={`Download PDF for ${ex.name}`}>
+                            <button className="export-btn pdf" onClick={() => setReportReq({ scope: ex.id, name: ex.name })}>
+                              <i className="fa-solid fa-file-pdf"></i> PDF
+                            </button>
+                          </Tooltip>
+                          <Tooltip text={`Download Word for ${ex.name}`}>
+                            <button className="export-btn word" onClick={() => setReportReq({ scope: ex.id, name: ex.name, format: 'word' })}>
+                              <i className="fa-brands fa-microsoft"></i> Word
+                            </button>
+                          </Tooltip>
                         </>)}
                       </div>
                       <div className="exam-td" style={{ justifyContent: 'flex-end', gap: 8 }} onClick={e => e.stopPropagation()}>
-                     <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : `Delete ${ex.name}`}>
-  <button
-    className="exam-del-btn"
-    disabled={isOtherSession || !canExamDelete}
-    style={(isOtherSession || !canExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setConfirmDel(ex); }}
-  >
-    <i className="fa-solid fa-trash"></i>
-  </button>
-</Tooltip>
+                        <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : `Delete ${ex.name}`}>
+                          <button
+                            className="exam-del-btn"
+                            disabled={isOtherSession || !canExamDelete}
+                            style={(isOtherSession || !canExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                            onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setConfirmDel(ex); }}
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
+                        </Tooltip>
                         <Tooltip text={isOpen ? 'Hide exam details' : 'Show exam details'}>
                           <button className={`exam-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setOpenExamId(isOpen ? null : ex.id); }}>
                             <i className="fa-solid fa-chevron-down"></i>
@@ -4591,13 +4619,13 @@ useEffect(() => {
                             </div>
                             <div>
                               <div className="exam-detail-label">Classes ({ex.classes.length})</div>
-                             <div className="exam-detail-val classes-list">
-  {ex.classes.map(c => (
-    <span key={c.classID} className="exam-class-pill">
-      {c.gradeName} - {c.sectionName}
-    </span>
-  ))}
-</div>
+                              <div className="exam-detail-val classes-list">
+                                {ex.classes.map(c => (
+                                  <span key={c.classID} className="exam-class-pill">
+                                    {c.gradeName} - {c.sectionName}
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -4609,9 +4637,9 @@ useEffect(() => {
                             </div>
                             <div>
                               <div className="exam-detail-label">Duration</div>
-<div className="exam-detail-val">
-  {calcDuration(ex.from, ex.to)}
-</div>                            </div>
+                              <div className="exam-detail-val">
+                                {calcDuration(ex.from, ex.to)}
+                              </div>                            </div>
                           </div>
                           <div className="exam-detail-item">
                             <div className="exam-detail-icon" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}>
@@ -4643,274 +4671,276 @@ useEffect(() => {
       )}
 
       {/* ── Date Sheet ── */}
-   {tab === 'datesheet' && (
-  <>
-    <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
-      {terms.map(t => (
-        <button
-          key={t.id}
-          className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
-          onClick={() => {
-            setTerm(t.term);
-            setSelectedTermId(t.id);
-            getExamsByTerm(t.id);
-          }}
-        >
-          {t.term}
-        </button>
-      ))}
-    </div>
-
-    {filtered.length > 0 && (
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <i className="fa-solid fa-file-pen" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
-          <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {filtered.map(ex => (
-            <button
-              key={ex.id}
-              className={`ds-exam-btn${dsExamId === ex.id ? ' active' : ''}`}
-              onClick={() => dsPickExam(ex.id)}
-            >
-              <i className="fa-solid fa-file-pen"></i> {ex.name}
-            </button>
-          ))}
-        </div>
-      </div>
-    )}
-
-    {dsCurrentExam && (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 14 }}>
-        <Tooltip text={`Download date sheet PDF for all classes in ${dsCurrentExam.name}`}>
-          <button className="export-btn pdf" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
-            <i className="fa-solid fa-file-pdf"></i> PDF
-          </button>
-        </Tooltip>
-        <Tooltip text={`Download date sheet in Word for ${dsCurrentExam.name}`}>
-          <button className="export-btn word" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}`, format: 'word' })}>
-            <i className="fa-brands fa-microsoft"></i> Word
-          </button>
-        </Tooltip>
-      </div>
-    )}
-
-    <div id="dsClassesPanel">
-      {!dsCurrentExam ? (
-        <div className="ds-empty" style={{ marginTop: 4 }}>
-          <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
-          {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
-        </div>
-      ) : examClasses.length === 0 ? (
-        <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
-      ) : (
-        <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
-          <div className="ds-table-head">
-            <div className="ds-th">S. No.</div>
-            <div className="ds-th">Class Name</div>
-            <div className="ds-th">Section</div>
-            <div className="ds-th">Status</div>
-            <div className="ds-th">Publish</div>
-            <div className="ds-th">Edit</div>
-            <div className="ds-th">Reports</div>
-            <div className="ds-th" style={{ textAlign: 'right' }}>Actions</div>
+      {tab === 'datesheet' && (
+        <>
+          <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
+            {terms.map(t => (
+              <button
+                key={t.id}
+                className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+                onClick={() => {
+                  setTerm(t.term);
+                  setSelectedTermId(t.id);
+                  getExamsByTerm(t.id);
+                }}
+              >
+                {t.term}
+              </button>
+            ))}
           </div>
-          {examClasses.map((cls, i) => {
-            console.log('Rendering class row:', cls);
-            const key = `cls_${dsExamId}_${cls.sectionID}_${i}`;
-            const dsRows = dsExamSheets[key] || [];
-            const hasDates = dsRows.length > 0;
-            const isOpen = dsOpenKey === key;
-            const className = `${cls.gradeName} - ${cls.sectionName}`;
 
-            return (
-              <div key={key} className="ds-row-wrap">
-<div
-  className={`ds-row${isOpen ? ' open' : ''}`}
-  onClick={() => {
-    const next = isOpen ? null : key;
-    setDsOpenKey(next);
-    if (next) dsLoadClassDateSheet(key, cls);
-  }}
->                  <div className="ds-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                    <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
-                  </div>
-                  <div className="ds-td cls-name">
-                    <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
-                    <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
-                  </div>
-                  <div className="ds-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
-                  <div className="ds-td">
-                    {hasDates
-                      ? <span className="ds-has-badge"><i className="fa-solid fa-circle-check"></i> {dsRows.length} Subject{dsRows.length !== 1 ? 's' : ''}</span>
-                      : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
-                  </div>
-                  <div className="ds-td" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    {(() => {
-                      const isRel = !!dsReleased[key];
-                      return (<>
-                        <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
-                          <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
-                          {isRel ? 'Released' : 'Not Released'}
-                        </span>
-                        <Tooltip text={!canDsEdit ? 'You do not have permission to publish date sheets' : (isRel ? 'Unpublish this date sheet' : 'Publish this date sheet')}>
-                          <button
-                            className={`res-publish-btn${isRel ? ' released' : ''}`}
-                            disabled={isOtherSession || !canDsEdit}
-                            style={(isOtherSession || !canDsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                            onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (!isRel && !hasDates) { toast('No datesheet found, please add datesheet', 'warning'); return; } setDsSylConfirmPublish({ kind: 'datesheet', key, className, released: isRel, classID: cls.classID, sectionID: cls.sectionID, selectExam: dsCurrentExam?.selectExam, term: dsCurrentExam?.termID }); }}
-                          >
-                            <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-                            {isRel ? 'Unpublish' : 'Publish'}
-                          </button>
-                        </Tooltip>
-                      </>);
-                    })()}
-                  </div>
-                  <div className="ds-td" onClick={e => e.stopPropagation()}>
-                   <Tooltip text={!canDsEdit ? 'You do not have permission to edit date sheets' : `Edit date sheet for ${className}`}>
-  <span>
-    <button className="ds-edit-btn"
-      disabled={isOtherSession || !canDsEdit}
-      style={(isOtherSession || !canDsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } dsOpenEdit(key, className, cls.classID, cls.sectionID); }}>
-      <i className="fa-solid fa-pen-to-square"></i> Edit
-    </button>
-  </span>
-</Tooltip>
-                  </div>
-                  <div className="ds-td ds-actions-cell" onClick={e => e.stopPropagation()}>
-                    {canDsDownload && (
-                    <Tooltip text={`Download basic date sheet PDF for ${className}`}>
-                      <button className="ds-report-btn" onClick={() => setDsReportReq({ classKey: key, name: className })}>
-                        <i className="fa-solid fa-file-pdf"></i> Basic PDF
-                      </button>
-                    </Tooltip>
-                    )}
-<Tooltip text={!canDsCreate ? 'You do not have permission to copy date sheets' : `Copy ${className}'s date sheet to other classes (only subjects those classes also have)`}>
-  <button className="ds-copy-row-btn"
-    disabled={isOtherSession || !canDsCreate}
-    style={(isOtherSession || !canDsCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    onClick={() => {
-    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-    if (!hasDates) {
-      toast('No date sheet to copy', 'warning');
-      return;
-    }
-    setDsConfirmCopy({
-      examId: dsExamId, 
-      sourceKey: key,
-      count: examClasses.length - 1,
-      examName: dsCurrentExam.name,
-      sourceClassName: className,
-      sourceRows: dsRows
-    });
-  }}>
-    <i className="fa-regular fa-copy"></i> Copy
-  </button>
-</Tooltip>
-                  </div>
-                  <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                    <Tooltip text={!canDsDelete ? 'You do not have permission to delete date sheets' : `Delete date sheet for ${className}`}>
-  <button
-    className="ds-del-btn"
-    disabled={isOtherSession || !canDsDelete}
-    style={(isOtherSession || !canDsDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDsConfirmDel({
-      examId: dsExamId,
-      classKey: key,
-      className: className,
-      classID: cls.classID,    // ← Add this
-      sectionID: cls.sectionID  // ← Add this
-    }); }}
-  >
-    <i className="fa-solid fa-trash"></i>
-  </button>
-</Tooltip>
-                    <Tooltip text={isOpen ? 'Hide date sheet details' : 'Show date sheet details'}>
-                     <button
-  className={`ds-expand-btn${isOpen ? ' open' : ''}`}
-  onClick={e => {
-    e.stopPropagation();
-    const next = isOpen ? null : key;
-    setDsOpenKey(next);
-    if (next) dsLoadClassDateSheet(key, cls);
-  }}
->
-  <i className="fa-solid fa-chevron-down"></i>
-</button>
-                    </Tooltip>
-                  </div>
-                </div>
-
-                <div className={`ds-detail${isOpen ? ' open' : ''}`}>
-                  <div className="ds-detail-inner">
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        <i className="fa-solid fa-calendar-days" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                        Date Sheet — {className}
-                      </div>
-                    </div>
-                    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                      <div className="ds-subj-table-head">
-                        <div className="ds-subj-th">#</div>
-                        <div className="ds-subj-th">Subject</div>
-                        <div className="ds-subj-th">Date</div>
-                        <div className="ds-subj-th">Time From</div>
-                        <div className="ds-subj-th">Time To</div>
-                      </div>
-                {hasDates
-
-  ? [...dsRows]
-      .sort((a, b) => {
-        if (!a.date) return 1;
-        if (!b.date) return -1;
-        const dCmp = new Date(a.date) - new Date(b.date);
-        if (dCmp !== 0) return dCmp;
-        return dsTimeToMinutes(a.timeFrom) - dsTimeToMinutes(b.timeFrom); // ← same-day tiebreak
-      })
-      .map((s, si) => (
-         <div key={si} className="ds-subj-row">
-                              <div className="ds-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                                <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
-                              </div>
-                              <div className="ds-subj-td name">
-                                <div className="ds-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
-                              </div>
-                              <div className="ds-subj-td">{s.date ? dsFmtDateDisplay(s.date) : '—'}</div>
-                              <div className="ds-subj-td">{s.timeFrom || '—'}</div>
-                              <div className="ds-subj-td">{s.timeTo || '—'}</div>
-                            </div>
-                          ))
-                        : <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No subjects yet. Click <strong>Edit</strong> to add subjects.</div>}
-                    </div>
-                  </div>
-                </div>
+          {filtered.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <i className="fa-solid fa-file-pen" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
+                <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
               </div>
-            );
-          })}
-        </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {filtered.map(ex => (
+                  <button
+                    key={ex.id}
+                    className={`ds-exam-btn${dsExamId === ex.id ? ' active' : ''}`}
+                    onClick={() => dsPickExam(ex.id)}
+                  >
+                    <i className="fa-solid fa-file-pen"></i> {ex.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {dsCurrentExam && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 14 }}>
+              <Tooltip text={`Download date sheet PDF for all classes in ${dsCurrentExam.name}`}>
+                <button className="export-btn pdf" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
+                  <i className="fa-solid fa-file-pdf"></i> PDF
+                </button>
+              </Tooltip>
+              <Tooltip text={`Download date sheet in Word for ${dsCurrentExam.name}`}>
+                <button className="export-btn word" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}`, format: 'word' })}>
+                  <i className="fa-brands fa-microsoft"></i> Word
+                </button>
+              </Tooltip>
+            </div>
+          )}
+
+          <div id="dsClassesPanel">
+            {!dsCurrentExam ? (
+              <div className="ds-empty" style={{ marginTop: 4 }}>
+                <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
+                {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
+              </div>
+            ) : examClasses.length === 0 ? (
+              <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
+            ) : (
+              <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
+                <div className="ds-table-head">
+                  <div className="ds-th">S. No.</div>
+                  <div className="ds-th">Class Name</div>
+                  <div className="ds-th">Section</div>
+                  <div className="ds-th">Status</div>
+                  <div className="ds-th">Publish</div>
+                  <div className="ds-th">Edit</div>
+                  <div className="ds-th">Reports</div>
+                  <div className="ds-th" style={{ textAlign: 'right' }}>Actions</div>
+                </div>
+                {examClasses.map((cls, i) => {
+                  console.log('Rendering class row:', cls);
+                  const key = `cls_${dsExamId}_${cls.sectionID}_${i}`;
+                  const dsRows = dsExamSheets[key] || [];
+                  const hasDates = dsRows.length > 0;
+                  const isOpen = dsOpenKey === key;
+                  const className = `${cls.gradeName} - ${cls.sectionName}`;
+
+                  return (
+                    <div key={key} className="ds-row-wrap">
+                      <div
+                        className={`ds-row${isOpen ? ' open' : ''}`}
+                        onClick={() => {
+                          const next = isOpen ? null : key;
+                          setDsOpenKey(next);
+                          if (next) dsLoadClassDateSheet(key, cls);
+                        }}
+                      >                  <div className="ds-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                          <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
+                        </div>
+                        <div className="ds-td cls-name">
+                          <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
+                          <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
+                        </div>
+                        <div className="ds-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+                        <div className="ds-td">
+                          {hasDates
+                            ? <span className="ds-has-badge"><i className="fa-solid fa-circle-check"></i> {dsRows.length} Subject{dsRows.length !== 1 ? 's' : ''}</span>
+                            : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
+                        </div>
+                        <div className="ds-td" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          {(() => {
+                            const isRel = !!dsReleased[key];
+                            return (<>
+                              <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
+                                <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+                                {isRel ? 'Released' : 'Not Released'}
+                              </span>
+                              <Tooltip text={!canDsEdit ? 'You do not have permission to publish date sheets' : (isRel ? 'Unpublish this date sheet' : 'Publish this date sheet')}>
+                                <button
+                                  className={`res-publish-btn${isRel ? ' released' : ''}`}
+                                  disabled={isOtherSession || !canDsEdit}
+                                  style={(isOtherSession || !canDsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                  onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (!isRel && !hasDates) { toast('No datesheet found, please add datesheet', 'warning'); return; } setDsSylConfirmPublish({ kind: 'datesheet', key, className, released: isRel, classID: cls.classID, sectionID: cls.sectionID, selectExam: dsCurrentExam?.selectExam, term: dsCurrentExam?.termID }); }}
+                                >
+                                  <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                                  {isRel ? 'Unpublish' : 'Publish'}
+                                </button>
+                              </Tooltip>
+                            </>);
+                          })()}
+                        </div>
+                        <div className="ds-td" onClick={e => e.stopPropagation()}>
+                          <Tooltip text={!canDsEdit ? 'You do not have permission to edit date sheets' : `Edit date sheet for ${className}`}>
+                            <span>
+                              <button className="ds-edit-btn"
+                                disabled={isOtherSession || !canDsEdit}
+                                style={(isOtherSession || !canDsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } dsOpenEdit(key, className, cls.classID, cls.sectionID); }}>
+                                <i className="fa-solid fa-pen-to-square"></i> Edit
+                              </button>
+                            </span>
+                          </Tooltip>
+                        </div>
+                        <div className="ds-td ds-actions-cell" onClick={e => e.stopPropagation()}>
+                          {canDsDownload && (
+                            <Tooltip text={`Download basic date sheet PDF for ${className}`}>
+                              <button className="ds-report-btn" onClick={() => setDsReportReq({ classKey: key, name: className })}>
+                                <i className="fa-solid fa-file-pdf"></i> Basic PDF
+                              </button>
+                            </Tooltip>
+                          )}
+                          <Tooltip text={!canDsCreate ? 'You do not have permission to copy date sheets' : `Copy ${className}'s date sheet to other classes (only subjects those classes also have)`}>
+                            <button className="ds-copy-row-btn"
+                              disabled={isOtherSession || !canDsCreate}
+                              style={(isOtherSession || !canDsCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              onClick={() => {
+                                if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                if (!hasDates) {
+                                  toast('No date sheet to copy', 'warning');
+                                  return;
+                                }
+                                setDsConfirmCopy({
+                                  examId: dsExamId,
+                                  sourceKey: key,
+                                  count: examClasses.length - 1,
+                                  examName: dsCurrentExam.name,
+                                  sourceClassName: className,
+                                  sourceRows: dsRows
+                                });
+                              }}>
+                              <i className="fa-regular fa-copy"></i> Copy
+                            </button>
+                          </Tooltip>
+                        </div>
+                        <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                          <Tooltip text={!canDsDelete ? 'You do not have permission to delete date sheets' : `Delete date sheet for ${className}`}>
+                            <button
+                              className="ds-del-btn"
+                              disabled={isOtherSession || !canDsDelete}
+                              style={(isOtherSession || !canDsDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              onClick={() => {
+                                if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDsConfirmDel({
+                                  examId: dsExamId,
+                                  classKey: key,
+                                  className: className,
+                                  classID: cls.classID,    // ← Add this
+                                  sectionID: cls.sectionID  // ← Add this
+                                });
+                              }}
+                            >
+                              <i className="fa-solid fa-trash"></i>
+                            </button>
+                          </Tooltip>
+                          <Tooltip text={isOpen ? 'Hide date sheet details' : 'Show date sheet details'}>
+                            <button
+                              className={`ds-expand-btn${isOpen ? ' open' : ''}`}
+                              onClick={e => {
+                                e.stopPropagation();
+                                const next = isOpen ? null : key;
+                                setDsOpenKey(next);
+                                if (next) dsLoadClassDateSheet(key, cls);
+                              }}
+                            >
+                              <i className="fa-solid fa-chevron-down"></i>
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </div>
+
+                      <div className={`ds-detail${isOpen ? ' open' : ''}`}>
+                        <div className="ds-detail-inner">
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                              <i className="fa-solid fa-calendar-days" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                              Date Sheet — {className}
+                            </div>
+                          </div>
+                          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                            <div className="ds-subj-table-head">
+                              <div className="ds-subj-th">#</div>
+                              <div className="ds-subj-th">Subject</div>
+                              <div className="ds-subj-th">Date</div>
+                              <div className="ds-subj-th">Time From</div>
+                              <div className="ds-subj-th">Time To</div>
+                            </div>
+                            {hasDates
+
+                              ? [...dsRows]
+                                .sort((a, b) => {
+                                  if (!a.date) return 1;
+                                  if (!b.date) return -1;
+                                  const dCmp = new Date(a.date) - new Date(b.date);
+                                  if (dCmp !== 0) return dCmp;
+                                  return dsTimeToMinutes(a.timeFrom) - dsTimeToMinutes(b.timeFrom); // ← same-day tiebreak
+                                })
+                                .map((s, si) => (
+                                  <div key={si} className="ds-subj-row">
+                                    <div className="ds-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                                      <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
+                                    </div>
+                                    <div className="ds-subj-td name">
+                                      <div className="ds-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
+                                    </div>
+                                    <div className="ds-subj-td">{s.date ? dsFmtDateDisplay(s.date) : '—'}</div>
+                                    <div className="ds-subj-td">{s.timeFrom || '—'}</div>
+                                    <div className="ds-subj-td">{s.timeTo || '—'}</div>
+                                  </div>
+                                ))
+                              : <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No subjects yet. Click <strong>Edit</strong> to add subjects.</div>}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
       )}
-    </div>
-  </>
-)}
       {/* ── Syllabus ── */}
       {tab === 'syllabus' && (
         <>
           <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
- {terms.map(t => (
-               <button
-          key={t.id}
-          className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
-          onClick={() => {
-            setTerm(t.term);
-            setSelectedTermId(t.id);
-            getExamsByTerm(t.id);
-          }}
-        >
-          {t.term}
-        </button>
+            {terms.map(t => (
+              <button
+                key={t.id}
+                className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+                onClick={() => {
+                  setTerm(t.term);
+                  setSelectedTermId(t.id);
+                  getExamsByTerm(t.id);
+                }}
+              >
+                {t.term}
+              </button>
             ))}
 
           </div>
@@ -4950,172 +4980,172 @@ useEffect(() => {
             </div>
           )}
 
-         <div id="sylClassesPanel">
-  {!sylCurrentExam ? (
-    <div className="ds-empty" style={{ marginTop: 4 }}>
-      <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
-      {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
-    </div>
-  ) : examClasses.length === 0 ? (
-    <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
-  ) : (
-    <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
-      <div className="syl-table-head">
-        <div className="syl-th">S. No.</div>
-        <div className="syl-th">Class Name</div>
-        <div className="syl-th">Section</div>
-        <div className="syl-th">Status</div>
-        <div className="syl-th">Publish</div>
-        <div className="syl-th">Edit</div>
-        <div className="syl-th">Report</div>
-        <div className="syl-th" style={{ textAlign: 'right' }}>Actions</div>
-      </div>
-
-      {examClasses.map((cls, i) => {
-        const key    = `scls_${sylExamId}_${cls.sectionID}_${i}`;
-        const data   = sylExamData[key] || [];
-        const hasSyl = data.length > 0;
-        const ovSt   = sylClassStatus(data);
-        const isOpen = sylOpenKey === key;
-        const className = `${cls.gradeName} - ${cls.sectionName}`;
- console.log(examClasses,"examclases");
-        return (
-          <div key={key} className="syl-row-wrap">
-<div
-  className={`syl-row${isOpen ? ' open' : ''}`}
-  onClick={() => {
-    const next = isOpen ? null : key;
-    setSylOpenKey(next);
-    if (next) sylLoadClassSyllabus(key, cls);
-  }}
->              <div className="syl-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
+          <div id="sylClassesPanel">
+            {!sylCurrentExam ? (
+              <div className="ds-empty" style={{ marginTop: 4 }}>
+                <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
+                {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
               </div>
-              <div className="syl-td cls-name">
-                <div className="syl-cls-icon"><i className="fa-solid fa-users"></i></div>
-                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
-              </div>
-              <div className="syl-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
-              <div className="syl-td">
-                <span className={`syl-status-badge ${ovSt.cls}`}>
-                  <i className={`fa-solid ${ovSt.icon}`}></i> {ovSt.label}
-                </span>
-              </div>
-              <div className="syl-td" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {(() => {
-                  const isRel = !!sylReleased[key];
-                  return (<>
-                    <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
-                      <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
-                      {isRel ? 'Released' : 'Not Released'}
-                    </span>
-                    <Tooltip text={!canSylEdit ? 'You do not have permission to publish syllabus' : (isRel ? 'Unpublish this syllabus' : 'Publish this syllabus')}>
-                      <button
-                        className={`res-publish-btn${isRel ? ' released' : ''}`}
-                        disabled={isOtherSession || !canSylEdit}
-                        style={(isOtherSession || !canSylEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                        onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (!isRel && !hasSyl) { toast('No syllabus found, please add syllabus', 'warning'); return; } setDsSylConfirmPublish({ kind: 'syllabus', key, className, released: isRel, classID: cls.classID, sectionID: cls.sectionID, selectExam: sylCurrentExam?.selectExam, term: sylCurrentExam?.termID }); }}
-                      >
-                        <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-                        {isRel ? 'Unpublish' : 'Publish'}
-                      </button>
-                    </Tooltip>
-                  </>);
-                })()}
-              </div>
-              <div className="syl-td" onClick={e => e.stopPropagation()}>
-                <Tooltip text={!canSylEdit ? 'You do not have permission to edit syllabus' : `Edit syllabus for ${className}`}>
-<button
-  className="syl-edit-btn"
-  disabled={isOtherSession || !canSylEdit}
-  style={(isOtherSession || !canSylEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-  onClick={() => {
-    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-    getSyllabusSubjects(cls.classID , cls.sectionID);
-    sylOpenEdit(key, className, cls.classID, cls.sectionID);
-  }}
->                    <i className="fa-solid fa-pen-to-square"></i> Edit
-                  </button>
-                </Tooltip>
-              </div>
-              <div className="syl-td" onClick={e => e.stopPropagation()}>
-                {canSylDownload && (
-                <Tooltip text={`Download syllabus PDF for ${className}`}>
-                  <button className="syl-report-btn" onClick={() => setSylReportReq({ classKey: key, name: className })}>
-                    <i className="fa-solid fa-file-pdf"></i> Report
-                  </button>
-                </Tooltip>
-                )}
-              </div>
-              <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                <Tooltip text={!canSylDelete ? 'You do not have permission to delete syllabus' : `Delete syllabus for ${className}`}>
-<button className="syl-del-btn" disabled={isOtherSession || !canSylDelete} style={(isOtherSession || !canSylDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID }); }}>                    <i className="fa-solid fa-trash"></i>
-                  </button>
-                </Tooltip>
-                <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
-                  <button className={`syl-expand-btn${isOpen ? ' open' : ''}`} onClick={e => {
-  e.stopPropagation();
-  const next = isOpen ? null : key;
-  setSylOpenKey(next);
-  if (next) sylLoadClassSyllabus(key, cls);
-}}>
-                    <i className="fa-solid fa-chevron-down"></i>
-                  </button>
-                </Tooltip>
-              </div>
-            </div>
-
-            <div className={`syl-detail${isOpen ? ' open' : ''}`}>
-              <div className="syl-detail-inner">
-                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                  <i className="fa-solid fa-book-open" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                  Syllabus — {className}
+            ) : examClasses.length === 0 ? (
+              <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
+            ) : (
+              <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
+                <div className="syl-table-head">
+                  <div className="syl-th">S. No.</div>
+                  <div className="syl-th">Class Name</div>
+                  <div className="syl-th">Section</div>
+                  <div className="syl-th">Status</div>
+                  <div className="syl-th">Publish</div>
+                  <div className="syl-th">Edit</div>
+                  <div className="syl-th">Report</div>
+                  <div className="syl-th" style={{ textAlign: 'right' }}>Actions</div>
                 </div>
-                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                  <div className="syl-subj-table-head">
-                    <div className="syl-subj-th">#</div>
-                    <div className="syl-subj-th">Subject</div>
-                    <div className="syl-subj-th">Summary</div>
-                    <div className="syl-subj-th">Status</div>
-                  </div>
-                  {hasSyl ? data.map((s, si) => {
-                    const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
-                    const plain    = plainAll || '—';   // poora content dikhao (truncate nahi)
-                    const added    = plainAll.length > 0;
-                    return (
-                      <div key={si} className="syl-subj-row">
-                        <div className="syl-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                          <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
+
+                {examClasses.map((cls, i) => {
+                  const key = `scls_${sylExamId}_${cls.sectionID}_${i}`;
+                  const data = sylExamData[key] || [];
+                  const hasSyl = data.length > 0;
+                  const ovSt = sylClassStatus(data);
+                  const isOpen = sylOpenKey === key;
+                  const className = `${cls.gradeName} - ${cls.sectionName}`;
+                  console.log(examClasses, "examclases");
+                  return (
+                    <div key={key} className="syl-row-wrap">
+                      <div
+                        className={`syl-row${isOpen ? ' open' : ''}`}
+                        onClick={() => {
+                          const next = isOpen ? null : key;
+                          setSylOpenKey(next);
+                          if (next) sylLoadClassSyllabus(key, cls);
+                        }}
+                      >              <div className="syl-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                          <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
                         </div>
-                        <div className="syl-subj-td name">
-                          <div className="syl-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
+                        <div className="syl-td cls-name">
+                          <div className="syl-cls-icon"><i className="fa-solid fa-users"></i></div>
+                          <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
                         </div>
-                        <div className="syl-subj-td">
-                          {added
-                            ? <div className="syl-summary-html" dangerouslySetInnerHTML={{ __html: s.content }} />
-                            : <span className="syl-summary-text">—</span>}
-                        </div>
-                        <div className="syl-subj-td">
-                          <span className={`syl-subj-status ${added ? 'completed' : 'pending'}`}>
-                            <span className="dot"></span>{added ? 'Added' : 'Not Added'}
+                        <div className="syl-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+                        <div className="syl-td">
+                          <span className={`syl-status-badge ${ovSt.cls}`}>
+                            <i className={`fa-solid ${ovSt.icon}`}></i> {ovSt.label}
                           </span>
                         </div>
+                        <div className="syl-td" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          {(() => {
+                            const isRel = !!sylReleased[key];
+                            return (<>
+                              <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
+                                <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+                                {isRel ? 'Released' : 'Not Released'}
+                              </span>
+                              <Tooltip text={!canSylEdit ? 'You do not have permission to publish syllabus' : (isRel ? 'Unpublish this syllabus' : 'Publish this syllabus')}>
+                                <button
+                                  className={`res-publish-btn${isRel ? ' released' : ''}`}
+                                  disabled={isOtherSession || !canSylEdit}
+                                  style={(isOtherSession || !canSylEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                  onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (!isRel && !hasSyl) { toast('No syllabus found, please add syllabus', 'warning'); return; } setDsSylConfirmPublish({ kind: 'syllabus', key, className, released: isRel, classID: cls.classID, sectionID: cls.sectionID, selectExam: sylCurrentExam?.selectExam, term: sylCurrentExam?.termID }); }}
+                                >
+                                  <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                                  {isRel ? 'Unpublish' : 'Publish'}
+                                </button>
+                              </Tooltip>
+                            </>);
+                          })()}
+                        </div>
+                        <div className="syl-td" onClick={e => e.stopPropagation()}>
+                          <Tooltip text={!canSylEdit ? 'You do not have permission to edit syllabus' : `Edit syllabus for ${className}`}>
+                            <button
+                              className="syl-edit-btn"
+                              disabled={isOtherSession || !canSylEdit}
+                              style={(isOtherSession || !canSylEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              onClick={() => {
+                                if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                getSyllabusSubjects(cls.classID, cls.sectionID);
+                                sylOpenEdit(key, className, cls.classID, cls.sectionID);
+                              }}
+                            >                    <i className="fa-solid fa-pen-to-square"></i> Edit
+                            </button>
+                          </Tooltip>
+                        </div>
+                        <div className="syl-td" onClick={e => e.stopPropagation()}>
+                          {canSylDownload && (
+                            <Tooltip text={`Download syllabus PDF for ${className}`}>
+                              <button className="syl-report-btn" onClick={() => setSylReportReq({ classKey: key, name: className })}>
+                                <i className="fa-solid fa-file-pdf"></i> Report
+                              </button>
+                            </Tooltip>
+                          )}
+                        </div>
+                        <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                          <Tooltip text={!canSylDelete ? 'You do not have permission to delete syllabus' : `Delete syllabus for ${className}`}>
+                            <button className="syl-del-btn" disabled={isOtherSession || !canSylDelete} style={(isOtherSession || !canSylDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID }); }}>                    <i className="fa-solid fa-trash"></i>
+                            </button>
+                          </Tooltip>
+                          <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
+                            <button className={`syl-expand-btn${isOpen ? ' open' : ''}`} onClick={e => {
+                              e.stopPropagation();
+                              const next = isOpen ? null : key;
+                              setSylOpenKey(next);
+                              if (next) sylLoadClassSyllabus(key, cls);
+                            }}>
+                              <i className="fa-solid fa-chevron-down"></i>
+                            </button>
+                          </Tooltip>
+                        </div>
                       </div>
-                    );
-                  }) : (
-                    <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
-                      No syllabus yet. Click <strong>Edit</strong> to add.
+
+                      <div className={`syl-detail${isOpen ? ' open' : ''}`}>
+                        <div className="syl-detail-inner">
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                            <i className="fa-solid fa-book-open" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                            Syllabus — {className}
+                          </div>
+                          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                            <div className="syl-subj-table-head">
+                              <div className="syl-subj-th">#</div>
+                              <div className="syl-subj-th">Subject</div>
+                              <div className="syl-subj-th">Summary</div>
+                              <div className="syl-subj-th">Status</div>
+                            </div>
+                            {hasSyl ? data.map((s, si) => {
+                              const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
+                              const plain = plainAll || '—';   // poora content dikhao (truncate nahi)
+                              const added = plainAll.length > 0;
+                              return (
+                                <div key={si} className="syl-subj-row">
+                                  <div className="syl-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                                    <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
+                                  </div>
+                                  <div className="syl-subj-td name">
+                                    <div className="syl-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
+                                  </div>
+                                  <div className="syl-subj-td">
+                                    {added
+                                      ? <div className="syl-summary-html" dangerouslySetInnerHTML={{ __html: s.content }} />
+                                      : <span className="syl-summary-text">—</span>}
+                                  </div>
+                                  <div className="syl-subj-td">
+                                    <span className={`syl-subj-status ${added ? 'completed' : 'pending'}`}>
+                                      <span className="dot"></span>{added ? 'Added' : 'Not Added'}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            }) : (
+                              <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
+                                No syllabus yet. Click <strong>Edit</strong> to add.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
+                  );
+                })}
               </div>
-            </div>
+            )}
           </div>
-        );
-      })}
-    </div>
-  )}
-</div>
         </>
       )}
 
@@ -5124,10 +5154,10 @@ useEffect(() => {
           {/* ── Level-1 sub-tabs ── (sirf woh screens jinka View permission hai) */}
           <div className="res-sub-tabs">
             {[
-              { k:'resultsetup',        l:'Result Setup',                show: examView('Result Setup') || examView('Result Card Options') },
-              { k:'singleassessment',   l:'Single Assessment Result',    show: examView('Single Assessment') },
-              { k:'combinedassessment', l:'Combined Assessment Result',  show: examView('Combined Assessment') },
-              { k:'resulthistory',      l:'Result History',              show: examView('Result History') },
+              { k: 'resultsetup', l: 'Result Setup', show: examView('Result Setup') || examView('Result Card Options') },
+              { k: 'singleassessment', l: 'Single Assessment Result', show: examView('Single Assessment') },
+              { k: 'combinedassessment', l: 'Combined Assessment Result', show: examView('Combined Assessment') },
+              { k: 'resulthistory', l: 'Result History', show: examView('Result History') },
             ].filter(it => it.show).map(it => (
               <button
                 key={it.k}
@@ -5143,14 +5173,14 @@ useEffect(() => {
           {rsTab === 'resultsetup' && (
             <>
               {isPreschoolBranch && (
-              <div className="rs-l2-tabs" style={{ marginBottom: 10 }}>
-                <button className={`rs-l2-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
-                  <i className="fa-solid fa-graduation-cap" style={{ marginRight: 7 }}></i> Grade 1-12
-                </button>
-                <button className={`rs-l2-tab${pResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
-                  <i className="fa-solid fa-shapes" style={{ marginRight: 7 }}></i> Preschool / Montessori
-                </button>
-              </div>
+                <div className="rs-l2-tabs" style={{ marginBottom: 10 }}>
+                  <button className={`rs-l2-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
+                    <i className="fa-solid fa-graduation-cap" style={{ marginRight: 7 }}></i> Grade 1-12
+                  </button>
+                  <button className={`rs-l2-tab${pResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
+                    <i className="fa-solid fa-shapes" style={{ marginRight: 7 }}></i> Preschool / Montessori
+                  </button>
+                </div>
               )}
               {isPreschoolBranch && pResultType === 'preschool' ? (
                 <PreschoolResultSetup
@@ -5162,558 +5192,394 @@ useEffect(() => {
                   pActiveLA={pActiveLA} setPActiveLA={setPActiveLA}
                   pPsdFields={pPsdFields} setPPsdFields={setPPsdFields}
                   pRco={pRco} setPRco={setPRco}
+                  pReportType={pReportType} setPReportType={setPReportType}
                   rsSigs={rsSigs}
                   setPPreviewId={setPPreviewId}
                   pHelpOpen={pHelpOpen} setPHelpOpen={setPHelpOpen}
                   toast={toast}
                 />
               ) : (
-              <>
-              {/* Level-2 inner tabs (View permission ke hisaab se) */}
-              <div className="rs-l2-tabs">
-                {examView('Result Setup') && (
-                <button className={`rs-l2-tab${rsL2 === 'setup' ? ' active' : ''}`}        onClick={() => setRsL2('setup')}>Result Setup</button>
-                )}
-                {examView('Result Card Options') && (
-                <button className={`rs-l2-tab${rsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setRsL2('cardoptions')}>Result Card Options</button>
-                )}
-              </div>
-
-              {rsL2 === 'setup' && (
                 <>
-                  {/* Top action row */}
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
-                    {canRsDownload && (
-                    <button className="export-btn pdf" onClick={() => setRsReportReq(true)}>
-                      <i className="fa-solid fa-file-pdf"></i> PDF
-                    </button>
+                  {/* Level-2 inner tabs (View permission ke hisaab se) */}
+                  <div className="rs-l2-tabs">
+                    {examView('Result Setup') && (
+                      <button className={`rs-l2-tab${rsL2 === 'setup' ? ' active' : ''}`} onClick={() => setRsL2('setup')}>Result Setup</button>
                     )}
-                    <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}
-                      disabled={isOtherSession || !canRsEdit}
-                      title={!canRsEdit ? 'You do not have permission to edit result setup' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                      style={(isOtherSession || !canRsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                      <i className="fa-solid fa-pen-to-square"></i> Edit
-                    </button>
+                    {examView('Result Card Options') && (
+                      <button className={`rs-l2-tab${rsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setRsL2('cardoptions')}>Result Card Options</button>
+                    )}
                   </div>
 
-                  {/* Grade Card */}
-                  <div className="rs-card">
-                    <div className="rs-card-head">
-                      <div className="rs-card-icon"><i className="fa-solid fa-chart-bar"></i></div>
-                      <span className="rs-card-title">Grade</span>
-                    </div>
-                    <div className="rs-grades-cols">
-                      <div className="rs-grades-col sno">Sr.no</div>
-                      <div className="rs-grades-col grade">Grade</div>
-                      <div className="rs-grades-col pct">Percentage</div>
-                      <div className="rs-grades-col cmt">Comment</div>
-                    </div>
-                    {rsGrades.length ? rsGrades.map((g, i) => (
-                      <div key={g.id} className="rs-grade-row">
-                        <div className="rs-grades-col sno">{i + 1}</div>
-                        <div className="rs-grades-col grade">
-                          <span className="rs-grade-chip" style={{ background: RS_GRADE_COLORS[g.grade] || '#1E3A8A' }}>{g.grade}</span>
-                        </div>
-                        <div className="rs-grades-col pct">
-                          <span className="rs-pct-pill">{(RS_COND_MAP[g.cond] || '≥') + ' ' + g.pct}</span>
-                        </div>
-                        <div className="rs-grades-col cmt">{g.comment}</div>
-                      </div>
-                    )) : <div className="rs-empty">No grades configured</div>}
-                  </div>
+                  {rsL2 === 'setup' && (
+                    <>
+                      {/* Top action row */}
 
-                  {/* Signature Card */}
-                  <div className="rs-card">
-                    <div className="rs-card-head">
-                      <div className="rs-card-icon"><i className="fa-solid fa-signature"></i></div>
-                      <span className="rs-card-title">Signature</span>
-                    </div>
-                    <div className="rs-sigs-cols">
-                      <div className="rs-sigs-col sno">Sr.no</div>
-                      <div className="rs-sigs-col name">Name</div>
-                      <div className="rs-sigs-col desig">Designation</div>
-                      <div className="rs-sigs-col sig">Signature</div>
-                    </div>
-                    {rsSigs.length ? rsSigs.map((s, i) => (
-                      <div key={s.id} className="rs-sig-row">
-                        <div className="rs-sigs-col sno">{i + 1}</div>
-                        <div className="rs-sigs-col name">{s.name}</div>
-                        <div className="rs-sigs-col desig">{s.desig}</div>
-                        <div className="rs-sigs-col sig">
-                          {s.img
-                            ? <img src={s.img} alt="" style={{ maxHeight: 36, maxWidth: 100, objectFit: 'contain' }} />
-                            : <div className="rs-sig-initial">{(s.name || '?').charAt(0).toUpperCase()}</div>}
-                        </div>
-                      </div>
-                    )) : <div className="rs-empty">No signatures added</div>}
-                  </div>
-
-                  {/* Final Remarks Card */}
-                  <div className="rs-card">
-                    <div className="rs-card-head">
-                      <div className="rs-card-icon"><i className="fa-solid fa-comment-dots"></i></div>
-                      <span className="rs-card-title">Final Remarks</span>
-                    </div>
-                    <div className="rs-rem-cols">
-                      <div className="rs-rem-col sno">Sr.no</div>
-                      <div className="rs-rem-col pct">Percentage</div>
-                      <div className="rs-rem-col text">Remarks</div>
-                    </div>
-                    {rsRemarks.length ? rsRemarks.map((r, i) => (
-                      <div key={r.id} className="rs-rem-row">
-                        <div className="rs-rem-col sno">{i + 1}</div>
-                        <div className="rs-rem-col pct">
-                          <span className="rs-pct-pill">{(RS_COND_MAP[r.cond] || '≥') + ' ' + r.pct}</span>
-                        </div>
-                        <div className="rs-rem-col text">{r.text}</div>
-                      </div>
-                    )) : <div className="rs-empty">No remarks configured</div>}
-                  </div>
-
-                  {/* Absent Handling Card */}
-                  <div className="rs-card" style={{ marginTop: 16 }}>
-                    <div className="rs-card-head">
-                      <div className="rs-card-icon"><i className="fa-solid fa-user-xmark"></i></div>
-                      <span className="rs-card-title">Absent Subject Handling</span>
-                    </div>
-                    <div className="rs-absent-summary">
-                      <div className="rs-abs-icon" style={{
-                        background: rsAbsentMode === 'zero' ? 'rgba(217,119,6,.1)' : rsAbsentMode === 'exclude' ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)',
-                        color:      rsAbsentMode === 'zero' ? '#B45309'              : rsAbsentMode === 'exclude' ? '#1E40AF'              : '#475569',
-                      }}>
-                        <i className={`fa-solid ${rsAbsentMode === 'zero' ? 'fa-calculator' : rsAbsentMode === 'exclude' ? 'fa-circle-minus' : 'fa-eye-slash'}`}></i>
-                      </div>
-                      <div className="rs-abs-body">
-                        <div className="rs-abs-title">
-                          {rsAbsentMode === 'zero'
-                            ? 'Count Absent Subjects as Zero Marks'
-                            : rsAbsentMode === 'exclude'
-                              ? 'Exclude Absent Subjects from Total Marks'
-                              : 'No Absent Handling Selected'}
-                        </div>
-                        <div
-                          className="rs-abs-desc"
-                          dangerouslySetInnerHTML={{
-                            __html: rsAbsentMode === 'zero'
-                              ? 'Absent subjects are scored as 0 and included in the full total. Card shows <strong>AB / 0</strong>.'
-                              : rsAbsentMode === 'exclude'
-                                ? 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'
-                                : 'Subjects with <strong>0 marks</strong> are hidden from the Result Card.',
-                          }}
-                        />
-                      </div>
-                      <span className={`rs-abs-badge${rsAbsentMode === 'zero' ? ' zero' : rsAbsentMode === 'exclude' ? '' : ' none'}`}>
-                        {rsAbsentMode === 'zero' ? 'AB / 0' : rsAbsentMode === 'exclude' ? 'AB' : 'Hidden'}
-                      </span>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {rsL2 === 'cardoptions' && (
-                <>
-                  {/* ── Template selection ── */}
-                  <div className="rct-grid">
-                    {RC_TEMPLATES.map(t => {
-                      const sel = rcTemplate === t.id;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`rct-card${sel ? ' selected' : ''}`}
-                          style={{
-                            '--rct-accent':       t.accent,
-                            '--rct-accent-light': t.accentLight,
-                            '--rct-accent-bg':    t.accentBg,
-                          }}
-                          onClick={() => setRcTemplate(t.id)}
-                        >
-                          <div className={`rct-check${sel ? '' : ' hollow'}`} onClick={e => { e.stopPropagation(); setRcTemplate(t.id); }}>
-                            {sel && <i className="fa-solid fa-check"></i>}
-                          </div>
-                          <div className="rct-preview"><TemplateHero id={t.id} /></div>
-                          <div className="rct-body">
-                            <div className="rct-title-row">
-                              <div className="rct-title">{t.name}</div>
-                              {t.badge && (
-                                <span className={`rct-badge ${t.badge.cls}`}>{t.badge.label}</span>
-                              )}
-                            </div>
-                            <div className="rct-desc">{t.desc}</div>
-                            <div className="rct-pages">
-                              <div className="rct-pages-row">
-                                <span><i className="fa-solid fa-file" style={{ color: '#1E40AF' }}></i> Single Assessment</span>
-                                <span style={{ color: t.pages.singleCol || '#1E40AF', fontWeight: 700 }}>{t.pages.single}</span>
-                              </div>
-                              <div className="rct-pages-row">
-                                <span><i className="fa-solid fa-layer-group" style={{ color: '#7C3AED' }}></i> Combined Assessment</span>
-                                <span style={{ color: t.pages.combinedCol, fontWeight: 700 }}>{t.pages.combined}</span>
-                              </div>
-                            </div>
-                            <div className="rct-tags">
-                              {t.tags.map((tg, ti) => (
-                                <span key={ti} className="rct-tag">
-                                  <i className={`fa-solid ${tg.i}`}></i> {tg.label}
-                                </span>
-                              ))}
-                            </div>
-                            <Tooltip text="Preview this result card template">
-                              <button
-                                type="button"
-                                className="rct-preview-btn"
-                                onClick={e => { e.stopPropagation(); setRcPreviewId(t.id); }}
-                              >
-                                <i className="fa-solid fa-eye"></i> Preview
-                              </button>
-                            </Tooltip>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* ── Visibility Options ── */}
-                  <div className="rs-card" style={{ marginTop: 16 }}>
-                    <div className="rs-card-head">
-                      <div className="rs-card-icon"><i className="fa-solid fa-sliders"></i></div>
-                      <div style={{ flex: 1 }}>
-                        <div className="rs-card-title">Visibility Options</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
-                          Choose what appears on the generated result card for parents and students.
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ padding: '18px 20px' }}>
-                      <div className="rco-group-label">
-                        <span className="rco-group-bar"></span>
-                        <span>General</span>
-                      </div>
-                      <div className="rco-grid">
-                        {rcoGeneral.map((item, idx) => (
-                          <div key={item.label} className="rco-row">
-                            <span className="rco-row-lbl">
-                              <i className={`fa-solid ${item.icon}`} style={{ color: '#1E40AF', width: 14 }}></i>
-                              {item.label}
-                            </span>
-                            <Tooltip text={item.on ? `Hide "${item.label}" on result card` : `Show "${item.label}" on result card`}>
-                              <button
-                                className={`rco-toggle${item.on ? ' on' : ''}`}
-                                onClick={() => setRcoGeneral(g => g.map((it, i) => i === idx ? { ...it, on: !it.on } : it))}
-                                aria-pressed={item.on}
-                              >
-                                <span className="rco-dot"></span>
-                              </button>
-                            </Tooltip>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="rco-group-label" style={{ marginTop: 18 }}>
-                        <span className="rco-group-bar"></span>
-                        <span>Signatures &amp; Remarks</span>
-                      </div>
-                      <div className="rco-grid">
-                        {/* Signature toggles — designations gradinguploadercrud API se
-                          (rsSigs). Max 2 signatures result card par (signature1 / signature2). */}
-                        {rsSigs.length === 0 ? (
-                          <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 2px', gridColumn: '1 / -1' }}>
-                            No signatures configured yet — add them in Result Setup → Signature.
-                          </div>
-                        ) : rsSigs.map((sig, idx) => (
-                          <div key={sig.id} className="rco-row">
-                            <span className="rco-row-lbl">
-                              <i className="fa-solid fa-signature" style={{ color: '#1E40AF', width: 14 }}></i>
-                              Show {sig.desig || sig.name || `Signature ${idx + 1}`} Signature
-                            </span>
-                            <Tooltip text={sig.on ? 'Hide this signature on result card' : 'Show this signature on result card'}>
-                              <button
-                                className={`rco-toggle${sig.on ? ' on' : ''}`}
-                                onClick={() => toggleSigShow(sig.id)}
-                                aria-pressed={!!sig.on}
-                              >
-                                <span className="rco-dot"></span>
-                              </button>
-                            </Tooltip>
-                          </div>
-                        ))}
-                        {/* Final Remarks toggle (rcoSig me se) */}
-                        {rcoSig.map((item, idx) => item.label !== 'Show Final Remarks' ? null : (
-                          <div key={item.label} className="rco-row">
-                            <span className="rco-row-lbl">
-                              <i className={`fa-solid ${item.icon}`} style={{ color: '#1E40AF', width: 14 }}></i>
-                              {item.label}
-                            </span>
-                            <Tooltip text={item.on ? `Hide "${item.label}" on result card` : `Show "${item.label}" on result card`}>
-                              <button
-                                className={`rco-toggle${item.on ? ' on' : ''}`}
-                                onClick={() => setRcoSig(g => g.map((it, i) => i === idx ? { ...it, on: !it.on } : it))}
-                                aria-pressed={item.on}
-                              >
-                                <span className="rco-dot"></span>
-                              </button>
-                            </Tooltip>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="rco-foot">
-                        <div className="rco-foot-hint">
-                          <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
-                          Changes apply to both Classic and Insight templates.
-                        </div>
-                        <button className="rco-save-btn" onClick={saveCardOptions}
-                          disabled={isOtherSession || !canRcoEdit}
-                          title={!canRcoEdit ? 'You do not have permission to edit result card options' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                          style={(isOtherSession || !canRcoEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                          <i className="fa-solid fa-floppy-disk"></i> Save Preferences
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+                        {canRsDownload && (
+                          <button className="export-btn pdf" onClick={() => setRsReportReq(true)}>
+                            <i className="fa-solid fa-file-pdf"></i> PDF
+                          </button>
+                        )}
+                        <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}
+                          disabled={isOtherSession || !canRsEdit}
+                          title={!canRsEdit ? 'You do not have permission to edit result setup' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                          style={(isOtherSession || !canRsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                          <i className="fa-solid fa-pen-to-square"></i> Edit
                         </button>
                       </div>
-                    </div>
-                  </div>
+
+                      {/* Grade Card */}
+                      <div className="rs-card">
+                        <div className="rs-card-head">
+                          <div className="rs-card-icon"><i className="fa-solid fa-chart-bar"></i></div>
+                          <span className="rs-card-title">Grade</span>
+                        </div>
+                        <div className="rs-grades-cols">
+                          <div className="rs-grades-col sno">Sr.no</div>
+                          <div className="rs-grades-col grade">Grade</div>
+                          <div className="rs-grades-col pct">Percentage</div>
+                          <div className="rs-grades-col cmt">Comment</div>
+                        </div>
+                        {rsGrades.length ? rsGrades.map((g, i) => (
+                          <div key={g.id} className="rs-grade-row">
+                            <div className="rs-grades-col sno">{i + 1}</div>
+                            <div className="rs-grades-col grade">
+                              <span className="rs-grade-chip" style={{ background: RS_GRADE_COLORS[g.grade] || '#1E3A8A' }}>{g.grade}</span>
+                            </div>
+                            <div className="rs-grades-col pct">
+                              <span className="rs-pct-pill">{(RS_COND_MAP[g.cond] || '≥') + ' ' + g.pct}</span>
+                            </div>
+                            <div className="rs-grades-col cmt">{g.comment}</div>
+                          </div>
+                        )) : <div className="rs-empty">No grades configured</div>}
+                      </div>
+
+                      {/* Signature Card */}
+                      <div className="rs-card">
+                        <div className="rs-card-head">
+                          <div className="rs-card-icon"><i className="fa-solid fa-signature"></i></div>
+                          <span className="rs-card-title">Signature</span>
+                        </div>
+                        <div className="rs-sigs-cols">
+                          <div className="rs-sigs-col sno">Sr.no</div>
+                          <div className="rs-sigs-col name">Name</div>
+                          <div className="rs-sigs-col desig">Designation</div>
+                          <div className="rs-sigs-col sig">Signature</div>
+                        </div>
+                        {rsSigs.length ? rsSigs.map((s, i) => (
+                          <div key={s.id} className="rs-sig-row">
+                            <div className="rs-sigs-col sno">{i + 1}</div>
+                            <div className="rs-sigs-col name">{s.name}</div>
+                            <div className="rs-sigs-col desig">{s.desig}</div>
+                            <div className="rs-sigs-col sig">
+                              {s.img
+                                ? <img src={s.img} alt="" style={{ maxHeight: 36, maxWidth: 100, objectFit: 'contain' }} />
+                                : <div className="rs-sig-initial">{(s.name || '?').charAt(0).toUpperCase()}</div>}
+                            </div>
+                          </div>
+                        )) : <div className="rs-empty">No signatures added</div>}
+                      </div>
+
+                      {/* Final Remarks Card */}
+                      <div className="rs-card">
+                        <div className="rs-card-head">
+                          <div className="rs-card-icon"><i className="fa-solid fa-comment-dots"></i></div>
+                          <span className="rs-card-title">Final Remarks</span>
+                        </div>
+                        <div className="rs-rem-cols">
+                          <div className="rs-rem-col sno">Sr.no</div>
+                          <div className="rs-rem-col pct">Percentage</div>
+                          <div className="rs-rem-col text">Remarks</div>
+                        </div>
+                        {rsRemarks.length ? rsRemarks.map((r, i) => (
+                          <div key={r.id} className="rs-rem-row">
+                            <div className="rs-rem-col sno">{i + 1}</div>
+                            <div className="rs-rem-col pct">
+                              <span className="rs-pct-pill">{(RS_COND_MAP[r.cond] || '≥') + ' ' + r.pct}</span>
+                            </div>
+                            <div className="rs-rem-col text">{r.text}</div>
+                          </div>
+                        )) : <div className="rs-empty">No remarks configured</div>}
+                      </div>
+
+                      {/* Absent Handling Card */}
+                      <div className="rs-card" style={{ marginTop: 16 }}>
+                        <div className="rs-card-head">
+                          <div className="rs-card-icon"><i className="fa-solid fa-user-xmark"></i></div>
+                          <span className="rs-card-title">Absent Subject Handling</span>
+                        </div>
+                        <div className="rs-absent-summary">
+                          <div className="rs-abs-icon" style={{
+                            background: rsAbsentMode === 'zero' ? 'rgba(217,119,6,.1)' : rsAbsentMode === 'exclude' ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)',
+                            color: rsAbsentMode === 'zero' ? '#B45309' : rsAbsentMode === 'exclude' ? '#1E40AF' : '#475569',
+                          }}>
+                            <i className={`fa-solid ${rsAbsentMode === 'zero' ? 'fa-calculator' : rsAbsentMode === 'exclude' ? 'fa-circle-minus' : 'fa-eye-slash'}`}></i>
+                          </div>
+                          <div className="rs-abs-body">
+                            <div className="rs-abs-title">
+                              {rsAbsentMode === 'zero'
+                                ? 'Count Absent Subjects as Zero Marks'
+                                : rsAbsentMode === 'exclude'
+                                  ? 'Exclude Absent Subjects from Total Marks'
+                                  : 'No Absent Handling Selected'}
+                            </div>
+                            <div
+                              className="rs-abs-desc"
+                              dangerouslySetInnerHTML={{
+                                __html: rsAbsentMode === 'zero'
+                                  ? 'Absent subjects are scored as 0 and included in the full total. Card shows <strong>AB / 0</strong>.'
+                                  : rsAbsentMode === 'exclude'
+                                    ? 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'
+                                    : 'Subjects with <strong>0 marks</strong> are hidden from the Result Card.',
+                              }}
+                            />
+                          </div>
+                          <span className={`rs-abs-badge${rsAbsentMode === 'zero' ? ' zero' : rsAbsentMode === 'exclude' ? '' : ' none'}`}>
+                            {rsAbsentMode === 'zero' ? 'AB / 0' : rsAbsentMode === 'exclude' ? 'AB' : 'Hidden'}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {rsL2 === 'cardoptions' && (
+                    <>
+                      {/* ── Template selection ── */}
+                      <div className="rct-grid">
+                        {RC_TEMPLATES.map(t => {
+                          const sel = rcTemplate === t.id;
+                          return (
+                            <div
+                              key={t.id}
+                              className={`rct-card${sel ? ' selected' : ''}`}
+                              style={{
+                                '--rct-accent': t.accent,
+                                '--rct-accent-light': t.accentLight,
+                                '--rct-accent-bg': t.accentBg,
+                              }}
+                              onClick={() => setRcTemplate(t.id)}
+                            >
+                              <div className={`rct-check${sel ? '' : ' hollow'}`} onClick={e => { e.stopPropagation(); setRcTemplate(t.id); }}>
+                                {sel && <i className="fa-solid fa-check"></i>}
+                              </div>
+                              <div className="rct-preview"><TemplateHero id={t.id} /></div>
+                              <div className="rct-body">
+                                <div className="rct-title-row">
+                                  <div className="rct-title">{t.name}</div>
+                                  {t.badge && (
+                                    <span className={`rct-badge ${t.badge.cls}`}>{t.badge.label}</span>
+                                  )}
+                                </div>
+                                <div className="rct-desc">{t.desc}</div>
+                                <div className="rct-pages">
+                                  <div className="rct-pages-row">
+                                    <span><i className="fa-solid fa-file" style={{ color: '#1E40AF' }}></i> Single Assessment</span>
+                                    <span style={{ color: t.pages.singleCol || '#1E40AF', fontWeight: 700 }}>{t.pages.single}</span>
+                                  </div>
+                                  <div className="rct-pages-row">
+                                    <span><i className="fa-solid fa-layer-group" style={{ color: '#7C3AED' }}></i> Combined Assessment</span>
+                                    <span style={{ color: t.pages.combinedCol, fontWeight: 700 }}>{t.pages.combined}</span>
+                                  </div>
+                                </div>
+                                <div className="rct-tags">
+                                  {t.tags.map((tg, ti) => (
+                                    <span key={ti} className="rct-tag">
+                                      <i className={`fa-solid ${tg.i}`}></i> {tg.label}
+                                    </span>
+                                  ))}
+                                </div>
+                                <Tooltip text="Preview this result card template">
+                                  <button
+                                    type="button"
+                                    className="rct-preview-btn"
+                                    onClick={e => { e.stopPropagation(); setRcPreviewId(t.id); }}
+                                  >
+                                    <i className="fa-solid fa-eye"></i> Preview
+                                  </button>
+                                </Tooltip>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* ── Visibility Options ── */}
+                      <div className="rs-card" style={{ marginTop: 16 }}>
+                        <div className="rs-card-head">
+                          <div className="rs-card-icon"><i className="fa-solid fa-sliders"></i></div>
+                          <div style={{ flex: 1 }}>
+                            <div className="rs-card-title">Visibility Options</div>
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+                              Choose what appears on the generated result card for parents and students.
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ padding: '18px 20px' }}>
+                          <div className="rco-group-label">
+                            <span className="rco-group-bar"></span>
+                            <span>General</span>
+                          </div>
+                          <div className="rco-grid">
+                            {rcoGeneral.map((item, idx) => (
+                              <div key={item.label} className="rco-row">
+                                <span className="rco-row-lbl">
+                                  <i className={`fa-solid ${item.icon}`} style={{ color: '#1E40AF', width: 14 }}></i>
+                                  {item.label}
+                                </span>
+                                <Tooltip text={item.on ? `Hide "${item.label}" on result card` : `Show "${item.label}" on result card`}>
+                                  <button
+                                    className={`rco-toggle${item.on ? ' on' : ''}`}
+                                    onClick={() => setRcoGeneral(g => g.map((it, i) => i === idx ? { ...it, on: !it.on } : it))}
+                                    aria-pressed={item.on}
+                                  >
+                                    <span className="rco-dot"></span>
+                                  </button>
+                                </Tooltip>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="rco-group-label" style={{ marginTop: 18 }}>
+                            <span className="rco-group-bar"></span>
+                            <span>Signatures &amp; Remarks</span>
+                          </div>
+                          <div className="rco-grid">
+                            {/* Signature toggles — designations gradinguploadercrud API se
+                          (rsSigs). Max 2 signatures result card par (signature1 / signature2). */}
+                            {rsSigs.length === 0 ? (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 2px', gridColumn: '1 / -1' }}>
+                                No signatures configured yet — add them in Result Setup → Signature.
+                              </div>
+                            ) : rsSigs.map((sig, idx) => (
+                              <div key={sig.id} className="rco-row">
+                                <span className="rco-row-lbl">
+                                  <i className="fa-solid fa-signature" style={{ color: '#1E40AF', width: 14 }}></i>
+                                  Show {sig.desig || sig.name || `Signature ${idx + 1}`} Signature
+                                </span>
+                                <Tooltip text={sig.on ? 'Hide this signature on result card' : 'Show this signature on result card'}>
+                                  <button
+                                    className={`rco-toggle${sig.on ? ' on' : ''}`}
+                                    onClick={() => toggleSigShow(sig.id)}
+                                    aria-pressed={!!sig.on}
+                                  >
+                                    <span className="rco-dot"></span>
+                                  </button>
+                                </Tooltip>
+                              </div>
+                            ))}
+                            {/* Final Remarks toggle (rcoSig me se) */}
+                            {rcoSig.map((item, idx) => item.label !== 'Show Final Remarks' ? null : (
+                              <div key={item.label} className="rco-row">
+                                <span className="rco-row-lbl">
+                                  <i className={`fa-solid ${item.icon}`} style={{ color: '#1E40AF', width: 14 }}></i>
+                                  {item.label}
+                                </span>
+                                <Tooltip text={item.on ? `Hide "${item.label}" on result card` : `Show "${item.label}" on result card`}>
+                                  <button
+                                    className={`rco-toggle${item.on ? ' on' : ''}`}
+                                    onClick={() => setRcoSig(g => g.map((it, i) => i === idx ? { ...it, on: !it.on } : it))}
+                                    aria-pressed={item.on}
+                                  >
+                                    <span className="rco-dot"></span>
+                                  </button>
+                                </Tooltip>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="rco-foot">
+                            <div className="rco-foot-hint">
+                              <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
+                              Changes apply to both Classic and Insight templates.
+                            </div>
+                            <button className="rco-save-btn" onClick={saveCardOptions}
+                              disabled={isOtherSession || !canRcoEdit}
+                              title={!canRcoEdit ? 'You do not have permission to edit result card options' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                              style={(isOtherSession || !canRcoEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                              <i className="fa-solid fa-floppy-disk"></i> Save Preferences
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
-              )}
-              </>
               )}
             </>
           )}
-{rsTab === 'singleassessment'   && (() => {
-  const resCurrentExam = resExamId ? filtered.find(e => e.id === resExamId) : null;
-  const resExamData    = resCurrentExam ? (resultData[resExamId] || {}) : {};
-// Add this function to delete single assessment data
+          {rsTab === 'singleassessment' && (() => {
+            const resCurrentExam = resExamId ? filtered.find(e => e.id === resExamId) : null;
+            const resExamData = resCurrentExam ? (resultData[resExamId] || {}) : {};
+            // Add this function to delete single assessment data
 
-  const buildDefaultClass = () => ({
-    released: false,
-    totalMarks: { ...RES_DEFAULT_TOTALS },
-    students: freshStudents(),
-  });
+            const buildDefaultClass = () => ({
+              released: false,
+              totalMarks: { ...RES_DEFAULT_TOTALS },
+              students: freshStudents(),
+            });
 
-  const calcOverall = (cd, st) => {
-    const absSet = {};
-    (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
-    const hideZero = rcHideZeroMarkSubjects(rsAbsentMode);
-    const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
-    const tot = st.absent
-      ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-      : (rsAbsentMode === 'zero'
-          ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-          : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0));
-    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (st.obtained[s] || 0)), 0);
-    const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
-    // Grade card jaisा — gradingcrud (rsGrades) se % ke hisaab se (fallback rcGetGrade).
-    const grade = (!st.absent && obt > 0)
-      ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obt, tot))
-      : null;
-    return { tot, obt, pct, grade };
-  };
+            const calcOverall = (cd, st) => {
+              const absSet = {};
+              (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
+              const hideZero = rcHideZeroMarkSubjects(rsAbsentMode);
+              const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
+              const tot = st.absent
+                ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
+                : (rsAbsentMode === 'zero'
+                  ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
+                  : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0));
+              const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (st.obtained[s] || 0)), 0);
+              const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
+              // Grade card jaisा — gradingcrud (rsGrades) se % ke hisaab se (fallback rcGetGrade).
+              const grade = (!st.absent && obt > 0)
+                ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obt, tot))
+                : null;
+              return { tot, obt, pct, grade };
+            };
 
- const togglePublish = (key, className, currentlyReleased, cls) => {
-  setResConfirmPublish({ key, className, released: currentlyReleased, cls });
-};
+            const togglePublish = (key, className, currentlyReleased, cls) => {
+              setResConfirmPublish({ key, className, released: currentlyReleased, cls });
+            };
 
-  // Single assessment ke liye exam select karne par classes API se load
-const resPickExam = async (id) => {
-  setResExamId(id);
-  setResOpenKey(null);
-  setExamClasses([]);
-  
-  const selectedExam = filtered.find(ex => ex.id === id);
-  if (selectedExam) {
-    const selectExamId = selectedExam.selectExam;
-    const termID = selectedExam.termID;
-    
-    const classes = await getExamClasses(selectExamId, termID);
-    setExamClasses(classes);
-    
-    try {
-      const branchID = sessionStorage.getItem('branchID');
-      const token = sessionStorage.getItem('token');
-      
-      const params = new URLSearchParams({
-        termID: String(termID),
-        examID: String(selectExamId),
-        branchID: String(branchID)
-      });
-      
-      const response = await fetch(
-        buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
-        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-      );
-      
-      const data = await response.json();
-      
-      // Visibility map build karo
-      const visMap = {};
-      if (Array.isArray(data)) {
-        data.forEach(item => {
-          classes.forEach((cls, i) => {
-            if (Number(cls.sectionID) === Number(item.sectionID) &&
-                Number(cls.classID) === Number(item.classID)) {
-              const key = `rcls_${id}_${cls.sectionID}_${i}`;
-              visMap[key] = item.isResultVisibleToParents;
-            }
-          });
-        });
-      }
-      setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
-      
-    } catch (error) {
-      console.error('Error fetching visibility:', error);
-    }
-  }
-};
-
-  return (
-    <>
-      {/* Term chips — API se */}
-      <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
-        {terms.map(t => (
-          <button
-            key={t.id}
-            className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
-            onClick={() => {
-              setTerm(t.term);
-              setSelectedTermId(t.id);
-              getExamsByTerm(t.id);
-              setResExamId(null);
+            // Single assessment ke liye exam select karne par classes API se load
+            const resPickExam = async (id) => {
+              setResExamId(id);
               setResOpenKey(null);
               setExamClasses([]);
-            }}
-          >
-            {t.term}
-          </button>
-        ))}
-      </div>
 
-      {/* Exam buttons — API se (filtered) */}
-      {filtered.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <i className="fa-solid fa-chart-bar" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
-            <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {filtered.map(ex => (
-              <button
-                key={ex.id}
-                className={`ds-exam-btn${resExamId === ex.id ? ' active' : ''}`}
-                onClick={() => resPickExam(ex.id)}
-              >
-                <i className="fa-solid fa-chart-bar"></i> {ex.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+              const selectedExam = filtered.find(ex => ex.id === id);
+              if (selectedExam) {
+                const selectExamId = selectedExam.selectExam;
+                const termID = selectedExam.termID;
 
-      {/* Classes panel — examClasses (API) se */}
-      <div>
-        {!resCurrentExam ? (
-          <div className="ds-empty" style={{ marginTop: 4 }}>
-            <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
-            {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view classes'}
-          </div>
-        ) : examClasses.length === 0 ? (
-          <div className="ds-empty">No classes assigned. Edit the exam in Exam Setup.</div>
-        ) : (
-          <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
-            <div className="res-table-head">
-              <div className="res-th">S. No.</div>
-              <div className="res-th">Class Name</div>
-              <div className="res-th" >Section</div>
-              <div className="res-th">Type</div>
-              <div className="res-th">Status</div>
-              <div className="res-th">Publish</div>
-              <div className="res-th">Total Marks</div>
-              <div className="res-th" style={{ textAlign: 'right' }}>Actions</div>
-            </div>
-            {examClasses.map((cls, i) => {
-const key    = `rcls_${resExamId}_${cls.sectionID}_${i}`;
-  const cd     = resExamData[key] || buildDefaultClass();
-  const isOpen = resOpenKey === key;
-  const isRel  = examVisibilityMap[key] ?? cd.released;  // ← yeh change karo
-  const className = `${cls.gradeName} - ${cls.sectionName}`;
-  const isPreschool = pClassTypes[key] === 'preschool';
-  const pcd = pResultData[key] || { released: false, students: [] };
-  const isRelP = !!pcd.released;
-  const shownRel = isPreschool ? isRelP : isRel;
-  const rowLevel = pClassLevels[key] || 'kg';
-  const rowSlo = pSlo[rowLevel] || {};
-  const rowSloTotal = (pLearningAreas || []).reduce((a, la) => a + ((rowSlo[la.id] || []).length), 0);
-              return (
-                <div key={key} className="res-row-wrap">
-                  <div
-                    className={`res-row${isOpen ? ' open' : ''}`}
-onClick={() => {
-  const next = isOpen ? null : key;
-  setResOpenKey(next);
-  if (next) loadResClassData(key, cls);
-}}                  >
-                    <div className="res-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                      <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
-                    </div>
-                    <div className="res-td cls-name">
-                      <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
-                      <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
-                    </div>
-                    <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
-                    <div className="res-td" onClick={e => e.stopPropagation()}>
-                      <div className="res-type-pill">
-                        <Tooltip text="Grade 1-12 (marks-based)">
-                          <button type="button" className={`res-type-btn grade${!isPreschool ? ' active' : ''}`} onClick={() => { preschoolService.setClassAssessmentType(key, 'grade').then(setPClassTypes); }}>
-                            <i className="fa-solid fa-graduation-cap"></i>
-                          </button>
-                        </Tooltip>
-                        {isPreschoolBranch && (
-                        <Tooltip text="Preschool / Montessori (E/M/A/NY)">
-                          <button type="button" className={`res-type-btn preschool${isPreschool ? ' active' : ''}`} onClick={() => { if (!isPreschool) setPLevelPickCtx({ key, className }); }}>
-                            <i className="fa-solid fa-shapes"></i>
-                          </button>
-                        </Tooltip>
-                        )}
-                      </div>
-                    </div>
-                    <div className="res-td">
-                     <span className={`res-released-badge${shownRel ? ' released' : ' pending'}`}>
-  <i className={`fa-solid ${shownRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
-  {shownRel ? 'Released' : 'Not Released'}
-</span>
+                const classes = await getExamClasses(selectExamId, termID);
+                setExamClasses(classes);
 
-                    </div>
-<div className="res-td" onClick={e => e.stopPropagation()}>
-  <Tooltip text={!canSingleEdit ? 'You do not have permission to publish results' : (shownRel ? 'Unpublish this class result' : 'Publish this class result')}>
-<button
-  className={`res-publish-btn${shownRel ? ' released' : ''}`}
-  disabled={isOtherSession || !canSingleEdit}
-  style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-  onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (isPreschool) { setPConfirmPublish({ key, className, released: isRelP }); return; } togglePublish(key, className, isRel, cls); }}
->
-  <i className={`fa-solid ${shownRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-  {shownRel ? 'Unpublish' : 'Publish Result'}
-</button>
+                // ── NAYA HISSA ── Preschool toggle state ko backend se refresh karo,
+                // taake page-reload/navigate ke baad bhi switch sahi dikhe (mock ki
+                // jagah asal saved state).
+                if (isPreschoolBranch && classes.length) {
+                  try {
+                    const { types, levels } = await preschoolService.getClassAssessmentTypesForExam(
+                      classes, termID, selectExamId
+                    );
+                    setPClassTypes(prev => ({ ...prev, ...types }));
+                    setPClassLevels(prev => ({ ...prev, ...levels }));
+                  } catch (e) {
+                    console.error('Could not load preschool class types:', e);
+                  }
+                }
+                try {
+                  const branchID = sessionStorage.getItem('branchID');
+                  const token = sessionStorage.getItem('token');
 
-  </Tooltip>
-</div>
-                    <div className="res-td" onClick={e => e.stopPropagation()}>
-                   {isPreschool ? (
-                     <span className="res-pms-badge"><i className="fa-solid fa-shapes"></i> {(pGradingScale || []).map(g => g.code).join(' / ')}</span>
-                   ) : (
-                   <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Edit total marks for each subject'}>
-  <button
-    className="res-marks-btn"
-    disabled={isOtherSession || !canSingleEdit}
-    style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    onClick={async () => {
-      if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-      const saSubjects = await fetchSASubjects(
-  cls.classID,
-  cls.sectionID,
-  resExamId
-);
-if (!saSubjects.length) {
-  toast('No exam subjects found for this class', 'error');
-  return;
-}
+                  const params = new URLSearchParams({
+                    termID: String(termID),
+                    examID: String(selectExamId),
+                    branchID: String(branchID)
+                  });
 
+<<<<<<< Updated upstream
 setResTotalMarksCtx({
     selectExam: resCurrentExam?.selectExam || 0,  // ← add this
   examId: resExamId,
@@ -5848,301 +5714,598 @@ onClick={e => {
                       </button>
                     </div>
                   </div>
+=======
+                  const response = await fetch(
+                    buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
+                    { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+                  );
+>>>>>>> Stashed changes
 
-                  {/* Expanded student table */}
-                  <div className={`res-detail${isOpen ? ' open' : ''}`}>
-                    <div className="res-detail-inner">
-                      {resLoadingKey === key ? (
-      <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
-        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
-        Loading student data...
-      </div>
-    ) : isPreschool ? (
-      <div>
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
-          <i className="fa-solid fa-shapes" style={{ color: '#7C3AED', marginRight: 5 }}></i>
-          Student Results — {className}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-            {(resStudentData[key]?.students || []).length} Students
-          </span>
-        </div>
-        <div className="res-student-scroll">
-          <table className="res-student-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Student Name</th>
-                <th>Father Name</th>
-                <th>Progress</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(resStudentData[key]?.students || []).map((raw, si) => {
-                const st = {
-                  id: raw.id ?? raw.studentID ?? raw.StudentID,
-                  name: raw.studentName || raw.name || '',
-                  father: raw.fatherName || raw.father || '',
-                  rollNo: raw.registrationNumber || raw.rollNo || raw.grNo || '—',
-                  attendance: raw.attendance,
-                };
-                const ad = (pcd.students || []).find(s => String(s.studentId) === String(st.id));
-                const { done, total } = pProgressForStudent(ad, (pLearningAreas || []).length, rowSloTotal);
-                const pct = total ? Math.round((done / total) * 100) : 0;
-                return (
-                  <tr key={st.id || si}>
-                    <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
-                    <td style={{ minWidth: 120 }}>
-                      <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{st.name}</div>
-                      <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{st.rollNo}</div>
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>{st.father}</td>
-                    <td style={{ minWidth: 110 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ flex: 1, height: 6, borderRadius: 999, background: '#E2E8F0', overflow: 'hidden', minWidth: 60 }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: pct >= 100 ? '#16A34A' : '#7C3AED', borderRadius: 3 }}></div>
-                        </div>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: pct >= 100 ? '#16A34A' : '#7C3AED', flexShrink: 0 }}>{done}/{total}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`res-st-badge ${done === 0 ? 'incomplete' : done >= total ? 'complete' : 'incomplete'}`}>
-                        <i className={`fa-solid ${done === 0 ? 'fa-circle-half-stroke' : done >= total ? 'fa-circle-check' : 'fa-circle-half-stroke'}`}></i>
-                        {done === 0 ? 'Not Started' : done >= total ? 'Complete' : 'In Progress'}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-                        <Tooltip text="Enter/Edit assessment">
-                          <button className="res-action-btn" onClick={() => setPAssessCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '', termLabel: resCurrentExam?.name || '' })}>
-                            <i className="fa-solid fa-pen-to-square"></i> Assess
-                          </button>
-                        </Tooltip>
-                        {ad && (
-                          <Tooltip text="View this student's result card">
-                            <button className="res-action-btn view" onClick={() => setPCardCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '' })}>
-                              <i className="fa-solid fa-eye"></i> Card
-                            </button>
-                          </Tooltip>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    ) : (
-<div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
-                        <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                        Student Results — {className}
-                      {/* Subject count from API */}
-<span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-  {(() => {
-    // Sirf Launch-Setup mapped subjects ko count karo (FIX 1). Mapped set khaali
-    // ho (API fail) to purana behavior — poori list count.
-    const subs = resStudentData[key]?.subjects || [];
-    const mset = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
-    const scoped = mset.size ? subs.filter(s => mset.has(Number(s.subjectID ?? s.SubjectID ?? 0))) : subs;
-    const n = (mset.size && scoped.length) ? scoped.length : subs.length;
-    return `${n} Subject${n !== 1 ? 's' : ''}`;
-  })()}
-</span>
-                      </div>    )}
-                      
-                      <div className="res-student-scroll">
-                        <table className="res-student-table">
-                          <thead>
-                            <tr>
-                              <th>#</th>
-                              <th>Student Name</th>
-                              <th>Father Name</th>
-                              <th style={{ textAlign: 'center' }}>Subjects</th>
-                              <th>Progress</th>
-                              <th>Status</th>
-                              <th style={{ textAlign: 'center' }}>Grade</th>
-                              <th>Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                           {(() => {
-  const apiStudents = resStudentData[key]?.students || [];
-  const apiMarks    = resStudentData[key]?.marks    || [];
-  const apiSubjects = resStudentData[key]?.subjects  || [];
-  const apiRankings = resStudentData[key]?.rankings  || [];
+                  const data = await response.json();
 
-  // FIX 1 — Total/subject-count SIRF Launch-Setup mapped subjects se.
-  // getsasubjectbybranchclassandtermtotalsum rows: har row me per-subject
-  // `totalMarks` + `subjectID`; row[0].totalMarksSum = poore (possibly unmapped)
-  // class ka sum. Isliye [0].totalMarksSum ko blindly trust na kar ke, mapped
-  // subjects ke per-subject totalMarks ko sum karte hain.
-  // apiMarks (getsauploadmarksbystudentbranchsum) per-student ek PRE-SUMMED
-  // obtainedMarks deta hai (koi per-subject breakdown nahi) — isliye obtained ko
-  // mapped-subjects tak scope nahi kar sakte; obtMarks jaisa ka waisa rehta hai,
-  // magar denominator/subject-count ab sahi (mapped) hai.
-  const mappedIDs = (resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean);
-  const mappedSet = new Set(mappedIDs);
-  // Per-subject total (getsasubjectbybranchclassandtermtotalsum) subjectID ke against.
-  const totalByID = {};
-  apiSubjects.forEach(s => {
-    const id = Number(s.subjectID ?? s.SubjectID ?? 0);
-    if (id) totalByID[id] = Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0;
-  });
-  // Subject list = SAARE Launch-Setup mapped subjects (authoritative). Jo subject
-  // mapped hai magar exam me total configure nahi (e.g. "Social Studies Spoken")
-  // wo bhi ginte hain (total 0) — isse count 16 aata hai (15 nahi), aur SA-only
-  // stale/unmapped subjects nikal jate hain. Mapped set khaali (API fail) → purana
-  // behavior (list kabhi 0/— na dikhaye).
-  const scopedActive = mappedSet.size > 0;
-  const subjCount = scopedActive ? mappedIDs.length : apiSubjects.length;
-  const totalMarksSum = scopedActive
-    ? mappedIDs.reduce((a, id) => a + (totalByID[id] || 0), 0)
-    : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
-  // Obtained ko bhi mapped subjects tak scope karo (loadResClassData me per-subject
-  // fetch se bana scopedObtained). Denominator scoped hai to numerator bhi scoped —
-  // warna >100% aata tha. Scoped obtained na mile to pre-summed obtainedMarks fallback.
-  const scopedObt   = resStudentData[key]?.scopedObtained || null;
-  const useScopedObt = scopedActive && !!resStudentData[key]?.scopedObtainedOk && !!scopedObt;
+                  // Visibility map build karo
+                  const visMap = {};
+                  if (Array.isArray(data)) {
+                    data.forEach(item => {
+                      classes.forEach((cls, i) => {
+                        if (Number(cls.sectionID) === Number(item.sectionID) &&
+                          Number(cls.classID) === Number(item.classID)) {
+                          const key = `rcls_${id}_${cls.sectionID}_${i}`;
+                          visMap[key] = item.isResultVisibleToParents;
+                        }
+                      });
+                    });
+                  }
+                  setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
 
-  if (!apiStudents.length) {
-    return (
-      <tr>
-        <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-          No students found for this class.
-        </td>
-      </tr>
-    );
-  }
+                } catch (error) {
+                  console.error('Error fetching visibility:', error);
+                }
+              }
+            };
 
-  return apiStudents.map((st, si) => {
-    const marksEntry = apiMarks.find(m => m.studentID === st.id);
-    const rankEntry  = apiRankings.find(r => r.studentID === st.id);
-    const obtMarks   = useScopedObt
-      ? (Number(scopedObt[String(st.id)]) || 0)
-      : (marksEntry ? Number(marksEntry.obtainedMarks) : 0);
-    const pct        = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
-    // Grade card jaisa — gradingcrud (rsGrades) se % ke hisaab se, taake table & card SAME.
-    const grade      = (obtMarks > 0 && totalMarksSum > 0)
-      ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obtMarks, totalMarksSum))
-      : null;
-    const gradeBg    = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
-    const hasMarks   = obtMarks > 0;
-    const stStatus   = hasMarks ? 'Complete' : 'Incomplete';
-    const stStatusCls  = hasMarks ? 'complete' : 'incomplete';
-    const stStatusIcon = hasMarks ? 'fa-circle-check' : 'fa-circle-half-stroke';
-    const progW = totalMarksSum > 0 ? Math.min(100, Math.round((obtMarks / totalMarksSum) * 100)) : 0;
-    const progColor = hasMarks ? '#16A34A' : '#E2E8F0';
+            return (
+              <>
+                {/* Term chips — API se */}
+                <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
+                  {terms.map(t => (
+                    <button
+                      key={t.id}
+                      className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+                      onClick={() => {
+                        setTerm(t.term);
+                        setSelectedTermId(t.id);
+                        getExamsByTerm(t.id);
+                        setResExamId(null);
+                        setResOpenKey(null);
+                        setExamClasses([]);
+                      }}
+                    >
+                      {t.term}
+                    </button>
+                  ))}
+                </div>
 
-    return (
-      <tr key={st.id}>
-        <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
-        <td style={{ minWidth: 120 }}>
-          <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
-            {st.studentName}
-          </div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
-            {st.registrationNumber || '—'}
-          </div>
-        </td>
-        <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>
-          {st.fatherName}
-        </td>
-        <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>
-          {subjCount}
-        </td>
-        <td style={{ minWidth: 110 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
-            </div>
-            <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>
-              {obtMarks}/{totalMarksSum || '—'}
-            </span>
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-            {pct > 0 ? `${pct}%` : 'No marks'}
-          </div>
-        </td>
-        <td>
-          <span className={`res-st-badge ${stStatusCls}`}>
-            <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
-          </span>
-        </td>
-        <td style={{ textAlign: 'center' }}>
-          {grade ? (
-            <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
-          ) : '—'}
-        </td>
-        <td>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-            <Tooltip text="Update marks for this student">
-              <button
-                className="res-action-btn"
-                disabled={isOtherSession}
-                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-onClick={async () => {
-  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-  const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
-  if (!saSubjects.length) {
-    toast('No exam subjects found for this class', 'error');
-    return;
-  }
-  setResUpdateCtx({
-    examId: resExamId, 
-    key, 
-    studentId: st.id,
-    subjects: saSubjects,
-    classID: cls.classID,
-    sectionID: cls.sectionID,
-    selectExam: resCurrentExam?.selectExam || 0,
-    termID: selectedTermId
-  });
-}}
-              >
-                <i className="fa-solid fa-pen-to-square"></i> Marks
-              </button>
-            </Tooltip>
-           <Tooltip text="Add or edit remarks for this student">
-  <button
-    className="res-action-btn remarks"
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } fetchStudentRemarks(cls, st , key); }}
-  >
-    <i className="fa-solid fa-comment-dots"></i> Remarks
-  </button>
-</Tooltip>
-            <Tooltip text="View this student's result card">
-              <button
-                className="res-action-btn view"
-                onClick={() => { setResCardMarks(null); loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
-              >
-                <i className="fa-solid fa-eye"></i> Card
-              </button>
-            </Tooltip>
-          </div>
-        </td>
-      </tr>
-    );
-  });
-})()}
-                          </tbody>
-                        </table>
-                      </div>
+                {/* Exam buttons — API se (filtered) */}
+                {filtered.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <i className="fa-solid fa-chart-bar" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
+                      <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {filtered.map(ex => (
+                        <button
+                          key={ex.id}
+                          className={`ds-exam-btn${resExamId === ex.id ? ' active' : ''}`}
+                          onClick={() => resPickExam(ex.id)}
+                        >
+                          <i className="fa-solid fa-chart-bar"></i> {ex.name}
+                        </button>
+                      ))}
                     </div>
                   </div>
+                )}
+
+                {/* Classes panel — examClasses (API) se */}
+                <div>
+                  {!resCurrentExam ? (
+                    <div className="ds-empty" style={{ marginTop: 4 }}>
+                      <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
+                      {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view classes'}
+                    </div>
+                  ) : examClasses.length === 0 ? (
+                    <div className="ds-empty">No classes assigned. Edit the exam in Exam Setup.</div>
+                  ) : (
+                    <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
+                      <div className="res-table-head">
+                        <div className="res-th">S. No.</div>
+                        <div className="res-th">Class Name</div>
+                        <div className="res-th" >Section</div>
+                        <div className="res-th">Type</div>
+                        <div className="res-th">Status</div>
+                        <div className="res-th">Publish</div>
+                        <div className="res-th">Total Marks</div>
+                        <div className="res-th" style={{ textAlign: 'right' }}>Actions</div>
+                      </div>
+                      {examClasses.map((cls, i) => {
+                        const key = `rcls_${resExamId}_${cls.sectionID}_${i}`;
+                        const cd = resExamData[key] || buildDefaultClass();
+                        const isOpen = resOpenKey === key;
+                        const isRel = examVisibilityMap[key] ?? cd.released;  // ← yeh change karo
+                        const className = `${cls.gradeName} - ${cls.sectionName}`;
+                        const isPreschool = pClassTypes[key] === 'preschool';
+                        const pcd = pResultData[key] || { released: false, students: [] };
+                        const isRelP = !!pcd.released;
+                        const shownRel = isPreschool ? isRelP : isRel;
+                        const rowLevel = pClassLevels[key] || 'kg';
+                        const rowSlo = pSlo[rowLevel] || {};
+                        const rowSloTotal = (pLearningAreas || []).reduce((a, la) => a + ((rowSlo[la.id] || []).length), 0);
+                        return (
+                          <div key={key} className="res-row-wrap">
+                            <div
+                              className={`res-row${isOpen ? ' open' : ''}`}
+                              onClick={() => {
+                                const next = isOpen ? null : key;
+                                setResOpenKey(next);
+                                if (next) loadResClassData(key, cls);
+                              }}                  >
+                              <div className="res-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                                <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
+                              </div>
+                              <div className="res-td cls-name">
+                                <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
+                                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
+                              </div>
+                              <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+                              <div className="res-td" onClick={e => e.stopPropagation()}>
+                                <div className="res-type-pill">
+                                  <Tooltip text="Grade 1-12 (marks-based)">
+                                    <button type="button" className={`res-type-btn grade${!isPreschool ? ' active' : ''}`} onClick={() => { preschoolService.setClassAssessmentType(key, 'grade').then(setPClassTypes); }}>
+                                      <i className="fa-solid fa-graduation-cap"></i>
+                                    </button>
+                                  </Tooltip>
+                                  {isPreschoolBranch && (
+                                    <Tooltip text="Preschool / Montessori (E/M/A/NY)">
+                                      <button type="button" className={`res-type-btn preschool${isPreschool ? ' active' : ''}`} onClick={() => { if (!isPreschool) setPLevelPickCtx({ key, className, cls, exam: resCurrentExam, termID: selectedTermId }); }}>
+                                        <i className="fa-solid fa-shapes"></i>
+                                      </button>
+                                    </Tooltip>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="res-td">
+                                <span className={`res-released-badge${shownRel ? ' released' : ' pending'}`}>
+                                  <i className={`fa-solid ${shownRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+                                  {shownRel ? 'Released' : 'Not Released'}
+                                </span>
+
+                              </div>
+                              <div className="res-td" onClick={e => e.stopPropagation()}>
+                                <Tooltip text={!canSingleEdit ? 'You do not have permission to publish results' : (shownRel ? 'Unpublish this class result' : 'Publish this class result')}>
+                                  <button
+                                    className={`res-publish-btn${shownRel ? ' released' : ''}`}
+                                    disabled={isOtherSession || !canSingleEdit}
+                                    style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                    onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (isPreschool) { setPConfirmPublish({ key, className, released: isRelP }); return; } togglePublish(key, className, isRel, cls); }}
+                                  >
+                                    <i className={`fa-solid ${shownRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                                    {shownRel ? 'Unpublish' : 'Publish Result'}
+                                  </button>
+
+                                </Tooltip>
+                              </div>
+                              <div className="res-td" onClick={e => e.stopPropagation()}>
+                                {isPreschool ? (
+                                  <span className="res-pms-badge"><i className="fa-solid fa-shapes"></i> {(pGradingScale || []).map(g => g.code).join(' / ')}</span>
+                                ) : (
+                                  <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Edit total marks for each subject'}>
+                                    <button
+                                      className="res-marks-btn"
+                                      disabled={isOtherSession || !canSingleEdit}
+                                      style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                      onClick={async () => {
+                                        if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                        const saSubjects = await fetchSASubjects(
+                                          cls.classID,
+                                          cls.sectionID,
+                                          resExamId
+                                        );
+                                        if (!saSubjects.length) {
+                                          toast('No exam subjects found for this class', 'error');
+                                          return;
+                                        }
+
+                                        setResTotalMarksCtx({
+                                          selectExam: resCurrentExam?.selectExam || 0,  // ← add this
+                                          examId: resExamId,
+                                          key,
+                                          className: cls.className,
+                                          classID: cls.classID,
+                                          sectionID: cls.sectionID,
+                                          subjects: saSubjects
+                                        });
+                                      }}
+                                    >
+                                      <i className="fa-solid fa-pen-to-square"></i> Total Marks
+                                    </button>
+                                  </Tooltip>
+                                )}
+                              </div>
+                              <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
+                                {!isPreschool && <>
+                                  <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Bulk upload obtained marks for the whole class via Excel'}>
+                                    <button
+                                      className="res-bulk-btn"
+                                      disabled={isOtherSession || !canSingleEdit}
+                                      style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                      onClick={async e => {
+                                        e.stopPropagation();
+                                        if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                        const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
+                                        if (!saSubjects.length) {
+                                          toast('No exam subjects found for this class', 'error');
+                                          return;
+                                        }
+                                        let students = resStudentData[key]?.students || [];
+                                        if (!students.length) {
+                                          try {
+                                            const token = sessionStorage.getItem('token');
+                                            const branchID = sessionStorage.getItem('branchID');
+                                            const studentsRes = await fetch(
+                                              buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
+                                              { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+                                            );
+                                            const studentsData = await studentsRes.json();
+                                            students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
+                                          } catch (err) {
+                                            students = [];
+                                          }
+                                        }
+                                        if (!students.length) {
+                                          toast('No students found for this class', 'error');
+                                          return;
+                                        }
+                                        setResBulkUploadCtx({
+                                          examId: resExamId,
+                                          key,
+                                          className,
+                                          examName: resCurrentExam?.name || '',
+                                          classID: cls.classID,
+                                          sectionID: cls.sectionID,
+                                          selectExam: resCurrentExam?.selectExam || 0,
+                                          termID: selectedTermId,
+                                          subjects: saSubjects,
+                                          students,
+                                        });
+                                      }}
+                                    >
+                                      <i className="fa-solid fa-file-excel"></i>
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : 'Download class result report'}>
+                                    <button
+                                      className="res-download-btn"
+                                      disabled={!canSingleDownload}
+                                      style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                      onClick={async e => {
+                                        e.stopPropagation();
+                                        if (!canSingleDownload) return;
+                                        const pack = await loadResClassData(key, cls);
+                                        if (!pack || !(pack.students || []).length) {
+                                          toast('No students found for this class', 'error');
+                                          return;
+                                        }
+                                        setResClassReportReq({
+                                          examId: resExamId,
+                                          key,
+                                          className,
+                                          ex: resCurrentExam,
+                                          cd: liveClassReportCd(pack, { released: isRel, grades: rsGrades }),
+                                        });
+                                      }}
+                                    >
+                                      <i className="fa-solid fa-file-arrow-down"></i>
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip text="Delete class data"><button
+                                    className="ds-del-btn"
+                                    onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resExamId, key, className }); }}
+                                  >
+                                    <i className="fa-solid fa-trash"></i>
+                                  </button></Tooltip>
+                                </>}
+                                <button
+                                  className={`ds-expand-btn${isOpen ? ' open' : ''}`}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    const next = isOpen ? null : key;
+                                    setResOpenKey(next);
+                                    if (next) loadResClassData(key, cls);
+                                  }}                      >
+                                  <i className="fa-solid fa-chevron-down"></i>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Expanded student table */}
+                            <div className={`res-detail${isOpen ? ' open' : ''}`}>
+                              <div className="res-detail-inner">
+                                {resLoadingKey === key ? (
+                                  <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
+                                    <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
+                                    Loading student data...
+                                  </div>
+                                ) : isPreschool ? (
+                                  <div>
+                                    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+                                      <i className="fa-solid fa-shapes" style={{ color: '#7C3AED', marginRight: 5 }}></i>
+                                      Student Results — {className}
+                                      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+                                        {(resStudentData[key]?.students || []).length} Students
+                                      </span>
+                                    </div>
+                                    <div className="res-student-scroll">
+                                      <table className="res-student-table">
+                                        <thead>
+                                          <tr>
+                                            <th>#</th>
+                                            <th>Student Name</th>
+                                            <th>Father Name</th>
+                                            <th>Progress</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(resStudentData[key]?.students || []).map((raw, si) => {
+                                            const st = {
+                                              id: raw.id ?? raw.studentID ?? raw.StudentID,
+                                              name: raw.studentName || raw.name || '',
+                                              father: raw.fatherName || raw.father || '',
+                                              rollNo: raw.registrationNumber || raw.rollNo || raw.grNo || '—',
+                                              attendance: raw.attendance,
+                                            };
+                                            const ad = (pcd.students || []).find(s => String(s.studentId) === String(st.id));
+                                            const { done, total } = pProgressForStudent(ad, (pLearningAreas || []).length, rowSloTotal);
+                                            const pct = total ? Math.round((done / total) * 100) : 0;
+                                            return (
+                                              <tr key={st.id || si}>
+                                                <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
+                                                <td style={{ minWidth: 120 }}>
+                                                  <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{st.name}</div>
+                                                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{st.rollNo}</div>
+                                                </td>
+                                                <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>{st.father}</td>
+                                                <td style={{ minWidth: 110 }}>
+                                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <div style={{ flex: 1, height: 6, borderRadius: 999, background: '#E2E8F0', overflow: 'hidden', minWidth: 60 }}>
+                                                      <div style={{ width: `${pct}%`, height: '100%', background: pct >= 100 ? '#16A34A' : '#7C3AED', borderRadius: 3 }}></div>
+                                                    </div>
+                                                    <span style={{ fontSize: 11, fontWeight: 700, color: pct >= 100 ? '#16A34A' : '#7C3AED', flexShrink: 0 }}>{done}/{total}</span>
+                                                  </div>
+                                                </td>
+                                                <td>
+                                                  <span className={`res-st-badge ${done === 0 ? 'incomplete' : done >= total ? 'complete' : 'incomplete'}`}>
+                                                    <i className={`fa-solid ${done === 0 ? 'fa-circle-half-stroke' : done >= total ? 'fa-circle-check' : 'fa-circle-half-stroke'}`}></i>
+                                                    {done === 0 ? 'Not Started' : done >= total ? 'Complete' : 'In Progress'}
+                                                  </span>
+                                                </td>
+                                                <td>
+                                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                                                    <Tooltip text="Enter/Edit assessment">
+                                                      <button className="res-action-btn" onClick={() => setPAssessCtx({
+                                                        examId: resExamId, key, className, student: st,
+                                                        examName: resCurrentExam?.name || '', termLabel: resCurrentExam?.name || '',
+                                                        classID: cls.classID, sectionID: cls.sectionID,
+                                                      })}>
+                                                        <i className="fa-solid fa-pen-to-square"></i> Assess
+                                                      </button>
+                                                    </Tooltip>
+                                                    {ad && (
+                                                      <Tooltip text="View this student's result card">
+                                                        <button className="res-action-btn view" onClick={() => setPCardCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '' })}>
+                                                          <i className="fa-solid fa-eye"></i> Card
+                                                        </button>
+                                                      </Tooltip>
+                                                    )}
+                                                  </div>
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+                                    <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                                    Student Results — {className}
+                                    {/* Subject count from API */}
+                                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+                                      {(() => {
+                                        // Sirf Launch-Setup mapped subjects ko count karo (FIX 1). Mapped set khaali
+                                        // ho (API fail) to purana behavior — poori list count.
+                                        const subs = resStudentData[key]?.subjects || [];
+                                        const mset = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
+                                        const scoped = mset.size ? subs.filter(s => mset.has(Number(s.subjectID ?? s.SubjectID ?? 0))) : subs;
+                                        const n = (mset.size && scoped.length) ? scoped.length : subs.length;
+                                        return `${n} Subject${n !== 1 ? 's' : ''}`;
+                                      })()}
+                                    </span>
+                                  </div>)}
+
+                                <div className="res-student-scroll">
+                                  <table className="res-student-table">
+                                    <thead>
+                                      <tr>
+                                        <th>#</th>
+                                        <th>Student Name</th>
+                                        <th>Father Name</th>
+                                        <th style={{ textAlign: 'center' }}>Subjects</th>
+                                        <th>Progress</th>
+                                        <th>Status</th>
+                                        <th style={{ textAlign: 'center' }}>Grade</th>
+                                        <th>Actions</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(() => {
+                                        const apiStudents = resStudentData[key]?.students || [];
+                                        const apiMarks = resStudentData[key]?.marks || [];
+                                        const apiSubjects = resStudentData[key]?.subjects || [];
+                                        const apiRankings = resStudentData[key]?.rankings || [];
+
+                                        // FIX 1 — Total/subject-count SIRF Launch-Setup mapped subjects se.
+                                        // getsasubjectbybranchclassandtermtotalsum rows: har row me per-subject
+                                        // `totalMarks` + `subjectID`; row[0].totalMarksSum = poore (possibly unmapped)
+                                        // class ka sum. Isliye [0].totalMarksSum ko blindly trust na kar ke, mapped
+                                        // subjects ke per-subject totalMarks ko sum karte hain.
+                                        // apiMarks (getsauploadmarksbystudentbranchsum) per-student ek PRE-SUMMED
+                                        // obtainedMarks deta hai (koi per-subject breakdown nahi) — isliye obtained ko
+                                        // mapped-subjects tak scope nahi kar sakte; obtMarks jaisa ka waisa rehta hai,
+                                        // magar denominator/subject-count ab sahi (mapped) hai.
+                                        const mappedIDs = (resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean);
+                                        const mappedSet = new Set(mappedIDs);
+                                        // Per-subject total (getsasubjectbybranchclassandtermtotalsum) subjectID ke against.
+                                        const totalByID = {};
+                                        apiSubjects.forEach(s => {
+                                          const id = Number(s.subjectID ?? s.SubjectID ?? 0);
+                                          if (id) totalByID[id] = Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0;
+                                        });
+                                        // Subject list = SAARE Launch-Setup mapped subjects (authoritative). Jo subject
+                                        // mapped hai magar exam me total configure nahi (e.g. "Social Studies Spoken")
+                                        // wo bhi ginte hain (total 0) — isse count 16 aata hai (15 nahi), aur SA-only
+                                        // stale/unmapped subjects nikal jate hain. Mapped set khaali (API fail) → purana
+                                        // behavior (list kabhi 0/— na dikhaye).
+                                        const scopedActive = mappedSet.size > 0;
+                                        const subjCount = scopedActive ? mappedIDs.length : apiSubjects.length;
+                                        const totalMarksSum = scopedActive
+                                          ? mappedIDs.reduce((a, id) => a + (totalByID[id] || 0), 0)
+                                          : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
+                                        // Obtained ko bhi mapped subjects tak scope karo (loadResClassData me per-subject
+                                        // fetch se bana scopedObtained). Denominator scoped hai to numerator bhi scoped —
+                                        // warna >100% aata tha. Scoped obtained na mile to pre-summed obtainedMarks fallback.
+                                        const scopedObt = resStudentData[key]?.scopedObtained || null;
+                                        const useScopedObt = scopedActive && !!resStudentData[key]?.scopedObtainedOk && !!scopedObt;
+
+                                        if (!apiStudents.length) {
+                                          return (
+                                            <tr>
+                                              <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+                                                No students found for this class.
+                                              </td>
+                                            </tr>
+                                          );
+                                        }
+
+                                        return apiStudents.map((st, si) => {
+                                          const marksEntry = apiMarks.find(m => m.studentID === st.id);
+                                          const rankEntry = apiRankings.find(r => r.studentID === st.id);
+                                          const obtMarks = useScopedObt
+                                            ? (Number(scopedObt[String(st.id)]) || 0)
+                                            : (marksEntry ? Number(marksEntry.obtainedMarks) : 0);
+                                          const pct = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
+                                          // Grade card jaisa — gradingcrud (rsGrades) se % ke hisaab se, taake table & card SAME.
+                                          const grade = (obtMarks > 0 && totalMarksSum > 0)
+                                            ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obtMarks, totalMarksSum))
+                                            : null;
+                                          const gradeBg = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
+                                          const hasMarks = obtMarks > 0;
+                                          const stStatus = hasMarks ? 'Complete' : 'Incomplete';
+                                          const stStatusCls = hasMarks ? 'complete' : 'incomplete';
+                                          const stStatusIcon = hasMarks ? 'fa-circle-check' : 'fa-circle-half-stroke';
+                                          const progW = totalMarksSum > 0 ? Math.min(100, Math.round((obtMarks / totalMarksSum) * 100)) : 0;
+                                          const progColor = hasMarks ? '#16A34A' : '#E2E8F0';
+
+                                          return (
+                                            <tr key={st.id}>
+                                              <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
+                                              <td style={{ minWidth: 120 }}>
+                                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+                                                  {st.studentName}
+                                                </div>
+                                                <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                                                  {st.registrationNumber || '—'}
+                                                </div>
+                                              </td>
+                                              <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>
+                                                {st.fatherName}
+                                              </td>
+                                              <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>
+                                                {subjCount}
+                                              </td>
+                                              <td style={{ minWidth: 110 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                  <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+                                                    <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
+                                                  </div>
+                                                  <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>
+                                                    {obtMarks}/{totalMarksSum || '—'}
+                                                  </span>
+                                                </div>
+                                                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                                                  {pct > 0 ? `${pct}%` : 'No marks'}
+                                                </div>
+                                              </td>
+                                              <td>
+                                                <span className={`res-st-badge ${stStatusCls}`}>
+                                                  <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
+                                                </span>
+                                              </td>
+                                              <td style={{ textAlign: 'center' }}>
+                                                {grade ? (
+                                                  <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
+                                                ) : '—'}
+                                              </td>
+                                              <td>
+                                                <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                                                  <Tooltip text="Update marks for this student">
+                                                    <button
+                                                      className="res-action-btn"
+                                                      disabled={isOtherSession}
+                                                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                                      onClick={async () => {
+                                                        if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                                        const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
+                                                        if (!saSubjects.length) {
+                                                          toast('No exam subjects found for this class', 'error');
+                                                          return;
+                                                        }
+                                                        setResUpdateCtx({
+                                                          examId: resExamId,
+                                                          key,
+                                                          studentId: st.id,
+                                                          subjects: saSubjects,
+                                                          classID: cls.classID,
+                                                          sectionID: cls.sectionID,
+                                                          selectExam: resCurrentExam?.selectExam || 0,
+                                                          termID: selectedTermId
+                                                        });
+                                                      }}
+                                                    >
+                                                      <i className="fa-solid fa-pen-to-square"></i> Marks
+                                                    </button>
+                                                  </Tooltip>
+                                                  <Tooltip text="Add or edit remarks for this student">
+                                                    <button
+                                                      className="res-action-btn remarks"
+                                                      disabled={isOtherSession}
+                                                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                                      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } fetchStudentRemarks(cls, st, key); }}
+                                                    >
+                                                      <i className="fa-solid fa-comment-dots"></i> Remarks
+                                                    </button>
+                                                  </Tooltip>
+                                                  <Tooltip text="View this student's result card">
+                                                    <button
+                                                      className="res-action-btn view"
+                                                      onClick={() => { setResCardMarks(null); loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
+                                                    >
+                                                      <i className="fa-solid fa-eye"></i> Card
+                                                    </button>
+                                                  </Tooltip>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          );
+                                        });
+                                      })()}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </>
-  );
-})()}
+              </>
+            );
+          })()}
           {rsTab === 'combinedassessment' && (() => {
             // Filter
             const filtered = cbrFilterClass
@@ -6198,8 +6361,8 @@ onClick={async () => {
                         "Grade 1 - A" format. value se neeche filter/search match hota hai. */}
                     {(cbrClassList.length
                       ? cbrClassList.flatMap(g => (g.sections || []).length
-                          ? (g.sections || []).map(s => `${g.name} - ${s.sectionName}`)
-                          : [g.name])
+                        ? (g.sections || []).map(s => `${g.name} - ${s.sectionName}`)
+                        : [g.name])
                       : CBR_CLASS_OPTIONS
                     ).map(c => (
                       <option key={c} value={c}>{c}</option>
@@ -6221,11 +6384,11 @@ onClick={async () => {
                   const isActive = cbrActiveGroup === grp.name;
                   const totalCls = grp.items.length;
                   const pubCount = grp.published;
-                  const allPub  = pubCount === totalCls;
+                  const allPub = pubCount === totalCls;
                   const nonePub = pubCount === 0;
                   const statusTxt = allPub ? 'All Published' : nonePub ? 'Not Published' : `${pubCount}/${totalCls} Published`;
                   const statusCol = allPub ? '#16A34A' : nonePub ? '#D97706' : '#1E40AF';
-                  const statusBg  = allPub ? 'rgba(22,163,74,.1)' : nonePub ? 'rgba(217,119,6,.1)' : 'rgba(30,64,175,.1)';
+                  const statusBg = allPub ? 'rgba(22,163,74,.1)' : nonePub ? 'rgba(217,119,6,.1)' : 'rgba(30,64,175,.1)';
 
                   return (
                     <div key={grp.name} className={`cbr-group${isActive ? ' active' : ''}`}>
@@ -6368,7 +6531,7 @@ onClick={async () => {
                                             // Grade card jaisा — grandObt/grandTotal ka % nikaal kar gradingcrud
                                             // (rsGrades) se. Taake table aur card/report ka grade SAME ho.
                                             const _gtPct = Number(st.grandTotal) > 0 ? Math.round((Number(st.grandObt) / Number(st.grandTotal)) * 10000) / 100 : 0;
-                                            const gradeObj   = (rsGrades && rsGrades.length) ? rcGradeByScale(_gtPct, rsGrades) : rcGetGrade(st.grandObt, st.grandTotal);
+                                            const gradeObj = (rsGrades && rsGrades.length) ? rcGradeByScale(_gtPct, rsGrades) : rcGetGrade(st.grandObt, st.grandTotal);
                                             const gradeLabel = gradeObj?.grade || '—';
                                             const grCol = RS_GRADE_COLORS[gradeLabel] || '#475569';
                                             const pctCol = st.pct >= 80 ? '#16A34A' : st.pct >= 60 ? '#D97706' : '#DC2626';
@@ -6477,21 +6640,21 @@ onClick={async () => {
             /* Students module wali ranking: exact GR / roll no pehle ("7" →
                reg "7" / "007"), phir prefix, phir naam/walid/class. */
             const rankOf = st => studentMatchRank(q, {
-              ids:  [st.rollNo, st.admission],
+              ids: [st.rollNo, st.admission],
               text: `${st.name} ${st.father} ${st.cls} ${st.section}`,
             });
             const filtered = sourceStudents.filter(st => {
               if (q && rankOf(st) < 0) return false;
               if (usingApi) {
                 // API students: class/section name se filter; session/exam data nahi hota.
-                if (rhFilterClass   && st.cls     !== rhFilterClass)   return false;
+                if (rhFilterClass && st.cls !== rhFilterClass) return false;
                 if (rhFilterSection && st.section !== rhFilterSection) return false;
                 return true;
               }
               if (rhFilterSession && st.session !== rhFilterSession) return false;
-              if (rhFilterClass   && st.cls     !== rhFilterClass)   return false;
+              if (rhFilterClass && st.cls !== rhFilterClass) return false;
               if (rhFilterSection && !st.cls.endsWith(`Section ${rhFilterSection}`)) return false;
-              if (rhFilterExam    && !st.results.some(r => r.type === rhFilterExam)) return false;
+              if (rhFilterExam && !st.results.some(r => r.type === rhFilterExam)) return false;
               return true;
             });
             if (q) {
@@ -6504,9 +6667,9 @@ onClick={async () => {
             const studentCardSummary = st => {
               const pcts = st.results.map(r => r.pct);
               const avgPct = pcts.length ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10 : 0;
-              const best   = pcts.length ? Math.max(...pcts) : 0;
-              const trend  = pcts.length >= 2 ? (pcts[pcts.length - 1] > pcts[0] ? 'up' : pcts[pcts.length - 1] < pcts[0] ? 'down' : 'flat') : 'flat';
-              const grade  = rcGetGrade(avgPct, 100);
+              const best = pcts.length ? Math.max(...pcts) : 0;
+              const trend = pcts.length >= 2 ? (pcts[pcts.length - 1] > pcts[0] ? 'up' : pcts[pcts.length - 1] < pcts[0] ? 'down' : 'flat') : 'flat';
+              const grade = rcGetGrade(avgPct, 100);
               return { avgPct, best, trend, grade: grade ? grade.grade : '—' };
             };
 
@@ -6553,8 +6716,8 @@ onClick={async () => {
               const { avgPct, best, grade: avgGrade } = studentCardSummary(st);
               const worst = st.results.length ? Math.min(...st.results.map(r => r.pct)) : 0;
               const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
-              const attCol  = st.attendance >= 90 ? '#16A34A' : st.attendance >= 75 ? '#D97706' : '#DC2626';
-              const avgCol  = avgPct >= 80 ? '#16A34A' : avgPct >= 60 ? '#1E40AF' : '#D97706';
+              const attCol = st.attendance >= 90 ? '#16A34A' : st.attendance >= 75 ? '#D97706' : '#DC2626';
+              const avgCol = avgPct >= 80 ? '#16A34A' : avgPct >= 60 ? '#1E40AF' : '#D97706';
               const worstCol = worst >= 60 ? '#D97706' : '#DC2626';
               return (
                 <>
@@ -6589,11 +6752,11 @@ onClick={async () => {
                     </div>
                     <div className="rh-kpi-strip">
                       {[
-                        { label:'Exams',    val: st.results.length,       icon:'fa-clipboard-list', col:'#1E40AF' },
-                        { label:'Average',  val: `${avgPct}%`,             icon:'fa-chart-line',     col: avgCol },
-                        { label:'Best',     val: `${best}%`,               icon:'fa-star',           col:'#16A34A' },
-                        { label:'Worst',    val: `${worst}%`,              icon:'fa-arrow-down',     col: worstCol },
-                        { label:'Attend.',  val: rhAttnLoading ? <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 15 }}></i> : `${st.attendance}%`, icon:'fa-calendar-check', col: attCol  },
+                        { label: 'Exams', val: st.results.length, icon: 'fa-clipboard-list', col: '#1E40AF' },
+                        { label: 'Average', val: `${avgPct}%`, icon: 'fa-chart-line', col: avgCol },
+                        { label: 'Best', val: `${best}%`, icon: 'fa-star', col: '#16A34A' },
+                        { label: 'Worst', val: `${worst}%`, icon: 'fa-arrow-down', col: worstCol },
+                        { label: 'Attend.', val: rhAttnLoading ? <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 15 }}></i> : `${st.attendance}%`, icon: 'fa-calendar-check', col: attCol },
                       ].map((kpi, i, arr) => (
                         <div
                           key={kpi.label}
@@ -6626,7 +6789,7 @@ onClick={async () => {
                       .map(s => ({ subj: s, avg: Math.round(subjTotals[s] / subjCounts[s] * 10) / 10 }))
                       .sort((a, b) => b.avg - a.avg);
                     const strongest = subjAvgs[0];
-                    const weakest   = subjAvgs[subjAvgs.length - 1];
+                    const weakest = subjAvgs[subjAvgs.length - 1];
 
                     return (
                       <div className="rh-two-col">
@@ -6651,89 +6814,89 @@ onClick={async () => {
                                   No exam history found for this student.
                                 </div>
                               ) : (
-                              st.results.map((r, idx) => {
-                                const isCombined = r.type === 'combined';
-                                const pctCol = r.pct >= 80 ? '#16A34A' : r.pct >= 60 ? '#1E40AF' : r.pct >= 50 ? '#D97706' : '#DC2626';
-                                const grade = rcGetGrade(r.pct, 100);
-                                const gradeCol = RS_GRADE_COLORS[grade ? grade.grade : 'F'] || '#475569';
-                                // rank string ("1st") API se aata hai; number ho to suffix lagao; khali → "—".
-                                // Score 0% ho (koi marks nahi) to position dikhana galat h → "—".
-                                const rankStr = (Number(r.pct) <= 0)
-                                  ? '—'
-                                  : (typeof r.rank === 'string' && /[a-z]/i.test(r.rank))
-                                    ? r.rank
-                                    : (r.rank ? `${r.rank}${r.rank === 1 ? 'st' : r.rank === 2 ? 'nd' : r.rank === 3 ? 'rd' : 'th'}` : '—');
-                                return (
-                                  <div key={idx} className="rh-timeline-row">
-                                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: isCombined ? '#7C3AED' : '#1E40AF', flexShrink: 0, marginTop: 6 }} />
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                      <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                                        {r.exam}
-                                        <span style={{
-                                          fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
-                                          background: isCombined ? 'rgba(124,58,237,.1)' : 'rgba(30,64,175,.1)',
-                                          color: isCombined ? '#7C3AED' : '#1E40AF',
-                                        }}>
-                                          {isCombined ? 'Combined' : 'Single'}
-                                        </span>
+                                st.results.map((r, idx) => {
+                                  const isCombined = r.type === 'combined';
+                                  const pctCol = r.pct >= 80 ? '#16A34A' : r.pct >= 60 ? '#1E40AF' : r.pct >= 50 ? '#D97706' : '#DC2626';
+                                  const grade = rcGetGrade(r.pct, 100);
+                                  const gradeCol = RS_GRADE_COLORS[grade ? grade.grade : 'F'] || '#475569';
+                                  // rank string ("1st") API se aata hai; number ho to suffix lagao; khali → "—".
+                                  // Score 0% ho (koi marks nahi) to position dikhana galat h → "—".
+                                  const rankStr = (Number(r.pct) <= 0)
+                                    ? '—'
+                                    : (typeof r.rank === 'string' && /[a-z]/i.test(r.rank))
+                                      ? r.rank
+                                      : (r.rank ? `${r.rank}${r.rank === 1 ? 'st' : r.rank === 2 ? 'nd' : r.rank === 3 ? 'rd' : 'th'}` : '—');
+                                  return (
+                                    <div key={idx} className="rh-timeline-row">
+                                      <div style={{ width: 10, height: 10, borderRadius: '50%', background: isCombined ? '#7C3AED' : '#1E40AF', flexShrink: 0, marginTop: 6 }} />
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                                          {r.exam}
+                                          <span style={{
+                                            fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+                                            background: isCombined ? 'rgba(124,58,237,.1)' : 'rgba(30,64,175,.1)',
+                                            color: isCombined ? '#7C3AED' : '#1E40AF',
+                                          }}>
+                                            {isCombined ? 'Combined' : 'Single'}
+                                          </span>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 5, background: 'rgba(30,64,175,.07)', color: '#1E40AF' }}>
+                                            <i className="fa-solid fa-users" style={{ fontSize: 8 }}></i>{st.cls}
+                                          </span>
+                                          <span style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 600,
+                                            padding: '1px 7px', borderRadius: 5,
+                                            background: r.year === st.session ? 'rgba(22,163,74,.08)' : 'rgba(217,119,6,.08)',
+                                            color: r.year === st.session ? '#16A34A' : '#D97706',
+                                          }}>
+                                            <i className="fa-regular fa-calendar" style={{ fontSize: 8 }}></i>
+                                            {rhSessionLabel(r.year)}
+                                          </span>
+                                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                                            <i className="fa-regular fa-calendar" style={{ marginRight: 3 }}></i>{r.date}
+                                          </span>
+                                        </div>
                                       </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 5, background: 'rgba(30,64,175,.07)', color: '#1E40AF' }}>
-                                          <i className="fa-solid fa-users" style={{ fontSize: 8 }}></i>{st.cls}
-                                        </span>
-                                        <span style={{
-                                          display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 600,
-                                          padding: '1px 7px', borderRadius: 5,
-                                          background: r.year === st.session ? 'rgba(22,163,74,.08)' : 'rgba(217,119,6,.08)',
-                                          color: r.year === st.session ? '#16A34A' : '#D97706',
-                                        }}>
-                                          <i className="fa-regular fa-calendar" style={{ fontSize: 8 }}></i>
-                                          {rhSessionLabel(r.year)}
-                                        </span>
-                                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                                          <i className="fa-regular fa-calendar" style={{ marginRight: 3 }}></i>{r.date}
-                                        </span>
+                                      <div style={{ minWidth: 90, flex: 1, maxWidth: 160 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 10, color: 'var(--text-muted)' }}>
+                                          <span>Score</span>
+                                          <span style={{ fontWeight: 700, color: pctCol }}>{r.pct}%</span>
+                                        </div>
+                                        <div style={{ height: 6, background: 'var(--border-light)', borderRadius: 3, overflow: 'hidden' }}>
+                                          <div style={{ height: '100%', width: `${Math.min(100, r.pct)}%`, background: pctCol, borderRadius: 3 }} />
+                                        </div>
+                                      </div>
+                                      <div style={{ textAlign: 'center', width: 38, flexShrink: 0 }}>
+                                        <div style={{ fontSize: 16, fontWeight: 900, color: gradeCol }}>{grade ? grade.grade : '—'}</div>
+                                      </div>
+                                      <div style={{ textAlign: 'center', width: 40, flexShrink: 0 }}>
+                                        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-secondary)' }}>{rankStr}</div>
+                                        <div style={{ fontSize: 8.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Pos.</div>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+                                        <Tooltip text="View result card">
+                                          <button
+                                            className="res-action-btn view"
+                                            onClick={() => { setRhCardMarks(null); loadCardOptions(true); setRhCardCtx({ student: st, result: r }); }}
+                                            style={{ padding: '6px 11px', fontSize: 11 }}
+                                          >
+                                            <i className="fa-solid fa-eye"></i> View
+                                          </button>
+                                        </Tooltip>
+                                        <Tooltip text="Download result card report">
+                                          <button
+                                            className="res-download-btn"
+                                            onClick={() => rhDownloadCardReport(st, r)}
+                                            style={{ width: 30, height: 30 }}
+                                          >
+                                            <i className="fa-solid fa-download"></i>
+                                          </button>
+                                        </Tooltip>
                                       </div>
                                     </div>
-                                    <div style={{ minWidth: 90, flex: 1, maxWidth: 160 }}>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 10, color: 'var(--text-muted)' }}>
-                                        <span>Score</span>
-                                        <span style={{ fontWeight: 700, color: pctCol }}>{r.pct}%</span>
-                                      </div>
-                                      <div style={{ height: 6, background: 'var(--border-light)', borderRadius: 3, overflow: 'hidden' }}>
-                                        <div style={{ height: '100%', width: `${Math.min(100, r.pct)}%`, background: pctCol, borderRadius: 3 }} />
-                                      </div>
-                                    </div>
-                                    <div style={{ textAlign: 'center', width: 38, flexShrink: 0 }}>
-                                      <div style={{ fontSize: 16, fontWeight: 900, color: gradeCol }}>{grade ? grade.grade : '—'}</div>
-                                    </div>
-                                    <div style={{ textAlign: 'center', width: 40, flexShrink: 0 }}>
-                                      <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-secondary)' }}>{rankStr}</div>
-                                      <div style={{ fontSize: 8.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Pos.</div>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
-                                      <Tooltip text="View result card">
-                                        <button
-                                          className="res-action-btn view"
-                                          onClick={() => { setRhCardMarks(null); loadCardOptions(true); setRhCardCtx({ student: st, result: r }); }}
-                                          style={{ padding: '6px 11px', fontSize: 11 }}
-                                        >
-                                          <i className="fa-solid fa-eye"></i> View
-                                        </button>
-                                      </Tooltip>
-                                      <Tooltip text="Download result card report">
-                                        <button
-                                          className="res-download-btn"
-                                          onClick={() => rhDownloadCardReport(st, r)}
-                                          style={{ width: 30, height: 30 }}
-                                        >
-                                          <i className="fa-solid fa-download"></i>
-                                        </button>
-                                      </Tooltip>
-                                    </div>
-                                  </div>
-                                );
-                              }))}
+                                  );
+                                }))}
                             </div>
                           </div>
 
@@ -6827,10 +6990,10 @@ onClick={async () => {
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                               {[
-                                { key:'history',    label:'Full Academic History', icon:'fa-file-invoice',   desc:'All exam results across classes & sessions', col:'#1E40AF', bg:'rgba(30,64,175,.07)' },
-                                { key:'progress',   label:'Progress Report',        icon:'fa-chart-line',     desc:'Performance trend & subject improvement',    col:'#7C3AED', bg:'rgba(124,58,237,.07)' },
-                                { key:'comparison', label:'Comparison Report',      icon:'fa-code-compare',   desc:'Exam vs exam comparison & grade movement',   col:'#D97706', bg:'rgba(217,119,6,.07)' },
-                                { key:'attendance', label:'Attendance Summary',     icon:'fa-calendar-check', desc:'Monthly attendance breakdown & status',      col:'#16A34A', bg:'rgba(22,163,74,.07)' },
+                                { key: 'history', label: 'Full Academic History', icon: 'fa-file-invoice', desc: 'All exam results across classes & sessions', col: '#1E40AF', bg: 'rgba(30,64,175,.07)' },
+                                { key: 'progress', label: 'Progress Report', icon: 'fa-chart-line', desc: 'Performance trend & subject improvement', col: '#7C3AED', bg: 'rgba(124,58,237,.07)' },
+                                { key: 'comparison', label: 'Comparison Report', icon: 'fa-code-compare', desc: 'Exam vs exam comparison & grade movement', col: '#D97706', bg: 'rgba(217,119,6,.07)' },
+                                { key: 'attendance', label: 'Attendance Summary', icon: 'fa-calendar-check', desc: 'Monthly attendance breakdown & status', col: '#16A34A', bg: 'rgba(22,163,74,.07)' },
                               ].map(item => (
                                 <div key={item.key} className="rh-report-card">
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
@@ -6969,17 +7132,17 @@ onClick={async () => {
                     {filtered.map(st => {
                       // Real summary (avg/best/trend/grade) jo background effect ne compute kiya;
                       // jab tak load na ho, seed st.results se fallback.
-                      const _sum  = rhStudentSummaries[st.id];
+                      const _sum = rhStudentSummaries[st.id];
                       const _base = studentCardSummary(st);
                       const avgPct = _sum ? _sum.avgPct : _base.avgPct;
-                      const best   = _sum ? _sum.best   : _base.best;
-                      const trend  = _sum ? _sum.trend  : _base.trend;
-                      const grade  = _sum ? _sum.grade  : _base.grade;
+                      const best = _sum ? _sum.best : _base.best;
+                      const trend = _sum ? _sum.trend : _base.trend;
+                      const grade = _sum ? _sum.grade : _base.grade;
                       const resultCount = _sum ? _sum.count : st.results.length;
                       const gradeCol = RS_GRADE_COLORS[grade] || '#1E40AF';
-                      const barCol   = avgPct >= 80 ? '#16A34A' : avgPct >= 60 ? '#D97706' : '#DC2626';
-                      const attCol   = st.attendance >= 90 ? '#16A34A' : st.attendance >= 75 ? '#D97706' : '#DC2626';
-                      const attBg    = st.attendance >= 90 ? 'rgba(22,163,74,.07)' : st.attendance >= 75 ? 'rgba(217,119,6,.07)' : 'rgba(220,38,38,.07)';
+                      const barCol = avgPct >= 80 ? '#16A34A' : avgPct >= 60 ? '#D97706' : '#DC2626';
+                      const attCol = st.attendance >= 90 ? '#16A34A' : st.attendance >= 75 ? '#D97706' : '#DC2626';
+                      const attBg = st.attendance >= 90 ? 'rgba(22,163,74,.07)' : st.attendance >= 75 ? 'rgba(217,119,6,.07)' : 'rgba(220,38,38,.07)';
                       const trendCol = trend === 'up' ? '#16A34A' : trend === 'down' ? '#DC2626' : '#64748B';
                       const trendLbl = trend === 'up' ? 'Improving' : trend === 'down' ? 'Declining' : 'Stable';
                       const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
@@ -7044,53 +7207,53 @@ onClick={async () => {
       <ExamModal
         data={editing}
         onClose={() => setEditing(null)}
-  onSave={handleSaveExam}
+        onSave={handleSaveExam}
         toast={toast}
-          selectedTermId={selectedTermId}  // Add this line
+        selectedTermId={selectedTermId}  // Add this line
 
       />
 
       {/* ── Delete confirm (Academics-style) ── */}
-{confirmDel && (
-  <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setConfirmDel(null); }}>
-    <div className="confirm-dialog">
-      <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
-      <div className="confirm-hero">
-        <div className="confirm-ring">
-          <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
-            <i className="fa-solid fa-trash"></i>
+      {confirmDel && (
+        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setConfirmDel(null); }}>
+          <div className="confirm-dialog">
+            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+            <div className="confirm-hero">
+              <div className="confirm-ring">
+                <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+                  <i className="fa-solid fa-trash"></i>
+                </div>
+              </div>
+            </div>
+            <div className="confirm-body">
+              <div className="confirm-title">Delete Exam?</div>
+              <div
+                className="confirm-msg"
+                dangerouslySetInnerHTML={{
+                  __html: `You are about to delete <strong>${confirmDel.name}</strong> and its associated data for <strong>${confirmDel.classes.length}</strong> class${confirmDel.classes.length !== 1 ? 'es' : ''}.`,
+                }}
+              />
+              <div className="confirm-hint">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                <span>This action cannot be undone.</span>
+              </div>
+            </div>
+            <div className="confirm-footer">
+              <Tooltip text="Cancel and close">
+                <button className="confirm-btn confirm-btn--cancel" onClick={() => setConfirmDel(null)}>Cancel</button>
+              </Tooltip>
+              <Tooltip text="Yes, Delete (confirm)">
+                <button
+                  className="confirm-btn confirm-btn--confirm"
+                  onClick={() => handleDeleteExam(confirmDel)}
+                >
+                  Yes, Delete
+                </button>
+              </Tooltip>
+            </div>
           </div>
         </div>
-      </div>
-      <div className="confirm-body">
-        <div className="confirm-title">Delete Exam?</div>
-        <div
-          className="confirm-msg"
-          dangerouslySetInnerHTML={{
-            __html: `You are about to delete <strong>${confirmDel.name}</strong> and its associated data for <strong>${confirmDel.classes.length}</strong> class${confirmDel.classes.length !== 1 ? 'es' : ''}.`,
-          }}
-        />
-        <div className="confirm-hint">
-          <i className="fa-solid fa-triangle-exclamation"></i>
-          <span>This action cannot be undone.</span>
-        </div>
-      </div>
-      <div className="confirm-footer">
-        <Tooltip text="Cancel and close">
-          <button className="confirm-btn confirm-btn--cancel" onClick={() => setConfirmDel(null)}>Cancel</button>
-        </Tooltip>
-        <Tooltip text="Yes, Delete (confirm)">
-          <button 
-            className="confirm-btn confirm-btn--confirm" 
-            onClick={() => handleDeleteExam(confirmDel)}
-          >
-            Yes, Delete
-          </button>
-        </Tooltip>
-      </div>
-    </div>
-  </div>
-)}
+      )}
       {/* ── Report style picker (Academics-style) ── */}
       {reportReq && (
         <ExamReportPicker
@@ -7114,84 +7277,84 @@ onClick={async () => {
       )}
 
       {/* ── Date Sheet — delete confirm (Academics-style) ── */}
-    {dsConfirmDel && (
-  <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmDel(null); }}>
-    <div className="confirm-dialog">
-      <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
-      <div className="confirm-hero">
-        <div className="confirm-ring">
-          <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
-            <i className="fa-solid fa-trash"></i>
+      {dsConfirmDel && (
+        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmDel(null); }}>
+          <div className="confirm-dialog">
+            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+            <div className="confirm-hero">
+              <div className="confirm-ring">
+                <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+                  <i className="fa-solid fa-trash"></i>
+                </div>
+              </div>
+            </div>
+            <div className="confirm-body">
+              <div className="confirm-title">Delete Date Sheet</div>
+              <div
+                className="confirm-msg"
+                dangerouslySetInnerHTML={{
+                  __html: `Are you sure you want to delete the date sheet for <strong>${dsConfirmDel.className}</strong>?`,
+                }}
+              />
+              <div className="confirm-hint">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                <span>This action cannot be undone. All subject schedule data will be lost.</span>
+              </div>
+            </div>
+            <div className="confirm-footer">
+              <Tooltip text="Cancel and close">
+                <button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmDel(null)}>Cancel</button>
+              </Tooltip>
+              <Tooltip text="Yes, Delete (confirm)">
+                <button
+                  className="confirm-btn confirm-btn--confirm"
+                  onClick={() => dsRunDelete(dsConfirmDel)}
+                >
+                  Yes, Delete
+                </button>
+              </Tooltip>
+            </div>
           </div>
         </div>
-      </div>
-      <div className="confirm-body">
-        <div className="confirm-title">Delete Date Sheet</div>
-        <div
-          className="confirm-msg"
-          dangerouslySetInnerHTML={{
-            __html: `Are you sure you want to delete the date sheet for <strong>${dsConfirmDel.className}</strong>?`,
-          }}
-        />
-        <div className="confirm-hint">
-          <i className="fa-solid fa-triangle-exclamation"></i>
-          <span>This action cannot be undone. All subject schedule data will be lost.</span>
-        </div>
-      </div>
-      <div className="confirm-footer">
-        <Tooltip text="Cancel and close">
-          <button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmDel(null)}>Cancel</button>
-        </Tooltip>
-        <Tooltip text="Yes, Delete (confirm)">
-          <button 
-            className="confirm-btn confirm-btn--confirm" 
-            onClick={() => dsRunDelete(dsConfirmDel)}
-          >
-            Yes, Delete
-          </button>
-        </Tooltip>
-      </div>
-    </div>
-  </div>
-)}
+      )}
 
       {/* ── Date Sheet — copy confirm (primary blue) ── */}
-{dsConfirmCopy && (
-  <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmCopy(null); }}>
-    <div className="confirm-dialog">
-      <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
-      <div className="confirm-hero" style={{ background: 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
-        <div className="confirm-ring">
-          <div className="confirm-icon-wrap" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF', boxShadow: '0 8px 24px rgba(30,58,138,.2)' }}>
-            <i className="fa-regular fa-copy"></i>
+      {dsConfirmCopy && (
+        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmCopy(null); }}>
+          <div className="confirm-dialog">
+            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+            <div className="confirm-hero" style={{ background: 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
+              <div className="confirm-ring">
+                <div className="confirm-icon-wrap" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF', boxShadow: '0 8px 24px rgba(30,58,138,.2)' }}>
+                  <i className="fa-regular fa-copy"></i>
+                </div>
+              </div>
+            </div>
+            <div className="confirm-body">
+              <div className="confirm-title">Copy to All Classes</div>
+              <div
+                className="confirm-msg"
+                dangerouslySetInnerHTML={{
+                  __html: `Copy date sheet subjects from <strong>${dsConfirmCopy.sourceClassName}</strong> to all <strong>${dsConfirmCopy.count} other class${dsConfirmCopy.count !== 1 ? 'es' : ''}</strong> in <strong>${dsConfirmCopy.examName}</strong>?<br/><br/>
+            <span style="font-size: 11px; color: var(--text-muted);">⚠️ A subject is copied to a class only if that class <strong>also has the same subject</strong>. Subjects already added are skipped.</span>`,
+                }}
+              />
+              <div className="confirm-hint" style={{ background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A' }}>
+                <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF' }}></i>
+                <span>Only matching subjects (same name) are copied; existing ones are not overwritten.</span>
+              </div>
+            </div>
+            <div className="confirm-footer">
+              <Tooltip text="Cancel and close">
+                <button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmCopy(null)}>Cancel</button>
+              </Tooltip>
+              <Tooltip text="Confirm copy (add missing subjects only)">
+                <button className="confirm-btn confirm-btn--confirm primary-style" onClick={dsRunCopy}>Yes, Copy Missing</button>
+              </Tooltip>
+            </div>
           </div>
         </div>
-      </div>
-      <div className="confirm-body">
-        <div className="confirm-title">Copy to All Classes</div>
-        <div
-          className="confirm-msg"
-          dangerouslySetInnerHTML={{
-            __html: `Copy date sheet subjects from <strong>${dsConfirmCopy.sourceClassName}</strong> to all <strong>${dsConfirmCopy.count} other class${dsConfirmCopy.count !== 1 ? 'es' : ''}</strong> in <strong>${dsConfirmCopy.examName}</strong>?<br/><br/>
-            <span style="font-size: 11px; color: var(--text-muted);">⚠️ A subject is copied to a class only if that class <strong>also has the same subject</strong>. Subjects already added are skipped.</span>`,
-          }}
-        />
-        <div className="confirm-hint" style={{ background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A' }}>
-          <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF' }}></i>
-          <span>Only matching subjects (same name) are copied; existing ones are not overwritten.</span>
-        </div>
-      </div>
-      <div className="confirm-footer">
-        <Tooltip text="Cancel and close">
-          <button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmCopy(null)}>Cancel</button>
-        </Tooltip>
-        <Tooltip text="Confirm copy (add missing subjects only)">
-          <button className="confirm-btn confirm-btn--confirm primary-style" onClick={dsRunCopy}>Yes, Copy Missing</button>
-        </Tooltip>
-      </div>
-    </div>
-  </div>
-)}
+      )}
 
       {/* ── Date Sheet — report picker (Academics-style) ── */}
       {dsReportReq && (
@@ -7209,30 +7372,30 @@ onClick={async () => {
       )}
 
       {/* ── Syllabus — edit modal ── */}
-     {sylEditing && (
-  <SylEditModal
-  ctx={sylEditing}
-  onClose={() => setSylEditing(null)}
-  onSave={sylSaveEdit}
-  onContentSaved={async () => {
-    const ed = sylEditing;
-    if (!ed || !sylReleased[ed.classKey] || !sylCurrentExam) return false;
-    try {
-      await postSylRelease(ed.classID, ed.sectionID, sylCurrentExam.selectExam, sylCurrentExam.termID ?? selectedTermId, false);
-      setSylReleased(prev => ({ ...prev, [ed.classKey]: false }));
-      return true;
-    } catch (e) {
-      console.error('Syllabus unpublish after edit failed:', e);
-      return false;
-    }
-  }}
-  toast={toast}
-  subjects={subjects}
-    examId={sylCurrentExam?.selectExam} 
-  term={selectedTermId}
-  fetchSubjectSyllabus={getExamSyllabusBySubject}
-/>
-)}
+      {sylEditing && (
+        <SylEditModal
+          ctx={sylEditing}
+          onClose={() => setSylEditing(null)}
+          onSave={sylSaveEdit}
+          onContentSaved={async () => {
+            const ed = sylEditing;
+            if (!ed || !sylReleased[ed.classKey] || !sylCurrentExam) return false;
+            try {
+              await postSylRelease(ed.classID, ed.sectionID, sylCurrentExam.selectExam, sylCurrentExam.termID ?? selectedTermId, false);
+              setSylReleased(prev => ({ ...prev, [ed.classKey]: false }));
+              return true;
+            } catch (e) {
+              console.error('Syllabus unpublish after edit failed:', e);
+              return false;
+            }
+          }}
+          toast={toast}
+          subjects={subjects}
+          examId={sylCurrentExam?.selectExam}
+          term={selectedTermId}
+          fetchSubjectSyllabus={getExamSyllabusBySubject}
+        />
+      )}
       {/* ── Syllabus — delete confirm ── */}
       {sylConfirmDel && (
         <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setSylConfirmDel(null); }}>
@@ -7340,55 +7503,55 @@ onClick={async () => {
       )}
 
       {/* ── Single Assessment — Update Marks modal ── */}
-  {resUpdateCtx && (() => {
-  const apiStudents = resStudentData[resUpdateCtx.key]?.students || [];
-  const st = apiStudents.find(s => s.id === resUpdateCtx.studentId);
-  if (!st) return null;
+      {resUpdateCtx && (() => {
+        const apiStudents = resStudentData[resUpdateCtx.key]?.students || [];
+        const st = apiStudents.find(s => s.id === resUpdateCtx.studentId);
+        if (!st) return null;
 
-  const modalStudent = {
-    id: st.id,
-    name: st.studentName,
-    father: st.fatherName,
-    rollNo: st.registrationNumber || '—',
-    obtained: {},
-    absentSubjects: [],
-    absent: false,
-    manualRemarks: {},
-    finalRemarks: '',
-  };
+        const modalStudent = {
+          id: st.id,
+          name: st.studentName,
+          father: st.fatherName,
+          rollNo: st.registrationNumber || '—',
+          obtained: {},
+          absentSubjects: [],
+          absent: false,
+          manualRemarks: {},
+          finalRemarks: '',
+        };
 
-  const modalCd = {
-    released: false,
-    totalMarks: {},
-    students: [modalStudent],
-  };
+        const modalCd = {
+          released: false,
+          totalMarks: {},
+          students: [modalStudent],
+        };
 
-  return (
-    <ResultUpdateMarksModal
-      cd={modalCd}
-      student={modalStudent}
-      subjects={resUpdateCtx.subjects || []}
-      grades={rsGrades}
-      // Yeh add karo ↓
-      resTotalMarksCtx={{
-        classID: resUpdateCtx.classID,
-        sectionID: resUpdateCtx.sectionID,
-        selectExam: resUpdateCtx.selectExam,
-      }}
-      selectedTermId={resUpdateCtx.termID}
-      onClose={() => setResUpdateCtx(null)}
-      onSave={payload => {
-        const ctx = resUpdateCtx;
-        toast('Marks saved!', 'success');
-        setResUpdateCtx(null);
-        // Marks save ke baad us class ka data GET APIs se dobara load karo (status/marks turant update).
-        if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
-      }}
-      absentMode={rsAbsentMode}
-      toast={toast}
-    />
-  );
-})()}
+        return (
+          <ResultUpdateMarksModal
+            cd={modalCd}
+            student={modalStudent}
+            subjects={resUpdateCtx.subjects || []}
+            grades={rsGrades}
+            // Yeh add karo ↓
+            resTotalMarksCtx={{
+              classID: resUpdateCtx.classID,
+              sectionID: resUpdateCtx.sectionID,
+              selectExam: resUpdateCtx.selectExam,
+            }}
+            selectedTermId={resUpdateCtx.termID}
+            onClose={() => setResUpdateCtx(null)}
+            onSave={payload => {
+              const ctx = resUpdateCtx;
+              toast('Marks saved!', 'success');
+              setResUpdateCtx(null);
+              // Marks save ke baad us class ka data GET APIs se dobara load karo (status/marks turant update).
+              if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
+            }}
+            absentMode={rsAbsentMode}
+            toast={toast}
+          />
+        );
+      })()}
 
       {resBulkUploadCtx && (
         <BulkMarksUploadModal
@@ -7419,8 +7582,8 @@ onClick={async () => {
         const { student, result } = rhCardCtx;
         // Modal hamesha khulta hai; data load hone tak card area mein loader (static/mock data NAHI).
         const cardLoading = !rhCardMarks;
-        
-        
+
+
         const cardStudent = {
           id: student.id,
           rollNo: student.rollNo,
@@ -7508,15 +7671,15 @@ onClick={async () => {
           photo: cbrCardMarks?.photo || rcPhotoFromRecord(st) || '',   // header ke circle me asli tasveer
           attendance: '—',
           _combined: {
-            grandTotal:   st.grandTotal,
-            grandObt:     st.grandObt,
-            ovPct:        st.pct,
-            mainExName:   grp.mainExam,
-            mainTotal:    st.mainTotal,
-            mainObt:      st.mainObt,
+            grandTotal: st.grandTotal,
+            grandObt: st.grandObt,
+            ovPct: st.pct,
+            mainExName: grp.mainExam,
+            mainTotal: st.mainTotal,
+            mainObt: st.mainObt,
             subBreakdown: st.subs,
-            rank:         rankNum,
-            rankSfx:      rankSfx,
+            rank: rankNum,
+            rankSfx: rankSfx,
           },
         };
         const cardRd = {
@@ -7551,9 +7714,11 @@ onClick={async () => {
       {cbrConfirmPublish && (
         <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setCbrConfirmPublish(null); }}>
           <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: cbrConfirmPublish.published
-              ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
-              : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+            <div className="confirm-glow" style={{
+              background: cbrConfirmPublish.published
+                ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+                : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)'
+            }} />
             <div className="confirm-hero">
               <div className="confirm-ring">
                 <div className="confirm-icon-wrap" style={{
@@ -7613,49 +7778,51 @@ onClick={async () => {
         const noun = kind === 'syllabus' ? 'syllabus' : 'date sheet';
         const Noun = kind === 'syllabus' ? 'Syllabus' : 'Date Sheet';
         return (
-        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsSylConfirmPublish(null); }}>
-          <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: released
-              ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
-              : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
-            <div className="confirm-hero">
-              <div className="confirm-ring">
-                <div className="confirm-icon-wrap" style={{
-                  background: released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
-                  color: released ? '#DC2626' : '#1E40AF',
-                }}>
-                  <i className={`fa-solid ${released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+          <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsSylConfirmPublish(null); }}>
+            <div className="confirm-dialog">
+              <div className="confirm-glow" style={{
+                background: released
+                  ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+                  : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)'
+              }} />
+              <div className="confirm-hero">
+                <div className="confirm-ring">
+                  <div className="confirm-icon-wrap" style={{
+                    background: released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
+                    color: released ? '#DC2626' : '#1E40AF',
+                  }}>
+                    <i className={`fa-solid ${released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="confirm-body">
-              <div className="confirm-title">{released ? `Unpublish ${Noun}?` : `Publish ${Noun}?`}</div>
-              <div className="confirm-msg" dangerouslySetInnerHTML={{
-                __html: released
-                  ? `Hide the ${noun} for <strong>${className}</strong> from students and parents?`
-                  : `Release the ${noun} for <strong>${className}</strong> to students and parents?`,
-              }} />
-              <div className="confirm-hint">
-                <i className="fa-solid fa-circle-info"></i>
-                <span>{released
-                  ? `Students and parents will lose access to this ${noun}.`
-                  : `Once published, this ${noun} will be visible on the student portal.`}
-                </span>
+              <div className="confirm-body">
+                <div className="confirm-title">{released ? `Unpublish ${Noun}?` : `Publish ${Noun}?`}</div>
+                <div className="confirm-msg" dangerouslySetInnerHTML={{
+                  __html: released
+                    ? `Hide the ${noun} for <strong>${className}</strong> from students and parents?`
+                    : `Release the ${noun} for <strong>${className}</strong> to students and parents?`,
+                }} />
+                <div className="confirm-hint">
+                  <i className="fa-solid fa-circle-info"></i>
+                  <span>{released
+                    ? `Students and parents will lose access to this ${noun}.`
+                    : `Once published, this ${noun} will be visible on the student portal.`}
+                  </span>
+                </div>
+              </div>
+              <div className="confirm-footer">
+                <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setDsSylConfirmPublish(null)}>Cancel</button></Tooltip>
+                <Tooltip text={released ? 'Confirm unpublish' : 'Confirm publish'}>
+                  <button
+                    className={`confirm-btn confirm-btn--confirm${released ? '' : ' primary-style'}`}
+                    onClick={handleDsSylConfirmPublish}
+                  >
+                    {released ? 'Yes, Unpublish' : 'Yes, Publish'}
+                  </button>
+                </Tooltip>
               </div>
             </div>
-            <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setDsSylConfirmPublish(null)}>Cancel</button></Tooltip>
-              <Tooltip text={released ? 'Confirm unpublish' : 'Confirm publish'}>
-                <button
-                  className={`confirm-btn confirm-btn--confirm${released ? '' : ' primary-style'}`}
-                  onClick={handleDsSylConfirmPublish}
-                >
-                  {released ? 'Yes, Unpublish' : 'Yes, Publish'}
-                </button>
-              </Tooltip>
-            </div>
           </div>
-        </div>
         );
       })()}
 
@@ -7734,15 +7901,84 @@ onClick={async () => {
           pLevels={pLevels}
           onClose={() => setPLevelPickCtx(null)}
           onConfirm={async levelId => {
-            const { key } = pLevelPickCtx;
-            const [freshTypes, freshLevels] = await Promise.all([
-              preschoolService.setClassAssessmentType(key, 'preschool'),
-              preschoolService.setClassPreschoolLevel(key, levelId),
-            ]);
-            setPClassTypes(freshTypes);
-            setPClassLevels(freshLevels);
-            toast('Class switched to Preschool / Montessori', 'success');
-            setPLevelPickCtx(null);
+            const { key, cls, exam, termID } = pLevelPickCtx;
+            const branchID = Number(sessionStorage.getItem('branchID') || 0);
+            const token = sessionStorage.getItem('token');
+            const level = pLevels.find(item =>
+              String(item.id ?? item.levelID ?? item.levelId) === String(levelId)
+            );
+            const levelName = String(
+              level?.name ?? level?.levelName ?? level?.className ?? level?.label ?? levelId
+            ).trim();
+            const payload = {
+              id: 0,
+              branchID,
+              termID: Number(exam?.termID ?? termID ?? selectedTermId),
+              selectExam: String(exam?.selectExam ?? ''),
+              classID: String(cls?.classID ?? cls?.gradeID ?? ''),
+              sectionID: String(cls?.sectionID ?? ''),
+              dateFrom: new Date().toISOString(),
+              dateTo: new Date().toISOString(),
+              isPreSchooling: true,
+              changePreSchoolingClassName: levelName,
+              action: 'save',
+            };
+            if (!payload.branchID || !payload.termID || !payload.selectExam ||
+              !payload.classID || !payload.sectionID || !levelName) {
+              toast('Missing exam, term, class, section, or preschool level details', 'error');
+              return;
+            }
+            try {
+              const response = await fetch(buildUrl('/api/addexam-preschooling-crud'), {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  Accept: '*/*',
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+              });
+              const responseText = await response.text();
+              let result = null;
+              try { result = responseText ? JSON.parse(responseText) : null; } catch { /* non-JSON response */ }
+              if (!response.ok || result?.success === false || result?.status === false) {
+                throw new Error(result?.message || result?.Message || responseText || 'Could not save preschool exam setup');
+              }
+
+              // ── NAYA HISSA ──
+              // Result Setup (Learning Areas / Grading Scale / SLOs / PSD fields) mein
+              // agar koi entry abhi tak save nahi hui, to class ko preschool lock karne
+              // se pehle sab kuch yahan save kar do — "Save Changes" button jo karta
+              // hai, wahi yahan resave kar dete hain.
+              try {
+                await Promise.all([
+                  preschoolService.saveLearningAreas(pLearningAreas, []),
+                  preschoolService.saveGradingScale(pGradingScale, {}),
+                  preschoolService.savePsdFields(pPsdFields, []),
+                  ...pLearningAreas.map(la =>
+                    preschoolService.saveSloStatements(levelId, la.id, pSlo[levelId]?.[la.id] || [], [])
+                  ),
+                ]);
+              } catch (setupErr) {
+                console.error('Could not auto-save preschool result setup:', setupErr);
+                // chahain to yahan toast bhi fire kar sakte hain, warning ke tor par
+              }
+              // ── NAYA HISSA KHATAM ──
+
+              // Save ho chuka hai backend pe — ab usi backend se fresh types/levels
+              // wapis le aao, taake UI aur DB hamesha sync rahein (mock mat use karo).
+              const [freshTypes, freshLevels] = await Promise.all([
+                preschoolService.setClassAssessmentType(key, 'preschool'),
+                preschoolService.setClassPreschoolLevel(key, levelId),
+              ]);
+              setPClassTypes(freshTypes);
+              setPClassLevels(freshLevels);
+              toast('Preschool exam setup saved', 'success');
+              setPLevelPickCtx(null);
+            } catch (error) {
+              console.error('Could not save preschool exam setup:', error);
+              toast(error.message || 'Could not save preschool exam setup', 'error');
+            }
           }}
         />
       )}
@@ -7750,7 +7986,7 @@ onClick={async () => {
       {pAssessCtx && (
         <PreschoolAssessmentModal
           assessment={{ name: pAssessCtx.examName, label: pAssessCtx.examName }}
-          cls={{ cls: pAssessCtx.className, sec: '' }}
+          cls={{ cls: pAssessCtx.className, sec: '', classID: pAssessCtx.classID, sectionID: pAssessCtx.sectionID }}
           student={pAssessCtx.student}
           existing={(pResultData[pAssessCtx.key]?.students || []).find(s => String(s.studentId) === String(pAssessCtx.student?.id)) || null}
           pLearningAreas={pLearningAreas}
@@ -7809,9 +8045,11 @@ onClick={async () => {
       {pConfirmPublish && (
         <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setPConfirmPublish(null); }}>
           <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: pConfirmPublish.released
-              ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
-              : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+            <div className="confirm-glow" style={{
+              background: pConfirmPublish.released
+                ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+                : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)'
+            }} />
             <div className="confirm-hero">
               <div className="confirm-ring">
                 <div className="confirm-icon-wrap" style={{
@@ -7882,306 +8120,310 @@ onClick={async () => {
       )}
 
       {/* ── Single Assessment — Final Remarks modal ── */}
-   {resRemarksCtx && (() => {
-  const apiStudents = resStudentData[resRemarksCtx.key]?.students || [];
-  const st = apiStudents.find(s => s.id === resRemarksCtx.studentId);
-  if (!st) return null;
+      {resRemarksCtx && (() => {
+        const apiStudents = resStudentData[resRemarksCtx.key]?.students || [];
+        const st = apiStudents.find(s => s.id === resRemarksCtx.studentId);
+        if (!st) return null;
 
-  const modalStudent = {
-    id: st.id,
-    name: st.studentName,
-    father: st.fatherName,
-    rollNo: st.registrationNumber || '—',
-    obtained: {},
-    absentSubjects: [],
-    absent: false,
-    finalRemarks: '',
-  };
-  const modalCd = {
-    released: false,
-    totalMarks: { ...RES_DEFAULT_TOTALS },
-    students: [modalStudent],
-  };
+        const modalStudent = {
+          id: st.id,
+          name: st.studentName,
+          father: st.fatherName,
+          rollNo: st.registrationNumber || '—',
+          obtained: {},
+          absentSubjects: [],
+          absent: false,
+          finalRemarks: '',
+        };
+        const modalCd = {
+          released: false,
+          totalMarks: { ...RES_DEFAULT_TOTALS },
+          students: [modalStudent],
+        };
 
-  return (
-<ResultRemarksModal
-  cd={modalCd}
-  student={modalStudent}
-  absentMode={rsAbsentMode}
-  existingRemark={resRemarksCtx.existingRemark}
-  remarksCtx={resRemarksCtx}
-  onClose={() => setResRemarksCtx(null)}
-  onSave={text => {
-    const ctx = resRemarksCtx;
-    toast('Final remarks saved!', 'success');
-    setResRemarksCtx(null);
-    // Remarks save ke baad us class ka data GET APIs se dobara load karo (turant update).
-    if (ctx?.key && ctx.classID && ctx.sectionID) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
-  }}
-/>
-  );
-})()}
+        return (
+          <ResultRemarksModal
+            cd={modalCd}
+            student={modalStudent}
+            absentMode={rsAbsentMode}
+            existingRemark={resRemarksCtx.existingRemark}
+            remarksCtx={resRemarksCtx}
+            onClose={() => setResRemarksCtx(null)}
+            onSave={text => {
+              const ctx = resRemarksCtx;
+              toast('Final remarks saved!', 'success');
+              setResRemarksCtx(null);
+              // Remarks save ke baad us class ka data GET APIs se dobara load karo (turant update).
+              if (ctx?.key && ctx.classID && ctx.sectionID) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
+            }}
+          />
+        );
+      })()}
 
       {/* ── Single Assessment — Card viewer ── */}
-{/* ── Single Assessment — Card viewer ── */}
-{resCardCtx && (() => {
-  const ex  = filtered.find(e => e.id === resCardCtx.examId);
-  const stu = resCardCtx.student;
+      {/* ── Single Assessment — Card viewer ── */}
+      {resCardCtx && (() => {
+        const ex = filtered.find(e => e.id === resCardCtx.examId);
+        const stu = resCardCtx.student;
 
-  if (!ex || !stu) return null;
+        if (!ex || !stu) return null;
 
-  // FIX 2 — Position/rank MARKS ONLY (attendance ignore). Backend rankings
-  // (updaterankings/getstudentsrankings) attendance factor karte the; ab yahan
-  // client-side, isi class ke students ko obtained marks par sort kar ke rank
-  // dete hain. getsauploadmarksbystudentbranchsum per-student pre-summed
-  // obtainedMarks deta hai (list wali obtMarks jaisi hi). Total sab ke liye same
-  // hota hai to obtained se sort karna hi kaafi hai; tie par naam se break.
-  // Standard competition ranking (barabar marks → same rank). 0/no-marks → no rank.
-  const classData  = resStudentData[resCardCtx.key] || {};
-  const clsStudents = classData.students || [];
-  const clsMarks    = classData.marks    || [];
-  // Position bhi SCOPED obtained par (list wali obtMarks jaisa) — mapped subjects ka
-  // sum. Scoped na mile to pre-summed obtainedMarks fallback.
-  const clsScopedObt   = classData.scopedObtained || null;
-  const clsScopedObtOk = !!classData.scopedObtainedOk && !!clsScopedObt;
-  const obtOf = (sid) => {
-    if (clsScopedObtOk) return Number(clsScopedObt[String(sid)]) || 0;
-    const m = clsMarks.find(mm => String(mm.studentID) === String(sid));
-    return m ? (Number(m.obtainedMarks) || 0) : 0;
-  };
-  const ranked = clsStudents
-    .map(s => ({ id: s.id, obt: obtOf(s.id), name: String(s.studentName || s.name || '') }))
-    .filter(s => s.obt > 0)
-    .sort((a, b) => (b.obt - a.obt) || a.name.localeCompare(b.name));
-  let posNum = 0;
-  let curRank = 0, prevObt = null;
-  for (let i = 0; i < ranked.length; i++) {
-    if (prevObt === null || ranked[i].obt !== prevObt) { curRank = i + 1; prevObt = ranked[i].obt; }
-    if (String(ranked[i].id) === String(stu.id)) { posNum = curRank; break; }
-  }
-  // Ordinal format jaisa baaqi code (1st/2nd/3rd/Nth). Rank na mile → '—'.
-  const realPosition = posNum
-    ? `${posNum}${posNum === 1 ? 'st' : posNum === 2 ? 'nd' : posNum === 3 ? 'rd' : 'th'}`
-    : '—';
+        // FIX 2 — Position/rank MARKS ONLY (attendance ignore). Backend rankings
+        // (updaterankings/getstudentsrankings) attendance factor karte the; ab yahan
+        // client-side, isi class ke students ko obtained marks par sort kar ke rank
+        // dete hain. getsauploadmarksbystudentbranchsum per-student pre-summed
+        // obtainedMarks deta hai (list wali obtMarks jaisi hi). Total sab ke liye same
+        // hota hai to obtained se sort karna hi kaafi hai; tie par naam se break.
+        // Standard competition ranking (barabar marks → same rank). 0/no-marks → no rank.
+        const classData = resStudentData[resCardCtx.key] || {};
+        const clsStudents = classData.students || [];
+        const clsMarks = classData.marks || [];
+        // Position bhi SCOPED obtained par (list wali obtMarks jaisa) — mapped subjects ka
+        // sum. Scoped na mile to pre-summed obtainedMarks fallback.
+        const clsScopedObt = classData.scopedObtained || null;
+        const clsScopedObtOk = !!classData.scopedObtainedOk && !!clsScopedObt;
+        const obtOf = (sid) => {
+          if (clsScopedObtOk) return Number(clsScopedObt[String(sid)]) || 0;
+          const m = clsMarks.find(mm => String(mm.studentID) === String(sid));
+          return m ? (Number(m.obtainedMarks) || 0) : 0;
+        };
+        const ranked = clsStudents
+          .map(s => ({ id: s.id, obt: obtOf(s.id), name: String(s.studentName || s.name || '') }))
+          .filter(s => s.obt > 0)
+          .sort((a, b) => (b.obt - a.obt) || a.name.localeCompare(b.name));
+        let posNum = 0;
+        let curRank = 0, prevObt = null;
+        for (let i = 0; i < ranked.length; i++) {
+          if (prevObt === null || ranked[i].obt !== prevObt) { curRank = i + 1; prevObt = ranked[i].obt; }
+          if (String(ranked[i].id) === String(stu.id)) { posNum = curRank; break; }
+        }
+        // Ordinal format jaisa baaqi code (1st/2nd/3rd/Nth). Rank na mile → '—'.
+        const realPosition = posNum
+          ? `${posNum}${posNum === 1 ? 'st' : posNum === 2 ? 'nd' : posNum === 3 ? 'rd' : 'th'}`
+          : '—';
 
-  const cardStudent = {
-    id:      stu.id,
-    rollNo:  stu.registrationNumber || stu.registrationNo || stu.rollNo || stu.id,
-    name:    stu.studentName || stu.name || stu.studentname || stu.StudentName
-             || stu.fullName || stu.student_name
-             || [stu.firstName, stu.lastName].filter(Boolean).join(' ')
-             || '',
-    father:  stu.fatherName || stu.father || stu.fatherrName || '',
+        const cardStudent = {
+          id: stu.id,
+          rollNo: stu.registrationNumber || stu.registrationNo || stu.rollNo || stu.id,
+          name: stu.studentName || stu.name || stu.studentname || stu.StudentName
+            || stu.fullName || stu.student_name
+            || [stu.firstName, stu.lastName].filter(Boolean).join(' ')
+            || '',
+          father: stu.fatherName || stu.father || stu.fatherrName || '',
 
-    position: realPosition,
+          position: realPosition,
 
-    obtained: resCardMarks?.obtained || {},
-    manualRemarks: resCardMarks?.remarks || {},
-    finalRemarks: resCardMarks?.finalRemark || '',
-    absentSubjects: resCardMarks?.absentSubjects || [],
-    photo: resCardMarks?.photo || rcPhotoFromRecord(stu) || '',   // header ke circle me asli tasveer
-    attendance: '—',
-  };
-  
-  const cardRd = {
-    released: false,
-    totalMarks: resCardMarks?.totals || {},   // sirf API data (koi static fallback nahi)
-    subjects: resCardMarks?.subjects || [],
-  };
-  const cardEx = { name: ex.name, classes: [resCardCtx.className || ''] };
-  return (
-    <ResultCardViewer
-      student={cardStudent}
-      rd={cardRd}
-      ex={cardEx}
-      school={branchSchool}
-      grades={rsGrades} remarks={rsRemarks}
-      template={rcTemplate}
-      rcoGeneral={rcoGeneral}
-      rcoSig={rcoSig}
-      rsSigs={rsSigs}
-      rsAbsentMode={rsAbsentMode}
-      onClose={() => setResCardCtx(null)}
-      toast={toast}
-      loading={!resCardMarks}
-      singleOnly
-      attnClassID={resCardCtx.classID}
-      attnSectionID={resCardCtx.sectionID}
-    />
-  );
-})()}
+          obtained: resCardMarks?.obtained || {},
+          manualRemarks: resCardMarks?.remarks || {},
+          finalRemarks: resCardMarks?.finalRemark || '',
+          absentSubjects: resCardMarks?.absentSubjects || [],
+          photo: resCardMarks?.photo || rcPhotoFromRecord(stu) || '',   // header ke circle me asli tasveer
+          attendance: '—',
+        };
+
+        const cardRd = {
+          released: false,
+          totalMarks: resCardMarks?.totals || {},   // sirf API data (koi static fallback nahi)
+          subjects: resCardMarks?.subjects || [],
+        };
+        const cardEx = { name: ex.name, classes: [resCardCtx.className || ''] };
+        return (
+          <ResultCardViewer
+            student={cardStudent}
+            rd={cardRd}
+            ex={cardEx}
+            school={branchSchool}
+            grades={rsGrades} remarks={rsRemarks}
+            template={rcTemplate}
+            rcoGeneral={rcoGeneral}
+            rcoSig={rcoSig}
+            rsSigs={rsSigs}
+            rsAbsentMode={rsAbsentMode}
+            onClose={() => setResCardCtx(null)}
+            toast={toast}
+            loading={!resCardMarks}
+            singleOnly
+            attnClassID={resCardCtx.classID}
+            attnSectionID={resCardCtx.sectionID}
+          />
+        );
+      })()}
 
       {/* ── Single Assessment — Total Marks edit modal ── */}
-     {/* ── Single Assessment — Total Marks edit modal ── */}
-{resTotalMarksCtx && (() => {
-  const cd = resultData[resTotalMarksCtx.examId]?.[resTotalMarksCtx.key]
-    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
-  return (
-    <ResultTotalMarksModal
-      cd={cd}
-      
-subjects={resTotalMarksCtx.subjects}
-      className={resTotalMarksCtx.className}
-      resTotalMarksCtx={resTotalMarksCtx}
-      selectedTermId={selectedTermId}
-      onClose={() => setResTotalMarksCtx(null)}
-      onSave={newTotals => {
-        const ctx = resTotalMarksCtx;
-        setResultData(prev => {
-          const next = { ...prev };
-          const examMap = { ...(next[ctx.examId] || {}) };
-          const oldCd = examMap[ctx.key] || cd;
-          examMap[ctx.key] = { ...oldCd, totalMarks: { ...newTotals } };
-          next[ctx.examId] = examMap;
-          return next;
-        });
-        toast('Total marks saved!', 'success');
-        setResTotalMarksCtx(null);
-        // Total marks save ke baad us class ka data GET APIs se dobara load karo (turant update).
-        if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
-      }}
-    />
-  );
-})()}
+      {/* ── Single Assessment — Total Marks edit modal ── */}
+      {resTotalMarksCtx && (() => {
+        const cd = resultData[resTotalMarksCtx.examId]?.[resTotalMarksCtx.key]
+          || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+        return (
+          <ResultTotalMarksModal
+            cd={cd}
+
+            subjects={resTotalMarksCtx.subjects}
+            className={resTotalMarksCtx.className}
+            resTotalMarksCtx={resTotalMarksCtx}
+            selectedTermId={selectedTermId}
+            onClose={() => setResTotalMarksCtx(null)}
+            onSave={newTotals => {
+              const ctx = resTotalMarksCtx;
+              setResultData(prev => {
+                const next = { ...prev };
+                const examMap = { ...(next[ctx.examId] || {}) };
+                const oldCd = examMap[ctx.key] || cd;
+                examMap[ctx.key] = { ...oldCd, totalMarks: { ...newTotals } };
+                next[ctx.examId] = examMap;
+                return next;
+              });
+              toast('Total marks saved!', 'success');
+              setResTotalMarksCtx(null);
+              // Total marks save ke baad us class ka data GET APIs se dobara load karo (turant update).
+              if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
+            }}
+          />
+        );
+      })()}
 
       {/* ── Single Assessment — Delete class confirm ── */}
-{resConfirmDelete && (() => {
-  // Find the selected exam to get the termID
-  const selectedExam = filtered.find(e => e.id === resConfirmDelete.examId);
-  const termId = selectedExam?.termID || selectedTermId;
-  
-  return (
-    <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmDelete(null); }}>
-      <div className="confirm-dialog">
-        <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
-        <div className="confirm-hero">
-          <div className="confirm-ring">
-            <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
-              <i className="fa-solid fa-trash"></i>
-            </div>
-          </div>
-        </div>
-        <div className="confirm-body">
-          <div className="confirm-title">Delete Class Result</div>
-          <div className="confirm-msg" dangerouslySetInnerHTML={{
-            __html: `Delete all result data for <strong>${resConfirmDelete.className}</strong>?`,
-          }} />
-          <div className="confirm-hint">
-            <i className="fa-solid fa-triangle-exclamation"></i>
-            <span>This will clear total marks, student marks and the release flag. This cannot be undone.</span>
-          </div>
-        </div>
-        <div className="confirm-footer">
-          <Tooltip text="Cancel and close">
-            <button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmDelete(null)}>Cancel</button>
-          </Tooltip>
-          <Tooltip text="Confirm delete">
-            <button
-              className="confirm-btn confirm-btn--confirm"
-              onClick={async () => {
-                try {
-                  // Find the class data from examClasses
-                  const classData = examClasses.find(c => 
-                    `${c.gradeName} - ${c.sectionName}` === resConfirmDelete.className
-                  );
-                  
-                  if (classData) {
-                    // Call the delete API
-                    const result = await deleteSingleAssessment(
-                      resConfirmDelete.examId,
-                      classData.classID,
-                      classData.sectionID,
-                      termId
-                    );
-                    
-                    if (result.success) {
-                      // Remove from local state
-                      setResultData(prev => {
-                        const next = { ...prev };
-                        if (next[resConfirmDelete.examId]) {
-                          const examMap = { ...next[resConfirmDelete.examId] };
-                          delete examMap[resConfirmDelete.key];
-                          next[resConfirmDelete.examId] = examMap;
-                        }
-                        return next;
-                      });
-                      // Add ki tarah GET APIs se fresh data laao (status/marks turant reset).
-                      loadResClassData(resConfirmDelete.key, { classID: classData.classID, sectionID: classData.sectionID }, true);
+      {resConfirmDelete && (() => {
+        // Find the selected exam to get the termID
+        const selectedExam = filtered.find(e => e.id === resConfirmDelete.examId);
+        const termId = selectedExam?.termID || selectedTermId;
 
-                      toast('Class result deleted successfully!', 'success');
-                    } else {
-                      toast('Failed to delete class result. Please try again.', 'error');
-                    }
-                  }
-                } catch (error) {
-                  console.error('Delete error:', error);
-                  toast('Error deleting class result', 'error');
-                }
-                setResConfirmDelete(null);
-              }}
-            >
-              Yes, Delete
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>
-  );
-})()}
-{resConfirmPublish && (() => {
-  const { key, className, released, cls } = resConfirmPublish;
-  return (
-    <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmPublish(null); }}>
-      <div className="confirm-dialog">
-        <div className="confirm-glow" style={{ background: released
-          ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
-          : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
-        <div className="confirm-hero" style={{ background: released
-          ? 'linear-gradient(180deg,rgba(220,38,38,.04),transparent)'
-          : 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
-          <div className="confirm-ring">
-            <div className="confirm-icon-wrap" style={{
-              background: released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
-              color: released ? '#DC2626' : '#1E40AF',
-            }}>
-              <i className={`fa-solid ${released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+        return (
+          <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmDelete(null); }}>
+            <div className="confirm-dialog">
+              <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+              <div className="confirm-hero">
+                <div className="confirm-ring">
+                  <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+                    <i className="fa-solid fa-trash"></i>
+                  </div>
+                </div>
+              </div>
+              <div className="confirm-body">
+                <div className="confirm-title">Delete Class Result</div>
+                <div className="confirm-msg" dangerouslySetInnerHTML={{
+                  __html: `Delete all result data for <strong>${resConfirmDelete.className}</strong>?`,
+                }} />
+                <div className="confirm-hint">
+                  <i className="fa-solid fa-triangle-exclamation"></i>
+                  <span>This will clear total marks, student marks and the release flag. This cannot be undone.</span>
+                </div>
+              </div>
+              <div className="confirm-footer">
+                <Tooltip text="Cancel and close">
+                  <button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmDelete(null)}>Cancel</button>
+                </Tooltip>
+                <Tooltip text="Confirm delete">
+                  <button
+                    className="confirm-btn confirm-btn--confirm"
+                    onClick={async () => {
+                      try {
+                        // Find the class data from examClasses
+                        const classData = examClasses.find(c =>
+                          `${c.gradeName} - ${c.sectionName}` === resConfirmDelete.className
+                        );
+
+                        if (classData) {
+                          // Call the delete API
+                          const result = await deleteSingleAssessment(
+                            resConfirmDelete.examId,
+                            classData.classID,
+                            classData.sectionID,
+                            termId
+                          );
+
+                          if (result.success) {
+                            // Remove from local state
+                            setResultData(prev => {
+                              const next = { ...prev };
+                              if (next[resConfirmDelete.examId]) {
+                                const examMap = { ...next[resConfirmDelete.examId] };
+                                delete examMap[resConfirmDelete.key];
+                                next[resConfirmDelete.examId] = examMap;
+                              }
+                              return next;
+                            });
+                            // Add ki tarah GET APIs se fresh data laao (status/marks turant reset).
+                            loadResClassData(resConfirmDelete.key, { classID: classData.classID, sectionID: classData.sectionID }, true);
+
+                            toast('Class result deleted successfully!', 'success');
+                          } else {
+                            toast('Failed to delete class result. Please try again.', 'error');
+                          }
+                        }
+                      } catch (error) {
+                        console.error('Delete error:', error);
+                        toast('Error deleting class result', 'error');
+                      }
+                      setResConfirmDelete(null);
+                    }}
+                  >
+                    Yes, Delete
+                  </button>
+                </Tooltip>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="confirm-body">
-          <div className="confirm-title">{released ? 'Unpublish Result?' : 'Publish Result?'}</div>
-          <div className="confirm-msg" dangerouslySetInnerHTML={{
-            __html: released
-              ? `Hide the result for <strong>${className}</strong> from students and parents?`
-              : `Release the result for <strong>${className}</strong> to students and parents?`,
-          }} />
-          <div className="confirm-hint" style={released ? undefined : {
-            background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A',
-          }}>
-            <i className={`fa-solid ${released ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} style={released ? undefined : { color: '#1E40AF' }}></i>
-            <span>{released
-              ? 'Students and parents will lose access to this result card.'
-              : 'Once published, this result will be visible on the student portal.'}
-            </span>
+        );
+      })()}
+      {resConfirmPublish && (() => {
+        const { key, className, released, cls } = resConfirmPublish;
+        return (
+          <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmPublish(null); }}>
+            <div className="confirm-dialog">
+              <div className="confirm-glow" style={{
+                background: released
+                  ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+                  : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)'
+              }} />
+              <div className="confirm-hero" style={{
+                background: released
+                  ? 'linear-gradient(180deg,rgba(220,38,38,.04),transparent)'
+                  : 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)'
+              }}>
+                <div className="confirm-ring">
+                  <div className="confirm-icon-wrap" style={{
+                    background: released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
+                    color: released ? '#DC2626' : '#1E40AF',
+                  }}>
+                    <i className={`fa-solid ${released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                  </div>
+                </div>
+              </div>
+              <div className="confirm-body">
+                <div className="confirm-title">{released ? 'Unpublish Result?' : 'Publish Result?'}</div>
+                <div className="confirm-msg" dangerouslySetInnerHTML={{
+                  __html: released
+                    ? `Hide the result for <strong>${className}</strong> from students and parents?`
+                    : `Release the result for <strong>${className}</strong> to students and parents?`,
+                }} />
+                <div className="confirm-hint" style={released ? undefined : {
+                  background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A',
+                }}>
+                  <i className={`fa-solid ${released ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} style={released ? undefined : { color: '#1E40AF' }}></i>
+                  <span>{released
+                    ? 'Students and parents will lose access to this result card.'
+                    : 'Once published, this result will be visible on the student portal.'}
+                  </span>
+                </div>
+              </div>
+              <div className="confirm-footer">
+                <Tooltip text="Cancel and close">
+                  <button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmPublish(null)}>Cancel</button>
+                </Tooltip>
+                <Tooltip text={released ? 'Confirm unpublish' : 'Confirm publish'}>
+                  <button
+                    className={`confirm-btn confirm-btn--confirm${released ? '' : ' primary-style'}`}
+                    onClick={handleConfirmPublish}
+                  >
+                    {released ? 'Yes, Unpublish' : 'Yes, Publish'}
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="confirm-footer">
-          <Tooltip text="Cancel and close">
-            <button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmPublish(null)}>Cancel</button>
-          </Tooltip>
-          <Tooltip text={released ? 'Confirm unpublish' : 'Confirm publish'}>
-            <button
-              className={`confirm-btn confirm-btn--confirm${released ? '' : ' primary-style'}`}
-              onClick={handleConfirmPublish}
-            >
-              {released ? 'Yes, Unpublish' : 'Yes, Publish'}
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>
-  );
-})()}
+        );
+      })()}
 
       <TutorialModal
         open={tutorialOpen}
@@ -8198,7 +8440,7 @@ subjects={resTotalMarksCtx.subjects}
    ═══════════════════════════════════════════════════════════════════ */
 function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
   const isEdit = !!data?.id || !!(data?.classes && data.classes.some(c => c.id));
-  
+
   const [name, setName] = useState('');
   const [allClasses, setAllClasses] = useState([]);
   const [classes, setCls] = useState([]);
@@ -8207,10 +8449,10 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
   const [search, setSearch] = useState('');
   const [dropOpen, setDropOpen] = useState(false);
   const [originalClassIds, setOriginalClassIds] = useState(new Set());
-  
+
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
-  
+
   // Track original classes for deletion detection
   useEffect(() => {
     if (data && data.classes && data.classes.length) {
@@ -8223,13 +8465,13 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
       setOriginalClassIds(new Set());
     }
   }, [data]);
-  
+
   useEffect(() => {
     if (data) {
       setName(data.name || '');
       setFrom(data.from ? data.from.split('T')[0] : '');
       setTo(data.to ? data.to.split('T')[0] : '');
-      
+
       if (data.classes && data.classes.length) {
         setCls(data.classes);
         const originalIds = new Set(data.classes.map(c => String(c.sectionID)));
@@ -8238,33 +8480,33 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
         setCls([]);
         setOriginalClassIds(new Set());
       }
-      
+
       setSearch('');
       setDropOpen(false);
-      
+
       getClasses(data.classes || []);
     }
   }, [data]);
-  
+
   useEffect(() => {
     if (!dropOpen) return;
-    
+
     const close = (e) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target)) {
         setDropOpen(false);
       }
     };
-    
+
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [dropOpen]);
-  
+
   async function getClasses(preselected) {
     try {
       const branchID = sessionStorage.getItem('branchID');
       const empID = sessionStorage.getItem('employee_ID');
       const token = sessionStorage.getItem('token');
-      
+
       const response = await fetch(
         buildUrl(`/api/getclassesbybranchinexamination?branchID=${branchID}&empID=${empID}`),
         {
@@ -8275,9 +8517,9 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
           }
         }
       );
-      
+
       const json = await response.json();
-      
+
       const mapped = (json.data || json || []).map(item => ({
         classID: item.gradeID,
         sectionID: item.sectionID,
@@ -8285,9 +8527,9 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
         gradeName: item.name || item.gradeName || '',
         className: `${item.name} - ${item.sectionName}`
       }));
-      
+
       setAllClasses(mapped);
-      
+
       if (preselected && preselected.length) {
         const normalized = preselected
           .map(pc => {
@@ -8311,7 +8553,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
             };
           })
           .filter(Boolean);
-        
+
         setCls(normalized);
       } else {
         setCls([]);
@@ -8320,17 +8562,17 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
       console.log("Could not load classes", error);
     }
   }
-  
+
   const removeCls = (c) =>
     setCls(arr => arr.filter(x => String(x.sectionID) !== String(c.sectionID)));
-  
+
   const toggleCls = (c) =>
     setCls(arr =>
       arr.some(x => String(x.sectionID) === String(c.sectionID))
         ? arr.filter(x => String(x.sectionID) !== String(c.sectionID))
         : [...arr, c]
     );
-  
+
   const submit = async () => {
     if (!name.trim()) {
       toast('Enter exam name', 'warning');
@@ -8351,7 +8593,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
     const branchID = sessionStorage.getItem('branchID');
     const token = sessionStorage.getItem('token');
     const currentClassIds = new Set(classes.map(c => String(c.sectionID)));
-    
+
     // Determine which classes were removed
     const removedClassIds = [];
     if (isEdit && originalClassIds.size > 0) {
@@ -8361,7 +8603,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
         }
       }
     }
-    
+
     // Delete removed classes
     if (removedClassIds.length > 0) {
       try {
@@ -8381,23 +8623,23 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
           }
           return null;
         });
-        
+
         await Promise.all(deletePromises);
         console.log(`Deleted ${removedClassIds.length} class(es)`);
       } catch (error) {
         console.log("Error deleting classes:", error);
       }
     }
-    
+
     // Prepare payloads for insert and update
     const insertPayloads = [];
     const updatePayloads = [];
-    
+
     for (const c of classes) {
       const existingClass = data?.classes?.find(
         existing => String(existing.sectionID) === String(c.sectionID)
       );
-      
+
       const payload = {
         action: existingClass && existingClass.id ? "update" : "insert",
         id: existingClass?.id || 0,
@@ -8414,41 +8656,41 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
         dateTo: to ? new Date(to).toISOString() : '',
         createdOn: new Date().toISOString()
       };
-      
+
       if (existingClass && existingClass.id) {
         updatePayloads.push(payload);
       } else {
         insertPayloads.push(payload);
       }
     }
-    
+
     // Combine all payloads
     const allPayloads = [...insertPayloads, ...updatePayloads];
-    
+
     if (allPayloads.length === 0) {
       toast('No changes to save', 'info');
       onClose();
       return;
     }
-    
+
     // Call onSave with all payloads
-    onSave({ 
-      payloads: allPayloads, 
-      name: name.trim(), 
-      from, 
-      to, 
+    onSave({
+      payloads: allPayloads,
+      name: name.trim(),
+      from,
+      to,
       classes: [...classes],
       deletedCount: removedClassIds.length
     });
   };
-  
+
   if (!data) return null;
-  
+
   const dropOptions = allClasses.filter(c =>
     !search ||
     c.className.toLowerCase().includes(search.toLowerCase())
   );
-  
+
   return (
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="exam-modal">
@@ -8464,7 +8706,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
           </div>
           <Tooltip text="Close"><button className="exam-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
-        
+
         <div className="exam-modal-body">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
             <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
@@ -8501,9 +8743,8 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
                   dropOptions.map(c => (
                     <div
                       key={c.sectionID}
-                      className={`exam-class-option${
-                        classes.some(x => String(x.sectionID) === String(c.sectionID)) ? ' selected' : ''
-                      }`}
+                      className={`exam-class-option${classes.some(x => String(x.sectionID) === String(c.sectionID)) ? ' selected' : ''
+                        }`}
                       onMouseDown={e => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -8516,7 +8757,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
                 )}
               </div>
             </div>
-            
+
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Exam Name <span className="req-star">*</span></label>
               <div className="exam-name-field">
@@ -8525,7 +8766,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
               </div>
             </div>
           </div>
-          
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Start Date</label>
@@ -8560,7 +8801,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
             </div>
           </div>
         </div>
-        
+
         <div className="exam-modal-footer">
           <Tooltip text="Cancel and close">
             <button className="exam-cancel-btn" onClick={onClose}>
@@ -8581,9 +8822,9 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
    REPORT STYLE PICKER — opens new tab with the chosen-style PDF
    ═══════════════════════════════════════════════════════════════════ */
 function ExamReportPicker({ req, exams, term, branchSchool, onClose }) {
-  const isAll  = req.scope === 'all';
+  const isAll = req.scope === 'all';
   const target = isAll ? null : exams.find(e => e.id === req.scope);
-  const name   = isAll ? `${term} Term — All Exams` : (target?.name || 'Exam Report');
+  const name = isAll ? `${term} Term — All Exams` : (target?.name || 'Exam Report');
 
   // Format default us button se aata hai jisse picker khula (PDF ya Word).
   return (
@@ -8612,70 +8853,70 @@ function DsEditModal({ ctx, onClose, onSave, toast }) {
   const updateRow = (idx, key, val) => setRows(rs => rs.map((r, i) => i === idx ? { ...r, [key]: val } : r));
   const addRow = () => setRows(rs => [...rs, { subject: '', date: '', timeFrom: '', timeTo: '' }]);
   const requestRemove = idx => setPendingRemoveIdx(idx);
-const confirmRemove = async () => {
-  if (pendingRemoveIdx == null) return;
+  const confirmRemove = async () => {
+    if (pendingRemoveIdx == null) return;
 
-  const row = rows[pendingRemoveIdx];
+    const row = rows[pendingRemoveIdx];
 
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
 
-    const requestPayload = {
-      id: row.id,
-      branchID: Number(branchID),
-      classID: Number(ctx.classID),
-      sectionID: Number(ctx.sectionID),
-      examID: Number(ctx.examId),
-      termID: ctx.termID,
-          subjectName: row.subject,      // ← Add subject name
-      date: row.date,                // ← Add date
-      timeFrom: row.timeFrom,        // ← Add timeFrom
-      timeTo: row.timeTo,
-      action: "delete"
-    };
+      const requestPayload = {
+        id: row.id,
+        branchID: Number(branchID),
+        classID: Number(ctx.classID),
+        sectionID: Number(ctx.sectionID),
+        examID: Number(ctx.examId),
+        termID: ctx.termID,
+        subjectName: row.subject,      // ← Add subject name
+        date: row.date,                // ← Add date
+        timeFrom: row.timeFrom,        // ← Add timeFrom
+        timeTo: row.timeTo,
+        action: "delete"
+      };
 
-    const res = await fetch(buildUrl('/api/datesheetcrud'), {
-      method: 'POST',   // (if backend supports DELETE, better; otherwise POST is fine)
-      headers: {
-        Authorization: `Bearer ${sessionStorage.getItem('token')}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json'
-      },
-      body: JSON.stringify(requestPayload)
-    });
+      const res = await fetch(buildUrl('/api/datesheetcrud'), {
+        method: 'POST',   // (if backend supports DELETE, better; otherwise POST is fine)
+        headers: {
+          Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(requestPayload)
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    if (!res.ok) {
-      toast('Failed to delete subject', 'error');
-      return;
+      if (!res.ok) {
+        toast('Failed to delete subject', 'error');
+        return;
+      }
+
+      // UI se remove only after success
+      setRows(rs => rs.filter((_, i) => i !== pendingRemoveIdx));
+      setPendingRemoveIdx(null);
+
+      toast('Subject deleted successfully', 'success');
+
+    } catch (err) {
+      console.error(err);
+      toast('Error deleting subject', 'error');
     }
-
-    // UI se remove only after success
-    setRows(rs => rs.filter((_, i) => i !== pendingRemoveIdx));
-    setPendingRemoveIdx(null);
-
-    toast('Subject deleted successfully', 'success');
-
-  } catch (err) {
-    console.error(err);
-    toast('Error deleting subject', 'error');
-  }
-};
-const save = () => {
-  const payload = {
-    ...ctx,
-    rows: rows.map(r => ({
-      id: r.id || 0,  // ← Add this line to preserve the ID
-      subject: (r.subject || '').trim(),
-      date: r.date || '',
-      timeFrom: r.timeFrom || '',
-      timeTo: r.timeTo || '',
-    })),
   };
-  onSave(payload);
-};
+  const save = () => {
+    const payload = {
+      ...ctx,
+      rows: rows.map(r => ({
+        id: r.id || 0,  // ← Add this line to preserve the ID
+        subject: (r.subject || '').trim(),
+        date: r.date || '',
+        timeFrom: r.timeFrom || '',
+        timeTo: r.timeTo || '',
+      })),
+    };
+    onSave(payload);
+  };
   return (
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="exam-modal ds-edit-modal">
@@ -8820,16 +9061,16 @@ function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose }) {
 async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchSchool }, isColor, format = 'pdf') {
   const isAll = classKey === 'all';
 
- let w = null;
-if (format === 'pdf') {
-  w = window.open('', '_blank', 'width=960,height=820');
-  if (!w) return;
-  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
-}
+  let w = null;
+  if (format === 'pdf') {
+    w = window.open('', '_blank', 'width=960,height=820');
+    if (!w) return;
+    w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+  }
 
   /* Real branch header (name / academic year) from the /report-header/{branchId}
      API (saved in branchSchool) — rendered by the shared report-kit header. */
-  const bs         = branchSchool || {};
+  const bs = branchSchool || {};
   const dsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const dsFmtDate = dsFmtDateDisplay;
 
@@ -8844,8 +9085,8 @@ if (format === 'pdf') {
   const fetchDs = async (cls) => {
     try {
       const branchID = sessionStorage.getItem('branchID');
-      const empID    = sessionStorage.getItem('employee_ID');
-      const token    = sessionStorage.getItem('token');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
       const params = new URLSearchParams({
         branchID: String(branchID), classID: String(cls.classID), termID: String(ex.termID ?? ''),
         ExamID: String(ex.selectExam ?? ex.id), sectionID: String(cls.sectionID), empID: String(empID),
@@ -8855,7 +9096,7 @@ if (format === 'pdf') {
       const data = await r.json();
       // const rows = Array.isArray(data) ? data : (data?.data || []);
       // return rows.map(dsMapApiRow);
-    const rows = Array.isArray(data) ? data : (data?.data || []);
+      const rows = Array.isArray(data) ? data : (data?.data || []);
 
       return rows
         .map(dsMapApiRow)
@@ -8871,7 +9112,7 @@ if (format === 'pdf') {
       return [];
     }
   };
-    const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
+  const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
 
   /* Two coordinated palettes:
      • Colorful: brand blue header, blue-tinted accent rows.
@@ -8879,10 +9120,10 @@ if (format === 'pdf') {
        borders, NO row striping (rowEv = white), no colored accent.
      The header/footer chrome itself comes from the shared report kit. */
   const aColor = isColor ? '#1E40AF' : '#374151';
-  const aBg    = isColor ? '#EFF6FF' : '#FFFFFF';
-  const aBdr   = isColor ? '#BFDBFE' : '#D1D5DB';
+  const aBg = isColor ? '#EFF6FF' : '#FFFFFF';
+  const aBdr = isColor ? '#BFDBFE' : '#D1D5DB';
   const tMuted = isColor ? '#64748B' : '#4B5563';
-  const rowEv  = isColor ? '#F8FAFF' : '#FFFFFF';
+  const rowEv = isColor ? '#F8FAFF' : '#FFFFFF';
 
   const classBlocks = blocks.map(({ cls, rows }) => {
     if (!cls) return '';
@@ -8922,11 +9163,11 @@ if (format === 'pdf') {
   const bodyHtml = `${EXAM_KIT_TABLE_CSS}
     <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;margin-bottom:16px;overflow:hidden">
       ${[
-        ['Term', term],
-        ['Exam', ex.name],
-        ['Classes', String(targetClasses.length)],
-        ['Period', `${dsFmtDate(ex.from)} → ${dsFmtDate(ex.to)}`],
-      ].map(([k, v]) => `
+      ['Term', term],
+      ['Exam', ex.name],
+      ['Classes', String(targetClasses.length)],
+      ['Period', `${dsFmtDate(ex.from)} → ${dsFmtDate(ex.to)}`],
+    ].map(([k, v]) => `
         <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
           <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
@@ -9042,7 +9283,7 @@ function SylRteEditor({ html, onChange, placeholder }) {
   };
   const execAlign = (cmd) => {
     if (!restoreSelection()) return;
-    try { document.execCommand('styleWithCSS', false, true); } catch (err) {}
+    try { document.execCommand('styleWithCSS', false, true); } catch (err) { }
     document.execCommand(cmd, false, null);
     saveSelection();
     emit();
@@ -9104,8 +9345,8 @@ function SylRteEditor({ html, onChange, placeholder }) {
     if (mode === 'inline') { img.style.display = 'inline'; img.style.marginLeft = ''; img.style.marginRight = ''; }
     else {
       img.style.display = 'block';
-      img.style.marginLeft  = (mode === 'center' || mode === 'right') ? 'auto' : '0';
-      img.style.marginRight = (mode === 'center' || mode === 'left')  ? 'auto' : '0';
+      img.style.marginLeft = (mode === 'center' || mode === 'right') ? 'auto' : '0';
+      img.style.marginRight = (mode === 'center' || mode === 'left') ? 'auto' : '0';
     }
     setImgTick(t => t + 1); emit();
   };
@@ -9215,7 +9456,7 @@ function SylRteEditor({ html, onChange, placeholder }) {
 }
 
 function SylEditModal({ ctx, onClose, onSave, onContentSaved, toast, subjects: externalSubjects = [], examId, term, fetchSubjectSyllabus }) {
-const [localSubjects, setLocalSubjects] = useState(() => {
+  const [localSubjects, setLocalSubjects] = useState(() => {
     if (externalSubjects && externalSubjects.length) {
       return externalSubjects.map(s => ({
         subjectID: s.subjectID,                      // ← explicitly preserve
@@ -9231,113 +9472,113 @@ const [localSubjects, setLocalSubjects] = useState(() => {
   const [activeIdx, setActiveIdx] = useState(0);
 
   const loadSubjectSyllabus = async (subjectObj, idx) => {
-  if (!fetchSubjectSyllabus || !subjectObj) return;
+    if (!fetchSubjectSyllabus || !subjectObj) return;
 
-  const data = await fetchSubjectSyllabus(
-    ctx.classID,
-    ctx.sectionID,
-    subjectObj.subjectID,
-    examId,
-    term
-  );
+    const data = await fetchSubjectSyllabus(
+      ctx.classID,
+      ctx.sectionID,
+      subjectObj.subjectID,
+      examId,
+      term
+    );
 
-  if (data && data.length) {
-    const incoming = data[0];
+    if (data && data.length) {
+      const incoming = data[0];
 
-    setLocalSubjects(ss =>
-      ss.map((s, i) =>
-        i === idx
-          ? {
+      setLocalSubjects(ss =>
+        ss.map((s, i) =>
+          i === idx
+            ? {
               ...s,
               id: incoming.id,
               syllabusID: incoming.syllabusID,
               content: incoming.subjectDetails || '',
               updatedAt: incoming.updatedAt || s.updatedAt
             }
-          : s
-      )
-    );
-  }
-};
+            : s
+        )
+      );
+    }
+  };
   const saveSubject = async (goNext = false) => {
-  if (!cur) return;
+    if (!cur) return;
 
-  const plainText = (cur.content || '').replace(/<[^>]+>/g, '').trim();
+    const plainText = (cur.content || '').replace(/<[^>]+>/g, '').trim();
 
-  if (!plainText) {
-    toast('Please add content first.', 'warning');
-    return;
-  }
-
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-const isUpdate = cur?.id > 0;
-
-const payload = {
-  id: isUpdate ? cur.id : 0,
-  syllabusID: cur?.syllabusID || 0,
-  imagePath: "string",
-  examID: examId,
-  branchID: branchID,
-  classID: String(ctx.classID),
-  className:  "",
-  sectionID: ctx.sectionID,
-  sectionName: ctx.sectionName || "",
-  terms: String(term),
-  termName: "",
-  subjectName: String(cur.subjectID),
-  subjectDisplayName: cur.subjectName,
-  subjectDetails: cur.content,
-  action: isUpdate ? "update" : "insert",
-  imagePaths: ["string"]
-};
-    const response = await fetch(
-      buildUrl('/api/examsyllabuscrud'),
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || 'Failed to save syllabus');
+    if (!plainText) {
+      toast('Please add content first.', 'warning');
+      return;
     }
 
-    const unpublished = typeof onContentSaved === 'function' ? !!(await onContentSaved()) : false;
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      const isUpdate = cur?.id > 0;
 
-    if (goNext) {
-      toast(unpublished
-        ? 'Syllabus saved. It is unpublished — publish again to show the changes.'
-        : 'Syllabus saved successfully.', 'success');
-      const next = (activeIdx + 1) % localSubjects.length;
-      setActiveIdx(next);
+      const payload = {
+        id: isUpdate ? cur.id : 0,
+        syllabusID: cur?.syllabusID || 0,
+        imagePath: "string",
+        examID: examId,
+        branchID: branchID,
+        classID: String(ctx.classID),
+        className: "",
+        sectionID: ctx.sectionID,
+        sectionName: ctx.sectionName || "",
+        terms: String(term),
+        termName: "",
+        subjectName: String(cur.subjectID),
+        subjectDisplayName: cur.subjectName,
+        subjectDetails: cur.content,
+        action: isUpdate ? "update" : "insert",
+        imagePaths: ["string"]
+      };
+      const response = await fetch(
+        buildUrl('/api/examsyllabuscrud'),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
 
-      if (localSubjects[next]) {
-        loadSubjectSyllabus(localSubjects[next]);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to save syllabus');
       }
-    } else {
-      onSave(localSubjects);
-    }
-  } catch (err) {
-    console.error(err);
-    toast(err.message || 'Failed to save syllabus', 'error');
-  }
-};
 
-useEffect(() => {
-  if (localSubjects.length) {
-    loadSubjectSyllabus(localSubjects[0], 0);
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [localSubjects.length]);
+      const unpublished = typeof onContentSaved === 'function' ? !!(await onContentSaved()) : false;
+
+      if (goNext) {
+        toast(unpublished
+          ? 'Syllabus saved. It is unpublished — publish again to show the changes.'
+          : 'Syllabus saved successfully.', 'success');
+        const next = (activeIdx + 1) % localSubjects.length;
+        setActiveIdx(next);
+
+        if (localSubjects[next]) {
+          loadSubjectSyllabus(localSubjects[next]);
+        }
+      } else {
+        onSave(localSubjects);
+      }
+    } catch (err) {
+      console.error(err);
+      toast(err.message || 'Failed to save syllabus', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (localSubjects.length) {
+      loadSubjectSyllabus(localSubjects[0], 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localSubjects.length]);
   // Second useEffect — externalSubjects merge, subjectID explicitly preserve karo
   useEffect(() => {
     if (externalSubjects && externalSubjects.length) {
@@ -9366,12 +9607,12 @@ useEffect(() => {
     setLocalSubjects(ss => ss.map((s, i) => i === activeIdx ? { ...s, content: htmlVal } : s));
   };
 
-const saveAndNext = () => {
-  saveSubject(true);
-};
-const save = () => {
-  saveSubject(false);
-};
+  const saveAndNext = () => {
+    saveSubject(true);
+  };
+  const save = () => {
+    saveSubject(false);
+  };
   return (
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="exam-modal syl-edit-modal" style={{ maxWidth: 860 }}>
@@ -9389,20 +9630,20 @@ const save = () => {
         <div className="exam-modal-body" style={{ paddingTop: 18 }}>
           {/* Subject tabs */}
           <div className="syl-subj-tabs">
-         {localSubjects.map((s, i) => (
-  <button
-    key={s.subjectID || i}
-    className={`syl-subj-tab${i === activeIdx ? ' active' : ''}`}
-    onClick={() => {
-        console.log('clicked subject:', s);   // subjectID dikh raha hai ya nahi
+            {localSubjects.map((s, i) => (
+              <button
+                key={s.subjectID || i}
+                className={`syl-subj-tab${i === activeIdx ? ' active' : ''}`}
+                onClick={() => {
+                  console.log('clicked subject:', s);   // subjectID dikh raha hai ya nahi
 
-      setActiveIdx(i);
-      loadSubjectSyllabus(s, i);
-    }}
-  >
-    {s.subjectName}
-  </button>
-))}
+                  setActiveIdx(i);
+                  loadSubjectSyllabus(s, i);
+                }}
+              >
+                {s.subjectName}
+              </button>
+            ))}
           </div>
 
           {cur && (
@@ -9434,25 +9675,25 @@ const save = () => {
             </button>
           </Tooltip>
           <Tooltip text="Save and move to the next class">
-           <button
-  className="exam-cancel-btn"
-  style={{ borderColor: '#1E40AF', color: '#1E40AF' }}
-  onClick={saveAndNext}
->
-  <i className="fa-solid fa-arrow-right"></i>
-  Save & Next
-</button>
+            <button
+              className="exam-cancel-btn"
+              style={{ borderColor: '#1E40AF', color: '#1E40AF' }}
+              onClick={saveAndNext}
+            >
+              <i className="fa-solid fa-arrow-right"></i>
+              Save & Next
+            </button>
 
           </Tooltip>
           <Tooltip text="Save and close">
 
-<button
-  className="exam-submit-btn"
-  onClick={save}
->
-  <i className="fa-solid fa-check"></i>
-  Save & Close
-</button>
+            <button
+              className="exam-submit-btn"
+              onClick={save}
+            >
+              <i className="fa-solid fa-check"></i>
+              Save & Close
+            </button>
           </Tooltip>
         </div>
       </div>
@@ -9496,7 +9737,7 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
   }
 
   /* Real branch header (name / academic year) from /report-header (branchSchool) — shared report-kit header. */
-  const bs         = branchSchool || {};
+  const bs = branchSchool || {};
   const sEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   // Target classes: 'all' → saari; warna classKey (scls_examId_sectionID_i) ki sectionID wali class.
@@ -9512,8 +9753,8 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
   const fetchSyl = async (cls) => {
     try {
       const branchID = sessionStorage.getItem('branchID');
-      const empID    = sessionStorage.getItem('employee_ID');
-      const token    = sessionStorage.getItem('token');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
       const params = new URLSearchParams({
         branchID: String(branchID), classID: String(cls.classID), Terms: String(ex.termID ?? ''),
         ExamID: String(ex.selectExam ?? ex.id), sectionID: String(cls.sectionID), pageNo: '1', empID: String(empID),
@@ -9544,21 +9785,21 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
   // Report mein asal term name (API se) dikhao; na mile to passed term, warna exam ka term.
   const termLabel = resolvedTermName || term || ex.term || '';
   const aColor = isColor ? '#1E40AF' : '#374151';
-  const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
-  const aBdr   = isColor ? '#BFDBFE' : '#DDD';
+  const aBg = isColor ? '#EFF6FF' : '#F5F5F5';
+  const aBdr = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
-  const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
-  const okC    = isColor ? '#16A34A' : '#333';
-  const noC    = isColor ? '#D97706' : '#777';
+  const rowEv = isColor ? '#F8FAFF' : '#F7F7F7';
+  const okC = isColor ? '#16A34A' : '#333';
+  const noC = isColor ? '#D97706' : '#777';
 
   const classBlocks = blocks.map(({ cls, rows }) => {
     if (!cls) return '';
     const rowsHtml = rows.length ? rows.map((s, si) => {
       const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
-      const added    = plainAll.length > 0;
+      const added = plainAll.length > 0;
       // Rich-text content ko AS-IS (HTML) render karo — bullets/bold/headings/math preserve hon.
-      const plain    = added ? `<div class="syl-rep-html">${s.content}</div>` : '—';
-      const sc       = added ? okC : noC;
+      const plain = added ? `<div class="syl-rep-html">${s.content}</div>` : '—';
+      const sc = added ? okC : noC;
       return `
         <tr style="background:${si % 2 === 0 ? '#fff' : rowEv}">
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr};vertical-align:top">${si + 1}</td>
@@ -9643,10 +9884,10 @@ td,th{overflow-wrap:break-word;word-break:normal}
     <div class="syl-report-body">
     <div class="syl-meta-grid" style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;margin-bottom:16px;overflow:hidden">
       ${[
-        ['Term', termLabel],
-        ['Exam', ex.name],
-        ['Classes', String(targetClasses.length)],
-      ].map(([k, v]) => `
+      ['Term', termLabel],
+      ['Exam', ex.name],
+      ['Classes', String(targetClasses.length)],
+    ].map(([k, v]) => `
         <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
           <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
@@ -9689,10 +9930,10 @@ function TemplateHero({ id, large = false }) {
           <div style={{ width: large ? 36 : 20, height: large ? 36 : 20, borderRadius: '50%', background: 'rgba(255,255,255,.2)', border: '1.5px solid rgba(255,255,255,.35)' }} />
         </div>
         <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 8 }}>
-          {[0,1,2].map(i => <div key={i} style={{ height: large ? 5 : 3, borderRadius: 2, background: 'rgba(255,255,255,.5)' }} />)}
+          {[0, 1, 2].map(i => <div key={i} style={{ height: large ? 5 : 3, borderRadius: 2, background: 'rgba(255,255,255,.5)' }} />)}
         </div>
         <div style={{ position: 'relative', background: 'rgba(255,255,255,.1)', borderRadius: 4, overflow: 'hidden' }}>
-          {[0,1,2].map(rowI => (
+          {[0, 1, 2].map(rowI => (
             <div key={rowI} style={{ display: 'flex', gap: 4, padding: large ? '6px 9px' : (rowI === 0 ? '3px 5px' : '2px 5px'), background: rowI === 0 ? 'rgba(255,255,255,.12)' : 'transparent', borderBottom: rowI < 2 ? '1px solid rgba(255,255,255,.06)' : 'none' }}>
               <div style={{ height: large ? 4 : 2.5, borderRadius: 1, background: `rgba(255,255,255,${rowI === 0 ? 0.7 : 0.5})`, flex: 2 }} />
               <div style={{ height: large ? 4 : 2.5, borderRadius: 1, background: `rgba(255,255,255,${rowI === 0 ? 0.5 : 0.35})`, flex: 1 }} />
@@ -9759,7 +10000,7 @@ function TemplateHero({ id, large = false }) {
           </div>
           <div style={{ height: large ? 60 : 30, background: 'rgba(255,255,255,.06)', borderRadius: 2, padding: '2px 3px' }}>
             {[1, .8, 1, .7].map((w, i) => (
-              <div key={i} style={{ height: 2, background: `rgba(255,255,255,${[0.5,0.35,0.35,0.25][i]})`, borderRadius: 1, marginBottom: 2, width: `${w*100}%` }} />
+              <div key={i} style={{ height: 2, background: `rgba(255,255,255,${[0.5, 0.35, 0.35, 0.25][i]})`, borderRadius: 1, marginBottom: 2, width: `${w * 100}%` }} />
             ))}
           </div>
           <div style={{ marginTop: 3, display: 'flex', gap: 2 }}>
@@ -9803,23 +10044,23 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 
   /* Sample sirf preview par; asli card par khali shapes (see EMPTY_RC_*). */
   const st = student || (preview ? SAMPLE_RC_STUDENT : EMPTY_RC_STUDENT);
-  const rd = rdProp  || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
-  const ex = exProp  || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
+  const rd = rdProp || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
+  const ex = exProp || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
   const isCombined = mode === 'combined';
   const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
   // Color palette (Color version)
-  const accent     = '#1E40AF';
-  const accentBg   = '#EFF6FF';
-  const accentBdr  = '#BFDBFE';
-  const hdrBg      = 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)';
-  const hdrBar     = 'linear-gradient(90deg,#1E3A8A,#2563EB,#93C5FD)';
-  const textPri    = '#0F172A';
-  const textSec    = '#1E40AF';
-  const textMut    = '#64748B';
-  const rowAlt     = '#F8FAFF';
+  const accent = '#1E40AF';
+  const accentBg = '#EFF6FF';
+  const accentBdr = '#BFDBFE';
+  const hdrBg = 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)';
+  const hdrBar = 'linear-gradient(90deg,#1E3A8A,#2563EB,#93C5FD)';
+  const textPri = '#0F172A';
+  const textSec = '#1E40AF';
+  const textMut = '#64748B';
+  const rowAlt = '#F8FAFF';
   const successCol = '#16A34A';
-  const warnCol    = '#D97706';
+  const warnCol = '#D97706';
 
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -9834,35 +10075,35 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
 
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
-  const obtAll   = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
-  const ovPct    = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+  const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
+  const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
     ? cb.ovPct
     : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
+  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
   // ye ovPct ke barabar hota hai.
-  const gtPct    = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
-  const gtGrade  = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
+  const gtPct = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const gtGrade = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
+  const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
 
-  const absBg    = 'rgba(217,119,6,.09)';
-  const absBdr   = 'rgba(217,119,6,.25)';
-  const absCol   = '#B45309';
+  const absBg = 'rgba(217,119,6,.09)';
+  const absBdr = 'rgba(217,119,6,.25)';
+  const absCol = '#B45309';
   const absRowBg = 'rgba(251,191,36,.06)';
 
   const gradeChipColor = g => {
     if (!g) return '#475569';
     if (g.grade === 'A+') return '#16A34A';
-    if (g.grade === 'A')  return '#15803D';
-    if (g.grade === 'B')  return '#1D4ED8';
-    if (g.grade === 'C')  return '#B45309';
+    if (g.grade === 'A') return '#15803D';
+    if (g.grade === 'B') return '#1D4ED8';
+    if (g.grade === 'C') return '#B45309';
     return '#B91C1C';
   };
 
@@ -9874,10 +10115,10 @@ const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim
   const thCenter = { ...thBase, textAlign: 'center' };
 
   const sumItems = [];
-  if (opt['Show Percentage'])        sumItems.push({ label: 'Overall %',        val: `${ovPct}%`,                col: accent });
-  if (opt['Show Grade'])             sumItems.push({ label: 'Grade',             val: ovGrade ? ovGrade.grade : '—', col: successCol });
-  if (opt['Show Position in Class']) sumItems.push({ label: 'Position in Class', val: position,                  col: warnCol });
-  if (opt['Show Attendance'])        sumItems.push({ label: 'Attendance',        val: st.attendance || '—',      col: successCol });
+  if (opt['Show Percentage']) sumItems.push({ label: 'Overall %', val: `${ovPct}%`, col: accent });
+  if (opt['Show Grade']) sumItems.push({ label: 'Grade', val: ovGrade ? ovGrade.grade : '—', col: successCol });
+  if (opt['Show Position in Class']) sumItems.push({ label: 'Position in Class', val: position, col: warnCol });
+  if (opt['Show Attendance']) sumItems.push({ label: 'Attendance', val: st.attendance || '—', col: successCol });
 
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
@@ -9904,7 +10145,7 @@ const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim
         </div>
         {(opt['Show Student Photo'] || st.photo) && (
           <RcAvatar src={st.photo} initials={initials} size={54} fontSize={19} color="#fff"
-                    bg="rgba(255,255,255,.2)" border="2px solid rgba(255,255,255,.4)" />
+            bg="rgba(255,255,255,.2)" border="2px solid rgba(255,255,255,.4)" />
         )}
       </div>
       <div style={{ height: 3, background: hdrBar }} />
@@ -9949,10 +10190,10 @@ const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim
               <tr style={{ background: accentBg }}>
                 <th style={thBase}>Sn.</th>
                 {opt['Show Subject-wise Marks'] && <th style={thBase}>Subject</th>}
-                {opt['Show Total Marks']        && <th style={thCenter}>Total</th>}
-                {opt['Show Obtained Marks']     && <th style={thCenter}>Obtained</th>}
-                {opt['Show Percentage']         && <th style={thCenter}>%</th>}
-                {opt['Show Grade']              && <th style={thCenter}>Grade</th>}
+                {opt['Show Total Marks'] && <th style={thCenter}>Total</th>}
+                {opt['Show Obtained Marks'] && <th style={thCenter}>Obtained</th>}
+                {opt['Show Percentage'] && <th style={thCenter}>%</th>}
+                {opt['Show Grade'] && <th style={thCenter}>Grade</th>}
                 <th style={thBase}>Comment</th>
               </tr>
             </thead>
@@ -9962,31 +10203,31 @@ const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim
                 const tot = rd.totalMarks[s] ?? 0;
                 const obt = isAbs ? 0 : (st.obtained[s] || 0);
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
-                const g   = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
+                const g = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
                 // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
                 // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
-// getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
-// Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
-// Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
+                // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
+                // Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
+                // Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
 
 
-//alasad school k liye ha  sirf 
-// const mc  = (!isAbs ? ((st.manualRemarks
-// 
+                //alasad school k liye ha  sirf 
+                // const mc  = (!isAbs ? ((st.manualRemarks
+                // 
 
 
 
 
-// const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);&& st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
-              
-const autoCmt = (grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment);
-const manualCmt = rcUseAutoComment() ? '' : (st.manualRemarks && st.manualRemarks[s]);
-const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);
+                // const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);&& st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
+
+                const autoCmt = (grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment);
+                const manualCmt = rcUseAutoComment() ? '' : (st.manualRemarks && st.manualRemarks[s]);
+                const mc = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);
 
 
-const gcol = gradeChipColor(g);
+                const gcol = gradeChipColor(g);
                 const bg = (i % 2 === 0 ? '#fff' : rowAlt);
-                const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
+                const tdBase = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
                 const tdCenter = { ...tdBase, textAlign: 'center' };
                 return (
                   <tr key={`${i}-${s}`} style={{ background: bg }}>
@@ -10075,20 +10316,20 @@ const gcol = gradeChipColor(g);
                           <i className="fa-solid fa-layer-group" style={{ fontSize: 9, marginRight: 4 }}></i>
                           {sb.name} <span style={{ fontSize: 9, fontWeight: 400, color: textMut }}>(Sub Exam)</span>
                         </td>
-                        {opt['Show Total Marks']    && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10.5, color: textMut }}>{sb.origT}</td>}
+                        {opt['Show Total Marks'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10.5, color: textMut }}>{sb.origT}</td>}
                         {opt['Show Obtained Marks'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10.5, color: textMut }}>{sb.subObt}</td>}
-                        {opt['Show Percentage']     && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10, color: '#7C3AED', fontWeight: 700 }}>{cpct}%</td>}
-                        {opt['Show Grade']          && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10, color: '#7C3AED', fontWeight: 700 }}>{sb.conv}/{sb.weight}</td>}
+                        {opt['Show Percentage'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10, color: '#7C3AED', fontWeight: 700 }}>{cpct}%</td>}
+                        {opt['Show Grade'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10, color: '#7C3AED', fontWeight: 700 }}>{sb.conv}/{sb.weight}</td>}
                         <td style={{ padding: '4px 8px', fontSize: 9.5, color: textMut }}>Converted: {sb.conv}/{sb.weight}</td>
                       </tr>
                     );
                   })}
                   <tr style={{ background: 'rgba(22,163,74,.07)' }}>
                     <td colSpan={1 + (opt['Show Subject-wise Marks'] ? 1 : 0)} style={{ padding: '5px 8px', fontSize: 10.5, fontWeight: 800, color: successCol, borderTop: '1.5px solid rgba(22,163,74,.15)' }}>Grand Total</td>
-                    {opt['Show Total Marks']    && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.grandTotal}</td>}
+                    {opt['Show Total Marks'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.grandTotal}</td>}
                     {opt['Show Obtained Marks'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: successCol }}>{cb.grandObt}</td>}
-                    {opt['Show Percentage']     && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.ovPct}%</td>}
-                    {opt['Show Grade']          && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 900, color: successCol }}>{(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade || '—'}</td>}
+                    {opt['Show Percentage'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.ovPct}%</td>}
+                    {opt['Show Grade'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 900, color: successCol }}>{(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade || '—'}</td>}
                     <td style={{ padding: '5px 8px', fontSize: 9, color: textMut }}>{cb.mainExName} + sub exams</td>
                   </tr>
                 </>
@@ -10155,22 +10396,22 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 
   /* Sample sirf preview par; asli card par khali shapes (see EMPTY_RC_*). */
   const st = student || (preview ? SAMPLE_RC_STUDENT : EMPTY_RC_STUDENT);
-  const rd = rdProp  || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
-  const ex = exProp  || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
+  const rd = rdProp || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
+  const ex = exProp || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
   const isCombined = mode === 'combined';
   const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
-  const accent     = '#1E40AF';
-  const accentBg   = '#EFF6FF';
-  const accentBdr  = '#BFDBFE';
-  const hdrBg      = 'linear-gradient(135deg,#1E3A8A,#1E40AF)';
-  const hdrBar     = 'linear-gradient(90deg,#7C3AED,#1E40AF,#38BDF8)';
-  const textPri    = '#0F172A';
-  const textMut    = '#64748B';
-  const grn        = '#16A34A';
-  const amb        = '#D97706';
-  const red        = '#DC2626';
-  const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const accent = '#1E40AF';
+  const accentBg = '#EFF6FF';
+  const accentBdr = '#BFDBFE';
+  const hdrBg = 'linear-gradient(135deg,#1E3A8A,#1E40AF)';
+  const hdrBar = 'linear-gradient(90deg,#7C3AED,#1E40AF,#38BDF8)';
+  const textPri = '#0F172A';
+  const textMut = '#64748B';
+  const grn = '#16A34A';
+  const amb = '#D97706';
+  const red = '#DC2626';
+  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
   const useZeroMode = rsAbsentMode === 'zero';
@@ -10182,29 +10423,29 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
-  const obtAll   = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
-  const ovPct    = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+  const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
+  const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
     ? cb.ovPct
     : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
+  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
   // ye ovPct ke barabar hota hai.
-  const gtPct    = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
-  const gtGrade  = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
+  const gtPct = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const gtGrade = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
+  const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
-  const barPalette = ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'];
+  const barPalette = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#DC2626', '#0891B2', '#EA580C', '#059669', '#9333EA', '#B45309'];
   const subjData = subjects.map((s, i) => {
     const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
-    const g   = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
+    const g = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
     const col = barPalette[i % barPalette.length];
     const pctCol = isAbs ? textMut : pct >= 80 ? grn : pct >= 60 ? amb : red;
     return { s, tot, obt, pct, g, isAbs, col, pctCol };
@@ -10212,17 +10453,17 @@ const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim
 
   const gcol = g => {
     if (!g) return '#94A3B8';
-    const m = { 'A+':'#16A34A','A':'#15803D','B':'#1D4ED8','C':'#B45309','D':'#EA580C','F':'#DC2626' };
+    const m = { 'A+': '#16A34A', 'A': '#15803D', 'B': '#1D4ED8', 'C': '#B45309', 'D': '#EA580C', 'F': '#DC2626' };
     return m[g.grade] || '#475569';
   };
 
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
   const summaryItems = [];
-  if (opt['Show Percentage'])        summaryItems.push({ label: 'Overall', val: `${ovPct}%`,                col: accent, bg: '#EFF6FF', bdr: '#BFDBFE' });
-  if (opt['Show Grade'] && ovGrade)  summaryItems.push({ label: 'Grade',   val: ovGrade.grade,              col: grn,    bg: '#F0FDF4', bdr: '#BBF7D0' });
-  if (opt['Show Position in Class']) summaryItems.push({ label: 'Position',val: position,                   col: amb,    bg: '#FFFBEB', bdr: '#FDE68A' });
-  if (opt['Show Attendance'])        summaryItems.push({ label: 'Attendance', val: st.attendance || '—',    col: '#7C3AED', bg: '#FAF5FF', bdr: '#DDD8FE' });
+  if (opt['Show Percentage']) summaryItems.push({ label: 'Overall', val: `${ovPct}%`, col: accent, bg: '#EFF6FF', bdr: '#BFDBFE' });
+  if (opt['Show Grade'] && ovGrade) summaryItems.push({ label: 'Grade', val: ovGrade.grade, col: grn, bg: '#F0FDF4', bdr: '#BBF7D0' });
+  if (opt['Show Position in Class']) summaryItems.push({ label: 'Position', val: position, col: amb, bg: '#FFFBEB', bdr: '#FDE68A' });
+  if (opt['Show Attendance']) summaryItems.push({ label: 'Attendance', val: st.attendance || '—', col: '#7C3AED', bg: '#FAF5FF', bdr: '#DDD8FE' });
 
   return (
     <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 24px rgba(0,0,0,.08)' }}>
@@ -10243,7 +10484,7 @@ const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim
         </div>
         {(opt['Show Student Photo'] || st.photo) && (
           <RcAvatar src={st.photo} initials={initials} size={50} fontSize={17} color="#fff"
-                    bg="rgba(255,255,255,.15)" border="2px solid rgba(255,255,255,.35)" />
+            bg="rgba(255,255,255,.15)" border="2px solid rgba(255,255,255,.35)" />
         )}
       </div>
       <div style={{ height: 3, background: hdrBar }} />
@@ -10401,28 +10642,28 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
   /* Sample sirf preview par; asli card par khali shapes (see EMPTY_RC_*). */
   const st = student || (preview ? SAMPLE_RC_STUDENT : EMPTY_RC_STUDENT);
-  const rd = rdProp  || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
-  const ex = exProp  || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
+  const rd = rdProp || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
+  const ex = exProp || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
   const isCombined = mode === 'combined';
   const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
   const C = {
-    p1bg:  'linear-gradient(150deg,#1A0533 0%,#2D1B69 40%,#1A3A5C 100%)',
+    p1bg: 'linear-gradient(150deg,#1A0533 0%,#2D1B69 40%,#1A3A5C 100%)',
     p1bar: 'linear-gradient(90deg,#D97706,#F59E0B,#D97706)',
     p2hdr: 'linear-gradient(135deg,#1E3A8A,#1E40AF)',
-    acc:   '#D97706', accL: '#FEF3C7', accBdr: 'rgba(217,119,6,.22)',
-    blu:   '#1E40AF', bluL: '#EFF6FF', bluBdr: '#BFDBFE',
-    pur:   '#7C3AED', purL: '#F5F3FF', purBdr: 'rgba(124,58,237,.22)',
-    grn:   '#16A34A', grnL: '#F0FDF4', grnBdr: 'rgba(22,163,74,.22)',
-    red:   '#DC2626',
+    acc: '#D97706', accL: '#FEF3C7', accBdr: 'rgba(217,119,6,.22)',
+    blu: '#1E40AF', bluL: '#EFF6FF', bluBdr: '#BFDBFE',
+    pur: '#7C3AED', purL: '#F5F3FF', purBdr: 'rgba(124,58,237,.22)',
+    grn: '#16A34A', grnL: '#F0FDF4', grnBdr: 'rgba(22,163,74,.22)',
+    red: '#DC2626',
     textP: '#0F172A', textS: '#374151', textM: '#64748B',
-    rowA:  '#fff',    rowB:  '#F8FAFF',
-    bdr:   '#E2E8F0',
-    sigBdr:'#CBD5E1',
-    bars:  ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'],
+    rowA: '#fff', rowB: '#F8FAFF',
+    bdr: '#E2E8F0',
+    sigBdr: '#CBD5E1',
+    bars: ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#DC2626', '#0891B2', '#EA580C', '#059669', '#9333EA', '#B45309'],
   };
 
-  const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
   const useZeroMode = rsAbsentMode === 'zero';
@@ -10434,75 +10675,75 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
-  const obtAll   = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
-  const ovPct    = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+  const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
+  const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
     ? cb.ovPct
     : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
+  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
   // ye ovPct ke barabar hota hai.
-  const gtPct    = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
-  const gtGrade  = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
+  const gtPct = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const gtGrade = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
+  const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const subjData = subjects.map((s, i) => {
     const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
-    const g   = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
+    const g = (!isAbs && obt > 0) ? ((grades && grades.length) ? rcGradeByScale(pct, grades) : rcGetGrade(obt, tot)) : null;
     // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
     // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
-// getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
-// Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
-// Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
-// const mc  = (!isAbs ? ((st.manualRemarks
+    // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
+    // Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
+    // Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
+    // const mc  = (!isAbs ? ((st.manualRemarks
 
-// al asad schoolk loye 
-const autoCmt = (grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment);
-const manualCmt = rcUseAutoComment() ? '' : (st.manualRemarks && st.manualRemarks[s]);
-const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);    return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
+    // al asad schoolk loye 
+    const autoCmt = (grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment);
+    const manualCmt = rcUseAutoComment() ? '' : (st.manualRemarks && st.manualRemarks[s]);
+    const mc = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40); return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
-const position = opt['Show Position in Class']
-  ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—'))
-  : '—';
+  const position = opt['Show Position in Class']
+    ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—'))
+    : '—';
   const gCol = g => {
     if (!g) return '#94A3B8';
-    const m = { 'A+':'#16A34A','A':'#15803D','B':'#1D4ED8','C':'#B45309','D':'#EA580C','F':'#DC2626' };
+    const m = { 'A+': '#16A34A', 'A': '#15803D', 'B': '#1D4ED8', 'C': '#B45309', 'D': '#EA580C', 'F': '#DC2626' };
     return m[g.grade] || '#475569';
   };
 
   const sorted = subjData
-  .filter(d => !d.isAbs)
-  .sort((a, b) => b.pct - a.pct);
+    .filter(d => !d.isAbs)
+    .sort((a, b) => b.pct - a.pct);
 
 
-// Top Subjects: only 90%+
-const strengths = sorted
-  .filter(d => d.pct >= 90)
-  .slice(0, 3);
+  // Top Subjects: only 90%+
+  const strengths = sorted
+    .filter(d => d.pct >= 90)
+    .slice(0, 3);
 
 
-// Need Attention: below 70%
-const improvements = sorted
-  .filter(d => d.pct < 70)
-  .slice(0, 3);
+  // Need Attention: below 70%
+  const improvements = sorted
+    .filter(d => d.pct < 70)
+    .slice(0, 3);
 
   const tilesEnabled = [];
-  if (opt['Show Percentage'])        tilesEnabled.push({ icon: 'fa-chart-line',     label: 'Overall %', val: `${ovPct}%`,         col: C.blu, bg: C.bluL, bdr: C.bluBdr });
-  if (opt['Show Grade'] && ovGrade)  tilesEnabled.push({ icon: 'fa-star',           label: 'Grade',     val: ovGrade.grade,       col: C.grn, bg: C.grnL, bdr: C.grnBdr });
-  if (opt['Show Position in Class']) tilesEnabled.push({ icon: 'fa-trophy',         label: 'Position',  val: position,            col: C.acc, bg: C.accL, bdr: C.accBdr });
-  if (opt['Show Attendance'])        tilesEnabled.push({ icon: 'fa-calendar-check', label: 'Attendance',val: st.attendance || '—',col: C.pur, bg: C.purL, bdr: C.purBdr });
+  if (opt['Show Percentage']) tilesEnabled.push({ icon: 'fa-chart-line', label: 'Overall %', val: `${ovPct}%`, col: C.blu, bg: C.bluL, bdr: C.bluBdr });
+  if (opt['Show Grade'] && ovGrade) tilesEnabled.push({ icon: 'fa-star', label: 'Grade', val: ovGrade.grade, col: C.grn, bg: C.grnL, bdr: C.grnBdr });
+  if (opt['Show Position in Class']) tilesEnabled.push({ icon: 'fa-trophy', label: 'Position', val: position, col: C.acc, bg: C.accL, bdr: C.accBdr });
+  if (opt['Show Attendance']) tilesEnabled.push({ icon: 'fa-calendar-check', label: 'Attendance', val: st.attendance || '—', col: C.pur, bg: C.purL, bdr: C.purBdr });
 
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
   const span = 1 + (opt['Show Subject-wise Marks'] ? 1 : 0);
 
   const thBase = { padding: '5px 8px', fontSize: 9, fontWeight: 700, color: C.blu, textAlign: 'left', textTransform: 'uppercase', letterSpacing: '.4px', borderBottom: `2px solid ${C.bluBdr}` };
-  const thC    = { ...thBase, textAlign: 'center' };
+  const thC = { ...thBase, textAlign: 'center' };
 
   return (
     <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto' }}>
@@ -10541,8 +10782,8 @@ const improvements = sorted
         <div style={{ padding: '16px 28px 22px', display: 'flex', alignItems: 'center', gap: 18, position: 'relative' }}>
           {(opt['Show Student Photo'] || st.photo) && (
             <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color="rgba(255,255,255,.85)"
-                      bg="rgba(255,255,255,.12)" border="3px solid rgba(255,255,255,.3)"
-                      extraStyle={{ boxShadow: '0 4px 16px rgba(0,0,0,.25)' }} />
+              bg="rgba(255,255,255,.12)" border="3px solid rgba(255,255,255,.3)"
+              extraStyle={{ boxShadow: '0 4px 16px rgba(0,0,0,.25)' }} />
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: '-.02em', marginBottom: 6 }}>{st.name}</div>
@@ -10599,10 +10840,10 @@ const improvements = sorted
             <tr style={{ background: C.bluL }}>
               <th style={thBase}>#</th>
               {opt['Show Subject-wise Marks'] && <th style={thBase}>Subject</th>}
-              {opt['Show Total Marks']        && <th style={thC}>Total</th>}
-              {opt['Show Obtained Marks']     && <th style={thC}>Marks</th>}
-              {opt['Show Percentage']         && <th style={thC}>%</th>}
-              {opt['Show Grade']              && <th style={thC}>Grade</th>}
+              {opt['Show Total Marks'] && <th style={thC}>Total</th>}
+              {opt['Show Obtained Marks'] && <th style={thC}>Marks</th>}
+              {opt['Show Percentage'] && <th style={thC}>%</th>}
+              {opt['Show Grade'] && <th style={thC}>Grade</th>}
               <th style={thBase}>Remark</th>
             </tr>
           </thead>
@@ -10653,10 +10894,10 @@ const improvements = sorted
             })}
             <tr style={{ background: C.bluL }}>
               <td colSpan={span} style={{ padding: '6px 8px', fontSize: 10.5, fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>Grand Total</td>
-              {opt['Show Total Marks']    && <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{totalAll}</td>}
+              {opt['Show Total Marks'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{totalAll}</td>}
               {opt['Show Obtained Marks'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{obtAll}</td>}
-              {opt['Show Percentage']     && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.grn, borderTop: `2px solid ${C.bluBdr}` }}>{gtPct}%</td>}
-              {opt['Show Grade']          && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: gCol(gtGrade), borderTop: `2px solid ${C.bluBdr}` }}>{gtGrade ? gtGrade.grade : '—'}</td>}
+              {opt['Show Percentage'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.grn, borderTop: `2px solid ${C.bluBdr}` }}>{gtPct}%</td>}
+              {opt['Show Grade'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: gCol(gtGrade), borderTop: `2px solid ${C.bluBdr}` }}>{gtGrade ? gtGrade.grade : '—'}</td>}
               <td style={{ borderTop: `2px solid ${C.bluBdr}` }} />
             </tr>
           </tbody>
@@ -10752,15 +10993,15 @@ const improvements = sorted
 
       {/* 3-col analysis */}
       {/* <div style={{ display: 'grid', gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr', borderBottom: `1px solid ${C.bdr}` }}> */}
-     <div 
-  style={{ 
-    display: 'grid',
-    gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr',
-    borderBottom: `1px solid ${C.bdr}`,
-    breakInside: 'avoid',
-    pageBreakInside: 'avoid'
-  }}
->
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr',
+          borderBottom: `1px solid ${C.bdr}`,
+          breakInside: 'avoid',
+          pageBreakInside: 'avoid'
+        }}
+      >
         <div style={{ padding: '16px 20px', borderRight: `1px solid ${C.bdr}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <div style={{ width: 28, height: 28, borderRadius: 7, background: C.grnL, color: C.grn, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
@@ -10769,7 +11010,7 @@ const improvements = sorted
             <div style={{ fontSize: 11, fontWeight: 800, color: C.textP }}>Top Subjects</div>
           </div>
           {strengths.map((d, i) => {
-            const medals = ['🥇','🥈','🥉'];
+            const medals = ['🥇', '🥈', '🥉'];
             return (
               <div key={d.s} style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 9, padding: '7px 10px', borderRadius: 8, background: C.grnL, border: `1px solid ${C.grnBdr}` }}>
                 <div style={{ fontSize: 14, lineHeight: 1 }}>{medals[i] || ''}</div>
@@ -10784,12 +11025,12 @@ const improvements = sorted
         </div>
 
         {/* <div style={{ padding: '16px 20px', borderRight: opt['Show Final Remarks'] ? `1px solid ${C.bdr}` : 'none' }}> */}
-          <div style={{
-  padding: '16px 20px',
-  borderRight: opt['Show Final Remarks'] ? `1px solid ${C.bdr}` : 'none',
-  breakInside: 'avoid',
-  pageBreakInside: 'avoid'
-}}>
+        <div style={{
+          padding: '16px 20px',
+          borderRight: opt['Show Final Remarks'] ? `1px solid ${C.bdr}` : 'none',
+          breakInside: 'avoid',
+          pageBreakInside: 'avoid'
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <div style={{ width: 28, height: 28, borderRadius: 7, background: C.accL, color: C.acc, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
               <i className="fa-solid fa-bullseye"></i>
@@ -10835,18 +11076,18 @@ const improvements = sorted
         ];
         return (
           // <div style={{ padding: '16px 24px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18, borderBottom: `1px solid ${C.bdr}` }}>
-          <div 
- style={{ 
-   padding: '16px 24px 18px',
-   display:'grid',
-   gridTemplateColumns:'repeat(3,1fr)',
-   gap:18,
-   borderBottom:`1px solid ${C.bdr}`,
-   breakInside:'avoid',
-   pageBreakInside:'avoid'
- }}
->
-          {cols.map((c, i) => (
+          <div
+            style={{
+              padding: '16px 24px 18px',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3,1fr)',
+              gap: 18,
+              borderBottom: `1px solid ${C.bdr}`,
+              breakInside: 'avoid',
+              pageBreakInside: 'avoid'
+            }}
+          >
+            {cols.map((c, i) => (
               <div key={i} style={{ textAlign: 'center', minWidth: 0 }}>
                 <div style={{ height: 32, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                   {c.img && <img src={c.img} alt="" style={{ maxHeight: 30, maxWidth: '90%', objectFit: 'contain' }} />}
@@ -11116,7 +11357,8 @@ async function bmuApiUploadMarks(ctx, commentsMode, file) {
   return { ok, status: res.status, message: data?.message || data?.Message || '', errors: errs, data };
 }
 
-async function bmuDownloadWorkbook(wb, filename) {  const buffer = await wb.xlsx.writeBuffer();
+async function bmuDownloadWorkbook(wb, filename) {
+  const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -11467,7 +11709,7 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
       toast?.('Set total marks for at least one subject before downloading the sheet.', 'error');
       return;
     }
-       setBusy(true);
+    setBusy(true);
     try {
       await bmuApiDownloadTemplate(ctx, commentsMode);
       toast?.('Template downloaded — fill it in and upload it below.', 'success');
@@ -11475,22 +11717,22 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
       console.error(e);
       toast?.(e?.message || 'Could not download the template. Please try again.', 'error');
     } finally {
-            setBusy(false);
+      setBusy(false);
     }
   };
-   
+
 
   const onFile = async e => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-         setFileName(file.name);
+    setFileName(file.name);
     setUpFile(file);
     setParsed({ results: [], errors: [], warnings: [] });
     setStep('validate');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
   /* onFile end */
-   const applyUpload = async () => {
+  const applyUpload = async () => {
     if (!upFile) return;
     setBusy(true);
     try {
@@ -11501,7 +11743,7 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
         toast?.('Upload failed — please fix the issues and upload again.', 'error');
         return;
       }
-       toast?.(r.message || 'Marks uploaded successfully.', 'success');
+      toast?.(r.message || 'Marks uploaded successfully.', 'success');
       onSaved?.();
     } catch (err) {
       console.error(err);
@@ -11590,7 +11832,7 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
                   <div className="bmu-issue-title"><i className="fa-solid fa-circle-exclamation"></i> {parsed.errors.length} issue{parsed.errors.length === 1 ? '' : 's'} must be fixed before uploading</div>
                   <ul className="bmu-issue-list">{parsed.errors.map((err, i) => <li key={i}>{err}</li>)}</ul>
                 </div>
-                  ) : (
+              ) : (
                 <div className="bmu-issue-box ok">
                   <div className="bmu-issue-title"><i className="fa-solid fa-circle-check"></i> {fileName} ready to upload</div>
                 </div>
@@ -11737,22 +11979,22 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       const marksRecord = Array.isArray(marksData) ? marksData[0] : (marksData?.data?.[0] || null);
       console.log('[loadMarks] GET marksRecord for', subjectObj.subjectName, ':', marksRecord);
       if (marksRecord) {
-  setObtained(prev => ({
-    ...prev,
-    [subjectObj.subjectName]: Number(marksRecord.obtainedMarks || marksRecord.obtainMarks || marksRecord.marks )
-  }));
-  setSubjectExistingMarkId(prev => ({
-    ...prev,
-    [subjectID]: marksRecord.id || 0
-  }));
-  // Manual Comment = is subject ke saved remarks (getsauploadmarks... API se).
-  // Casing tolerate karo (remarks / Remarks) aur hamesha reflect karo (API source of truth).
-  const savedRemarks = marksRecord.remarks ?? marksRecord.Remarks ?? '';
-  setManualRemarks(prev => ({
-    ...prev,
-    [subjectObj.subjectName]: savedRemarks
-  }));
-}
+        setObtained(prev => ({
+          ...prev,
+          [subjectObj.subjectName]: Number(marksRecord.obtainedMarks || marksRecord.obtainMarks || marksRecord.marks)
+        }));
+        setSubjectExistingMarkId(prev => ({
+          ...prev,
+          [subjectID]: marksRecord.id || 0
+        }));
+        // Manual Comment = is subject ke saved remarks (getsauploadmarks... API se).
+        // Casing tolerate karo (remarks / Remarks) aur hamesha reflect karo (API source of truth).
+        const savedRemarks = marksRecord.remarks ?? marksRecord.Remarks ?? '';
+        setManualRemarks(prev => ({
+          ...prev,
+          [subjectObj.subjectName]: savedRemarks
+        }));
+      }
     } catch (err) {
       console.error('Error fetching subject data:', err);
       toast?.('Could not load subject data', 'error');
@@ -11777,10 +12019,10 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     const curSubjObj = subjects[tab];
     const subjectID = curSubjObj?.subjectID;
     const maxMarks = subjectTotalMarks[subjectID] ?? (cd.totalMarks[subject] || 0);
-setObtained(o => ({
-  ...o,
-  [subject]: val === '' ? '' : Math.max(0, Math.min(maxMarks, parseFloat(val) || 0))
-}));
+    setObtained(o => ({
+      ...o,
+      [subject]: val === '' ? '' : Math.max(0, Math.min(maxMarks, parseFloat(val) || 0))
+    }));
   };
 
   const updateMc = (subject, val) => {
@@ -11819,140 +12061,140 @@ setObtained(o => ({
     setTab(nextIdx);
     fetchSubjectData(subjects[nextIdx]);
   };
-const saveCurrentSubject = async () => {
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-    const classID = resTotalMarksCtx?.classID || '';
-    const sectionID = resTotalMarksCtx?.sectionID || '';
-    const examID = resTotalMarksCtx?.selectExam || 0;
-    const termID = selectedTermId || '';
+  const saveCurrentSubject = async () => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      const classID = resTotalMarksCtx?.classID || '';
+      const sectionID = resTotalMarksCtx?.sectionID || '';
+      const examID = resTotalMarksCtx?.selectExam || 0;
+      const termID = selectedTermId || '';
 
-    const curSubjObj = subjects[tab] || {};
-    const curSubj = curSubjObj.subjectName || '';
-    const curSubjID = curSubjObj.subjectID;
-    const existingId = subjectExistingMarkId[curSubjID] || 0;
-    const obtainedMarks = obtained[curSubj] || 0;
-    const curTotal = subjectTotalMarks[curSubjID] ?? 0;
-    // Total marks set na ho (0) to marks save mat karo — toaster dikhao.
-    if (!curTotal || Number(curTotal) <= 0) {
-      toast?.('Please add total marks for this subject.', 'error');
-      return false;
-    }
-    const pct = curTotal > 0 ? Math.round((obtainedMarks / curTotal) * 100) : 0;
-    // Auto Comment/remarks branch ke configured grading se (percentage → matching band).
-    const gradeObj = (obtainedMarks && curTotal)
-      ? (rcGradeByScale(pct, grades) || rcGetGrade(obtainedMarks, curTotal))
-      : null;
-    // Manual comment mojood hai? (agar hai to CalculateUploadRemark na chalao warna
-    // wo auto-computed remark se manual value overwrite kar dega.)
-    const hasManual = !!(manualRemarks[curSubj] && String(manualRemarks[curSubj]).trim());
-    const remarks = manualRemarks[curSubj] || (gradeObj ? gradeObj.comment : '');
+      const curSubjObj = subjects[tab] || {};
+      const curSubj = curSubjObj.subjectName || '';
+      const curSubjID = curSubjObj.subjectID;
+      const existingId = subjectExistingMarkId[curSubjID] || 0;
+      const obtainedMarks = obtained[curSubj] || 0;
+      const curTotal = subjectTotalMarks[curSubjID] ?? 0;
+      // Total marks set na ho (0) to marks save mat karo — toaster dikhao.
+      if (!curTotal || Number(curTotal) <= 0) {
+        toast?.('Please add total marks for this subject.', 'error');
+        return false;
+      }
+      const pct = curTotal > 0 ? Math.round((obtainedMarks / curTotal) * 100) : 0;
+      // Auto Comment/remarks branch ke configured grading se (percentage → matching band).
+      const gradeObj = (obtainedMarks && curTotal)
+        ? (rcGradeByScale(pct, grades) || rcGetGrade(obtainedMarks, curTotal))
+        : null;
+      // Manual comment mojood hai? (agar hai to CalculateUploadRemark na chalao warna
+      // wo auto-computed remark se manual value overwrite kar dega.)
+      const hasManual = !!(manualRemarks[curSubj] && String(manualRemarks[curSubj]).trim());
+      const remarks = manualRemarks[curSubj] || (gradeObj ? gradeObj.comment : '');
 
-    const headers = {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    };
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      };
 
-    const commonParams = new URLSearchParams({
-      branchId: String(branchID),
-      classId: String(classID),
-      sectionId: String(sectionID),
-      termId: String(termID),
-      examId: String(examID),
-      studentId: String(student.id),
-    });
-const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
-    // API 1: Save marks
-const savePayload = {
-  id: existingId,
-  subjectID: Number(curSubjID),
-  obtainMarks: String(obtainedMarks),
-  totalMarks: String(curTotal),
-  subjectName: "",
-  studentID: Number(student.id),
-  classID: Number(classID),
-  className: "",
-  termID: Number(termID),
-  term: "",
-  examID: Number(examID),
-  examName: "",
-  sectionID: Number(sectionID),
-  sectionName: "",
-  branchID: Number(branchID),
-  dateFrom: today, // ya dynamic date
-  dateTo: today,   // ya dynamic date
-  remarks: remarks,
-  percentage: String(pct),
-  action: existingId > 0 ? "update" : "insert",
-};
-
-    // API 1: Save marks — response check + log (silent-fail diagnose ke liye).
-    // Console me actual URL/status/response dikhega; agar base URL galat ho
-    // (localStorage sm_api_base_url) ya token expire ho to yahin pata chal jayega.
-    const saveUrl = buildUrl('/api/sauploadmarkscrud');
-    const saveRes = await fetch(saveUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(savePayload)
-    });
-    const saveText = await saveRes.text().catch(() => '');
-    console.log('[saveMarks] POST', saveUrl, '\npayload:', savePayload, '\nstatus:', saveRes.status, '\nresponse:', saveText);
-    if (!saveRes.ok) {
-      toast?.(`Save failed (HTTP ${saveRes.status}). ${String(saveText).slice(0, 140)}`, 'error');
-      return false;
-    }
-
-    // API 2: FetchFinalRemarksAgainstPercentage
-    await fetch(
-      buildUrl(`/api/FetchFinalRemarksAgainstPercentage?${commonParams}`),
-      { method: 'GET', headers }
-    );
-
-    // API 3: CalculateUploadRemark — remark ko percentage/grade se dobara compute karta
-    // hai. Manual comment ho to ye NA chalao, warna manual value auto se overwrite ho
-    // jati hai. Manual na ho to hi auto-calculate chale.
-    if (!hasManual) {
-      const calculateParams = new URLSearchParams({
-        ...Object.fromEntries(commonParams),
-        subjectId: String(curSubjID),
+      const commonParams = new URLSearchParams({
+        branchId: String(branchID),
+        classId: String(classID),
+        sectionId: String(sectionID),
+        termId: String(termID),
+        examId: String(examID),
+        studentId: String(student.id),
       });
+      const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+      // API 1: Save marks
+      const savePayload = {
+        id: existingId,
+        subjectID: Number(curSubjID),
+        obtainMarks: String(obtainedMarks),
+        totalMarks: String(curTotal),
+        subjectName: "",
+        studentID: Number(student.id),
+        classID: Number(classID),
+        className: "",
+        termID: Number(termID),
+        term: "",
+        examID: Number(examID),
+        examName: "",
+        sectionID: Number(sectionID),
+        sectionName: "",
+        branchID: Number(branchID),
+        dateFrom: today, // ya dynamic date
+        dateTo: today,   // ya dynamic date
+        remarks: remarks,
+        percentage: String(pct),
+        action: existingId > 0 ? "update" : "insert",
+      };
+
+      // API 1: Save marks — response check + log (silent-fail diagnose ke liye).
+      // Console me actual URL/status/response dikhega; agar base URL galat ho
+      // (localStorage sm_api_base_url) ya token expire ho to yahin pata chal jayega.
+      const saveUrl = buildUrl('/api/sauploadmarkscrud');
+      const saveRes = await fetch(saveUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(savePayload)
+      });
+      const saveText = await saveRes.text().catch(() => '');
+      console.log('[saveMarks] POST', saveUrl, '\npayload:', savePayload, '\nstatus:', saveRes.status, '\nresponse:', saveText);
+      if (!saveRes.ok) {
+        toast?.(`Save failed (HTTP ${saveRes.status}). ${String(saveText).slice(0, 140)}`, 'error');
+        return false;
+      }
+
+      // API 2: FetchFinalRemarksAgainstPercentage
       await fetch(
-        buildUrl(`/api/CalculateUploadRemark?${calculateParams}`),
+        buildUrl(`/api/FetchFinalRemarksAgainstPercentage?${commonParams}`),
         { method: 'GET', headers }
       );
+
+      // API 3: CalculateUploadRemark — remark ko percentage/grade se dobara compute karta
+      // hai. Manual comment ho to ye NA chalao, warna manual value auto se overwrite ho
+      // jati hai. Manual na ho to hi auto-calculate chale.
+      if (!hasManual) {
+        const calculateParams = new URLSearchParams({
+          ...Object.fromEntries(commonParams),
+          subjectId: String(curSubjID),
+        });
+        await fetch(
+          buildUrl(`/api/CalculateUploadRemark?${calculateParams}`),
+          { method: 'GET', headers }
+        );
+      }
+
+      // API 4: saveoverallstudentresultpercentage
+      await fetch(buildUrl('/api/saveoverallstudentresultpercentage'), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          branchID: Number(branchID),
+          classID: Number(classID),
+          sectionID: Number(sectionID),
+          termID: Number(termID),
+          examID: Number(examID),
+        })
+      });
+
+      toast?.('Marks saved!', 'success');
+      return true;
+    } catch (err) {
+      console.error('Error saving marks:', err);
+      toast?.('Could not save marks', 'error');
+      return false;
     }
+  };
 
-    // API 4: saveoverallstudentresultpercentage
-    await fetch(buildUrl('/api/saveoverallstudentresultpercentage'), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        branchID: Number(branchID),
-        classID: Number(classID),
-        sectionID: Number(sectionID),
-        termID: Number(termID),
-        examID: Number(examID),
-      })
-    });
-
-    toast?.('Marks saved!', 'success');
-    return true;
-  } catch (err) {
-    console.error('Error saving marks:', err);
-    toast?.('Could not save marks', 'error');
-    return false;
-  }
-};
-
-const saveAndClose = async () => {
-  // Save block ho (total marks 0) to modal band mat karo — user total marks add kare.
-  const ok = await saveCurrentSubject();
-  if (ok === false) return;
-  onSave(computePayload());
-};
+  const saveAndClose = async () => {
+    // Save block ho (total marks 0) to modal band mat karo — user total marks add kare.
+    const ok = await saveCurrentSubject();
+    if (ok === false) return;
+    onSave(computePayload());
+  };
   const curSubjObj = subjects[tab] || {};
   const curSubj = curSubjObj.subjectName || '';
   const curSubjID = curSubjObj.subjectID;
@@ -12100,16 +12342,16 @@ const saveAndClose = async () => {
 function CbrCreateModal({ exams, onClose, onCreate, toast }) {
   /* Exams are keyed by selectExam — the real exam id all the combined-assessment
      APIs expect (mainExamID / subExams.examID / examIDs). */
-  const [name, setName]             = useState('');
-  const [mainSel, setMainSel]       = useState(null);   // selected main exam's selectExam
-  const [subSels, setSubSels]       = useState([]);     // selected sub exams' selectExam
-  const [weights, setWeights]       = useState({});     // { selectExam: weightage }
-  const [subTotals, setSubTotals]   = useState({});     // { selectExam: originalTotalMarks }
-  const [fetched, setFetched]       = useState(false);
+  const [name, setName] = useState('');
+  const [mainSel, setMainSel] = useState(null);   // selected main exam's selectExam
+  const [subSels, setSubSels] = useState([]);     // selected sub exams' selectExam
+  const [weights, setWeights] = useState({});     // { selectExam: weightage }
+  const [subTotals, setSubTotals] = useState({});     // { selectExam: originalTotalMarks }
+  const [fetched, setFetched] = useState(false);
   const [commonClasses, setCommonClasses] = useState([]); // [{ classID, sectionID, className, sectionName }]
-  const [classes, setClasses]       = useState([]);       // selected subset (same shape)
-  const [errorMsg, setErrorMsg]     = useState('');
-  const [busy, setBusy]             = useState(false);
+  const [classes, setClasses] = useState([]);       // selected subset (same shape)
+  const [errorMsg, setErrorMsg] = useState('');
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -12140,7 +12382,7 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
       setWeights(w => ({ ...w, [key]: w[key] ?? 20 }));
       /* Load this sub exam's original total marks (API 3). */
       const ex = findBySel(key);
-      const c  = ex?.classes?.[0];
+      const c = ex?.classes?.[0];
       if (ex && c && subTotals[key] == null) {
         cbrApi.getSubExamTotalMarks(key, c.classID, c.sectionID, ex.termID)
           .then(r => setSubTotals(t => ({ ...t, [key]: r?.originalTotalMarks ?? 0 })))
@@ -12498,7 +12740,7 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existing
     ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
     : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0);
   const obtAll = RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (student.obtained[s] || 0)), 0);
-  const ovPct  = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const ovPct = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
   const autoRem = rcGetFinalRemarks(ovPct);
 
   // Sirf SAVED remark (getremarksbystudentfilters) se pre-fill; agar API khali
@@ -12601,9 +12843,9 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existing
         <div className="exam-modal-footer">
           <Tooltip text="Close"><button className="exam-cancel-btn" onClick={onClose}><i className="fa-solid fa-xmark"></i> Close</button></Tooltip>
           <Tooltip text="Save remark and close">
-<button className="exam-submit-btn" onClick={handleSave}>
-  <i className="fa-solid fa-check"></i> Save &amp; Close
-</button>
+            <button className="exam-submit-btn" onClick={handleSave}>
+              <i className="fa-solid fa-check"></i> Save &amp; Close
+            </button>
           </Tooltip>
         </div>
       </div>
@@ -12615,107 +12857,107 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existing
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — TOTAL MARKS EDIT MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultTotalMarksModal({ cd, className, onSave, onClose , subjects = [] , resTotalMarksCtx,  selectedTermId }) {
+function ResultTotalMarksModal({ cd, className, onSave, onClose, subjects = [], resTotalMarksCtx, selectedTermId }) {
   const subjKey = (subject) => subject?.subjectID ?? subject?.subjectName;
 
-const [totals, setTotals] = useState({});
-useEffect(() => {
-  const initialTotals = {};
+  const [totals, setTotals] = useState({});
+  useEffect(() => {
+    const initialTotals = {};
 
-  (subjects || []).forEach(subject => {
-    initialTotals[subjKey(subject)] = Number(subject.totalMarks || 0);
-  });
+    (subjects || []).forEach(subject => {
+      initialTotals[subjKey(subject)] = Number(subject.totalMarks || 0);
+    });
 
-  setTotals(initialTotals);
-}, [subjects]);
+    setTotals(initialTotals);
+  }, [subjects]);
   const upd = (key, val) => {
     const n = val === '' ? '' : Math.max(0, parseFloat(val) || 0);
     setTotals(t => ({ ...t, [key]: n }));
   };
 
- const applyAll = val => {
-  const n = Math.max(0, parseFloat(val) || 0);
+  const applyAll = val => {
+    const n = Math.max(0, parseFloat(val) || 0);
 
-  const next = {};
+    const next = {};
 
-  (subjects || []).forEach(subject => {
-    next[subjKey(subject)] = n;
-  });
+    (subjects || []).forEach(subject => {
+      next[subjKey(subject)] = n;
+    });
 
-  setTotals(next);
-};
-const save = async () => {
-  try {
-    const token = sessionStorage.getItem("token");
-    const branchID = sessionStorage.getItem("branchID");
+    setTotals(next);
+  };
+  const save = async () => {
+    try {
+      const token = sessionStorage.getItem("token");
+      const branchID = sessionStorage.getItem("branchID");
 
-    const results = [];
+      const results = [];
 
-    for (const subject of subjects) {
-      const key = subjKey(subject);
-      const total =
-        totals[key] === "" ||
-        totals[key] == null
-          ? 0
-          : Number(totals[key]);
+      for (const subject of subjects) {
+        const key = subjKey(subject);
+        const total =
+          totals[key] === "" ||
+            totals[key] == null
+            ? 0
+            : Number(totals[key]);
 
-      const hasExisting =
-        subject.id && Number(subject.id) > 0;
+        const hasExisting =
+          subject.id && Number(subject.id) > 0;
 
-      const payload = {
-        id: hasExisting ? Number(subject.id) : 0,
-        subjectID: Number(subject.subjectID),
-        totalMarks: String(total),
-        branchID: String(branchID),
-        classID: Number(resTotalMarksCtx?.classID || 0),
-        termID: Number(selectedTermId || 0),
-        examID: Number(
-          resTotalMarksCtx?.selectExam ||
-          resTotalMarksCtx?.examId ||
-          0
-        ),
-        sectionID: Number(resTotalMarksCtx?.sectionID || 0),
-        subjectName: "",
-        termName: "",
-        examName: "",
-        totalMarksSum: "",
-        action: hasExisting ? "update" : "insert"
-      };
+        const payload = {
+          id: hasExisting ? Number(subject.id) : 0,
+          subjectID: Number(subject.subjectID),
+          totalMarks: String(total),
+          branchID: String(branchID),
+          classID: Number(resTotalMarksCtx?.classID || 0),
+          termID: Number(selectedTermId || 0),
+          examID: Number(
+            resTotalMarksCtx?.selectExam ||
+            resTotalMarksCtx?.examId ||
+            0
+          ),
+          sectionID: Number(resTotalMarksCtx?.sectionID || 0),
+          subjectName: "",
+          termName: "",
+          examName: "",
+          totalMarksSum: "",
+          action: hasExisting ? "update" : "insert"
+        };
 
-      console.log("Sending payload:", payload);
+        console.log("Sending payload:", payload);
 
-      const response = await fetch(
-        buildUrl("/api/sasubjectcrud"),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify(payload)
+        const response = await fetch(
+          buildUrl("/api/sasubjectcrud"),
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("API Error:", errorText);
+          throw new Error(errorText);
         }
-      );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("API Error:", errorText);
-        throw new Error(errorText);
+        const data = await response.json();
+        results.push(data);
       }
 
-      const data = await response.json();
-      results.push(data);
+      // Parent refresh callback
+      onSave?.(results);
+
+      // Modal close
+      onClose?.();
+
+    } catch (error) {
+      console.error("Save error:", error);
     }
-
-    // Parent refresh callback
-    onSave?.(results);
-
-    // Modal close
-    onClose?.();
-
-  } catch (error) {
-    console.error("Save error:", error);
-  }
-};
+  };
   return createPortal(
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
@@ -12752,40 +12994,40 @@ const save = async () => {
           </div>
 
           {/* Per-subject rows */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-  {subjects.map(subject => (
-    <div
-      key={subject.subjectID}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '8px 12px',
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border-light)',
-        borderRadius: 8
-      }}
-    >
-      <div
-        style={{
-          flex: 1,
-          fontSize: 12.5,
-          fontWeight: 600
-        }}
-      >
-        {saSubjectLabel(subject)}
-      </div>
-<input
-  className="rs-input"
-  type="number"
-  min={0}
-  value={totals[subjKey(subject)] ?? ''}
-  onChange={e => upd(subjKey(subject), e.target.value)}
-  style={{ width: 80, textAlign: 'center' }}
-/>
-    </div>
-  ))}
-</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {subjects.map(subject => (
+              <div
+                key={subject.subjectID}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 12px',
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-light)',
+                  borderRadius: 8
+                }}
+              >
+                <div
+                  style={{
+                    flex: 1,
+                    fontSize: 12.5,
+                    fontWeight: 600
+                  }}
+                >
+                  {saSubjectLabel(subject)}
+                </div>
+                <input
+                  className="rs-input"
+                  type="number"
+                  min={0}
+                  value={totals[subjKey(subject)] ?? ''}
+                  onChange={e => upd(subjKey(subject), e.target.value)}
+                  style={{ width: 80, textAlign: 'center' }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="exam-modal-footer">
@@ -12862,13 +13104,13 @@ function liveClassReportCd(pack, { released, grades }) {
 
 function generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, isColor, format = 'pdf') {
   const aColor = isColor ? '#1E40AF' : '#374151';
-  const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
-  const aBdr   = isColor ? '#BFDBFE' : '#DDD';
+  const aBg = isColor ? '#EFF6FF' : '#F5F5F5';
+  const aBdr = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
-  const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
+  const rowEv = isColor ? '#F8FAFF' : '#F7F7F7';
   const successCol = isColor ? '#16A34A' : '#000';
-  const warnCol    = isColor ? '#D97706' : '#000';
-  const bs         = branchSchool || {};
+  const warnCol = isColor ? '#D97706' : '#000';
+  const bs = branchSchool || {};
 
   // Compute each student's totals + ranking
   const useZero = absentMode === 'zero';
@@ -12876,29 +13118,29 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
   const students = cd.live
     ? cd.students.map(st => ({ st, tot: st.tot, obt: st.obt, pct: st.pct, grade: st.grade }))
     : cd.students.map(st => {
-    const absSet = {};
-    (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
-    const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
-    const tot = st.absent
-      ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-      : (useZero
+      const absSet = {};
+      (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
+      const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
+      const tot = st.absent
+        ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
+        : (useZero
           ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
           : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0));
-    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (st.obtained[s] || 0)), 0);
-    const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
-    const grade = (!st.absent && obt > 0) ? rcGetGrade(obt, tot) : null;
-    return { st, tot, obt, pct, grade };
-  });
+      const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (st.obtained[s] || 0)), 0);
+      const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
+      const grade = (!st.absent && obt > 0) ? rcGetGrade(obt, tot) : null;
+      return { st, tot, obt, pct, grade };
+    });
 
   const ranked = [...students].filter(r => !r.st.absent).sort((a, b) => b.obt - a.obt);
   const rankMap = new Map();
   ranked.forEach((r, i) => { rankMap.set(r.st.id, i + 1); });
 
-  const totalSum  = students.reduce((a, r) => a + r.tot, 0);
-  const obtSum    = students.reduce((a, r) => a + r.obt, 0);
-  const avgPct    = totalSum ? Math.round((obtSum / totalSum) * 100 * 100) / 100 : 0;
-  const highest   = ranked[0];
-  const lowest    = ranked.length ? ranked[ranked.length - 1] : null;
+  const totalSum = students.reduce((a, r) => a + r.tot, 0);
+  const obtSum = students.reduce((a, r) => a + r.obt, 0);
+  const avgPct = totalSum ? Math.round((obtSum / totalSum) * 100 * 100) / 100 : 0;
+  const highest = ranked[0];
+  const lowest = ranked.length ? ranked[ranked.length - 1] : null;
   const completeCount = students.filter(r => {
     if (r.st.absent) return false;
     if (cd.live) return r.obt > 0;
@@ -12908,12 +13150,12 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
   const gradeColor = g => {
     if (!isColor || !g) return tMuted;
     return g.grade === 'A+' ? '#16A34A'
-         : g.grade === 'A'  ? '#15803D'
-         : g.grade === 'B'  ? '#1D4ED8'
-         : g.grade === 'C'  ? '#B45309'
-         : g.grade === 'D'  ? '#EA580C'
-         : g.grade === 'F'  ? '#DC2626'
-         : '#475569';
+      : g.grade === 'A' ? '#15803D'
+        : g.grade === 'B' ? '#1D4ED8'
+          : g.grade === 'C' ? '#B45309'
+            : g.grade === 'D' ? '#EA580C'
+              : g.grade === 'F' ? '#DC2626'
+                : '#475569';
   };
 
   const rowsHtml = students.map((r, i) => {
@@ -12923,7 +13165,7 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
     const bg = i % 2 === 0 ? '#fff' : rowEv;
     const grCol = gradeColor(r.grade);
     const tdBase = `padding:7px 9px;border-bottom:1px solid ${aBdr};font-size:11px;color:#0F172A`;
-    const tdC    = tdBase + ';text-align:center';
+    const tdC = tdBase + ';text-align:center';
     return `
       <tr style="background:${bg}${r.st.absent ? ';opacity:.78' : ''}">
         <td style="${tdBase};color:${tMuted};font-weight:700">${i + 1}</td>
@@ -12932,12 +13174,12 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
         <td style="${tdBase};color:${tMuted}">${r.st.father || '—'}</td>
         <td style="${tdC};font-weight:600">${r.tot || '—'}</td>
         <td style="${tdC}">${r.st.absent
-          ? `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:${isColor ? 'rgba(217,119,6,.1)' : '#F5F5F5'};color:${warnCol};border:1px solid ${isColor ? 'rgba(217,119,6,.25)' : '#CCC'};font-size:10px;font-weight:700">AB</span>`
-          : `<strong style="color:${aColor}">${r.obt}</strong>`}</td>
+        ? `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:${isColor ? 'rgba(217,119,6,.1)' : '#F5F5F5'};color:${warnCol};border:1px solid ${isColor ? 'rgba(217,119,6,.25)' : '#CCC'};font-size:10px;font-weight:700">AB</span>`
+        : `<strong style="color:${aColor}">${r.obt}</strong>`}</td>
         <td style="${tdC};font-weight:700;color:${r.st.absent ? tMuted : (r.pct >= 80 ? successCol : r.pct >= 60 ? warnCol : (isColor ? '#DC2626' : '#000'))}">${r.st.absent ? '—' : `${r.pct}%`}</td>
         <td style="${tdC}">${r.grade
-          ? `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 7px;border-radius:6px;background:${grCol};color:#fff;font-size:10.5px;font-weight:800">${r.grade.grade}</span>`
-          : `<span style="color:${tMuted};font-size:10.5px">${r.st.absent ? 'Absent' : '—'}</span>`}</td>
+        ? `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 7px;border-radius:6px;background:${grCol};color:#fff;font-size:10.5px;font-weight:800">${r.grade.grade}</span>`
+        : `<span style="color:${tMuted};font-size:10.5px">${r.st.absent ? 'Absent' : '—'}</span>`}</td>
         <td style="${tdC};font-weight:700;color:${aColor}">${rankStr}</td>
       </tr>`;
   }).join('');
@@ -12946,12 +13188,12 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
       <!-- Meta strip -->
       <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
         ${[
-          ['Term',     term],
-          ['Exam',     ex.name],
-          ['Class',    className],
-          ['Students', String(students.length)],
-          ['Released', cd.released ? 'Yes' : 'No'],
-        ].map(([k, v]) => `
+      ['Term', term],
+      ['Exam', ex.name],
+      ['Class', className],
+      ['Students', String(students.length)],
+      ['Released', cd.released ? 'Yes' : 'No'],
+    ].map(([k, v]) => `
           <div style="flex:1;min-width:130px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
             <div style="font-size:12.5px;font-weight:800;color:${aColor}">${v}</div>
@@ -12962,11 +13204,11 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
       <!-- Summary stats -->
       <div style="display:flex;gap:0;border-bottom:1px solid ${aBdr};background:${aBg}">
         ${[
-          { label: 'Class Average', val: `${avgPct}%`,                              col: aColor },
-          { label: 'Highest',       val: highest ? `${highest.pct}%` : '—',         col: successCol, sub: highest ? highest.st.name : '' },
-          { label: 'Lowest',        val: lowest ? `${lowest.pct}%` : '—',           col: warnCol,    sub: lowest ? lowest.st.name : '' },
-          { label: 'Completed',     val: `${completeCount}/${students.length}`,     col: aColor },
-        ].map((tile, i, arr) => `
+      { label: 'Class Average', val: `${avgPct}%`, col: aColor },
+      { label: 'Highest', val: highest ? `${highest.pct}%` : '—', col: successCol, sub: highest ? highest.st.name : '' },
+      { label: 'Lowest', val: lowest ? `${lowest.pct}%` : '—', col: warnCol, sub: lowest ? lowest.st.name : '' },
+      { label: 'Completed', val: `${completeCount}/${students.length}`, col: aColor },
+    ].map((tile, i, arr) => `
           <div style="flex:1;padding:11px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + aBdr : 'none'}">
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:3px">${tile.label}</div>
             <div style="font-size:16px;font-weight:900;color:${tile.col}">${tile.val}</div>
@@ -13034,33 +13276,33 @@ function CbrClassReportPicker({ cr, branchSchool, onClose }) {
 
 function generateCbrClassReport(cr, isColor, branchSchool, format = 'pdf') {
   const aColor = isColor ? '#1E40AF' : '#374151';
-  const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
-  const aBdr   = isColor ? '#BFDBFE' : '#DDD';
+  const aBg = isColor ? '#EFF6FF' : '#F5F5F5';
+  const aBdr = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
-  const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
+  const rowEv = isColor ? '#F8FAFF' : '#F7F7F7';
   const successCol = isColor ? '#16A34A' : '#000';
-  const warnCol    = isColor ? '#D97706' : '#000';
-  const purCol     = isColor ? '#7C3AED' : '#444';
-  const bs         = branchSchool || {};
+  const warnCol = isColor ? '#D97706' : '#000';
+  const purCol = isColor ? '#7C3AED' : '#444';
+  const bs = branchSchool || {};
 
   const subs = cr.students[0]?.subs || [];
 
   const gradeColor = g => {
     if (!isColor) return '#000';
     return g === 'A+' ? '#16A34A'
-         : g === 'A'  ? '#15803D'
-         : g === 'B'  ? '#1D4ED8'
-         : g === 'C'  ? '#B45309'
-         : g === 'D'  ? '#EA580C'
-         : g === 'F'  ? '#DC2626'
-         : '#475569';
+      : g === 'A' ? '#15803D'
+        : g === 'B' ? '#1D4ED8'
+          : g === 'C' ? '#B45309'
+            : g === 'D' ? '#EA580C'
+              : g === 'F' ? '#DC2626'
+                : '#475569';
   };
 
   // Class stats
   const sortedByPct = [...cr.students].sort((a, b) => b.pct - a.pct);
   const highest = sortedByPct[0];
-  const lowest  = sortedByPct[sortedByPct.length - 1];
-  const avgPct  = cr.students.length
+  const lowest = sortedByPct[sortedByPct.length - 1];
+  const avgPct = cr.students.length
     ? Math.round((cr.students.reduce((a, s) => a + s.pct, 0) / cr.students.length) * 100) / 100
     : 0;
   const publishedTxt = cr.published ? 'Yes' : 'No';
@@ -13111,12 +13353,12 @@ function generateCbrClassReport(cr, isColor, branchSchool, format = 'pdf') {
       <!-- Meta strip -->
       <div style="display:flex;flex-wrap:wrap;border:1px solid ${aBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
         ${[
-          ['Main Exam',  cr.mainExam],
-          ['Sub Exams',  (cr.subExams || []).join(', ')],
-          ['Class',      `${cr.cls} · Section ${cr.section}`],
-          ['Students',   String(cr.students.length)],
-          ['Published',  publishedTxt],
-        ].map(([k, v]) => `
+      ['Main Exam', cr.mainExam],
+      ['Sub Exams', (cr.subExams || []).join(', ')],
+      ['Class', `${cr.cls} · Section ${cr.section}`],
+      ['Students', String(cr.students.length)],
+      ['Published', publishedTxt],
+    ].map(([k, v]) => `
           <div style="flex:1;min-width:120px;padding:9px 14px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
             <div style="font-size:12px;font-weight:800;color:${aColor}">${v || '—'}</div>
@@ -13127,11 +13369,11 @@ function generateCbrClassReport(cr, isColor, branchSchool, format = 'pdf') {
       <!-- Stats -->
       <div style="display:flex;gap:0;border-bottom:1px solid ${aBdr};background:${aBg}">
         ${[
-          { label:'Class Average', val: avgPct + '%', col: aColor },
-          { label:'Highest',       val: highest ? highest.pct + '%' : '—', col: successCol, sub: highest ? highest.name : '' },
-          { label:'Lowest',        val: lowest  ? lowest.pct  + '%' : '—', col: warnCol,    sub: lowest  ? lowest.name  : '' },
-          { label:'Sub Exams',     val: subs.length, col: purCol },
-        ].map((tile, i, arr) => `
+      { label: 'Class Average', val: avgPct + '%', col: aColor },
+      { label: 'Highest', val: highest ? highest.pct + '%' : '—', col: successCol, sub: highest ? highest.name : '' },
+      { label: 'Lowest', val: lowest ? lowest.pct + '%' : '—', col: warnCol, sub: lowest ? lowest.name : '' },
+      { label: 'Sub Exams', val: subs.length, col: purCol },
+    ].map((tile, i, arr) => `
           <div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + aBdr : 'none'}">
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:3px">${tile.label}</div>
             <div style="font-size:16px;font-weight:900;color:${tile.col}">${tile.val}</div>
@@ -13186,9 +13428,9 @@ function generateCbrClassReport(cr, isColor, branchSchool, format = 'pdf') {
    ═══════════════════════════════════════════════════════════════════ */
 function RhReportPicker({ req, branchSchool, onClose, toast }) {
   const titles = {
-    card:       'Result Card Report',
-    history:    'Full Academic History',
-    progress:   'Progress Report',
+    card: 'Result Card Report',
+    history: 'Full Academic History',
+    progress: 'Progress Report',
     comparison: 'Comparison Report',
     attendance: 'Attendance Summary',
   };
@@ -13200,9 +13442,9 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
       rhExportFormat = format;
       // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
       rhReportSchool = branchSchool || null;
-      if (req.type === 'card')       rhBuildSingleCardReport(req.student, req.result, isColor);
-      if (req.type === 'history')    rhBuildHistoryReport(req.student, isColor);
-      if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
+      if (req.type === 'card') rhBuildSingleCardReport(req.student, req.result, isColor);
+      if (req.type === 'history') rhBuildHistoryReport(req.student, isColor);
+      if (req.type === 'progress') rhBuildProgressReport(req.student, isColor);
       if (req.type === 'comparison') rhBuildComparisonReport(req.student, isColor);
       if (req.type === 'attendance') rhBuildAttendanceReport(req.student, isColor);
       // Excel sirf is picker ke liye — baaki (direct) result-card prints pehle jaisa preview kholein.
@@ -13231,16 +13473,16 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
 /* Shared helpers for RH reports */
 function rhRptPalette(isColor) {
   return {
-    accent : isColor ? '#1E40AF' : '#374151',
-    accBg  : isColor ? '#EFF6FF' : '#F5F5F5',
-    accBdr : isColor ? '#BFDBFE' : '#DDD',
-    tMuted : isColor ? '#64748B' : '#666',
-    rowEv  : isColor ? '#F8FAFF' : '#F7F7F7',
-    hBg    : isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF',
-    grn    : isColor ? '#16A34A' : '#000',
-    amb    : isColor ? '#D97706' : '#000',
-    red    : isColor ? '#DC2626' : '#000',
-    pur    : isColor ? '#7C3AED' : '#444',
+    accent: isColor ? '#1E40AF' : '#374151',
+    accBg: isColor ? '#EFF6FF' : '#F5F5F5',
+    accBdr: isColor ? '#BFDBFE' : '#DDD',
+    tMuted: isColor ? '#64748B' : '#666',
+    rowEv: isColor ? '#F8FAFF' : '#F7F7F7',
+    hBg: isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF',
+    grn: isColor ? '#16A34A' : '#000',
+    amb: isColor ? '#D97706' : '#000',
+    red: isColor ? '#DC2626' : '#000',
+    pur: isColor ? '#7C3AED' : '#444',
   };
 }
 /* rhRptShell ab header/logo/footer/toolbar shared reportKit se leta hai
@@ -13271,7 +13513,7 @@ function rhRptOpen(html, name = 'Result Report') {
 function rhGradeColor(g, isColor) {
   if (!isColor || !g) return '#475569';
   return g === 'A+' ? '#16A34A' : g === 'A' ? '#15803D' : g === 'B' ? '#1D4ED8'
-       : g === 'C' ? '#B45309' : g === 'D' ? '#EA580C' : '#DC2626';
+    : g === 'C' ? '#B45309' : g === 'D' ? '#EA580C' : '#DC2626';
 }
 
 /* 1) Single result card report (download icon on each exam history row) */
@@ -13279,20 +13521,20 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
   const p = rhRptPalette(isColor);
   const subline = `${r.exam} · ${st.cls}`;
   // Real data (subjects/totals/obtained/remarks/finalRemark) mile to use karo, warna mock.
-  const hasReal     = !!(data && data.subjects && data.subjects.length);
-  const subjList    = hasReal ? data.subjects : RES_SUBJECTS;
-  const totalsMap   = hasReal ? (data.totals   || {}) : RES_DEFAULT_TOTALS;
+  const hasReal = !!(data && data.subjects && data.subjects.length);
+  const subjList = hasReal ? data.subjects : RES_SUBJECTS;
+  const totalsMap = hasReal ? (data.totals || {}) : RES_DEFAULT_TOTALS;
   const obtainedMap = hasReal ? (data.obtained || {}) : (r.subjects || rhMakeSubjects(r.pct));
-  const remarksMap  = (data && data.remarks) || {};
+  const remarksMap = (data && data.remarks) || {};
   const subjTotal = subjList.reduce((a, s) => a + (Number(totalsMap[s]) || 0), 0);
-  const subjObt   = subjList.reduce((a, s) => a + (Number(obtainedMap[s]) || 0), 0);
-  const ovPct     = hasReal ? (subjTotal ? Math.round((subjObt / subjTotal) * 10000) / 100 : 0) : (r.pct || 0);
-  const grade     = hasReal ? rcGetGrade(subjObt, subjTotal) : rcGetGrade(r.pct, 100);
-  const gradeStr  = grade ? grade.grade : '—';
-  const gradeCol  = rhGradeColor(gradeStr, isColor);
-  const finalRem  = (data && data.finalRemark) || rcGetFinalRemarks(ovPct);
+  const subjObt = subjList.reduce((a, s) => a + (Number(obtainedMap[s]) || 0), 0);
+  const ovPct = hasReal ? (subjTotal ? Math.round((subjObt / subjTotal) * 10000) / 100 : 0) : (r.pct || 0);
+  const grade = hasReal ? rcGetGrade(subjObt, subjTotal) : rcGetGrade(r.pct, 100);
+  const gradeStr = grade ? grade.grade : '—';
+  const gradeCol = rhGradeColor(gradeStr, isColor);
+  const finalRem = (data && data.finalRemark) || rcGetFinalRemarks(ovPct);
 
-  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const rows = subjList.map((s, i) => {
     const tot = Number(totalsMap[s]) || 0;
     const obt = Number(obtainedMap[s]) || 0;
@@ -13323,15 +13565,15 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
   const body = `<div style="font-family:inherit">
     <div style="display:flex;flex-wrap:wrap;border:1px solid ${p.accBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
       ${[
-        ['Student',     st.name],
-        ['Father',      st.father],
-        ['Class',       st.cls + ' · Section A'],
-        ['Exam',        r.exam],
-        ['Exam Date',   r.date],
-        // Combined Assessment ki report me session/year nahi dikhana.
-        ...(r.type === 'combined' ? [] : [['Year', rhSessionLabel(r.year)]]),
-        ['Type',        r.type === 'combined' ? 'Combined Assessment' : 'Single Assessment'],
-      ].map(([k,v]) => `<div style="flex:1;min-width:120px;padding:8px 14px;border-right:1px solid ${p.accBdr}">
+      ['Student', st.name],
+      ['Father', st.father],
+      ['Class', st.cls + ' · Section A'],
+      ['Exam', r.exam],
+      ['Exam Date', r.date],
+      // Combined Assessment ki report me session/year nahi dikhana.
+      ...(r.type === 'combined' ? [] : [['Year', rhSessionLabel(r.year)]]),
+      ['Type', r.type === 'combined' ? 'Combined Assessment' : 'Single Assessment'],
+    ].map(([k, v]) => `<div style="flex:1;min-width:120px;padding:8px 14px;border-right:1px solid ${p.accBdr}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:2px">${k}</div>
         <div style="font-size:12px;font-weight:800;color:${p.accent}">${v}</div>
       </div>`).join('')}
@@ -13381,8 +13623,8 @@ function rhBuildHistoryReport(st, isColor) {
   const subline = `${st.name} · ${st.cls}`;
   const pcts = st.results.map(r => r.pct);
   const avgPct = pcts.length ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10 : 0;
-  const best   = pcts.length ? Math.max(...pcts) : 0;
-  const worst  = pcts.length ? Math.min(...pcts) : 0;
+  const best = pcts.length ? Math.max(...pcts) : 0;
+  const worst = pcts.length ? Math.min(...pcts) : 0;
 
   const rows = st.results.map((r, i) => {
     const isCb = r.type === 'combined';
@@ -13407,22 +13649,22 @@ function rhBuildHistoryReport(st, isColor) {
   const body = `<div>
     <div style="display:flex;border:1px solid ${p.accBdr};border-radius:8px;overflow:hidden;margin-bottom:16px">
       ${[
-        ['Student',  st.name],
-        ['Class',    st.cls],
-        ['Roll No',  st.rollNo],
-        ['Session',  rhSessionLabel(st.session)],
-      ].map(([k,v]) => `<div style="flex:1;padding:9px 14px;border-right:1px solid ${p.accBdr}">
+      ['Student', st.name],
+      ['Class', st.cls],
+      ['Roll No', st.rollNo],
+      ['Session', rhSessionLabel(st.session)],
+    ].map(([k, v]) => `<div style="flex:1;padding:9px 14px;border-right:1px solid ${p.accBdr}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:2px">${k}</div>
         <div style="font-size:12px;font-weight:800;color:${p.accent}">${v}</div>
       </div>`).join('')}
     </div>
     <div style="display:flex;border-bottom:1px solid ${p.accBdr};background:${p.accBg}">
       ${[
-        ['Exams',    String(st.results.length), p.accent],
-        ['Average',  `${avgPct}%`, avgPct >= 80 ? p.grn : avgPct >= 60 ? p.amb : p.red],
-        ['Best',     `${best}%`,   p.grn],
-        ['Worst',    `${worst}%`,  p.red],
-      ].map(([k,v,col], i, arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
+      ['Exams', String(st.results.length), p.accent],
+      ['Average', `${avgPct}%`, avgPct >= 80 ? p.grn : avgPct >= 60 ? p.amb : p.red],
+      ['Best', `${best}%`, p.grn],
+      ['Worst', `${worst}%`, p.red],
+    ].map(([k, v, col], i, arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:3px">${k}</div>
         <div style="font-size:16px;font-weight:900;color:${col}">${v}</div>
       </div>`).join('')}
@@ -13455,7 +13697,7 @@ function rhBuildProgressReport(st, isColor) {
   const subline = `${st.name} · ${st.cls}`;
   const pcts = st.results.map(r => r.pct);
   const first = pcts[0] || 0;
-  const last  = pcts[pcts.length - 1] || 0;
+  const last = pcts[pcts.length - 1] || 0;
   const delta = Math.round((last - first) * 10) / 10;
   const trendCol = delta > 0 ? p.grn : delta < 0 ? p.red : p.tMuted;
   const trendLbl = delta > 0 ? `Improving (+${delta}%)` : delta < 0 ? `Declining (${delta}%)` : 'Stable';
@@ -13476,10 +13718,10 @@ function rhBuildProgressReport(st, isColor) {
   // Subject improvement: avg across firsts vs lasts (single results only)
   const singles = st.results.filter(r => r.type === 'single' && r.subjects);
   const subjFirst = singles[0]?.subjects || {};
-  const subjLast  = singles[singles.length - 1]?.subjects || {};
+  const subjLast = singles[singles.length - 1]?.subjects || {};
   const subjRows = RES_SUBJECTS.slice(0, 10).map((s, i) => {
     const a = subjFirst[s] || 0;
-    const b = subjLast[s]  || 0;
+    const b = subjLast[s] || 0;
     const d = b - a;
     const col = d > 0 ? p.grn : d < 0 ? p.red : p.tMuted;
     const bg = i % 2 === 0 ? '#fff' : p.rowEv;
@@ -13495,11 +13737,11 @@ function rhBuildProgressReport(st, isColor) {
   const body = `<div>
     <div style="display:flex;border-bottom:1px solid ${p.accBdr};background:${p.accBg}">
       ${[
-        ['First',  `${first}%`, p.accent],
-        ['Latest', `${last}%`,  p.accent],
-        ['Change', `${delta > 0 ? '+' : ''}${delta}%`, trendCol],
-        ['Trend',  trendLbl, trendCol],
-      ].map(([k,v,col],i,arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
+      ['First', `${first}%`, p.accent],
+      ['Latest', `${last}%`, p.accent],
+      ['Change', `${delta > 0 ? '+' : ''}${delta}%`, trendCol],
+      ['Trend', trendLbl, trendCol],
+    ].map(([k, v, col], i, arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:3px">${k}</div>
         <div style="font-size:14px;font-weight:900;color:${col}">${v}</div>
       </div>`).join('')}
@@ -13538,7 +13780,7 @@ function rhBuildComparisonReport(st, isColor) {
   const rows = [];
   for (let i = 1; i < st.results.length; i++) {
     const prev = st.results[i - 1];
-    const cur  = st.results[i];
+    const cur = st.results[i];
     const dPct = Math.round((cur.pct - prev.pct) * 10) / 10;
     const dRank = (prev.rank || 0) - (cur.rank || 0);
     const dirCol = dPct > 0 ? p.grn : dPct < 0 ? p.red : p.tMuted;
@@ -13587,7 +13829,7 @@ function rhBuildAttendanceReport(st, isColor) {
   // otherwise fall back to a plausible spread derived from the overall %.
   let months, monthAtt;
   if (st.attendanceMonthly && st.attendanceMonthly.length) {
-    months  = st.attendanceMonthly.map(m => m.label);
+    months = st.attendanceMonthly.map(m => m.label);
     monthAtt = st.attendanceMonthly.map(m => m.pct);
   } else {
     months = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
@@ -13623,11 +13865,11 @@ function rhBuildAttendanceReport(st, isColor) {
   const body = `<div>
     <div style="display:flex;border-bottom:1px solid ${p.accBdr};background:${p.accBg}">
       ${[
-        ['Overall',  `${st.attendance}%`, attCol],
-        ['Status',   statusLbl,             attCol],
-        ['Session',  rhSessionLabel(st.session), p.accent],
-        ['Class',    st.cls.replace(' - Section A', ''), p.accent],
-      ].map(([k,v,col],i,arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
+      ['Overall', `${st.attendance}%`, attCol],
+      ['Status', statusLbl, attCol],
+      ['Session', rhSessionLabel(st.session), p.accent],
+      ['Class', st.cls.replace(' - Section A', ''), p.accent],
+    ].map(([k, v, col], i, arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:3px">${k}</div>
         <div style="font-size:15px;font-weight:900;color:${col}">${v}</div>
       </div>`).join('')}
@@ -13661,13 +13903,13 @@ function rhBuildAttendanceReport(st, isColor) {
 async function fetchClassAttendanceMap(classID, sectionID) {
   try {
     const branchID = Number(sessionStorage.getItem('branchID')) || 0;
-    const token    = sessionStorage.getItem('token');
+    const token = sessionStorage.getItem('token');
     let sessionID = '';
     try { sessionID = await getActiveSessionID(); } catch (_) { /* ignore */ }
     if (!sessionID) sessionID = sessionStorage.getItem('sessionId') || sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
 
     const startStr = sessionStorage.getItem('sessionStartDate');
-    const endStr   = sessionStorage.getItem('sessionEndDate');
+    const endStr = sessionStorage.getItem('sessionEndDate');
     const start = startStr ? new Date(startStr) : null;
     const today = new Date(); today.setHours(0, 0, 0, 0);
     let end = endStr ? new Date(endStr) : null;
@@ -13765,7 +14007,7 @@ function ResultCardViewer({ student, rd, ex, template, school, grades, remarks =
     if (!w) { toast('Pop-up blocker prevented opening', 'error'); return; }
     // w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Result Card — ${student.name}</title>
 
-w.document.write(`<!DOCTYPE html><html><head>
+    w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="UTF-8">
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
@@ -13853,14 +14095,14 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 
         {/* Sub-tabs — hidden when the card is opened for a single assessment only */}
         {!singleOnly && (
-        <div style={{ display: 'flex', gap: 0, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
-          <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
-            <i className="fa-solid fa-file"></i> Single Assessment
-          </button>
-          <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
-            <i className="fa-solid fa-layer-group"></i> Combined Assessment
-          </button>
-        </div>
+          <div style={{ display: 'flex', gap: 0, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
+            <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
+              <i className="fa-solid fa-file"></i> Single Assessment
+            </button>
+            <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
+              <i className="fa-solid fa-layer-group"></i> Combined Assessment
+            </button>
+          </div>
         )}
 
         {/* Card area */}
@@ -13871,26 +14113,26 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
               Loading result card…
             </div>
           ) : (
-          <div ref={cardRef} style={{ maxWidth: 720, margin: '0 auto', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
-            {template === 'classic' && (
-              <ClassicResultCard
-                rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
-              />
-            )}
-            {template === 'insight' && (
-              <InsightResultCard
-                rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
-              />
-            )}
-            {template === 'portfolio' && (
-              <PortfolioResultCard
-                rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
-              />
-            )}
-          </div>
+            <div ref={cardRef} style={{ maxWidth: 720, margin: '0 auto', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
+              {template === 'classic' && (
+                <ClassicResultCard
+                  rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
+                  mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
+                />
+              )}
+              {template === 'insight' && (
+                <InsightResultCard
+                  rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
+                  mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
+                />
+              )}
+              {template === 'portfolio' && (
+                <PortfolioResultCard
+                  rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
+                  mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
+                />
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -13905,10 +14147,10 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
    → getremarksbystudentfilters (final remark). Single-card jaisi hi rendering, bas N students. */
 function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
   const { classID, sectionID, selectExam, termID, className, examName, students: presetStudents } = ctx;
-  const [cards, setCards]       = useState([]);   // [{ student, rd }]
-  const [loading, setLoading]   = useState(true);
+  const [cards, setCards] = useState([]);   // [{ student, rd }]
+  const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [attnMap, setAttnMap]   = useState({});   // { [studentId]: pct } — REAL attendance
+  const [attnMap, setAttnMap] = useState({});   // { [studentId]: pct } — REAL attendance
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -13931,8 +14173,8 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
       try {
         setLoading(true);
         const branchID = sessionStorage.getItem('branchID');
-        const token    = sessionStorage.getItem('token');
-        const headers  = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        const token = sessionStorage.getItem('token');
+        const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
 
         // Poori class — exam list kabhi 1 student pe ruk jati hai, roster se poori lo.
         const studentsRaw = await rcFetchClassStudents(classID, sectionID, presetStudents);
@@ -13968,7 +14210,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
               const d = await r.json();
               const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
               obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
-              totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+              totals[su.subjectName] = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
               if (rec?.remarks) manualRemarks[su.subjectName] = rec.remarks;
               if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
             } catch { absentSubjects.push(su.subjectName); }
@@ -14116,10 +14358,10 @@ ${node.innerHTML}
    Combined breakdown (grandTotal / sub-exam breakdown / overall % / rank) pehle se cbrResults
    group ke har student par maujood hai; sirf per-subject main-exam marks load karne hain. */
 function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
-  const [cards, setCards]       = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const [cards, setCards] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: (grp?.students || []).length });
-  const [attnMap, setAttnMap]   = useState({});   // { [studentId]: pct } — REAL attendance
+  const [attnMap, setAttnMap] = useState({});   // { [studentId]: pct } — REAL attendance
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -14245,7 +14487,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
                 examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID,
               }).catch(() => null);
               obtained[su.subjectName] = m == null ? '' : m;
-              totals[su.subjectName]   = su.totalMarks;
+              totals[su.subjectName] = su.totalMarks;
               if (m == null || String(m).trim() === '' || !su.totalMarks || Number(su.totalMarks) <= 0) absentSubjects.push(su.subjectName);
             }));
           } else {
@@ -14497,7 +14739,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
    RESULT SETUP — EDIT MODAL (4 tabs: grades, signatures, remarks, absent)
    ═══════════════════════════════════════════════════════════════════ */
 function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, onSave, onClose, toast,
-                           reloadGrades, reloadSigs, reloadRemarks }) {
+  reloadGrades, reloadSigs, reloadRemarks }) {
   const [tab, setTab] = useState('grades');
   const [draftGrades, setDraftGrades] = useState(() => {
     if (grades && grades.length) {
@@ -14543,33 +14785,33 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   const upSig = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
   const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
 
-/* Naye (abhi tak save na huye) row ki unique id. Sirf `Date.now()` se ek hi
-   millisecond me add hui do rows ko same id mil jati thi — phir ek row edit
-   karne par dono badal jati thin. */
-const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  /* Naye (abhi tak save na huye) row ki unique id. Sirf `Date.now()` se ek hi
+     millisecond me add hui do rows ko same id mil jati thi — phir ek row edit
+     karne par dono badal jati thin. */
+  const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-const addGrade = () =>
-  setDraftGrades(r => {
-    // Jo grades pehle se use ho chuki hain unhe skip karke agli available grade
-    // default karo (A+ used → A, phir B+ ...). Sab use ho gayi to blank.
-    const used = new Set(r.map(g => g.grade));
-    const nextGrade = RS_GRADE_LIST.find(gr => !used.has(gr)) || '';
-    return [
+  const addGrade = () =>
+    setDraftGrades(r => {
+      // Jo grades pehle se use ho chuki hain unhe skip karke agli available grade
+      // default karo (A+ used → A, phir B+ ...). Sab use ho gayi to blank.
+      const used = new Set(r.map(g => g.grade));
+      const nextGrade = RS_GRADE_LIST.find(gr => !used.has(gr)) || '';
+      return [
+        ...r,
+        { id: tempId(), grade: nextGrade, cond: 'gte', pct: '', comment: '' }
+      ];
+    });
+  const addSig = () =>
+    setDraftSigs(r => [
       ...r,
-      { id: tempId(), grade: nextGrade, cond: 'gte', pct: '', comment: '' }
-    ];
-  });
-   const addSig = () =>
-  setDraftSigs(r => [
-    ...r,
-    { id: tempId(), name: '', desig: '', img: '' }
-  ]);
+      { id: tempId(), name: '', desig: '', img: '' }
+    ]);
 
-const addRemark = () =>
-  setDraftRemarks(r => [
-    ...r,
-    { id: tempId(), cond: 'gte', pct: '', text: '' }
-  ]);  const [rsConfirm, setRsConfirm] = useState(null);
+  const addRemark = () =>
+    setDraftRemarks(r => [
+      ...r,
+      { id: tempId(), cond: 'gte', pct: '', text: '' }
+    ]); const [rsConfirm, setRsConfirm] = useState(null);
 
   const askDeleteGrade = g => setRsConfirm({
     kind: 'grade', id: g.id,
@@ -14587,57 +14829,57 @@ const addRemark = () =>
     message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
   });
 
-const runDelete = async () => {
-  if (!rsConfirm) return;
+  const runDelete = async () => {
+    if (!rsConfirm) return;
 
-  const { kind, id } = rsConfirm;
+    const { kind, id } = rsConfirm;
 
-  try {
-    const token = sessionStorage.getItem("token");
+    try {
+      const token = sessionStorage.getItem("token");
 
-    if (typeof id === "number" && id > 0) {
-      let endpoint = "";
+      if (typeof id === "number" && id > 0) {
+        let endpoint = "";
 
+        if (kind === "grade") {
+          endpoint = `/api/delete-grading-setup/${id}`;
+        } else if (kind === "sig") {
+          endpoint = `/api/delete-grading-uploader/${id}`;
+        } else if (kind === "remark") {
+          endpoint = `/api/delete-overall-grading/${id}`;
+        }
+
+        if (endpoint) {
+          await fetch(buildUrl(endpoint), {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json"
+            }
+          });
+        }
+      }
+
+      // Remove from local state
       if (kind === "grade") {
-        endpoint = `/api/delete-grading-setup/${id}`;
-      } else if (kind === "sig") {
-        endpoint = `/api/delete-grading-uploader/${id}`;
-      } else if (kind === "remark") {
-        endpoint = `/api/delete-overall-grading/${id}`;
+        setDraftGrades(r => r.filter(x => x.id !== id));
       }
 
-      if (endpoint) {
-        await fetch(buildUrl(endpoint), {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json"
-          }
-        });
+      if (kind === "sig") {
+        setDraftSigs(r => r.filter(x => x.id !== id));
       }
+
+      if (kind === "remark") {
+        setDraftRemarks(r => r.filter(x => x.id !== id));
+      }
+
+      setRsConfirm(null);
+
+      toast("Deleted successfully", "success");
+    } catch (err) {
+      console.error(err);
+      toast("Failed to delete", "error");
     }
-
-    // Remove from local state
-    if (kind === "grade") {
-      setDraftGrades(r => r.filter(x => x.id !== id));
-    }
-
-    if (kind === "sig") {
-      setDraftSigs(r => r.filter(x => x.id !== id));
-    }
-
-    if (kind === "remark") {
-      setDraftRemarks(r => r.filter(x => x.id !== id));
-    }
-
-    setRsConfirm(null);
-
-    toast("Deleted successfully", "success");
-  } catch (err) {
-    console.error(err);
-    toast("Failed to delete", "error");
-  }
-};
+  };
   const uploadSig = (id, file) => {
     if (!file) return;
     const reader = new FileReader();
@@ -14650,7 +14892,7 @@ const runDelete = async () => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
-      
+
       // Format percentage based on condition
       let percentage = '';
       switch (grade.cond) {
@@ -14661,9 +14903,9 @@ const runDelete = async () => {
         case 'eq': percentage = `=${grade.pct}`; break;
         default: percentage = grade.pct;
       }
-      
+
       const isUpdate = grade.id && typeof grade.id === 'number' && grade.id > 0;
-      
+
       const payload = {
         id: isUpdate ? grade.id : 0,
         branchID: branchID || "1",
@@ -14673,9 +14915,9 @@ const runDelete = async () => {
         percentageNo: "",
         action: isUpdate ? "update" : "insert"
       };
-      
+
       console.log("Saving grade payload:", payload);
-      
+
       const response = await fetch(buildUrl('/api/gradingcrud'), {
         method: 'POST',
         headers: {
@@ -14685,7 +14927,7 @@ const runDelete = async () => {
         },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
       console.log("Grade save response:", data);
       return { success: response.ok, data };
@@ -14694,13 +14936,13 @@ const runDelete = async () => {
       return { success: false, error };
     }
   };
-  
+
   // Helper function to delete a grade from API
   const deleteGradeFromAPI = async (gradeId) => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
-      
+
       const payload = {
         id: gradeId,
         branchID: branchID || "1",
@@ -14710,9 +14952,9 @@ const runDelete = async () => {
         percentageNo: "",
         action: "delete"
       };
-      
+
       console.log("Deleting grade payload:", payload);
-      
+
       const response = await fetch(buildUrl('/api/gradingcrud'), {
         method: 'POST',
         headers: {
@@ -14722,7 +14964,7 @@ const runDelete = async () => {
         },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
       return { success: response.ok, data };
     } catch (error) {
@@ -14730,19 +14972,19 @@ const runDelete = async () => {
       return { success: false, error };
     }
   };
-  
+
   // Helper function to save a single signature to API
   const saveSignatureToAPI = async (signature) => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
-      
+
       const isUpdate = signature.id && typeof signature.id === 'number' && signature.id > 0;
-      
+
       // Handle image - if it's a data URL, we need to send it as is or extract base64
       let signatureValue = signature.img || '';
       // If it's a file upload, we keep the data URL
-      
+
       const payload = {
         id: isUpdate ? signature.id : 0,
         branchID: branchID || "1",
@@ -14751,9 +14993,9 @@ const runDelete = async () => {
         signature: signatureValue,
         action: isUpdate ? "update" : "insert"
       };
-      
+
       console.log("Saving signature payload:", payload);
-      
+
       const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
         method: 'POST',
         headers: {
@@ -14763,7 +15005,7 @@ const runDelete = async () => {
         },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
       console.log("Signature save response:", data);
       return { success: response.ok, data };
@@ -14772,13 +15014,13 @@ const runDelete = async () => {
       return { success: false, error };
     }
   };
-  
+
   // Helper function to delete a signature from API
   const deleteSignatureFromAPI = async (signatureId) => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
-      
+
       const payload = {
         id: signatureId,
         branchID: branchID || "1",
@@ -14787,7 +15029,7 @@ const runDelete = async () => {
         signature: "",
         action: "delete"
       };
-      
+
       const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
         method: 'POST',
         headers: {
@@ -14797,7 +15039,7 @@ const runDelete = async () => {
         },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
       return { success: response.ok, data };
     } catch (error) {
@@ -14805,13 +15047,13 @@ const runDelete = async () => {
       return { success: false, error };
     }
   };
-  
+
   // Helper function to save a single remark to API
   const saveRemarkToAPI = async (remark) => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
-      
+
       // Format percentage based on condition
       let percentage = '';
       switch (remark.cond) {
@@ -14822,9 +15064,9 @@ const runDelete = async () => {
         case 'eq': percentage = `= ${remark.pct}`; break;
         default: percentage = remark.pct;
       }
-      
+
       const isUpdate = remark.id && typeof remark.id === 'number' && remark.id > 0;
-      
+
       const payload = {
         id: isUpdate ? remark.id : 0,
         branchID: branchID || "1",
@@ -14832,9 +15074,9 @@ const runDelete = async () => {
         finalRemarks: remark.text || '',
         action: isUpdate ? "update" : "insert"
       };
-      
+
       console.log("Saving remark payload:", payload);
-      
+
       const response = await fetch(buildUrl('/api/overallgradingcrud'), {
         method: 'POST',
         headers: {
@@ -14844,7 +15086,7 @@ const runDelete = async () => {
         },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
       console.log("Remark save response:", data);
       return { success: response.ok, data };
@@ -14853,13 +15095,13 @@ const runDelete = async () => {
       return { success: false, error };
     }
   };
-  
+
   // Helper function to delete a remark from API
   const deleteRemarkFromAPI = async (remarkId) => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
-      
+
       const payload = {
         id: remarkId,
         branchID: branchID || "1",
@@ -14867,7 +15109,7 @@ const runDelete = async () => {
         finalRemarks: "",
         action: "delete"
       };
-      
+
       const response = await fetch(buildUrl('/api/overallgradingcrud'), {
         method: 'POST',
         headers: {
@@ -14877,7 +15119,7 @@ const runDelete = async () => {
         },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
       return { success: response.ok, data };
     } catch (error) {
@@ -15018,7 +15260,7 @@ const runDelete = async () => {
         remarks: pick(freshRemarks, draftRemarks),
         absentMode: draftAbsent,
       });
-      
+
     } catch (error) {
       console.error("Error saving result setup:", error);
       toast('Error saving result setup', 'error');
@@ -15332,21 +15574,21 @@ const runDelete = async () => {
 }
 
 function CharField({ value, max, placeholder, multiline = false, onChange, toast }) {
-  const warnRef  = useRef(false);
+  const warnRef = useRef(false);
   const limitRef = useRef(false);
   const len = (value || '').length;
   const pct = max > 0 ? len / max : 0;
   const barCol = pct >= 1 ? '#DC2626' : pct >= 0.8 ? '#D97706' : '#1E40AF';
   const cntCol = pct >= 1 ? '#DC2626' : pct >= 0.8 ? '#D97706' : 'var(--text-muted)';
   const bdrCol = pct >= 1 ? '#DC2626' : pct >= 0.8 ? '#D97706' : 'var(--border-light)';
-  const barW   = Math.min(100, Math.round(pct * 100));
-  const label  = multiline ? 'Final Remarks' : 'Comment';
+  const barW = Math.min(100, Math.round(pct * 100));
+  const label = multiline ? 'Final Remarks' : 'Comment';
 
   const handle = next => {
     const nlen = next.length;
     const npct = max > 0 ? nlen / max : 0;
     if (npct >= 0.8 && npct < 1 && !warnRef.current) {
-      warnRef.current  = true;
+      warnRef.current = true;
       limitRef.current = false;
       toast && toast(`${label}: only ${max - nlen} characters remaining.`, 'info');
     }
@@ -15411,13 +15653,13 @@ function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, branchScho
 
 function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, isColor, format = 'pdf') {
   /* Real branch header (name / academic year) from /report-header (branchSchool) — shared report-kit header. */
-  const bs         = branchSchool || {};
+  const bs = branchSchool || {};
 
   const aColor = isColor ? '#1E40AF' : '#374151';
-  const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
-  const aBdr   = isColor ? '#BFDBFE' : '#DDD';
+  const aBg = isColor ? '#EFF6FF' : '#F5F5F5';
+  const aBdr = isColor ? '#BFDBFE' : '#DDD';
   const tMuted = isColor ? '#64748B' : '#666';
-  const rowEv  = isColor ? '#F8FAFF' : '#F7F7F7';
+  const rowEv = isColor ? '#F8FAFF' : '#F7F7F7';
   const accLight = isColor ? '#DBEAFE' : '#E5E5E5';
 
   const sectionCard = (icon, title, sub, body) => `
@@ -15448,8 +15690,8 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
       </thead>
       <tbody>
         ${grades.map((g, i) => {
-          const col = isColor ? (RS_GRADE_COLORS[g.grade] || aColor) : '#555';
-          return `
+    const col = isColor ? (RS_GRADE_COLORS[g.grade] || aColor) : '#555';
+    return `
             <tr style="background:${i % 2 === 0 ? '#fff' : rowEv}">
               <td style="padding:8px 10px;border-bottom:1px solid ${aBdr};text-align:center;color:${tMuted};font-weight:700">${i + 1}</td>
               <td style="padding:8px 10px;border-bottom:1px solid ${aBdr};text-align:center">
@@ -15460,7 +15702,7 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
               </td>
               <td style="padding:8px 10px;border-bottom:1px solid ${aBdr};color:#0F172A;font-size:11.5px">${g.comment || '—'}</td>
             </tr>`;
-        }).join('')}
+  }).join('')}
       </tbody>
     </table>` : `<div style="padding:16px;text-align:center;font-size:12px;color:${tMuted}">No grades configured</div>`;
 
@@ -15484,8 +15726,8 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
             <td style="padding:8px 10px;border-bottom:1px solid ${aBdr};font-size:11.5px;color:${tMuted}">${s.desig || '—'}</td>
             <td style="padding:8px 10px;border-bottom:1px solid ${aBdr};text-align:center">
               ${s.img
-                ? `<img src="${s.img}" style="max-height:36px;max-width:100px;object-fit:contain" />`
-                : `<span style="display:inline-block;padding:3px 9px;border-radius:6px;background:${accLight};color:${aColor};font-size:11px;font-weight:700">—</span>`}
+      ? `<img src="${s.img}" style="max-height:36px;max-width:100px;object-fit:contain" />`
+      : `<span style="display:inline-block;padding:3px 9px;border-radius:6px;background:${accLight};color:${aColor};font-size:11px;font-weight:700">—</span>`}
             </td>
           </tr>`).join('')}
       </tbody>
@@ -15530,10 +15772,10 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
         </div>
         <div style="font-size:11px;color:${tMuted};line-height:1.6">
           ${isZero
-            ? 'Absent subjects are scored as 0 and included in the full total. Card shows <strong>AB / 0</strong>.'
-            : isExclude
-              ? 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'
-              : 'Subjects with <strong>0 marks</strong> are hidden from the Result Card.'}
+      ? 'Absent subjects are scored as 0 and included in the full total. Card shows <strong>AB / 0</strong>.'
+      : isExclude
+        ? 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'
+        : 'Subjects with <strong>0 marks</strong> are hidden from the Result Card.'}
         </div>
       </div>
       <span style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:${isZero ? 'rgba(217,119,6,.1)' : isExclude ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)'};color:${isZero ? '#B45309' : isExclude ? aColor : '#475569'};border:1px solid ${isZero ? 'rgba(217,119,6,.25)' : isExclude ? 'rgba(30,64,175,.25)' : 'rgba(100,116,139,.25)'};white-space:nowrap">${isZero ? 'AB / 0' : isExclude ? 'AB' : 'Hidden'}</span>
@@ -15564,7 +15806,7 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
 function examSetupReportRows(list, isColor, fmtDate) {
   const p = reportPalette(isColor);
   return list.map((ex, i) => {
-    const st  = getExamStatus(ex);
+    const st = getExamStatus(ex);
     const dur = calcDuration(ex.from, ex.to);
     const classLabels = (ex.classes || []).map(c => (typeof c === 'string'
       ? c
@@ -15606,9 +15848,9 @@ function generateExamReport(ctx, isColor, format = 'pdf') {
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     return `${dd}/${mm}/${d.getFullYear()}`;
   };
-  const isAll      = req.scope === 'all';
+  const isAll = req.scope === 'all';
   const scopeTitle = isAll ? `${term} Term — All Exams` : (target ? target.name : '');
-  const scopeLbl   = isAll ? 'All Exams (' + list.length + ')' : 'Single Exam';
+  const scopeLbl = isAll ? 'All Exams (' + list.length + ')' : 'Single Exam';
   const reportName = `Exam Report - ${target?.name || (isAll ? 'All Exams' : '')}`;
   const rows = examSetupReportRows(list, isColor, fmtDate);
 
@@ -20219,4 +20461,3 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   .exam-submit-btn,.exam-add-btn,.exam-cancel-btn { height:38px; padding:0 14px; font-size:12px; }
 }
 `;
-    
