@@ -5579,147 +5579,10 @@ export default function Examination({ toast = () => { } }) {
                     branchID: String(branchID)
                   });
 
-<<<<<<< Updated upstream
-setResTotalMarksCtx({
-    selectExam: resCurrentExam?.selectExam || 0,  // ← add this
-  examId: resExamId,
-  key,
-  className: cls.className,
-  classID: cls.classID,
-  sectionID: cls.sectionID,
-  subjects: saSubjects
-});
-    }}
-  >
-    <i className="fa-solid fa-pen-to-square"></i> Total Marks
-  </button>
-</Tooltip>
-                   )}
-                    </div>
-                    <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
-                      {!isPreschool && <>
-                      <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Bulk upload obtained marks for the whole class via Excel'}>
-                        <button
-                          className="res-bulk-btn"
-                          disabled={isOtherSession || !canSingleEdit}
-                          style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                          onClick={async e => {
-                            e.stopPropagation();
-                            if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-                            const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
-                            if (!saSubjects.length) {
-                              toast('No exam subjects found for this class', 'error');
-                              return;
-                            }
-                            let students = resStudentData[key]?.students || [];
-                            if (!students.length) {
-                              try {
-                                const token = sessionStorage.getItem('token');
-                                const branchID = sessionStorage.getItem('branchID');
-                                const studentsRes = await fetch(
-                                  buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
-                                  { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-                                );
-                                const studentsData = await studentsRes.json();
-                                students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
-                              } catch (err) {
-                                students = [];
-                              }
-                            }
-                            if (!students.length) {
-                              toast('No students found for this class', 'error');
-                              return;
-                            }
-                            setResBulkUploadCtx({
-                              examId: resExamId,
-                              key,
-                              className,
-                              examName: resCurrentExam?.name || '',
-                              classID: cls.classID,
-                              sectionID: cls.sectionID,
-                              selectExam: resCurrentExam?.selectExam || 0,
-                              termID: selectedTermId,
-                              subjects: saSubjects,
-                              students,
-                            });
-                          }}
-                        >
-                          <i className="fa-solid fa-file-excel"></i>
-                        </button>
-                      </Tooltip>
-                                  <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : "Generate all students' result cards (bulk)"}>
-                        <button
-                          className="res-bulk-btn"
-                          disabled={!canSingleDownload}
-                          style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (!canSingleDownload) return;
-                            loadCardOptions(true);
-                            setBulkCardCtx({
-                              classID: cls.classID,
-                              sectionID: cls.sectionID,
-                              selectExam: resCurrentExam?.selectExam || 0,
-                              termID: resCurrentExam?.termID ?? selectedTermId,
-                              className,
-                              examName: resCurrentExam?.name || '',
-                              students: resStudentData[key]?.students || [],
-                            });
-                          }}
-                        >
-                          <i className="fa-solid fa-id-card"></i>
-                        </button>
-                      </Tooltip>
-                      <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : 'Download class result report'}>
-                        <button
-                          className="res-download-btn"
-                          disabled={!canSingleDownload}
-                          style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                          onClick={async e => {
-                            e.stopPropagation();
-                            if (!canSingleDownload) return;
-                            const pack = await loadResClassData(key, cls);
-                            if (!pack || !(pack.students || []).length) {
-                              toast('No students found for this class', 'error');
-                              return;
-                            }
-                            setResClassReportReq({
-                              examId: resExamId,
-                              key,
-                              className,
-                              ex: resCurrentExam,
-                              cd: liveClassReportCd(pack, { released: isRel, grades: rsGrades }),
-                            });
-                          }}
-                        >
-                          <i className="fa-solid fa-file-arrow-down"></i>
-                        </button>
-                      </Tooltip>
-                      <Tooltip text="Delete class data"><button
-                        className="ds-del-btn"
-                        onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resExamId, key, className }); }}
-                      >
-                        <i className="fa-solid fa-trash"></i>
-                      </button></Tooltip>
-                      </>}
-                      <button
-                        className={`ds-expand-btn${isOpen ? ' open' : ''}`}
-onClick={e => { 
-  e.stopPropagation(); 
-  const next = isOpen ? null : key;
-  setResOpenKey(next);
-  if (next) loadResClassData(key, cls);
-}}                      >
-                        <i className="fa-solid fa-chevron-down"></i>
-                      </button>
-                    </div>
-                  </div>
-=======
                   const response = await fetch(
                     buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
                     { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
                   );
->>>>>>> Stashed changes
 
                   const data = await response.json();
 
@@ -5961,6 +5824,29 @@ onClick={e => {
                                       }}
                                     >
                                       <i className="fa-solid fa-file-excel"></i>
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : "Generate all students' result cards (bulk)"}>
+                                    <button
+                                      className="res-bulk-btn"
+                                      disabled={!canSingleDownload}
+                                      style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        if (!canSingleDownload) return;
+                                        loadCardOptions(true);
+                                        setBulkCardCtx({
+                                          classID: cls.classID,
+                                          sectionID: cls.sectionID,
+                                          selectExam: resCurrentExam?.selectExam || 0,
+                                          termID: resCurrentExam?.termID ?? selectedTermId,
+                                          className,
+                                          examName: resCurrentExam?.name || '',
+                                          students: resStudentData[key]?.students || [],
+                                        });
+                                      }}
+                                    >
+                                      <i className="fa-solid fa-id-card"></i>
                                     </button>
                                   </Tooltip>
                                   <Tooltip text={!canSingleDownload ? 'You do not have permission to download this report' : 'Download class result report'}>
