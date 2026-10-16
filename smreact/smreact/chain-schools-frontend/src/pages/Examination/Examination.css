@@ -579,3 +579,42 @@
   .exm-scale-row, .exm-scale-row.head { grid-template-columns: 1fr; min-width: 0; }
   .exm-scale-row.head { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Term Breakup (opened from Add Term) — class cards expand to a term /
+   subject pill selector and a units & topics view; Update modal reuses
+   the exm-modal shell. Mirrors the Academics module's Term Breakup.
+   ═══════════════════════════════════════════════════════════════════ */
+.exm-tb-card { border: 1px solid var(--border-light); border-radius: var(--radius-lg); background: var(--bg-card); margin-bottom: 12px; overflow: hidden; }
+.exm-tb-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; flex-wrap: wrap; transition: var(--tr); }
+.exm-tb-head:hover { background: var(--bg-muted); }
+.exm-tb-ic { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; font-size: 14px; }
+.exm-tb-name { font-size: 14px; font-weight: 800; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exm-tb-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.exm-tb-body { padding: 0 14px 16px; border-top: 1px solid var(--border-light); background: linear-gradient(135deg,rgba(30,58,138,.02),rgba(30,58,138,.04)); }
+.exm-tb-body .exm-term-chips { margin: 12px 0 0; }
+.exm-tb-subj.on { background: linear-gradient(135deg,#F5F3FF,#EDE9FE); border-color: #C4B5FD; color: #6D28D9; }
+.exm-tb-none { text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px; }
+.exm-tb-none i { display: block; font-size: 22px; opacity: .25; margin-bottom: 8px; }
+
+/* Units / topics view */
+.exm-tb-unit { border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-card); overflow: hidden; margin-top: 12px; }
+.exm-tb-unit-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; background: var(--bg-muted); }
+.exm-tb-unit-title { font-size: 13.5px; font-weight: 800; color: var(--brand-primary); }
+.exm-tb-unit-meta { font-size: 11.5px; font-weight: 700; color: var(--text-muted); flex-shrink: 0; }
+.exm-tb-utable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.exm-tb-utable th { text-align: left; padding: 8px 12px; font-size: 10.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border-light); }
+.exm-tb-utable td { padding: 9px 12px; border-bottom: 1px solid var(--border-light); color: var(--text-secondary); }
+.exm-tb-utable tr:last-child td { border-bottom: 0; }
+.exm-tb-utable .c, .exm-tb-utable th.c { text-align: center; }
+
+/* Update modal editor */
+.exm-tb-ed-unit { border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-muted); padding: 12px; margin-bottom: 10px; }
+.exm-tb-ed-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 90px 36px; gap: 8px; align-items: center; }
+.exm-tb-ed-lbl { font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); margin: 10px 0 6px; }
+.exm-tb-ed-topic { display: grid; grid-template-columns: minmax(0, 1fr) 90px 36px; gap: 8px; align-items: center; margin-bottom: 6px; }
+@media (max-width: 640px) {
+  .exm-tb-ed-row { grid-template-columns: 70px minmax(0, 1fr) 36px; }
+  .exm-tb-ed-row .exm-input:nth-child(3) { grid-column: 1 / 3; }
+  .exm-tb-ed-topic { grid-template-columns: minmax(0, 1fr) 70px 36px; }
+}

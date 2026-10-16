@@ -340,3 +340,142 @@ export async function saveRemark(m, networkId = currentNetworkId()) {
 export async function deleteRemark(serverId, networkId = currentNetworkId()) {
   return call('/overallgradingcrud', { method: 'POST', body: remBody('delete', { serverId }, networkId) })
 }
+
+/* ══════════════════ TERM BREAKUP ══════════════════════════════════
+   Academics (ERP LessonPlans) jaisa, magar Chain Management API par
+   network level (branchID/sectionID nahi — networkID + sessionID 0):
+
+     GET  /gettermbreakups?networkID&classID&subjectID&termID&sessionID&pageNo&pageCount
+          → data[0].id = termBreakupID (ek class+subject+term ka master)
+     POST /lptermbreakupcrud        mdlNetLPTermBreakups
+          { id, networkID, termID, subjectID, classID, sessionID, action }
+     POST /lptermbreakupdetailscrud mdlNetLPTermBreakupsDetails
+          { id, networkID, termBreakupID, unitNumber, unitName,
+            weekRequired, subTopic, periodRequired, type, action }
+
+   Ek detail row = ek (unit + sub-topic). Chain UI unit shape:
+     { unitNum, unitName, weeks, topics:[{ topic, periods, detailId? }] }.
+   Flow: master id gettermbreakups se; na mile to lptermbreakupcrud insert;
+   phir details crud get/insert/delete. SP deploy na ho (ya class/subject
+   id server par na ho) to caller local store par chalta rahe — baqi
+   examination module jaisa local-first fallback. */
+
+/* gettermbreakups → master id (0 if none). */
+export async function fetchTermBreakupId({ classId, subjectId, termId }, networkId = currentNetworkId()) {
+  const params = new URLSearchParams({
+    networkID: String(Number(networkId) || 0),
+    classID: String(Number(classId) || 0),
+    subjectID: String(Number(subjectId) || 0),
+    termID: String(Number(termId) || 0),
+    sessionID: String(NETWORK_SESSION_YEAR_ID),
+    pageNo: '1',
+    pageCount: '1',
+  })
+  const json = await call(`/gettermbreakups?${params.toString()}`)
+  const list = rows(json)
+  return Number(pick(list[0] || {}, 'id', 'ID', 'termBreakupID', 'TermBreakupID')) || 0
+}
+
+/* Detail rows → UI units. Rows ko unitNumber+unitName+weekRequired par group. */
+function mapBreakupDetails(list) {
+  const map = new Map()
+  const order = []
+  for (const r of list) {
+    const unitNum = String(pick(r, 'unitNumber', 'UnitNumber') ?? '')
+    const unitName = String(pick(r, 'unitName', 'UnitName') ?? '')
+    const weeks = String(pick(r, 'weekRequired', 'WeekRequired') ?? '')
+    const subTopic = pick(r, 'subTopic', 'SubTopic')
+    const periods = pick(r, 'periodRequired', 'PeriodRequired')
+    const detailId = Number(pick(r, 'id', 'ID')) || 0
+    const key = `${unitNum}__${unitName}__${weeks}`
+    if (!map.has(key)) { map.set(key, { unitNum, unitName, weeks, topics: [] }); order.push(key) }
+    if ((subTopic != null && subTopic !== '') || (periods != null && periods !== '')) {
+      map.get(key).topics.push({ topic: String(subTopic || ''), periods: String(periods ?? '0'), detailId })
+    }
+  }
+  return order.map((k) => map.get(k))
+}
+
+/* Ek class+term+subject ke units API se → { id, units }. id 0 → koi breakup nahi. */
+export async function fetchTermBreakupUnits({ classId, subjectId, termId }, networkId = currentNetworkId()) {
+  const id = await fetchTermBreakupId({ classId, subjectId, termId }, networkId)
+  if (!id) return { id: 0, units: [] }
+  const json = await call('/lptermbreakupdetailscrud', {
+    method: 'POST',
+    body: { id, networkID: Number(networkId) || 0, termBreakupID: id, unitNumber: '', unitName: '', weekRequired: '', subTopic: '', periodRequired: '', type: '', action: 'get' },
+  })
+  return { id, units: mapBreakupDetails(rows(json)) }
+}
+
+/* Master id yaqeeni banao — na ho to lptermbreakupcrud insert. */
+export async function ensureTermBreakupId({ classId, subjectId, termId }, networkId = currentNetworkId()) {
+  const existing = await fetchTermBreakupId({ classId, subjectId, termId }, networkId)
+  if (existing) return existing
+  const json = await call('/lptermbreakupcrud', {
+    method: 'POST',
+    body: { id: 0, networkID: Number(networkId) || 0, termID: Number(termId) || 0, subjectID: Number(subjectId) || 0, classID: Number(classId) || 0, sessionID: NETWORK_SESSION_YEAR_ID, action: 'insert' },
+  })
+  const id = idOf(json)
+  if (!id) throw new Error('Could not create term breakup')
+  return id
+}
+
+/* Ek detail row ka body (insert/update/delete). */
+function detailBody(action, termBreakupID, unit = {}, topic = {}, networkId) {
+  return {
+    id: Number(topic.detailId) || 0,
+    networkID: Number(networkId) || 0,
+    termBreakupID: Number(termBreakupID) || 0,
+    unitNumber: String(unit.unitNum ?? ''),
+    unitName: String(unit.unitName || '').trim(),
+    weekRequired: String(unit.weeks ?? '0'),
+    subTopic: String(topic.topic || '').trim(),
+    periodRequired: String(topic.periods ?? '0'),
+    type: '',
+    action,
+  }
+}
+
+/* Ek class+term+subject ka pura breakup save: master ensure → purani rows
+   delete → nayi insert (re-save par duplicate na banein). Return { termBreakupID }.
+   units: [{ unitNum, unitName, weeks, topics:[{ topic, periods }] }]. */
+export async function saveTermBreakup({ classId, subjectId, termId, units = [] }, networkId = currentNetworkId()) {
+  const termBreakupID = await ensureTermBreakupId({ classId, subjectId, termId }, networkId)
+  /* purani detail rows le kar delete */
+  let existing = []
+  try {
+    const json = await call('/lptermbreakupdetailscrud', {
+      method: 'POST',
+      body: { id: termBreakupID, networkID: Number(networkId) || 0, termBreakupID, unitNumber: '', unitName: '', weekRequired: '', subTopic: '', periodRequired: '', type: '', action: 'get' },
+    })
+    existing = rows(json)
+  } catch { /* get fail → delete skip, insert phir bhi try */ }
+  for (const r of existing) {
+    const detailId = Number(pick(r, 'id', 'ID')) || 0
+    if (detailId) { try { await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('delete', termBreakupID, {}, { detailId }, networkId) }) } catch { /* ignore */ } }
+  }
+  /* nayi rows insert — ek topic = ek row */
+  for (const u of units) {
+    for (const t of (u.topics || [])) {
+      if (!String(t.topic || '').trim()) continue
+      await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('insert', termBreakupID, u, t, networkId) })
+    }
+  }
+  return { termBreakupID }
+}
+
+/* Ek ya ziada detail rows server se delete (lptermbreakupdetailscrud action:'delete')
+   — subtopic / unit delete icon ke liye. detailIds = un rows ke server ids (jo
+   gettermbreakups se load hue the). Master id khud gettermbreakups se nikaal leta hai. */
+export async function deleteTermBreakupDetails({ classId, subjectId, termId, detailIds = [] }, networkId = currentNetworkId()) {
+  const ids = (detailIds || []).map(Number).filter((n) => n > 0)
+  if (!ids.length) return { deleted: 0 }
+  const termBreakupID = await fetchTermBreakupId({ classId, subjectId, termId }, networkId)
+  if (!termBreakupID) return { deleted: 0 }
+  let deleted = 0
+  for (const detailId of ids) {
+    await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('delete', termBreakupID, {}, { detailId }, networkId) })
+    deleted += 1
+  }
+  return { deleted }
+}

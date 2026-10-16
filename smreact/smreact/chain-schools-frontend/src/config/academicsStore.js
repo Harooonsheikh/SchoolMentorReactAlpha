@@ -62,12 +62,8 @@ const DEFAULT = {
     { id: 4, name: 'Parent-Teacher Meet', start: '2026-03-20', end: '2026-03-21', status: 'completed', purpose: 'Progress discussion with parents and guardians', development: 'Schedule appointments, prepare report cards', resource: 'Report cards, feedback forms' },
   ],
   // termBreakups[classId][termId][subjectId] = [{ unitNum, unitName, weeks, topics:[{topic, periods}] }]
-  termBreakups: {
-    3: { 1: { 1: [
-      { unitNum: '1', unitName: 'Unit 1 – Reading Skills', weeks: '2', topics: [{ topic: 'Introduction to Reading', periods: '12' }, { topic: 'Comprehension Basics', periods: '10' }] },
-      { unitNum: '2', unitName: 'Unit 2 – Grammar', weeks: '3', topics: [{ topic: 'Nouns & Pronouns', periods: '8' }, { topic: 'Verbs & Tenses', periods: '10' }] },
-    ] } },
-  },
+  // Koi seed/mock nahi — Term Breakup ab API (gettermbreakups/lptermbreakupdetailscrud) se aata hai.
+  termBreakups: {},
   // lessonPlans: units → lessons → sections (SLOs / Intro / Development / Recap)
   // [{ id, classId, subjectId, unitNo, unitName, lessons:[{ id, num, topic, source, duration, sections:[{title,mins,content}] }] }]
   lessonPlans: [

@@ -5,6 +5,7 @@ import { loadExam, saveExam } from './examStore'
 import AddTermTab from './AddTermTab'
 import AddExamTab from './AddExamTab'
 import AddResultTab from './AddResultTab'
+import TermBreakup from './TermBreakup'
 import './Examination.css'
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -16,6 +17,7 @@ const TABS = [
   { key: 'terms', label: 'Add Term', icon: 'fa-layer-group' },
   { key: 'exams', label: 'Add Exam', icon: 'fa-file-signature' },
   { key: 'result', label: 'Add Result', icon: 'fa-chart-bar' },
+  { key: 'breakup', label: 'Term Breakup', icon: 'fa-table-list' },
 ]
 
 export default function Examination() {
@@ -58,6 +60,7 @@ export default function Examination() {
       {tab === 'terms' && <AddTermTab store={store} commit={commit} flash={flash} />}
       {tab === 'exams' && <AddExamTab store={store} commit={commit} flash={flash} />}
       {tab === 'result' && <AddResultTab store={store} commit={commit} flash={flash} />}
+      {tab === 'breakup' && <TermBreakup store={store} commit={commit} flash={flash} />}
 
       {toast && createPortal(
         <div className="exm-toast-wrap" role="status" aria-live="polite">

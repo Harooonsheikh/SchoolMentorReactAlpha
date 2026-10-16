@@ -11,7 +11,7 @@
    term/exam UI stays in sync with what Academics defines.
    ═══════════════════════════════════════════════════════════════════ */
 
-import { loadAcademics } from '../../config/academicsStore'
+import { loadAcademics, subjectsOfClass } from '../../config/academicsStore'
 
 const KEY = 'csp_examination_v2'
 
@@ -31,7 +31,8 @@ export const RS_COND_LIST = [
 ]
 export const RS_COND_MAP = { gte: '≥', gt: '>', lte: '≤', lt: '<', eq: '=' }
 
-const EMPTY = { terms: [], exams: [], result: { grades: [], signatures: [], remarks: [] } }
+/* termBreakups[classId][termId][subjectId] = [{ unitNum, unitName, weeks, topics:[{topic, periods}] }] */
+const EMPTY = { terms: [], exams: [], result: { grades: [], signatures: [], remarks: [] }, termBreakups: {} }
 const clone = (o) => JSON.parse(JSON.stringify(o))
 
 export const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
@@ -48,6 +49,7 @@ export function loadExam() {
         signatures: Array.isArray(d.result?.signatures) ? d.result.signatures : [],
         remarks: Array.isArray(d.result?.remarks) ? d.result.remarks : [],
       },
+      termBreakups: (d.termBreakups && typeof d.termBreakups === 'object') ? d.termBreakups : {},
     }
   } catch {
     return clone(EMPTY)
@@ -61,6 +63,10 @@ export function saveExam(store) {
 /* ── Chain context from Academics ── */
 export const examSession = () => loadAcademics().sessionSettings || {}
 export const examClasses = () => loadAcademics().classes || []
+/* Subjects assigned to a class (from Academics' classSubjects map). */
+export const examSubjectsOfClass = (classId) => subjectsOfClass(loadAcademics(), classId)
+/* Units saved for a class/term/subject in the Term Breakup. */
+export const unitsOf = (store, classId, termId, subjectId) => store.termBreakups?.[classId]?.[termId]?.[subjectId] || []
 
 /* ── Exam helpers ── */
 export function examStatus(ex) {
