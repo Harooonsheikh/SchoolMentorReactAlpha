@@ -678,7 +678,8 @@ export async function saveAttendanceRemarks(d = {}) {
     createdAt: now,
     modifiedBy: 0,
     modifiedAt: now,
-    action: Number(d.id) ? 'update' : 'insert',
+    /* insert + update dono ke liye backend 'save' action use karta hai. */
+    action: 'save',
   };
   const res = await apiPost('preschooling-attendance-remarks-crud', payload);
   return res?.id ?? res?.Id ?? (Number(d.id) || 0);
