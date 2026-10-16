@@ -4486,8 +4486,10 @@ const setSubjLine = (ci, si, l) => {
       `<div style="border:1px solid ${isBW ? '#D1D5DB' : (accent ? '#BFDBFE' : '#E2E8F0')};border-radius:6px;padding:6px 8px;background:${isBW ? '#fff' : (accent ? '#EFF6FF' : '#F8FAFF')}${span ? ';grid-column:span 2' : ''}">
         <span style="display:block;font-size:9px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">${label}</span>
         <span style="display:block;font-size:12px;font-weight:700;color:${AC}">${val}</span></div>`;
-    return `<div style="background:${barBg};color:${barColor};border:${barBorder};text-align:center;padding:12px 16px;font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px 6px 0 0;margin-bottom:14px">${pgEsc(schoolBar)}</div>
-      <div style="text-align:center;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:12px">${pgEsc(examLine)}</div>
+    const classicLogo = d.logo
+      ? `<img src="${d.logo}" alt="logo" style="width:40px;height:40px;object-fit:contain;border-radius:8px;background:#fff;padding:2px;flex-shrink:0" />`
+      : '';
+    return `<div style="background:${barBg};color:${barColor};border:${barBorder};display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 16px;font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px 6px 0 0;margin-bottom:14px">${classicLogo}<span>${pgEsc(schoolBar)}</span></div>      <div style="text-align:center;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:12px">${pgEsc(examLine)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:#334155;margin-bottom:10px">
         <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Student Name: _______________________________</div>
         <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Roll No: _______________</div>

@@ -231,6 +231,16 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
      aati hai, magar wo all-time hai aur improvements ko bhi bugs me ginti
      hai — is liye cards yeh derived aankre dikhate hain taake dono section
      aapas me mel khayen.) */
+  /* Cards aur report ek hi source se — dashboard khulte hi school-progress list
+     (aur is mahine ke logins) load karo, taake card ka number = list ka count. */
+  useEffect(() => {
+    if (progress) return;
+    schoolProgressApi.listSchoolProgress()
+      .then((p) => { setProgress(p); loadMonthLogins(p); })
+      .catch((e) => setProgressErr(e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const bugStats = useMemo(() => countBi(d?.bugList, 'bug', bugPeriod), [d, bugPeriod]);
   const impStats = useMemo(() => countBi(d?.bugList, 'improvement', impPeriod), [d, impPeriod]);
 
@@ -302,6 +312,10 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       staff:       all.filter((r) => r.staff > 0).map((r) => ({ ...toRow(r), note: `Staff: ${r.staff}` })),
     };
    }, [progress, monthLogins]);
+
+  /* Card ka number = report list ka length. List load na ho to API wala fallback. */
+  const listCount = (key, fallback) =>
+    (schoolLists && Array.isArray(schoolLists[key])) ? schoolLists[key].length : fallback;
 
   /* Current Month Details ki rows— pehle period, phir search.
 
@@ -518,25 +532,25 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             <div className="section-hdr-title">School Overview</div>
           </div>
           <div className="overview-grid" style={{ marginBottom: 14 }}>
-                     <OvCard label="Active Schools"         val={d.schools.active} sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue"   icon="fa-circle-check"
+               <OvCard label="Active Schools"         val={listCount('active', d.schools.active)}sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue"   icon="fa-circle-check"
               onClick={() => openSchoolReport('active', 'Active Schools', 'ERP + Launch Set-Up schools', d.schools.active)} />
-            <OvCard label="ERP Schools"            val={d.schools.erp}    sub={<><b>↑ {d.schools.newErp}</b> &nbsp;New this month</>}    badge="teal"   icon="fa-database"
+<OvCard label="ERP Schools"            val={listCount('erp', d.schools.erp)}  sub={<><b>↑ {d.schools.newErp}</b> &nbsp;New this month</>}    badge="teal"   icon="fa-database"
               onClick={() => openSchoolReport('erp', 'ERP Schools', 'Active schools running on ERP', d.schools.erp)} />
-            <OvCard label="Launch Set-Up Schools"  val={d.schools.launch} sub={<><b>↑ {d.schools.newLaunch}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
+       <OvCard label="Launch Set-Up Schools"  val={listCount('launch', d.schools.launch)} sub={<><b>↑ {d.schools.newLaunch}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
               onClick={() => openSchoolReport('launch', 'Launch Set-Up Schools', 'Active schools in launch set-up', d.schools.launch)} />
           </div>
           <div className="overview-grid" style={{ marginBottom: 28 }}>
               <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
               onClick={() => openSchoolReport('zeroLogin', 'Inactive Schools', 'Registered schools with 0 logins', d.schools.inactive)}>
               <div className="ov-lbl red">Inactive Schools</div>
-              <div className="ov-val red">{d.schools.inactive}</div>
+        <div className="ov-val red">{listCount('zeroLogin', d.schools.inactive)}</div>
               <div className="ov-sub">Registered but <b className="red">0 logins</b> from 1st of this month to today</div>
               <div className="ov-badge ov-badge-red"><i className="fa-solid fa-user-slash" /></div>
             </div>
             <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
               onClick={() => openSchoolReport('activeLogin', 'Active Login Schools', 'Schools that logged in at least once', d.schools.activeLogin)}>
               <div className="ov-lbl green">Active Login Schools</div>
-              <div className="ov-val" style={{ color: '#16A34A' }}>{d.schools.activeLogin}</div>
+<div className="ov-val" style={{ color: '#16A34A' }}>{listCount('activeLogin', d.schools.activeLogin)}</div>
               <div className="ov-sub">Logged in <b style={{ color: '#16A34A' }}>at least once</b> from 1st of this month to today</div>
               <div className="ov-badge ov-badge-green"><i className="fa-solid fa-user-check" /></div>
             </div>
@@ -723,11 +737,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div className="db-detail-card-icon"><i className="fa-solid fa-school" /></div>
               <div className="db-detail-card-title">School Details</div>
             </div>
-            <DetailRow label="Total Schools:"        val={d.schools.total} />
-            <DetailRow label="In Active Schools:"    val={d.schools.inactive} tone="red" />
-            <DetailRow label="Active Schools:"       val={d.schools.active} tone="green" />
-            <DetailRow label="Launch Set-up Schools:" val={d.schools.launch} />
-            <DetailRow label="ERP Schools:"          val={d.schools.erp} />
+                 <DetailRow label="Total Schools:"        val={progress ? progress.launch.length + progress.erp.length + progress.inactive.length : d.schools.total} />
+            <DetailRow label="In Active Schools:"    val={listCount('zeroLogin', d.schools.inactive)} tone="red" />
+            <DetailRow label="Active Schools:"       val={listCount('active', d.schools.active)} tone="green" />
+            <DetailRow label="Launch Set-up Schools:" val={listCount('launch', d.schools.launch)} />
+            <DetailRow label="ERP Schools:"          val={listCount('erp', d.schools.erp)} />
           </div>
           {/* User Details */}
           <div className="db-detail-card">
@@ -801,7 +815,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div style={{ textAlign: 'center', padding: 30, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</div>
             ) : (
               <SchoolListReport title={schoolReport.title} description={schoolReport.description}
-                count={['students', 'staff'].includes(schoolReport.key) ? schoolLists[schoolReport.key].length : schoolReport.count}
+                count={schoolLists[schoolReport.key].length}
                 rows={schoolLists[schoolReport.key]} />
             )}
           </div>
