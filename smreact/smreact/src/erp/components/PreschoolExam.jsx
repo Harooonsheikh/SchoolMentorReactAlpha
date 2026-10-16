@@ -792,24 +792,74 @@ function PreschoolResultSetup({
    read-only (auto-fetched from the same student record the Grade
    1-12 system already carries, pAutoAttendance) — teachers only add
    the free-text Observation Remarks. ────────────────────────────── */
-function PreschoolAssessmentModal({ assessment, cls, student, existing, pLearningAreas, pSlo, pGradingScale, pPsdFields, allClasses, onClose, onSave, toast }) {
+function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, existing, pLearningAreas, pSlo, pGradingScale, pPsdFields, allClasses, attendanceLoader, attRemarksLoader, resolvePromoteName, onClose, onSave, toast }) {
   const areaTabs = [...pLearningAreas.map(la => ({ id: la.id, label: la.name })), { id: '__psd', label: 'Personal & Social Dev.' }, { id: '__meta', label: 'Attendance, Remarks & PTM' }];
   const [tabIdx, setTabIdx] = useState(0);
   const [achievements, setAchievements] = useState(existing?.achievements || {});
   const [psd, setPsd] = useState(existing?.psd || {});
-  const autoAttendance = pAutoAttendance(student);
+  /* Attendance SIRF result-card wali API se — koi static estimate nahi. Jab tak
+     load ho rahi ho, loader dikhta hai; response aane par wohi values. */
+  const [autoAttendance, setAutoAttendance] = useState(null);   // null = abhi load nahi hui
+  const [attLoading, setAttLoading] = useState(!!attendanceLoader);
   const [attendanceMode, setAttendanceMode] = useState(existing?.attendance?.mode === 'manual' ? 'manual' : 'auto'); // 'auto' | 'manual'
   const [manualAttendance, setManualAttendance] = useState({
-    workingDays: existing?.attendance?.workingDays ?? autoAttendance.workingDays,
-    presentDays: existing?.attendance?.presentDays ?? autoAttendance.presentDays,
+    workingDays: existing?.attendance?.workingDays ?? 0,
+    presentDays: existing?.attendance?.presentDays ?? 0,
   });
+  const manualTouched = useRef(!!existing?.attendance);   // pehle se saved manual ho to API se overwrite na karo
+  useEffect(() => {
+    if (!attendanceLoader) { setAttLoading(false); return; }
+    let alive = true;
+    setAttLoading(true);
+    Promise.resolve(attendanceLoader())
+      .then(s => {
+        if (!alive) return;
+        const wd = Number(s?.workingDays) || 0, pd = Number(s?.presentDays) || 0;
+        const v = { workingDays: wd, presentDays: pd, pct: s?.pct != null ? s.pct : (wd ? Math.round((pd / wd) * 100) : 0) };
+        setAutoAttendance(v);
+        if (!manualTouched.current) setManualAttendance({ workingDays: v.workingDays, presentDays: v.presentDays });
+      })
+      .catch(() => { if (alive) setAutoAttendance({ workingDays: 0, presentDays: 0, pct: 0 }); })
+      .finally(() => { if (alive) setAttLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const auto = autoAttendance || { workingDays: 0, presentDays: 0, pct: 0 };
   const attendance = attendanceMode === 'manual'
     ? { mode: 'manual', workingDays: manualAttendance.workingDays, presentDays: manualAttendance.presentDays, pct: manualAttendance.workingDays ? Math.round((manualAttendance.presentDays / manualAttendance.workingDays) * 100) : 0 }
-    : { mode: 'auto', ...autoAttendance };
+    : { mode: 'auto', ...auto };
   const [teacherRemarks, setTeacherRemarks] = useState(existing?.teacherRemarks || '');
   const [finalRemarks, setFinalRemarks] = useState(existing?.finalRemarks || pGetFinalRemarks(pGradingScale, existing) || '');
   const [ptm, setPtm] = useState(existing?.ptm || { enabled: false, date: '', parentAttendance: false, parentComments: '', teacherComments: '' });
   const [promotion, setPromotion] = useState(existing?.promotion || { status: null, toClass: '' }); // status: null | 'retained' | 'promoted' — null = "unselected", hidden from the result card
+  const [attRemarksId, setAttRemarksId] = useState(0);   // saved row id → agli save UPDATE jaye
+
+  /* Modal open: saved Attendance/Remarks/PTM get (action:'get') se laa kar fields bhar do. */
+  useEffect(() => {
+    if (!attRemarksLoader) return;
+    let alive = true;
+    Promise.resolve(attRemarksLoader())
+      .then(r => {
+        if (!alive || !r) return;
+        setAttRemarksId(r.id || 0);
+        if (r.teacherObservation) setTeacherRemarks(r.teacherObservation);
+        if (r.finalRemarks) setFinalRemarks(r.finalRemarks);
+        setPtm({
+          enabled: r.ptm === true, date: r.meetingDate || '', parentAttendance: r.parentAttendance === true,
+          parentComments: r.parentComment || '', teacherComments: r.teacherComment || '',
+        });
+        if (r.promotionDecision) {
+          setPromotion({ status: r.promotionDecision, toClass: r.promotedClassId ? (resolvePromoteName?.(r.promotedClassId) || '') : '' });
+        }
+        if (r.workingDays || r.presentDays) {
+          manualTouched.current = true;   // saved values hain → API-attendance se overwrite na ho
+          setManualAttendance({ workingDays: r.workingDays || 0, presentDays: r.presentDays || 0 });
+        }
+      })
+      .catch(e => console.error('Could not load attendance/remarks:', e));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -818,6 +868,7 @@ function PreschoolAssessmentModal({ assessment, cls, student, existing, pLearnin
   }, [onClose]);
 const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRowId } }
   const [sloSaving, setSloSaving] = useState({});  // { 'laId_sloId': true } jab tak save ho raha ho
+  const sloDirtyRef = useRef(new Set());           // 'laId_sloId' jo modal me badli; Save par API jayengi
 
   // Modal khulte hi is student ki asal (real API) SLO ratings load karo —
   // taake pehle se save hui selection buttons par highlighted dikhe.
@@ -826,7 +877,7 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
     (async () => {
       try {
         const map = await preschoolService.getStudentSloAssessments({
-          gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
+          gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id, examId, termId,
         });
         if (cancelled) return;
         setAchievements(prev => {
@@ -857,40 +908,63 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
 
   const activeTab = areaTabs[tabIdx];
   const setPsdCode = (fieldId, code) => setPsd(p => ({ ...p, [fieldId]: code }));
+   /* Rating button sirf local state update + dirty mark. Asli API ab footer ke
+      Save par chalti hai (flushSloAssessments). */
    const setSlo = (laId, sloId, code) => {
     setAchievements(a => ({ ...a, [laId]: { ...(a[laId] || {}), [sloId]: code } }));
-
-    // Agar Learning Area / SLO abhi tak backend par save hi nahi hua (local-only
-    // id jaisa "la_171234"), to real DB id nahi milegi — asli assessment API
-    // call skip kar do (warna galat subjectId/sloId=0 save ho jayega).
-    const subIdNum = Number(laId);
-    const sloIdNum = Number(sloId);
-    if (Number.isNaN(subIdNum) || Number.isNaN(sloIdNum)) return;
-
-    const rowId = sloDbIds[laId]?.[sloId] || 0;
-    const key = `${laId}_${sloId}`;
-    setSloSaving(s => ({ ...s, [key]: true }));
-    preschoolService.saveSloAssessment({
-      id: rowId,
-      gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
-      preSubjectId: subIdNum, preSLOId: sloIdNum, code,
-    }).then(newId => {
-      if (!rowId && newId) setSloDbIds(prev => ({ ...prev, [laId]: { ...(prev[laId] || {}), [sloId]: newId } }));
-    }).catch(e => {
-      console.error('Could not save SLO assessment:', e);
-      toast('Could not save this rating — please try again', 'error');
-    }).finally(() => {
-      setSloSaving(s => { const n = { ...s }; delete n[key]; return n; });
-    });
+    // Local-only id (jaise "la_171234") par real DB id nahi hoti — API skip.
+    if (Number.isNaN(Number(laId)) || Number.isNaN(Number(sloId))) return;
+    sloDirtyRef.current.add(`${laId}_${sloId}`);
   };
 
-  const buildPayload = () => ({ achievements, psd, attendance, teacherRemarks, finalRemarks, ptm, promotion });
+  /* Save par: HAR choose-shuda SLO rating ke against ek call — 3 select kiye to 3,
+     2 kiye to 2. Row ki id (load/pehle save se) ho to action:'update' us id ke
+     saath, warna action:'insert' (response se nayi id milti hai, sloDbIds me store).
+     Har call allSettled se independent — ek fail ho to baqi phir bhi chalein. */
+  const flushSloAssessments = async () => {
+    const ops = [];
+    Object.entries(achievements).forEach(([laId, slos]) => {
+      if (Number.isNaN(Number(laId))) return;   // local-only la id (real DB id nahi)
+      Object.entries(slos || {}).forEach(([sloId, code]) => {
+        if (Number.isNaN(Number(sloId)) || code == null || code === '') return;
+        const rowId = sloDbIds[laId]?.[sloId] || 0;   // id ho to update, warna insert
+        ops.push(
+          preschoolService.saveSloAssessment({
+            id: rowId, gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
+            preSubjectId: Number(laId), preSLOId: Number(sloId), code, examId, termId,
+          }).then(newId => ({ laId, sloId, newId })),
+        );
+      });
+    });
+    if (!ops.length) return true;
+    setSloSaving(s => ({ ...s, __all: true }));
+    try {
+      const settled = await Promise.allSettled(ops);
+      const ok = settled.filter(r => r.status === 'fulfilled').map(r => r.value);
+      const failed = settled.length - ok.length;
+      setSloDbIds(prev => {
+        const next = { ...prev };
+        ok.forEach(({ laId, sloId, newId }) => { if (newId) next[laId] = { ...(next[laId] || {}), [sloId]: newId }; });
+        return next;
+      });
+      sloDirtyRef.current.clear();
+      if (failed) { toast(`${failed} rating(s) could not be saved — please try again`, 'error'); return false; }
+      return true;
+    } catch (e) {
+      console.error('Could not save SLO assessments:', e);
+      toast('Some ratings could not be saved — please try again', 'error');
+      return false;
+    } finally {
+      setSloSaving(s => { const n = { ...s }; delete n.__all; return n; });
+    }
+  };
+
+  const buildPayload = () => ({ achievements, psd, attendance, teacherRemarks, finalRemarks, ptm, promotion, attRemarksId });
   /* shouldClose lets the footer tell onSave whether this was "Save & Next"
-     (stay open, just move tabs) or "Save & Close" (dismiss the modal) —
-     previously both used the same onSave and it always closed, so
-     "Save & Next" incorrectly closed the modal too. */
-  const saveAndNext = () => { onSave(buildPayload(), false); if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1); };
-  const saveAndClose = () => onSave(buildPayload(), true);
+     (stay open, just move tabs) or "Save & Close" (dismiss the modal). Save par
+     pehle SLO ratings API (action:insert) jati hain, phir onSave. */
+  const saveAndNext = async () => { await flushSloAssessments(); onSave(buildPayload(), false); if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1); };
+  const saveAndClose = async () => { const ok = await flushSloAssessments(); if (ok) onSave(buildPayload(), true); };
 
   return createPortal(
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -926,7 +1000,12 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
                     </button>
                   </div>
                 </label>
-                {attendanceMode === 'auto' ? (
+                {attLoading ? (
+                  /* Jab tak API se attendance load ho rahi ho — sirf loader, koi static value nahi. */
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '18px 4px', color: 'var(--text-muted)', fontSize: 12.5 }}>
+                    <i className="fa-solid fa-spinner fa-spin" /> Loading attendance…
+                  </div>
+                ) : attendanceMode === 'auto' ? (
                   <>
                     <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8 }}>Auto-fetched from attendance records</div>
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -1087,9 +1166,11 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
         <div className="exam-modal-footer">
           <button className="exam-cancel-btn" onClick={onClose}>Cancel</button>
           {tabIdx < areaTabs.length - 1 && (
-            <button className="exam-cancel-btn" onClick={saveAndNext}>Save &amp; Next <i className="fa-solid fa-arrow-right"></i></button>
+            <button className="exam-cancel-btn" disabled={!!sloSaving.__all} onClick={saveAndNext}>Save &amp; Next <i className="fa-solid fa-arrow-right"></i></button>
           )}
-          <button className="exam-submit-btn" onClick={saveAndClose}><i className="fa-solid fa-floppy-disk"></i> Save &amp; Close</button>
+          <button className="exam-submit-btn" disabled={!!sloSaving.__all} onClick={saveAndClose}>
+            <i className={`fa-solid ${sloSaving.__all ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {sloSaving.__all ? 'Saving…' : 'Save & Close'}
+          </button>
         </div>
       </div>
     </div>,

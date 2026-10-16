@@ -46,7 +46,22 @@ import {
   mockPreschoolLevels, mockPreschoolResultData, mockPRco,
 } from '../mock/preschool';
 import { delay, clone } from './_http';
-import { apiPost, getBranchId } from './api';
+import { apiPost, apiGet, getBranchId } from './api';
+
+/* preschooling-slos-crud ka `class` field EXACTLY in me se ek hona chahiye
+   (API validation): PlayGroup/Pre1 · Nursery/Pre2 · KG/Pre3. Mock level names
+   ("Play Group / Pre 1") me spaces hain jo API reject karta hai — is liye level
+   id se canonical string bhejte hain. */
+const PRESCHOOL_API_CLASS = { pg: 'PlayGroup/Pre1', nur: 'Nursery/Pre2', kg: 'KG/Pre3' };
+const apiClassName = (levelId, fallback) => PRESCHOOL_API_CLASS[levelId] || fallback || '';
+/* API class string ("PlayGroup/Pre1" ya "Play Group / Pre 1") → level id (pg/nur/kg).
+   Space-insensitive match. */
+export const levelIdFromApiName = (name) => {
+  const k = String(name || '').toLowerCase().replace(/\s+/g, '');
+  if (!k) return '';
+  const hit = Object.entries(PRESCHOOL_API_CLASS).find(([, v]) => v.toLowerCase() === k);
+  return hit ? hit[0] : '';
+};
 
 /* ════════════════════════════════════════════════════════════════
    IMPORTANT: delete sirf EXPLICITLY batayi gayi dbIds ke liye hoti
@@ -191,8 +206,11 @@ export async function getSloStatements() {
     getPreschoolLevels(),
     _laCache.length ? Promise.resolve(_laCache) : getLearningAreas(),
   ]);
-  const norm = s => String(s || '').trim().toLowerCase();
+  /* Space-insensitive: API "PlayGroup/Pre1" bhi mock name "Play Group / Pre 1"
+     se match kare. Canonical api class string ko bhi map karo. */
+  const norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
   const levelByName = new Map(levels.map(l => [norm(l.name), l.id]));
+  Object.entries(PRESCHOOL_API_CLASS).forEach(([lid, cls]) => levelByName.set(norm(cls), lid));
   const laByName = new Map(areas.map(a => [norm(a.name), a.id]));
 
   const res = await apiPost('preschooling-slos-crud', { id: 0, branchID: getBranchId(), action: 'get' });
@@ -213,6 +231,7 @@ export async function saveSloStatements(levelId, learningAreaId, statements, rem
   const levels = await getPreschoolLevels();
   const areas = _laCache.length ? _laCache : await getLearningAreas();
   const levelName = levels.find(l => l.id === levelId)?.name;
+  const classVal = apiClassName(levelId, levelName);   // API-accepted class string
   const laName = areas.find(a => a.id === learningAreaId)?.name;
   const original = (_sloCache[levelId] && _sloCache[levelId][learningAreaId]) || [];
 
@@ -222,7 +241,7 @@ export async function saveSloStatements(levelId, learningAreaId, statements, rem
     if (!dbId) return;
     const orig = original.find(x => x.dbId === dbId);
     ops.push(apiPost('preschooling-slos-crud', {
-      id: dbId, branchID: getBranchId(), class: levelName, subject: laName,
+      id: dbId, branchID: getBranchId(), class: classVal, subject: laName,
       assessmentName: orig?.text || '',
       isActive: false, action: 'delete',
     }).then(() => null));
@@ -231,11 +250,11 @@ export async function saveSloStatements(levelId, learningAreaId, statements, rem
   (statements || []).forEach(item => {
     if (item.dbId) {
       ops.push(apiPost('preschooling-slos-crud', {
-        id: item.dbId, branchID: getBranchId(), class: levelName, subject: laName, assessmentName: item.text, isActive: true, action: 'update',
+        id: item.dbId, branchID: getBranchId(), class: classVal, subject: laName, assessmentName: item.text, isActive: true, action: 'update',
       }).then(() => item));
     } else {
       ops.push(apiPost('preschooling-slos-crud', {
-        id: 0, branchID: getBranchId(), class: levelName, subject: laName, assessmentName: item.text, isActive: true, action: 'insert',
+        id: 0, branchID: getBranchId(), class: classVal, subject: laName, assessmentName: item.text, isActive: true, action: 'insert',
       }).then(res => ({ ...item, dbId: res.id })));
     }
   });
@@ -249,6 +268,7 @@ export async function saveSloStatements(levelId, learningAreaId, statements, rem
 export async function copyLevelSlo(fromLevel, toLevel) {
   const levels = await getPreschoolLevels();
   const toLevelName = levels.find(l => l.id === toLevel)?.name;
+  const toClassVal = apiClassName(toLevel, toLevelName);   // API-accepted class string
   const source = _sloCache[fromLevel] || {};
   const areas = _laCache.length ? _laCache : await getLearningAreas();
   const copy = {};
@@ -258,7 +278,7 @@ export async function copyLevelSlo(fromLevel, toLevel) {
     const inserted = [];
     for (const s of source[laId] || []) {
       const res = await apiPost('preschooling-slos-crud', {
-        id: 0, branchID: getBranchId(), class: toLevelName, subject: laName, assessmentName: s.text, isActive: true, action: 'insert',
+        id: 0, branchID: getBranchId(), class: toClassVal, subject: laName, assessmentName: s.text, isActive: true, action: 'insert',
       });
       inserted.push({ id: String(res.id), dbId: res.id, text: s.text });
     }
@@ -506,41 +526,69 @@ export async function setClassPreschoolLevel(key, levelId) {
 }
 /* ════════════════════════════════════════════════════════════════
    ✅ 7. Student SLO Assessment (EE/ME/AE/NYME per subject+SLO) — REAL API
-   Endpoint name ASSUMED 'preschooling-studentassessment-crud' — agar
-   backend ka naam alag hai to sirf neeche ye ek constant badal dein.
-   Is schema mein examId/termId nahi hai — ye student ki CURRENT
-   rating store karta hai (har subject+SLO ke liye ek row).
+   Endpoint: preschooling-marks-crud (save) + preschooling-marks-get-by-all
+   (load, examId/termId samet). Har subject+SLO ki ek row.
    ════════════════════════════════════════════════════════════════ */
 const SLO_ASSESS_ENDPOINT = 'preschooling-marks-crud';
 
-export async function getStudentSloAssessments({ gradeId, sectionId, studentId }) {
-  const res = await apiPost(SLO_ASSESS_ENDPOINT, {
-    id: 0,
+const _rowsOf = (res) => {
+  const d = res?.data ?? res?.Data;
+  return Array.isArray(res) ? res : Array.isArray(d) ? d : (d && typeof d === 'object' ? [d] : []);
+};
+
+export async function getStudentSloAssessments({ gradeId, sectionId, studentId, examId, termId }) {
+  /* Modal open: SIRF get-by-all chalti hai (branch/grade/section/student/exam/term
+     ke against). Uski response me jo rows aati hain unhi se saved ratings bante
+     hain — koi per-id preschooling-marks-crud get nahi. */
+  const res = await apiGet('preschooling-marks-get-by-all', {
     branchId: getBranchId(),
     gradeId: Number(gradeId) || 0,
     sectionId: Number(sectionId) || 0,
     studentId: Number(studentId) || 0,
-    preSubjectId: 0,
-    preSLOId: 0,
-    studentAssessment: '',
-    action: 'get',
+    examId: Number(examId) || 0,
+    termId: Number(termId) || 0,
   });
-  const rows = Array.isArray(res) ? res : (res?.data || res?.Data || []);
+
   // { [preSubjectId]: { [preSLOId]: { id, code } } }
   const map = {};
-  rows.forEach(row => {
+  _rowsOf(res).forEach(row => {
     const subId = String(row.preSubjectId ?? row.PreSubjectId ?? '');
     const sloId = String(row.preSLOId ?? row.PreSLOId ?? '');
+    const code = row.studentAssessment ?? row.StudentAssessment ?? '';
     if (!subId || !sloId) return;
     if (!map[subId]) map[subId] = {};
-    map[subId][sloId] = {
-      id: row.id ?? row.Id ?? 0,
-      code: row.studentAssessment ?? row.StudentAssessment ?? '',
-    };
+    map[subId][sloId] = { id: Number(row.id ?? row.Id) || 0, code };
   });
   return map;
 }
-export async function saveSloAssessment({ id, gradeId, sectionId, studentId, preSubjectId, preSLOId, code }) {
+
+/* List ke progress/status ke liye: poori class/section ke saved marks ek hi
+   get-by-all call se (studentId omit → sab students) → per-student rated-SLO
+   count. Return: { [studentId]: count }. */
+export async function getClassPreschoolMarkCounts({ gradeId, sectionId, examId, termId }) {
+  const res = await apiGet('preschooling-marks-get-by-all', {
+    branchId: getBranchId(),
+    gradeId: Number(gradeId) || 0,
+    sectionId: Number(sectionId) || 0,
+    examId: Number(examId) || 0,
+    termId: Number(termId) || 0,
+    // studentId omit → poori class/section ke saare students (is exam+term ke)
+  });
+  const byStudent = {};   // { studentId: Set('sub_slo') }
+  _rowsOf(res).forEach(r => {
+    const sid = String(r.studentId ?? r.StudentId ?? r.StudentID ?? '');
+    const sub = String(r.preSubjectId ?? r.PreSubjectId ?? '');
+    const slo = String(r.preSLOId ?? r.PreSLOId ?? '');
+    const code = r.studentAssessment ?? r.StudentAssessment ?? '';
+    if (!sid || !sub || !slo || code === '' || code == null) return;
+    (byStudent[sid] = byStudent[sid] || new Set()).add(`${sub}_${slo}`);
+  });
+  const counts = {};
+  Object.entries(byStudent).forEach(([sid, set]) => { counts[sid] = set.size; });
+  return counts;
+}
+
+export async function saveSloAssessment({ id, gradeId, sectionId, studentId, preSubjectId, preSLOId, code, examId, termId, action }) {
   const isUpdate = !!id;
   const now = new Date().toISOString();
   const payload = {
@@ -552,12 +600,86 @@ export async function saveSloAssessment({ id, gradeId, sectionId, studentId, pre
     preSubjectId: Number(preSubjectId) || 0,
     preSLOId: Number(preSLOId) || 0,
     studentAssessment: code,          // yahi EE / ME / AE / NYME code jaata hai
+    examId: Number(examId) || 0,
+    termId: Number(termId) || 0,
     createdBy: 0,
     createdAt: now,
     modifiedBy: 0,
     modifiedAt: now,
-    action: isUpdate ? 'update' : 'insert',
+    action: action || (isUpdate ? 'update' : 'insert'),
   };
   const res = await apiPost(SLO_ASSESS_ENDPOINT, payload);
   return res?.id ?? res?.Id ?? id ?? 0;
+}
+
+/* Modal open par saved Attendance/Remarks/PTM laao — preschooling-attendance-remarks-crud
+   action:'get' (student+class+section+term+exam ke against). Row mile to UI shape me
+   wapas (id samet, taake agli save UPDATE jaye), warna null. */
+export async function getAttendanceRemarks({ studentId, classId, sectionId, termId, examId } = {}) {
+  const now = new Date().toISOString();
+  const res = await apiPost('preschooling-attendance-remarks-crud', {
+    id: 0,
+    branchId: getBranchId(),
+    studentId: Number(studentId) || 0,
+    classId: Number(classId) || 0,
+    sectionId: Number(sectionId) || 0,
+    termId: Number(termId) || 0,
+    examID: Number(examId) || 0,
+    workingDays: 0, presentDays: 0,
+    teacherObservation: '', finalRemarks: '',
+    ptm: false, meetingDate: '', parentAttendance: false,
+    parentComment: '', teacherComment: '',
+    promotionDecision: '', promotedClassId: 0,
+    createdBy: 0, createdAt: now, modifiedBy: 0, modifiedAt: now,
+    action: 'get',
+  });
+  const row = _rowsOf(res)[0];
+  if (!row) return null;
+  return {
+    id: Number(row.id ?? row.Id) || 0,
+    workingDays: Number(row.workingDays ?? row.WorkingDays) || 0,
+    presentDays: Number(row.presentDays ?? row.PresentDays) || 0,
+    teacherObservation: row.teacherObservation ?? row.TeacherObservation ?? '',
+    finalRemarks: row.finalRemarks ?? row.FinalRemarks ?? '',
+    ptm: (row.ptm ?? row.Ptm ?? row.PTM) === true,
+    meetingDate: row.meetingDate ?? row.MeetingDate ?? '',
+    parentAttendance: (row.parentAttendance ?? row.ParentAttendance) === true,
+    parentComment: row.parentComment ?? row.ParentComment ?? '',
+    teacherComment: row.teacherComment ?? row.TeacherComment ?? '',
+    promotionDecision: row.promotionDecision ?? row.PromotionDecision ?? '',
+    promotedClassId: Number(row.promotedClassId ?? row.PromotedClassId) || 0,
+  };
+}
+
+/* Attendance, Remarks & PTM tab — preschooling-attendance-remarks-crud.
+   id ho to update, warna insert. (examID capital, baaqi camelCase — swagger model.) */
+export async function saveAttendanceRemarks(d = {}) {
+  const now = new Date().toISOString();
+  const payload = {
+    id: Number(d.id) || 0,
+    branchId: getBranchId(),
+    studentId: Number(d.studentId) || 0,
+    classId: Number(d.classId) || 0,
+    sectionId: Number(d.sectionId) || 0,
+    termId: Number(d.termId) || 0,
+    examID: Number(d.examId) || 0,
+    workingDays: Number(d.workingDays) || 0,
+    presentDays: Number(d.presentDays) || 0,
+    teacherObservation: String(d.teacherObservation || ''),
+    finalRemarks: String(d.finalRemarks || ''),
+    ptm: d.ptm === true,
+    meetingDate: String(d.meetingDate || ''),
+    parentAttendance: d.parentAttendance === true,
+    parentComment: String(d.parentComment || ''),
+    teacherComment: String(d.teacherComment || ''),
+    promotionDecision: String(d.promotionDecision || ''),
+    promotedClassId: Number(d.promotedClassId) || 0,
+    createdBy: 0,
+    createdAt: now,
+    modifiedBy: 0,
+    modifiedAt: now,
+    action: Number(d.id) ? 'update' : 'insert',
+  };
+  const res = await apiPost('preschooling-attendance-remarks-crud', payload);
+  return res?.id ?? res?.Id ?? (Number(d.id) || 0);
 }

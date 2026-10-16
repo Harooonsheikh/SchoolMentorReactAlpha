@@ -1044,13 +1044,87 @@ export default function Examination({ toast = () => { } }) {
     toggles: typeof updater === 'function' ? updater(prev.toggles) : updater,
   }));
   const setPReportType = val => setPRcoData(prev => ({ ...prev, reportType: val }));
+  /* Selected design (monthly/term/annual) ko sessionStorage me rakho — jaisa chuna/save
+     kiya, result card wahi design use kare (exam-naam se infer nahi). */
+  useEffect(() => {
+    if (pReportType) { try { sessionStorage.setItem('preschoolReportType', pReportType); } catch { /* ignore */ } }
+  }, [pReportType]);
   const [pPreviewId, setPPreviewId] = useState(null);
   const [pHelpOpen, setPHelpOpen] = useState(false);
   const { data: pClassTypes = {}, setData: setPClassTypes } = useAsync(preschoolService.getClassAssessmentTypes, []);
   const { data: pClassLevels = {}, setData: setPClassLevels } = useAsync(preschoolService.getClassPreschoolLevels, []);
   const { data: pResultData = {}, setData: setPResultData } = useAsync(preschoolService.getPreschoolResultData, []);
+  /* Preschool list ka progress/status real marks API se: { [key]: { [studentId]: ratedCount } }.
+     Class expand par (aur modal save ke baad) load hota hai — refresh par bhi sahi dikhe. */
+  const [pMarkCounts, setPMarkCounts] = useState({});
+  const loadPreMarkCounts = async (key, cls, examId, termId) => {
+    try {
+      const counts = await preschoolService.getClassPreschoolMarkCounts({ gradeId: cls.classID, sectionId: cls.sectionID, examId, termId });
+      setPMarkCounts(prev => ({ ...prev, [key]: counts }));
+    } catch (e) { console.error('Could not load preschool mark counts:', e); }
+  };
+  /* Promote To dropdown ke liye class list (get-classlist-...): ["Grade 1 - A", ...].
+     Preschool assess modal khulne par ek dafa load. */
+  const [pPromoteClasses, setPPromoteClasses] = useState([]);
+  const pPromoteIdMap = useRef({});   // { "Grade 1 - A": gradeID } — promotedClassId resolve karne ke liye
+  const pPromoteLoaded = useRef(false);
+  const loadPromoteClasses = async () => {
+    if (pPromoteLoaded.current) return;
+    pPromoteLoaded.current = true;
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
+      const r = await fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      const data = await r.json();
+      const arr = Array.isArray(data) ? data : (data?.data || []);
+      const names = [];
+      const idMap = {};
+      arr.forEach(g => {
+        if ((g.sections || []).length) {
+          g.sections.forEach(s => { const nm = `${g.name} - ${s.sectionName}`; names.push(nm); idMap[nm] = Number(g.id) || 0; });
+        } else { names.push(g.name); idMap[g.name] = Number(g.id) || 0; }
+      });
+      pPromoteIdMap.current = idMap;
+      setPPromoteClasses(names);
+    } catch (e) { console.error('Could not load promote classes', e); pPromoteLoaded.current = false; }
+  };
   const [pAssessCtx, setPAssessCtx] = useState(null);
   const [pCardCtx, setPCardCtx] = useState(null);
+  /* Result card ka data (ad). Local pResultData me ho to wahi; warna real API se
+     (SLO + attendance-remarks) build — refresh ke baad bhi card khule. */
+  const [pCardAd, setPCardAd] = useState(null);
+  useEffect(() => {
+    if (!pCardCtx) { setPCardAd(null); return; }
+    const localAd = (pResultData[pCardCtx.key]?.students || []).find(s => String(s.studentId) === String(pCardCtx.student?.id));
+    if (localAd) { setPCardAd(localAd); return; }
+    let alive = true;
+    setPCardAd(null);
+    (async () => {
+      try {
+        const [sloMap, attR] = await Promise.all([
+          preschoolService.getStudentSloAssessments({ gradeId: pCardCtx.classID, sectionId: pCardCtx.sectionID, studentId: pCardCtx.student?.id, examId: pCardCtx.apiExamId, termId: pCardCtx.apiTermId }),
+          preschoolService.getAttendanceRemarks({ studentId: pCardCtx.student?.id, classId: pCardCtx.classID, sectionId: pCardCtx.sectionID, termId: pCardCtx.apiTermId, examId: pCardCtx.apiExamId }).catch(() => null),
+        ]);
+        if (!alive) return;
+        const achievements = {};
+        Object.keys(sloMap || {}).forEach(sub => { achievements[sub] = {}; Object.keys(sloMap[sub]).forEach(slo => { achievements[sub][slo] = sloMap[sub][slo].code; }); });
+        const toClass = attR?.promotedClassId ? (Object.keys(pPromoteIdMap.current).find(nm => pPromoteIdMap.current[nm] === Number(attR.promotedClassId)) || '') : '';
+        setPCardAd({
+          studentId: pCardCtx.student?.id,
+          achievements, psd: {},
+          attendance: attR ? { workingDays: attR.workingDays, presentDays: attR.presentDays } : null,
+          teacherRemarks: attR?.teacherObservation || '',
+          finalRemarks: attR?.finalRemarks || '',
+          ptm: attR ? { enabled: attR.ptm, date: attR.meetingDate, parentAttendance: attR.parentAttendance, parentComments: attR.parentComment, teacherComments: attR.teacherComment } : null,
+          promotion: attR?.promotionDecision ? { status: attR.promotionDecision, toClass } : null,
+        });
+      } catch (e) { console.error('Could not load result card data:', e); if (alive) setPCardAd(null); }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pCardCtx]);
   const [pConfirmPublish, setPConfirmPublish] = useState(null);
   const [pLevelPickCtx, setPLevelPickCtx] = useState(null);
 
@@ -2783,15 +2857,29 @@ export default function Examination({ toast = () => { } }) {
       const data = await response.json();
       console.log("API Response:", data); // Debug log
 
+      /* getclassesinexam ek (grade,section) ke kai rows de sakta hai (history) —
+         TYPE/level ke liye SAB se latest (highest id) wala row authoritative hai. */
+      const latestByKey = {};
+      (data || []).forEach(item => {
+        const k = `${item.gradeID}_${item.sectionID}`;
+        if (!latestByKey[k] || Number(item.id) > Number(latestByKey[k].id)) latestByKey[k] = item;
+      });
+
       // Transform the data to match your component structure
-      const transformedData = (data || []).map(item => ({
-        id: item.id,
-        classID: item.gradeID,
-        sectionID: item.sectionID,
-        sectionName: item.sectionName,
-        gradeName: item.name,
-        className: `${item.name} - ${item.sectionName}`.trim()
-      }));
+      const transformedData = (data || []).map(item => {
+        const latest = latestByKey[`${item.gradeID}_${item.sectionID}`] || item;
+        return {
+          id: item.id,
+          classID: item.gradeID,
+          sectionID: item.sectionID,
+          sectionName: item.sectionName,
+          gradeName: item.name,
+          className: `${item.name} - ${item.sectionName}`.trim(),
+          /* API se: isPreSchooling true → TYPE preschool, false → marks-based (grade). */
+          isPreSchooling: (latest.isPreSchooling ?? latest.IsPreSchooling) === true,
+          preLevelName: latest.changePreSchoolingClassName ?? latest.ChangePreSchoolingClassName ?? '',
+        };
+      });
 
       // Duplicate sectionID hataao — ek section ek baar dikhe
       const seen = new Set();
@@ -2975,6 +3063,10 @@ export default function Examination({ toast = () => { } }) {
       );
       const studentsData = await studentsRes.json();
       const students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
+
+      /* Preschool class: list ke progress/status ke liye real per-student rated-SLO
+         counts bhi laa lo (fire-and-forget, is exam+term ke against) — refresh par bhi sahi. */
+      if (pClassTypes[key] === 'preschool') loadPreMarkCounts(key, cls, selectExamValue, termID);
 
       // 2. Subject totals
       const subjParams = new URLSearchParams({
@@ -5555,19 +5647,23 @@ export default function Examination({ toast = () => { } }) {
                 const classes = await getExamClasses(selectExamId, termID);
                 setExamClasses(classes);
 
-                // ── NAYA HISSA ── Preschool toggle state ko backend se refresh karo,
-                // taake page-reload/navigate ke baad bhi switch sahi dikhe (mock ki
-                // jagah asal saved state).
+                // ── TYPE column ── getclassesinexam response ke isPreSchooling se:
+                // true → Preschool checked, false → marks-based (grade). Level
+                // changePreSchoolingClassName se. Reload/navigate par bhi sahi
+                // (backend saved state, mock nahi).
                 if (isPreschoolBranch && classes.length) {
-                  try {
-                    const { types, levels } = await preschoolService.getClassAssessmentTypesForExam(
-                      classes, termID, selectExamId
-                    );
-                    setPClassTypes(prev => ({ ...prev, ...types }));
-                    setPClassLevels(prev => ({ ...prev, ...levels }));
-                  } catch (e) {
-                    console.error('Could not load preschool class types:', e);
-                  }
+                  const types = {};
+                  const levels = {};
+                  classes.forEach((c, i) => {
+                    const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
+                    types[key] = c.isPreSchooling ? 'preschool' : 'grade';
+                    if (c.isPreSchooling) {
+                      const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
+                      if (levelId) levels[key] = levelId;
+                    }
+                  });
+                  setPClassTypes(prev => ({ ...prev, ...types }));
+                  setPClassLevels(prev => ({ ...prev, ...levels }));
                 }
                 try {
                   const branchID = sessionStorage.getItem('branchID');
@@ -5933,7 +6029,11 @@ export default function Examination({ toast = () => { } }) {
                                               attendance: raw.attendance,
                                             };
                                             const ad = (pcd.students || []).find(s => String(s.studentId) === String(st.id));
-                                            const { done, total } = pProgressForStudent(ad, (pLearningAreas || []).length, rowSloTotal);
+                                            const prog = pProgressForStudent(ad, (pLearningAreas || []).length, rowSloTotal);
+                                            /* done real marks API se (pMarkCounts) — refresh par bhi sahi; na mile to local. */
+                                            const realDone = pMarkCounts[key]?.[String(st.id)];
+                                            const done = realDone != null ? realDone : prog.done;
+                                            const total = prog.total;
                                             const pct = total ? Math.round((done / total) * 100) : 0;
                                             return (
                                               <tr key={st.id || si}>
@@ -5960,17 +6060,20 @@ export default function Examination({ toast = () => { } }) {
                                                 <td>
                                                   <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
                                                     <Tooltip text="Enter/Edit assessment">
-                                                      <button className="res-action-btn" onClick={() => setPAssessCtx({
+                                                      <button className="res-action-btn" onClick={() => { loadPromoteClasses(); setPAssessCtx({
                                                         examId: resExamId, key, className, student: st,
                                                         examName: resCurrentExam?.name || '', termLabel: resCurrentExam?.name || '',
                                                         classID: cls.classID, sectionID: cls.sectionID,
-                                                      })}>
+                                                        /* preschool marks API ke liye asli exam/term id (jaisa baaqi result code bhejta hai). */
+                                                        apiExamId: resCurrentExam?.selectExam ?? resExamId,
+                                                        apiTermId: resCurrentExam?.termID ?? selectedTermId,
+                                                      }); }}>
                                                         <i className="fa-solid fa-pen-to-square"></i> Assess
                                                       </button>
                                                     </Tooltip>
-                                                    {ad && (
+                                                    {(ad || done > 0) && (
                                                       <Tooltip text="View this student's result card">
-                                                        <button className="res-action-btn view" onClick={() => setPCardCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '' })}>
+                                                        <button className="res-action-btn view" onClick={() => { loadPromoteClasses(); setPCardCtx({ examId: resExamId, key, className, student: st, examName: resCurrentExam?.name || '', classID: cls.classID, sectionID: cls.sectionID, apiExamId: resCurrentExam?.selectExam ?? resExamId, apiTermId: resCurrentExam?.termID ?? selectedTermId }); }}>
                                                           <i className="fa-solid fa-eye"></i> Card
                                                         </button>
                                                       </Tooltip>
@@ -7796,6 +7899,17 @@ export default function Examination({ toast = () => { } }) {
             const levelName = String(
               level?.name ?? level?.levelName ?? level?.className ?? level?.label ?? levelId
             ).trim();
+            /* API `ChangePreSchoolingClassName` EXACTLY in me se ek maangti hai:
+               PlayGroup/Pre1 · Nursery/Pre2 · KG/Pre3. Level ka naam ("Play Group /
+               Pre 1") spaces ki wajah se reject hota hai, is liye canonical string. */
+            const canonPreschoolClass = (name) => {
+              const k = String(name || '').toLowerCase().replace(/\s+/g, '');
+              if (k.includes('playgroup') || k.includes('pre1')) return 'PlayGroup/Pre1';
+              if (k.includes('nursery') || k.includes('pre2')) return 'Nursery/Pre2';
+              if (k.includes('kg') || k.includes('pre3')) return 'KG/Pre3';
+              return '';
+            };
+            const apiLevelName = canonPreschoolClass(levelName);
             const payload = {
               id: 0,
               branchID,
@@ -7806,11 +7920,11 @@ export default function Examination({ toast = () => { } }) {
               dateFrom: new Date().toISOString(),
               dateTo: new Date().toISOString(),
               isPreSchooling: true,
-              changePreSchoolingClassName: levelName,
+              changePreSchoolingClassName: apiLevelName,
               action: 'save',
             };
             if (!payload.branchID || !payload.termID || !payload.selectExam ||
-              !payload.classID || !payload.sectionID || !levelName) {
+              !payload.classID || !payload.sectionID || !apiLevelName) {
               toast('Missing exam, term, class, section, or preschool level details', 'error');
               return;
             }
@@ -7873,17 +7987,57 @@ export default function Examination({ toast = () => { } }) {
         <PreschoolAssessmentModal
           assessment={{ name: pAssessCtx.examName, label: pAssessCtx.examName }}
           cls={{ cls: pAssessCtx.className, sec: '', classID: pAssessCtx.classID, sectionID: pAssessCtx.sectionID }}
+          examId={pAssessCtx.apiExamId}
+          termId={pAssessCtx.apiTermId}
           student={pAssessCtx.student}
           existing={(pResultData[pAssessCtx.key]?.students || []).find(s => String(s.studentId) === String(pAssessCtx.student?.id)) || null}
           pLearningAreas={pLearningAreas}
           pSlo={pSlo[pClassLevels[pAssessCtx.key] || 'kg'] || {}}
           pGradingScale={pGradingScale}
           pPsdFields={pPsdFields}
-          allClasses={[]}
+          allClasses={pPromoteClasses}
+          /* Attendance result-card wali API se — is student ke working/present days + %. */
+          attendanceLoader={async () => {
+            const sum = await fetchClassAttendanceSummary(pAssessCtx.classID, pAssessCtx.sectionID);
+            return sum[String(pAssessCtx.student?.id)] || null;
+          }}
+          /* Saved Attendance/Remarks/PTM — modal open par action:'get' se. */
+          attRemarksLoader={async () => preschoolService.getAttendanceRemarks({
+            studentId: pAssessCtx.student?.id, classId: pAssessCtx.classID, sectionId: pAssessCtx.sectionID,
+            termId: pAssessCtx.apiTermId, examId: pAssessCtx.apiExamId,
+          })}
+          resolvePromoteName={(id) => Object.keys(pPromoteIdMap.current).find(nm => pPromoteIdMap.current[nm] === Number(id)) || ''}
           onClose={() => setPAssessCtx(null)}
           onSave={async (patch, shouldClose) => {
             await preschoolService.saveStudentAssessment(pAssessCtx.key, pAssessCtx.student.id, patch);
+            /* Attendance, Remarks & PTM → preschooling-attendance-remarks-crud. */
+            try {
+              const att = patch.attendance || {};
+              const ptm = patch.ptm || {};
+              const promo = patch.promotion || {};
+              await preschoolService.saveAttendanceRemarks({
+                id: patch.attRemarksId || 0,   // id ho to UPDATE, warna insert
+                studentId: pAssessCtx.student?.id,
+                classId: pAssessCtx.classID,
+                sectionId: pAssessCtx.sectionID,
+                termId: pAssessCtx.apiTermId,
+                examId: pAssessCtx.apiExamId,
+                workingDays: att.workingDays,
+                presentDays: att.presentDays,
+                teacherObservation: patch.teacherRemarks,
+                finalRemarks: patch.finalRemarks,
+                ptm: ptm.enabled,
+                meetingDate: ptm.date,
+                parentAttendance: ptm.parentAttendance,
+                parentComment: ptm.parentComments,
+                teacherComment: ptm.teacherComments,
+                promotionDecision: promo.status || '',
+                promotedClassId: promo.status === 'promoted' ? (pPromoteIdMap.current[promo.toClass] || 0) : 0,
+              });
+            } catch (e) { console.error('Could not save attendance/remarks:', e); }
             setPResultData(await preschoolService.getPreschoolResultData());
+            /* List ka progress/status real API se dobara laa lo — save ke baad foran sahi dikhe. */
+            loadPreMarkCounts(pAssessCtx.key, { classID: pAssessCtx.classID, sectionID: pAssessCtx.sectionID }, pAssessCtx.apiExamId, pAssessCtx.apiTermId);
             toast(shouldClose ? 'Assessment saved!' : 'Saved — continue to next section', 'success');
             if (shouldClose) setPAssessCtx(null);
           }}
@@ -7892,15 +8046,17 @@ export default function Examination({ toast = () => { } }) {
       )}
 
       {pCardCtx && (() => {
-        const ad = (pResultData[pCardCtx.key]?.students || []).find(s => String(s.studentId) === String(pCardCtx.student?.id));
-        if (!ad) return null;
+        const ad = pCardAd || (pResultData[pCardCtx.key]?.students || []).find(s => String(s.studentId) === String(pCardCtx.student?.id));
+        if (!ad) return null;   // abhi load ho raha hai (real API) — ready hote hi card khul jayega
         return (
           <PreschoolResultCardViewer
             assessment={{ name: pCardCtx.examName, label: pCardCtx.examName }}
             cls={{ cls: pCardCtx.className, sec: '' }}
             student={pCardCtx.student}
             ad={ad}
-            template={pTemplateForExam(pCardCtx.examName)}
+            /* Selected design (Result Card Options) — sessionStorage/pReportType se;
+               na mile to exam-naam se infer. */
+            template={(() => { try { return sessionStorage.getItem('preschoolReportType'); } catch { return null; } })() || pReportType || pTemplateForExam(pCardCtx.examName)}
             pRco={pRco}
             pLearningAreas={pLearningAreas}
             pSlo={pSlo[pClassLevels[pCardCtx.key] || 'kg'] || {}}
@@ -13786,7 +13942,7 @@ function rhBuildAttendanceReport(st, isColor) {
    Backend har get-call mein sirf us `attendanceDate` ka data deta hai, aur us response mein us din
    ke SAARE students hote hain — is liye per-date ek call (concurrency-limited) kaafi hai poori class
    ke liye (per-student loop ki zaroorat nahi). sessionID wahi jis se attendance save hui. */
-async function fetchClassAttendanceMap(classID, sectionID) {
+async function _fetchClassAttendanceAgg(classID, sectionID) {
   try {
     const branchID = Number(sessionStorage.getItem('branchID')) || 0;
     const token = sessionStorage.getItem('token');
@@ -13844,13 +14000,31 @@ async function fetchClassAttendanceMap(classID, sectionID) {
     };
     await Promise.all(Array.from({ length: Math.min(6, dates.length) }, worker));
 
-    const map = {};
-    Object.keys(agg).forEach(sid => { map[sid] = agg[sid].total ? Math.round(agg[sid].att / agg[sid].total * 100) : 0; });
-    return map;
+    /* Full summary: { sid: { workingDays, presentDays, pct } } — total = working days
+       (jin dinon record mila), att = present/late days. */
+    const summary = {};
+    Object.keys(agg).forEach(sid => {
+      const { att, total } = agg[sid];
+      summary[sid] = { workingDays: total, presentDays: att, pct: total ? Math.round(att / total * 100) : 0 };
+    });
+    return summary;
   } catch (e) {
-    console.error('fetchClassAttendanceMap error:', e);
+    console.error('fetchClassAttendanceSummary error:', e);
     return {};
   }
+}
+
+/* Result card wali attendance — per-student { workingDays, presentDays, pct }. */
+async function fetchClassAttendanceSummary(classID, sectionID) {
+  return _fetchClassAttendanceAgg(classID, sectionID);
+}
+
+/* Backward-compat: sirf percentage map { sid: pct } (purane callers ke liye). */
+async function fetchClassAttendanceMap(classID, sectionID) {
+  const sum = await _fetchClassAttendanceAgg(classID, sectionID);
+  const map = {};
+  Object.keys(sum).forEach(sid => { map[sid] = sum[sid].pct; });
+  return map;
 }
 
 function ResultCardViewer({ student, rd, ex, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false, attnClassID, attnSectionID, attnStudentID }) {

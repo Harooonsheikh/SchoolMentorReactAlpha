@@ -77,3 +77,27 @@ export async function apiPost(endpoint, payload) {
   }
   return body || { success: true };
 }
+
+/**
+ * GETs a preschooling read endpoint. `params` → query string. Same
+ * auth + { success, message, data } handling as apiPost.
+ */
+export async function apiGet(endpoint, params = {}) {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+  const res = await fetch(`${API_BASE}/${endpoint}${qs ? `?${qs}` : ''}`, {
+    method: 'GET',
+    headers: { accept: '*/*', Authorization: `bearer ${getAuthToken()}` },
+  });
+
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON / empty body */ }
+
+  if (!res.ok || (body && body.success === false)) {
+    const msg = (body && body.message) || `${endpoint} request failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return body || { success: true };
+}
