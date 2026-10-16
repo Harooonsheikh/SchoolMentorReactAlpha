@@ -479,3 +479,16 @@ export async function deleteTermBreakupDetails({ classId, subjectId, termId, det
   }
   return { deleted }
 }
+
+/* Update Weeks (pencil) — dedicated endpoint lpupdateweekrequired.
+   Model: { networkID, unitName, weekRequired } (ERP jaisa, magar networkID).
+   NOTE: ye API sirf networkID + unitName par chalti hai — is network me ek hi
+   naam ki do units hon to dono ke weeks badal jayenge (backend ka faisla). */
+export async function updateTermBreakupWeeks({ unit }, networkId = currentNetworkId()) {
+  const unitName = String(unit?.unitName || '').trim()
+  if (!unitName) throw new Error('Unit Name is required')
+  return call('/lpupdateweekrequired', {
+    method: 'POST',
+    body: { networkID: Number(networkId) || 0, unitName, weekRequired: String(unit.weeks ?? '0') },
+  })
+}

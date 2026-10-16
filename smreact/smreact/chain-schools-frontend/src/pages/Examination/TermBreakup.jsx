@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { examSession, unitsOf } from './examStore'
 import { exportReport } from '../Academics/reportEngine'
-import { fetchTermBreakupUnits, saveTermBreakup, deleteTermBreakupDetails } from '../../api/examinationApi'
+import { fetchTermBreakupUnits, saveTermBreakup, deleteTermBreakupDetails, updateTermBreakupWeeks } from '../../api/examinationApi'
 import { fetchNetworkAcademics, currentNetworkId } from '../../api/academicsSetupApi'
 import SpinnerButton from '../../components/SpinnerButton'
 
@@ -123,6 +123,29 @@ export default function TermBreakup({ store, commit, flash, onBack }) {
     flash(failed ? 'Term breakup saved locally — server sync pending' : 'Term breakup saved', failed ? 'error' : 'success')
   }
 
+  /* Ek class+term+subject ka breakup foran persist (modal band kiye baghair) —
+     per-unit save (pencil/floppy) ke liye. Local store me merge + API par save. */
+  const persistCombo = async (classId, termId, subjectId, units) => {
+    commit({
+      ...store,
+      termBreakups: {
+        ...(store.termBreakups || {}),
+        [classId]: {
+          ...(store.termBreakups?.[classId] || {}),
+          [termId]: { ...(store.termBreakups?.[classId]?.[termId] || {}), [subjectId]: units },
+        },
+      },
+    })
+    if (!Number(classId) || !Number(subjectId) || !Number(termId)) { flash('Saved locally', 'success'); return }
+    try {
+      await saveTermBreakup({ classId: Number(classId), termId: Number(termId), subjectId: Number(subjectId), units })
+      loadedRef.current.delete(`${classId}__${termId}__${subjectId}`)
+      flash('Unit saved')
+    } catch {
+      flash('Saved locally — server sync pending', 'error')
+    }
+  }
+
   return (
     <div className="exm-panel">
       <div className="exm-panel-hdr">
@@ -196,16 +219,17 @@ export default function TermBreakup({ store, commit, flash, onBack }) {
         )
       })}
 
-      {edit && <BreakupModal cls={edit} subjects={subjectsOf(edit.id)} store={store} session={session} flash={flash} onClose={() => setEdit(null)} onSave={(wb) => saveBreakup(edit.id, wb)} />}
+      {edit && <BreakupModal cls={edit} subjects={subjectsOf(edit.id)} store={store} session={session} flash={flash} onClose={() => setEdit(null)} onSave={(wb) => saveBreakup(edit.id, wb)} onPersist={persistCombo} />}
     </div>
   )
 }
 
 /* ── Update modal: term tabs + subject tabs + units/topics editor ── */
-function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSave }) {
+function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSave, onPersist }) {
   const [mTerm, setMTerm] = useState(store.terms[0]?.id || null)
   const [mSubj, setMSubj] = useState(subjects[0]?.id || null)
   const [wb, setWb] = useState(() => JSON.parse(JSON.stringify(store.termBreakups?.[cls.id] || {})))
+  const [saving, setSaving] = useState(false)
 
   /* Jis term+subject par aao, us ke units API se laa kar wb me daal do (har
      combo sirf ek dafa). Khaali/fail par local seed (store) hi rehta hai. */
@@ -267,6 +291,41 @@ function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSa
     onSave(clean)
   }
 
+  /* Mojooda term+subject ka breakup foran persist (per-unit save — floppy).
+     Save ke baad server se dobara laa kar wb update (taake detailId aa jaye —
+     phir pencil se weeks update ho sake). Modal khula rehta hai. */
+  const persistCurrent = async () => {
+    if (!mTerm || !mSubj) return
+    const cleanUnits = units
+      .map((u) => ({ ...u, topics: (u.topics || []).filter((t) => String(t.topic || '').trim()) }))
+      .filter((u) => String(u.unitName || '').trim())
+    setSaving(true)
+    try {
+      await onPersist?.(cls.id, mTerm, mSubj, cleanUnits)
+      try {
+        const { units: fresh } = await fetchTermBreakupUnits({ classId: Number(cls.id), termId: Number(mTerm), subjectId: Number(mSubj) })
+        if (fresh && fresh.length) setWb((w) => ({ ...w, [mTerm]: { ...(w[mTerm] || {}), [mSubj]: fresh } }))
+      } catch { /* re-fetch fail — local hi rahe */ }
+    } finally { setSaving(false) }
+  }
+
+  /* Pencil = Update weeks: unit pehle SAVE honi chahiye (koi topic ki detailId ho),
+     warna "Save the unit first" toaster. Saved ho to SIRF weeks update —
+     lptermbreakupdetailscrud action:'update' (full re-save nahi). */
+  const updateWeeks = async (ui) => {
+    const u = units[ui]
+    if (!String(u?.unitName || '').trim()) { flash?.('Unit Name is required', 'error'); return }
+    if (Number(u?.weeks) <= 0) { flash?.('Weeks Required must be greater than 0', 'error'); return }
+    const saved = (u.topics || []).some((t) => Number(t.detailId) > 0)
+    if (!saved) { flash?.('Save the unit first, then update weeks', 'error'); return }
+    setSaving(true)
+    try {
+      await updateTermBreakupWeeks({ classId: Number(cls.id), termId: Number(mTerm), subjectId: Number(mSubj), unit: u })
+      flash?.('Weeks required updated')
+    } catch { flash?.('Could not update weeks — please try again', 'error') }
+    finally { setSaving(false) }
+  }
+
   return createPortal(
     <div className="exm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="exm-modal" role="dialog" aria-modal="true">
@@ -289,27 +348,66 @@ function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSa
           </div>
 
           {units.length === 0 ? <div className="exm-tb-none" style={{ padding: 16 }}>No units yet for this term &amp; subject.</div>
-            : units.map((u, ui) => (
-              <div className="exm-tb-ed-unit" key={ui}>
-                <div className="exm-tb-ed-row">
-                  <input className="exm-input" value={u.unitNum} onChange={(e) => setUnit(ui, 'unitNum', e.target.value)} placeholder="No." />
-                  <input className="exm-input" value={u.unitName} onChange={(e) => setUnit(ui, 'unitName', e.target.value)} placeholder="Unit name" />
-                  <input className="exm-input" value={u.weeks} onChange={(e) => setUnit(ui, 'weeks', e.target.value)} placeholder="Weeks" />
-                  <button className="exm-icon-btn danger" style={{ color: 'var(--error)', borderColor: 'rgba(220,38,38,.35)' }} title="Remove unit" onClick={() => delUnit(ui)}><i className="fa-solid fa-trash-can" /></button>
-                </div>
-                <div className="exm-tb-ed-lbl">Topics</div>
-                {u.topics.map((tp, ti) => (
-                  <div className="exm-tb-ed-topic" key={ti}>
-                    <input className="exm-input" value={tp.topic} onChange={(e) => setTopic(ui, ti, 'topic', e.target.value)} placeholder="Topic / sub-topic" />
-                    <input className="exm-input" value={tp.periods} onChange={(e) => setTopic(ui, ti, 'periods', e.target.value)} placeholder="Periods" />
-                    <button className="exm-icon-btn danger" style={{ color: 'var(--error)', borderColor: 'rgba(220,38,38,.35)' }} title="Remove topic" onClick={() => delTopic(ui, ti)}><i className="fa-solid fa-xmark" /></button>
+            : units.map((u, ui) => {
+              const unitReady = String(u.unitNum || '').trim() && String(u.unitName || '').trim() && Number(u.weeks) > 0
+              return (
+              <div className="tbm-unit-block" key={ui}>
+                {/* Unit header: Unit Number / Unit Name / Weeks Required + Save unit (pencil) */}
+                <div className="tbm-unit-top">
+                  <div>
+                    <label className="tbm-label">Unit Number</label>
+                    <input className="exm-input" value={u.unitNum} onChange={(e) => setUnit(ui, 'unitNum', e.target.value)} placeholder="Enter unit number" />
                   </div>
-                ))}
-                <button className="exm-btn sm" style={{ marginTop: 4 }} onClick={() => addTopic(ui)}><i className="fa-solid fa-plus" /> Add Topic</button>
-              </div>
-            ))}
+                  <div>
+                    <label className="tbm-label">Unit Name</label>
+                    <input className="exm-input" value={u.unitName} onChange={(e) => setUnit(ui, 'unitName', e.target.value)} placeholder="Enter unit name" />
+                  </div>
+                  <div>
+                    <label className="tbm-label">Weeks Required</label>
+                    <input className="exm-input" type="number" min="0" value={u.weeks} style={{ textAlign: 'center' }} onChange={(e) => setUnit(ui, 'weeks', e.target.value)} placeholder="Weeks" />
+                  </div>
+                  <div className="tbm-unit-top-btns">
+                    <button className="tbm-unit-save-btn" title={unitReady ? 'Update weeks' : 'Unit number, name & weeks (> 0) required'} disabled={saving || !unitReady} onClick={() => updateWeeks(ui)}>
+                      <i className="fa-solid fa-pen" />
+                    </button>
+                    <button className="tbm-topic-del-btn" title="Remove unit" disabled={saving} onClick={() => delUnit(ui)}>
+                      <i className="fa-solid fa-trash-can" />
+                    </button>
+                  </div>
+                </div>
 
-          <button className="exm-btn primary" onClick={addUnit} disabled={!mTerm || !mSubj}><i className="fa-solid fa-plus" /> Add Unit</button>
+                {/* Sub topics: har row me Sub Topic / Total Period Required + Save (floppy) + Delete (trash) */}
+                <div className="tbm-topics-area">
+                  {u.topics.map((tp, ti) => (
+                    <div className="tbm-topic-row" key={ti}>
+                      <div>
+                        <label className="tbm-label">Sub Topic</label>
+                        <input className="exm-input" value={tp.topic} onChange={(e) => setTopic(ui, ti, 'topic', e.target.value)} placeholder="Enter sub topic" />
+                      </div>
+                      <div>
+                        <label className="tbm-label">Total Period Required</label>
+                        <input className="exm-input" type="number" min="0" value={tp.periods} style={{ textAlign: 'center' }} onChange={(e) => setTopic(ui, ti, 'periods', e.target.value)} placeholder="0" />
+                      </div>
+                      <div className="tbm-topic-action-cell">
+                        <button className="tbm-unit-save-btn" title={unitReady ? 'Save unit' : 'Unit number, name & weeks (> 0) required'} disabled={saving || !unitReady} onClick={persistCurrent}>
+                          <i className="fa-solid fa-floppy-disk" />
+                        </button>
+                        <button className="tbm-topic-del-btn" title="Delete topic" disabled={saving} onClick={() => delTopic(ui, ti)}>
+                          <i className="fa-solid fa-trash" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ padding: '0 2px 6px' }}>
+                  <button className="tbm-topic-add-btn" onClick={() => addTopic(ui)}><i className="fa-solid fa-plus" /> Add Topic</button>
+                </div>
+              </div>
+              )
+            })}
+
+          <button className="exm-btn primary" onClick={addUnit} disabled={!mTerm || !mSubj}><i className="fa-solid fa-plus" /> Add More Units</button>
         </div>
 
         <div className="exm-modal-foot">
