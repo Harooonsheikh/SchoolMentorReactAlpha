@@ -265,15 +265,21 @@ function POS({ inv, reload, fire }) {
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState([])
   const [buyer, setBuyer] = useState('')
+  /* Faderate: checkbox on → faderate true + amount & description (max 200) API me jate hain. */
+  const [faderate, setFaderate] = useState(false)
+  const [faderateAmount, setFaderateAmount] = useState('')
+  const [faderateDesc, setFaderateDesc] = useState('')
   const [prodModal, setProdModal] = useState(null)
   const [del, setDel] = useState(null)
   const mi = POS_MODES[mode]
 
   /* Is tab (Internal/External) ke products — inHouse se. Internal → inHouse true. */
   const modeProducts = inv.products.filter((p) => (mode === 'internal' ? p.inHouse : !p.inHouse))
+  /* Is tab ki sales — Internal tab me internal (inHouse true), External tab me external. */
+  const modeSales = inv.sales.filter((s) => (mode === 'internal' ? s.inHouse : !s.inHouse))
 
   const today = todayISO()
-  const todaySales = inv.sales.filter((s) => s.date === today)
+  const todaySales = modeSales.filter((s) => s.date === today)
   const lowCount = modeProducts.filter((p) => p.stock <= p.low).length
   const total = cart.reduce((a, l) => a + l.qty * l.price, 0)
 
@@ -291,11 +297,18 @@ function POS({ inv, reload, fire }) {
   const checkout = async () => {
     if (!cart.length) return fire('Cart is empty', 'warn')
     try {
-      const res = await saveNetworkSale({ cart, buyer, total })
+      /* inHouse is tab se: Internal Sale → true, External Sale → false (product add jaisa).
+         faderate off ho to amount 0 / description '' jata hai (true tabhi jab checkbox on). */
+      const res = await saveNetworkSale({
+        cart, buyer, total, inHouse: mode === 'internal',
+        faderate,
+        faderateAmount: faderate ? (Number(faderateAmount) || 0) : 0,
+        faderateDescription: faderate ? faderateDesc.trim() : '',
+      })
       const no = res?.data?.saleId ? `RCP-${res.data.saleId}` : 'RCP'
       const sale = { no, date: today, buyer: buyer.trim() || 'Walk-in', lines: cart.map((l) => ({ name: l.name, qty: l.qty, price: l.price })), total, by: 'Front Desk' }
       printReceipt(sale, fire)
-      setCart([]); setBuyer(''); fire('Sale completed · receipt generated')
+      setCart([]); setBuyer(''); setFaderate(false); setFaderateAmount(''); setFaderateDesc(''); fire('Sale completed · receipt generated')
       await reload()
     } catch (e) { fire(e.message || 'Could not complete sale', 'warn') }
   }
@@ -374,6 +387,21 @@ function POS({ inv, reload, fire }) {
             </div>
             <div className="inv-cart-foot">
               <div className="inv-field" style={{ marginBottom: 12 }}><label>School Owner</label><input className="inv-input" value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="e.g. ABC-Campus" /></div>
+              {/* Faderate: checkbox on karne par amount + description (max 200 chars) fields. */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: faderate ? 10 : 12, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: 'var(--t1)' }}>
+                <input type="checkbox" checked={faderate} onChange={(e) => setFaderate(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                Faderate
+              </label>
+              {faderate && (
+                <>
+                  <div className="inv-field" style={{ marginBottom: 10 }}><label>Faderate Amount</label><input className="inv-input" type="number" min="0" value={faderateAmount} onChange={(e) => setFaderateAmount(e.target.value)} placeholder="0" /></div>
+                  <div className="inv-field" style={{ marginBottom: 12 }}>
+                    <label>Faderate Description</label>
+                    <textarea className="inv-input" rows={3} maxLength={200} value={faderateDesc} onChange={(e) => setFaderateDesc(e.target.value)} placeholder="Reason / note (max 200 characters)" style={{ resize: 'vertical' }} />
+                    <div style={{ fontSize: 11, color: 'var(--tm)', textAlign: 'right', marginTop: 2 }}>{faderateDesc.length}/200</div>
+                  </div>
+                </>
+              )}
               <div className="inv-cart-total"><span style={{ fontWeight: 700, color: 'var(--tm)' }}>Total</span><span className="inv-cart-total-val">{rs(total)}</span></div>
               <SpinnerButton style={{ width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg,#16A34A,#15803D)' }} icon="fa-receipt" onClick={checkout}>Generate Receipt</SpinnerButton>
             </div>
@@ -408,13 +436,13 @@ function POS({ inv, reload, fire }) {
 
       {pt === 'sales' && (
         <div className="section-card">
-          <div className="card-header"><div className="card-title"><i className="fa-solid fa-receipt" /> Sales History</div></div>
+          <div className="card-header"><div className="card-title"><i className="fa-solid fa-receipt" /> {mi.title} History</div></div>
           <div className="tbl-wrap">
             <table className="inv-table">
               <thead><tr><th>Receipt #</th><th>Date</th><th>School Owner</th><th>Items</th><th className="c">Qty</th><th className="r">Amount</th><th className="c">Receipt</th></tr></thead>
               <tbody>
-                {inv.sales.length === 0 ? <tr><td colSpan={7}><div className="inv-empty"><i className="fa-solid fa-receipt" /><div style={{ fontSize: 13, fontWeight: 700 }}>No sales yet</div></div></td></tr>
-                  : inv.sales.map((s) => (
+                {modeSales.length === 0 ? <tr><td colSpan={7}><div className="inv-empty"><i className="fa-solid fa-receipt" /><div style={{ fontSize: 13, fontWeight: 700 }}>No {mode} sales yet</div></div></td></tr>
+                  : modeSales.map((s) => (
                     <tr key={s.no}>
                       <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand)' }}>{s.no}</td>
                       <td>{fmtDate(s.date)}</td>
@@ -485,6 +513,7 @@ const INV_REPORTS = [
   { key: 'pos_lowstock', icon: 'fa-triangle-exclamation', title: 'Low Stock Products',      desc: 'Shop products that need restocking',           ctrl: 'none' },
   { key: 'pos_pvs',      icon: 'fa-scale-balanced',       title: 'Purchase vs Sale Summary', desc: 'Cost, revenue & profit per product',          ctrl: 'none' },
   { key: 'pos_pnl',      icon: 'fa-money-bill-trend-up',  title: 'Profit & Loss Report',    desc: 'Sales, costing & profit between two dates',   ctrl: 'range' },
+  { key: 'pos_faderate', icon: 'fa-hand-holding-dollar',  title: 'Faderate Report',         desc: 'Sales marked faderate — amount & reason',     ctrl: 'range' },
   { key: 'pos_invvalue', icon: 'fa-warehouse',            title: 'Current Product Value',   desc: 'Stock value at purchase & sale price',        ctrl: 'none' },
   { key: 'pos_vendor',   icon: 'fa-truck',                title: 'Vendor Report',           desc: 'Products & stock value grouped by vendor',    ctrl: 'none' },
 ]
@@ -675,6 +704,16 @@ function buildInvReport(inv, type, ctrl) {
       filters: [['Products', String(prods.length)], ['Units Sold', num(tUnits)], ['Revenue', rs(tRev)]],
       kpis: [{ label: 'Products', value: prods.length, icon: 'fa-box-open', cls: 'info' }, { label: 'Units Sold', value: num(tUnits), icon: 'fa-box', cls: 'amber' }, { label: 'Revenue', value: rs(tRev), icon: 'fa-sack-dollar', cls: 'green' }],
       sections: [{ columns: [C('Product'), C('Category'), C('Stock', 'c'), C('Units Sold', 'c'), C('Revenue', 'r')], rows: prods.map((p) => { const a = agg[p.name] || { qty: 0, rev: 0 }; return [p.name, p.cat, num(p.stock), num(a.qty), num(a.rev)] }), totals: ['', '', '', num(tUnits), num(tRev)] }] }
+  }
+  if (type === 'pos_faderate') {
+    /* Faderate sales — jin par checkout par faderate on tha (amount + reason). */
+    const list = inv.sales.filter((s) => s.faderate && s.date >= ctrl.from && s.date <= ctrl.to).sort((a, b) => (a.date < b.date ? -1 : 1))
+    const totFad = list.reduce((a, s) => a + (Number(s.faderateAmount) || 0), 0)
+    const totSales = list.reduce((a, s) => a + s.total, 0)
+    return { title: 'Faderate Report', period: `${fmtDate(ctrl.from)} → ${fmtDate(ctrl.to)}`,
+      filters: [['From', fmtDate(ctrl.from)], ['To', fmtDate(ctrl.to)], ['Faderate Receipts', String(list.length)], ['Faderate Total', rs(totFad)]],
+      kpis: [{ label: 'Faderate Receipts', value: list.length, icon: 'fa-receipt', cls: 'info' }, { label: 'Faderate Total', value: rs(totFad), icon: 'fa-hand-holding-dollar', cls: 'amber' }, { label: 'Sales Total', value: rs(totSales), icon: 'fa-sack-dollar', cls: 'green' }],
+      sections: [{ columns: [C('Receipt #'), C('Date'), C('School Owner'), C('Faderate Amount', 'r'), C('Description'), C('Sale Amount', 'r')], rows: list.map((s) => [s.no, fmtDate(s.date), s.buyer, num(Number(s.faderateAmount) || 0), s.faderateDesc || '—', num(s.total)]), totals: ['', '', 'TOTAL', num(totFad), '', num(totSales)] }] }
   }
   if (type === 'pos_lowstock') {
     const list = inv.products.filter((p) => p.stock <= p.low)

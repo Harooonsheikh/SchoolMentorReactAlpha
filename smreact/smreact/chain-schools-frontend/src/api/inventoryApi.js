@@ -101,6 +101,12 @@ const mapSale = (r) => ({
   buyer: r.buyerName || 'Walk-in',
   by: '—',
   total: Number(r.totalAmount) || 0,
+  /* inHouse — Internal Sale (true) vs External Sale (false). History tab mode se filter karta hai. */
+  inHouse: (r.inHouse ?? r.InHouse) === true,
+  /* Faderate — sale save par bheji thi; report ke liye wapas padho (casing dono). */
+  faderate: (r.faderate ?? r.Faderate) === true,
+  faderateAmount: Number(r.faderateAmount ?? r.FaderateAmount) || 0,
+  faderateDesc: String(r.faderateDescription ?? r.FaderateDescription ?? ''),
   lines: (r.saleItems || []).map((li) => ({
     name: li.itemName || '',
     qty: Number(li.quantity) || 0,
@@ -197,8 +203,13 @@ export function deleteNetworkProduct(product, networkId = currentNetworkId()) {
   return call('/manage', { method: 'POST', body: inventoryBody({ ...product, active: false }, { action: 'delete', isPOS: true, networkId }) })
 }
 
-/* Record a POS sale. cart lines: { id, name, price, qty, cat?, barcode? }. */
-export function saveNetworkSale({ cart = [], buyer, total = 0 }, networkId = currentNetworkId()) {
+/* Record a POS sale. cart lines: { id, name, price, qty, cat?, barcode? }.
+   inHouse: product add ki tarah is tab se — Internal Sale → true, External → false.
+   faderate: checkbox on → true + amount/description; off → false, amount 0, description ''. */
+export function saveNetworkSale(
+  { cart = [], buyer, total = 0, inHouse = true, faderate = false, faderateAmount = 0, faderateDescription = '' },
+  networkId = currentNetworkId(),
+) {
   const subtotal = cart.reduce((a, c) => a + (Number(c.price) || 0) * (Number(c.qty) || 0), 0)
   const body = {
     id: 0,
@@ -211,6 +222,11 @@ export function saveNetworkSale({ cart = [], buyer, total = 0 }, networkId = cur
     subTotal: subtotal,
     items: cart.reduce((a, c) => a + (Number(c.qty) || 0), 0),
     totalAmount: Number(total) || subtotal,
+    inHouse: inHouse === true,
+    /* faderate off ho to amount 0 / description '' hi jaye. */
+    faderate: faderate === true,
+    faderateAmount: faderate === true ? (Number(faderateAmount) || 0) : 0,
+    faderateDescription: faderate === true ? String(faderateDescription || '').trim() : '',
     createdBy: currentUserId(),
     saleItems: cart.map((c) => ({
       id: 0, masterID: 0, branchID: null, networkID: Number(networkId) || 0,
