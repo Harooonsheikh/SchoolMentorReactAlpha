@@ -93,32 +93,37 @@ const audioChunksRef = useRef([]);
   useEffect(() => () => { job.cancel(); clearInterval(voiceTimer.current); voiceActiveRef.current = false; if (recognitionRef.current) recognitionRef.current.onend = null; recognitionRef.current?.abort?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // useEffect(() => { mentorAiStudioService.getChatHistory().then(setHistory).catch(() => {}); }, []);
-  useEffect(() => {
+   // ---- Chat history: hamesha CURRENT branch ki ----
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const historyReqRef = useRef(0);
+  const branchId = useCurrentBranchId();
 
   const loadChatHistory = async () => {
-
+    const req = ++historyReqRef.current;     // har request ka number
+    setHistoryLoading(true);
     try {
-
       const data = await getChatSessions();
-
-      console.log("CHAT HISTORY:", data);
-
-      setHistory(data);
-
+      if (req !== historyReqRef.current) return; // purani request ka jawab ignore
+      setHistory(Array.isArray(data) ? data : (data?.results || data?.data || []));
     } catch (error) {
-
-      console.error(
-        "Failed to load chat history:",
-        error.response?.data || error
-      );
-
+      if (req !== historyReqRef.current) return;
+      console.error("Failed to load chat history:", error.response?.data || error);
+      setHistory([]);
+    } finally {
+      if (req === historyReqRef.current) setHistoryLoading(false);
     }
-
   };
 
-  loadChatHistory();
-
-}, []);
+  // Branch milne/badalne par: purani chat aur list saaf, phir nayi load
+  useEffect(() => {
+    if (!branchId) return;          // branch abhi set nahi hui → load mat karo
+    setHistory([]);
+    setExchanges([]);
+    sessionRef.current = null;
+    setActiveSessionId(null);
+    loadChatHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId]);
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
@@ -192,7 +197,7 @@ const runQuery = async (q, exchangeId, atts = []) => {
     if (isNewSession && q) {
       updateChatSession(response?.session_id || sessionId, { title: titleFrom(q) }).catch(() => {});
     }
-    getChatSessions().then(setHistory).catch(() => {});
+    loadChatHistory();
   } catch (error) {
     console.error("Chat API Error:", error.response?.data || error);
     const data = error.response?.data;
@@ -457,9 +462,9 @@ const stopRecording = () => {
                    <button type="button" className="msai-chip msai-chip--mode" onClick={() => setModeOpen(true)} aria-haspopup="dialog">
             <i className="fa-solid fa-sliders" aria-hidden="true" /> Universal <i className="fa-solid fa-chevron-down" aria-hidden="true" />
           </button>
-          <button type="button" className="msai-icon-btn" onClick={() => setHistoryOpen(o => !o)} aria-label="Chat history">
+                <button type="button" className="msai-icon-btn" onClick={() => { if (!historyOpen) loadChatHistory(); setHistoryOpen(o => !o); }} aria-label="Chat history">
             <i className="fa-solid fa-clock-rotate-left" aria-hidden="true" />
-            {history.length > 0 && <span className="msai-icon-badge">{history.length}</span>}
+            {!historyLoading && history.length > 0 && <span className="msai-icon-badge">{history.length}</span>}
           </button>
           <button type="button" className="msai-icon-btn" onClick={startNewChat} aria-label="New chat">
             <i className="fa-solid fa-pen-to-square" aria-hidden="true" />
@@ -629,7 +634,9 @@ placeholder={!canCreate ? 'You have view-only access to AI Chat' : busy ? 'Mento
               </div>
             </div>
             <div className="msai-panel-body">
-              {sortedHistory.length === 0 ? (
+                   {historyLoading ? (
+                <div className="msai-editai-empty"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading your chats…</div>
+              ) : sortedHistory.length === 0 ? (
                 <div className="msai-editai-empty">Your past conversations will show up here.</div>
               ) : Object.entries(groupByDay(sortedHistory)).map(([day, items]) => (
                 <div key={day} className="msai-hist-group">
@@ -794,7 +801,29 @@ function blocksToText(blocks) {
     if (b.type === 'text') return `${b.text}\n`;
     if (b.type === 'bullets' || b.type === 'numbered') return b.items.map(it => `• ${it}`).join('\n');
     if (b.type === 'correction') return `Original: ${b.original}\nIssue: ${b.issue}\nCorrected: ${b.corrected}\nRule: ${b.rule}`;
-    if (b.type === 'fields') return b.items.map(f => `${f.label}: ${f.value}`).join('\n');
+     if (b.type === 'fields') return b.items.map(f => `${f.label}: ${f.value}`).join('\n');
     return '';
   }).join('\n');
+}
+
+/* Current branch ID — localStorage se, aur badalne par update */
+const BRANCH_KEY = 'branch_id'; // ⚠️ apni app ki asli key yahan likhein
+
+function readBranchId() {
+  try {
+    const raw = localStorage.getItem(BRANCH_KEY);
+    if (!raw) return null;
+    try { const o = JSON.parse(raw); return String(o?.id ?? o?.branch_id ?? o); } catch { return raw; }
+  } catch { return null; }
+}
+
+function useCurrentBranchId() {
+  const [id, setId] = useState(readBranchId);
+  useEffect(() => {
+    const check = () => setId(prev => { const now = readBranchId(); return now !== prev ? now : prev; });
+    const t = setInterval(check, 500);
+    window.addEventListener('storage', check);
+    return () => { clearInterval(t); window.removeEventListener('storage', check); };
+  }, []);
+  return id;
 }
