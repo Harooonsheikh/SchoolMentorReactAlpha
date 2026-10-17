@@ -327,11 +327,11 @@
 /* Toast */
 .exm-toast-wrap { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 20px); right: 20px; z-index: 1300; max-width: calc(100vw - 32px); }
 .exm-toast {
-  display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-radius: var(--radius-md); box-shadow: var(--shadow-md);
-  background: var(--text-primary); color: var(--bg-card); font: 700 13px var(--font-body);
+  display: flex; align-items: center; gap: 9px; padding: 12px 18px; border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-med); min-width: 240px; font: 700 13px var(--font-body);
 }
-.exm-toast.success i { color: #4ade80; }
-.exm-toast.error i { color: #f87171; }
+.exm-toast.success i { color: #16A34A; }
+.exm-toast.error i { color: #DC2626; }
 
 /* ── Responsive ── */
 @media (max-width: 900px) {

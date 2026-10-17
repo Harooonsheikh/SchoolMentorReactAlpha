@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import TutorialButton from '../../components/TutorialButton'
 import { loadExam, saveExam } from './examStore'
+import { currentNetworkId, fetchNetworkAcademics } from '../../api/academicsSetupApi'
+import { buildAcademicStructure, mirrorAcademicStructure } from '../../config/academicsStore'
 import AddTermTab from './AddTermTab'
 import AddExamTab from './AddExamTab'
 import AddResultTab from './AddResultTab'
@@ -24,6 +26,29 @@ export default function Examination() {
   const [tab, setTab] = useState('terms')
   const [store, setStore] = useState(loadExam)
   const [toast, setToast] = useState(null)
+  const [, setClassSync] = useState(0) // classes mirror hone par re-render (dropdowns refresh)
+
+  /* Classes har network ki asli (LaunchSetup API) honi chahiyen — pehle ye
+     sirf Settings → Classes & Subjects khulne par sync hoti thi, is liye
+     seedhe Examination par aane wale ko dummy seed (Nursery/KG…) dikhti thi.
+     Ab mount par hi network ke grades/subjects la kar Academics store me
+     mirror kar dete hain, taake Add Exam/Result/Breakup ke dropdown har
+     network ke liye sahi classes dikhayen. API fail ho to local par chalti
+     rahe (baqi examination module jaisa fallback). */
+  useEffect(() => {
+    const networkId = currentNetworkId()
+    if (!networkId) return undefined
+    let alive = true
+    fetchNetworkAcademics(networkId)
+      .then(({ classes, subjectRows }) => {
+        if (!alive) return
+        const { subjects, classSubjects } = buildAcademicStructure({ classes, subjectRows })
+        mirrorAcademicStructure({ classes, subjects, classSubjects })
+        setClassSync((v) => v + 1)
+      })
+      .catch(() => { /* API band → dummy/local fallback */ })
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     if (!toast) return undefined
