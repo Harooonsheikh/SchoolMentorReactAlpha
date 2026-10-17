@@ -217,7 +217,7 @@ export default function DesignStudio({ toast, onConsumed }) {
 
   /* ─── Download handler ─── */
    const handleDownload = async () => {
-    if (!canDownload) { deny('download'); return; }    const url = post?.imageUrl || post?.pdfUrl;
+    if (!canDownload) { deny('download'); return; }    const url = fixMediaUrl(post?.imageUrl || post?.pdfUrl);
     if (!url) { toast?.('Download not available yet.'); return; }
     toast?.('Downloading HD post…');
     const result = await downloadFile(url, `design-${post.id || 'post'}${post.imageUrl ? '' : '.pdf'}`);
@@ -484,8 +484,19 @@ function EditFreeform({ onSend, disabled }) {
 }
 
 /* ─── PostMockup — shows real image if available, else text fallback ─── */
+// Live (https) par http://IP:8000 wale media links ko HTTPS API domain par le jao
+const MEDIA_BASE = 'https://YOUR-API-DOMAIN'; // ⚠️ live API ka https domain likhein
+function fixMediaUrl(url) {
+  if (!url || typeof window === 'undefined') return url;
+  if (window.location.protocol !== 'https:' || !url.startsWith('http://')) return url;
+  try {
+    const u = new URL(url);
+    return `${MEDIA_BASE}${u.pathname}${u.search}`;
+  } catch { return url; }
+}
+
 function PostMockup({ post, branding }) {
-  const imageUrl = post?.imageUrl || post?.pdfUrl;
+  const imageUrl = fixMediaUrl(post?.imageUrl || post?.pdfUrl);
 
   return (
     <div className="msai-ds-mockup">
