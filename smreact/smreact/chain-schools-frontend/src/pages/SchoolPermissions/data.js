@@ -106,10 +106,20 @@ export const MODULE_ADVANCED_PERMISSIONS = {
   academics: {
     title: 'Academics Permissions',
     subtitle: 'Manage content access permissions for this associate school.',
+    impactExamples: 'Lesson Plans, Activity Planner entries, Notebook Lesson Plans, and academic Terms',
     sections: [
       { key: 'activityPlanner', label: 'Activity Planner', icon: 'fa-calendar-check' },
       { key: 'lessonPlan', label: 'Lesson Plan', icon: 'fa-book-open' },
       { key: 'notebookLessonPlan', label: 'Notebook Lesson Plan', icon: 'fa-book' },
+    ],
+  },
+  examination: {
+    title: 'Examination Permissions',
+    subtitle: 'Control which examination setups this associate school can create or change.',
+    impactExamples: 'Exam Setup and Result Setup configuration',
+    sections: [
+      { key: 'examSetup', label: 'Exam Setup', icon: 'fa-file-signature' },
+      { key: 'resultSetup', label: 'Result Setup', icon: 'fa-square-poll-vertical' },
     ],
   },
 }

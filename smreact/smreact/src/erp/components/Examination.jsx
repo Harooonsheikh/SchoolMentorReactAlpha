@@ -10162,7 +10162,7 @@ function TemplateHero({ id, large = false }) {
   );
 }
 
-function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
+function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [], isColor = true }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -10174,18 +10174,23 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const isCombined = mode === 'combined';
   const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
-  // Color palette (Color version)
-  const accent = '#1E40AF';
-  const accentBg = '#EFF6FF';
-  const accentBdr = '#BFDBFE';
-  const hdrBg = 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)';
-  const hdrBar = 'linear-gradient(90deg,#1E3A8A,#2563EB,#93C5FD)';
+  /* Colorful keeps the blue card. Colorless is the low-ink paper layout. */
+  const accent = isColor ? '#1E40AF' : '#374151';
+  const accentBg = isColor ? '#EFF6FF' : '#F9FAFB';
+  const accentBdr = isColor ? '#BFDBFE' : '#D1D5DB';
+  const hdrBg = isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF';
+  const hdrBar = isColor ? 'linear-gradient(90deg,#1E3A8A,#2563EB,#93C5FD)' : '#374151';
+  const hdrText = isColor ? '#fff' : '#0F172A';
+  const hdrTextMut = isColor ? 'rgba(255,255,255,.75)' : '#4B5563';
+  const hdrLogoBg = isColor ? 'rgba(255,255,255,.2)' : '#F3F4F6';
+  const hdrLogoBdr = isColor ? 'rgba(255,255,255,.4)' : '#D1D5DB';
+  const hdrLogoCol = isColor ? '#FCD34D' : '#374151';
   const textPri = '#0F172A';
-  const textSec = '#1E40AF';
-  const textMut = '#64748B';
-  const rowAlt = '#F8FAFF';
-  const successCol = '#16A34A';
-  const warnCol = '#D97706';
+  const textSec = isColor ? '#1E40AF' : '#374151';
+  const textMut = isColor ? '#64748B' : '#4B5563';
+  const rowAlt = isColor ? '#F8FAFF' : '#F9FAFB';
+  const successCol = isColor ? '#16A34A' : '#111827';
+  const warnCol = isColor ? '#D97706' : '#374151';
 
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -10218,13 +10223,13 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
 
-  const absBg = 'rgba(217,119,6,.09)';
-  const absBdr = 'rgba(217,119,6,.25)';
-  const absCol = '#B45309';
-  const absRowBg = 'rgba(251,191,36,.06)';
+  const absBg = isColor ? 'rgba(217,119,6,.09)' : '#F3F4F6';
+  const absBdr = isColor ? 'rgba(217,119,6,.25)' : '#D1D5DB';
+  const absCol = isColor ? '#B45309' : '#374151';
+  const absRowBg = isColor ? 'rgba(251,191,36,.06)' : '#F9FAFB';
 
   const gradeChipColor = g => {
-    if (!g) return '#475569';
+    if (!isColor || !g) return '#475569';
     if (g.grade === 'A+') return '#16A34A';
     if (g.grade === 'A') return '#15803D';
     if (g.grade === 'B') return '#1D4ED8';
@@ -10248,11 +10253,11 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
   return (
-    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)' }}>
+    <div className="rc-card rc-card-classic" style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
       {/* Header */}
-      <div style={{ background: hdrBg, padding: '11px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ background: hdrBg, padding: '11px 18px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {opt['Show School Logo'] && (
-          <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, border: '1.5px solid rgba(255,255,255,.4)', background: school?.logo ? '#fff' : 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D', overflow: 'hidden' }}>
+          <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, border: `1.5px solid ${hdrLogoBdr}`, background: school?.logo ? '#fff' : hdrLogoBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: hdrLogoCol, overflow: 'hidden' }}>
             {school?.logo
               ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 20 }}></i>}
@@ -10260,17 +10265,17 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         )}
         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
           {opt['Show School Name'] && (
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: '-.01em', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: hdrText, letterSpacing: '-.01em', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {schoolName}
             </div>
           )}
-          <div style={{ fontSize: 10, color: 'rgba(255,255,255,.75)', marginTop: 2 }}>
+          <div style={{ fontSize: 10, color: hdrTextMut, marginTop: 2 }}>
             Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}
           </div>
         </div>
         {(opt['Show Student Photo'] || st.photo) && (
-          <RcAvatar src={st.photo} initials={initials} size={54} fontSize={19} color="#fff"
-            bg="rgba(255,255,255,.2)" border="2px solid rgba(255,255,255,.4)" />
+          <RcAvatar src={st.photo} initials={initials} size={54} fontSize={19} color={hdrText}
+            bg={hdrLogoBg} border={`2px solid ${hdrLogoBdr}`} />
         )}
       </div>
       <div style={{ height: 3, background: hdrBar }} />
@@ -10428,7 +10433,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
               {/* Sub Exam breakdown (combined only) */}
               {isCombined && cb && (
                 <>
-                  <tr style={{ background: 'rgba(30,64,175,.06)' }}>
+                  <tr style={{ background: isColor ? 'rgba(30,64,175,.06)' : '#F3F4F6' }}>
                     <td colSpan={7} style={{ padding: '5px 8px', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.6px', color: accent, borderTop: '1.5px solid #E2E8F0' }}>
                       <i className="fa-solid fa-layer-group" style={{ marginRight: 4 }}></i>Sub Exam Breakdown
                     </td>
@@ -10436,8 +10441,8 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                   {cb.subBreakdown.map((sb, i) => {
                     const cpct = sb.origT ? Math.round((sb.subObt / sb.origT) * 100) : 0;
                     return (
-                      <tr key={i} style={{ background: 'rgba(124,58,237,.05)' }}>
-                        <td colSpan={1 + (opt['Show Subject-wise Marks'] ? 1 : 0)} style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: '#7C3AED' }}>
+                      <tr key={i} style={{ background: isColor ? 'rgba(124,58,237,.05)' : '#F9FAFB' }}>
+                        <td colSpan={1 + (opt['Show Subject-wise Marks'] ? 1 : 0)} style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: isColor ? '#7C3AED' : '#374151' }}>
                           <i className="fa-solid fa-layer-group" style={{ fontSize: 9, marginRight: 4 }}></i>
                           {sb.name} <span style={{ fontSize: 9, fontWeight: 400, color: textMut }}>(Sub Exam)</span>
                         </td>
@@ -10514,7 +10519,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
+function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [], isColor = true }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -10526,16 +10531,17 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const isCombined = mode === 'combined';
   const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
-  const accent = '#1E40AF';
-  const accentBg = '#EFF6FF';
-  const accentBdr = '#BFDBFE';
-  const hdrBg = 'linear-gradient(135deg,#1E3A8A,#1E40AF)';
-  const hdrBar = 'linear-gradient(90deg,#7C3AED,#1E40AF,#38BDF8)';
+  const accent = isColor ? '#1E40AF' : '#374151';
+  const accentBg = isColor ? '#EFF6FF' : '#F9FAFB';
+  const accentBdr = isColor ? '#BFDBFE' : '#D1D5DB';
+  const hdrBg = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#FFFFFF';
+  const hdrBar = isColor ? 'linear-gradient(90deg,#7C3AED,#1E40AF,#38BDF8)' : '#374151';
+  const hdrText = isColor ? '#fff' : '#0F172A';
   const textPri = '#0F172A';
-  const textMut = '#64748B';
-  const grn = '#16A34A';
-  const amb = '#D97706';
-  const red = '#DC2626';
+  const textMut = isColor ? '#64748B' : '#4B5563';
+  const grn = isColor ? '#16A34A' : '#111827';
+  const amb = isColor ? '#D97706' : '#374151';
+  const red = isColor ? '#DC2626' : '#111827';
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
@@ -10585,17 +10591,17 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
   const summaryItems = [];
-  if (opt['Show Percentage']) summaryItems.push({ label: 'Overall', val: `${ovPct}%`, col: accent, bg: '#EFF6FF', bdr: '#BFDBFE' });
-  if (opt['Show Grade'] && ovGrade) summaryItems.push({ label: 'Grade', val: ovGrade.grade, col: grn, bg: '#F0FDF4', bdr: '#BBF7D0' });
-  if (opt['Show Position in Class']) summaryItems.push({ label: 'Position', val: position, col: amb, bg: '#FFFBEB', bdr: '#FDE68A' });
-  if (opt['Show Attendance']) summaryItems.push({ label: 'Attendance', val: st.attendance || '—', col: '#7C3AED', bg: '#FAF5FF', bdr: '#DDD8FE' });
+  if (opt['Show Percentage']) summaryItems.push({ label: 'Overall', val: `${ovPct}%`, col: accent, bg: isColor ? '#EFF6FF' : '#F9FAFB', bdr: isColor ? '#BFDBFE' : '#D1D5DB' });
+  if (opt['Show Grade'] && ovGrade) summaryItems.push({ label: 'Grade', val: ovGrade.grade, col: grn, bg: isColor ? '#F0FDF4' : '#F9FAFB', bdr: isColor ? '#BBF7D0' : '#D1D5DB' });
+  if (opt['Show Position in Class']) summaryItems.push({ label: 'Position', val: position, col: amb, bg: isColor ? '#FFFBEB' : '#F9FAFB', bdr: isColor ? '#FDE68A' : '#D1D5DB' });
+  if (opt['Show Attendance']) summaryItems.push({ label: 'Attendance', val: st.attendance || '—', col: isColor ? '#7C3AED' : '#374151', bg: isColor ? '#FAF5FF' : '#F9FAFB', bdr: isColor ? '#DDD8FE' : '#D1D5DB' });
 
   return (
-    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 24px rgba(0,0,0,.08)' }}>
+    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 24px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
       {/* Header */}
-      <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {opt['Show School Logo'] && (
-          <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: school?.logo ? '#fff' : 'linear-gradient(135deg,#7C3AED,#1E40AF)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D', overflow: 'hidden' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: school?.logo ? '#fff' : (isColor ? 'linear-gradient(135deg,#7C3AED,#1E40AF)' : '#F3F4F6'), display: 'flex', alignItems: 'center', justifyContent: 'center', color: isColor ? '#FCD34D' : '#374151', overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
             {school?.logo
               ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 17 }}></i>}
@@ -10603,13 +10609,13 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           {opt['Show School Name'] && (
-            <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schoolName}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: hdrText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schoolName}</div>
           )}
-          <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.6)', marginTop: 1 }}>Insight Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}</div>
+          <div style={{ fontSize: 9.5, color: isColor ? 'rgba(255,255,255,.6)' : '#4B5563', marginTop: 1 }}>Insight Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}</div>
         </div>
         {(opt['Show Student Photo'] || st.photo) && (
-          <RcAvatar src={st.photo} initials={initials} size={50} fontSize={17} color="#fff"
-            bg="rgba(255,255,255,.15)" border="2px solid rgba(255,255,255,.35)" />
+          <RcAvatar src={st.photo} initials={initials} size={50} fontSize={17} color={hdrText}
+            bg={isColor ? 'rgba(255,255,255,.15)' : '#F3F4F6'} border={isColor ? '2px solid rgba(255,255,255,.35)' : '2px solid #D1D5DB'} />
         )}
       </div>
       <div style={{ height: 3, background: hdrBar }} />
@@ -10760,7 +10766,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
+function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [], isColor = true }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -10772,7 +10778,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const isCombined = mode === 'combined';
   const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
-  const C = {
+  const C = isColor ? {
     p1bg: 'linear-gradient(150deg,#1A0533 0%,#2D1B69 40%,#1A3A5C 100%)',
     p1bar: 'linear-gradient(90deg,#D97706,#F59E0B,#D97706)',
     p2hdr: 'linear-gradient(135deg,#1E3A8A,#1E40AF)',
@@ -10785,7 +10791,29 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     rowA: '#fff', rowB: '#F8FAFF',
     bdr: '#E2E8F0',
     sigBdr: '#CBD5E1',
+    hdrText: '#fff', hdrTextMut: 'rgba(255,255,255,.6)', hdrChip: 'rgba(255,255,255,.12)', hdrChipBdr: 'rgba(255,255,255,.18)',
+    footBg: '#1A0533', footText: 'rgba(255,255,255,.45)',
+    gold: '#FCD34D', logoGrad: 'linear-gradient(135deg,#D97706,#1E3A8A)',
+    blob1: 'rgba(217,119,6,.12)', blob2: 'rgba(6,182,212,.08)', blob3: 'rgba(124,58,237,.06)',
     bars: ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#DC2626', '#0891B2', '#EA580C', '#059669', '#9333EA', '#B45309'],
+  } : {
+    p1bg: '#FFFFFF',
+    p1bar: '#374151',
+    p2hdr: '#F3F4F6',
+    acc: '#374151', accL: '#F9FAFB', accBdr: '#D1D5DB',
+    blu: '#374151', bluL: '#F9FAFB', bluBdr: '#D1D5DB',
+    pur: '#374151', purL: '#F9FAFB', purBdr: '#D1D5DB',
+    grn: '#111827', grnL: '#F9FAFB', grnBdr: '#D1D5DB',
+    red: '#111827',
+    textP: '#0F172A', textS: '#374151', textM: '#4B5563',
+    rowA: '#fff', rowB: '#F9FAFB',
+    bdr: '#D1D5DB',
+    sigBdr: '#D1D5DB',
+    hdrText: '#0F172A', hdrTextMut: '#4B5563', hdrChip: '#F3F4F6', hdrChipBdr: '#D1D5DB',
+    footBg: '#F3F4F6', footText: '#4B5563',
+    gold: '#374151', logoGrad: '#F3F4F6',
+    blob1: 'transparent', blob2: 'transparent', blob3: 'transparent',
+    bars: ['#374151'],
   };
 
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -10874,15 +10902,15 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto' }}>
       {/* ── PAGE 1 ── */}
       {/* Cover header */}
-      <div style={{ background: C.p1bg, padding: 0, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: -50, right: -30, width: 220, height: 220, borderRadius: '50%', background: 'rgba(217,119,6,.12)' }} />
-        <div style={{ position: 'absolute', bottom: -40, left: -20, width: 160, height: 160, borderRadius: '50%', background: 'rgba(6,182,212,.08)' }} />
-        <div style={{ position: 'absolute', top: 20, left: '50%', width: 100, height: 100, borderRadius: '50%', background: 'rgba(124,58,237,.06)' }} />
+      <div style={{ background: C.p1bg, padding: 0, position: 'relative', overflow: 'hidden', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
+        <div style={{ position: 'absolute', top: -50, right: -30, width: 220, height: 220, borderRadius: '50%', background: C.blob1 }} />
+        <div style={{ position: 'absolute', bottom: -40, left: -20, width: 160, height: 160, borderRadius: '50%', background: C.blob2 }} />
+        <div style={{ position: 'absolute', top: 20, left: '50%', width: 100, height: 100, borderRadius: '50%', background: C.blob3 }} />
 
         {/* Brand row */}
         <div style={{ padding: '22px 28px 14px', display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
           {opt['Show School Logo'] && (
-            <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, boxShadow: '0 4px 16px rgba(0,0,0,.35)', background: school?.logo ? '#fff' : 'linear-gradient(135deg,#D97706,#1E3A8A)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D', overflow: 'hidden' }}>
+            <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.35)' : 'none', background: school?.logo ? '#fff' : C.logoGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.gold, overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
               {school?.logo
                 ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                 : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 22 }}></i>}
@@ -10890,14 +10918,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             {opt['Show School Name'] && (
-              <div style={{ fontSize: 17, fontWeight: 900, color: '#fff', letterSpacing: '-.02em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schoolName}</div>
+              <div style={{ fontSize: 17, fontWeight: 900, color: C.hdrText, letterSpacing: '-.02em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schoolName}</div>
             )}
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.6)', marginTop: 2 }}>Academic Portfolio Report &nbsp;·&nbsp; {ex.name}</div>
+            <div style={{ fontSize: 10, color: C.hdrTextMut, marginTop: 2 }}>Academic Portfolio Report &nbsp;·&nbsp; {ex.name}</div>
           </div>
           {ovGrade && (
-            <div style={{ textAlign: 'center', background: 'rgba(255,255,255,.1)', borderRadius: 14, padding: '10px 18px', border: '1px solid rgba(255,255,255,.2)', flexShrink: 0 }}>
-              <div style={{ fontSize: 30, fontWeight: 900, color: '#FCD34D' }}>{ovGrade.grade}</div>
-              <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'rgba(255,255,255,.55)' }}>Grade</div>
+            <div style={{ textAlign: 'center', background: C.hdrChip, borderRadius: 14, padding: '10px 18px', border: `1px solid ${C.hdrChipBdr}`, flexShrink: 0 }}>
+              <div style={{ fontSize: 30, fontWeight: 900, color: C.gold }}>{ovGrade.grade}</div>
+              <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: C.hdrTextMut }}>Grade</div>
             </div>
           )}
         </div>
@@ -10906,34 +10934,34 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         {/* Student banner */}
         <div style={{ padding: '16px 28px 22px', display: 'flex', alignItems: 'center', gap: 18, position: 'relative' }}>
           {(opt['Show Student Photo'] || st.photo) && (
-            <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color="rgba(255,255,255,.85)"
-              bg="rgba(255,255,255,.12)" border="3px solid rgba(255,255,255,.3)"
-              extraStyle={{ boxShadow: '0 4px 16px rgba(0,0,0,.25)' }} />
+            <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color={C.hdrText}
+              bg={C.hdrChip} border={`3px solid ${C.hdrChipBdr}`}
+              extraStyle={{ boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.25)' : 'none' }} />
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: '-.02em', marginBottom: 6 }}>{st.name}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: C.hdrText, letterSpacing: '-.02em', marginBottom: 6 }}>{st.name}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-              <span style={{ fontSize: 10.5, fontWeight: 600, color: 'rgba(255,255,255,.75)' }}>
-                <i className="fa-solid fa-user" style={{ marginRight: 4, fontSize: 9, color: 'rgba(255,255,255,.5)' }}></i>{st.father}
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: C.hdrTextMut }}>
+                <i className="fa-solid fa-user" style={{ marginRight: 4, fontSize: 9 }}></i>{st.father}
               </span>
               {opt['Show Student Roll Number'] && (
-                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'rgba(255,255,255,.12)', color: 'rgba(255,255,255,.9)', border: '1px solid rgba(255,255,255,.18)' }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: C.hdrChip, color: C.hdrText, border: `1px solid ${C.hdrChipBdr}` }}>
                   <i className="fa-solid fa-hashtag" style={{ fontSize: 8.5, marginRight: 3 }}></i>{st.rollNo}
                 </span>
               )}
               {opt['Show Class and Section'] && (
-                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'rgba(255,255,255,.12)', color: 'rgba(255,255,255,.9)', border: '1px solid rgba(255,255,255,.18)' }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: C.hdrChip, color: C.hdrText, border: `1px solid ${C.hdrChipBdr}` }}>
                   <i className="fa-solid fa-chalkboard" style={{ fontSize: 8.5, marginRight: 3 }}></i>{ex.classes[0] || '—'} · A
                 </span>
               )}
-              <span style={{ fontSize: 10, color: 'rgba(255,255,255,.5)' }}>{today}</span>
+              <span style={{ fontSize: 10, color: C.hdrTextMut }}>{today}</span>
             </div>
           </div>
           {/* Overall % circle */}
           <div style={{ textAlign: 'center', flexShrink: 0 }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(255,255,255,.1)', border: '3px solid rgba(255,255,255,.25)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', lineHeight: 1 }}>{ovPct}%</div>
-              <div style={{ fontSize: 7.5, fontWeight: 700, textTransform: 'uppercase', color: 'rgba(255,255,255,.5)', letterSpacing: '.3px' }}>Score</div>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: C.hdrChip, border: `3px solid ${C.hdrChipBdr}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: C.hdrText, lineHeight: 1 }}>{ovPct}%</div>
+              <div style={{ fontSize: 7.5, fontWeight: 700, textTransform: 'uppercase', color: C.hdrTextMut, letterSpacing: '.3px' }}>Score</div>
             </div>
           </div>
         </div>
@@ -11036,12 +11064,12 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
       </div>
 
       {/* ── PAGE 2 ── */}
-      <div style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', letterSpacing: '-.01em' }}>Performance Analytics</div>
-          <div style={{ fontSize: 10, color: 'rgba(255,255,255,.55)', marginTop: 1 }}>{st.name} &nbsp;·&nbsp; {ex.name}</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.hdrText, letterSpacing: '-.01em' }}>Performance Analytics</div>
+          <div style={{ fontSize: 10, color: C.hdrTextMut, marginTop: 1 }}>{st.name} &nbsp;·&nbsp; {ex.name}</div>
         </div>
-        <div style={{ fontSize: 9, color: 'rgba(255,255,255,.5)' }}>{schoolName}</div>
+        <div style={{ fontSize: 9, color: C.hdrTextMut }}>{schoolName}</div>
       </div>
       <div style={{ height: 3, background: C.p1bar }} />
 
@@ -11226,9 +11254,9 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
       })()}
 
       {/* Page 2 footer */}
-      <div style={{ padding: '8px 24px', background: '#1A0533', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.45)' }}>School Mentor ERP &nbsp;·&nbsp; Portfolio Report</div>
-        <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.45)' }}>Page 2 of 2 &nbsp;·&nbsp; {schoolName}</div>
+      <div style={{ padding: '8px 24px', background: C.footBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: 8.5, color: C.footText }}>School Mentor ERP &nbsp;·&nbsp; Portfolio Report</div>
+        <div style={{ fontSize: 8.5, color: C.footText }}>Page 2 of 2 &nbsp;·&nbsp; {schoolName}</div>
       </div>
     </div>
   );
@@ -14112,6 +14140,7 @@ async function fetchClassAttendanceMap(classID, sectionID) {
 
 function ResultCardViewer({ student, rd, ex, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false, attnClassID, attnSectionID, attnStudentID }) {
   const [mode, setMode] = useState(initialMode);
+  const [isColor, setIsColor] = useState(true);
   const [attnPct, setAttnPct] = useState(null); // is student ki REAL attendance %
   const cardRef = useRef(null);
 
@@ -14237,16 +14266,36 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
         </div>
 
         {/* Sub-tabs — hidden when the card is opened for a single assessment only */}
-        {!singleOnly && (
-          <div style={{ display: 'flex', gap: 0, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
-            <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
-              <i className="fa-solid fa-file"></i> Single Assessment
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 0 }}>
+            {!singleOnly && (
+              <>
+                <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
+                  <i className="fa-solid fa-file"></i> Single Assessment
+                </button>
+                <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
+                  <i className="fa-solid fa-layer-group"></i> Combined Assessment
+                </button>
+              </>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 8, background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 9, padding: 3 }}>
+            <button
+              type="button"
+              onClick={() => setIsColor(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', background: isColor ? tConfig.accent : 'transparent', color: isColor ? '#fff' : 'var(--text-muted)' }}
+            >
+              <i className="fa-solid fa-palette"></i> Colorful
             </button>
-            <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
-              <i className="fa-solid fa-layer-group"></i> Combined Assessment
+            <button
+              type="button"
+              onClick={() => setIsColor(false)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', background: !isColor ? '#374151' : 'transparent', color: !isColor ? '#fff' : 'var(--text-muted)' }}
+            >
+              <i className="fa-solid fa-circle-half-stroke"></i> Colorless
             </button>
           </div>
-        )}
+        </div>
 
         {/* Card area */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#F1F5F9' }}>
@@ -14261,18 +14310,21 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
                 <ClassicResultCard
                   rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
                   mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
+                  isColor={isColor}
                 />
               )}
               {template === 'insight' && (
                 <InsightResultCard
                   rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
                   mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
+                  isColor={isColor}
                 />
               )}
               {template === 'portfolio' && (
                 <PortfolioResultCard
                   rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
                   mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
+                  isColor={isColor}
                 />
               )}
             </div>
@@ -14281,6 +14333,21 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
       </div>
     </div>,
     document.body
+  );
+}
+
+function RcColorToggle({ isColor, setIsColor, accent = '#1E40AF' }) {
+  return (
+    <div style={{ display: 'flex', gap: 4, background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 9, padding: 3 }}>
+      <button type="button" onClick={() => setIsColor(true)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', background: isColor ? accent : 'transparent', color: isColor ? '#fff' : 'var(--text-muted)' }}>
+        <i className="fa-solid fa-palette"></i> Colorful
+      </button>
+      <button type="button" onClick={() => setIsColor(false)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', background: !isColor ? '#374151' : 'transparent', color: !isColor ? '#fff' : 'var(--text-muted)' }}>
+        <i className="fa-solid fa-circle-half-stroke"></i> Colorless
+      </button>
+    </div>
   );
 }
 
@@ -14294,6 +14361,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [attnMap, setAttnMap] = useState({});   // { [studentId]: pct } — REAL attendance
+  const [isColor, setIsColor] = useState(true);
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -14458,7 +14526,8 @@ ${node.innerHTML}
               {examName} · {loading ? `Loading ${progress.done}/${progress.total}…` : `${cards.length} student${cards.length !== 1 ? 's' : ''}`}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <RcColorToggle isColor={isColor} setIsColor={setIsColor} />
             <button type="button" onClick={printAll} disabled={loading || !cards.length}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: (!loading && cards.length) ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: (!loading && cards.length) ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
               <i className="fa-solid fa-file-pdf"></i> {loading ? `Loading ${progress.done}/${progress.total}` : `Print All (${cards.length})`}
@@ -14483,7 +14552,7 @@ ${node.innerHTML}
               {cards.map((c, i) => (
                 <div key={c.student.id || i} className="bulk-card" style={{ marginBottom: 18, borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
                   <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                    mode="single"
+                    mode="single" isColor={isColor}
                     student={attnMap[String(c.student.id)] != null ? { ...c.student, attendance: `${attnMap[String(c.student.id)]}%` } : c.student}
                     rd={c.rd} ex={cardEx} school={school} grades={grades} remarks={remarks} />
                 </div>
@@ -14505,6 +14574,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: (grp?.students || []).length });
   const [attnMap, setAttnMap] = useState({});   // { [studentId]: pct } — REAL attendance
+  const [isColor, setIsColor] = useState(true);
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -14732,7 +14802,8 @@ ${node.innerHTML}
               {grp?.mainExam} · {loading ? `Loading ${progress.done}/${progress.total}…` : `${cards.length} student${cards.length !== 1 ? 's' : ''}`}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <RcColorToggle isColor={isColor} setIsColor={setIsColor} />
             <button type="button" onClick={printAll} disabled={loading || !cards.length}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: (!loading && cards.length) ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: (!loading && cards.length) ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
               <i className="fa-solid fa-file-pdf"></i> {loading ? `Loading ${progress.done}/${progress.total}` : `Print All (${cards.length})`}
@@ -14756,7 +14827,7 @@ ${node.innerHTML}
               {cards.map((c, i) => (
                 <div key={c.student.id || i} className="bulk-card" style={{ marginBottom: 18, borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
                   <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                    mode="combined"
+                    mode="combined" isColor={isColor}
                     student={attnMap[String(c.student._attnId)] != null ? { ...c.student, attendance: `${attnMap[String(c.student._attnId)]}%` } : c.student}
                     rd={c.rd} ex={cardEx} school={school} grades={grades} remarks={remarks} />
                 </div>
@@ -14773,6 +14844,7 @@ ${node.innerHTML}
 function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, onSelect }) {
   const t = RC_TEMPLATES.find(x => x.id === templateId);
   const [mode, setMode] = useState('single'); // single | combined
+  const [isColor, setIsColor] = useState(true);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -14828,13 +14900,18 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
         </div>
 
         {/* Sub-tabs */}
-        <div style={{ display: 'flex', gap: 0, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 0 }}>
           <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
             <i className="fa-solid fa-file"></i> Single Assessment
           </button>
           <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
             <i className="fa-solid fa-layer-group"></i> Combined Assessment
           </button>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <RcColorToggle isColor={isColor} setIsColor={setIsColor} accent={t.accent} />
+          </div>
         </div>
 
         {/* Preview area */}
@@ -14848,6 +14925,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
                 rsAbsentMode={rsAbsentMode}
                 mode={mode}
                 preview
+                isColor={isColor}
               />
             )}
             {t.id === 'insight' && (
@@ -14858,6 +14936,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
                 rsAbsentMode={rsAbsentMode}
                 mode={mode}
                 preview
+                isColor={isColor}
               />
             )}
             {t.id === 'portfolio' && (
@@ -14868,6 +14947,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
                 rsAbsentMode={rsAbsentMode}
                 mode={mode}
                 preview
+                isColor={isColor}
               />
             )}
           </div>
