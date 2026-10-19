@@ -5901,9 +5901,12 @@ function MarkInactiveModal({ emp, onClose, onConfirm }) {
    
    ═══════════════════════════════════════════════════════════════════ */
 function staffQrValue(emp) {
+  /* QR me Employee ID (EMP-019) — wahi jo card par "ID" me likha hai.
+     eid khali ho tab hi DB id par gir jao, taa-ke QR khali na rahe. */
+  const eid = String(emp?.eid || '').trim();
+  if (eid) return eid;
   const id = String(emp?.id ?? '').trim();
-  if (id && id !== '0') return id;
-  return String(emp?.eid || '').trim();
+  return id && id !== '0' ? id : '';
 }
 
 function staffQrSVG(value) {

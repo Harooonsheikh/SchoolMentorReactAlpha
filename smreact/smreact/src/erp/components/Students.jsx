@@ -439,9 +439,9 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
 
   /* ── Hero strip ke top-right ka QR — asli hai, student id encode karta hai.
        Pehle yahan sirf QR ki shakl (chand rectangles) bani hui thi jo kisi
-       scanner se parhi nahi ja sakti thi. ── */
-  const QR_SVG = stuQrSVG(stuQrValue(s));
-
+      //  scanner se parhi nahi ja sakti thi. ── */
+  // const QR_SVG = stuQrSVG(stuQrValue(s));
+const QR_SVG = stuQrSVG(stuQrValue(s));
   /* ── Hero photo ── */
   const photoBlock = s.photo
     ? `<img src="${s.photo}" style="width:100%;height:100%;object-fit:cover" alt="${stuEsc(fullName)}"/>`
@@ -687,7 +687,10 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
    function stuQrValue(s) {
     const appId = String(s?._id ?? '').trim();
     const reg   = String(s?.reg || s?.adm || '').trim();
-    return `${appId}|${reg}`;
+     const lines = [];
+    if (appId && appId !== '0') lines.push(`Applicant ID: ${appId}`);
+    if (reg) lines.push(`Reg No: ${reg}`);
+    return lines.join('\n') || '—';
   }
 
 /* Wrapper — SVG markup string, preview aur print HTML dono me lagta hai. */
@@ -736,6 +739,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
        <div class="back-row"><span class="lbl">Applicant ID</span><b class="mono">${stuEsc(s._id || '—')}</b></div>
        ${s.bform ? `<div class="back-row"><span class="lbl">B-Form</span><b class="mono">${stuEsc(s.bform)}</b></div>` : ''}
 </div>
+        <div class="qr-strip-back"><div class="qr-big">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg">${stuEsc(s._id || '')}|${stuEsc(s.reg || '')}</div></div></div>
         ${school?.address || school?.phone ? `<div class="addr">${school?.address ? stuEsc(school.address) : ''}${school?.phone ? ` · ☎ ${stuEsc(school.phone)}` : ''}</div>` : ''}
       </div>
       <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>

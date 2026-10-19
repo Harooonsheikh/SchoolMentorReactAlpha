@@ -53,14 +53,20 @@ function backFaceHtml({ theme, orientation, qrSrc, barcodeSrc, idText, branding,
   const c = theme.colors;
   const showBanner = backOptions.showBanner !== false;
   const showIdText = backOptions.showIdText !== false;
-  const qrCornerCss = qrSrc ? qrPositionCss(qrPosition) : '';
-  const qrInline = qrSrc && !qrCornerCss;
+  const pos = String(qrPosition || 'center');
+  const vAlign = pos.includes('top') ? 'flex-start' : pos.includes('bottom') ? 'flex-end' : 'center';
+  const hAlign = pos.includes('left') ? 'flex-start' : pos.includes('right') ? 'flex-end' : 'center';
+  const qrCornerCss = '';
+  const qrInline = !!qrSrc;
+  const qrBackSize = scalePx(pos === 'center' ? 72 : 52, qrSizePct);
   return `${cardShellOpen(orientation, c.bg, `border:1px solid ${c.border}`)}
     ${showBanner ? `<div style="background:${c.primary};color:${c.onPrimary};padding:8px 14px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${esc(backOptions.bannerText || 'If found, please return to school office')}</div>` : ''}
-    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:14px;overflow:hidden">
-      ${qrInline ? codeHtml(qrSrc, scalePx(72, qrSizePct)) : ''}
+<div style="flex:1;display:flex;flex-direction:column;align-items:${hAlign};justify-content:safe ${vAlign};gap:6px;padding:10px 14px;min-height:0;overflow:hidden">
+           ${(qrInline || (showIdText && idText)) ? `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0">
+${qrInline ? codeHtml(qrSrc, qrBackSize) : ''}
+        ${showIdText && idText ? `<div style="font-size:10.5px;font-weight:800;color:${c.ink};letter-spacing:.5px">${esc(idText)}</div>` : ''}
+      </div>` : ''}
       ${codeHtml(barcodeSrc, 140, true)}
-      ${showIdText && idText ? `<div style="font-size:10.5px;font-weight:800;color:${c.ink};letter-spacing:.5px">${esc(idText)}</div>` : ''}
       ${backRows.length > 0 ? `<div style="width:100%;display:flex;flex-direction:column;gap:3px;margin-top:2px">${backRows.map((r) => `<div style="text-align:center"><span style="font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#94A3B8;margin-right:4px">${esc(r.label)}:</span><span style="font-size:9px;font-weight:700;color:${c.ink}">${esc(r.value)}</span></div>`).join('')}</div>` : ''}
     </div>
     ${(branding.showAddress || branding.showContact) ? `<div style="padding:8px 14px;font-size:8.5px;color:#64748B;text-align:center;border-top:1px solid ${c.border}">${branding.showAddress ? esc(school?.address || '') : ''}${branding.showAddress && branding.showContact && school?.address && school?.phone ? ' &middot; ' : ''}${branding.showContact ? esc(school?.phone || '') : ''}</div>` : ''}

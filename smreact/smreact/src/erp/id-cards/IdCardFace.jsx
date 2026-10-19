@@ -111,8 +111,14 @@ function BackFace({ theme, orientation, qrSrc, barcodeSrc, idText, branding, sch
   /* 'center' (the default) keeps the QR inline in the centered stack,
      exactly as before. Any corner choice pulls it OUT of the stack into
      a pinned overlay instead — so it doesn't render twice. */
-  const qrCorner = qrSrc ? qrPositionStyle(qrPosition) : null;
-  const qrInline = qrSrc && !qrCorner;
+  /* Back par QR ab kone me "chipkaya" nahi jata (woh banner/footer se takrata tha) —
+     QR + number ek group me rehte hain jo content area ke andar position ke hisaab se khiskta hai. */
+  const pos = String(qrPosition || 'center');
+  const vAlign = pos.includes('top') ? 'flex-start' : pos.includes('bottom') ? 'flex-end' : 'center';
+  const hAlign = pos.includes('left') ? 'flex-start' : pos.includes('right') ? 'flex-end' : 'center';
+  const qrCorner = null;
+  const qrInline = !!qrSrc;
+  const qrBackSize = scalePx(pos === 'center' ? 72 : 52, qrSizePct);
   return (
     <CardShell orientation={orientation} style={{ background: c.bg, border: `1px solid ${c.border}` }}>
       {showBanner && (
@@ -120,10 +126,14 @@ function BackFace({ theme, orientation, qrSrc, barcodeSrc, idText, branding, sch
           {backOptions.bannerText || 'If found, please return to school office'}
         </div>
       )}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, overflow: 'hidden' }}>
-        {qrInline && <CodeBox src={qrSrc} label="QR" size={scalePx(72, qrSizePct)} />}
+<div style={{ flex: 1, display: 'flex', flexDirection: 'column',alignItems: hAlign, justifyContent: `safe ${vAlign}`, gap: 6, padding: '10px 14px',minHeight: 0, overflow: 'hidden' }}>
+        {(qrInline || (showIdText && idText)) && (
+<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+           {qrInline && <CodeBox src={qrSrc} label="QR" size={qrBackSize} />}
+            {showIdText && idText && <div style={{ fontSize: 10.5, fontWeight: 800, color: c.ink, letterSpacing: '.5px' }}>{idText}</div>}
+          </div>
+        )}
         {barcodeSrc && <CodeBox src={barcodeSrc} label="Barcode" size={140} />}
-        {showIdText && idText && <div style={{ fontSize: 10.5, fontWeight: 800, color: c.ink, letterSpacing: '.5px' }}>{idText}</div>}
         {backRows.length > 0 && (
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
             {backRows.map((r) => (
