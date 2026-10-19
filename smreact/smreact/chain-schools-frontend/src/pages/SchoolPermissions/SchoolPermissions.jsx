@@ -14,8 +14,20 @@ import {
   cachedPermissions, cachePermissions,
   listMobileAppPermission, saveMobileAppPermission, emptyMobileAppPerms,
 } from '../../api/schoolPermissionsApi'
-import { fetchAcademicsPermissions, saveAcademicsPermissions, currentNetworkId } from '../../api/academicsPermissionsApi'
+import {
+  fetchAcademicsPermissions, saveAcademicsPermissions,
+  fetchExaminationPermissions, saveExaminationPermissions,
+  currentNetworkId,
+} from '../../api/academicsPermissionsApi'
 import './SchoolPermissions.css'
+
+/* Jin modules ki content-permissions asli API (manage-academics-permission)
+   par save/load hoti hain. Baqi modules abhi localStorage par stage hote hain
+   (AdvancedPermissionsModal onSave). Naya module yahan aik entry se jurta hai. */
+const PERMISSION_APIS = {
+  academics: { fetch: fetchAcademicsPermissions, save: saveAcademicsPermissions },
+  examination: { fetch: fetchExaminationPermissions, save: saveExaminationPermissions },
+}
 
 export default function SchoolPermissions() {
   /* Network me shamil ho chuke schools — Chain-Management API se. */
@@ -578,6 +590,10 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
    — it only ever reads `config`/`value`, never a module-specific prop). ── */
 function AdvancedPermissionsModal({ school, moduleKey, config, value, onToast, onClose, onSave }) {
   const isAcademics = moduleKey === 'academics'
+  /* Jin modules ki asli API hai (academics, examination) wo GET/SAVE isi se
+     karte hain; baqi modules localStorage par stage hote hain (onSave). */
+  const api = PERMISSION_APIS[moduleKey] || null
+  const usesApi = !!api
   const [perms, setPerms] = useState(() => {
     const seeded = { ...value }
     config.sections.forEach((sec) => {
@@ -585,12 +601,12 @@ function AdvancedPermissionsModal({ school, moduleKey, config, value, onToast, o
     })
     return seeded
   })
-  /* Academics content permissions ab asli API se aati/jaati hain
+  /* API-backed content permissions ab asli endpoint se aati/jaati hain
      (manage-academics-permission). GET par maujooda state bilkul waisi hi
      dikhti hai jaisi save hui thi — enabled wahi jo di gayi, view-only to
      sirf View, delete di ho to Delete. ids rakhte hain taake SAVE purani
      row update kare, nayi duplicate na bane. */
-  const [loading, setLoading] = useState(isAcademics)
+  const [loading, setLoading] = useState(usesApi)
   const [savingPerms, setSavingPerms] = useState(false)
   const idsRef = useRef({})
 
@@ -600,10 +616,10 @@ function AdvancedPermissionsModal({ school, moduleKey, config, value, onToast, o
   }, [])
 
   useEffect(() => {
-    if (!isAcademics) return undefined
+    if (!usesApi) return undefined
     let alive = true
     setLoading(true)
-    fetchAcademicsPermissions(school.id, currentNetworkId())
+    api.fetch(school.id, currentNetworkId())
       .then(({ perms: saved, ids }) => {
         if (!alive) return
         idsRef.current = ids
@@ -615,21 +631,21 @@ function AdvancedPermissionsModal({ school, moduleKey, config, value, onToast, o
           return next
         })
       })
-      .catch((err) => { onToast?.({ type: 'error', text: err?.message || 'Could not load academics permissions' }) })
+      .catch((err) => { onToast?.({ type: 'error', text: err?.message || `Could not load ${config.title.toLowerCase()}` }) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [isAcademics, school.id, config])
+  }, [usesApi, api, school.id, config])
 
   const handleSave = async () => {
-    if (!isAcademics) { onSave(perms); return }
+    if (!usesApi) { onSave(perms); return }
     if (savingPerms || loading) return
     setSavingPerms(true)
     try {
-      await saveAcademicsPermissions(school.id, perms, currentNetworkId(), idsRef.current)
-      onToast?.({ type: 'success', text: `Academics permissions saved for ${school?.name || 'this school'}` })
+      await api.save(school.id, perms, currentNetworkId(), idsRef.current)
+      onToast?.({ type: 'success', text: `${config.title} saved for ${school?.name || 'this school'}` })
       onSave(perms)
     } catch (err) {
-      onToast?.({ type: 'error', text: err?.message || 'Could not save academics permissions' })
+      onToast?.({ type: 'error', text: err?.message || `Could not save ${config.title.toLowerCase()}` })
     } finally {
       setSavingPerms(false)
     }

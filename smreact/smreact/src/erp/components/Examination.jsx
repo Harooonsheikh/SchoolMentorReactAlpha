@@ -15,6 +15,7 @@ import {
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
+import { useExaminationContentPerms, EXAMINATION_VIEW_ONLY_MSG } from '../services/examinationContentPermissions';
 import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
 import useAsync from '../hooks/useAsync';
@@ -951,6 +952,23 @@ function dsMapApiRow(item) {
 export default function Examination({ toast = () => { } }) {
   /* Logged-in user ki action-level permissions (School Head → sab true). */
   const { can } = usePermissions();
+  /* Chain Head Office ki content permissions (Exam Setup / Result Setup par
+     add/edit/delete). applies:false (chain ka hissa nahi) → sab true, school
+     ki apni role chalti hai. Per-user `can()` ke UPAR layer hoti hai: action
+     tabhi chalegi jab per-user AND head-office dono allow karein. */
+  const ecp = useExaminationContentPerms();
+  const hoExamAdd = ecp.can('examsetup', 'add');
+  const hoExamEdit = ecp.can('examsetup', 'edit');
+  const hoExamDelete = ecp.can('examsetup', 'delete');
+  /* Result Setup ki granular content permissions. Modal (Edit) ke andar har
+     action alag se gate hoti hai: Add rows → hoRsAdd, field edit → hoRsEdit,
+     Delete rows → hoRsDelete. Edit button tabhi khulta hai jab in me se koi
+     ek bhi allowed ho (hoRsAny). */
+  const hoRsAdd = ecp.can('resultsetup', 'add');
+  const hoRsEdit = ecp.can('resultsetup', 'edit');
+  const hoRsDelete = ecp.can('resultsetup', 'delete');
+  const hoRsAny = hoRsAdd || hoRsEdit || hoRsDelete;
+
   const canExamCreate = can('Examination', 'Exam Setup', 'Create');
   const canExamEdit = can('Examination', 'Exam Setup', 'Edit');
   const canExamDelete = can('Examination', 'Exam Setup', 'Delete');
@@ -4584,21 +4602,23 @@ export default function Examination({ toast = () => { } }) {
             ))}
           </div>
           <div className="exam-action-bar">
-            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (termsLoading ? 'Loading terms…' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term'))}>
+            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (!hoExamAdd ? EXAMINATION_VIEW_ONLY_MSG : (termsLoading ? 'Loading terms…' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term')))}>
               <button className="exam-add-btn"
                 onClick={() => {
                   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                  if (ecp.denyWrite('examsetup', 'add', toast)) return;
                   // Term na ho to disable ke bajaye clickable rakhte hain taake toast dikhe.
                   if (termsLoading) { toast('Terms are still loading, please wait.', 'info'); return; }
                   if (!terms.length) { toast('There is no term soo to Add Exam Please add a term from Academics.', 'error'); return; }
                   openAdd();
                 }}
-                disabled={isOtherSession || !canExamCreate}
+                disabled={isOtherSession || !canExamCreate || !hoExamAdd}
                 title={!canExamCreate ? 'You do not have permission to create exams'
-                  : isOtherSession ? 'Editing is only allowed for the current session'
-                    : termsLoading ? 'Loading terms…'
-                      : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
-                style={(isOtherSession || termsLoading || !terms.length || !canExamCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                  : !hoExamAdd ? EXAMINATION_VIEW_ONLY_MSG
+                    : isOtherSession ? 'Editing is only allowed for the current session'
+                      : termsLoading ? 'Loading terms…'
+                        : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
+                style={(isOtherSession || termsLoading || !terms.length || !canExamCreate || !hoExamAdd) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
@@ -4656,10 +4676,10 @@ export default function Examination({ toast = () => { } }) {
                         </span>
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()}>
-                        <Tooltip text={!canExamEdit ? 'You do not have permission to edit exams' : `Edit ${ex.name}`}>
-                          <button className="exam-edit-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openEdit(ex); }}
-                            disabled={isOtherSession || !canExamEdit}
-                            style={(isOtherSession || !canExamEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                        <Tooltip text={!canExamEdit ? 'You do not have permission to edit exams' : (!hoExamEdit ? EXAMINATION_VIEW_ONLY_MSG : `Edit ${ex.name}`)}>
+                          <button className="exam-edit-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (ecp.denyWrite('examsetup', 'edit', toast)) return; openEdit(ex); }}
+                            disabled={isOtherSession || !canExamEdit || !hoExamEdit}
+                            style={(isOtherSession || !canExamEdit || !hoExamEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                             <i className="fa-solid fa-pen-to-square"></i> Edit
                           </button>
                         </Tooltip>
@@ -4679,12 +4699,12 @@ export default function Examination({ toast = () => { } }) {
                         </>)}
                       </div>
                       <div className="exam-td" style={{ justifyContent: 'flex-end', gap: 8 }} onClick={e => e.stopPropagation()}>
-                        <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : `Delete ${ex.name}`}>
+                        <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : (!hoExamDelete ? EXAMINATION_VIEW_ONLY_MSG : `Delete ${ex.name}`)}>
                           <button
                             className="exam-del-btn"
-                            disabled={isOtherSession || !canExamDelete}
-                            style={(isOtherSession || !canExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                            onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setConfirmDel(ex); }}
+                            disabled={isOtherSession || !canExamDelete || !hoExamDelete}
+                            style={(isOtherSession || !canExamDelete || !hoExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                            onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (ecp.denyWrite('examsetup', 'delete', toast)) return; setConfirmDel(ex); }}
                           >
                             <i className="fa-solid fa-trash"></i>
                           </button>
@@ -5316,10 +5336,10 @@ export default function Examination({ toast = () => { } }) {
                             <i className="fa-solid fa-file-pdf"></i> PDF
                           </button>
                         )}
-                        <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}
-                          disabled={isOtherSession || !canRsEdit}
-                          title={!canRsEdit ? 'You do not have permission to edit result setup' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                          style={(isOtherSession || !canRsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                        <button className="rs-edit-btn" onClick={() => { if (!hoRsAny) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return; } setRsModalOpen(true); }}
+                          disabled={isOtherSession || !canRsEdit || !hoRsAny}
+                          title={!canRsEdit ? 'You do not have permission to edit result setup' : !hoRsAny ? EXAMINATION_VIEW_ONLY_MSG : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                          style={(isOtherSession || !canRsEdit || !hoRsAny) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                           <i className="fa-solid fa-pen-to-square"></i> Edit
                         </button>
                       </div>
@@ -7517,11 +7537,15 @@ export default function Examination({ toast = () => { } }) {
       {/* ── Result Setup — edit modal ── */}
       {rsModalOpen && (
         <ResultSetupModal
-          grades={rsGrades} remarks={rsRemarks}
+          grades={rsGrades}
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
           onAbsentChange={setRsAbsentMode}
+          /* Head Office content permissions — Add rows / edit existing rows / Delete rows. */
+          hoAdd={hoRsAdd}
+          hoEdit={hoRsEdit}
+          hoDelete={hoRsDelete}
           /* Save ke baad modal server se fresh rows le kar aata hai taake naye
              row ki asli DB id mil jaye (warna `temp_…` id rehti thi aur agla
              save UPDATE ki jagah dobara INSERT kar deta tha). */
@@ -7563,7 +7587,7 @@ export default function Examination({ toast = () => { } }) {
       {/* ── Result Setup — report picker ── */}
       {rsReportReq && (
         <ResultSetupReportPicker
-          grades={rsGrades} remarks={rsRemarks}
+          grades={rsGrades}
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
@@ -15087,7 +15111,13 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
    RESULT SETUP — EDIT MODAL (4 tabs: grades, signatures, remarks, absent)
    ═══════════════════════════════════════════════════════════════════ */
 function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, onSave, onClose, toast,
-  reloadGrades, reloadSigs, reloadRemarks }) {
+  reloadGrades, reloadSigs, reloadRemarks,
+  /* Head Office content permissions — na diye jayein (purana caller) to sab allow.
+     Modal tabhi khulta hai jab koi write (add/edit/delete) allowed ho. Andar:
+     Add rows → hoAdd, Delete rows → hoDelete, existing rows ke fields edit →
+     hoEdit. Abhi tak save na hui (nayi) row hamesha editable rehti hai warna
+     Add-only user usay bhar hi nahi sakta. */
+  hoAdd = true, hoEdit = true, hoDelete = true }) {
   const [tab, setTab] = useState('grades');
   const [draftGrades, setDraftGrades] = useState(() => {
     if (grades && grades.length) {
@@ -15129,16 +15159,47 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
     }
   }, [remarks]);
 
-  const upGrade = (id, k, v) => setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
-  const upSig = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
-  const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
+  /* Nayi (abhi tak save na hui) row ki id `temp_…` hoti hai. Edit permission na
+     ho to sirf aisi nayi rows editable rehti hain — pehle se saved rows change
+     nahi hotin (Add-only user nayi entry bana sakta hai, purani badal nahi sakta). */
+  const isNewRow = (id) => typeof id === 'string' && String(id).startsWith('temp_');
+  const rowEditable = (id) => hoEdit || isNewRow(id);
+  /* Edit allowed na ho aur existing row badalne ki koshish ho → change rok do +
+     toast. UI waisa ka waisa (input disable nahi); sirf har keystroke par toast
+     spam na ho is liye 1.5s throttle. */
+  const editToastRef = useRef(0);
+  const blockEdit = (id) => {
+    if (rowEditable(id)) return false;
+    const now = Date.now();
+    if (now - editToastRef.current > 1500) { editToastRef.current = now; toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); }
+    return true;
+  };
+
+  /* Save par kis row ki write API bheji jaye:
+     - existing row (numeric id > 0) → UPDATE, sirf hoEdit par
+     - nayi row (temp_ id)           → INSERT, sirf hoAdd par
+     Add aur Edit dono na hon to kisi row par koi grading API hit nahi hoti. */
+  const canWriteRow = (id) => ((typeof id === 'number' && id > 0) ? hoEdit : hoAdd);
+  /* Add aur Edit dono ki permission na ho to Save ka koi faida nahi (add/update
+     dono band) — is liye Save button disable (delete trash foran alag API par
+     chalta hai, Save ka mohtaj nahi). */
+  const noWritePerm = !hoAdd && !hoEdit;
+
+  const upGrade = (id, k, v) => { if (blockEdit(id)) return; setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
+  const upSig = (id, k, v) => { if (blockEdit(id)) return; setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
+  const upRemark = (id, k, v) => { if (blockEdit(id)) return; setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
 
   /* Naye (abhi tak save na huye) row ki unique id. Sirf `Date.now()` se ek hi
      millisecond me add hui do rows ko same id mil jati thi — phir ek row edit
      karne par dono badal jati thin. */
   const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const addGrade = () =>
+  /* Head Office ne Add/Delete na di ho to action rok do + toast. */
+  const guardAdd = () => { if (!hoAdd) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return true; } return false; };
+  const guardDelete = () => { if (!hoDelete) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return true; } return false; };
+
+  const addGrade = () => {
+    if (guardAdd()) return;
     setDraftGrades(r => {
       // Jo grades pehle se use ho chuki hain unhe skip karke agli available grade
       // default karo (A+ used → A, phir B+ ...). Sab use ho gayi to blank.
@@ -15149,33 +15210,39 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         { id: tempId(), grade: nextGrade, cond: 'gte', pct: '', comment: '' }
       ];
     });
-  const addSig = () =>
+  };
+  const addSig = () => {
+    if (guardAdd()) return;
     setDraftSigs(r => [
       ...r,
       { id: tempId(), name: '', desig: '', img: '' }
     ]);
+  };
 
-  const addRemark = () =>
+  const addRemark = () => {
+    if (guardAdd()) return;
     setDraftRemarks(r => [
       ...r,
       { id: tempId(), cond: 'gte', pct: '', text: '' }
-    ]); const [rsConfirm, setRsConfirm] = useState(null);
+    ]);
+  };
+  const [rsConfirm, setRsConfirm] = useState(null);
 
-  const askDeleteGrade = g => setRsConfirm({
+  const askDeleteGrade = g => { if (guardDelete()) return; setRsConfirm({
     kind: 'grade', id: g.id,
     title: 'Delete Grade',
     message: `Delete grade rule for <strong>${g.grade || '—'}</strong>?`,
-  });
-  const askDeleteSig = s => setRsConfirm({
+  }); };
+  const askDeleteSig = s => { if (guardDelete()) return; setRsConfirm({
     kind: 'sig', id: s.id,
     title: 'Delete Signature',
     message: `Delete signature for <strong>${s.name?.trim() || 'this entry'}</strong>?`,
-  });
-  const askDeleteRemark = r => setRsConfirm({
+  }); };
+  const askDeleteRemark = r => { if (guardDelete()) return; setRsConfirm({
     kind: 'remark', id: r.id,
     title: 'Delete Remark',
     message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
-  });
+  }); };
 
   const runDelete = async () => {
     if (!rsConfirm) return;
@@ -15545,16 +15612,20 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         // Find deleted grades (present in original but not in new)
         const deletedGrades = grades.filter(g => !newGradeIds.has(g.id));
 
-        // Sirf COMPLETE grade rows save karo (grade + pct + comment).
+        // Sirf COMPLETE grade rows save karo (grade + pct + comment) — aur wahi
+        // jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const gradesToSave = draftGrades.filter(g =>
           String(g.grade ?? '').trim() && String(g.pct ?? '').trim() && String(g.comment ?? '').trim());
         for (const grade of gradesToSave) {
+          if (!canWriteRow(grade.id)) continue;   // permission nahi → API skip
           await saveGradeToAPI(grade);
         }
-        // Delete removed grades
-        for (const grade of deletedGrades) {
-          if (grade.id && typeof grade.id === 'number') {
-            await deleteGradeFromAPI(grade.id);
+        // Delete removed grades — sirf tab jab Delete permission ho.
+        if (hoDelete) {
+          for (const grade of deletedGrades) {
+            if (grade.id && typeof grade.id === 'number') {
+              await deleteGradeFromAPI(grade.id);
+            }
           }
         }
         freshGrades = await reloadGrades?.();
@@ -15564,15 +15635,19 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         const newSigIds = new Set(draftSigs.map(s => s.id).filter(id => typeof id === 'number'));
         const deletedSigs = sigs.filter(s => !newSigIds.has(s.id));
 
-        // Sirf COMPLETE signature rows save karo (name + designation + image).
+        // Sirf COMPLETE signature rows save karo (name + designation + image) —
+        // aur wahi jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const sigsToSave = draftSigs.filter(s =>
           String(s.name ?? '').trim() && String(s.desig ?? '').trim() && String(s.img ?? '').trim());
         for (const sig of sigsToSave) {
+          if (!canWriteRow(sig.id)) continue;   // permission nahi → API skip
           await saveSignatureToAPI(sig);
         }
-        for (const sig of deletedSigs) {
-          if (sig.id && typeof sig.id === 'number') {
-            await deleteSignatureFromAPI(sig.id);
+        if (hoDelete) {
+          for (const sig of deletedSigs) {
+            if (sig.id && typeof sig.id === 'number') {
+              await deleteSignatureFromAPI(sig.id);
+            }
           }
         }
         freshSigs = await reloadSigs?.();
@@ -15582,14 +15657,18 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         const newRemarkIds = new Set(draftRemarks.map(r => r.id).filter(id => typeof id === 'number'));
         const deletedRemarks = remarks.filter(r => !newRemarkIds.has(r.id));
 
-        // Sirf COMPLETE remark rows save karo (percentage + text).
+        // Sirf COMPLETE remark rows save karo (percentage + text) — aur wahi
+        // jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const remarksToSave = draftRemarks.filter(r => String(r.pct ?? '').trim() && String(r.text ?? '').trim());
         for (const remark of remarksToSave) {
+          if (!canWriteRow(remark.id)) continue;   // permission nahi → API skip
           await saveRemarkToAPI(remark);
         }
-        for (const remark of deletedRemarks) {
-          if (remark.id && typeof remark.id === 'number') {
-            await deleteRemarkFromAPI(remark.id);
+        if (hoDelete) {
+          for (const remark of deletedRemarks) {
+            if (remark.id && typeof remark.id === 'number') {
+              await deleteRemarkFromAPI(remark.id);
+            }
           }
         }
         freshRemarks = await reloadRemarks?.();
@@ -15658,6 +15737,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                     <select
                       className="rs-input"
                       value={g.grade || ''}
+                      disabled={!rowEditable(g.id)}
                       onChange={e => upGrade(g.id, 'grade', e.target.value)}
                     >
                       <option value="" disabled>Grade...</option>
@@ -15668,7 +15748,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         .filter(opt => opt === g.grade || !draftGrades.some(o => o.id !== g.id && o.grade === opt))
                         .map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
-                    <select className="rs-input" value={g.cond || 'gte'} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
+                    <select className="rs-input" value={g.cond || 'gte'} disabled={!rowEditable(g.id)} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
                       {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                     </select>
                     <input
@@ -15678,6 +15758,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       max={100}
                       value={g.pct || ''}
                       placeholder="Value"
+                      disabled={!rowEditable(g.id)}
                       onChange={e => {
                         let v = e.target.value;
                         if (v !== '' && Number(v) > 100) v = '100';
@@ -15691,8 +15772,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       placeholder="Comment (max 28 chars)"
                       onChange={v => upGrade(g.id, 'comment', v)}
                       toast={toast}
+                      disabled={!rowEditable(g.id)}
                     />
-                    <Tooltip text="Remove this grade band">
+                    <Tooltip text={hoDelete ? 'Remove this grade band' : EXAMINATION_VIEW_ONLY_MSG}>
                       <button className="rs-del" onClick={() => askDeleteGrade(g)}>
                         <i className="fa-solid fa-trash-can"></i>
                       </button>
@@ -15700,8 +15782,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new grade band">
-                <button className="rs-add" onClick={addGrade}>
+              <Tooltip text={hoAdd ? 'Add a new grade band' : EXAMINATION_VIEW_ONLY_MSG}>
+                <button className="rs-add" onClick={addGrade} disabled={!hoAdd}>
                   <i className="fa-solid fa-plus"></i> Add Grade
                 </button>
               </Tooltip>
@@ -15721,16 +15803,18 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       className="rs-input"
                       value={s.name || ''}
                       placeholder="Name"
+                      disabled={!rowEditable(s.id)}
                       onChange={e => upSig(s.id, 'name', e.target.value)}
                     />
                     <input
                       className="rs-input"
                       value={s.desig || ''}
                       placeholder="Designation"
+                      disabled={!rowEditable(s.id)}
                       onChange={e => upSig(s.id, 'desig', e.target.value)}
                     />
-                    <label className="rs-sig-upload">
-                      <input type="file" accept="image/*" onChange={e => uploadSig(s.id, e.target.files[0])} />
+                    <label className="rs-sig-upload" style={!rowEditable(s.id) ? { opacity: .55, pointerEvents: 'none' } : undefined}>
+                      <input type="file" accept="image/*" disabled={!rowEditable(s.id)} onChange={e => uploadSig(s.id, e.target.files[0])} />
                       {s.img ? (
                         <img src={s.img} alt="" />
                       ) : (
@@ -15740,7 +15824,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         </div>
                       )}
                     </label>
-                    <Tooltip text="Remove this signatory">
+                    <Tooltip text={hoDelete ? 'Remove this signatory' : EXAMINATION_VIEW_ONLY_MSG}>
                       <button className="rs-del" onClick={() => askDeleteSig(s)}>
                         <i className="fa-solid fa-trash-can"></i>
                       </button>
@@ -15748,8 +15832,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new signatory">
-                <button className="rs-add" onClick={addSig}>
+              <Tooltip text={hoAdd ? 'Add a new signatory' : EXAMINATION_VIEW_ONLY_MSG}>
+                <button className="rs-add" onClick={addSig} disabled={!hoAdd}>
                   <i className="fa-solid fa-plus"></i> Add Signature
                 </button>
               </Tooltip>
@@ -15766,7 +15850,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   <div key={r.id} className="rm-remark-row">
                     <div className="rm-remark-top">
                       <div className="rm-sno">{i + 1}</div>
-                      <select className="rs-input" value={r.cond || 'gte'} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
+                      <select className="rs-input" value={r.cond || 'gte'} disabled={!rowEditable(r.id)} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
                         {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                       </select>
                       <input
@@ -15776,6 +15860,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         max={100}
                         value={r.pct || ''}
                         placeholder="Percentage value"
+                        disabled={!rowEditable(r.id)}
                         onChange={e => {
                           let v = e.target.value;
                           if (v !== '' && Number(v) > 100) v = '100';
@@ -15783,7 +15868,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                           upRemark(r.id, 'pct', v);
                         }}
                       />
-                      <Tooltip text="Remove this remark">
+                      <Tooltip text={hoDelete ? 'Remove this remark' : EXAMINATION_VIEW_ONLY_MSG}>
                         <button className="rs-del" onClick={() => askDeleteRemark(r)}>
                           <i className="fa-solid fa-trash-can"></i>
                         </button>
@@ -15797,13 +15882,14 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         multiline
                         onChange={v => upRemark(r.id, 'text', v)}
                         toast={toast}
+                        disabled={!rowEditable(r.id)}
                       />
                     </div>
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new remark band">
-                <button className="rs-add" onClick={addRemark}>
+              <Tooltip text={hoAdd ? 'Add a new remark band' : EXAMINATION_VIEW_ONLY_MSG}>
+                <button className="rs-add" onClick={addRemark} disabled={!hoAdd}>
                   <i className="fa-solid fa-plus"></i> Add Remark
                 </button>
               </Tooltip>
@@ -15870,8 +15956,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
               <i className="fa-solid fa-xmark"></i> Cancel
             </button>
           </Tooltip>
-          <Tooltip text="Submit">
-            <button className="exam-submit-btn" onClick={submit} disabled={loading}>
+          <Tooltip text={noWritePerm ? EXAMINATION_VIEW_ONLY_MSG : 'Submit'}>
+            <button className="exam-submit-btn" onClick={submit} disabled={loading || noWritePerm}>
               {loading ? (
                 <><i className="fa-solid fa-spinner fa-spin"></i> Saving...</>
               ) : (
@@ -15921,7 +16007,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   );
 }
 
-function CharField({ value, max, placeholder, multiline = false, onChange, toast }) {
+function CharField({ value, max, placeholder, multiline = false, onChange, toast, disabled = false }) {
   const warnRef = useRef(false);
   const limitRef = useRef(false);
   const len = (value || '').length;
@@ -15957,6 +16043,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
           placeholder={placeholder}
           value={value || ''}
           onChange={e => handle(e.target.value)}
+          disabled={disabled}
           style={{ borderColor: bdrCol }}
         />
       ) : (
@@ -15966,6 +16053,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
           placeholder={placeholder}
           value={value || ''}
           onChange={e => handle(e.target.value)}
+          disabled={disabled}
           style={{ borderColor: bdrCol }}
         />
       )}

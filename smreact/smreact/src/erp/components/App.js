@@ -19,6 +19,7 @@ import {
 } from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import { loadAcademicsContentPermissions } from '../services/academicsContentPermissions';
+import { loadExaminationContentPermissions } from '../services/examinationContentPermissions';
 import { startChatLoginWindow, pingChat, nudgeChatOnFocus, chatActive } from '../services/chatActivity';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
@@ -352,6 +353,7 @@ export default function App() {
      add-edit-delete isAccessable se chalen. */
   useEffect(() => {
     loadAcademicsContentPermissions().catch(() => {});
+    loadExaminationContentPermissions().catch(() => {});
   }, []);
 
   /* Branch header (name, logo, address) for the sidebar top — same API the
