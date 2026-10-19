@@ -1038,6 +1038,17 @@ export async function saveStudentTransport(classKey, reg, payload) {
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => null);
+  /* Approval-gated: transport fee change approval ke intezaar me ho to backend
+     pendingApproval:true (ya message "…sent for approval") deta hai aur asal
+     record nahi banta. Aise me RAW json wapas do — caller pendingFromResp se
+     badge + Withdraw dikhata hai. (Mapped object pendingApproval fields gira
+     deta tha, is liye badge kabhi nahi aata tha.) */
+  const pendMsg = String(json?.message || json?.Message || '');
+  const isPending = (json?.pendingApproval ?? json?.PendingApproval) === true
+    || (json?.pendingApproval ?? json?.PendingApproval) === 1
+    || /sent for approval/i.test(pendMsg);
+  if (isPending) return json;
+
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not save transport fee setup');
   }

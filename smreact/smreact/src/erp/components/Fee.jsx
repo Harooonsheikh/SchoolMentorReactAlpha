@@ -583,6 +583,80 @@ function TransportFeeAssignment({ toast }) {
   const [openKey, setOpenKey] = useState(null);
   const [editing, setEditing] = useState(null); // { classKey, student }
   const [reportHtml, setReportHtml] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  /* Transport fee changes jo approval ka intezaar kar rahe hain — student row ke
+     Action me "Pending Approval" badge + Withdraw (Student Fee Setup jaisa).
+     session: `${classKey}-${reg}` par (save response), server: reg par
+     (getUserApprovalRequests, transport filter). */
+  const [pendingTransSession, setPendingTransSession] = useState({});
+  const [pendingTransServer, setPendingTransServer] = useState({});   // studentID -> {approvalId, requestNo}
+  /* approvals_by_user se pending transport requests — page reload ke baad bhi
+     badge dikhe. Per-student fee approvals ki tarah studentID par key karte
+     hain (discount/challan/delete/receive KO chhod kar — unke apne module/prefix
+     hain). Transport ki pehchaan: module/requestNo me 'transport' ya prefix TF/TS/TR/TP. */
+  const loadTransApprovals = useCallback(async () => {
+    try {
+      const rows = await feeService.getUserApprovalRequests();
+      const map = {};
+      rows.forEach(r => {
+        if (String(r.status).toLowerCase() !== 'pending') return;
+        const mod = String(r.module || '');
+        const reqNo = String(r.requestNo || '');
+        /* Transport request: module 'TransportFeeSetup' ya requestNo 'TF-'. */
+        const isTransport = /transportfee/i.test(mod) || /^tf-/i.test(reqNo);
+        if (!isTransport) return;
+        /* studentID transport me NULL aata hai — asli student id (ApplicantsID)
+           detailsXml ke andar hoti hai (<ApplicantsID>35</ApplicantsID>). */
+        const xml = String(r.detailsXml || '');
+        const m = xml.match(/<ApplicantsID>\s*(\d+)\s*<\/ApplicantsID>/i);
+        const sid = m ? m[1] : String(r.studentID ?? r.applicantsID ?? '');
+        if (!sid) return;
+        const prev = map[sid];
+        if (!prev || Number(r.id) > Number(prev.approvalId)) map[sid] = { approvalId: r.id, requestNo: r.requestNo };
+      });
+      setPendingTransServer(map);
+    } catch (e) { /* optional */ }
+  }, []);
+  useEffect(() => { loadTransApprovals(); }, [loadTransApprovals]);
+
+  /* Student ke sare mumkin ids — detailsXml se nikli ApplicantsID in me se kisi
+     se match karti hai (applicantsID zyada tar). */
+  const stuSrvPend = useCallback((s) => (
+    pendingTransServer[String(s.applicantsID ?? '')]
+    || pendingTransServer[String(s.studentID ?? '')]
+    || pendingTransServer[String(s.reg ?? '')]
+  ), [pendingTransServer]);
+
+  const transPendOf = useCallback((c, s) => (
+    pendingTransSession[`${c.key}-${s.reg}`] || stuSrvPend(s)
+  ), [pendingTransSession, stuSrvPend]);
+
+  const requestWithdrawTrans = (c, s) => {
+    const cands = [pendingTransSession[`${c.key}-${s.reg}`], stuSrvPend(s)].filter(Boolean);
+    const pend = cands.find(p => p.approvalId) || cands[0];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: `The transport fee change for ${s.name} will not be applied.`,
+      confirmStyle: 'primary', icon: 'fa-rotate-left', iconBg: 'rgba(30,58,138,.1)', iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingTransSession(prev => { const n = { ...prev }; delete n[`${c.key}-${s.reg}`]; return n; });
+          setPendingTransServer(prev => {
+            const n = { ...prev };
+            delete n[String(s.studentID ?? '')];
+            delete n[String(s.applicantsID ?? '')];
+            return n;
+          });
+          loadTransApprovals();
+          toast('Request withdrawn', 'success');
+        } catch (e) { toast(e.message || 'Could not withdraw request', 'error'); }
+      },
+    });
+  };
 
   /* ── Smart search (mirrors Fee Challans) ── */
   const [searchQ, setSearchQ] = useState('');
@@ -654,6 +728,16 @@ function TransportFeeAssignment({ toast }) {
         createdBy: student.transportSetup?.createdBy,
         isActive: true,
       });
+      /* Approval on: change abhi apply nahi — us student ki row par badge +
+         Withdraw. transportMap waise ka waisa (purani value dikhti rahe). */
+      const info = pendingFromResp(saved, 'Transport fee sent for approval');
+      if (info) {
+        setPendingTransSession(prev => ({ ...prev, [`${classKey}-${student.reg}`]: { approvalId: info.approvalId ?? null, requestNo: info.requestNo || '' } }));
+        toast(info.message || 'Transport fee sent for approval', 'info');
+        closeEdit();
+        loadTransApprovals();
+        return;
+      }
       const next = (transportMap[classKey] || []).map(s =>
         s.reg === student.reg
           ? {
@@ -672,7 +756,7 @@ function TransportFeeAssignment({ toast }) {
     } catch (err) {
       toast(err.message || 'Could not save transport fee', 'error');
     }
-  }, [editing, classes, transportMap, setTransportMap, closeEdit, toast]);
+  }, [editing, classes, transportMap, setTransportMap, closeEdit, toast, loadTransApprovals]);
 
   const openClassReport = useCallback((c) => {
     const rows = transportMap[c.key] || [];
@@ -777,7 +861,13 @@ function TransportFeeAssignment({ toast }) {
             <div key={c.key} className="fee-rowwrap">
               <div
                 className={`fee-row fee-trans-row${isOpen ? ' open' : ''}`}
-                onClick={() => setOpenKey(isOpen ? null : c.key)}
+                onClick={() => {
+                  const opening = !isOpen;
+                  setOpenKey(opening ? c.key : null);
+                  /* Class expand par approvals_by_user dobara lao — taake us class
+                     ke students ke pending transport badge taza/updated rahein. */
+                  if (opening) loadTransApprovals();
+                }}
               >
                 <div className="fee-td" data-label="#"><span className="fee-row-icon">{i + 1}</span></div>
                 <div className="fee-td fee-name" data-label="Class">{c.cls}</div>
@@ -846,12 +936,33 @@ function TransportFeeAssignment({ toast }) {
                                 : <span className="fee-muted-dash">—</span>}
                             </td>
                             <td className="fee-center">
-                              <Tooltip text={!canTfEdit ? 'You do not have permission to edit transport fee' : `Edit transport fee for ${s.name}`}>
-                                <button className="fee-iconbtn" onClick={() => openEdit(c.key, s)}
-                                  disabled={!canTfEdit} style={!canTfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                                  <i className="fa-solid fa-pen"></i>
-                                </button>
-                              </Tooltip>
+                              {(() => {
+                                const tp = transPendOf(c, s);
+                                if (tp) return (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+                                    <Tooltip text={`Transport fee request ${tp.requestNo || ''} awaiting approval`.trim()}>
+                                      <span className="fee-pending-badge" role="status">
+                                        <i className="fa-solid fa-hourglass-half"></i>
+                                        <span>Pending Approval</span>
+                                        {tp.approvalId != null && <b className="fee-pending-id">#{tp.approvalId}</b>}
+                                      </span>
+                                    </Tooltip>
+                                    <Tooltip text="Withdraw this request">
+                                      <button className="fee-iconbtn fee-withdraw-btn" onClick={() => requestWithdrawTrans(c, s)}>
+                                        <i className="fa-solid fa-rotate-left"></i>
+                                      </button>
+                                    </Tooltip>
+                                  </span>
+                                );
+                                return (
+                                  <Tooltip text={!canTfEdit ? 'You do not have permission to edit transport fee' : `Edit transport fee for ${s.name}`}>
+                                    <button className="fee-iconbtn" onClick={() => openEdit(c.key, s)}
+                                      disabled={!canTfEdit} style={!canTfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                                      <i className="fa-solid fa-pen"></i>
+                                    </button>
+                                  </Tooltip>
+                                );
+                              })()}
                             </td>
                           </tr>
                         ))}
@@ -891,6 +1002,8 @@ function TransportFeeAssignment({ toast }) {
         html={reportHtml?.html}
         onClose={() => setReportHtml(null)}
       />
+
+      <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
     </>
   );
 }
