@@ -387,9 +387,11 @@ function ChartOfAccounts({ toast, isOtherSession }) {
         return { key: String(at.ID), id: at.ID, name: at.AccountTypeName, icon: m.icon, cls: m.cls, heads };
       }));
       setTypes(built);
+      return built;
     } catch (e) {
       console.error('Error loading account types:', e);
       toast('Could not load chart of accounts', 'error');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -403,9 +405,11 @@ function ChartOfAccounts({ toast, isOtherSession }) {
   const [edit, setEdit]       = useState(null); // { typeKey, mode:'add'|'edit', head? }
   const [confirm, setConfirm] = useState(null);
   /* Head recordId → pending approval ({ approvalId, requestNo }) for this
-     user, so edited/deleted heads awaiting review show a badge + Withdraw
-     (mirrors the Fee module). Cleared automatically once a request is
-     approved/rejected, since it then leaves approvals_by_user. */
+     user, so edited/deleted AND newly-added heads awaiting review show a
+     badge + Withdraw right on their row (mirrors the Fee module). Cleared
+     automatically once a request is approved/rejected, since it then leaves
+     approvals_by_user. Naya pending head bhi get-accountsHeads me aata hai, is
+     liye uski row banti hai aur yahi map use ho kar badge laga deta hai. */
   const [pendingMap, setPendingMap] = useState({});
 
   const loadPending = useCallback(async () => {
@@ -439,6 +443,8 @@ function ChartOfAccounts({ toast, isOtherSession }) {
           return;
         }
         toast('Request withdrawn', 'success');
+        /* Naya (pending) head withdraw hone par list se bhi hat jaye. */
+        load();
         loadPending();
       },
     });
@@ -471,11 +477,46 @@ function ChartOfAccounts({ toast, isOtherSession }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { toast(data?.message || 'Could not save account head', 'error'); return; }
-      /* Approval on: the change is queued, not saved — close the form but
-         DON'T refresh, so the head only appears once it's approved. */
+      /* Approval on: change queued. Naya/edited head pending ke saath list me
+         dikhana hai — uski APNI row par badge + Withdraw (alag modal nahi).
+         getMyRequests save ke foran baad nayi request kabhi late deti hai, is
+         liye response ke `approval` se badge OPTIMISTICALLY foran laga dete
+         hain; phir loadPending() server se authoritative sync kar leta hai. */
       if (approvalPending(data)) {
+        const ap = data.approval || data.Approval || {};
+        const pend = {
+          approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+          requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+        };
+        const submittedName = String(name || '').trim();
+        const submittedDesc = String(desc || '').trim();
+        const submittedType = accountTypeID;
+        const editedRecordId = mode === 'edit' ? head?.recordId : null;
         toast(apiMessage(data) || 'Account head sent for approval', 'info');
         setEdit(null);
+        const built = await load();   // pending head agar backend return kare to list me aa jata hai
+        /* Badge kis row par — edit me wahi recordId; add me naya head naam+type
+           se dhoondo. */
+        let key = editedRecordId != null ? String(editedRecordId) : null;
+        if (key == null && Array.isArray(built)) {
+          const t = built.find((tt) => String(tt.id) === String(submittedType));
+          const match = (t?.heads || []).filter((hh) => String(hh.name).trim() === submittedName);
+          const h = match[match.length - 1];   // sab se nayi matching row
+          if (h) key = String(h.recordId);
+        }
+        /* ADD aur backend ne pending head return nahi kiya (insert abhi apply nahi
+           hua) → list me koi row nahi. Us head ki SYNTHETIC pending row inject karo
+           taake uski apni row par badge + Withdraw dikhe. Withdraw/approve ke baad
+           load() asli data laa kar isay hata deta hai. */
+        if (key == null && editedRecordId == null) {
+          const synthId = `pending-${pend.approvalId ?? pend.requestNo ?? Date.now()}`;
+          const synthHead = { no: '—', recordId: synthId, name: submittedName, desc: submittedDesc, typeID: submittedType };
+          setTypes((prev) => (prev || []).map((t) => (
+            String(t.id) === String(submittedType) ? { ...t, heads: [...t.heads, synthHead] } : t
+          )));
+          key = synthId;
+        }
+        if (key != null) setPendingMap((m) => ({ ...m, [key]: pend }));
         loadPending();
         return;
       }
@@ -511,8 +552,18 @@ function ChartOfAccounts({ toast, isOtherSession }) {
             );
             return;
           }
-          /* Approval on: nothing removed yet — leave the list as-is. */
-          if (approvalPending(data)) { toast(apiMessage(data) || 'Delete sent for approval', 'info'); loadPending(); return; }
+          /* Approval on: kuch remove nahi hua — row waise hi rehti hai, us par
+             badge + Withdraw lag jata hai (foran response se, phir server sync). */
+          if (approvalPending(data)) {
+            const ap = data.approval || data.Approval || {};
+            toast(apiMessage(data) || 'Delete sent for approval', 'info');
+            setPendingMap((m) => ({ ...m, [String(head.recordId)]: {
+              approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+              requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+            } }));
+            loadPending();
+            return;
+          }
           toast('Account head deleted', 'success');
           load();
         } catch (e) {
@@ -669,7 +720,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                         </thead>
                         <tbody>
                           {t.heads.map(h => (
-                            <tr key={h.no} id={`acchd-${t.key}-${h.no}`}>
+                            <tr key={h.recordId ?? h.no} id={`acchd-${t.key}-${h.no}`}>
                               <td data-label="COA No"><span className="acc-head-no">{h.no}</span></td>
                               <td className="acc-head-name" data-label="Head Name">{h.name}</td>
                               <td className="acc-head-desc" data-label="Description">{h.desc || '—'}</td>
