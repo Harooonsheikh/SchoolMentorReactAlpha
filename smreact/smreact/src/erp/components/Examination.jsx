@@ -10202,8 +10202,14 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
-
+  // const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+  /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
+    ? rcFilterZeroMarkSubjects(subjectsAll, st)
+    : (rsAbsentMode === 'zero' && rdProp
+        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+        : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -10552,7 +10558,13 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+  /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
+    ? rcFilterZeroMarkSubjects(subjectsAll, st)
+    : (rsAbsentMode === 'zero' && rdProp
+        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+        : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -10687,7 +10699,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           Subject Performance
         </div>
         {subjData.map((d, idx) => (
-          <div key={`bar-${idx}-${d.s}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+         <div key={`bar-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
             <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
             <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${d.isAbs ? 0 : d.pct}%`, background: d.isAbs ? 'rgba(217,119,6,.3)' : d.col, borderRadius: 4 }} />
@@ -10826,7 +10838,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+  // const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+    /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
+    ? rcFilterZeroMarkSubjects(subjectsAll, st)
+    : (rsAbsentMode === 'zero' && rdProp
+        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+        : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -11063,8 +11082,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ fontSize: 8.5, color: C.textM }}>Page 1 of 2</div>
       </div>
 
-      {/* ── PAGE 2 ── */}
-      <div style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
+         {/* ── PAGE 2 ── */}
+      <div data-rc-page-break="1" style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.hdrText, letterSpacing: '-.01em' }}>Performance Analytics</div>
           <div style={{ fontSize: 10, color: C.hdrTextMut, marginTop: 1 }}>{st.name} &nbsp;·&nbsp; {ex.name}</div>
@@ -11085,7 +11104,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             const barC = d.isAbs ? 'rgba(217,119,6,.25)' : d.col;
             const lblC = d.isAbs ? '#B45309' : (d.pct >= 80 ? C.grn : d.pct >= 60 ? C.acc : C.red);
             return (
-              <div key={`ov-${idx}-${d.s}`} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div key={`ov-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: d.isAbs ? '#B45309' : C.textS, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
                 <div style={{ flex: 1, height: 10, borderRadius: 5, background: '#EFF6FF', overflow: 'hidden' }}>
                   <div style={{ height: '100%', width: `${barW}%`, background: barC, borderRadius: 5, position: 'relative' }}>
@@ -14187,7 +14206,6 @@ function ResultCardViewer({ student, rd, ex, template, school, grades, remarks =
 <title>Result Card — ${student.name}</title>
 
 <style>
-<style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
@@ -14199,12 +14217,19 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
   thead{display:table-header-group}
   tr{break-inside:avoid;page-break-inside:avoid}
 }
-.wrap{width:100%;max-width:210mm;margin:0 auto}
+.wrap{width:190mm;max-width:190mm;margin:0 auto}
+.wrap > *{max-width:none!important;width:100%!important;margin:0!important;box-shadow:none!important}
+@media print{
+  @page{size:A4 portrait;margin:0}
+  html,body{width:210mm;margin:0}
+  .wrap{width:210mm;max-width:210mm;padding:10mm}
+}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 /* Colorless overrides — recolor white text + decorative fills on the header. */
 .cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
+${RC_PRINT_CSS}
 .cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
 .cl-doc-header [style*="opacity:.75"],
 .cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
@@ -14216,6 +14241,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
+${RC_PRINT_FIT_SCRIPT}
 </body></html>`);
     w.document.close();
   };
@@ -14335,6 +14361,101 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
     document.body
   );
 }
+
+/* ── Result card PDF: A4 full-page print (Classic / Insight / Portfolio, single + bulk) ── */
+const RC_PRINT_CSS = `
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@page{size:A4 portrait;margin:0}
+.wrap,.bulk-card{width:210mm!important;max-width:210mm!important;padding:10mm!important;margin:0 auto!important;border-radius:0!important;box-shadow:none!important;overflow:visible!important;height:auto!important;background:#fff}
+.bulk-card + .bulk-card{break-before:page;page-break-before:always}
+.wrap > *,.bulk-card > *{max-width:none!important;width:100%!important;margin:0!important;box-shadow:none!important;border-radius:0!important;overflow:visible!important;height:auto!important}
+.wrap img,.bulk-card img{max-width:100%}
+.wrap td,.wrap th,.bulk-card td,.bulk-card th{overflow-wrap:anywhere}
+.rc-seg + .rc-seg{break-before:page;page-break-before:always}
+.wrap > * > *,.bulk-card > * > *,.rc-seg > *{break-inside:avoid;page-break-inside:avoid}
+@media print{
+  html,body{width:210mm}
+  .no-print{display:none!important}
+  thead{display:table-header-group}
+  tr{break-inside:avoid;page-break-inside:avoid}
+}
+`;
+const RC_PRINT_FIT_SCRIPT = `<script>
+(function(){
+  var MM = 96 / 25.4;
+  var PAGE_H = 277 * MM - 4;
+  var MIN_ZOOM = 0.8;
+  var ROW_CAP = 26;
+  function H(el){ return el.getBoundingClientRect().height; }
+  function visible(el){ return el.getBoundingClientRect().height > 0; }
+  function segmentsOf(root){
+    var kids = Array.prototype.slice.call(root.children);
+    var cut = -1;
+    kids.forEach(function(k, i){ if (cut < 0 && k.hasAttribute('data-rc-page-break')) cut = i; });
+    if (cut <= 0) return [root];
+    var a = document.createElement('div'), b = document.createElement('div');
+    a.className = 'rc-seg'; b.className = 'rc-seg';
+    kids.slice(0, cut).forEach(function(k){ a.appendChild(k); });
+    kids.slice(cut).forEach(function(k){ b.appendChild(k); });
+    root.appendChild(a); root.appendChild(b);
+    return [a, b];
+  }
+  function shrink(seg){
+    var z = 1;
+    for (var i = 0; i < 5 && H(seg) > PAGE_H; i++) {
+      z = z * PAGE_H / H(seg) - 0.005;
+      if (z < MIN_ZOOM) { seg.style.zoom = ''; seg.style.width = ''; return; }
+      seg.style.zoom = z;
+      seg.style.width = (100 / z) + '%';
+    }
+  }
+  function stretch(seg){
+    var extra = PAGE_H - H(seg);
+    if (extra <= 2) return;
+    var tbl = null;
+    seg.querySelectorAll('table').forEach(function(x){ if (!tbl || x.rows.length > tbl.rows.length) tbl = x; });
+    if (tbl) {
+      var rows = Array.prototype.filter.call(tbl.querySelectorAll('tbody tr'), visible);
+      if (rows.length) {
+        var add = Math.min(ROW_CAP, extra / rows.length);
+             rows.forEach(function(r){ r.style.height = (H(r) + add) + 'px'; });
+        extra = PAGE_H - H(seg);
+      }
+    }
+    var bars = Array.prototype.filter.call(seg.querySelectorAll('[data-rc-row]'), visible);
+    if (bars.length && extra > 2) {
+      var addB = Math.min(ROW_CAP, extra / bars.length);
+      bars.forEach(function(r){
+        var cs = getComputedStyle(r);
+        r.style.paddingTop = ((parseFloat(cs.paddingTop) || 0) + addB / 2) + 'px';
+        r.style.paddingBottom = ((parseFloat(cs.paddingBottom) || 0) + addB / 2) + 'px';
+      });
+      extra = PAGE_H - H(seg);
+    }
+    if (extra <= 2) return;
+    var kids = Array.prototype.filter.call(seg.children, visible);
+    if (kids.length < 2) return;
+    var target = kids[kids.length - 1];
+    var prev = kids[kids.length - 2];
+    if (kids.length >= 3 && H(target) < 50 && !prev.querySelector('table')) target = prev;
+    var mt = parseFloat(getComputedStyle(target).marginTop) || 0;
+    target.style.setProperty('margin-top', (mt + extra) + 'px', 'important');
+  }
+  function fit(){
+    document.querySelectorAll('.wrap > *, .bulk-card > *').forEach(function(root){
+      segmentsOf(root).forEach(function(seg){
+        if (H(seg) > PAGE_H) shrink(seg); else stretch(seg);
+      });
+    });
+  }
+  function run(){
+    var f = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+    f.then(function(){ try { fit(); } catch (e) { console.error('A4 fit failed', e); } });
+  }
+  if (document.readyState === 'complete') run(); else window.addEventListener('load', run);
+})();
+</script>`;
 
 function RcColorToggle({ isColor, setIsColor, accent = '#1E40AF' }) {
   return (
@@ -14494,7 +14615,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
-@page{size:A4 portrait;margin:12mm}
+@page{size:A4 portrait;margin:10mm;-webkit-print-color-adjust:exact}
 @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
   thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
 .bulk-card{max-width:210mm;margin:0 auto 12px;page-break-after:always;break-after:page;overflow:visible!important;height:auto!important}
@@ -14504,12 +14625,14 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 .cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
+${RC_PRINT_CSS}
 </style></head><body>
 ${node.innerHTML}
 <div class="print-bar no-print">
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
+${RC_PRINT_FIT_SCRIPT}
 </body></html>`);
     w.document.close();
   };
@@ -14781,12 +14904,14 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 .cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
+${RC_PRINT_CSS}
 </style></head><body>
 ${node.innerHTML}
 <div class="print-bar no-print">
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
+${RC_PRINT_FIT_SCRIPT}
 </body></html>`);
     w.document.close();
   };
