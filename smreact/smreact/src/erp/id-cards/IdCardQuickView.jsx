@@ -96,7 +96,13 @@ export default function IdCardQuickView({ kind, entity, ctx = {}, idValue, displ
     backQrPosition: design.qr?.backPosition || 'center',
     qrSizePct: design.qr?.sizePct || 100,
     idText: idValue, showPhoto,
-    backOptions: design.backOptions, backRows,
+    /* Student ID card par QR ke neeche registration number NAHI chahiye
+       (front par pehle se hai + QR usi value ko encode karta hai). Sirf
+       student ke liye showIdText off — employee/applicant jaise hain. */
+    backOptions: kind === 'student'
+      ? { ...design.backOptions, showIdText: false }
+      : design.backOptions,
+    backRows,
   });
 
   const handleDownload = () => {

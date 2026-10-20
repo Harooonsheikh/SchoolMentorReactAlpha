@@ -7,19 +7,18 @@ import { buildAcademicStructure, mirrorAcademicStructure } from '../../config/ac
 import AddTermTab from './AddTermTab'
 import AddExamTab from './AddExamTab'
 import AddResultTab from './AddResultTab'
-import TermBreakup from './TermBreakup'
 import './Examination.css'
 
 /* ═══════════════════════════════════════════════════════════════════
    Examination — Head Office module, redesigned to mirror the School
-   Mentor ERP. Three tabs: Add Term · Add Exam · Add Result.
+   Mentor ERP. Three tabs: Term Setup · Exam Setup · Result Setup.
+   (Term Breakup lives under Academics now.)
    Everything persists to localStorage via examStore.
    ═══════════════════════════════════════════════════════════════════ */
 const TABS = [
-  { key: 'terms', label: 'Add Term', icon: 'fa-layer-group' },
-  { key: 'exams', label: 'Add Exam', icon: 'fa-file-signature' },
-  { key: 'result', label: 'Add Result', icon: 'fa-chart-bar' },
-  { key: 'breakup', label: 'Term Breakup', icon: 'fa-table-list' },
+  { key: 'terms', label: 'Term Setup', icon: 'fa-layer-group' },
+  { key: 'exams', label: 'Exam Setup', icon: 'fa-file-signature' },
+  { key: 'result', label: 'Result Setup', icon: 'fa-chart-bar' },
 ]
 
 export default function Examination() {
@@ -85,7 +84,6 @@ export default function Examination() {
       {tab === 'terms' && <AddTermTab store={store} commit={commit} flash={flash} />}
       {tab === 'exams' && <AddExamTab store={store} commit={commit} flash={flash} />}
       {tab === 'result' && <AddResultTab store={store} commit={commit} flash={flash} />}
-      {tab === 'breakup' && <TermBreakup store={store} commit={commit} flash={flash} />}
 
       {toast && createPortal(
         <div className="exm-toast-wrap" role="status" aria-live="polite">
