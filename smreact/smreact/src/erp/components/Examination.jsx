@@ -1044,8 +1044,9 @@ export default function Examination({ toast = () => { } }) {
      Preschool in branchon par live hai (toggle + per-class Preschool option +
      Result Setup tab); baqi branches par sirf Grade 1-12 dikhta hai. Nayi branch
      yahin add karo. */
-  const PRESCHOOL_BRANCH_IDS = new Set(['1', '15']);
-  const isPreschoolBranch = PRESCHOOL_BRANCH_IDS.has(String(sessionStorage.getItem('branchID') || '').trim());
+  // const PRESCHOOL_BRANCH_IDS = new Set(['1', '15']);
+  // const isPreschoolBranch = PRESCHOOL_BRANCH_IDS.has(String(sessionStorage.getItem('branchID') || '').trim());
+  const isPreschoolBranch = true;
   const [pResultType, setPResultType] = useState('grade');
   const [pRsL2, setPRsL2] = useState('setup');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);

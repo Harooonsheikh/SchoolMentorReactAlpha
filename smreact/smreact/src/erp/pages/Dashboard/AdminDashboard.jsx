@@ -401,15 +401,17 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      data se bharta hai (mock constants ki jagah). Fee section alag se
      BranchLedger (Fee reports jaisa) se aata hai, is liye yahan FeeAnalytics
      use NAHI karte. */
-  const [dash, setDash] = useState({});
-  useEffect(() => {
-    let alive = true;
-    const { month, year } = dashboardService.currentMonthYear();
-    dashboardService.getDashboard(month, year)
-      .then((d) => { if (alive) setDash(d || {}); })
-      .catch(() => { if (alive) setDash({}); });
-    return () => { alive = false; };
-  }, []);
+ const [dash, setDash] = useState({});
+const [dashLoaded, setDashLoaded] = useState(false);
+useEffect(() => {
+  let alive = true;
+  const { month, year } = dashboardService.currentMonthYear();
+  dashboardService.getDashboard(month, year)
+    .then((d) => { if (alive) setDash(d || {}); })
+    .catch(() => { if (alive) setDash({}); })
+    .finally(() => { if (alive) setDashLoaded(true); });
+  return () => { alive = false; };
+}, []);
   const D    = dash || {};
   const kpi  = D.Kpi || {};
   const snap = D.ModuleSnapshot || {};
@@ -842,12 +844,25 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       <style>{DASH_CSS}</style>
       <style>{ADM_NEW_CSS}</style>
 
+          {!dashLoaded && (
+      <div aria-busy="true" aria-label="Loading dashboard">
+        <div className="skel-block" style={{ height: 52, marginBottom: 16 }} />
+        <div className="skel-block" style={{ height: 110, borderRadius: 18, marginBottom: 16 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="skel-block" style={{ height: 200 }} />
+          ))}
+        </div>
+      </div>
+    )}
+
       {/* ═════════ 0. UNIVERSAL SEARCH BAR ═════════
             Sits at the top of the Admin / Principal Dashboard.
             Permission predicate gates each module's results — today the
             admin sees everything, but the prop is wired so the backend
             can clamp it later. Module-activation gating happens inside
             the hook via ModuleContext. */}
+    <div style={dashLoaded ? undefined : { display: 'none' }}>
       <div className="adm-uvs-row">
         <MentorAISearchBar
           onNavigate={(target, params) => {
@@ -2113,8 +2128,9 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
         )}
       </div>
       )}
+      </div>
     </>
-  );
+);
 }
 
 

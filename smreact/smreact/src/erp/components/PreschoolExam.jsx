@@ -401,11 +401,15 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
     setNewLabel('');
   };
   const save = async () => {
+  try {
     const saved = await service(draft, removedDbIds);
     onSaved(saved);
     setRemovedDbIds([]);
     toast('Saved successfully!', 'success');
-  };
+  } catch (err) {
+    toast(err.message || 'Save failed, please try again', 'error');
+  }
+};
   return (
     <div className="rs-card">
       <div className="rs-card-head">
@@ -563,20 +567,28 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
     setDraft(d => [...d, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: v }]);
     setNewText('');
   };
-  const save = async () => {
-    await preschoolService.saveSloStatements(activeLevel, activeId, draft, removedDbIds);
-    onSaved({ ...pSlo, [activeLevel]: { ...levelSlo, [activeId]: draft } });
-    setRemovedDbIds([]);
+    const save = async () => {
+  try {
+    const la = pLearningAreas.find(x => x.id === activeId);
+    const fresh = await preschoolService.saveSloStatements(activeLevel, la, draft, levelSlo[activeId] || [], pLearningAreas);
+    onSaved(fresh);
     toast('Assessment points saved!', 'success');
-  };
-  const copyFromPrevious = async () => {
-    if (!prevLevel) return;
-    const hasExisting = Object.values(levelSlo).some(list => list?.length);
-    if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
-    const fresh = await preschoolService.copyLevelSlo(prevLevel.id, activeLevel);
+  } catch (err) {
+    toast(err.message || 'Save failed, please try again', 'error');
+  }
+};
+ const copyFromPrevious = async () => {
+  if (!prevLevel) return;
+  const hasExisting = Object.values(levelSlo).some(list => list?.length);
+  if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
+  try {
+    const fresh = await preschoolService.copyLevelSlo(prevLevel.id, activeLevel, pLearningAreas);
     onSaved(fresh);
     toast(`Copied all SLOs from ${prevLevel.name}!`, 'success');
-  };
+  } catch (err) {
+    toast(err.message || 'Copy failed, please try again', 'error');
+  }
+};
 
   return (
     <div className="rs-card">
@@ -644,6 +656,41 @@ function PreschoolResultSetup({
   pHelpOpen, setPHelpOpen,
   toast,
 }) {
+
+    const [pRcoId, setPRcoId] = useState(0);
+  const [pRcoSaving, setPRcoSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await preschoolService.getPRcoState();
+        if (!alive) return;
+        setPRco(s.list);
+        setPRcoId(s.id);
+        setPReportType(s.reportType);
+      } catch (err) {
+        toast(err.message || 'Could not load saved preferences', 'error');
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const savePrefs = async () => {
+    setPRcoSaving(true);
+    try {
+      const s = await preschoolService.savePRco(pRco, pReportType, pRcoId);
+      setPRcoId(s.id);
+      setPRco(s.list);
+      toast('Preferences saved!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed, please try again', 'error');
+    } finally {
+      setPRcoSaving(false);
+    }
+  };
+
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 4 }}>
@@ -773,8 +820,8 @@ function PreschoolResultSetup({
                   <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
                   Applies to Monthly, Term &amp; Annual Preschool report cards.
                 </div>
-                <button className="rco-save-btn" onClick={async () => { await preschoolService.savePRco(pRco, pReportType); toast('Preferences saved!', 'success'); }}>
-                  <i className="fa-solid fa-floppy-disk"></i> Save Preferences
+                <button className="rco-save-btn" onClick={savePrefs} disabled={pRcoSaving}>
+                  <i className="fa-solid fa-floppy-disk"></i> {pRcoSaving ? 'Saving…' : 'Save Preferences'}
                 </button>
               </div>
             </div>

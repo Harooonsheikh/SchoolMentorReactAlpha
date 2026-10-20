@@ -15,6 +15,7 @@ const PROBE_TIMEOUT_MS = 15000;
 let speedMonitorActive = false;
 let lastSpeed = { at: 0, mbps: null };
 let probeInFlight = null;
+let lastServerToastAt = 0;   // shared: saari copies ke liye ek hi throttle
 
 function measureMbps() {
   if (probeInFlight) return probeInFlight;
@@ -45,7 +46,7 @@ function measureMbps() {
 export default function SystemDialogs({ toast = () => {} }) {
   const [showSlow, setShowSlow] = useState(false);
   const [slowMbps, setSlowMbps] = useState(null);
-  const lastServerToastRef = useRef(0);
+  // const lastServerToastRef = useRef(0);
   const slowDismissedRef = useRef(false);
 
   useEffect(() => {
@@ -78,8 +79,8 @@ export default function SystemDialogs({ toast = () => {} }) {
     };
     const onServerError = () => {
       const now = Date.now();
-      if (now - lastServerToastRef.current < 8000) return;
-      lastServerToastRef.current = now;
+      if (now - lastServerToastAt < 8000) return;
+      lastServerToastAt = now;
       toast('Server error (500) — something went wrong. Please try again in a moment.', 'error');
     };
     /* Offline still suppresses the slow banner. The no-internet banner itself is not shown. */
