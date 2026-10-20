@@ -2340,6 +2340,7 @@ export function buildReceivePaymentInstallmentRequest({
   receivedDate = '',
   modifiedBy = 0,
   isReceiving = true,
+  walletId = 0,
   detailRows = [],
 } = {}) {
   const rows = (Array.isArray(detailRows) ? detailRows : [])
@@ -2362,6 +2363,7 @@ export function buildReceivePaymentInstallmentRequest({
     receivedDate: String(receivedDate || '').slice(0, 10),
     modifiedBy: Number(modifiedBy) || 0,
     isReceiving: !!isReceiving,
+    walletId: Number(walletId) || 0,
     detailRows: rows,
   };
 }

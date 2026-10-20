@@ -16,10 +16,7 @@ import { buildDiscountMap } from './feeDashboardExtra';
 import { useLedgerReportData } from '../../components/Fee';
 import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser } from '../UserPermissions/permissionsData';
-import useAsync from '../../hooks/useAsync';
 import * as dashboardService from '../../services/dashboardService';
-import * as accountsService from './_forked/services/accountsService';
-import * as feeService from './_forked/services/feeService';
 import { buildStandardReportHtml } from '../../reports/reportKit';
 import {
   STUDENT_STATS,
@@ -179,9 +176,25 @@ const TYPE_COLOR = {
 const FIN_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const fmtPKR = (n) => `PKR ${(Number(n) || 0).toLocaleString('en-PK')}`;
 /* Accounts entries API (date-wise filter ke liye). Live pe wahi base URL use karein jo dashboardService use karta hai. */
-const FIN_API_BASE = 'http://50.190.164.42:4100';
-const FIN_TYPE_INCOME = 1;
-const FIN_TYPE_EXPENSE = 2;
+/* /financial-summary ke accountFilterType values. Monthly Financial Summary ke
+   period toggle (Month / From–To / Single Date) inhi par map hote hain. Agar
+   backend inke naam alag use karta ho to SIRF yahan badlo — 'CurrentMonth'
+   confirmed hai, baqi teen best-guess naam hain. */
+const ACCT_FILTER = {
+  current:    'CurrentMonth',
+  month:      'SpecificMonth',
+  dateRange:  'DateRange',
+  singleDate: 'SingleDate',
+};
+
+/* OneLink Payments API ke filterType values (Month / From–To / Single Date toggle).
+   Confirmed: Month (month+year), FromTo (fromDate+toDate), SingleDate (singleDate).
+   filterType na ho to backend default aaj ka single date deta hai. */
+const ONELINK_FILTER = {
+  month:  'Month',
+  range:  'FromTo',
+  single: 'SingleDate',
+};
 /* Student attendance API — classID/sectionID 0 = poora school. Status: 1/Present, 2/Absent, 3/Leave. */
 const ATT_API_URL = 'https://erp.schoolmentor.ai/api/student-attendance';
 const getAttSessionId = () => Number(sessionStorage.getItem('sessionID') || localStorage.getItem('sessionID')) || 5;
@@ -682,27 +695,54 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
   const { totals: faPrevTotals } = useLedgerReportData(faPrevPeriod);
   const prevMonthOutstanding = Number(faPrevTotals?.pend) || 0;
 
-  /* get-dashboard ka FeeAnalytics — CHUNE HUE fee mahine ke liye (upar wala `dash` sirf
-     current month ka hai, month badalne par ghalat hota). Do values yahin se:
-       ReceivedDiscount → "Discount Given During Receiving" card (receiving-time discount)
-       DiscountGiven    → "Current Month Fee Position" ki line "with discounted amount …" */
-  const [feeApi, setFeeApi] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    dashboardService.getDashboard(feeMonthIdx + 1, feeYear)
-      .then((d) => { if (alive) setFeeApi((d && d.FeeAnalytics) || {}); })
-      .catch(() => { if (alive) setFeeApi({}); });
-    return () => { alive = false; };
-  }, [feeMonthIdx, feeYear]);
-  const apiReceivedDiscount = Number(feeApi?.ReceivedDiscount) || 0;
-  const apiDiscountGiven = Number(feeApi?.DiscountGiven) || 0;
-  /* Pending Fee card ki "Receiving Discount" = API ReceivedDiscount (receiving-time discount),
-     challan wala discountTotal nahi. API na aaye to ledger ki recvDiscount use hoti hai. */
-  const apiRecvDiscOrNull = (feeApi && feeApi.ReceivedDiscount != null) ? apiReceivedDiscount : null;
-  const feeExtras = useMemo(
+  /* ─── Combined Financial Summary (EK call, dono sections) — /financial-summary.
+     FinancialOverview (Monthly Financial Summary card) + FeeAnalytics (ye saare
+     fee cards) dono isi response se aate hain. State yahan declare hoti hai; fetch
+     effect neeche hai (financeSeg/… filter states ke BAAD, kyun ke wo accountFilterType
+     decide karta hai) — dono sections usi ek state (finSummary) se parhte hain. */
+  const [finSummary, setFinSummary] = useState(null);
+  const feeApiSummary = finSummary?.FeeAnalytics || null;
+  /* "Current Month Fee Position" card ki line — challan banate waqt ka discount. */
+  const apiDiscountGiven = Number(feeApiSummary?.ChallanDiscount) || 0;
+  /* "Discount Given During Receiving" card — receiving ke waqt di gayi discount. */
+  const apiReceivedDiscount = Number(feeApiSummary?.ReceivingDiscount) || 0;
+  /* Ledger ke pending math me yehi receiving-discount feed hoti hai (API aaye to);
+     warna ledger apni recvDiscount use karta hai. */
+  const apiRecvDiscOrNull = (feeApiSummary && feeApiSummary.ReceivingDiscount != null) ? apiReceivedDiscount : null;
+  /* Ledger-derived extras — per-student ROWS (download reports) + wo COUNTS/charts
+     jo endpoint nahi deta (totalStudents, advanceStudentCount, *Rows) — SAME
+     BranchLedger source Fee reports jaisa. */
+  const feeExtrasLedger = useMemo(
     () => computeFeeExtrasFromLedger(faLedger, { month: feeMonthIdx + 1, year: feeYear, previousMonthOutstanding: prevMonthOutstanding, receivingDiscount: apiRecvDiscOrNull }),
     [faLedger, feeMonthIdx, feeYear, prevMonthOutstanding, apiRecvDiscOrNull],
   );
+  /* Headline totals ab LIVE /financial-summary FeeAnalytics se (jo value aayi ho);
+     rows/counts ledger se. Koi API value na ho (endpoint fail / null) to ledger
+     wali value rehti hai — card khali nahi hota. */
+  const feeExtras = useMemo(() => {
+    const base = feeExtrasLedger;
+    const a = feeApiSummary;
+    if (!a) return base;
+    const num = (v, fb) => (v != null && !Number.isNaN(Number(v)) ? Number(v) : fb);
+    return {
+      ...base,
+      currentMonthTotal:             num(a.CurrentMonthFeePosition, base.currentMonthTotal),
+      challansGenerated:             num(a.ChallansGenerated,       base.challansGenerated),
+      previousDuesTotal:             num(a.PreviousDues,            base.previousDuesTotal),
+      studentsWithDues:              num(a.StudentsWithDues,        base.studentsWithDues),
+      netReceivableTotal:            num(a.TotalNetReceivable,      base.netReceivableTotal),
+      receivedTotal:                 num(a.FeeReceived,             base.receivedTotal),
+      receivedPct:                   num(a.CollectionPercent,       base.receivedPct),
+      receivedStudentCount:          num(a.StudentsPaid,            base.receivedStudentCount),
+      receivingDiscountApplied:      num(a.ReceivingDiscount,       base.receivingDiscountApplied),
+      receivingDiscountTotal:        num(a.ReceivingDiscount,       base.receivingDiscountTotal),
+      advanceTotal:                  num(a.AdvanceReceived,         base.advanceTotal),
+      advanceAdjustmentTotal:        num(a.AdvanceAdjustments,      base.advanceAdjustmentTotal),
+      advanceAdjustmentStudentCount: num(a.StudentsAdjusted,        base.advanceAdjustmentStudentCount),
+      pendingTotal:                  num(a.PendingFee,              base.pendingTotal),
+      pendingPct:                    num(a.PendingPercent,          base.pendingPct),
+    };
+  }, [feeExtrasLedger, feeApiSummary]);
   const feeMonthLabel = `${FIN_MONTH_NAMES[feeMonthIdx]} ${feeYear}`;
 
   /* ─── Fee Analytics Overview — graphical summary above the cards.
@@ -898,15 +938,11 @@ const newAnnouncementCount = liveAnnouncements.filter((a) => a.status === 'new')
   const [revenueYear, setRevenueYear] = useState(() => new Date().getFullYear());
     const [birthdayTab, setBirthdayTab] = useState('all');
 
-  /* Monthly Financial Summary — reads the same Accounts transaction
-     ledger as Accounts → Reports (getAccTxns), so Expenses/Income/
-     Net P&L here always match what that module reports. Supports the
-     same three period filters as the OneLink Payments card below —
-     Month / From–To / Single Date. */
-  /* Monthly Financial Summary — LIVE from get-dashboard FinancialOverview
-     (current month). Period toggle UI retained, but the live API returns the
-     current month's totals; no data → 0. */
-  const [financeSeg, setFinanceSeg]     = useState('month'); // 'month' | 'range' | 'single'
+  /* Monthly Financial Summary — LIVE from /financial-summary FinancialOverview.
+     Period toggle (Month / From–To / Single Date) ko accountFilterType me tabdeel
+     kiya jata hai (dekho finAccountQuery neeche); wahi call FeeAnalytics bhi deti
+     hai. No data → 0. */
+  const [financeSeg, setFinanceSeg]     = useState('month'); // 'month' | 'range' | 'dates' | 'single'
   const [financeMonth, setFinanceMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [financeFrom, setFinanceFrom]   = useState(() => `${new Date().getFullYear()}-01`);
   const [financeTo, setFinanceTo]       = useState(() => new Date().toISOString().slice(0, 7));
@@ -914,100 +950,58 @@ const newAnnouncementCount = liveAnnouncements.filter((a) => a.status === 'new')
   const [financeDateFrom, setFinanceDateFrom] = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
   const [financeDateTo, setFinanceDateTo]     = useState(() => new Date().toISOString().slice(0, 10));
 const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.branchId ?? user?.BranchID) || 0;
-  /* Selected month ka FinancialOverview — month badalne par get-dashboard(month, year). */
-  const [finApi, setFinApi] = useState(null);
-  useEffect(() => {
-    if (financeSeg !== 'month' || !financeMonth) return undefined;
-    const [y, m] = financeMonth.split('-').map(Number);
-    let alive = true;
-    setFinApi(null);
-    dashboardService.getDashboard(m, y)
-    .then((d) => {
-        const fo = d?.FinancialOverview || d?.data?.FinancialOverview || {};
-        console.log('[Fin] month', m, y, fo);
-        if (alive) setFinApi(fo);
-      })
-      .catch(() => { if (alive) setFinApi({}); });
-    return () => { alive = false; };
-  }, [financeSeg, financeMonth]);
-  /* Month Range — har saal ka ProfitLossTrend la ke From→To months ka Income/Expense jor do. */
-  const [finRangeRows, setFinRangeRows] = useState(null);
-  useEffect(() => {
-    if (financeSeg !== 'range' || !financeFrom || !financeTo) return undefined;
-    const [fy, fm] = financeFrom.split('-').map(Number);
-    const [ty, tm] = financeTo.split('-').map(Number);
-    const fromKey = fy * 12 + fm;
-    const toKey = ty * 12 + tm;
-    if (fromKey > toKey) { setFinRangeRows([]); return undefined; }
+  /* Period toggle → /financial-summary ka accountFilterType + relevant params.
+     UI segments: 'month' (accountMonth/accountYear; current month ho to CurrentMonth),
+     'dates' (fromDate/toDate), 'single' (singleDate). Puraana 'range' (month range)
+     bhi DateRange par map hota hai (From month ka pehla din → To month ka aakhri din). */
+  const finAccountQuery = useMemo(() => {
     const now = new Date();
-    const years = [];
-    for (let y = fy; y <= ty; y += 1) years.push(y);
-    let alive = true;
-    setFinRangeRows(null);
-    Promise.all(years.map((y) =>
-      dashboardService.getDashboard(y === now.getFullYear() ? now.getMonth() + 1 : 12, y)
-        .then((d) => (Array.isArray(d?.ProfitLossTrend) ? d.ProfitLossTrend : []).map((r) => ({ ...r, Year: y })))
-        .catch(() => [])
-    )).then((lists) => {
-      if (!alive) return;
-      setFinRangeRows(lists.flat().filter((r) => {
-        const k = r.Year * 12 + Number(r.Month);
-        return k >= fromKey && k <= toKey;
-      }));
-    });
-    return () => { alive = false; };
-  }, [financeSeg, financeFrom, financeTo]);
-
-  /* From–To dates / Single Date — get-account-entries-by-branch-month se har month ki
-     Income (1) + Expense (2) entries la kar EntryDate se filter + jor. */
-  const [finDateTotals, setFinDateTotals] = useState(null);
-  useEffect(() => {
-    if (financeSeg !== 'dates' && financeSeg !== 'single') return undefined;
-    const from = financeSeg === 'single' ? financeSingle : financeDateFrom;
-    const to   = financeSeg === 'single' ? financeSingle : financeDateTo;
-    if (!from || !to || from > to) { setFinDateTotals({ income: 0, expense: 0 }); return undefined; }
-    const months = [];
-    let [y, m] = from.slice(0, 7).split('-').map(Number);
-    const [ty, tm] = to.slice(0, 7).split('-').map(Number);
-    while (y * 12 + m <= ty * 12 + tm) { months.push([y, m]); m += 1; if (m > 12) { m = 1; y += 1; } }
-    const sumType = (typeId) => Promise.all(months.map(([yy, mm]) =>
-      fetch(`${FIN_API_BASE}/get-account-entries-by-branch-month/${finBranchId}/${typeId}/${mm}/${yy}`)
-        .then((r) => r.json())
-        .then((j) => (Array.isArray(j?.data) ? j.data : []))
-        .catch(() => [])
-    )).then((lists) => lists.flat()
-      .filter((e) => e && e.IsActive !== false)
-      .filter((e) => { const d = String(e.EntryDate || '').slice(0, 10); return d >= from && d <= to; })
-      .reduce((s, e) => s + (Number(e.Amount) || 0), 0));
-    let alive = true;
-    setFinDateTotals(null);
-    Promise.all([sumType(FIN_TYPE_INCOME), sumType(FIN_TYPE_EXPENSE)])
-      .then(([income, expense]) => { if (alive) setFinDateTotals({ income, expense }); });
-    return () => { alive = false; };
-  }, [financeSeg, financeDateFrom, financeDateTo, financeSingle, finBranchId]);
-
-  const financeSummary = useMemo(() => {
-    if (financeSeg === 'dates' || financeSeg === 'single') {
-      const t = finDateTotals || { income: 0, expense: 0 };
-      const fmtD = (v) => new Date(`${v}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-      const label = financeSeg === 'single' ? fmtD(financeSingle) : `${fmtD(financeDateFrom)} – ${fmtD(financeDateTo)}`;
-      return { label, income: t.income, expense: t.expense, pl: t.income - t.expense };
-    }
+    const pad = (n) => String(n).padStart(2, '0');
+    const lastDayISO = (yy, mm) => { const d = new Date(yy, mm, 0); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+    if (financeSeg === 'dates')  return { accountFilterType: ACCT_FILTER.dateRange, fromDate: financeDateFrom, toDate: financeDateTo };
+    if (financeSeg === 'single') return { accountFilterType: ACCT_FILTER.singleDate, singleDate: financeSingle };
     if (financeSeg === 'range') {
-      const rows = finRangeRows || [];
-      const income  = rows.reduce((s, r) => s + (Number(r.Income) || 0), 0);
-      const expense = rows.reduce((s, r) => s + (Number(r.Expenses) || 0), 0);
-      const fmtM = (v) => { const [y, m] = v.split('-').map(Number); return `${FIN_MONTH_NAMES[m - 1].slice(0, 3)} ${y}`; };
-      return { label: `${fmtM(financeFrom)} – ${fmtM(financeTo)}`, income, expense, pl: income - expense };
+      const [fy, fm] = financeFrom.split('-').map(Number);
+      const [ty, tm] = financeTo.split('-').map(Number);
+      return { accountFilterType: ACCT_FILTER.dateRange, fromDate: `${fy}-${pad(fm)}-01`, toDate: lastDayISO(ty, tm) };
     }
-    const src = finApi || {};
     const [y, m] = financeMonth.split('-').map(Number);
+    const isCurrent = (m === now.getMonth() + 1 && y === now.getFullYear());
+    return { accountFilterType: isCurrent ? ACCT_FILTER.current : ACCT_FILTER.month, accountMonth: m, accountYear: y };
+  }, [financeSeg, financeMonth, financeFrom, financeTo, financeDateFrom, financeDateTo, financeSingle]);
+
+  /* EK call — FinancialOverview (chuna account period) + FeeAnalytics (chuna fee
+     mahina, feeMonthIdx/feeYear). Koi bhi filter badle to dobara fetch. */
+  useEffect(() => {
+    let alive = true;
+    setFinSummary(null);
+    dashboardService.getFinancialSummary({
+      branchId: finBranchId,
+      ...finAccountQuery,
+      feeMonth: feeMonthIdx + 1,
+      feeYear,
+    })
+      .then((d) => { if (alive) setFinSummary(d || {}); })
+      .catch(() => { if (alive) setFinSummary({}); });
+    return () => { alive = false; };
+  }, [finBranchId, finAccountQuery, feeMonthIdx, feeYear]);
+
+  const finOverviewApi = finSummary?.FinancialOverview || null;
+  const financeSummary = useMemo(() => {
+    const src = finOverviewApi || {};
     const income  = Number(src.OverallIncome)   || 0;
     const expense = Number(src.OverallExpenses) || 0;
     const pl = (src.NetProfitLoss != null) ? Number(src.NetProfitLoss) : (income - expense);
-    return { label: `${FIN_MONTH_NAMES[m - 1]} ${y}`, income, expense, pl };
-  }, [financeSeg, finApi, finRangeRows, finDateTotals, financeMonth, financeFrom, financeTo, financeDateFrom, financeDateTo, financeSingle]);
-  const finLoading = (financeSeg === 'range' ? finRangeRows : (financeSeg === 'dates' || financeSeg === 'single') ? finDateTotals : finApi) === null;
+    const fmtD = (v) => new Date(`${v}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const fmtM = (v) => { const [y, m] = v.split('-').map(Number); return `${FIN_MONTH_NAMES[m - 1].slice(0, 3)} ${y}`; };
+    let label;
+    if (financeSeg === 'dates')       label = `${fmtD(financeDateFrom)} – ${fmtD(financeDateTo)}`;
+    else if (financeSeg === 'single') label = fmtD(financeSingle);
+    else if (financeSeg === 'range')  label = `${fmtM(financeFrom)} – ${fmtM(financeTo)}`;
+    else { const [y, m] = financeMonth.split('-').map(Number); label = `${FIN_MONTH_NAMES[m - 1]} ${y}`; }
+    return { label, income, expense, pl };
+  }, [finOverviewApi, financeSeg, financeMonth, financeFrom, financeTo, financeDateFrom, financeDateTo, financeSingle]);
+  const finLoading = finSummary === null;
   const finSpinner = <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 22 }} aria-label="Loading" />;
 
   /* Top-card modals */
@@ -1828,8 +1822,9 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
 
       <div className="adm-divider" />
 
-      {/* OneLink Payments section removed per request — its live source
-          (feeService.getReceipts) is a stub, so it had no real data. */}
+      {/* OneLink Payments — LIVE from Super-Admin /branch_onelink-payments
+          (getOneLinkPayments), period filter se. */}
+      {isActive('fee') && <OneLinkPaymentSection openModule={openModule} toast={toast} />}
 
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
       {isActive('accounts') && (
@@ -1868,7 +1863,7 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
                 <div className="fin-summary-ic"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i></div>
                 <div>
                   <div className="fin-summary-t">Monthly Financial Summary</div>
-<div className="fin-summary-s">{financeSummary.label} · {(financeSeg === 'range' ? finRangeRows : (financeSeg === 'dates' || financeSeg === 'single') ? finDateTotals : finApi) === null ? 'Loading…' : 'Live'}</div>                </div>
+<div className="fin-summary-s">{financeSummary.label} · {finLoading ? 'Loading…' : 'Live'}</div>                </div>
               </div>
               <div className="ol-controls">
                 <div className="adm-seg" role="tablist" aria-label="Financial summary period filter">
@@ -2657,79 +2652,59 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
 }
 
 /* ─── OneLink Payments card ───────────────────────────────────
-   Reads the same fee receipts ledger (feeService.getReceipts) as
-   Fee → Reports → OneLink Payment Report, filtered to
-   p.source === 'onelink' (legacy 'bank' alias included), so the
-   dashboard figures always match that report. Supports the same
-   three period filters — Month / Date Range / Single Date — and
-   the download icon opens the identical detailed report. */
+   LIVE from the Super-Admin /branch_onelink-payments endpoint
+   (dashboardService.getOneLinkPayments). Supports three period
+   filters — Month / Date Range / Single Date — mapped to the API's
+   filterType; the download icon opens the detailed report. */
 const OL_MONTH_NAMES = FIN_MONTH_NAMES;
 
-/* "Payment Collection Summary" tile — display-only labels for the
-   payment method breakdown, shown here as the school's own preferred
-   channel names instead of the raw payment `method` value (kept as-is
-   everywhere else this same data is used). */
-const OL_MODE_DISPLAY_NAMES = {
-  'Bank Transfer': '1-Link',
-  'Online / App': 'Visa / Master Cards',
-};
-
 function OneLinkPaymentSection({ openModule, toast }) {
-  const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
-  const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
-  const { data: receipts = [] }    = useAsync(feeService.getReceipts, []);
   const kpiReplay = useScrollReplay();
 
   const [seg, setSeg]     = useState('month');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [from, setFrom]   = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
-  const [to, setTo]       = useState('2026-05-31');
   const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom]   = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
+  const [to, setTo]       = useState(today);
   const [single, setSingle] = useState(today);
 
-  const studentLookup = useMemo(() => {
-    const map = {};
-    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => { map[`${c.key}|${s.reg}`] = s; }));
-    return map;
-  }, [classes, studentsMap]);
+  /* LIVE OneLink payments — Super-Admin API (getOneLinkPayments), chuni hui period
+     filter ke hisab se. filterType seg se banta hai; baqi params service default
+     bhejti hai. Response.Summary KPI tiles bharti hai, Transactions download report. */
+  const [summary, setSummary] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    setSummary(null);
+    let q;
+    if (seg === 'range') q = { filterType: ONELINK_FILTER.range, fromDate: from, toDate: to };
+    else if (seg === 'single') q = { filterType: ONELINK_FILTER.single, singleDate: single };
+    else {
+      const [y, m] = month.split('-').map(Number);
+      q = { filterType: ONELINK_FILTER.month, month: m, year: y };
+    }
+    dashboardService.getOneLinkPayments(q)
+      .then((d) => {
+        if (!alive) return;
+        setSummary((d && d.Summary) || {});
+        setTransactions(Array.isArray(d?.Transactions) ? d.Transactions : []);
+      })
+      .catch(() => { if (alive) { setSummary({}); setTransactions([]); } });
+    return () => { alive = false; };
+  }, [seg, month, from, to, single]);
 
-  const transactions = useMemo(() => {
-    const out = [];
-    (receipts || []).forEach(rec => {
-      (rec.payments || []).forEach(p => {
-        if (p.source !== 'onelink' && p.source !== 'bank') return;
-        const d = p.date;
-        if (!d) return;
-        const inPeriod = seg === 'month' ? d.slice(0, 7) === month
-          : seg === 'range' ? (d >= from && d <= to)
-          : d === single;
-        if (!inPeriod) return;
-        out.push({ ...p, classKey: rec.classKey, reg: rec.reg, student: studentLookup[`${rec.classKey}|${rec.reg}`] });
-      });
-    });
-    return out;
-  }, [receipts, studentLookup, seg, month, from, to, single]);
-
-  const totalTxns = transactions.length;
-  const totalAmt  = transactions.reduce((a, x) => a + (+x.amount || 0), 0);
-  const modeBreak = useMemo(() => {
-    const map = {};
-    transactions.forEach(x => { const k = x.method || 'Bank Transfer'; map[k] = (map[k] || 0) + (+x.amount || 0); });
-    return Object.keys(map).map(k => ({ name: k, amt: map[k] }));
-  }, [transactions]);
-  /* Display-only relabelling for the "Payment Collection Summary" tile
-     (and its matching print report) — the underlying payment `method`
-     values ('Bank Transfer' / 'Online / App') are left untouched so
-     grouping above and every other screen that shows a payment's
-     method still reads the real value. */
-  const olModeDisplayName = (name) => OL_MODE_DISPLAY_NAMES[name] || name;
+  const totalTxns     = Number(summary?.OnelinkTransactions) || 0;
+  const totalAmt      = Number(summary?.TotalReceived) || 0;
+  const totalCharges  = Number(summary?.TotalCharges) || 0;
+  const grossAmount   = Number(summary?.GrossAmount) || 0;
+  const loading       = summary === null;
 
   const periodLabel = seg === 'month'
     ? `${OL_MONTH_NAMES[Number(month.split('-')[1]) - 1]} ${month.split('-')[0]}`
     : seg === 'range' ? `${from} to ${to}` : single;
 
   const downloadReport = (mode) => {
-    const html = buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, modeBreak, periodLabel });
+    const html = buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, totalCharges, grossAmount, periodLabel });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
     w.document.write(html);
@@ -2753,7 +2728,7 @@ function OneLinkPaymentSection({ openModule, toast }) {
             <div className="fin-summary-ic fin-summary-ic--purple"><i className="fa-solid fa-building-columns" aria-hidden="true"></i></div>
             <div>
               <div className="fin-summary-t">OneLink / Bank Payments</div>
-              <div className="fin-summary-s">{periodLabel} · payments received through OneLink</div>
+              <div className="fin-summary-s">{periodLabel} · {loading ? 'Loading…' : 'payments received through OneLink'}</div>
             </div>
           </div>
 
@@ -2767,7 +2742,7 @@ function OneLinkPaymentSection({ openModule, toast }) {
             {seg === 'month' && (
               <label className="fin-summary-month">
                 <span className="fin-summary-month-lbl">Month</span>
-                <input type="month" className="fin-summary-month-input" value={month} min="2026-01" max="2026-05" onChange={(e) => setMonth(e.target.value)} aria-label="Select month" />
+                <input type="month" className="fin-summary-month-input" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Select month" />
               </label>
             )}
             {seg === 'range' && (
@@ -2827,18 +2802,22 @@ function OneLinkPaymentSection({ openModule, toast }) {
               <div className="fc-icon-chip"><i className="fa-solid fa-chart-pie" aria-hidden="true"></i></div>
               <div className="fc-title">Payment Collection Summary</div>
             </div>
-            {modeBreak.length === 0 ? (
-              <div className="fc-support"><i className="fa-solid fa-circle-info" aria-hidden="true"></i><span>No OneLink payments in this period</span></div>
-            ) : (
-              <div className="fa-meta-rows">
-                {modeBreak.map(m => (
-                  <div key={m.name} className="fa-meta-row">
-                    <span className="fa-meta-lbl"><i className="fa-solid fa-building-columns" aria-hidden="true"></i> {olModeDisplayName(m.name)}</span>
-                    <span className="fa-meta-val"><AnimatedNumber key={`${m.name}-${kpiReplay.replayKey}`} prefix="PKR " value={m.amt} duration={CHART_ANIM_MS} /></span>
-                  </div>
-                ))}
+            {/* API Summary ke Gross / Charges / Net — pehla method-wise breakdown
+                (modeBreak) hata diya kyun ke naya endpoint method nahi deta. */}
+            <div className="fa-meta-rows">
+              <div className="fa-meta-row">
+                <span className="fa-meta-lbl"><i className="fa-solid fa-coins" aria-hidden="true"></i> Gross Amount</span>
+                <span className="fa-meta-val"><AnimatedNumber key={`gross-${kpiReplay.replayKey}`} prefix="PKR " value={grossAmount} duration={CHART_ANIM_MS} /></span>
               </div>
-            )}
+              <div className="fa-meta-row">
+                <span className="fa-meta-lbl"><i className="fa-solid fa-scissors" aria-hidden="true"></i> Total Charges</span>
+                <span className="fa-meta-val"><AnimatedNumber key={`charges-${kpiReplay.replayKey}`} prefix="PKR " value={totalCharges} duration={CHART_ANIM_MS} /></span>
+              </div>
+              <div className="fa-meta-row">
+                <span className="fa-meta-lbl"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i> Net Received</span>
+                <span className="fa-meta-val fa-meta-val--green"><AnimatedNumber key={`net-${kpiReplay.replayKey}`} prefix="PKR " value={totalAmt} duration={CHART_ANIM_MS} /></span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2846,30 +2825,37 @@ function OneLinkPaymentSection({ openModule, toast }) {
   );
 }
 
-function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, modeBreak, periodLabel }) {
+function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, totalCharges = 0, grossAmount = 0, periodLabel }) {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const accent = '#7C3AED';
-  const rows = transactions.map((x, i) => `
+  /* API Transactions ka exact shape abhi maaloom nahi (sample khali aata hai), is
+     liye har field ke liye kai naam (camel/Pascal) try karte hain — jo na mile wo '—'. */
+  const pick = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && o[k] !== '') return o[k]; } return ''; };
+  const rows = (transactions || []).map((x, i) => {
+    const amt = Number(pick(x, 'amount', 'Amount', 'TotalReceived', 'ReceivedAmount', 'NetAmount')) || 0;
+    const date = String(pick(x, 'date', 'Date', 'PaymentDate', 'TransactionDate', 'CreatedAt')).slice(0, 10) || '—';
+    const time = String(pick(x, 'time', 'Time')).slice(0, 5);
+    return `
     <tr>
       <td>${i + 1}</td>
-      <td><small>${esc(x.txn || x.ref || '—')}</small></td>
-      <td><b>${esc(x.student?.name || '—')}</b></td>
-      <td>${esc(x.reg)}</td>
-      <td>${esc(x.date || '—')}${x.time ? `<br><small>${esc(x.time)}</small>` : ''}</td>
-      <td>${esc(x.method || 'Bank Transfer')}</td>
-      <td style="text-align:right;font-weight:700;color:#16A34A">${(+x.amount || 0).toLocaleString('en-PK')}</td>
-    </tr>`).join('');
-  const modeKpis = modeBreak.map(m => `<div class="kpi"><div class="l">${esc(OL_MODE_DISPLAY_NAMES[m.name] || m.name)}</div><div class="v">Rs. ${m.amt.toLocaleString('en-PK')}</div></div>`).join('');
+      <td><small>${esc(pick(x, 'txn', 'TransactionNo', 'TransactionID', 'ref', 'ReferenceNo', 'VoucherNo') || '—')}</small></td>
+      <td><b>${esc(pick(x, 'studentName', 'StudentName', 'student')?.name || pick(x, 'studentName', 'StudentName') || '—')}</b></td>
+      <td>${esc(pick(x, 'reg', 'RegNo', 'RegistrationNo', 'Registration') || '—')}</td>
+      <td>${esc(date)}${time ? `<br><small>${esc(time)}</small>` : ''}</td>
+      <td>${esc(pick(x, 'method', 'PaymentMethod', 'Method', 'Channel') || 'OneLink')}</td>
+      <td style="text-align:right;font-weight:700;color:#16A34A">${amt.toLocaleString('en-PK')}</td>
+    </tr>`;
+  }).join('');
   const today = new Date().toLocaleDateString('en-GB');
   const inner = `
     <div class="rep-filters"><span><b>Period:</b> ${esc(periodLabel)}</span><span><b>Transactions:</b> ${totalTxns}</span><span><b>Total Received:</b> Rs. ${totalAmt.toLocaleString('en-PK')}</span></div>
     <div class="kpi-row">
       <div class="kpi"><div class="l">Total Transactions</div><div class="v">${totalTxns}</div></div>
-      <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${totalAmt.toLocaleString('en-PK')}</div></div>
-      <div class="kpi"><div class="l">Period</div><div class="v">${esc(periodLabel)}</div></div>
-      <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+      <div class="kpi"><div class="l">Gross Amount</div><div class="v">Rs. ${grossAmount.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Total Charges</div><div class="v">Rs. ${totalCharges.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Net Received</div><div class="v">Rs. ${totalAmt.toLocaleString('en-PK')}</div></div>
     </div>
-    ${modeBreak.length ? `<div class="rep-secttl">Payment Collection Summary</div><div class="kpi-row">${modeKpis}</div>` : ''}
+    <div class="rep-filters"><span><b>Period:</b> ${esc(periodLabel)}</span><span><b>Generated:</b> ${esc(today)}</span></div>
     <div class="rep-secttl">Transaction Details</div>
     <table class="rep-tbl">
       <thead><tr><th>Sn.</th><th>Txn / Ref No</th><th>Student</th><th>Reg No</th><th>Date &amp; Time</th><th>Method</th><th style="text-align:right">Amount</th></tr></thead>
