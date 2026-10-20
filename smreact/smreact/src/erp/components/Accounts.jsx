@@ -6069,10 +6069,13 @@ function Reports({ toast }) {
     }
     if (repType === 'monthly-statement') {
       const isCustom = masMode === 'custom';
-      const rangeStart = isCustom ? masFrom : `${masMonth}-01`;
-      const priorRev = (txnData.rev || []).filter(x => x.date < rangeStart).reduce((a, x) => a + Number(x.amount || 0), 0);
-      const priorExp = (txnData.exp || []).filter(x => x.date < rangeStart).reduce((a, x) => a + Number(x.amount || 0), 0);
-      const opening = priorRev - priorExp;
+      /* Opening Balance = SIRF wallets ke "Opening Balance" (jo user ne wallet
+         banate waqt dala). Koi wallet opening na ho to 0 (reduce khud 0 deta hai).
+         Pehle yahan priorRev−priorExp (pichle sab transactions) jama hota tha; wo
+         hata diya — ab Opening sirf wallet seed hai. finAccounts = getFinAccounts
+         (manage-wallat). */
+      const walletOpening = (finAccounts || []).reduce((a, w) => a + (Number(w.opening) || 0), 0);
+      const opening = walletOpening;
       const incomeAll = isCustom
         ? (txnData.rev || []).filter(x => x.date >= masFrom && x.date <= masTo).sort((a, b) => (a.date < b.date ? -1 : 1))
         : (txnData.rev || []).filter(x => x.month === masMonth).sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -6105,19 +6108,21 @@ function Reports({ toast }) {
       }];
     }
     if (repType === 'fin-summary') {
-      const defId = String((finAccounts.find(a => a.isDefault) || finAccounts[0] || {}).id || '');
       return finAccounts.map(a => {
         const id = String(a.id);
-        const acctMoves = [];
-        (txnData.rev || []).forEach(t => { if (String(t.acctId || defId) === id) acctMoves.push({ date: t.date, amt: Number(t.amount) || 0, dir: 1 }); });
-        (txnData.exp || []).forEach(t => { if (String(t.acctId || defId) === id) acctMoves.push({ date: t.date, amt: Number(t.amount) || 0, dir: -1 }); });
-        (finTransfers || []).forEach(tr => {
-          if (String(tr.toId) === id)   acctMoves.push({ date: tr.date, amt: Number(tr.amount) || 0, dir: 1 });
-          if (String(tr.fromId) === id) acctMoves.push({ date: tr.date, amt: Number(tr.amount) || 0, dir: -1 });
-        });
-        const opening = Number(a.opening || 0) + acctMoves.filter(m => !fromDate || m.date < fromDate).reduce((s, m) => s + m.dir * m.amt, 0);
-        const incomeIn = (txnData.rev || []).filter(t => String(t.acctId || defId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-        const expenseOut = (txnData.exp || []).filter(t => String(t.acctId || defId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        /* Opening = SIRF wallet ka entered "Opening Balance" (0 agar na ho). Pehle
+           isme period se PEHLE ke transactions + transfers bhi jama hote the, is
+           liye Main Wallat ka Opening −818,750 dikh raha tha; wo hata diya taake
+           Opening wahi rahe jo user ne wallet banate waqt dala — Account Statement
+           report jaisa. Income In / Expense Out / Transfers chune date-range ke hi. */
+        const opening = Number(a.opening || 0);
+        /* Income In / Expense Out = SIRF is wallet ko assign ki gayi entries (acctId
+           == wallet). Pehle `t.acctId || defId` tha — jis entry me koi wallet nahi
+           hoti wo DEFAULT account par jama ho jati thi (uska debit/credit barha deti).
+           Ab har account sirf apna hi debit/credit dikhata hai; bina-wallet entries
+           kisi account me nahi gintiin. */
+        const incomeIn = (txnData.rev || []).filter(t => String(t.acctId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        const expenseOut = (txnData.exp || []).filter(t => String(t.acctId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
         const transfersInRange = (finTransfers || []).filter(tr => (!fromDate || tr.date >= fromDate) && (!toDate || tr.date <= toDate));
         const transfersNet = transfersInRange.reduce((s, tr) => s + (String(tr.toId) === id ? Number(tr.amount) || 0 : 0) - (String(tr.fromId) === id ? Number(tr.amount) || 0 : 0), 0);
         const current = opening + incomeIn - expenseOut + transfersNet;
