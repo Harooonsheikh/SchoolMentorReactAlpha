@@ -2224,6 +2224,8 @@ export function buildReceiveInstallmentRequest({
   receivedDate = '',
   modifiedBy = 0,
   isReceiving = true,
+  /* Receiving popup me chuna wallet (Accounts) — paisa isi wallet me. 0 = koi nahi. */
+  walletId = 0,
   detailRows = [],
   perHead = {},
   giveDisc = {},
@@ -2325,6 +2327,7 @@ export function buildReceiveInstallmentRequest({
     receivedDate: String(receivedDate || '').slice(0, 10),
     modifiedBy: Number(modifiedBy) || 0,
     isReceiving: !!isReceiving,
+    walletId: Number(walletId) || 0,
     detailRows: rows,
   };
 }
