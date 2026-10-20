@@ -4365,7 +4365,11 @@ function AccountBooks({ toast, isOtherSession }) {
     if (!currentBookId) return;
     let resp;
     try {
-      resp = await accountsService.saveAccBookTxn({ bookId: currentBookId, ...form });
+      resp = await accountsService.saveAccBookTxn({
+  bookId: currentBookId,
+  ...form,
+  walletId: form.acctId,   //  NEW: dropdown mein select kiya hua wallet
+});
     } catch (err) {
       toast(err?.message || 'Could not save transaction', 'error');
       return;
@@ -5518,9 +5522,9 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
     };
   }, [cfg, onClose]);
 
-  if (!cfg) return null;                  // ✅ guard: must come after ALL hooks
+  if (!cfg) return null;                  //  guard: must come after ALL hooks
 
-  const isEdit = cfg.mode === 'edit';     // ✅ safe now
+  const isEdit = cfg.mode === 'edit';     //  safe now
 
   /* Live preview of balance after this txn */
   const c = book ? bookCalc(book) : { balance: 0 };
@@ -5530,7 +5534,7 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
    const handle = () => {
     if (!date)   { toast('Date is required', 'error'); return; }
     if (!amt)    { toast('Amount is required', 'error'); return; }
-    if (branchWallets.length > 0 && !acctId) { toast('Please select a wallet', 'error'); return; }
+   if (!acctId) { toast('Please select a wallet', 'error'); return; }
 
     /* Paying out of a wallet: check it has enough balance.
        On edit, the old payment is added back if it was from the same wallet. */
@@ -5672,41 +5676,56 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
           </div>
 
           {/* wallet */}
+<div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
+  <div className="fee-field-stack">
+    <label className="fee-label">
+      <i className="fa-solid fa-wallet"></i>{' '}
+      {type === 'received' ? 'Received In Wallet' : type === 'returned' ? 'Paid From Wallet' : 'Wallet'}
+      {' '}<span className="acc-req">*</span>
+    </label>
 
-                    {branchWallets.length > 0 && (
-            <div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
-              <div className="fee-field-stack">
-                <label className="fee-label">
-                  <i className="fa-solid fa-wallet"></i>{' '}
-                  {type === 'received' ? 'Received In Wallet' : type === 'returned' ? 'Paid From Wallet' : 'Wallet'}
-                  {' '}<span className="acc-req">*</span>
-                </label>
-                <div className="fee-select-wrap">
-                  <select className="fee-select" value={acctId} onChange={e => setAcctId(e.target.value)}>
-                    <option value="">{type === 'received' ? 'Select wallet to receive into' : 'Select wallet to pay from'}</option>
-                    {branchWallets
-                      .filter(w => w.status === 'active' || String(w.id) === String(acctId))
-                      .map(w => (
-                        <option key={w.id} value={w.id}>{w.name} — {finTypeMeta(w.type).label}</option>
-                      ))}
-                  </select>
-                  <i className="fa-solid fa-chevron-down"></i>
-                </div>
-                {acctId && walletBal != null && (
-                  <div className="fee-hint" style={{ fontWeight: 700, color: type === 'returned' && walletBal <= 0 ? '#DC2626' : '#0E7490' }}>
-                    <i className="fa-solid fa-wallet"></i> Available Balance: Rs. {Number(walletBal).toLocaleString('en-PK')}
-                  </div>
-                )}
-                <div className="fee-hint">
-                  <i className="fa-solid fa-circle-info"></i>
-                  {type === 'received'
-                    ? 'Choose which wallet receives this money. Its balance will increase.'
-                    : 'Choose which wallet this payment is made from. Its balance will decrease.'}
-                </div>
-              </div>
-            </div>
-          )}
+    <div className="fee-select-wrap">
+      <select
+        className="fee-select"
+        value={acctId}
+        onChange={e => setAcctId(e.target.value)}
+        style={!acctId ? { borderColor: '#DC2626' } : undefined}
+      >
+        <option value="">{type === 'received' ? 'Select wallet to receive into' : 'Select wallet to pay from'}</option>
+        {branchWallets
+          .filter(w => w.status === 'active' || String(w.id) === String(acctId))
+          .map(w => (
+            <option key={w.id} value={w.id}>{w.name} — {finTypeMeta(w.type).label}</option>
+          ))}
+      </select>
+      <i className="fa-solid fa-chevron-down"></i>
+    </div>
 
+    {/*  NEW: wallet na ho to warning */}
+    {branchWallets.length === 0 && (
+      <div className="fee-hint" style={{ color: '#DC2626', fontWeight: 700 }}>
+        <i className="fa-solid fa-triangle-exclamation" style={{ color: '#DC2626' }}></i>
+        No wallet found. Please create a wallet first in the Wallets tab.
+      </div>
+    )}
+
+    {/* purana: Available Balance */}
+    {acctId && walletBal != null && (
+      <div className="fee-hint" style={{ fontWeight: 700, color: type === 'returned' && walletBal <= 0 ? '#DC2626' : '#0E7490' }}>
+        <i className="fa-solid fa-wallet"></i> Available Balance: Rs. {Number(walletBal).toLocaleString('en-PK')}
+      </div>
+    )}
+
+    {/* purana: info hint */}
+    <div className="fee-hint">
+      <i className="fa-solid fa-circle-info"></i>
+      {type === 'received'
+        ? 'Choose which wallet receives this money. Its balance will increase.'
+        : 'Choose which wallet this payment is made from. Its balance will decrease.'}
+    </div>
+  </div>
+</div>
+                 
           {/* Attachment uploader */}
           <div
             className={`acc-attach-zone${dragOver ? ' drag' : ''}`}
