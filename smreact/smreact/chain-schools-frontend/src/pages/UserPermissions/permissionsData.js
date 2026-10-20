@@ -76,7 +76,14 @@ export const MODULE_TREE = [
       { id: 'academics.lessonplans',   label: 'Lesson Plans' },
       { id: 'academics.notebookplans', label: 'Notebook Plans' },
       { id: 'academics.resources',     label: 'Resource Library' },
+      { id: 'academics.breakup',       label: 'Term Breakup' },
       { id: 'academics.releases',      label: 'Release Control (Master/Sub)' },
+    ] },
+  { id: 'examination', label: 'Examination', icon: 'fa-file-signature',
+    children: [
+      { id: 'examination.terms',  label: 'Term Setup' },
+      { id: 'examination.exams',  label: 'Exam Setup' },
+      { id: 'examination.result', label: 'Result Setup' },
     ] },
   { id: 'schoolperm', label: 'School Permissions', icon: 'fa-key',
     children: [
@@ -172,8 +179,15 @@ export const MODULE_PERMISSIONS = {
   'academics.lessonplans':   ['view', 'create', 'edit', 'delete', 'download'],
   'academics.notebookplans': ['view', 'create', 'edit', 'delete', 'download'],
   'academics.resources':     ['view', 'create', 'edit', 'delete', 'download'],
+  /* Term Breakup — units/topics per term & subject: add, edit (Update modal), delete, PDF/Word */
+  'academics.breakup':       ['view', 'create', 'edit', 'delete', 'download'],
   /* Create Master/Sub Release (create), push live to schools (approve), Revoke (delete) */
   'academics.releases':      ['view', 'create', 'approve', 'delete'],
+
+  /* Examination — Term Setup / Exam Setup / Result Setup (Examination.jsx) */
+  'examination.terms':  ['view', 'create', 'edit', 'delete'],
+  'examination.exams':  ['view', 'create', 'edit', 'delete', 'download'],
+  'examination.result': ['view', 'create', 'edit', 'delete'],
 
   /* School Permissions — edit ERP/module toggles per school, per-module content-access settings */
   'schoolperm.access': ['view', 'edit', 'manage_settings'],
