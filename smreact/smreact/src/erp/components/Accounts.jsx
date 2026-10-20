@@ -5439,7 +5439,30 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
   const fileInputRef              = useRef(null);
   const [dragOver, setDragOver]   = useState(false);
 
+
+    /* Wallet picker (same wallets as Transfer Money / Transactions tab) */
+  const [acctId, setAcctId]       = useState('');
+  const [wallets, setWallets]     = useState([]);
+  const [walletBal, setWalletBal] = useState(null);
+  const branchID = sessionStorage.getItem('branchID') || '1';
+
+  /* Only wallets of the current branch (or with no branch info) */
+  const branchWallets = useMemo(
+    () => wallets.filter(w => w.branchID == null || Number(w.branchID) === Number(branchID)),
+    [wallets, branchID]
+  );
+
+  /* Load wallets when the modal opens */
   useEffect(() => {
+    if (!cfg) return undefined;
+    let cancelled = false;
+    accountsService.getFinAccounts()
+      .then(list => { if (!cancelled) setWallets(Array.isArray(list) ? list : []); })
+      .catch(() => { if (!cancelled) setWallets([]); });
+    return () => { cancelled = true; };
+  }, [cfg]);
+
+    useEffect(() => {
     if (!cfg) return;
     if (cfg.mode === 'edit' && cfg.txn) {
       const t = cfg.txn;
@@ -5447,14 +5470,43 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
       setAmount(String(Math.abs(t.amount))); setNotes(t.notes || '');
       setEnteredBy(t.enteredBy || currentUser);
       setAttachments(Array.isArray(t.attachments) ? [...t.attachments] : []);
+      const saved = String(t.walletId ?? t.acctId ?? '');
+      setAcctId(saved && saved !== '0' ? saved : '');
     } else {
       setType('received');
       setDate(new Date().toISOString().slice(0, 10));
       setAmount(''); setNotes(''); setEnteredBy(currentUser);
       setAttachments([]);
+      setAcctId('');
     }
   }, [cfg, currentUser]);
 
+  /* New entry: preselect the default active wallet */
+  useEffect(() => {
+    if (!cfg || !branchWallets.length) return;
+    const active = branchWallets.filter(w => w.status === 'active');
+    const def = active.find(w => w.isDefault) || active[0];
+    setAcctId(prev => prev || (def ? String(def.id) : ''));
+  }, [cfg, branchWallets]);
+
+  /* Selected wallet's available balance */
+  useEffect(() => {
+    if (!cfg || !acctId) { setWalletBal(null); return undefined; }
+    const w = wallets.find(x => String(x.id) === String(acctId));
+    if (!w) { setWalletBal(null); return undefined; }
+    if (w.serverBalance != null && Number.isFinite(w.serverBalance)) { setWalletBal(w.serverBalance); return undefined; }
+    let cancelled = false;
+    accountsService.getWalletTransactions(acctId)
+      .then(rows => {
+        if (cancelled) return;
+        const net = (rows || []).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+        setWalletBal((Number(w.opening) || 0) + net);
+      })
+      .catch(() => { if (!cancelled) setWalletBal(null); });
+    return () => { cancelled = true; };
+  }, [cfg, acctId, wallets]);
+
+  /* Escape key + lock body scroll while the modal is open */
   useEffect(() => {
     if (!cfg) return undefined;
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -5466,21 +5518,38 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
     };
   }, [cfg, onClose]);
 
-  if (!cfg) return null;
-  const isEdit = cfg.mode === 'edit';
+  if (!cfg) return null;                  // ✅ guard: must come after ALL hooks
+
+  const isEdit = cfg.mode === 'edit';     // ✅ safe now
 
   /* Live preview of balance after this txn */
   const c = book ? bookCalc(book) : { balance: 0 };
   const amt = Number(amount) || 0;
   const newBal = c.balance + (type === 'received' ? amt : type === 'returned' ? -amt : amt);
 
-  const handle = () => {
+   const handle = () => {
     if (!date)   { toast('Date is required', 'error'); return; }
     if (!amt)    { toast('Amount is required', 'error'); return; }
+    if (branchWallets.length > 0 && !acctId) { toast('Please select a wallet', 'error'); return; }
+
+    /* Paying out of a wallet: check it has enough balance.
+       On edit, the old payment is added back if it was from the same wallet. */
+    if (type === 'returned' && walletBal != null) {
+      const prev = cfg.mode === 'edit' ? cfg.txn : null;
+      const sameWallet = prev && prev.type === 'returned' && String(prev.walletId ?? prev.acctId ?? '') === String(acctId);
+      const available = walletBal + (sameWallet ? Math.abs(Number(prev.amount) || 0) : 0);
+      if (amt > available) {
+        toast(`Insufficient balance. Available in this wallet: Rs. ${available.toLocaleString('en-PK')}`, 'error');
+        return;
+      }
+    }
+
     onSave({
-      id: isEdit ? cfg.txn.id : 0, // 0 → insert; existing record id → update
+      id: isEdit ? cfg.txn.id : 0,
       type, date, amount: type === 'adjustment' ? Number(amount) : amt,
       notes: notes.trim(), enteredBy, attachments,
+      acctId,                    // selected wallet
+      wallatID: Number(acctId) || 0,
     });
   };
 
@@ -5601,6 +5670,42 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
               </div>
             </div>
           </div>
+
+          {/* wallet */}
+
+                    {branchWallets.length > 0 && (
+            <div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
+              <div className="fee-field-stack">
+                <label className="fee-label">
+                  <i className="fa-solid fa-wallet"></i>{' '}
+                  {type === 'received' ? 'Received In Wallet' : type === 'returned' ? 'Paid From Wallet' : 'Wallet'}
+                  {' '}<span className="acc-req">*</span>
+                </label>
+                <div className="fee-select-wrap">
+                  <select className="fee-select" value={acctId} onChange={e => setAcctId(e.target.value)}>
+                    <option value="">{type === 'received' ? 'Select wallet to receive into' : 'Select wallet to pay from'}</option>
+                    {branchWallets
+                      .filter(w => w.status === 'active' || String(w.id) === String(acctId))
+                      .map(w => (
+                        <option key={w.id} value={w.id}>{w.name} — {finTypeMeta(w.type).label}</option>
+                      ))}
+                  </select>
+                  <i className="fa-solid fa-chevron-down"></i>
+                </div>
+                {acctId && walletBal != null && (
+                  <div className="fee-hint" style={{ fontWeight: 700, color: type === 'returned' && walletBal <= 0 ? '#DC2626' : '#0E7490' }}>
+                    <i className="fa-solid fa-wallet"></i> Available Balance: Rs. {Number(walletBal).toLocaleString('en-PK')}
+                  </div>
+                )}
+                <div className="fee-hint">
+                  <i className="fa-solid fa-circle-info"></i>
+                  {type === 'received'
+                    ? 'Choose which wallet receives this money. Its balance will increase.'
+                    : 'Choose which wallet this payment is made from. Its balance will decrease.'}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Attachment uploader */}
           <div

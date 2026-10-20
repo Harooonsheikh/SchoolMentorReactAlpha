@@ -378,7 +378,7 @@ const PRCO_FIELD_MAP = [
 
 let _prcoDbId = 0;
 
-export async function getPRco() {
+export async function getPRcoState() {
   const res = await apiPost('preschooling-resultcard-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
@@ -397,23 +397,35 @@ export async function getPRco() {
     'Show Parent Teacher Meeting Section': 'fa-handshake',
     'Show Promotion / Retention Status': 'fa-arrow-up-right-from-square',
   };
-  const toggles = PRCO_FIELD_MAP.map(({ label, field }) => ({
+  const list = PRCO_FIELD_MAP.map(({ label, field }) => ({
     label, icon: iconByLabel[label], on: !!row[field],
   }));
 
-  return { toggles: clone(toggles), reportType: row.reportType || 'monthly' };
+  return { id: _prcoDbId, list: clone(list), reportType: row.reportType || 'monthly' };
 }
 
-export async function savePRco(list, reportType) {
+/* Purani shape ({ toggles, reportType }) un jagahon ke liye jo abhi getPRco use karti hain */
+export async function getPRco() {
+  const s = await getPRcoState();
+  return { toggles: s.list, reportType: s.reportType };
+}
+
+export async function savePRco(list, reportType, id) {
   const byLabel = {};
   (list || []).forEach(item => { byLabel[item.label] = item.on; });
 
-  const payload = { id: _prcoDbId, branchID: getBranchId(), reportType: reportType || 'monthly', action: 'save' };
+  const payload = {
+    id: Number(id) || _prcoDbId || 0,
+    branchID: getBranchId(),
+    reportType: reportType || 'monthly',
+    action: 'save',
+  };
   PRCO_FIELD_MAP.forEach(({ label, field }) => { payload[field] = !!byLabel[label]; });
 
   const res = await apiPost('preschooling-resultcard-crud', payload);
-  if (res?.id) _prcoDbId = res.id;
-  return clone(list);
+  const newId = res?.id ?? res?.Id ?? payload.id;
+  if (newId) _prcoDbId = newId;
+  return { id: _prcoDbId, list: clone(list) };
 }
 
 /* ════════════════════════════════════════════════════════════════
