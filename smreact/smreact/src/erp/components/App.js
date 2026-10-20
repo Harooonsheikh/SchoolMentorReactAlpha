@@ -432,6 +432,14 @@ const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).joi
     /* Retire ho chuke modules kabhi visible nahi — chahe permission aur
        module-activation dono allow karti hon. */
     if (RETIRED_NAV.has(navId)) return false;
+    /* E-Tube / Chat / Notifications ab ERP User Permission se bhi governed hain
+       (PermissionsContext ke GATEABLE_MODULES me add). Grant na ho to neeche ke
+       mobile/branch gating se PEHLE hi hat jate hain. School Head / chain
+       (fullAccess / readOnly) par canModule true rehta hai, is liye unhe farq
+       nahi parta. Mobile-app ke flags (ChatType / eTube / MentorAI) phir bhi
+       neeche AND hote hain — dono allow karein tabhi module dikhta hai. */
+    const EXTRA_PERM_LABEL = { chat: 'Chat', etube: 'E-Tube', notifications: 'Notifications' };
+    if (EXTRA_PERM_LABEL[navId] && !(fullAccess || canModule(EXTRA_PERM_LABEL[navId]))) return false;
     /* Super Admin (ya chain portal) ne is school ke liye Chat / Mentor AI /
        eTube SAVE kiye hon to wahi flags maano.
          • Chat: har branch par khulta hai. Row ho to ChatType faisla karta

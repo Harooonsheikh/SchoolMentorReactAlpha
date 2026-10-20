@@ -1,8 +1,1 @@
-# Dependencies
-node_modules/
-
-# Cache files
-.npm
-.cache
-build/
-dist/
+node_modules/ 

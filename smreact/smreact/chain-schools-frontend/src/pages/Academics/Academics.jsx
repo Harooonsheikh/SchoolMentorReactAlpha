@@ -25,6 +25,10 @@ import { onAcademicContentChanged } from '../../api/contentEvents'
 import { EMPTY_CONTENT, fetchReleaseContent, filterReleaseContent, hasReleasableContent, idSetsOf, releaseItemsOf, summarizeReleaseContent } from '../../api/releaseContent'
 /* A4 branded PDF / Word shell — sab Academics reports isi se bante hain. */
 import { esc, exportReport } from './reportEngine'
+/* Term Breakup ab Academics ke andar hai (pehle Examination module me tha).
+   Wohi component aur wohi exam store (localStorage) istemal hota hai. */
+import TermBreakup from '../Examination/TermBreakup'
+import { loadExam, saveExam } from '../Examination/examStore'
 import './Academics.css'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -63,6 +67,11 @@ const GROUPS = {
   resources: { label: 'Resource Library', icon: 'fa-folder-open', subs: [
     ['resources', 'Resource Library', 'fa-folder-open'],
   ] },
+  /* Term Breakup — Examination module se yahan le aaya gaya. Apna exam store
+     istemal karta hai (release workspace se alag), is liye alag group hai. */
+  breakup: { label: 'Term Breakup', icon: 'fa-table-list', subs: [
+    ['term-breakup', 'Term Breakup', 'fa-table-list'],
+  ] },
 }
 
 export default function Academics() {
@@ -97,6 +106,11 @@ export default function Academics() {
      hai. Har chhoti tabdeeli par NAHI barhti — warna activity save karte hi
      tab remount ho kar khula hua modal/scroll ura deta. */
   const [contentEpoch, setContentEpoch] = useState(0)
+
+  /* Term Breakup ka apna store (Examination module wala). Release workspace se
+     alag — seedha localStorage par chalta hai. */
+  const [examStore, setExamStore] = useState(loadExam)
+  const examCommit = (next) => { saveExam(next); setExamStore(next) }
 
   useEffect(() => { setA(loadAcademics()) }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
@@ -156,6 +170,9 @@ export default function Academics() {
   if (!a) return null
 
   const switchGroup = (g) => { setGroup(g); setSub(GROUPS[g].subs[0][0]) }
+  /* Term Breakup apne exam store par chalta hai, kisi release workspace me
+     nahi aata — is liye us tab par release wale cards nahi dikhte. */
+  const isBreakup = group === 'breakup'
   const releases = a.releases || []
   const draftReleases = releases.filter((r) => releaseStatusOf(r) !== 'ACTIVE') // Releases & Drafts (non-live)
 
@@ -367,9 +384,10 @@ export default function Academics() {
       </div>
 
       {/* 1 — Currently live */}
-      <LiveReleasesCard releases={releases} canRelease={canReleaseWorkspace} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />
+      {!isBreakup && <LiveReleasesCard releases={releases} canRelease={canReleaseWorkspace} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />}
 
       {/* 2 — Releases & Drafts (only non-live editable workspaces) */}
+      {!isBreakup && (
       <div className="ac-rel-bar">
         <span className="ac-rel-bar-lbl"><i className="fa-solid fa-layer-group" /> Releases &amp; Drafts</span>
         <div className="ac-rel-btns">
@@ -380,20 +398,23 @@ export default function Academics() {
           <button className="ac-rel-btn new" onClick={createNewRelease}><i className="fa-solid fa-plus" /> Create New Release</button>
         </div>
       </div>
+      )}
 
       {/* 3 — Release Control panel (contextual to selected workspace) */}
+      {!isBreakup && (
       <div ref={relBarRef}>
         <ReleaseBar workspaceName={workspaceName} content={workspaceRelContent} isCurrent={view === 'current'} isLiveView={isLiveView} onCreate={setModalType} />
       </div>
+      )}
 
       {/* Live read-only notice */}
-      {isLiveView && (
+      {!isBreakup && isLiveView && (
         <div className="ac-rel-viewing">
           <i className="fa-solid fa-eye" /> <span>Viewing live release snapshot of <strong>{viewedRelease.label}</strong> ({viewedRelease.batchId}) — live for {viewedRelease.appliesToAllSchools ? 'all member schools' : `${viewedRelease.schoolCount} selected school${viewedRelease.schoolCount !== 1 ? 's' : ''}`}{viewedRelease.validUntil ? `, valid until ${fmtDate(viewedRelease.validUntil)}` : ''}. Revoke this release if you need to edit and release it again.</span>
           <button className="btn-sm res-keep" onClick={() => setView('current')}><i className="fa-solid fa-arrow-left" /> Back to Current Draft</button>
         </div>
       )}
-      {viewedRelease && !isLiveView && (
+      {!isBreakup && viewedRelease && !isLiveView && (
         <div className="ac-rel-editing">
           <i className="fa-solid fa-pen" /> <span>Editing <strong>{viewedRelease.label}</strong> ({viewedRelease.batchId}) — {releaseStatusOf(viewedRelease) === 'EXPIRED' ? 'expired' : 'revoked'} workspace. Make changes, then release it again from Release Control above.</span>
           <button className="btn-sm res-keep" onClick={() => setView('current')}><i className="fa-solid fa-arrow-left" /> Back to Current Draft</button>
@@ -427,6 +448,8 @@ export default function Academics() {
         {sub === 'session' && <SessionSettings a={aView} commit={commitView} fire={fire} />}
         {sub === 'acad-cal' && <AcademicCalendar a={aView} commit={commitView} fire={fire} />}
         {sub === 'breakup' && <TermBreakups a={aView} commit={commitView} fire={fire} />}
+        {/* Term Breakup — Examination module wala component, apne exam store par. */}
+        {sub === 'term-breakup' && <TermBreakup store={examStore} commit={examCommit} flash={fire} />}
       </div>
 
       {modalType && <ReleaseModal type={modalType} releases={releases} relContent={relContent} baseRelease={viewedRelease} baseLabel={workspaceName} busy={relBusy} onClose={() => setModalType(null)} onRelease={applyRelease} />}

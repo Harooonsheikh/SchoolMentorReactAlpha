@@ -726,3 +726,35 @@ const PRT_CSS = `
   @page { size: A4; margin: 12mm; }
 }
 `;
+
+/* Dashboard cards ke liye — report jaisi hi ginti (same APIs + same matching). */
+export async function loadAppStatusCounts(mode = 'parents') {
+  const isTeacher = mode === 'teachers';
+  const [list, people] = await Promise.all([
+    getBranchFcmTokens(isTeacher ? 'teacher' : 'parent'),
+    isTeacher ? getBranchStaff() : getClassStudentRoster(),
+  ]);
+  const byId = new Map(), byPhone = new Map(), byName = new Map();
+  (list || []).forEach((r) => {
+    const has = hasAppToken(r);
+    const put = (map, k) => { if (k) map.set(k, (map.get(k) || false) || has); };
+    put(byId, Number(r.accountTypeID) || 0);
+    put(byPhone, phoneKey(r.userName));
+    put(byName, nameKey(r.name));
+  });
+  const rows = isTeacher
+    ? (people || []).map((e) => ({ ids: [e.id], phone: e.phone, name: e.name }))
+    : Object.values(people?.studentsMap || {}).flat().map((st) => ({ ids: [Number(st.studentID), Number(st.applicantsID)], phone: st.phone, name: st.name }));
+  const c = { total: rows.length, downloaded: 0, pending: 0, notDownloaded: 0 };
+  rows.forEach((p) => {
+    let hit;
+    const id = p.ids.find((x) => byId.has(x));
+    if (id !== undefined) hit = byId.get(id);
+    else if (phoneKey(p.phone) && byPhone.has(phoneKey(p.phone))) hit = byPhone.get(phoneKey(p.phone));
+    else if (p.name && p.name !== '-' && byName.has(nameKey(p.name))) hit = byName.get(nameKey(p.name));
+    if (hit === true) c.downloaded += 1;
+    else if (hit === false) c.pending += 1;
+    else c.notDownloaded += 1;
+  });
+  return c;
+}

@@ -9,7 +9,7 @@ import {
 import { useModules } from '../../context/ModuleContext';
 import { DASH_CSS } from './Dashboard';
 import AnnouncementsModal from './AnnouncementsModal';
-import AppPendingReportModal from './AppPendingReportModal';
+import AppPendingReportModal, { loadAppStatusCounts } from './AppPendingReportModal';
 import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvanceAdjustmentReportModal } from './DailyReceivingReport';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
 import { buildDiscountMap } from './feeDashboardExtra';
@@ -164,8 +164,7 @@ const TEACHER_BIRTHDAYS = [
   { name: 'Ms. Sana Mirza',     role: 'Coordinator',      date: '30 May', dob: 30 },
 ];
 
-const TODAY_DAY = 31;        /* Mock "today" — matches CURRENT_SESSION's daysLeft pivot */
-
+const TODAY_DAY = new Date().getDate();
 const TYPE_COLOR = {
   exam:     { bg: 'rgba(220, 38, 38, .12)', fg: '#DC2626' },
   event:    { bg: 'rgba(30, 58, 138, .12)', fg: '#1E40AF' },
@@ -179,6 +178,121 @@ const TYPE_COLOR = {
    match what Accounts reports for the same month. */
 const FIN_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const fmtPKR = (n) => `PKR ${(Number(n) || 0).toLocaleString('en-PK')}`;
+/* Accounts entries API (date-wise filter ke liye). Live pe wahi base URL use karein jo dashboardService use karta hai. */
+const FIN_API_BASE = 'http://50.190.164.42:4100';
+const FIN_TYPE_INCOME = 1;
+const FIN_TYPE_EXPENSE = 2;
+/* Student attendance API — classID/sectionID 0 = poora school. Status: 1/Present, 2/Absent, 3/Leave. */
+const ATT_API_URL = 'https://erp.schoolmentor.ai/api/student-attendance';
+const getAttSessionId = () => Number(sessionStorage.getItem('sessionID') || localStorage.getItem('sessionID')) || 5;
+const getAuthToken = () => {
+  try {
+    for (const store of [localStorage, sessionStorage]) {
+      for (let i = 0; i < store.length; i += 1) {
+        const m = String(store.getItem(store.key(i)) || '').match(/eyJ[\w-]+\.[\w-]+\.[\w-]+/);
+        if (m) return m[0];
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return '';
+};
+const normAttStatus = (s) => {
+  const v = String(s ?? '').trim().toLowerCase();
+  if (v === '1' || v === 'present' || v === 'p') return 'present';
+  if (v === '2' || v === 'absent' || v === 'a') return 'absent';
+  if (v === '3' || v === 'leave' || v === 'l') return 'leave';
+  return null;
+};
+const fetchStudentAttDay = async (branchId, date, tries = 2) => {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+ const r = await fetch(ATT_API_URL, {
+        signal: AbortSignal.timeout(20000),
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({ id: 0, branchID: branchId, studentID: 0, sessionID: getAttSessionId(), classID: 0, sectionID: 0, attendanceDate: date, status: '', platform: 'ERP', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0 }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const arr = Array.isArray(j?.data) ? j.data
+        : Array.isArray(j?.data?.data) ? j.data.data
+        : Array.isArray(j) ? j : [];
+      if (arr.length) {
+        const statusCount = {};
+        arr.forEach((r) => {
+          const s = JSON.stringify(r.Status ?? r.status ?? r.AttendanceStatus ?? r.attendanceStatus ?? r.StatusID ?? r.AttendanceStatusID ?? '(none)');
+          statusCount[s] = (statusCount[s] || 0) + 1;
+        });
+        console.log('[Attendance]', date, '\nKEYS:', Object.keys(arr[0]).join(', '), '\nSAMPLE:', JSON.stringify(arr[0]), '\nSTATUS VALUES:', JSON.stringify(statusCount));
+      }      return arr;
+    } catch (e) {
+      if (i === tries - 1) { console.warn('[Attendance] failed for', date, e); return null; }
+    }
+  }
+  return null;
+};
+/* Purane din ka data cache — wahi month/din dobara chunein to foran aaye. Aaj ka din cache nahi hota (attendance badal sakti hai). */
+const attDayCache = new Map();
+const fetchStudentAttDayCached = async (branchId, date) => {
+  const key = `${branchId}|${date}`;
+  if (attDayCache.has(key)) return attDayCache.get(key);
+  const rows = await fetchStudentAttDay(branchId, date);
+  if (rows && date !== ymdLocal(new Date())) attDayCache.set(key, rows);
+  return rows;
+};
+/* ─── Staff attendance (student jaisa hi) ───
+   ⚠️ URL + body Network tab se confirm karein. */
+const STAFF_ATT_API_URL = 'https://erp.schoolmentor.ai/api/staff-attendance';
+const fetchStaffAttDay = async (branchId, date, tries = 2) => {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const r = await fetch(STAFF_ATT_API_URL, {
+        signal: AbortSignal.timeout(20000),
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({ id: 0, branchID: branchId, employeeID: 0, sessionID: getAttSessionId(), attendanceDate: date, status: '', platform: 'ERP', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0 }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const arr = Array.isArray(j?.data) ? j.data
+        : Array.isArray(j?.data?.data) ? j.data.data
+        : Array.isArray(j) ? j : [];
+      if (date === ymdLocal(new Date())) console.log('[StaffAtt]', date, 'rows:', arr.length, 'SAMPLE:', JSON.stringify(arr[0] || null), 'raw:', j);
+      return arr;
+    } catch (e) {
+      if (i === tries - 1) { console.warn('[StaffAtt] failed for', date, e); return null; }
+    }
+  }
+  return null;
+};
+const staffDayCache = new Map();
+const fetchStaffAttDayCached = async (branchId, date) => {
+  const key = `${branchId}|${date}`;
+  if (staffDayCache.has(key)) return staffDayCache.get(key);
+  const rows = await fetchStaffAttDay(branchId, date);
+  if (rows && date !== ymdLocal(new Date())) staffDayCache.set(key, rows);
+  return rows;
+};
+const staffIdOf = (r) => r.EmployeeID ?? r.employeeID ?? r.EmployeeId ?? r.EmpID ?? r.StaffID ?? r.staffID ?? r.ID;
+const staffStatusOf = (r) => r.Status ?? r.status ?? r.AttendanceStatus ?? r.attendanceStatus;
+/* Ek waqt mein sirf `limit` requests */
+const runLimited = async (items, limit, fn) => {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i]); }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+};
+const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const attDatesBetween = (from, to) => {
+  const out = [];
+  const d = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T00:00:00`);
+  while (d <= end && out.length < 62) { out.push(ymdLocal(d)); d.setDate(d.getDate() + 1); }
+  return out;
+};
 
 /* Gradient stat-tile palette — reuses hex values already present
    elsewhere in this file (dash-pri / adm-tc gradients) so the new
@@ -358,15 +472,15 @@ function ProfitLossTooltip({ active, payload, label }) {
       <div className="pl-tooltip-month">{label}</div>
       <div className="pl-tooltip-row">
         <span className="pl-tooltip-lbl"><span className="pl-tooltip-dot" style={{ background: '#1E40AF' }} />Revenue</span>
-        <b>Rs. {Math.abs(revenue).toFixed(2)}M</b>
+        <b>Rs. {Math.abs(revenue).toFixed(2)}L</b>
       </div>
       <div className="pl-tooltip-row">
         <span className="pl-tooltip-lbl"><span className="pl-tooltip-dot" style={{ background: '#DC2626' }} />Expenses</span>
-        <b>Rs. {Math.abs(expense).toFixed(2)}M</b>
+        <b>Rs. {Math.abs(expense).toFixed(2)}L</b>
       </div>
       <div className="pl-tooltip-row">
         <span className="pl-tooltip-lbl"><span className="pl-tooltip-dot" style={{ background: '#16A34A' }} />Profit/Loss</span>
-        <b style={{ color: pl >= 0 ? '#16A34A' : '#DC2626' }}>{pl >= 0 ? '+' : '−'}Rs. {Math.abs(pl).toFixed(2)}M</b>
+        <b style={{ color: pl >= 0 ? '#16A34A' : '#DC2626' }}>{pl >= 0 ? '+' : '−'}Rs. {Math.abs(pl).toFixed(2)}L</b>
       </div>
     </div>
   );
@@ -401,17 +515,15 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      data se bharta hai (mock constants ki jagah). Fee section alag se
      BranchLedger (Fee reports jaisa) se aata hai, is liye yahan FeeAnalytics
      use NAHI karte. */
- const [dash, setDash] = useState({});
-const [dashLoaded, setDashLoaded] = useState(false);
-useEffect(() => {
-  let alive = true;
-  const { month, year } = dashboardService.currentMonthYear();
-  dashboardService.getDashboard(month, year)
-    .then((d) => { if (alive) setDash(d || {}); })
-    .catch(() => { if (alive) setDash({}); })
-    .finally(() => { if (alive) setDashLoaded(true); });
-  return () => { alive = false; };
-}, []);
+  const [dash, setDash] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const { month, year } = dashboardService.currentMonthYear();
+    dashboardService.getDashboard(month, year)
+      .then((d) => { if (alive) setDash(d || {}); })
+      .catch(() => { if (alive) setDash({}); });
+    return () => { alive = false; };
+  }, []);
   const D    = dash || {};
   const kpi  = D.Kpi || {};
   const snap = D.ModuleSnapshot || {};
@@ -440,7 +552,7 @@ useEffect(() => {
   }, []);
   const actMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const monthActivities = useMemo(() => {
-    const src = (monthActs && monthActs.length) ? monthActs : liveUpActivities;
+const src = [...(monthActs || []), ...liveUpActivities];
     const pick = (o, keys) => { for (const k of keys) { if (o[k] != null && o[k] !== '') return o[k]; } return ''; };
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -458,7 +570,7 @@ useEffect(() => {
         start, end,
       };
     })
-      .filter((a) => a.start && a.start <= mEnd && a.end >= mStart)
+.filter((a, i, arr) => a.start && a.end >= mStart && arr.findIndex((b) => String(b.id) === String(a.id)) === i)
       .sort((p, q) => p.start - q.start)
       .map((a) => {
         const days = Math.round((a.start - today) / 86400000);
@@ -481,17 +593,34 @@ useEffect(() => {
   const teacherAppLive = appOf('Teacher');
   const parentAppLive  = appOf('Parent');
   const teacherAppStatus = {
-    total: Number(kpi.ActiveStaff) || Number(teacherAppLive.Total) || 0,
+total: Number(teacherAppLive.Total) || Number(kpi.ActiveStaff) || 0,
     downloaded: Number(teacherAppLive.Downloaded) || 0,
     get pending() { return Math.max(0, this.total - this.downloaded); },
     get pct() { return dPctOf(this.downloaded, this.total); },
   };
   const parentAppStatus = {
-    total: Number(kpi.ActiveStudents) || Number(parentAppLive.Total) || 0,
+total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
     downloaded: Number(parentAppLive.Downloaded) || 0,
     get pending() { return Math.max(0, this.total - this.downloaded); },
     get pct() { return dPctOf(this.downloaded, this.total); },
   };
+
+/* App cards — report (AppPendingReportModal) wali hi ginti: active students/staff + fcm-tokens. */
+  const [appLive, setAppLive] = useState({});
+  useEffect(() => {
+    let alive = true;
+    Promise.allSettled([loadAppStatusCounts('teachers'), loadAppStatusCounts('parents')])
+      .then(([t, p]) => {
+        if (!alive) return;
+        setAppLive({
+          teachers: t.status === 'fulfilled' ? t.value : null,
+          parents:  p.status === 'fulfilled' ? p.value : null,
+        });
+      });
+    return () => { alive = false; };
+  }, []);
+  if (appLive.teachers) { teacherAppStatus.total = appLive.teachers.total; teacherAppStatus.downloaded = appLive.teachers.downloaded; }
+  if (appLive.parents)  { parentAppStatus.total  = appLive.parents.total;  parentAppStatus.downloaded  = appLive.parents.downloaded; }
 
   /* ─── Per-card dashboard permissions ───
      Reads the same effectivePermsForUser() used by the User Permissions
@@ -719,8 +848,8 @@ useEffect(() => {
       meta: <><span className="dash-tile-meta-pill">{Number(snap.TotalDepartments) || 0} depts</span><span>{Number(snap.InactiveEmployees) || 0} inactive</span></>,
       target: 'hr' },
     moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Upcoming Activities', icon: 'fa-calendar-days',
-      value: liveUpActivities.length,
-      meta: <><span className="dash-tile-meta-pill">{liveUpActivities.length} upcoming</span></>,
+  value: monthActivities.filter((a) => a.status !== 'done').length,
+      meta: <><span className="dash-tile-meta-pill">{monthActivities.filter((a) => a.status !== 'done').length} upcoming</span></>,
       target: 'acad' },
     moduleActive('fee') && { key: 'fee', accent: MODULE_COLOR.fee, label: 'Fee Collection', icon: 'fa-money-bill-wave',
       value: feeExtras.receivedPct, suffix: '%',
@@ -736,25 +865,26 @@ useEffect(() => {
   const liveAnnouncements = (Array.isArray(D.Announcements) ? D.Announcements : [])
     .map((a, idx) => {
       const created = a.AnnounceDate || a.announceDate || a.Date || a.date || a.CreatedDate || '';
-      const dt = created ? new Date(created) : null;
+const dt = created ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(created)) ? `${created}T00:00:00` : created) : null;
       const validDt = dt && !Number.isNaN(+dt);
       const rawBody = a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '';
       /* Body rich-text editor se HTML (<ul><li><b>…) aata hai — card pe plain text dikhana hai. */
       const preview = htmlToPlainText(rawBody);      return {
         id: a.ID ?? a.id ?? `an-${idx}`,
         sender: a.Sender ?? a.sender ?? a.CreatedBy ?? 'School Mentor — HQ',
-        title: a.Title ?? a.title ?? a.Subject ?? '',
+        title: (a.Title ?? a.title ?? a.Subject ?? '') || 'Untitled notice',
         preview,
         description: preview,
         category: a.Category ?? a.category ?? 'General',
         date: validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
-        time: validDt ? dt.toLocaleTimeString('en-PK', { hour: 'numeric', minute: '2-digit' }) : '',
-        status: 'new',
+time: '',
+      status: validDt && (Date.now() - dt.getTime()) <= 7 * 86400000 ? 'new' : 'read',
+        _ts: validDt ? dt.getTime() : 0,
       };
     })
-    .filter((a) => a.title || a.preview);
+.filter((a) => a.title || a.preview).sort((p, q) => q._ts - p._ts);
   const latestAnnouncement = liveAnnouncements[0] || null;
-  const newAnnouncementCount = liveAnnouncements.length;
+const newAnnouncementCount = liveAnnouncements.filter((a) => a.status === 'new').length;
 
   /* Greeting */
   const hour = new Date().getHours();
@@ -765,8 +895,8 @@ useEffect(() => {
   /* ─── New section local state ──────────────────────────────── */
   const [lpClass,    setLpClass]    = useState('II-Pre');
   const [paperClass, setPaperClass] = useState('IV');
-  const [revenueYear, setRevenueYear] = useState(2026);
-  const [birthdayTab, setBirthdayTab] = useState('all');
+  const [revenueYear, setRevenueYear] = useState(() => new Date().getFullYear());
+    const [birthdayTab, setBirthdayTab] = useState('all');
 
   /* Monthly Financial Summary — reads the same Accounts transaction
      ledger as Accounts → Reports (getAccTxns), so Expenses/Income/
@@ -778,16 +908,107 @@ useEffect(() => {
      current month's totals; no data → 0. */
   const [financeSeg, setFinanceSeg]     = useState('month'); // 'month' | 'range' | 'single'
   const [financeMonth, setFinanceMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [financeFrom, setFinanceFrom]   = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
-  const [financeTo, setFinanceTo]       = useState(() => new Date().toISOString().slice(0, 10));
+  const [financeFrom, setFinanceFrom]   = useState(() => `${new Date().getFullYear()}-01`);
+  const [financeTo, setFinanceTo]       = useState(() => new Date().toISOString().slice(0, 7));
   const [financeSingle, setFinanceSingle] = useState(() => new Date().toISOString().slice(0, 10));
-  const financeSummary = useMemo(() => {
+  const [financeDateFrom, setFinanceDateFrom] = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
+  const [financeDateTo, setFinanceDateTo]     = useState(() => new Date().toISOString().slice(0, 10));
+const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.branchId ?? user?.BranchID) || 0;
+  /* Selected month ka FinancialOverview — month badalne par get-dashboard(month, year). */
+  const [finApi, setFinApi] = useState(null);
+  useEffect(() => {
+    if (financeSeg !== 'month' || !financeMonth) return undefined;
+    const [y, m] = financeMonth.split('-').map(Number);
+    let alive = true;
+    setFinApi(null);
+    dashboardService.getDashboard(m, y)
+    .then((d) => {
+        const fo = d?.FinancialOverview || d?.data?.FinancialOverview || {};
+        console.log('[Fin] month', m, y, fo);
+        if (alive) setFinApi(fo);
+      })
+      .catch(() => { if (alive) setFinApi({}); });
+    return () => { alive = false; };
+  }, [financeSeg, financeMonth]);
+  /* Month Range — har saal ka ProfitLossTrend la ke From→To months ka Income/Expense jor do. */
+  const [finRangeRows, setFinRangeRows] = useState(null);
+  useEffect(() => {
+    if (financeSeg !== 'range' || !financeFrom || !financeTo) return undefined;
+    const [fy, fm] = financeFrom.split('-').map(Number);
+    const [ty, tm] = financeTo.split('-').map(Number);
+    const fromKey = fy * 12 + fm;
+    const toKey = ty * 12 + tm;
+    if (fromKey > toKey) { setFinRangeRows([]); return undefined; }
     const now = new Date();
-    const income  = Number(liveFinOverview.OverallIncome)   || 0;
-    const expense = Number(liveFinOverview.OverallExpenses) || 0;
-    const pl = (liveFinOverview.NetProfitLoss != null) ? Number(liveFinOverview.NetProfitLoss) : (income - expense);
-    return { label: `${FIN_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`, income, expense, pl };
-  }, [liveFinOverview]);
+    const years = [];
+    for (let y = fy; y <= ty; y += 1) years.push(y);
+    let alive = true;
+    setFinRangeRows(null);
+    Promise.all(years.map((y) =>
+      dashboardService.getDashboard(y === now.getFullYear() ? now.getMonth() + 1 : 12, y)
+        .then((d) => (Array.isArray(d?.ProfitLossTrend) ? d.ProfitLossTrend : []).map((r) => ({ ...r, Year: y })))
+        .catch(() => [])
+    )).then((lists) => {
+      if (!alive) return;
+      setFinRangeRows(lists.flat().filter((r) => {
+        const k = r.Year * 12 + Number(r.Month);
+        return k >= fromKey && k <= toKey;
+      }));
+    });
+    return () => { alive = false; };
+  }, [financeSeg, financeFrom, financeTo]);
+
+  /* From–To dates / Single Date — get-account-entries-by-branch-month se har month ki
+     Income (1) + Expense (2) entries la kar EntryDate se filter + jor. */
+  const [finDateTotals, setFinDateTotals] = useState(null);
+  useEffect(() => {
+    if (financeSeg !== 'dates' && financeSeg !== 'single') return undefined;
+    const from = financeSeg === 'single' ? financeSingle : financeDateFrom;
+    const to   = financeSeg === 'single' ? financeSingle : financeDateTo;
+    if (!from || !to || from > to) { setFinDateTotals({ income: 0, expense: 0 }); return undefined; }
+    const months = [];
+    let [y, m] = from.slice(0, 7).split('-').map(Number);
+    const [ty, tm] = to.slice(0, 7).split('-').map(Number);
+    while (y * 12 + m <= ty * 12 + tm) { months.push([y, m]); m += 1; if (m > 12) { m = 1; y += 1; } }
+    const sumType = (typeId) => Promise.all(months.map(([yy, mm]) =>
+      fetch(`${FIN_API_BASE}/get-account-entries-by-branch-month/${finBranchId}/${typeId}/${mm}/${yy}`)
+        .then((r) => r.json())
+        .then((j) => (Array.isArray(j?.data) ? j.data : []))
+        .catch(() => [])
+    )).then((lists) => lists.flat()
+      .filter((e) => e && e.IsActive !== false)
+      .filter((e) => { const d = String(e.EntryDate || '').slice(0, 10); return d >= from && d <= to; })
+      .reduce((s, e) => s + (Number(e.Amount) || 0), 0));
+    let alive = true;
+    setFinDateTotals(null);
+    Promise.all([sumType(FIN_TYPE_INCOME), sumType(FIN_TYPE_EXPENSE)])
+      .then(([income, expense]) => { if (alive) setFinDateTotals({ income, expense }); });
+    return () => { alive = false; };
+  }, [financeSeg, financeDateFrom, financeDateTo, financeSingle, finBranchId]);
+
+  const financeSummary = useMemo(() => {
+    if (financeSeg === 'dates' || financeSeg === 'single') {
+      const t = finDateTotals || { income: 0, expense: 0 };
+      const fmtD = (v) => new Date(`${v}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const label = financeSeg === 'single' ? fmtD(financeSingle) : `${fmtD(financeDateFrom)} – ${fmtD(financeDateTo)}`;
+      return { label, income: t.income, expense: t.expense, pl: t.income - t.expense };
+    }
+    if (financeSeg === 'range') {
+      const rows = finRangeRows || [];
+      const income  = rows.reduce((s, r) => s + (Number(r.Income) || 0), 0);
+      const expense = rows.reduce((s, r) => s + (Number(r.Expenses) || 0), 0);
+      const fmtM = (v) => { const [y, m] = v.split('-').map(Number); return `${FIN_MONTH_NAMES[m - 1].slice(0, 3)} ${y}`; };
+      return { label: `${fmtM(financeFrom)} – ${fmtM(financeTo)}`, income, expense, pl: income - expense };
+    }
+    const src = finApi || {};
+    const [y, m] = financeMonth.split('-').map(Number);
+    const income  = Number(src.OverallIncome)   || 0;
+    const expense = Number(src.OverallExpenses) || 0;
+    const pl = (src.NetProfitLoss != null) ? Number(src.NetProfitLoss) : (income - expense);
+    return { label: `${FIN_MONTH_NAMES[m - 1]} ${y}`, income, expense, pl };
+  }, [financeSeg, finApi, finRangeRows, finDateTotals, financeMonth, financeFrom, financeTo, financeDateFrom, financeDateTo, financeSingle]);
+  const finLoading = (financeSeg === 'range' ? finRangeRows : (financeSeg === 'dates' || financeSeg === 'single') ? finDateTotals : finApi) === null;
+  const finSpinner = <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 22 }} aria-label="Loading" />;
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
@@ -800,8 +1021,7 @@ useEffect(() => {
      Class pickers ab data ko affect nahi karte (live API school-level subject
      totals deta hai); koi data na ho to khaali. */
   const lpData = useMemo(
-    () => liveLessonPlans.map((l) => ({ subject: l.SubjectName || '—', classwork: Number(l.ClassworkCount) || 0, notebook: Number(l.NotebookCount) || 0 })),
-    [liveLessonPlans],
+() => Object.values(liveLessonPlans.reduce((acc, l) => { const s = String(l.SubjectName || '—').trim(); const k = s.toLowerCase(); if (!acc[k]) acc[k] = { subject: s.charAt(0).toUpperCase() + s.slice(1), classwork: 0, notebook: 0 }; acc[k].classwork += Number(l.ClassworkCount) || 0; acc[k].notebook += Number(l.NotebookCount) || 0; return acc; }, {})),    [liveLessonPlans],
   );
   const paperData = useMemo(
     () => livePaperStats.map((p) => ({ subject: p.SubjectName || '—', count: Number(p.TotalGenerated) || 0 })),
@@ -809,12 +1029,42 @@ useEffect(() => {
   );
   /* P&L — monthly revenue from RevenueStreams (lakh scale). Monthly expense
      get-dashboard me nahi aata → expense 0 (pl = revenue). */
+  /* P&L — get-dashboard ProfitLossTrend (Income / Expenses / ProfitLoss), LAKH (L) me.
+     Year dropdown badalne par us saal ka dashboard fetch hota hai. */
+  const [plTrend, setPlTrend] = useState(null);
+  useEffect(() => {
+    const now = new Date();
+    const m = revenueYear === now.getFullYear() ? now.getMonth() + 1 : 12;
+    let alive = true;
+    /* ProfitLossTrend sirf 3 mahine deta hai → Mar / Jun / Sep / Dec (ya current month) tak ke calls se poora saal */
+    const ends = [3, 6, 9, 12].filter((x) => x < m).concat(m);
+    setPlTrend(null);
+    Promise.all(ends.map((em) => dashboardService.getDashboard(em, revenueYear)
+      .then((d) => { const t = d?.ProfitLossTrend || d?.data?.ProfitLossTrend; return Array.isArray(t) ? t : []; })
+      .catch(() => [])))
+      .then((lists) => {
+        if (!alive) return;
+        const byMonth = new Map();
+        lists.flat()
+          .filter((r) => Number(r.Month) >= 1 && Number(r.Month) <= m)
+          .forEach((r) => byMonth.set(Number(r.Month), r));
+        setPlTrend([...byMonth.values()]);
+      });
+    return () => { alive = false; };
+  }, [revenueYear]);
   const profitData = useMemo(() => {
     const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const byMonth = {};
-    liveRevenueStreams.forEach((r) => { const m = Number(r.Month); if (m >= 1 && m <= 12) byMonth[m] = (byMonth[m] || 0) + (Number(r.Amount) || 0); });
-    return MONTH_ABBR.map((m, i) => { const rev = (byMonth[i + 1] || 0) / 100000; return { m, revenue: rev, expense: 0, pl: rev }; });
-  }, [liveRevenueStreams]);
+    const rows = plTrend || [];
+    return MONTH_ABBR.map((m, i) => {
+      const r = rows.find((x) => Number(x.Month) === i + 1); if (!r) return { m, revenue: null, expense: null, pl: null };
+      return {
+        m,
+        revenue: (Number(r.Income) || 0) / 100000,
+        expense: -(Number(r.Expenses) || 0) / 100000,
+        pl: (Number(r.ProfitLoss) || 0) / 100000,
+      };
+    });
+  }, [plTrend]);
   const plTotal = useMemo(() => profitData.reduce((s, d) => s + d.pl, 0), [profitData]);
   const lpMaxCw = useMemo(() => (lpData.length ? Math.max(...lpData.map((d) => d.classwork)) : 0), [lpData]);
   const paperTotal = useMemo(() => paperData.reduce((s, p) => s + p.count, 0), [paperData]);
@@ -824,14 +1074,14 @@ useEffect(() => {
     name: b.StudentName || b.Name || '—',
     grade: [b.ClassName, b.SectionName].filter(Boolean).join(' — ') || '—',
     date: b.BirthDate ? new Date(b.BirthDate).toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }) : '',
-    dob: b.BirthDate ? new Date(b.BirthDate).getDate() : i,
-  })) : []), [isActive, liveStuBdays]);
+    dob: (b.BirthDate || b.DateOfBirth) ? new Date(b.BirthDate).getDate() : i,
+})).sort((a, b) => a.dob - b.dob) : []), [isActive, liveStuBdays]);
   const teacherBdays = useMemo(() => (isActive('hr') ? liveStaffBdays.map((b, i) => ({
-    name: b.StaffName || b.Name || b.StudentName || '—',
+name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Name || '—',
     role: b.Designation || b.Role || 'Staff',
     date: b.BirthDate ? new Date(b.BirthDate).toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }) : '',
     dob: b.BirthDate ? new Date(b.BirthDate).getDate() : i,
-  })) : []), [isActive, liveStaffBdays]);
+})).sort((a, b) => a.dob - b.dob) : []), [isActive, liveStaffBdays]);
 
   /* LIVE today's attendance (get-dashboard TodaysAttendance). No data → 0. */
   const studentAttLive = { total: Number(liveStuAtt.StudentTotal) || 0, present: Number(liveStuAtt.StudentPresent) || 0, absent: Number(liveStuAtt.StudentAbsent) || 0, leave: Number(liveStuAtt.StudentLeave) || 0, percentage: dPctOf(liveStuAtt.StudentPresent, liveStuAtt.StudentTotal) };
@@ -844,25 +1094,12 @@ useEffect(() => {
       <style>{DASH_CSS}</style>
       <style>{ADM_NEW_CSS}</style>
 
-          {!dashLoaded && (
-      <div aria-busy="true" aria-label="Loading dashboard">
-        <div className="skel-block" style={{ height: 52, marginBottom: 16 }} />
-        <div className="skel-block" style={{ height: 110, borderRadius: 18, marginBottom: 16 }} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="skel-block" style={{ height: 200 }} />
-          ))}
-        </div>
-      </div>
-    )}
-
       {/* ═════════ 0. UNIVERSAL SEARCH BAR ═════════
             Sits at the top of the Admin / Principal Dashboard.
             Permission predicate gates each module's results — today the
             admin sees everything, but the prop is wired so the backend
             can clamp it later. Module-activation gating happens inside
             the hook via ModuleContext. */}
-    <div style={dashLoaded ? undefined : { display: 'none' }}>
       <div className="adm-uvs-row">
         <MentorAISearchBar
           onNavigate={(target, params) => {
@@ -955,7 +1192,7 @@ useEffect(() => {
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestAnnouncement ? `${latestAnnouncement.date} · ${latestAnnouncement.time}` : '—'}
+              {latestAnnouncement ? `${latestAnnouncement.date}${latestAnnouncement.time ? ` · ${latestAnnouncement.time}` : ''}` : '—'}
             </span>
             <Tooltip text="View all announcements">
               <button
@@ -1599,10 +1836,17 @@ useEffect(() => {
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
-            <select
+                      <select
               className="adm-select"
               value={revenueYear}
-              onChange={(e) => setRevenueYear(Number(e.target.value))}
+              onChange={(e) => {
+                const y = Number(e.target.value);
+                setRevenueYear(y);
+                const now = new Date();
+                const mm = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+                setFinanceSeg('month');
+                setFinanceMonth(`${y}-${String(mm).padStart(2, '0')}`);
+              }}
               aria-label="Select year"
             >
               <option value={2026}>2026</option>
@@ -1624,14 +1868,14 @@ useEffect(() => {
                 <div className="fin-summary-ic"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i></div>
                 <div>
                   <div className="fin-summary-t">Monthly Financial Summary</div>
-                  <div className="fin-summary-s">{financeSummary.label} · from Accounts ledger</div>
-                </div>
+<div className="fin-summary-s">{financeSummary.label} · {(financeSeg === 'range' ? finRangeRows : (financeSeg === 'dates' || financeSeg === 'single') ? finDateTotals : finApi) === null ? 'Loading…' : 'Live'}</div>                </div>
               </div>
               <div className="ol-controls">
                 <div className="adm-seg" role="tablist" aria-label="Financial summary period filter">
-                  <button type="button" className={`adm-seg-btn${financeSeg === 'month' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'month'} onClick={() => setFinanceSeg('month')}>Month</button>
-                  <button type="button" className={`adm-seg-btn${financeSeg === 'range' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'range'} onClick={() => setFinanceSeg('range')}>From – To</button>
-                  <button type="button" className={`adm-seg-btn${financeSeg === 'single' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'single'} onClick={() => setFinanceSeg('single')}>Single Date</button>
+                                    <button type="button" className={`adm-seg-btn${financeSeg === 'month' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'month'} onClick={() => setFinanceSeg('month')}>Month</button>
+                  <button type="button" className={`adm-seg-btn${financeSeg === 'dates' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'dates'} onClick={() => setFinanceSeg('dates')}>From – To</button>
+<button type="button" className={`adm-seg-btn${financeSeg === 'single' ? ' on' : ''}`} role="tab" aria-selected={financeSeg === 'single'} onClick={() => setFinanceSeg('single')}>Single Date</button>
+
                 </div>
 
                 {financeSeg === 'month' && (
@@ -1640,9 +1884,9 @@ useEffect(() => {
                     <input
                       type="month"
                       className="fin-summary-month-input"
-                      value={financeMonth}
-                      min="2026-01"
-                      max="2026-05"
+                                       value={financeMonth}
+                      min="2024-01"
+                      max={new Date().toISOString().slice(0, 7)}
                       onChange={(e) => setFinanceMonth(e.target.value)}
                       aria-label="Select month for financial summary"
                     />
@@ -1652,11 +1896,23 @@ useEffect(() => {
                   <>
                     <label className="fin-summary-month">
                       <span className="fin-summary-month-lbl">From</span>
-                      <input type="date" className="fin-summary-month-input" value={financeFrom} onChange={(e) => setFinanceFrom(e.target.value)} aria-label="From date for financial summary" />
+                   <input type="month" min="2024-01" max={financeTo} className="fin-summary-month-input" value={financeFrom} onChange={(e) => setFinanceFrom(e.target.value)} aria-label="From date for financial summary" />
                     </label>
                     <label className="fin-summary-month">
                       <span className="fin-summary-month-lbl">To</span>
-                      <input type="date" className="fin-summary-month-input" value={financeTo} onChange={(e) => setFinanceTo(e.target.value)} aria-label="To date for financial summary" />
+                    <input type="month" min={financeFrom} max={new Date().toISOString().slice(0, 7)} className="fin-summary-month-input" value={financeTo} onChange={(e) => setFinanceTo(e.target.value)} aria-label="To date for financial summary" />
+                    </label>
+                  </>
+                )}
+{financeSeg === 'dates' && (
+                  <>
+                    <label className="fin-summary-month">
+                      <span className="fin-summary-month-lbl">From</span>
+                      <input type="date" className="fin-summary-month-input" value={financeDateFrom} max={financeDateTo} onChange={(e) => setFinanceDateFrom(e.target.value)} aria-label="From date for financial summary" />
+                    </label>
+                    <label className="fin-summary-month">
+                      <span className="fin-summary-month-lbl">To</span>
+                      <input type="date" className="fin-summary-month-input" value={financeDateTo} min={financeDateFrom} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setFinanceDateTo(e.target.value)} aria-label="To date for financial summary" />
                     </label>
                   </>
                 )}
@@ -1669,14 +1925,14 @@ useEffect(() => {
               </div>
             </div>
 
-            <div className="fin-summary-grid" ref={financeCardsReplay.ref}>
+          <div className="fin-summary-grid" ref={financeCardsReplay.ref} style={{ opacity: finLoading ? 0.6 : 1, transition: 'opacity .2s' }}>
               <div className="fee-card fa-card fc-tone--red fc-bordered fin-summary-sub">
                 <div className="fc-header">
                   <div className="fc-icon-chip"><i className="fa-solid fa-arrow-trend-down" aria-hidden="true"></i></div>
                   <div className="fc-title fc-title--red">Overall Expenses</div>
                 </div>
                 <div className="fc-amount fc-amount--red fa-amount--lg">
-                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.expense} duration={CHART_ANIM_MS} />
+{finLoading ? finSpinner : <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.expense} duration={CHART_ANIM_MS} />}
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -1690,7 +1946,7 @@ useEffect(() => {
                   <div className="fc-title">Overall Income</div>
                 </div>
                 <div className="fc-amount fc-amount--green fa-amount--lg">
-                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.income} duration={CHART_ANIM_MS} />
+{finLoading ? finSpinner : <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.income} duration={CHART_ANIM_MS} />}
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -1706,8 +1962,8 @@ useEffect(() => {
                   <div className={`fc-title${financeSummary.pl < 0 ? ' fc-title--red' : ''}`}>Net Profit / Loss</div>
                 </div>
                 <div className={`fc-amount fa-amount--lg ${financeSummary.pl >= 0 ? 'fc-amount--green' : 'fc-amount--red'}`}>
-                  {financeSummary.pl >= 0 ? '+' : '−'}
-                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={Math.abs(financeSummary.pl)} duration={CHART_ANIM_MS} />
+                 {!finLoading && (financeSummary.pl >= 0 ? '+' : '−')}
+{finLoading ? finSpinner : <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={Math.abs(financeSummary.pl)} duration={CHART_ANIM_MS} />}
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -1737,7 +1993,7 @@ useEffect(() => {
                   <option value={2024}>2024</option>
                 </select>
                 <span className="adm-card-h-meta" style={{ color: plTotal >= 0 ? '#16A34A' : '#DC2626', fontWeight: 800 }}>
-                  Net Profit / Loss: <b>{plTotal >= 0 ? '+' : '−'}Rs. <AnimatedNumber key={plOverviewReplay.replayKey} value={Math.abs(plTotal)} decimals={2} duration={CHART_ANIM_MS} />M</b>
+                  Net Profit / Loss: <b>{plTotal >= 0 ? '+' : '−'}Rs. <AnimatedNumber key={plOverviewReplay.replayKey} value={Math.abs(plTotal)}decimals={2} duration={CHART_ANIM_MS} />L</b>
                 </span>
               </div>
             </div>
@@ -1746,14 +2002,14 @@ useEffect(() => {
                 <ComposedChart data={profitData} margin={{ top: 12, right: 28, left: 4, bottom: 4 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="m" tick={{ fontSize: 12.5, fill: '#64748B', fontWeight: 600 }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[-3, 5]} tick={{ fontSize: 12, fill: '#64748B' }} tickLine={false} axisLine={false} width={46} tickFormatter={(v) => `${v}M`} />
+<YAxis domain={['auto', 'auto']} tick={{ fontSize: 12, fill: '#64748B' }} tickLine={false} axisLine={false} width={46} tickFormatter={(v) => `${Number(v).toFixed(1)}L`} />
                   {/* Hidden right axis, scaled to the pl series' own range so the
                       Profit/Loss bars read clearly instead of being squashed
                       against the much wider revenue/expense scale. Display-only —
                       the underlying pl values are unchanged. */}
                   <YAxis yAxisId="pl" orientation="right" domain={[(dataMin) => Math.min(0, dataMin - 0.15), (dataMax) => dataMax + 0.2]} hide />
                   <RTooltip content={<ProfitLossTooltip />} cursor={{ fill: 'rgba(30, 64, 175, .07)' }} />
-                  <Bar yAxisId="pl" dataKey="pl" name="Profit/Loss" fillOpacity={0.88} radius={[8, 8, 0, 0]} barSize={30}
+               <Bar dataKey="pl" name="Profit/Loss" fillOpacity={0.88} radius={[8, 8, 0, 0]} barSize={30}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                   >
                     {profitData.map((d, i) => (
@@ -1805,7 +2061,7 @@ useEffect(() => {
        */}
       {moduleActive('attendance') && (
         canSeeCard('attendance')
-          ? <AttendanceSection openModule={openModule} studentAtt={studentAttLive} staffAtt={staffAttLive} />
+          ? <AttendanceSection openModule={openModule} studentAtt={studentAttLive} staffAtt={staffAttLive} branchId={finBranchId} />
           : <LockedCard title="Today's Attendance" icon="fa-clipboard-check" />
       )}
 
@@ -1821,7 +2077,7 @@ useEffect(() => {
             <div className="dash-sec-title"><i className="fa-solid fa-book-open-reader" aria-hidden="true"></i> Lesson Plan Analytics <span className="fa-live-badge"><span className="fa-live-dot" /> Live</span></div>
             <select
               className="adm-select"
-              value={lpClass}
+value={lpClass} style={{ display: 'none' }}
               onChange={(e) => setLpClass(e.target.value)}
               aria-label="Select class"
             >
@@ -1845,7 +2101,7 @@ useEffect(() => {
                   </defs>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
                   <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[0, 20]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                <YAxis domain={[0, 'auto']} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
                   <Area type="monotone" dataKey="classwork" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }}
                     isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
@@ -1903,7 +2159,7 @@ useEffect(() => {
               <span className="adm-h-meta">Total: <b><AnimatedNumber key={paperSecReplay.replayKey} value={paperTotal} duration={CHART_ANIM_MS} /> Papers</b></span>
               <select
                 className="adm-select"
-                value={paperClass}
+            value={paperClass} style={{ display: 'none' }}
                 onChange={(e) => setPaperClass(e.target.value)}
                 aria-label="Select class"
               >
@@ -1982,7 +2238,7 @@ useEffect(() => {
 
           <div className="adm-info-banner">
             <i className="fa-solid fa-calendar" aria-hidden="true"></i>
-            <span>Showing birthdays for May 2026</span>
+            <span>Showing birthdays for {actMonthLabel}</span>
           </div>
 
           <div className="adm-bday-row">
@@ -1998,7 +2254,7 @@ useEffect(() => {
                     const isTomorrow = b.dob === TODAY_DAY + 1;
                     return (
                       <div
-                        key={b.name}
+                      key={`${b.name}-${b.date}`}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
                         <div className="adm-bday-av">{initials(b.name)}</div>
@@ -2074,7 +2330,7 @@ useEffect(() => {
         </div>
         <div className="adm-info-banner">
           <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-          <span>School events, exams, and important dates for this month.</span>
+          <span>School events, exams, and important dates for this month and upcoming.</span>
         </div>
 
         {monthActs === null ? (
@@ -2128,9 +2384,8 @@ useEffect(() => {
         )}
       </div>
       )}
-      </div>
     </>
-);
+  );
 }
 
 
@@ -2138,7 +2393,7 @@ useEffect(() => {
    Renders the 2-card row with the same `.fee-card` chrome used by
    the Fee Analytics section. Field names match the Attendance
    module schema (present / absent / leave / total / percentage). */
-function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
+function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {}, branchId = 1 }) {
   /* Period filter — same three modes as Financial Overview / OneLink
      Payments below (Day / Month / Custom Range). The underlying present /
      absent / leave figures are a single daily snapshot (mock/attendance.js
@@ -2148,9 +2403,9 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
      already did; it does not fabricate different numbers per period. */
   const [attSeg, setAttSeg]     = useState('day'); // 'day' | 'month' | 'range'
   const [attDate, setAttDate]   = useState(() => new Date().toISOString().slice(0, 10));
-  const [attMonth, setAttMonth] = useState('2026-05');
-  const [attFrom, setAttFrom]   = useState('2026-05-01');
-  const [attTo, setAttTo]       = useState('2026-05-31');
+  const [attMonth, setAttMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [attFrom, setAttFrom]   =useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
+  const [attTo, setAttTo]       =useState(() => new Date().toISOString().slice(0, 10));
 
   const attDateLabel = new Date(`${attDate}T00:00:00`).toLocaleDateString('en-PK', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -2159,6 +2414,92 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
   const attPeriodLabel = attSeg === 'day' ? attDateLabel
     : attSeg === 'month' ? `${FIN_MONTH_NAMES[Number(attMonthMM) - 1]} ${attMonthYY}`
     : `${attFrom} to ${attTo}`;
+
+/* Selected Day / Month / Range ke liye har din ki student attendance la kar jor do. */
+  const [stuPeriod, setStuPeriod] = useState(null);
+  useEffect(() => {
+    const todayStr = ymdLocal(new Date());
+    let from;
+    let to;
+    if (attSeg === 'day') { from = attDate; to = attDate; }
+    else if (attSeg === 'month') {
+      const [yy, mm] = attMonth.split('-').map(Number);
+      from = `${attMonth}-01`;
+      to = `${attMonth}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
+    } else { from = attFrom; to = attTo; }
+    if (to > todayStr) to = todayStr;
+    if (!from || !to || from > to) { setStuPeriod({ total: 0, present: 0, absent: 0, leave: 0, percentage: 0 }); return undefined; }
+    let alive = true;
+    setStuPeriod(null);
+runLimited(attDatesBetween(from, to), 4, (d) => fetchStudentAttDay(branchId, d)).then((lists) => {      if (!alive) return;
+      const c = { present: 0, absent: 0, leave: 0 };
+      lists.forEach((rows) => {
+        const perStudent = new Map();
+(rows || []).forEach((r) => perStudent.set(
+          r.StudentID ?? r.studentID ?? r.studentId ?? r.StudentId,
+          r.Status ?? r.status ?? r.AttendanceStatus ?? r.attendanceStatus ?? r.AttStatus,
+        ));
+        perStudent.forEach((s) => { const k = normAttStatus(s); if (k) c[k] += 1; });
+      });
+      const total = c.present + c.absent + c.leave;
+console.log('[Attendance] DONE', { ...c, total, days: lists.length, failed: lists.filter((l) => l === null).length });
+      setStuPeriod({ ...c, total, failed: lists.filter((l) => l === null).length, percentage: total > 0 ? Math.round((c.present / total) * 100) : 0 });
+    });
+    return () => { alive = false; };
+  }, [attSeg, attDate, attMonth, attFrom, attTo, branchId]);
+
+  /* Staff — Day / Month / Range ke har din ki staff attendance jor do (student jaisa). */
+  const [staffPeriod, setStaffPeriod] = useState(null);
+  const staffReqRef = useRef(0);
+  useEffect(() => {
+    const todayStr = ymdLocal(new Date());
+    let from;
+    let to;
+    if (attSeg === 'day') { from = attDate; to = attDate; }
+    else if (attSeg === 'month') {
+      const [yy, mm] = attMonth.split('-').map(Number);
+      from = `${attMonth}-01`;
+      to = `${attMonth}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
+    } else { from = attFrom; to = attTo; }
+    if (to > todayStr) to = todayStr;
+
+    const empty = { total: 0, present: 0, absent: 0, leave: 0, percentage: 0, failed: 0 };
+    if (!from || !to || from > to) { setStaffPeriod(empty); return; }
+
+    const myReq = ++staffReqRef.current;
+    setStaffPeriod(null);
+    (async () => {
+      try {
+        const lists = await runLimited(attDatesBetween(from, to), 6, (d) => fetchStaffAttDayCached(branchId, d));
+        const c = { present: 0, absent: 0, leave: 0 };
+        lists.forEach((rows) => {
+          const perStaff = new Map();
+          (rows || []).forEach((r) => perStaff.set(staffIdOf(r), staffStatusOf(r)));
+          perStaff.forEach((s) => { const k = normAttStatus(s); if (k) c[k] += 1; });
+        });
+        const total = c.present + c.absent + c.leave;
+        const result = { ...c, total, failed: lists.filter((l) => l === null).length, percentage: total > 0 ? Math.round((c.present / total) * 100) : 0 };
+        console.log('[StaffAtt] DONE', result);
+        if (myReq === staffReqRef.current) setStaffPeriod(result);
+      } catch (e) {
+        console.error('[StaffAtt] calc error', e);
+        if (myReq === staffReqRef.current) setStaffPeriod(empty);
+      }
+    })();
+  }, [attSeg, attDate, attMonth, attFrom, attTo, branchId]);
+
+  const lastStaffRef = useRef(null);
+  if (staffPeriod && staffPeriod.total > 0) lastStaffRef.current = staffPeriod;
+  const isTodayStaff = attSeg === 'day' && attDate === ymdLocal(new Date());
+  const staffAttData = (staffPeriod && staffPeriod.total > 0) ? staffPeriod
+    : (isTodayStaff && Number(staffAtt.total) > 0) ? staffAtt
+    : (staffPeriod || lastStaffRef.current || { total: 0, present: 0, absent: 0, leave: 0, percentage: 0 });
+  const lastStuRef = useRef(null);
+  if (stuPeriod && stuPeriod.total > 0) lastStuRef.current = stuPeriod;
+  const isTodayDay = attSeg === 'day' && attDate === ymdLocal(new Date());
+  const studentAttData = (stuPeriod && stuPeriod.total > 0) ? stuPeriod
+    : (isTodayDay && Number(studentAtt.total) > 0) ? studentAtt
+    : (stuPeriod || lastStuRef.current || { total: 0, present: 0, absent: 0, leave: 0, percentage: 0 });
 
   /* Status colour ladder per spec: >=90 green · >=75 amber · else red */
   const pctColor = (p) => (p >= 90 ? '#16A34A' : p >= 75 ? '#D97706' : '#DC2626');
@@ -2178,8 +2519,8 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
         </div>
       </div>
 
-      <div className="ol-controls" style={{ marginBottom: 14 }}>
-        <div className="adm-seg" role="tablist" aria-label="Attendance period filter">
+<div className="ol-controls"style={{ marginBottom: 14 }}>
+          <div className="adm-seg" role="tablist" aria-label="Attendance period filter">
           <button type="button" className={`adm-seg-btn${attSeg === 'day' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'day'} onClick={() => setAttSeg('day')}>Day</button>
           <button type="button" className={`adm-seg-btn${attSeg === 'month' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'month'} onClick={() => setAttSeg('month')}>Month</button>
           <button type="button" className={`adm-seg-btn${attSeg === 'range' ? ' on' : ''}`} role="tab" aria-selected={attSeg === 'range'} onClick={() => setAttSeg('range')}>Custom Range</button>
@@ -2200,7 +2541,7 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
         {attSeg === 'month' && (
           <label className="fin-summary-month">
             <span className="fin-summary-month-lbl">Month</span>
-            <input type="month" className="fin-summary-month-input" value={attMonth} min="2026-01" max="2026-05" onChange={(e) => setAttMonth(e.target.value)} aria-label="Select month for attendance" />
+            <input type="month" className="fin-summary-month-input" value={attMonth} min="2024-01" max={new Date().toISOString().slice(0, 7)} onChange={(e) => setAttMonth(e.target.value)} aria-label="Select month for attendance" />
           </label>
         )}
         {attSeg === 'range' && (
@@ -2218,16 +2559,22 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
         <span className="adm-h-meta">{attPeriodLabel}</span>
       </div>
 
+    {stuPeriod?.failed > 0 && (
+        <div className="adm-info-banner">
+          <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+          <span>{stuPeriod.failed} din ka data load nahi hua — numbers adhoore ho sakte hain.</span>
+        </div>
+      )}
       <div className="att-grid">
         {/* Student card */}
         <AttendanceCard
           icon="fa-user-graduate"
           tone="brand"
-          title={`Student Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
-          data={studentAtt}
+title={`Student Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}${stuPeriod === null ? ' (Loading…)' : ''}`}  data={studentAttData}
+          loading={stuPeriod === null}
           unitSingular="student"
           unitPlural="students"
-          unitSuffix="enrolled"
+unitSuffix="marked"
           pctColor={pctColor}
           pctTone={pctTone}
         />
@@ -2235,8 +2582,8 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
         <AttendanceCard
           icon="fa-chalkboard-user"
           tone="purple"
-          title={`Staff Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
-          data={staffAtt}
+title={`Staff Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}${staffPeriod === null ? ' (Loading…)' : ''}`}    data={staffAttData}
+          loading={staffPeriod === null}
           unitSingular="staff member"
           unitPlural="staff members"
           unitSuffix=""
@@ -2248,13 +2595,11 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {} }) {
   );
 }
 
-function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, unitSuffix, pctColor, pctTone }) {
-  const pct = data.percentage;
+function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, unitSuffix, pctColor, pctTone, loading = false }) {  const pct = data.percentage;
   const color = pctColor(pct);
   const barReplay = useScrollReplay();
   return (
-    <div className={`stat-card fee-card att-card att-card--${tone}`} ref={barReplay.ref}>
-      <div className="fc-header">
+<div className={`stat-card fee-card att-card att-card--${tone}`} ref={barReplay.ref} style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .2s' }}>      <div className="fc-header">
         <div className="fc-icon-chip">
           <i className={`fa-solid ${icon}`} aria-hidden="true"></i>
         </div>
@@ -2263,9 +2608,11 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
 
       {/* Hero percentage in the status colour */}
       <div className="att-pct" style={{ color }}>
-        <AnimatedNumber key={barReplay.replayKey} value={pct} duration={CHART_ANIM_MS} /><span className="att-pct-sym">%</span>
-        <span className={`att-pct-tag att-pct-tag--${pctTone(pct)}`}>
-          {pct >= 90 ? 'Excellent' : pct >= 75 ? 'Watch' : 'Critical'}
+{loading
+          ? <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 26 }} aria-label="Loading" />
+          : <><AnimatedNumber key={barReplay.replayKey} value={pct} duration={CHART_ANIM_MS} /><span className="att-pct-sym">%</span></>}
+        <span className={`att-pct-tag att-pct-tag--${(data.present + data.absent + data.leave) === 0 ? 'amber' : pctTone(pct)}`}>
+{(data.present + data.absent + data.leave) === 0 ? 'Not Marked' : pct >= 90 ? 'Excellent' : pct >= 75 ? 'Watch' : 'Critical'}
         </span>
       </div>
 
@@ -2334,8 +2681,8 @@ function OneLinkPaymentSection({ openModule, toast }) {
   const kpiReplay = useScrollReplay();
 
   const [seg, setSeg]     = useState('month');
-  const [month, setMonth] = useState('2026-05');
-  const [from, setFrom]   = useState('2026-05-01');
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [from, setFrom]   = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
   const [to, setTo]       = useState('2026-05-31');
   const today = new Date().toISOString().slice(0, 10);
   const [single, setSingle] = useState(today);
@@ -2737,7 +3084,7 @@ function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 
             />
           </div>
           <div className="adm-tc-bar-meta">
-            <span><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i> +<AnimatedNumber key={replay.replayKey} value={data.newThisMonth} duration={CHART_ANIM_MS} /> this month</span>
+{data.newThisMonth != null ? <span><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i> +<AnimatedNumber key={replay.replayKey} value={data.newThisMonth} duration={CHART_ANIM_MS} /> this month</span> : <span />}
             <span className="adm-tc-bar-pct"><AnimatedNumber key={replay.replayKey} value={data.pct} suffix="% adopted" duration={CHART_ANIM_MS} /></span>
           </div>
         </div>

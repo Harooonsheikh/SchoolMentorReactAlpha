@@ -18,6 +18,9 @@ import { INITIAL_USERS, INITIAL_ROLES } from '../pages/UserPermissions/permissio
    API surface (usePermissions):
      ready        — permissions load ho chuki hain
      fullAccess   — sab allowed (School Head / uncovered / fail-open)
+     failOpen     — fullAccess sirf is liye laga ke permissions na mili (khaali/
+                    error/no userId); School Head/chain par false. Sensitive
+                    screens isay dekh kar strict reh sakti hain.
      isSchoolHead
      readOnly     — chain/network account: har screen dikhti hai, magar sirf
                     View / Download / Print chalte hain (koi tabdeeli nahi)
@@ -51,10 +54,18 @@ const GATEABLE_MODULES = new Set([
   /* Mentor AI bhi registry me nahi, magar user permission se milta hai —
      response me na ho to access nahi (warna har user ko dikh jata). */
   'mentor ai',
+  /* E-Tube / Chat / Notifications bhi MODULE_REGISTRY me nahi (mobile-app
+     features), magar ab User Permissions se grantable + enforced hain: grant
+     na ho to sidebar me nahi aate. Labels wahi jo MODULE_TREE / permission API
+     bhejti hai (normalised). Mobile-app ke apne flags (ChatType/eTube/MentorAI)
+     ab bhi upar se lagte hain — dono allow karein tabhi dikhta hai. */
+  'e-tube',
+  'chat',
+  'notifications',
 ]);
 
 const FULL_ACCESS_VALUE = {
-  ready: true, fullAccess: true, isSchoolHead: false, readOnly: false,
+  ready: true, fullAccess: true, failOpen: false, isSchoolHead: false, readOnly: false,
   can: () => true, canScreen: () => true, canModule: () => true,
 };
 
@@ -79,6 +90,12 @@ export function PermissionsProvider({ children }) {
   const [state, setState] = useState(() => ({
     ready: isSchoolHead || isViewOnlyAccount(),        // School Head / chain → foran ready (no fetch)
     fullAccess: isSchoolHead || isViewOnlyAccount(),   // dono ko har screen dikhti hai
+    /* failOpen = fullAccess jo kisi hard-identity (School Head / chain) ki wajah
+       se NAHI, balke permissions na mil paane (khaali / error / no userId) ki
+       wajah se laga. Aise soorat me sensitive screens (jaise Approvals ka review
+       queue) ko strict rakhte hain — dekhein usage. School Head / chain par ye
+       false rehta hai (unka full access asli hai). */
+    failOpen: false,
     accessible: new Set(),         // `menu||sub||action` jinki isAccessable true
     screens: new Set(),            // `menu||sub` jinme koi action accessible
     modules: new Set(),            // menu jinme koi action accessible
@@ -93,7 +110,7 @@ export function PermissionsProvider({ children }) {
     const branchId = sessionStorage.getItem('branchID') || '1';
     const userId = sessionStorage.getItem('UserID') || '';
     const token = sessionStorage.getItem('token');
-    if (!userId) { setState((s) => ({ ...s, ready: true, fullAccess: true })); return undefined; }
+    if (!userId) { setState((s) => ({ ...s, ready: true, fullAccess: true, failOpen: true })); return undefined; }
 
     fetch(buildUrl(`/get-user-menu-permissions/${branchId}/${userId}`), {
       method: 'GET',
@@ -104,8 +121,17 @@ export function PermissionsProvider({ children }) {
         if (!alive) return;
         const perms = json?.data?.permissions;
         if (!Array.isArray(perms) || !perms.length) {
-          // Koi permission data nahi → fail-open (app usable rahe)
-          setState((s) => ({ ...s, ready: true, fullAccess: true }));
+          /* Request KAMYAB hui magar koi granted row nahi — matlab is user ko
+             koi permission di hi nahi gayi (ya sab uncheck karke save ki gayi).
+             Ye fail-open NAHI: aise user ko koi bhi gateable module (Approvals
+             waghaira) nazar nahi aana chahiye. Is liye governed-empty set karte
+             hain — canModule har registry module par false dega.
+             (Asli network/parse error alag se neeche .catch me fail-open rehta
+             hai, taake aarzi kharabi par koi lock-out na ho.) */
+          setState({
+            ready: true, fullAccess: false, failOpen: false,
+            accessible: new Set(), screens: new Set(), modules: new Set(), knownModules: new Set(),
+          });
           return;
         }
         const accessible = new Set();
@@ -123,17 +149,17 @@ export function PermissionsProvider({ children }) {
             modules.add(m);
           }
         });
-        setState({ ready: true, fullAccess: false, accessible, screens, modules, knownModules });
+        setState({ ready: true, fullAccess: false, failOpen: false, accessible, screens, modules, knownModules });
       })
       .catch((err) => {
         console.error('Could not load user permissions:', err);
-        if (alive) setState((s) => ({ ...s, ready: true, fullAccess: true })); // fail-open
+        if (alive) setState((s) => ({ ...s, ready: true, fullAccess: true, failOpen: true })); // fail-open
       });
     return () => { alive = false; };
   }, [isSchoolHead, readOnly]);
 
   const value = useMemo(() => {
-    const { fullAccess, accessible, screens, modules, knownModules, ready } = state;
+    const { fullAccess, failOpen, accessible, screens, modules, knownModules, ready } = state;
     const can = (menu, sub, action) => {
       /* Chain account: sirf dekhna, chhapna aur download — koi tabdeeli nahi.
          Ye check fullAccess se PEHLE lagta hai, warna fullAccess ki wajah se
@@ -141,7 +167,13 @@ export function PermissionsProvider({ children }) {
       if (readOnly) return VIEW_ACTIONS.has(norm(action));
       if (fullAccess) return true;
       const m = norm(menu);
-      if (!knownModules.has(m)) return true;         // module governed nahi → allow
+      /* Registry (gateable) module → sirf wahi action allowed jo WAQAI granted
+         hai — chahe response me is module ki koi row aayi ho ya na (governed-
+         empty). Isse canModule ke sath poori consistency: jo module grant hi
+         nahi, uski koi screen/action bhi allow nahi (warna action-level yahan
+         fail-open ho kar sidebar-gating ka faida khatam kar deta). */
+      if (GATEABLE_MODULES.has(m)) return accessible.has(`${m}||${norm(sub)}||${norm(action)}`);
+      if (!knownModules.has(m)) return true;         // truly uncovered/legacy → allow
       return accessible.has(`${m}||${norm(sub)}||${norm(action)}`);
     };
     /* Chain wale school ko har screen/module DIKHTA hai — rok sirf actions par
@@ -150,6 +182,8 @@ export function PermissionsProvider({ children }) {
     const canScreen = (menu, sub) => {
       if (fullAccess || readOnly) return true;
       const m = norm(menu);
+      /* canModule/can jaisa hi — registry module par sirf granted screen allowed. */
+      if (GATEABLE_MODULES.has(m)) return screens.has(`${m}||${norm(sub)}`);
       if (!knownModules.has(m)) return true;
       return screens.has(`${m}||${norm(sub)}`);
     };
@@ -162,7 +196,7 @@ export function PermissionsProvider({ children }) {
       if (!knownModules.has(m)) return true;          // truly uncovered → allow (legacy safety)
       return modules.has(m);
     };
-    return { ready, fullAccess, isSchoolHead, readOnly, can, canScreen, canModule };
+    return { ready, fullAccess, failOpen, isSchoolHead, readOnly, can, canScreen, canModule };
   }, [state, isSchoolHead, readOnly]);
 
   return (
