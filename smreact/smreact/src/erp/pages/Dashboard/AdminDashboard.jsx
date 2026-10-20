@@ -203,11 +203,88 @@ const normAttStatus = (s) => {
   if (v === '3' || v === 'leave' || v === 'l') return 'leave';
   return null;
 };
-const fetchStudentAttDay = (branchId, date) => fetch(ATT_API_URL, {
-  method: 'POST',
-  headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${getAuthToken()}` },
-  body: JSON.stringify({ id: 0, branchID: branchId, studentID: 0, sessionID: getAttSessionId(), classID: 0, sectionID: 0, attendanceDate: date, status: '', platform: 'ERP', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0 }),
-}).then((r) => r.json()).then((j) => (Array.isArray(j?.data) ? j.data : [])).catch(() => []);
+const fetchStudentAttDay = async (branchId, date, tries = 2) => {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+ const r = await fetch(ATT_API_URL, {
+        signal: AbortSignal.timeout(20000),
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({ id: 0, branchID: branchId, studentID: 0, sessionID: getAttSessionId(), classID: 0, sectionID: 0, attendanceDate: date, status: '', platform: 'ERP', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0 }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const arr = Array.isArray(j?.data) ? j.data
+        : Array.isArray(j?.data?.data) ? j.data.data
+        : Array.isArray(j) ? j : [];
+      if (arr.length) {
+        const statusCount = {};
+        arr.forEach((r) => {
+          const s = JSON.stringify(r.Status ?? r.status ?? r.AttendanceStatus ?? r.attendanceStatus ?? r.StatusID ?? r.AttendanceStatusID ?? '(none)');
+          statusCount[s] = (statusCount[s] || 0) + 1;
+        });
+        console.log('[Attendance]', date, '\nKEYS:', Object.keys(arr[0]).join(', '), '\nSAMPLE:', JSON.stringify(arr[0]), '\nSTATUS VALUES:', JSON.stringify(statusCount));
+      }      return arr;
+    } catch (e) {
+      if (i === tries - 1) { console.warn('[Attendance] failed for', date, e); return null; }
+    }
+  }
+  return null;
+};
+/* Purane din ka data cache — wahi month/din dobara chunein to foran aaye. Aaj ka din cache nahi hota (attendance badal sakti hai). */
+const attDayCache = new Map();
+const fetchStudentAttDayCached = async (branchId, date) => {
+  const key = `${branchId}|${date}`;
+  if (attDayCache.has(key)) return attDayCache.get(key);
+  const rows = await fetchStudentAttDay(branchId, date);
+  if (rows && date !== ymdLocal(new Date())) attDayCache.set(key, rows);
+  return rows;
+};
+/* ─── Staff attendance (student jaisa hi) ───
+   ⚠️ URL + body Network tab se confirm karein. */
+const STAFF_ATT_API_URL = 'https://erp.schoolmentor.ai/api/staff-attendance';
+const fetchStaffAttDay = async (branchId, date, tries = 2) => {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const r = await fetch(STAFF_ATT_API_URL, {
+        signal: AbortSignal.timeout(20000),
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({ id: 0, branchID: branchId, employeeID: 0, sessionID: getAttSessionId(), attendanceDate: date, status: '', platform: 'ERP', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0 }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const arr = Array.isArray(j?.data) ? j.data
+        : Array.isArray(j?.data?.data) ? j.data.data
+        : Array.isArray(j) ? j : [];
+      if (date === ymdLocal(new Date())) console.log('[StaffAtt]', date, 'rows:', arr.length, 'SAMPLE:', JSON.stringify(arr[0] || null), 'raw:', j);
+      return arr;
+    } catch (e) {
+      if (i === tries - 1) { console.warn('[StaffAtt] failed for', date, e); return null; }
+    }
+  }
+  return null;
+};
+const staffDayCache = new Map();
+const fetchStaffAttDayCached = async (branchId, date) => {
+  const key = `${branchId}|${date}`;
+  if (staffDayCache.has(key)) return staffDayCache.get(key);
+  const rows = await fetchStaffAttDay(branchId, date);
+  if (rows && date !== ymdLocal(new Date())) staffDayCache.set(key, rows);
+  return rows;
+};
+const staffIdOf = (r) => r.EmployeeID ?? r.employeeID ?? r.EmployeeId ?? r.EmpID ?? r.StaffID ?? r.staffID ?? r.ID;
+const staffStatusOf = (r) => r.Status ?? r.status ?? r.AttendanceStatus ?? r.attendanceStatus;
+/* Ek waqt mein sirf `limit` requests */
+const runLimited = async (items, limit, fn) => {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i]); }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+};
 const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const attDatesBetween = (from, to) => {
   const out = [];
@@ -845,7 +922,11 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
     let alive = true;
     setFinApi(null);
     dashboardService.getDashboard(m, y)
-      .then((d) => { if (alive) setFinApi((d && d.FinancialOverview) || {}); })
+    .then((d) => {
+        const fo = d?.FinancialOverview || d?.data?.FinancialOverview || {};
+        console.log('[Fin] month', m, y, fo);
+        if (alive) setFinApi(fo);
+      })
       .catch(() => { if (alive) setFinApi({}); });
     return () => { alive = false; };
   }, [financeSeg, financeMonth]);
@@ -926,6 +1007,8 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
     const pl = (src.NetProfitLoss != null) ? Number(src.NetProfitLoss) : (income - expense);
     return { label: `${FIN_MONTH_NAMES[m - 1]} ${y}`, income, expense, pl };
   }, [financeSeg, finApi, finRangeRows, finDateTotals, financeMonth, financeFrom, financeTo, financeDateFrom, financeDateTo, financeSingle]);
+  const finLoading = (financeSeg === 'range' ? finRangeRows : (financeSeg === 'dates' || financeSeg === 'single') ? finDateTotals : finApi) === null;
+  const finSpinner = <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 22 }} aria-label="Loading" />;
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
@@ -953,9 +1036,20 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
     const now = new Date();
     const m = revenueYear === now.getFullYear() ? now.getMonth() + 1 : 12;
     let alive = true;
-    dashboardService.getDashboard(m, revenueYear)
-      .then((d) => { if (alive) setPlTrend(Array.isArray(d?.ProfitLossTrend) ? d.ProfitLossTrend : []); })
-      .catch(() => { if (alive) setPlTrend([]); });
+    /* ProfitLossTrend sirf 3 mahine deta hai → Mar / Jun / Sep / Dec (ya current month) tak ke calls se poora saal */
+    const ends = [3, 6, 9, 12].filter((x) => x < m).concat(m);
+    setPlTrend(null);
+    Promise.all(ends.map((em) => dashboardService.getDashboard(em, revenueYear)
+      .then((d) => { const t = d?.ProfitLossTrend || d?.data?.ProfitLossTrend; return Array.isArray(t) ? t : []; })
+      .catch(() => [])))
+      .then((lists) => {
+        if (!alive) return;
+        const byMonth = new Map();
+        lists.flat()
+          .filter((r) => Number(r.Month) >= 1 && Number(r.Month) <= m)
+          .forEach((r) => byMonth.set(Number(r.Month), r));
+        setPlTrend([...byMonth.values()]);
+      });
     return () => { alive = false; };
   }, [revenueYear]);
   const profitData = useMemo(() => {
@@ -1742,10 +1836,17 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
-            <select
+                      <select
               className="adm-select"
               value={revenueYear}
-              onChange={(e) => setRevenueYear(Number(e.target.value))}
+              onChange={(e) => {
+                const y = Number(e.target.value);
+                setRevenueYear(y);
+                const now = new Date();
+                const mm = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+                setFinanceSeg('month');
+                setFinanceMonth(`${y}-${String(mm).padStart(2, '0')}`);
+              }}
               aria-label="Select year"
             >
               <option value={2026}>2026</option>
@@ -1824,14 +1925,14 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
               </div>
             </div>
 
-            <div className="fin-summary-grid" ref={financeCardsReplay.ref}>
+          <div className="fin-summary-grid" ref={financeCardsReplay.ref} style={{ opacity: finLoading ? 0.6 : 1, transition: 'opacity .2s' }}>
               <div className="fee-card fa-card fc-tone--red fc-bordered fin-summary-sub">
                 <div className="fc-header">
                   <div className="fc-icon-chip"><i className="fa-solid fa-arrow-trend-down" aria-hidden="true"></i></div>
                   <div className="fc-title fc-title--red">Overall Expenses</div>
                 </div>
                 <div className="fc-amount fc-amount--red fa-amount--lg">
-                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.expense} duration={CHART_ANIM_MS} />
+{finLoading ? finSpinner : <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.expense} duration={CHART_ANIM_MS} />}
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -1845,7 +1946,7 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
                   <div className="fc-title">Overall Income</div>
                 </div>
                 <div className="fc-amount fc-amount--green fa-amount--lg">
-                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.income} duration={CHART_ANIM_MS} />
+{finLoading ? finSpinner : <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={financeSummary.income} duration={CHART_ANIM_MS} />}
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -1861,8 +1962,8 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
                   <div className={`fc-title${financeSummary.pl < 0 ? ' fc-title--red' : ''}`}>Net Profit / Loss</div>
                 </div>
                 <div className={`fc-amount fa-amount--lg ${financeSummary.pl >= 0 ? 'fc-amount--green' : 'fc-amount--red'}`}>
-                  {financeSummary.pl >= 0 ? '+' : '−'}
-                  <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={Math.abs(financeSummary.pl)} duration={CHART_ANIM_MS} />
+                 {!finLoading && (financeSummary.pl >= 0 ? '+' : '−')}
+{finLoading ? finSpinner : <AnimatedNumber key={financeCardsReplay.replayKey} prefix="PKR " value={Math.abs(financeSummary.pl)} duration={CHART_ANIM_MS} />}
                 </div>
                 <div className="fc-support">
                   <i className="fa-solid fa-calendar" aria-hidden="true"></i>
@@ -2330,20 +2431,75 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {}, branchI
     if (!from || !to || from > to) { setStuPeriod({ total: 0, present: 0, absent: 0, leave: 0, percentage: 0 }); return undefined; }
     let alive = true;
     setStuPeriod(null);
-    Promise.all(attDatesBetween(from, to).map((d) => fetchStudentAttDay(branchId, d))).then((lists) => {
-      if (!alive) return;
+runLimited(attDatesBetween(from, to), 4, (d) => fetchStudentAttDay(branchId, d)).then((lists) => {      if (!alive) return;
       const c = { present: 0, absent: 0, leave: 0 };
       lists.forEach((rows) => {
         const perStudent = new Map();
-        rows.forEach((r) => perStudent.set(r.StudentID, r.Status));
+(rows || []).forEach((r) => perStudent.set(
+          r.StudentID ?? r.studentID ?? r.studentId ?? r.StudentId,
+          r.Status ?? r.status ?? r.AttendanceStatus ?? r.attendanceStatus ?? r.AttStatus,
+        ));
         perStudent.forEach((s) => { const k = normAttStatus(s); if (k) c[k] += 1; });
       });
       const total = c.present + c.absent + c.leave;
-      setStuPeriod({ ...c, total, percentage: total > 0 ? Math.round((c.present / total) * 100) : 0 });
+console.log('[Attendance] DONE', { ...c, total, days: lists.length, failed: lists.filter((l) => l === null).length });
+      setStuPeriod({ ...c, total, failed: lists.filter((l) => l === null).length, percentage: total > 0 ? Math.round((c.present / total) * 100) : 0 });
     });
     return () => { alive = false; };
   }, [attSeg, attDate, attMonth, attFrom, attTo, branchId]);
-  const studentAttData = stuPeriod || { total: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
+
+  /* Staff — Day / Month / Range ke har din ki staff attendance jor do (student jaisa). */
+  const [staffPeriod, setStaffPeriod] = useState(null);
+  const staffReqRef = useRef(0);
+  useEffect(() => {
+    const todayStr = ymdLocal(new Date());
+    let from;
+    let to;
+    if (attSeg === 'day') { from = attDate; to = attDate; }
+    else if (attSeg === 'month') {
+      const [yy, mm] = attMonth.split('-').map(Number);
+      from = `${attMonth}-01`;
+      to = `${attMonth}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
+    } else { from = attFrom; to = attTo; }
+    if (to > todayStr) to = todayStr;
+
+    const empty = { total: 0, present: 0, absent: 0, leave: 0, percentage: 0, failed: 0 };
+    if (!from || !to || from > to) { setStaffPeriod(empty); return; }
+
+    const myReq = ++staffReqRef.current;
+    setStaffPeriod(null);
+    (async () => {
+      try {
+        const lists = await runLimited(attDatesBetween(from, to), 6, (d) => fetchStaffAttDayCached(branchId, d));
+        const c = { present: 0, absent: 0, leave: 0 };
+        lists.forEach((rows) => {
+          const perStaff = new Map();
+          (rows || []).forEach((r) => perStaff.set(staffIdOf(r), staffStatusOf(r)));
+          perStaff.forEach((s) => { const k = normAttStatus(s); if (k) c[k] += 1; });
+        });
+        const total = c.present + c.absent + c.leave;
+        const result = { ...c, total, failed: lists.filter((l) => l === null).length, percentage: total > 0 ? Math.round((c.present / total) * 100) : 0 };
+        console.log('[StaffAtt] DONE', result);
+        if (myReq === staffReqRef.current) setStaffPeriod(result);
+      } catch (e) {
+        console.error('[StaffAtt] calc error', e);
+        if (myReq === staffReqRef.current) setStaffPeriod(empty);
+      }
+    })();
+  }, [attSeg, attDate, attMonth, attFrom, attTo, branchId]);
+
+  const lastStaffRef = useRef(null);
+  if (staffPeriod && staffPeriod.total > 0) lastStaffRef.current = staffPeriod;
+  const isTodayStaff = attSeg === 'day' && attDate === ymdLocal(new Date());
+  const staffAttData = (staffPeriod && staffPeriod.total > 0) ? staffPeriod
+    : (isTodayStaff && Number(staffAtt.total) > 0) ? staffAtt
+    : (staffPeriod || lastStaffRef.current || { total: 0, present: 0, absent: 0, leave: 0, percentage: 0 });
+  const lastStuRef = useRef(null);
+  if (stuPeriod && stuPeriod.total > 0) lastStuRef.current = stuPeriod;
+  const isTodayDay = attSeg === 'day' && attDate === ymdLocal(new Date());
+  const studentAttData = (stuPeriod && stuPeriod.total > 0) ? stuPeriod
+    : (isTodayDay && Number(studentAtt.total) > 0) ? studentAtt
+    : (stuPeriod || lastStuRef.current || { total: 0, present: 0, absent: 0, leave: 0, percentage: 0 });
 
   /* Status colour ladder per spec: >=90 green · >=75 amber · else red */
   const pctColor = (p) => (p >= 90 ? '#16A34A' : p >= 75 ? '#D97706' : '#DC2626');
@@ -2403,13 +2559,19 @@ function AttendanceSection({ openModule, studentAtt = {}, staffAtt = {}, branchI
         <span className="adm-h-meta">{attPeriodLabel}</span>
       </div>
 
+    {stuPeriod?.failed > 0 && (
+        <div className="adm-info-banner">
+          <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+          <span>{stuPeriod.failed} din ka data load nahi hua — numbers adhoore ho sakte hain.</span>
+        </div>
+      )}
       <div className="att-grid">
         {/* Student card */}
         <AttendanceCard
           icon="fa-user-graduate"
           tone="brand"
-          title={`Student Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}`}
- data={studentAttData}
+title={`Student Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}${stuPeriod === null ? ' (Loading…)' : ''}`}  data={studentAttData}
+          loading={stuPeriod === null}
           unitSingular="student"
           unitPlural="students"
 unitSuffix="marked"
@@ -2420,7 +2582,8 @@ unitSuffix="marked"
         <AttendanceCard
           icon="fa-chalkboard-user"
           tone="purple"
-title="Staff Attendance — Today"          data={staffAtt}
+title={`Staff Attendance — ${attSeg === 'day' ? 'Today' : attSeg === 'month' ? 'This Month' : 'This Period'}${staffPeriod === null ? ' (Loading…)' : ''}`}    data={staffAttData}
+          loading={staffPeriod === null}
           unitSingular="staff member"
           unitPlural="staff members"
           unitSuffix=""
@@ -2432,13 +2595,11 @@ title="Staff Attendance — Today"          data={staffAtt}
   );
 }
 
-function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, unitSuffix, pctColor, pctTone }) {
-  const pct = data.percentage;
+function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, unitSuffix, pctColor, pctTone, loading = false }) {  const pct = data.percentage;
   const color = pctColor(pct);
   const barReplay = useScrollReplay();
   return (
-    <div className={`stat-card fee-card att-card att-card--${tone}`} ref={barReplay.ref}>
-      <div className="fc-header">
+<div className={`stat-card fee-card att-card att-card--${tone}`} ref={barReplay.ref} style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .2s' }}>      <div className="fc-header">
         <div className="fc-icon-chip">
           <i className={`fa-solid ${icon}`} aria-hidden="true"></i>
         </div>
@@ -2447,7 +2608,9 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
 
       {/* Hero percentage in the status colour */}
       <div className="att-pct" style={{ color }}>
-        <AnimatedNumber key={barReplay.replayKey} value={pct} duration={CHART_ANIM_MS} /><span className="att-pct-sym">%</span>
+{loading
+          ? <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 26 }} aria-label="Loading" />
+          : <><AnimatedNumber key={barReplay.replayKey} value={pct} duration={CHART_ANIM_MS} /><span className="att-pct-sym">%</span></>}
         <span className={`att-pct-tag att-pct-tag--${(data.present + data.absent + data.leave) === 0 ? 'amber' : pctTone(pct)}`}>
 {(data.present + data.absent + data.leave) === 0 ? 'Not Marked' : pct >= 90 ? 'Excellent' : pct >= 75 ? 'Watch' : 'Critical'}
         </span>
