@@ -44,6 +44,7 @@
 
 import {
   mockPreschoolLevels, mockPreschoolResultData, mockPRco,
+  mockLearningAreas, mockGradingScale, mockSloStatements, mockPsdFields,
 } from '../mock/preschool';
 import { delay, clone } from './_http';
 import { apiPost, apiGet, getBranchId } from './api';
@@ -82,6 +83,31 @@ let _sloCache = {};      // { [levelId]: { [laId]: [{ id, dbId, text }] } }
 let _psdCache = [];      // [{ id, dbId, label }]
 
 /* ════════════════════════════════════════════════════════════════
+   STATIC DEFAULTS — Result Setup me Learning Areas, Assessment
+   Criteria, SLOs aur PSD fields ki default values HAMESHA dikhti hain,
+   chahe backend pe kuch save ho ya na ho. GET ka data defaults ke
+   upar merge hota hai: jo default naam se backend me mil jaye uski
+   dbId/values use hoti hain; jo na mile wo bina dbId ke dikhta hai
+   (agli "Save Changes" pe insert ho jata hai). Backend me jo extra
+   rows hain (user ne khud add kiye) wo defaults ke baad append hote
+   hain. User ko defaults khud type nahi karne parte.
+   ════════════════════════════════════════════════════════════════ */
+const _norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
+
+/* defaults (order rakhte hue) + saved rows ko naam se merge karta hai. */
+function mergeWithDefaults(saved, defaults, nameOf) {
+  const used = new Set();
+  const out = defaults.map(def => {
+    const hit = saved.find(s => !used.has(s) && _norm(nameOf(s)) === _norm(nameOf(def)));
+    if (!hit) return { ...def };
+    used.add(hit);
+    return { ...def, ...hit, icon: def.icon || hit.icon };
+  });
+  saved.forEach(s => { if (!used.has(s)) out.push(s); });
+  return out;
+}
+
+/* ════════════════════════════════════════════════════════════════
    ✅ 1. Learning Areas — REAL API (preschooling-learningareas-crud)
    ════════════════════════════════════════════════════════════════ */
    /* ════════════════════════════════════════════════════════════════
@@ -95,9 +121,10 @@ export async function getLearningAreas() {
   const res = await apiPost('preschooling-learningareas-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const list = (res.data || []).map(row => ({
+  const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id, name: row.subjectName, icon: 'fa-book',
   }));
+  const list = mergeWithDefaults(saved, mockLearningAreas, x => x.name);
   _laCache = list;
   return clone(list);
 }
@@ -140,11 +167,24 @@ export async function getGradingScale() {
   const res = await apiPost('preschooling-assessmentcriteria-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const list = (res.data || []).map(row => ({
+  const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id,
     label: row.assessmentName, range: row.percentage, color: row.color,
     code: deriveCodeFromLabel(row.assessmentName),
   }));
+  /* 4 fixed slots: pehle label se match, phir bache hue saved rows (rename
+     kiye gaye) unmatched default slots ko order me bharte hain — taake
+     rename ke baad purana default label 5th row ban ke wapas na aaye. */
+  const used = new Set();
+  const slots = mockGradingScale.map(def => {
+    const hit = saved.find(s => !used.has(s) && _norm(s.label) === _norm(def.label));
+    if (hit) used.add(hit);
+    // default label match hua → default code (E/M/A/NY) hi rakho, "EE" na bane
+    return hit ? { ...def, ...hit, code: def.code, range: hit.range || def.range, color: hit.color || def.color } : null;
+  });
+  const rest = saved.filter(s => !used.has(s));
+  const list = slots.map((s, i) => s || (rest.length ? rest.shift() : { ...mockGradingScale[i], id: `grade_${i}` }));
+  list.push(...rest);
   _gradingCache = list;
   return clone(list);
 }
@@ -223,6 +263,18 @@ export async function getSloStatements() {
     if (!nested[levelId][laId]) nested[levelId][laId] = [];
     nested[levelId][laId].push({ id: String(row.id), dbId: row.id, text: row.assessmentName });
   });
+
+  /* Default SLOs har level + learning area me merge karo. mockSloStatements
+     mock LA ids (la_1..) se keyed hain — naam ke zariye merged LA id pe map. */
+  const mockLaName = new Map(mockLearningAreas.map(a => [a.id, a.name]));
+  Object.entries(mockSloStatements).forEach(([levelId, byLa]) => {
+    Object.entries(byLa).forEach(([mockLaId, defs]) => {
+      const laId = laByName.get(norm(mockLaName.get(mockLaId)));
+      if (!laId) return;   // user ne ye default learning area hata diya
+      if (!nested[levelId]) nested[levelId] = {};
+      nested[levelId][laId] = mergeWithDefaults(nested[levelId][laId] || [], defs, s => s.text);
+    });
+  });
   _sloCache = nested;
   return clone(nested);
 }
@@ -296,9 +348,10 @@ export async function getPsdFields() {
   const res = await apiPost('preschooling-personalsocial-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const list = (res.data || []).map(row => ({
+  const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id, label: row.fieldName,
   }));
+  const list = mergeWithDefaults(saved, mockPsdFields, x => x.label);
   _psdCache = list;
   return clone(list);
 }

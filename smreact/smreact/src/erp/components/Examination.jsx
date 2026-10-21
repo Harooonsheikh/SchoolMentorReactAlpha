@@ -1041,11 +1041,9 @@ export default function Examination({ toast = () => { } }) {
   const [rsModalOpen, setRsModalOpen] = useState(false);
   const [rsReportReq, setRsReportReq] = useState(null);      // truthy → picker open
   /* Preschool / Montessori — separate from the Grade 1-12 result state.
-     Preschool in branchon par live hai (toggle + per-class Preschool option +
-     Result Setup tab); baqi branches par sirf Grade 1-12 dikhta hai. Nayi branch
-     yahin add karo. */
-  const PRESCHOOL_BRANCH_IDS = new Set(['1', '15']);
-  const isPreschoolBranch = PRESCHOOL_BRANCH_IDS.has(String(sessionStorage.getItem('branchID') || '').trim());
+     Preschool har branch par live hai (toggle + per-class Preschool option +
+     Result Setup tab). */
+  const isPreschoolBranch = true;
   const [pResultType, setPResultType] = useState('grade');
   const [pRsL2, setPRsL2] = useState('setup');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
@@ -8057,14 +8055,23 @@ export default function Examination({ toast = () => { } }) {
               // se pehle sab kuch yahan save kar do — "Save Changes" button jo karta
               // hai, wahi yahan resave kar dete hain.
               try {
-                await Promise.all([
-                  preschoolService.saveLearningAreas(pLearningAreas, []),
+                // Learning areas pehle (SLOs inke naam pe save hote hain); returned
+                // dbIds state me wapis daalo warna har lock pe defaults dobara insert hote.
+                const savedLAs = await preschoolService.saveLearningAreas(pLearningAreas, []);
+                const [savedGrades, savedPsd, ...savedSlos] = await Promise.all([
                   preschoolService.saveGradingScale(pGradingScale, {}),
                   preschoolService.savePsdFields(pPsdFields, []),
-                  ...pLearningAreas.map(la =>
+                  ...savedLAs.map(la =>
                     preschoolService.saveSloStatements(levelId, la.id, pSlo[levelId]?.[la.id] || [], [])
                   ),
                 ]);
+                setPLearningAreas(savedLAs);
+                setPGradingScale(savedGrades);
+                setPPsdFields(savedPsd);
+                setPSlo(prev => ({
+                  ...prev,
+                  [levelId]: Object.fromEntries(savedLAs.map((la, i) => [la.id, savedSlos[i]])),
+                }));
               } catch (setupErr) {
                 console.error('Could not auto-save preschool result setup:', setupErr);
                 // chahain to yahan toast bhi fire kar sakte hain, warning ke tor par

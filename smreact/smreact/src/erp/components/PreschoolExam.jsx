@@ -393,17 +393,25 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
       return d.filter(x => x.id !== id);
     });
   };
+  const newItem = v => (showIcons ? { id: `la_${Date.now()}`, name: v, icon: 'fa-book' } : { id: `psd_${Date.now()}`, label: v });
   const add = () => {
     const v = newLabel.trim();
-    if (!v) { toast('Enter a name first', 'error'); return; }
-    const item = showIcons ? { id: `la_${Date.now()}`, name: v, icon: 'fa-book' } : { id: `psd_${Date.now()}`, label: v };
-    setDraft(d => [...d, item]);
+    if (!v) { toast(showIcons ? 'Type a learning area name in the box before clicking Add' : 'Type a field name in the box before clicking Add', 'info'); return; }
+    setDraft(d => [...d, newItem(v)]);
     setNewLabel('');
   };
   const save = async () => {
+  /* Add box me likha hua naam (Add dabaye baghair) bhi save me shamil karo. */
+  const pending = newLabel.trim();
+  const list = pending ? [...draft, newItem(pending)] : draft;
+  if (list.some(x => !String((showIcons ? x.name : x.label) || '').trim())) {
+    toast('A row is empty — type a name or remove it before saving', 'error');
+    return;
+  }
   try {
-    const saved = await service(draft, removedDbIds);
+    const saved = await service(list, removedDbIds);
     onSaved(saved);
+    setNewLabel('');
     setRemovedDbIds([]);
     toast('Saved successfully!', 'success');
   } catch (err) {
@@ -563,15 +571,20 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
   };
   const add = () => {
     const v = newText.trim();
-    if (!v) { toast('Enter an assessment statement first', 'error'); return; }
+    if (!v) { toast('Type an assessment statement in the box before clicking Add', 'info'); return; }
     setDraft(d => [...d, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: v }]);
     setNewText('');
   };
     const save = async () => {
   try {
-    const la = pLearningAreas.find(x => x.id === activeId);
-    const fresh = await preschoolService.saveSloStatements(activeLevel, la, draft, levelSlo[activeId] || [], pLearningAreas);
-    onSaved(fresh);
+    const pending = newText.trim();
+    const list = pending ? [...draft, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: pending }] : draft;
+    if (list.some(s => !String(s.text || '').trim())) { toast('A statement is empty — type it or remove it before saving', 'error'); return; }
+    const fresh = await preschoolService.saveSloStatements(activeLevel, activeId, list, removedDbIds);
+    setNewText('');
+    // sirf isi level + learning area ki list badlo, baaqi pSlo waisa hi rahe
+    onSaved(prev => ({ ...prev, [activeLevel]: { ...(prev?.[activeLevel] || {}), [activeId]: fresh } }));
+    setRemovedDbIds([]);
     toast('Assessment points saved!', 'success');
   } catch (err) {
     toast(err.message || 'Save failed, please try again', 'error');
