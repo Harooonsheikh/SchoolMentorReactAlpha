@@ -14238,7 +14238,7 @@ const isLedgerCarryRow = (r) => isAggregateCarryRow(r);
    date me chala jata tha). Ek receive call ke saare heads ek hi waqt save hote hain.
    Negative advance-consumption rows (challanAmount < 0, received −X) cash nahi — skip.
    Installments na hon (purana record) to ek synthetic receipt detail totals se. */
-function ledgerInstallmentReceipts(rec) {
+export function ledgerInstallmentReceipts(rec) {
   if (!rec || !Array.isArray(rec.detailRows)) return [];
   const rows = rec.detailRows.filter(r => !((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)));
   const groups = new Map();

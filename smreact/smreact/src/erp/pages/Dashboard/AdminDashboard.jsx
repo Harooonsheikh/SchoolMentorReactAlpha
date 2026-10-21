@@ -13,7 +13,8 @@ import AppPendingReportModal, { loadAppStatusCounts } from './AppPendingReportMo
 import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvanceAdjustmentReportModal } from './DailyReceivingReport';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
 import { buildDiscountMap } from './feeDashboardExtra';
-import { useLedgerReportData } from '../../components/Fee';
+import { useLedgerReportData, ledgerInstallmentReceipts } from '../../components/Fee';
+import * as feeService from '../../services/feeService';
 import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser } from '../UserPermissions/permissionsData';
 import * as dashboardService from '../../services/dashboardService';
@@ -682,6 +683,68 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
      popups (secondary, behind buttons) until those are ported too. */
   const faLedgerPeriods = useMemo(() => [{ month: feeMonthIdx + 1, year: feeYear }], [feeMonthIdx, feeYear]);
   const { allStudents: faLedger = [] } = useLedgerReportData(faLedgerPeriods);
+
+  /* Fee Received / Discount Given During Receiving REPORTS — is mahine ki ASLI receipts,
+     receiving DATE se (card ke FeeReceived / ReceivingDiscount jaisa), challan chahe kisi
+     bhi mahine ka ho: September ka challan October me receive hua to October ki report me.
+     Is liye pichhle 12 mahine + is mahine ke challans; har receipt ka method, received-by,
+     date, time. Pehle sirf is mahine ke challans aur khaali (—) columns the. */
+  const rcptPeriods = useMemo(() => {
+    const out = [];
+    for (let i = 12; i >= 0; i--) {
+      const d = new Date(feeYear, feeMonthIdx - i, 1);
+      out.push({ month: d.getMonth() + 1, year: d.getFullYear() });
+    }
+    return out;
+  }, [feeMonthIdx, feeYear]);
+  const { allStudents: rcptLedger = [] } = useLedgerReportData(rcptPeriods);
+  const monthReceipts = useMemo(() => {
+    const ym = `${feeYear}-${String(feeMonthIdx + 1).padStart(2, '0')}`;
+    const received = [], discounts = [];
+    const seen = new Set();
+    rcptLedger.forEach(({ c = {}, s = {}, m }) => (m?.recs || []).forEach(rec => {
+      if (rec.id != null) { if (seen.has(rec.id)) return; seen.add(rec.id); }
+      const method = feeService.paymentMethodDisplay(rec.paymentMethod) || 'Cash';
+      ledgerInstallmentReceipts(rec).forEach(p => {
+        if (String(p.date || '').slice(0, 7) !== ym || !p.amount) return;
+        received.push({
+          reg: s.reg, studentName: s.name, cls: c.cls, sec: c.sec,
+          amount: Math.round(p.amount), method, by: p.by || null,
+          date: p.date || '', time: p.time || '',
+        });
+      });
+      (rec.detailRows || []).forEach(r => (r.installments || []).forEach(inst => {
+        const give = Math.max(0, Math.round(+inst.recvDiscount || 0));
+        if (!give) return;
+        const d = String(inst.receivedDate || rec.receivedDate || '').slice(0, 10);
+        if (d.slice(0, 7) !== ym) return;
+        discounts.push({
+          reg: s.reg, studentName: s.name, cls: c.cls, sec: c.sec,
+          head: r.subHead || r.head || '—',
+          original: Math.round(+r.challanAmount || 0),
+          discountGiven: give,
+          finalPayable: Math.max(0, Math.round((+r.challanAmount || 0) - (+r.discount || 0))),
+          by: inst.modifiedBy || inst.createdBy || null,
+          date: d, time: String(inst.modifiedAt || inst.createdAt || '').slice(11, 16),
+        });
+      }));
+    }));
+    const byDate = (a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`);
+    return { received: received.sort(byDate), discounts: discounts.sort(byDate) };
+  }, [rcptLedger, feeMonthIdx, feeYear]);
+  /* User id → naam (Received By / Discount Given By). */
+  const empNamesFor = async (ids) => {
+    const uniq = [...new Set((ids || []).filter(Boolean).map(String))];
+    const pairs = await Promise.all(uniq.map(id =>
+      feeService.getEmployeeNameByLoginUser(id).then(n => [id, n]).catch(() => [id, null])));
+    return Object.fromEntries(pairs);
+  };
+  const fmtTime12 = (t) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(t || ''));
+    if (!m) return t || '';
+    const h = Number(m[1]);
+    return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+  };
   /* Previous Dues = Monthly Fee Defaulter "Total Outstanding" of the PREVIOUS
      month (current month − 1), exactly like Fee → Reports → Monthly Fee
      Defaulters. Fetch that month's ledger separately and use its outstanding
@@ -816,25 +879,42 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
     { label: 'Students Paid in Advance', value: feeExtras.advanceStudentCount,         suffix: '',  icon: 'fa-user-plus',      tone: 'violet' },
   ];
 
-  const downloadFeeReceivedReport = () => {
-    const html = buildFeeReceivedDashboardReportHTML(feeExtras, feeMonthLabel);
+  const downloadFeeReceivedReport = async () => {
+    /* Window pehle kholo (pop-up blocker) — naam aane ke baad likho. */
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    const names = await empNamesFor(monthReceipts.received.map(r => r.by));
+    const receivedRows = monthReceipts.received.map(r => ({
+      ...r,
+      receivedBy: r.by ? (names[String(r.by)] || `User #${r.by}`) : '—',
+      time: fmtTime12(r.time),
+    }));
+    const html = buildFeeReceivedDashboardReportHTML({
+      receivedRows,
+      receivedTotal: feeExtras.receivedTotal || 0,
+      receivedStudentCount: feeExtras.receivedStudentCount || new Set(receivedRows.map(r => r.reg)).size,
+    }, feeMonthLabel);
     w.document.write(html);
     w.document.close();
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     toast('Fee Received Report — sent to print.', 'success');
   };
-  const downloadFeeDiscountReport = () => {
-    /* Sirf RECEIVING-time discount wale students (card ka ReceivedDiscount) — Discount
-       Manager wala challan discount is report me nahi. */
-    const html = buildDiscountGivenDashboardReportHTML({
-      discountRows: feeExtras.receivingDiscountRows || [],
-      discountTotal: feeExtras.receivingDiscountTotal || 0,
-      discountStudentCount: feeExtras.receivingDiscountStudentCount || 0,
-    }, feeMonthLabel);
+  const downloadFeeDiscountReport = async () => {
+    /* Sirf RECEIVING-time discount (card ka ReceivedDiscount) — is mahine ki receiving date
+       se, challan kisi bhi mahine ka ho. Discount Manager wala challan discount nahi. */
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    const names = await empNamesFor(monthReceipts.discounts.map(r => r.by));
+    const discountRows = monthReceipts.discounts.map(r => ({
+      ...r,
+      givenBy: r.by ? (names[String(r.by)] || `User #${r.by}`) : '—',
+      time: fmtTime12(r.time),
+    }));
+    const html = buildDiscountGivenDashboardReportHTML({
+      discountRows,
+      discountTotal: feeExtras.receivingDiscountTotal || discountRows.reduce((a, r) => a + r.discountGiven, 0),
+      discountStudentCount: new Set(discountRows.map(r => r.reg)).size,
+    }, feeMonthLabel);
     w.document.write(html);
     w.document.close();
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
