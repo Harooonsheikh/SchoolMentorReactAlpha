@@ -19,7 +19,13 @@
   shipping to production.
 */
 
-const API_BASE = 'https://alphaapi.schoolmentor.ai/api';
+import { buildUrl } from '../../utils/apiConfig';
+
+/* Base URL baqi app jaisa buildUrl() se — dev me API box, live me app ka APNA
+   origin (erp.schoolmentor.ai/api/…, IIS proxy aage alphaapi ko bhejta hai).
+   Pehle yahan alphaapi hardcoded tha → live par CORS error (alphaapi is
+   origin ke liye Access-Control-Allow-Origin nahi bhejta). */
+const apiUrl = (endpoint) => buildUrl(`/api/${endpoint}`);
 
 // DEV-ONLY fallback — the sample token/branch supplied with this module's
 // API docs. Swap getAuthToken()/getBranchId() for real session lookups.
@@ -58,7 +64,7 @@ export function getBranchId() {
  * errors.
  */
 export async function apiPost(endpoint, payload) {
-  const res = await fetch(`${API_BASE}/${endpoint}`, {
+  const res = await fetch(apiUrl(endpoint), {
     method: 'POST',
     headers: {
       accept: '*/*',
@@ -87,7 +93,7 @@ export async function apiGet(endpoint, params = {}) {
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  const res = await fetch(`${API_BASE}/${endpoint}${qs ? `?${qs}` : ''}`, {
+  const res = await fetch(`${apiUrl(endpoint)}${qs ? `?${qs}` : ''}`, {
     method: 'GET',
     headers: { accept: '*/*', Authorization: `bearer ${getAuthToken()}` },
   });

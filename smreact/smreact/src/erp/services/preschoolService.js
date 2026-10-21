@@ -94,6 +94,18 @@ let _psdCache = [];      // [{ id, dbId, label }]
    ════════════════════════════════════════════════════════════════ */
 const _norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
 
+/* GET calls ke liye: API hit na ho / error / response na aaye to throw mat
+   karo — khali data lautao, taake screen par mock/default values phir bhi
+   dikhti rahen (blank screen ya error na aaye). */
+async function apiGetOrEmpty(endpoint, payload) {
+  try {
+    return await apiPost(endpoint, payload);
+  } catch (err) {
+    console.warn(`[preschool] ${endpoint} failed — showing default data`, err);
+    return { data: null };
+  }
+}
+
 /* defaults (order rakhte hue) + saved rows ko naam se merge karta hai. */
 function mergeWithDefaults(saved, defaults, nameOf) {
   const used = new Set();
@@ -118,7 +130,7 @@ export async function getPreschoolLevels() {
   return clone(mockPreschoolLevels);
 }
 export async function getLearningAreas() {
-  const res = await apiPost('preschooling-learningareas-crud', {
+  const res = await apiGetOrEmpty('preschooling-learningareas-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
   const saved = (res.data || []).map(row => ({
@@ -164,7 +176,7 @@ export async function saveLearningAreas(list, removedDbIds = []) {
    (preschooling-assessmentcriteria-crud)
    ════════════════════════════════════════════════════════════════ */
 export async function getGradingScale() {
-  const res = await apiPost('preschooling-assessmentcriteria-crud', {
+  const res = await apiGetOrEmpty('preschooling-assessmentcriteria-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
   const saved = (res.data || []).map(row => ({
@@ -253,7 +265,7 @@ export async function getSloStatements() {
   Object.entries(PRESCHOOL_API_CLASS).forEach(([lid, cls]) => levelByName.set(norm(cls), lid));
   const laByName = new Map(areas.map(a => [norm(a.name), a.id]));
 
-  const res = await apiPost('preschooling-slos-crud', { id: 0, branchID: getBranchId(), action: 'get' });
+  const res = await apiGetOrEmpty('preschooling-slos-crud', { id: 0, branchID: getBranchId(), action: 'get' });
   const nested = {};
   (res.data || []).forEach(row => {
     const levelId = levelByName.get(norm(row.class));
@@ -345,7 +357,7 @@ export async function copyLevelSlo(fromLevel, toLevel) {
    (preschooling-personalsocial-crud)
    ════════════════════════════════════════════════════════════════ */
 export async function getPsdFields() {
-  const res = await apiPost('preschooling-personalsocial-crud', {
+  const res = await apiGetOrEmpty('preschooling-personalsocial-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
   const saved = (res.data || []).map(row => ({
@@ -432,10 +444,15 @@ const PRCO_FIELD_MAP = [
 let _prcoDbId = 0;
 
 export async function getPRcoState() {
-  const res = await apiPost('preschooling-resultcard-crud', {
+  const res = await apiGetOrEmpty('preschooling-resultcard-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const row = res?.data || {};
+  const row = res?.data;
+  /* API fail / koi saved row nahi → mock toggles (sab ON) dikhao. */
+  if (!row || typeof row !== 'object') {
+    _prcoDbId = 0;
+    return { id: 0, list: clone(mockPRco), reportType: 'monthly' };
+  }
   _prcoDbId = row.id || 0;
 
   const iconByLabel = {
