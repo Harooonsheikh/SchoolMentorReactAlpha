@@ -2321,13 +2321,18 @@ export function buildReceiveInstallmentRequest({
     });
   });
 
+  /* walletId HAR row par bhi (installment-level) — top-level ke saath, taake backend
+     dono jagah se wallet pehchan le. */
+  const walletIdNum = Number(walletId) || 0;
+  rows.forEach(r => { r.walletId = walletIdNum; });
+
   return {
     ledgerId: Number(ledgerId) || 0,
     paymentMethod: paymentMethod || 'Cash',
     receivedDate: String(receivedDate || '').slice(0, 10),
     modifiedBy: Number(modifiedBy) || 0,
     isReceiving: !!isReceiving,
-    walletId: Number(walletId) || 0,
+    walletId: walletIdNum,
     detailRows: rows,
   };
 }
@@ -2343,6 +2348,7 @@ export function buildReceivePaymentInstallmentRequest({
   walletId = 0,
   detailRows = [],
 } = {}) {
+  const walletIdNum = Number(walletId) || 0;
   const rows = (Array.isArray(detailRows) ? detailRows : [])
     .filter(r => r && (Number(r.id) || Number(r.receivedAmount) || Number(r.discount)))
     .map(r => {
@@ -2350,6 +2356,7 @@ export function buildReceivePaymentInstallmentRequest({
         id: Number(r.id) || 0,
         receivedAmount: Math.max(0, Math.round(Number(r.receivedAmount) || 0)),
         discount: Math.max(0, Math.round(Number(r.discount) || 0)),
+        walletId: walletIdNum,
       };
       if (!out.id && (r.head || r.subHead)) {
         out.head = r.head || '';
@@ -2363,7 +2370,7 @@ export function buildReceivePaymentInstallmentRequest({
     receivedDate: String(receivedDate || '').slice(0, 10),
     modifiedBy: Number(modifiedBy) || 0,
     isReceiving: !!isReceiving,
-    walletId: Number(walletId) || 0,
+    walletId: walletIdNum,
     detailRows: rows,
   };
 }
