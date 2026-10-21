@@ -10,7 +10,11 @@ import { APPROVAL_ACTION_META } from '../../mock/approvals';
 const ACTION_DESCRIPTIONS = {
   fee_discount: 'A discount applied to a student’s fee head (flat or percentage) won’t reduce what they owe until a Super Admin approves it.',
   fee_delete_challan: 'Deleting an already-generated fee challan — for one student or a whole class — removes it only after approval, preventing accidental loss of billing records.',
-  fee_heads_update: 'Adding, editing or removing a class’s fee heads (via Update Fee Structure or Copy to All Classes) needs approval before the new structure applies to future challans.',
+  fee_create_challan: 'Generating a fee challan — for one student or a whole class — needs approval before it’s issued.',
+  fee_receive_challan: 'Recording a fee payment against a challan needs approval before it’s marked as received.',
+  fee_clear_receiving: 'Clearing (reversing) a fee receiving needs approval before the payment is removed.',
+  fee_grade_head: 'Adding or changing a fee head for a grade/class needs approval before it applies.',
+  fee_heads_update:'Adding, editing or removing a class’s fee heads (via Update Fee Structure or Copy to All Classes) needs approval before the new structure applies to future challans.',
   accounts_head: 'Adding, editing or deleting an account head (Chart of Accounts) needs approval before it’s saved or removed.',
   accounts_add_entry: 'Adding a new Accounts ledger entry (revenue or expense) needs approval before it’s posted to the books.',
   accounts_edit_entry: 'Editing an existing Accounts ledger entry — amount, date, detail, etc. — requires approval before the change is saved.',

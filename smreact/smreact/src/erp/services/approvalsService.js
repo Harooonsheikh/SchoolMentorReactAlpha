@@ -207,6 +207,11 @@ const ACTION_TO_API = {
   students_mark_inactive:   'markStudentInactive',
   students_discount:        'studentFeeDiscount',
   students_dues_discount:   'duesSettelmentDiscount',
+  fee_create_challan:       'createFeeChallan',
+  fee_receive_challan:      'receiveFeeChallan',
+  fee_clear_receiving:      'clearFeeReceiving',
+  fee_grade_head:           'gradeFeeHead',
+  students_preenroll_admission: 'preEnrollStudent',
 };
 
 /* Every approval switch the backend stores (swagger
@@ -381,7 +386,12 @@ export async function getApprovalSettings() {
   /* Remember every stored flag so a later SAVE can replay the ones this UI
      doesn't expose, instead of letting SAVE's overwrite reset them to false. */
   lastLoadedFlags = {};
-  if (row) ALL_API_FLAGS.forEach((k) => { lastLoadedFlags[k] = boolFlag(pick(row, [k]), false); });
+  if (row) {
+    ALL_API_FLAGS.forEach((k) => { lastLoadedFlags[k] = boolFlag(pick(row, [k]), false); });
+    Object.keys(row).forEach((k) => {
+      if (typeof row[k] === 'boolean' && k !== 'approvalsActive') lastLoadedFlags[k] = row[k];
+    });
+  }
   const settings = row
     ? rowToSettings(row)
     : {
