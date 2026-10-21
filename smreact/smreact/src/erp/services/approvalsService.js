@@ -170,7 +170,10 @@ function mapApiRequest(r) {
     actionType,
     module: meta.module || r.module,
     actionLabel: meta.label || `${r.module} — ${r.requestAction}`,
-    entityId: r.recordID,
+    /* Kuch modules (e.g. HREmployee UPDATE) recordID null bhejte hain — record
+       ki id sirf detailsXml ke <ID> me hoti hai. Wahan se fallback (0 = naya
+       record, us ki koi row nahi, is liye ignore). */
+    entityId: r.recordID ?? (Number((String(r.detailsXml || '').match(/<ID>(\d+)<\/ID>/) || [])[1]) || null),
     entitySummary: r.summary || '',
     requestedBy: resolveRequesterName(r),
     requestedAt: r.requestedAt,
