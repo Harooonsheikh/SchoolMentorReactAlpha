@@ -4,17 +4,18 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 .exm-tabs {
-  display: flex; gap: 6px; margin: 18px 0 16px; padding: 4px;
-  background: var(--bg-muted); border: 1px solid var(--border-light);
-  border-radius: var(--radius-md); width: fit-content; max-width: 100%; overflow-x: auto;
+  display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px;
+  background: var(--bg-card); border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-sm);
 }
 .exm-tab {
-  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
-  padding: 8px 14px; border: 0; border-radius: var(--radius-sm); background: transparent;
-  color: var(--text-muted); font: 700 13px var(--font-body); cursor: pointer; transition: var(--tr);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
+  padding: 13px 10px; border: 0; border-right: 1px solid var(--border-light); background: transparent;
+  color: var(--text-muted); font: 600 13px var(--font-body); cursor: pointer; transition: var(--tr);
 }
-.exm-tab:hover { color: var(--text-primary); }
-.exm-tab.on { background: var(--bg-card); color: var(--brand-primary); box-shadow: var(--shadow-sm); }
+.exm-tab:last-child { border-right: 0; }
+.exm-tab:hover:not(.on) { background: var(--bg-muted); color: var(--text-primary); }
+.exm-tab.on { background: linear-gradient(135deg,#1E3A8A,#1E40AF,#2563EB); color: #fff; font-weight: 700; }
 .exm-tab:focus-visible, .exm-btn:focus-visible, .exm-icon-btn:focus-visible, .exm-chip:focus-visible,
 .exm-kpi:focus-visible, .exm-name:focus-visible, .exm-recent-row:focus-visible, .exm-link:focus-visible {
   outline: 2px solid var(--brand-mid); outline-offset: 2px;
@@ -338,6 +339,7 @@
   .exm-two-col { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
+  .exm-tab { font-size: 11.5px; padding: 11px 6px; gap: 6px; }
   .exm-grid { grid-template-columns: 1fr; }
   .exm-span-2 { grid-column: auto; }
   .exm-detail-grid, .exm-reach { grid-template-columns: 1fr; }

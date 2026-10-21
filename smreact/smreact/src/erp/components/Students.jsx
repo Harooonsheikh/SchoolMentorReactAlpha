@@ -4,6 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
+import * as approvalsService from '../services/approvalsService';
 import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
@@ -11,7 +12,7 @@ import { deliverReport } from './reportDelivery';
 import { buildStandardReportHtml, StandardReportPicker, downloadReportHtmlAsExcel, reportFileName } from '../reports/reportKit';
 import { qrSVG } from '../utils/qrcode';
 import { rankedMatches, studentMatches } from '../utils/studentSearch';
-import { activeSessionName } from '../../utils/apiConfig';
+import { activeSessionName, apiMessage, approvalPending } from '../../utils/apiConfig';
 import IdCardDesigner from '../id-cards/IdCardDesigner';
 import IdCardQuickView from '../id-cards/IdCardQuickView';
 
@@ -29,6 +30,20 @@ const stuInitials = (s) => {
   return (a + b).toUpperCase() || ((s.name || '?')[0] || '?').toUpperCase();
 };
 const stuFullName = (s) => s.name || `${s.first || ''} ${s.last || ''}`.trim();
+
+/* Student save/delete/restore APIs approval info TOP-LEVEL par deti hain
+   ({ pendingApproval, approvalID, requestNo, data:{id} }) — Accounts ki tarah
+   nested `approval:{}` ke andar NAHI. Dono shapes handle karte hain. */
+const stuPending = (resp) => approvalPending(resp)
+  || resp?.pendingApproval === true || resp?.PendingApproval === true
+  || resp?.pendingApproval === 'true' || resp?.pendingApproval === 1;
+const pendFromResp = (resp) => {
+  const ap = (resp && (resp.approval || resp.Approval)) || resp || {};
+  return {
+    approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+    requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+  };
+};
 const stuMoney = (n) => 'Rs. ' + Number(n || 0).toLocaleString('en-PK');
 const STU_PRE_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const stuHasDiscount = (s) => {
@@ -439,9 +454,9 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
 
   /* ── Hero strip ke top-right ka QR — asli hai, student id encode karta hai.
        Pehle yahan sirf QR ki shakl (chand rectangles) bani hui thi jo kisi
-       scanner se parhi nahi ja sakti thi. ── */
-  const QR_SVG = stuQrSVG(stuQrValue(s));
-
+      //  scanner se parhi nahi ja sakti thi. ── */
+  // const QR_SVG = stuQrSVG(stuQrValue(s));
+const QR_SVG = stuQrSVG(stuQrValue(s));
   /* ── Hero photo ── */
   const photoBlock = s.photo
     ? `<img src="${s.photo}" style="width:100%;height:100%;object-fit:cover" alt="${stuEsc(fullName)}"/>`
@@ -687,7 +702,10 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
    function stuQrValue(s) {
     const appId = String(s?._id ?? '').trim();
     const reg   = String(s?.reg || s?.adm || '').trim();
-    return `${appId}|${reg}`;
+     const lines = [];
+    if (appId && appId !== '0') lines.push(`Applicant ID: ${appId}`);
+    if (reg) lines.push(`Reg No: ${reg}`);
+    return lines.join('\n') || '—';
   }
 
 /* Wrapper — SVG markup string, preview aur print HTML dono me lagta hai. */
@@ -736,6 +754,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
        <div class="back-row"><span class="lbl">Applicant ID</span><b class="mono">${stuEsc(s._id || '—')}</b></div>
        ${s.bform ? `<div class="back-row"><span class="lbl">B-Form</span><b class="mono">${stuEsc(s.bform)}</b></div>` : ''}
 </div>
+        <div class="qr-strip-back"><div class="qr-big">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg">${stuEsc(s._id || '')}|${stuEsc(s.reg || '')}</div></div></div>
         ${school?.address || school?.phone ? `<div class="addr">${school?.address ? stuEsc(school.address) : ''}${school?.phone ? ` · ☎ ${stuEsc(school.phone)}` : ''}</div>` : ''}
       </div>
       <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>
@@ -1660,6 +1679,55 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
     }
   };
 
+  /* Student _id → pending approval ({ approvalId, requestNo }) for this user.
+     Add / Update / Mark-Inactive jab approval ke intezar me ho to us student ki
+     row par badge + Withdraw dikhta hai (mirrors Accounts / Fee). Approve/reject
+     hote hi request approvals_by_user se nikal jaati hai, is liye khud saaf. */
+  const [pendingMap, setPendingMap] = useState({});
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { student, pend }
+
+  const loadPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const isStudent = String(r.module || '').toLowerCase().includes('student')
+          || String(r.actionType || '').toLowerCase().includes('student');
+        if (r.status === 'pending' && isStudent && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal — badge just won't show */ }
+  }, []);
+
+  useEffect(() => { loadPending(); }, [loadPending]);
+
+  const requestWithdrawStudent = (id) => {
+    const pend = pendingMap[String(id)];
+    if (!pend) return;
+    let student = null;
+    for (const c of (list || [])) {
+      const f = (c.students || []).find((x) => String(x._id) === String(id));
+      if (f) { student = f; break; }
+    }
+    setWithdrawCfg({ student, pend });
+  };
+
+  const doWithdrawStudent = async () => {
+    if (!withdrawCfg) return;
+    try {
+      await approvalsService.withdrawRequest(withdrawCfg.pend.approvalId);
+    } catch (e) {
+      toast(e?.message || 'Could not withdraw request', 'error');
+      return;
+    }
+    toast('Request withdrawn', 'success');
+    setWithdrawCfg(null);
+    reloadClasses();
+    loadPending();
+  };
+
   /* Mark Inactive: DELETE the student on the server (soft delete → isActive=false),
      then refresh the Active + Inactive lists from the API. */
   const handleMarkInactive = async ({ reason, effectiveDate }) => {
@@ -1671,7 +1739,16 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
     if (!reason.trim()) { toast('Please enter a reason', 'error'); return; }
     try {
       /* DELETE /api/LaunchSetup/delete-student/{id}?reason=... → soft-deletes (isActive=false). */
-      await studentService.markStuInactive(s._id, reason.trim());
+      const resp = await studentService.markStuInactive(s._id, reason.trim());
+      /* Approval on: kuch remove nahi hua — student active list me hi rehta hai,
+         us ki row par Pending Approval badge + Withdraw lag jata hai. */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Mark inactive sent for approval', 'info');
+        setPendingMap((m) => ({ ...m, [String(s._id)]: pendFromResp(resp) }));
+        loadPending();
+        setInactiveCfg(null);
+        return;
+      }
       /* Refresh both lists from the server so Active drops the student and the
          Inactive tab (get-...?isActive=false) shows it. */
       const [freshClasses, freshInactive] = await Promise.all([
@@ -1749,6 +1826,31 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
         pictureFile: payload.pictureFile || null,
         dues:      0,
       });
+
+      /* Approval on: change queued — student abhi apply nahi hua, documents/family
+         link ka koi matlab nahi. Us student ki row par Pending Approval badge +
+         Withdraw lagana hai. Edit me _id maloom; add me reload ke baad reg se
+         dhoond lete hain (backend pending student return kare tabhi mil paye ga). */
+      if (stuPending(resp)) {
+        const pend = pendFromResp(resp);
+        toast(apiMessage(resp) || 'Student sent for approval', 'info');
+        setEditCfg(null);
+        const built = await studentService.getStuClasses();
+        setClasses(built);
+        /* Badge key: edit me _id maloom; add me response ke data.id se (backend
+           pending student ki record id yahan deta hai), warna reg se fallback. */
+        const respId = resp?.data?.id ?? resp?.data?.ID ?? resp?.data?.studentID ?? resp?.data?.studentId;
+        let key = existing?._id != null ? String(existing._id) : (respId != null ? String(respId) : null);
+        if (key == null && Array.isArray(built) && payload.reg) {
+          for (const c of built) {
+            const f = (c.students || []).find((st) => String(st.reg) === String(payload.reg));
+            if (f) { key = String(f._id); break; }
+          }
+        }
+        if (key != null) setPendingMap((m) => ({ ...m, [key]: pend }));
+        loadPending();
+        return;
+      }
 
       /* Documents ride on separate endpoints and need the student's id. For an
          edit we have it; for a fresh add we read it from the save response, and
@@ -2000,6 +2102,8 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
             flashReg={flashReg}
             onStudentEdit={(id) => openEditStudent(c.key, id)}
             onStudentMarkInactive={(id) => openMarkInactive(c.key, id)}
+            pendingMap={pendingMap}
+            onStudentWithdraw={(id) => requestWithdrawStudent(id)}
             onStudentProfile={(id) => openProfilePicker(c.key, id)}
             onStudentIdCard={(id) => openIdCard(c.key, id)}
             onStudentIdCardView={(id) => openIdCardView(c.key, id)}
@@ -2054,6 +2158,32 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
           onClose={() => setInactiveCfg(null)}
           onSubmit={handleMarkInactive}
         />
+      )}
+
+      {withdrawCfg && createPortal(
+        <div className="stu-modal-ov" style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 4000, padding: 16 }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setWithdrawCfg(null); }}>
+          <div style={{ width: 'min(440px, 100%)', background: 'var(--bg-card, #fff)', color: 'var(--text-primary, #111827)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(217,119,6,.12)', color: '#D97706' }}>
+                <i className="fa-solid fa-rotate-left"></i>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>Withdraw this request?</div>
+            </div>
+            <div style={{ padding: '16px 18px', fontSize: 13.5, lineHeight: 1.5 }}>
+              The pending change for <strong>{withdrawCfg.student ? (withdrawCfg.student.name || stuFullName(withdrawCfg.student)) : 'this student'}</strong>
+              {' '}(request {withdrawCfg.pend?.requestNo || `#${withdrawCfg.pend?.approvalId}`}) will be withdrawn and not applied.
+              <div style={{ marginTop: 8, color: 'var(--text-muted, #6b7280)', fontSize: 12.5 }}>You can raise it again later if needed.</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border-light, #e5e7eb)' }}>
+              <button onClick={() => setWithdrawCfg(null)}
+                style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={doWithdrawStudent}
+                style={{ padding: '9px 16px', borderRadius: 9, border: 'none', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-rotate-left"></i> Yes, Withdraw</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {rpCfg && (
@@ -2168,6 +2298,7 @@ function IdcClassPickerModal({ classes, onClose, onSelect }) {
 
 /* ─── Class header row + collapsible student list ─── */
 function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentIdCardView, onStudentCert, onStudentAddFamily, isInFamilyTree,
+  pendingMap = {}, onStudentWithdraw,
   canStuCreate = true, canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
@@ -2260,6 +2391,8 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   flash={flashReg === s.reg}
                   onEdit={() => onStudentEdit(s._id)}
                   onMarkInactive={() => onStudentMarkInactive(s._id)}
+                  pend={pendingMap[String(s._id)]}
+                  onWithdraw={() => onStudentWithdraw && onStudentWithdraw(s._id)}
                   onProfile={() => onStudentProfile(s._id)}
                   onIdCard={() => onStudentIdCard(s._id)}
                   onIdCardView={() => onStudentIdCardView(s._id)}
@@ -2280,6 +2413,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
 
 /* ─── Per-student row + 3-dot floating menu ─── */
 function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onIdCardView, onCert, onAddFamily, isLinkedToFamily,
+  pend = null, onWithdraw,
   canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [certOpen, setCertOpen] = useState(false);
@@ -2331,7 +2465,23 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
       <div className="td stu-father-cell">{s.father || '—'}</div>
       <div className="td stu-dob-cell">{stuFmtDate(s.dob)}</div>
       <div className="td stu-contact-cell">{s.mobile || '—'}</div>
-      <div className="td c" ref={anchorRef}>
+      <div className="td c" ref={anchorRef} style={{ gap: 6 }}>
+        {pend && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%' }}>
+            <Tooltip text={`Pending Approval — request ${pend.requestNo || `#${pend.approvalId}`}`}>
+              <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: '#D97706', background: 'rgba(217,119,6,.1)', border: '1px solid rgba(217,119,6,.25)', whiteSpace: 'nowrap' }}>
+                <i className="fa-solid fa-hourglass-half"></i>
+                Pending{pend.approvalId != null && <> #{pend.approvalId}</>}
+              </span>
+            </Tooltip>
+            <Tooltip text="Withdraw this request">
+              <button onClick={() => onWithdraw && onWithdraw()}
+                style={{ display: 'inline-grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 auto', borderRadius: 7, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', cursor: 'pointer' }}>
+                <i className="fa-solid fa-rotate-left"></i>
+              </button>
+            </Tooltip>
+          </div>
+        )}
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
@@ -3172,6 +3322,44 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   const [duesCfg, setDuesCfg]   = useState(null);
   const [certCfg, setCertCfg]   = useState(null);   // { type, student, cls } — certificate modal
 
+  /* Student _id → pending approval, so restore / permanent-delete jab approval
+     ke intezar me ho to us student ki row par badge + Withdraw dikhe (Active
+     Students jaisa). */
+  const [pendingMap, setPendingMap] = useState({});
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { student, pend }
+
+  const loadInPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const isStudent = String(r.module || '').toLowerCase().includes('student')
+          || String(r.actionType || '').toLowerCase().includes('student');
+        if (r.status === 'pending' && isStudent && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { loadInPending(); }, [loadInPending]);
+
+  const requestWithdrawInactive = (id) => {
+    const pend = pendingMap[String(id)];
+    if (!pend) return;
+    const student = (inactive || []).find((x) => String(x._id) === String(id)) || null;
+    setWithdrawCfg({ student, pend });
+  };
+  const doWithdrawInactive = async () => {
+    if (!withdrawCfg) return;
+    try { await approvalsService.withdrawRequest(withdrawCfg.pend.approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    setWithdrawCfg(null);
+    try { setInactive(await studentService.getStuInactive()); } catch { /* ignore */ }
+    loadInPending();
+  };
+
   /* outside-click closes the search dropdown */
   useEffect(() => {
     if (!searchOpen) return undefined;
@@ -3268,7 +3456,16 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
      refresh the Active + Inactive lists from the API. */
   const reactivate = async (student) => {
     try {
-      await studentService.restoreStuStudent(student._id);
+      const resp = await studentService.restoreStuStudent(student._id);
+      /* Approval on: student abhi inactive hi rehta hai, us ki row par
+         Pending Approval badge + Withdraw lag jata hai. */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Restore sent for approval', 'info');
+        setPendingMap((m) => ({ ...m, [String(student._id)]: pendFromResp(resp) }));
+        loadInPending();
+        setReactCfg(null);
+        return;
+      }
       const [freshClasses, freshInactive] = await Promise.all([
         studentService.getStuClasses(),
         studentService.getStuInactive(),
@@ -3294,7 +3491,16 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
       return;
     }
     try {
-      await studentService.permanentDeleteStuStudent(id);
+      const resp = await studentService.permanentDeleteStuStudent(id);
+      /* Approval on: kuch delete nahi hua — student inactive list me rehta hai
+         with Pending Approval badge + Withdraw. */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Delete sent for approval', 'info');
+        setPendingMap((m) => ({ ...m, [String(id)]: pendFromResp(resp) }));
+        loadInPending();
+        setDelCfg(null);
+        return;
+      }
       const freshInactive = await studentService.getStuInactive();
       setInactive(Array.isArray(freshInactive) ? freshInactive : []);
       toast(`${stuFullName(student)} permanently deleted`, 'success');
@@ -3482,11 +3688,39 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
               setCertCfg({ type, student, cls: { cls: student.cls || '—', sec: student.sec || '—' } });
             }}
             onProfileDownload={(student) => openProfilePicker(student)}
+            pendingMap={pendingMap}
+            onWithdraw={(id) => requestWithdrawInactive(id)}
             canInEdit={canInEdit}
             canInDownload={canInDownload}
           />
         ))}
       </div>
+
+      {withdrawCfg && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 4000, padding: 16 }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setWithdrawCfg(null); }}>
+          <div style={{ width: 'min(440px, 100%)', background: 'var(--bg-card, #fff)', color: 'var(--text-primary, #111827)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(217,119,6,.12)', color: '#D97706' }}>
+                <i className="fa-solid fa-rotate-left"></i>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>Withdraw this request?</div>
+            </div>
+            <div style={{ padding: '16px 18px', fontSize: 13.5, lineHeight: 1.5 }}>
+              The pending change for <strong>{withdrawCfg.student ? (withdrawCfg.student.name || stuFullName(withdrawCfg.student)) : 'this student'}</strong>
+              {' '}(request {withdrawCfg.pend?.requestNo || `#${withdrawCfg.pend?.approvalId}`}) will be withdrawn and not applied.
+              <div style={{ marginTop: 8, color: 'var(--text-muted, #6b7280)', fontSize: 12.5 }}>You can raise it again later if needed.</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border-light, #e5e7eb)' }}>
+              <button onClick={() => setWithdrawCfg(null)}
+                style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={doWithdrawInactive}
+                style={{ padding: '9px 16px', borderRadius: 9, border: 'none', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-rotate-left"></i> Yes, Withdraw</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       <CrmConfirmStyleReactivate cfg={reactCfg} onClose={() => setReactCfg(null)} onConfirm={reactivate} />
 
@@ -3523,7 +3757,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
 }
 
 /* ─── Inactive group row + expanded student list ─── */
-function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, onReactivate, onDelete, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
+function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, onReactivate, onDelete, onPendingDues, onCert, onProfileDownload, pendingMap = {}, onWithdraw, canInEdit = true, canInDownload = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
       <div className="stu-cls-row" style={{ gridTemplateColumns: '54px 1.4fr 1fr 110px 90px 70px' }} onClick={onToggle}>
@@ -3563,7 +3797,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
             </div>
           </div>
 
-          <div className="stu-list-head stu-in-list-head" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 104px' }}>
+          <div className="stu-list-head stu-in-list-head" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 176px' }}>
             <div className="th c">#</div>
             <div className="th c">Photo</div>
             <div className="th">Reg No</div>
@@ -3584,6 +3818,8 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
               onPendingDues={() => onPendingDues(s)}
               onCert={(type) => onCert(s, type)}
               onProfileDownload={() => onProfileDownload(s)}
+              pend={pendingMap[String(s._id)]}
+              onWithdraw={() => onWithdraw && onWithdraw(s._id)}
               canInEdit={canInEdit} canInDownload={canInDownload}
             />
           ))}
@@ -3594,7 +3830,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
 }
 
 /* ─── Per-inactive-student row + 3-dot menu ─── */
-function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
+function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, onCert, onProfileDownload, pend = null, onWithdraw, canInEdit = true, canInDownload = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
   const anchorRef = useRef(null);
@@ -3626,7 +3862,7 @@ function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, on
   const fire = (fn) => { setMenuOpen(false); fn(); };
 
   return (
-    <div className={`stu-srow stu-srow-inactive${flash ? ' flash' : ''}`} style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 104px' }} data-inreg={s.reg}>
+    <div className={`stu-srow stu-srow-inactive${flash ? ' flash' : ''}`} style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 176px' }} data-inreg={s.reg}>
       <div className="td c"><div className="stu-srow-sn">{i}</div></div>
       <div className="td c">
         <div className="stu-avatar" style={{ background: 'rgba(220,38,38,.10)', color: '#DC2626' }}>
@@ -3646,11 +3882,28 @@ function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, on
       </div>
       <div className="td stu-reason-cell">{s.reason || '—'}</div>
       <div className="td c stu-in-actions" ref={anchorRef}>
+        {pend && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%' }}>
+            <Tooltip text={`Pending Approval — request ${pend.requestNo || `#${pend.approvalId}`}`}>
+              <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: '#D97706', background: 'rgba(217,119,6,.1)', border: '1px solid rgba(217,119,6,.25)', whiteSpace: 'nowrap' }}>
+                <i className="fa-solid fa-hourglass-half"></i>
+                Pending{pend.approvalId != null && <> #{pend.approvalId}</>}
+              </span>
+            </Tooltip>
+            <Tooltip text="Withdraw this request">
+              <button onClick={() => onWithdraw && onWithdraw()}
+                style={{ display: 'inline-grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 auto', borderRadius: 7, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', cursor: 'pointer' }}>
+                <i className="fa-solid fa-rotate-left"></i>
+              </button>
+            </Tooltip>
+          </div>
+        )}
         {/* Delete ka apna icon. Pehle ye sirf 3-dot menu ke andar dabba hua tha,
             is liye inactive student ko mitana nazar hi nahi aata tha. Amal wahi
             hai jo menu wale "Delete Permanently" ka — wahi permission
-            (Inactive Students › Edit) aur wahi confirm dialog. */}
-        {canInEdit && (
+            (Inactive Students › Edit) aur wahi confirm dialog. Pending ke dauran
+            chhupa dete hain taake badge+withdraw ke sath jagah bache. */}
+        {!pend && canInEdit && (
           <Tooltip text="Delete permanently">
             <button className="stu-dots stu-dots--danger" onClick={() => fire(onDelete)}>
               <i className="fa-solid fa-trash"></i>
@@ -5746,31 +5999,92 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
     }
   };
 
+  /* Pre-enroll student _id → pending approval. Enroll / Reject / Challan create /
+     Receive jab approval ke intezar me ho to us student ki row par badge +
+     Withdraw dikhe (Active/Inactive jaisa). Challan/receive response me record id
+     nahi aati, is liye badge student ke _id par lagate hain. */
+  const [pendingMap, setPendingMap] = useState({});
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { student, pend }
+
+  const loadPrePending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const hay = `${r.module || ''} ${r.actionType || ''}`.toLowerCase();
+        const relevant = hay.includes('student') || hay.includes('challan')
+          || hay.includes('enroll') || hay.includes('admission');
+        if (r.status === 'pending' && relevant && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { loadPrePending(); }, [loadPrePending]);
+
+  const setPrePend = (student, resp) => {
+    const id = student?._id;
+    if (id == null) return;
+    setPendingMap((m) => ({ ...m, [String(id)]: pendFromResp(resp) }));
+  };
+
+  const requestWithdrawPre = (id) => {
+    const pend = pendingMap[String(id)];
+    if (!pend) return;
+    const student = (list || []).find((x) => String(x._id) === String(id)) || null;
+    setWithdrawCfg({ student, pend });
+  };
+  const doWithdrawPre = async () => {
+    if (!withdrawCfg) return;
+    try { await approvalsService.withdrawRequest(withdrawCfg.pend.approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    setWithdrawCfg(null);
+    reloadList();
+    loadPrePending();
+  };
+
   const resolveRow = (p) => (classes || []).find(c => c.cls === p.cls && c.sec === p.sec);
 
   const persistStudent = async (payload, existing) => {
     const row = resolveRow(payload);
     if (!row?._gradeId || !row?._sectionId) {
       toast('Please select an existing Class and Section', 'error');
-      return false;
+      return { ok: false };
     }
     try {
-      await preEnrollmentService.savePreEnrollStudent({
+      const resp = await preEnrollmentService.savePreEnrollStudent({
         ...payload,
         id:        existing?._id || 0,
         gradeId:   row._gradeId,
         sectionId: row._sectionId,
         dues:      0,
       });
-      return true;
+      return { ok: true, resp };
     } catch (err) {
       toast(err.message || 'Could not save student', 'error');
-      return false;
+      return { ok: false };
     }
   };
 
+  /* Pre-enroll student save pending → us student ki row par badge. Edit me
+     existing._id; add me response ke data.id (warna reload ke baad reg se). */
+  const handlePreSavePending = async (resp, { existing, reg }) => {
+    toast(apiMessage(resp) || 'Pre-enrollment sent for approval', 'info');
+    const rows = await preEnrollmentService.getPreEnrollStudents().then(d => (Array.isArray(d) ? d.map(preLocalMerge) : [])).catch(() => []);
+    setStudents(rows);
+    const respId = resp?.data?.id ?? resp?.data?.ID;
+    let key = existing?._id != null ? String(existing._id) : (respId != null ? String(respId) : null);
+    if (key == null && reg) { const f = rows.find((st) => String(st.reg) === String(reg)); if (f) key = String(f._id); }
+    if (key != null) setPendingMap((m) => ({ ...m, [key]: pendFromResp(resp) }));
+    loadPrePending();
+  };
+
   const handleSaveStudent = async (payload) => {
-    if (!(await persistStudent(payload, null))) return;
+    const { ok, resp } = await persistStudent(payload, null);
+    if (!ok) return;
+    if (stuPending(resp)) { setAddOpen(false); await handlePreSavePending(resp, { existing: null, reg: payload.reg }); return; }
     await reloadList();
     toast(`${`${payload.first || ''} ${payload.last || ''}`.trim()} pre-enrolled successfully`, 'success');
     setAddOpen(false);
@@ -5779,7 +6093,9 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   const handleEditStudent = async (payload) => {
     const existing = editCfg.student;
     if (!existing?._id) { toast('Could not resolve this student record — please reload and retry', 'error'); return; }
-    if (!(await persistStudent(payload, existing))) return;
+    const { ok, resp } = await persistStudent(payload, existing);
+    if (!ok) return;
+    if (stuPending(resp)) { setEditCfg(null); await handlePreSavePending(resp, { existing, reg: payload.reg }); return; }
     await reloadList();
     toast(`${stuFullName({ ...existing, ...payload })} updated`, 'success');
     setEditCfg(null);
@@ -5789,7 +6105,15 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
     const student = challanCfg.student;
     if (!student._id) { toast('Student ID is missing — please reload and try again', 'error'); return; }
     try {
-      await preEnrollmentService.createPreEnrollChallan({ student, heads: challan.heads });
+      const resp = await preEnrollmentService.createPreEnrollChallan({ student, heads: challan.heads });
+      /* Approval on: challan abhi bana nahi — us student ki row par badge + Withdraw. */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Challan sent for approval', 'info');
+        setPrePend(student, resp);
+        loadPrePending();
+        setChallanCfg(null);
+        return;
+      }
       const fresh = await preEnrollmentService.getPreEnrollChallan({ studentId: student._id });
       const finalChallan = fresh || challan;
       setStudents(prev => prev.map(s => s.preId === student.preId
@@ -5806,11 +6130,19 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
     const student = receivingCfg.student;
     if (!student._id) { toast('Student ID is missing — please reload and try again', 'error'); return; }
     try {
-      await preEnrollmentService.receivePreEnrollPayment({
+      const resp = await preEnrollmentService.receivePreEnrollPayment({
         student,
         heads: student.challan.heads,
         payment: { ...payment, challanId: student.challan.id },
       });
+      /* Approval on: payment abhi apply nahi — us student ki row par badge + Withdraw. */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Payment sent for approval', 'info');
+        setPrePend(student, resp);
+        loadPrePending();
+        setReceivingCfg(null);
+        return;
+      }
       const fresh = await preEnrollmentService
         .getPreEnrollChallan({ studentId: student._id, month: student.challan.monthNo, year: student.challan.year })
         .catch(() => null);
@@ -5882,7 +6214,7 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
         const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
         const finalAdm = typedAdm || String(nextAdm || 1100);
 
-        await studentService.saveStuStudent({
+        const enrollResp = await studentService.saveStuStudent({
           ...student,
           id:        0,
           gradeId:   student._gradeId || 0,
@@ -5893,6 +6225,15 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
           admdate:   cfg.admdate || new Date().toISOString().slice(0, 10),
           dues:      0,
         });
+        /* Approval on: enroll abhi hua nahi — pre-enroll record waise rehta hai,
+           us ki row par badge + Withdraw. */
+        if (stuPending(enrollResp)) {
+          toast(apiMessage(enrollResp) || 'Enrollment sent for approval', 'info');
+          setPrePend(student, enrollResp);
+          loadPrePending();
+          setConfirmCfg(null);
+          return;
+        }
 
         try {
           await preEnrollmentService.removePreEnrollStudentPermanent(student._id);
@@ -5909,7 +6250,14 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
         });
         toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
       } else {
-        await preEnrollmentService.removePreEnrollStudent(student._id, 'Did not proceed after pre-enrollment');
+        const rejResp = await preEnrollmentService.removePreEnrollStudent(student._id, 'Did not proceed after pre-enrollment');
+        if (stuPending(rejResp)) {
+          toast(apiMessage(rejResp) || 'Request sent for approval', 'info');
+          setPrePend(student, rejResp);
+          loadPrePending();
+          setConfirmCfg(null);
+          return;
+        }
         setInactive(prev => [{
           reg: student.reg, first: student.first, last: student.last, father: student.father,
           gender: student.gender, dob: student.dob, mobile: student.mobile,
@@ -6007,9 +6355,37 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
               setSlipCfg({ kind, student: s });
             }}
             onEdit={() => setEditCfg({ student: s })}
+            pend={pendingMap[String(s._id)]}
+            onWithdraw={() => requestWithdrawPre(s._id)}
           />
         ))}
       </div>
+
+      {withdrawCfg && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 4000, padding: 16 }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setWithdrawCfg(null); }}>
+          <div style={{ width: 'min(440px, 100%)', background: 'var(--bg-card, #fff)', color: 'var(--text-primary, #111827)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(217,119,6,.12)', color: '#D97706' }}>
+                <i className="fa-solid fa-rotate-left"></i>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>Withdraw this request?</div>
+            </div>
+            <div style={{ padding: '16px 18px', fontSize: 13.5, lineHeight: 1.5 }}>
+              The pending change for <strong>{withdrawCfg.student ? stuFullName(withdrawCfg.student) : 'this student'}</strong>
+              {' '}(request {withdrawCfg.pend?.requestNo || `#${withdrawCfg.pend?.approvalId}`}) will be withdrawn and not applied.
+              <div style={{ marginTop: 8, color: 'var(--text-muted, #6b7280)', fontSize: 12.5 }}>You can raise it again later if needed.</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border-light, #e5e7eb)' }}>
+              <button onClick={() => setWithdrawCfg(null)}
+                style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={doWithdrawPre}
+                style={{ padding: '9px 16px', borderRadius: 9, border: 'none', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-rotate-left"></i> Yes, Withdraw</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {addOpen && (
         <StuStudentModal
@@ -6100,7 +6476,7 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   );
 }
 
-function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject, onSlip, onEdit, onDeleteChallan, onResetReceiving }) {  const [menuOpen, setMenuOpen] = useState(false);
+function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject, onSlip, onEdit, onDeleteChallan, onResetReceiving, pend = null, onWithdraw }) {  const [menuOpen, setMenuOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
   const anchorRef = useRef(null);
 
@@ -6135,7 +6511,23 @@ function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject,
       <div className="td stu-father-cell">{s.father || '—'}</div>
       <div className="td">{s.cls}{s.sec ? ` (${s.sec})` : ''}</div>
       <div className="td stu-contact-cell">{s.mobile || '—'}</div>
-      <div className="td c" ref={anchorRef}>
+      <div className="td c" ref={anchorRef} style={{ gap: 6 }}>
+        {pend && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%' }}>
+            <Tooltip text={`Pending Approval — request ${pend.requestNo || `#${pend.approvalId}`}`}>
+              <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: '#D97706', background: 'rgba(217,119,6,.1)', border: '1px solid rgba(217,119,6,.25)', whiteSpace: 'nowrap' }}>
+                <i className="fa-solid fa-hourglass-half"></i>
+                Pending{pend.approvalId != null && <> #{pend.approvalId}</>}
+              </span>
+            </Tooltip>
+            <Tooltip text="Withdraw this request">
+              <button onClick={() => onWithdraw && onWithdraw()}
+                style={{ display: 'inline-grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 auto', borderRadius: 7, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', cursor: 'pointer' }}>
+                <i className="fa-solid fa-rotate-left"></i>
+              </button>
+            </Tooltip>
+          </div>
+        )}
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
@@ -7303,14 +7695,14 @@ const STU_CSS = `
 /* Roster (per-class student rows) — hide DOB + Father at narrow widths
    to prevent the 8-col grid from overflowing on tablets/phones. */
 @media (max-width: 900px) {
-  .stu-list-head, .stu-srow { grid-template-columns: 40px 50px 1fr 1.2fr 1fr 60px !important; gap: 8px !important; }
+  .stu-list-head, .stu-srow { grid-template-columns: 40px 50px 1fr 1.2fr 1fr 150px !important; gap: 8px !important; }
   .stu-list-head .th:nth-child(5),
   .stu-list-head .th:nth-child(6),
   .stu-srow .td:nth-child(5),
   .stu-srow .td:nth-child(6) { display: none; }
 }
 @media (max-width: 600px) {
-  .stu-list-head, .stu-srow { grid-template-columns: 34px 46px 1fr 60px !important; gap: 6px !important; }
+  .stu-list-head, .stu-srow { grid-template-columns: 34px 46px 1fr 140px !important; gap: 6px !important; }
   .stu-list-head .th:nth-child(3),
   .stu-list-head .th:nth-child(7),
   .stu-srow .td:nth-child(3),
@@ -7529,7 +7921,7 @@ const STU_CSS = `
 /* Student list (inner) */
 .stu-list-head {
   display: grid;
-  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 60px;
+  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 170px;
   gap: 10px;
   padding: 10px 14px;
   background: var(--bg-card);
@@ -7545,7 +7937,7 @@ const STU_CSS = `
 .stu-srow {
   position: relative;
   display: grid;
-  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 60px;
+  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 170px;
   gap: 10px;
   padding: 12px 14px;
   background: var(--bg-card);

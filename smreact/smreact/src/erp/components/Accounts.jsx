@@ -387,9 +387,11 @@ function ChartOfAccounts({ toast, isOtherSession }) {
         return { key: String(at.ID), id: at.ID, name: at.AccountTypeName, icon: m.icon, cls: m.cls, heads };
       }));
       setTypes(built);
+      return built;
     } catch (e) {
       console.error('Error loading account types:', e);
       toast('Could not load chart of accounts', 'error');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -403,9 +405,11 @@ function ChartOfAccounts({ toast, isOtherSession }) {
   const [edit, setEdit]       = useState(null); // { typeKey, mode:'add'|'edit', head? }
   const [confirm, setConfirm] = useState(null);
   /* Head recordId → pending approval ({ approvalId, requestNo }) for this
-     user, so edited/deleted heads awaiting review show a badge + Withdraw
-     (mirrors the Fee module). Cleared automatically once a request is
-     approved/rejected, since it then leaves approvals_by_user. */
+     user, so edited/deleted AND newly-added heads awaiting review show a
+     badge + Withdraw right on their row (mirrors the Fee module). Cleared
+     automatically once a request is approved/rejected, since it then leaves
+     approvals_by_user. Naya pending head bhi get-accountsHeads me aata hai, is
+     liye uski row banti hai aur yahi map use ho kar badge laga deta hai. */
   const [pendingMap, setPendingMap] = useState({});
 
   const loadPending = useCallback(async () => {
@@ -439,6 +443,8 @@ function ChartOfAccounts({ toast, isOtherSession }) {
           return;
         }
         toast('Request withdrawn', 'success');
+        /* Naya (pending) head withdraw hone par list se bhi hat jaye. */
+        load();
         loadPending();
       },
     });
@@ -471,11 +477,46 @@ function ChartOfAccounts({ toast, isOtherSession }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { toast(data?.message || 'Could not save account head', 'error'); return; }
-      /* Approval on: the change is queued, not saved — close the form but
-         DON'T refresh, so the head only appears once it's approved. */
+      /* Approval on: change queued. Naya/edited head pending ke saath list me
+         dikhana hai — uski APNI row par badge + Withdraw (alag modal nahi).
+         getMyRequests save ke foran baad nayi request kabhi late deti hai, is
+         liye response ke `approval` se badge OPTIMISTICALLY foran laga dete
+         hain; phir loadPending() server se authoritative sync kar leta hai. */
       if (approvalPending(data)) {
+        const ap = data.approval || data.Approval || {};
+        const pend = {
+          approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+          requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+        };
+        const submittedName = String(name || '').trim();
+        const submittedDesc = String(desc || '').trim();
+        const submittedType = accountTypeID;
+        const editedRecordId = mode === 'edit' ? head?.recordId : null;
         toast(apiMessage(data) || 'Account head sent for approval', 'info');
         setEdit(null);
+        const built = await load();   // pending head agar backend return kare to list me aa jata hai
+        /* Badge kis row par — edit me wahi recordId; add me naya head naam+type
+           se dhoondo. */
+        let key = editedRecordId != null ? String(editedRecordId) : null;
+        if (key == null && Array.isArray(built)) {
+          const t = built.find((tt) => String(tt.id) === String(submittedType));
+          const match = (t?.heads || []).filter((hh) => String(hh.name).trim() === submittedName);
+          const h = match[match.length - 1];   // sab se nayi matching row
+          if (h) key = String(h.recordId);
+        }
+        /* ADD aur backend ne pending head return nahi kiya (insert abhi apply nahi
+           hua) → list me koi row nahi. Us head ki SYNTHETIC pending row inject karo
+           taake uski apni row par badge + Withdraw dikhe. Withdraw/approve ke baad
+           load() asli data laa kar isay hata deta hai. */
+        if (key == null && editedRecordId == null) {
+          const synthId = `pending-${pend.approvalId ?? pend.requestNo ?? Date.now()}`;
+          const synthHead = { no: '—', recordId: synthId, name: submittedName, desc: submittedDesc, typeID: submittedType };
+          setTypes((prev) => (prev || []).map((t) => (
+            String(t.id) === String(submittedType) ? { ...t, heads: [...t.heads, synthHead] } : t
+          )));
+          key = synthId;
+        }
+        if (key != null) setPendingMap((m) => ({ ...m, [key]: pend }));
         loadPending();
         return;
       }
@@ -511,8 +552,18 @@ function ChartOfAccounts({ toast, isOtherSession }) {
             );
             return;
           }
-          /* Approval on: nothing removed yet — leave the list as-is. */
-          if (approvalPending(data)) { toast(apiMessage(data) || 'Delete sent for approval', 'info'); loadPending(); return; }
+          /* Approval on: kuch remove nahi hua — row waise hi rehti hai, us par
+             badge + Withdraw lag jata hai (foran response se, phir server sync). */
+          if (approvalPending(data)) {
+            const ap = data.approval || data.Approval || {};
+            toast(apiMessage(data) || 'Delete sent for approval', 'info');
+            setPendingMap((m) => ({ ...m, [String(head.recordId)]: {
+              approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+              requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+            } }));
+            loadPending();
+            return;
+          }
           toast('Account head deleted', 'success');
           load();
         } catch (e) {
@@ -669,7 +720,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                         </thead>
                         <tbody>
                           {t.heads.map(h => (
-                            <tr key={h.no} id={`acchd-${t.key}-${h.no}`}>
+                            <tr key={h.recordId ?? h.no} id={`acchd-${t.key}-${h.no}`}>
                               <td data-label="COA No"><span className="acc-head-no">{h.no}</span></td>
                               <td className="acc-head-name" data-label="Head Name">{h.name}</td>
                               <td className="acc-head-desc" data-label="Description">{h.desc || '—'}</td>
@@ -4314,7 +4365,11 @@ function AccountBooks({ toast, isOtherSession }) {
     if (!currentBookId) return;
     let resp;
     try {
-      resp = await accountsService.saveAccBookTxn({ bookId: currentBookId, ...form });
+      resp = await accountsService.saveAccBookTxn({
+  bookId: currentBookId,
+  ...form,
+  walletId: form.acctId,   //  NEW: dropdown mein select kiya hua wallet
+});
     } catch (err) {
       toast(err?.message || 'Could not save transaction', 'error');
       return;
@@ -5388,7 +5443,30 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
   const fileInputRef              = useRef(null);
   const [dragOver, setDragOver]   = useState(false);
 
+
+    /* Wallet picker (same wallets as Transfer Money / Transactions tab) */
+  const [acctId, setAcctId]       = useState('');
+  const [wallets, setWallets]     = useState([]);
+  const [walletBal, setWalletBal] = useState(null);
+  const branchID = sessionStorage.getItem('branchID') || '1';
+
+  /* Only wallets of the current branch (or with no branch info) */
+  const branchWallets = useMemo(
+    () => wallets.filter(w => w.branchID == null || Number(w.branchID) === Number(branchID)),
+    [wallets, branchID]
+  );
+
+  /* Load wallets when the modal opens */
   useEffect(() => {
+    if (!cfg) return undefined;
+    let cancelled = false;
+    accountsService.getFinAccounts()
+      .then(list => { if (!cancelled) setWallets(Array.isArray(list) ? list : []); })
+      .catch(() => { if (!cancelled) setWallets([]); });
+    return () => { cancelled = true; };
+  }, [cfg]);
+
+    useEffect(() => {
     if (!cfg) return;
     if (cfg.mode === 'edit' && cfg.txn) {
       const t = cfg.txn;
@@ -5396,14 +5474,43 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
       setAmount(String(Math.abs(t.amount))); setNotes(t.notes || '');
       setEnteredBy(t.enteredBy || currentUser);
       setAttachments(Array.isArray(t.attachments) ? [...t.attachments] : []);
+      const saved = String(t.walletId ?? t.acctId ?? '');
+      setAcctId(saved && saved !== '0' ? saved : '');
     } else {
       setType('received');
       setDate(new Date().toISOString().slice(0, 10));
       setAmount(''); setNotes(''); setEnteredBy(currentUser);
       setAttachments([]);
+      setAcctId('');
     }
   }, [cfg, currentUser]);
 
+  /* New entry: preselect the default active wallet */
+  useEffect(() => {
+    if (!cfg || !branchWallets.length) return;
+    const active = branchWallets.filter(w => w.status === 'active');
+    const def = active.find(w => w.isDefault) || active[0];
+    setAcctId(prev => prev || (def ? String(def.id) : ''));
+  }, [cfg, branchWallets]);
+
+  /* Selected wallet's available balance */
+  useEffect(() => {
+    if (!cfg || !acctId) { setWalletBal(null); return undefined; }
+    const w = wallets.find(x => String(x.id) === String(acctId));
+    if (!w) { setWalletBal(null); return undefined; }
+    if (w.serverBalance != null && Number.isFinite(w.serverBalance)) { setWalletBal(w.serverBalance); return undefined; }
+    let cancelled = false;
+    accountsService.getWalletTransactions(acctId)
+      .then(rows => {
+        if (cancelled) return;
+        const net = (rows || []).reduce((a, m) => a + (m.kind === 'credit' ? m.amount : -m.amount), 0);
+        setWalletBal((Number(w.opening) || 0) + net);
+      })
+      .catch(() => { if (!cancelled) setWalletBal(null); });
+    return () => { cancelled = true; };
+  }, [cfg, acctId, wallets]);
+
+  /* Escape key + lock body scroll while the modal is open */
   useEffect(() => {
     if (!cfg) return undefined;
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -5415,21 +5522,38 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
     };
   }, [cfg, onClose]);
 
-  if (!cfg) return null;
-  const isEdit = cfg.mode === 'edit';
+  if (!cfg) return null;                  //  guard: must come after ALL hooks
+
+  const isEdit = cfg.mode === 'edit';     //  safe now
 
   /* Live preview of balance after this txn */
   const c = book ? bookCalc(book) : { balance: 0 };
   const amt = Number(amount) || 0;
   const newBal = c.balance + (type === 'received' ? amt : type === 'returned' ? -amt : amt);
 
-  const handle = () => {
+   const handle = () => {
     if (!date)   { toast('Date is required', 'error'); return; }
     if (!amt)    { toast('Amount is required', 'error'); return; }
+   if (!acctId) { toast('Please select a wallet', 'error'); return; }
+
+    /* Paying out of a wallet: check it has enough balance.
+       On edit, the old payment is added back if it was from the same wallet. */
+    if (type === 'returned' && walletBal != null) {
+      const prev = cfg.mode === 'edit' ? cfg.txn : null;
+      const sameWallet = prev && prev.type === 'returned' && String(prev.walletId ?? prev.acctId ?? '') === String(acctId);
+      const available = walletBal + (sameWallet ? Math.abs(Number(prev.amount) || 0) : 0);
+      if (amt > available) {
+        toast(`Insufficient balance. Available in this wallet: Rs. ${available.toLocaleString('en-PK')}`, 'error');
+        return;
+      }
+    }
+
     onSave({
-      id: isEdit ? cfg.txn.id : 0, // 0 → insert; existing record id → update
+      id: isEdit ? cfg.txn.id : 0,
       type, date, amount: type === 'adjustment' ? Number(amount) : amt,
       notes: notes.trim(), enteredBy, attachments,
+      acctId,                    // selected wallet
+      wallatID: Number(acctId) || 0,
     });
   };
 
@@ -5551,6 +5675,57 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
             </div>
           </div>
 
+          {/* wallet */}
+<div className="acc-entry-acctbox" style={{ marginTop: 16 }}>
+  <div className="fee-field-stack">
+    <label className="fee-label">
+      <i className="fa-solid fa-wallet"></i>{' '}
+      {type === 'received' ? 'Received In Wallet' : type === 'returned' ? 'Paid From Wallet' : 'Wallet'}
+      {' '}<span className="acc-req">*</span>
+    </label>
+
+    <div className="fee-select-wrap">
+      <select
+        className="fee-select"
+        value={acctId}
+        onChange={e => setAcctId(e.target.value)}
+        style={!acctId ? { borderColor: '#DC2626' } : undefined}
+      >
+        <option value="">{type === 'received' ? 'Select wallet to receive into' : 'Select wallet to pay from'}</option>
+        {branchWallets
+          .filter(w => w.status === 'active' || String(w.id) === String(acctId))
+          .map(w => (
+            <option key={w.id} value={w.id}>{w.name} — {finTypeMeta(w.type).label}</option>
+          ))}
+      </select>
+      <i className="fa-solid fa-chevron-down"></i>
+    </div>
+
+    {/*  NEW: wallet na ho to warning */}
+    {branchWallets.length === 0 && (
+      <div className="fee-hint" style={{ color: '#DC2626', fontWeight: 700 }}>
+        <i className="fa-solid fa-triangle-exclamation" style={{ color: '#DC2626' }}></i>
+        No wallet found. Please create a wallet first in the Wallets tab.
+      </div>
+    )}
+
+    {/* purana: Available Balance */}
+    {acctId && walletBal != null && (
+      <div className="fee-hint" style={{ fontWeight: 700, color: type === 'returned' && walletBal <= 0 ? '#DC2626' : '#0E7490' }}>
+        <i className="fa-solid fa-wallet"></i> Available Balance: Rs. {Number(walletBal).toLocaleString('en-PK')}
+      </div>
+    )}
+
+    {/* purana: info hint */}
+    <div className="fee-hint">
+      <i className="fa-solid fa-circle-info"></i>
+      {type === 'received'
+        ? 'Choose which wallet receives this money. Its balance will increase.'
+        : 'Choose which wallet this payment is made from. Its balance will decrease.'}
+    </div>
+  </div>
+</div>
+                 
           {/* Attachment uploader */}
           <div
             className={`acc-attach-zone${dragOver ? ' drag' : ''}`}
@@ -5894,10 +6069,13 @@ function Reports({ toast }) {
     }
     if (repType === 'monthly-statement') {
       const isCustom = masMode === 'custom';
-      const rangeStart = isCustom ? masFrom : `${masMonth}-01`;
-      const priorRev = (txnData.rev || []).filter(x => x.date < rangeStart).reduce((a, x) => a + Number(x.amount || 0), 0);
-      const priorExp = (txnData.exp || []).filter(x => x.date < rangeStart).reduce((a, x) => a + Number(x.amount || 0), 0);
-      const opening = priorRev - priorExp;
+      /* Opening Balance = SIRF wallets ke "Opening Balance" (jo user ne wallet
+         banate waqt dala). Koi wallet opening na ho to 0 (reduce khud 0 deta hai).
+         Pehle yahan priorRev−priorExp (pichle sab transactions) jama hota tha; wo
+         hata diya — ab Opening sirf wallet seed hai. finAccounts = getFinAccounts
+         (manage-wallat). */
+      const walletOpening = (finAccounts || []).reduce((a, w) => a + (Number(w.opening) || 0), 0);
+      const opening = walletOpening;
       const incomeAll = isCustom
         ? (txnData.rev || []).filter(x => x.date >= masFrom && x.date <= masTo).sort((a, b) => (a.date < b.date ? -1 : 1))
         : (txnData.rev || []).filter(x => x.month === masMonth).sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -5930,19 +6108,21 @@ function Reports({ toast }) {
       }];
     }
     if (repType === 'fin-summary') {
-      const defId = String((finAccounts.find(a => a.isDefault) || finAccounts[0] || {}).id || '');
       return finAccounts.map(a => {
         const id = String(a.id);
-        const acctMoves = [];
-        (txnData.rev || []).forEach(t => { if (String(t.acctId || defId) === id) acctMoves.push({ date: t.date, amt: Number(t.amount) || 0, dir: 1 }); });
-        (txnData.exp || []).forEach(t => { if (String(t.acctId || defId) === id) acctMoves.push({ date: t.date, amt: Number(t.amount) || 0, dir: -1 }); });
-        (finTransfers || []).forEach(tr => {
-          if (String(tr.toId) === id)   acctMoves.push({ date: tr.date, amt: Number(tr.amount) || 0, dir: 1 });
-          if (String(tr.fromId) === id) acctMoves.push({ date: tr.date, amt: Number(tr.amount) || 0, dir: -1 });
-        });
-        const opening = Number(a.opening || 0) + acctMoves.filter(m => !fromDate || m.date < fromDate).reduce((s, m) => s + m.dir * m.amt, 0);
-        const incomeIn = (txnData.rev || []).filter(t => String(t.acctId || defId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-        const expenseOut = (txnData.exp || []).filter(t => String(t.acctId || defId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        /* Opening = SIRF wallet ka entered "Opening Balance" (0 agar na ho). Pehle
+           isme period se PEHLE ke transactions + transfers bhi jama hote the, is
+           liye Main Wallat ka Opening −818,750 dikh raha tha; wo hata diya taake
+           Opening wahi rahe jo user ne wallet banate waqt dala — Account Statement
+           report jaisa. Income In / Expense Out / Transfers chune date-range ke hi. */
+        const opening = Number(a.opening || 0);
+        /* Income In / Expense Out = SIRF is wallet ko assign ki gayi entries (acctId
+           == wallet). Pehle `t.acctId || defId` tha — jis entry me koi wallet nahi
+           hoti wo DEFAULT account par jama ho jati thi (uska debit/credit barha deti).
+           Ab har account sirf apna hi debit/credit dikhata hai; bina-wallet entries
+           kisi account me nahi gintiin. */
+        const incomeIn = (txnData.rev || []).filter(t => String(t.acctId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        const expenseOut = (txnData.exp || []).filter(t => String(t.acctId) === id && (!fromDate || t.date >= fromDate) && (!toDate || t.date <= toDate)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
         const transfersInRange = (finTransfers || []).filter(tr => (!fromDate || tr.date >= fromDate) && (!toDate || tr.date <= toDate));
         const transfersNet = transfersInRange.reduce((s, tr) => s + (String(tr.toId) === id ? Number(tr.amount) || 0 : 0) - (String(tr.fromId) === id ? Number(tr.amount) || 0 : 0), 0);
         const current = opening + incomeIn - expenseOut + transfersNet;

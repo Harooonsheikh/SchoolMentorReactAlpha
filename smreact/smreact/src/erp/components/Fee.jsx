@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
+import * as accountsService from '../services/accountsService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
@@ -583,6 +584,80 @@ function TransportFeeAssignment({ toast }) {
   const [openKey, setOpenKey] = useState(null);
   const [editing, setEditing] = useState(null); // { classKey, student }
   const [reportHtml, setReportHtml] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  /* Transport fee changes jo approval ka intezaar kar rahe hain — student row ke
+     Action me "Pending Approval" badge + Withdraw (Student Fee Setup jaisa).
+     session: `${classKey}-${reg}` par (save response), server: reg par
+     (getUserApprovalRequests, transport filter). */
+  const [pendingTransSession, setPendingTransSession] = useState({});
+  const [pendingTransServer, setPendingTransServer] = useState({});   // studentID -> {approvalId, requestNo}
+  /* approvals_by_user se pending transport requests — page reload ke baad bhi
+     badge dikhe. Per-student fee approvals ki tarah studentID par key karte
+     hain (discount/challan/delete/receive KO chhod kar — unke apne module/prefix
+     hain). Transport ki pehchaan: module/requestNo me 'transport' ya prefix TF/TS/TR/TP. */
+  const loadTransApprovals = useCallback(async () => {
+    try {
+      const rows = await feeService.getUserApprovalRequests();
+      const map = {};
+      rows.forEach(r => {
+        if (String(r.status).toLowerCase() !== 'pending') return;
+        const mod = String(r.module || '');
+        const reqNo = String(r.requestNo || '');
+        /* Transport request: module 'TransportFeeSetup' ya requestNo 'TF-'. */
+        const isTransport = /transportfee/i.test(mod) || /^tf-/i.test(reqNo);
+        if (!isTransport) return;
+        /* studentID transport me NULL aata hai — asli student id (ApplicantsID)
+           detailsXml ke andar hoti hai (<ApplicantsID>35</ApplicantsID>). */
+        const xml = String(r.detailsXml || '');
+        const m = xml.match(/<ApplicantsID>\s*(\d+)\s*<\/ApplicantsID>/i);
+        const sid = m ? m[1] : String(r.studentID ?? r.applicantsID ?? '');
+        if (!sid) return;
+        const prev = map[sid];
+        if (!prev || Number(r.id) > Number(prev.approvalId)) map[sid] = { approvalId: r.id, requestNo: r.requestNo };
+      });
+      setPendingTransServer(map);
+    } catch (e) { /* optional */ }
+  }, []);
+  useEffect(() => { loadTransApprovals(); }, [loadTransApprovals]);
+
+  /* Student ke sare mumkin ids — detailsXml se nikli ApplicantsID in me se kisi
+     se match karti hai (applicantsID zyada tar). */
+  const stuSrvPend = useCallback((s) => (
+    pendingTransServer[String(s.applicantsID ?? '')]
+    || pendingTransServer[String(s.studentID ?? '')]
+    || pendingTransServer[String(s.reg ?? '')]
+  ), [pendingTransServer]);
+
+  const transPendOf = useCallback((c, s) => (
+    pendingTransSession[`${c.key}-${s.reg}`] || stuSrvPend(s)
+  ), [pendingTransSession, stuSrvPend]);
+
+  const requestWithdrawTrans = (c, s) => {
+    const cands = [pendingTransSession[`${c.key}-${s.reg}`], stuSrvPend(s)].filter(Boolean);
+    const pend = cands.find(p => p.approvalId) || cands[0];
+    if (!pend) return;
+    setConfirm({
+      title: 'Withdraw this request?',
+      message: `The transport fee change for ${s.name} will not be applied.`,
+      confirmStyle: 'primary', icon: 'fa-rotate-left', iconBg: 'rgba(30,58,138,.1)', iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Withdraw',
+      onConfirm: async () => {
+        try {
+          if (pend.approvalId) await feeService.withdrawFeeDiscount(pend.approvalId);
+          setPendingTransSession(prev => { const n = { ...prev }; delete n[`${c.key}-${s.reg}`]; return n; });
+          setPendingTransServer(prev => {
+            const n = { ...prev };
+            delete n[String(s.studentID ?? '')];
+            delete n[String(s.applicantsID ?? '')];
+            return n;
+          });
+          loadTransApprovals();
+          toast('Request withdrawn', 'success');
+        } catch (e) { toast(e.message || 'Could not withdraw request', 'error'); }
+      },
+    });
+  };
 
   /* ── Smart search (mirrors Fee Challans) ── */
   const [searchQ, setSearchQ] = useState('');
@@ -654,6 +729,16 @@ function TransportFeeAssignment({ toast }) {
         createdBy: student.transportSetup?.createdBy,
         isActive: true,
       });
+      /* Approval on: change abhi apply nahi — us student ki row par badge +
+         Withdraw. transportMap waise ka waisa (purani value dikhti rahe). */
+      const info = pendingFromResp(saved, 'Transport fee sent for approval');
+      if (info) {
+        setPendingTransSession(prev => ({ ...prev, [`${classKey}-${student.reg}`]: { approvalId: info.approvalId ?? null, requestNo: info.requestNo || '' } }));
+        toast(info.message || 'Transport fee sent for approval', 'info');
+        closeEdit();
+        loadTransApprovals();
+        return;
+      }
       const next = (transportMap[classKey] || []).map(s =>
         s.reg === student.reg
           ? {
@@ -672,7 +757,7 @@ function TransportFeeAssignment({ toast }) {
     } catch (err) {
       toast(err.message || 'Could not save transport fee', 'error');
     }
-  }, [editing, classes, transportMap, setTransportMap, closeEdit, toast]);
+  }, [editing, classes, transportMap, setTransportMap, closeEdit, toast, loadTransApprovals]);
 
   const openClassReport = useCallback((c) => {
     const rows = transportMap[c.key] || [];
@@ -777,7 +862,13 @@ function TransportFeeAssignment({ toast }) {
             <div key={c.key} className="fee-rowwrap">
               <div
                 className={`fee-row fee-trans-row${isOpen ? ' open' : ''}`}
-                onClick={() => setOpenKey(isOpen ? null : c.key)}
+                onClick={() => {
+                  const opening = !isOpen;
+                  setOpenKey(opening ? c.key : null);
+                  /* Class expand par approvals_by_user dobara lao — taake us class
+                     ke students ke pending transport badge taza/updated rahein. */
+                  if (opening) loadTransApprovals();
+                }}
               >
                 <div className="fee-td" data-label="#"><span className="fee-row-icon">{i + 1}</span></div>
                 <div className="fee-td fee-name" data-label="Class">{c.cls}</div>
@@ -846,12 +937,33 @@ function TransportFeeAssignment({ toast }) {
                                 : <span className="fee-muted-dash">—</span>}
                             </td>
                             <td className="fee-center">
-                              <Tooltip text={!canTfEdit ? 'You do not have permission to edit transport fee' : `Edit transport fee for ${s.name}`}>
-                                <button className="fee-iconbtn" onClick={() => openEdit(c.key, s)}
-                                  disabled={!canTfEdit} style={!canTfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                                  <i className="fa-solid fa-pen"></i>
-                                </button>
-                              </Tooltip>
+                              {(() => {
+                                const tp = transPendOf(c, s);
+                                if (tp) return (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+                                    <Tooltip text={`Transport fee request ${tp.requestNo || ''} awaiting approval`.trim()}>
+                                      <span className="fee-pending-badge" role="status">
+                                        <i className="fa-solid fa-hourglass-half"></i>
+                                        <span>Pending Approval</span>
+                                        {tp.approvalId != null && <b className="fee-pending-id">#{tp.approvalId}</b>}
+                                      </span>
+                                    </Tooltip>
+                                    <Tooltip text="Withdraw this request">
+                                      <button className="fee-iconbtn fee-withdraw-btn" onClick={() => requestWithdrawTrans(c, s)}>
+                                        <i className="fa-solid fa-rotate-left"></i>
+                                      </button>
+                                    </Tooltip>
+                                  </span>
+                                );
+                                return (
+                                  <Tooltip text={!canTfEdit ? 'You do not have permission to edit transport fee' : `Edit transport fee for ${s.name}`}>
+                                    <button className="fee-iconbtn" onClick={() => openEdit(c.key, s)}
+                                      disabled={!canTfEdit} style={!canTfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                                      <i className="fa-solid fa-pen"></i>
+                                    </button>
+                                  </Tooltip>
+                                );
+                              })()}
                             </td>
                           </tr>
                         ))}
@@ -891,6 +1003,8 @@ function TransportFeeAssignment({ toast }) {
         html={reportHtml?.html}
         onClose={() => setReportHtml(null)}
       />
+
+      <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
     </>
   );
 }
@@ -5582,6 +5696,29 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   const [method, setMethod] = useState('Cash');
   const [ref, setRef] = useState('');
   const [txn, setTxn] = useState('');
+  /* Wallets (Accounts → Financial Accounts) — Payment Method dropdown me yahi aate hain.
+     Chuna hua wallet ka NAAM paymentMethod me, aur id receive-installment ke walletId me —
+     paisa usi wallet me jata hai. Default = API ka isDefault:true wallet. Sirf Active. */
+  const [wallets, setWallets] = useState([]);
+  const [walletId, setWalletId] = useState('');
+  const [walletsLoaded, setWalletsLoaded] = useState(false);
+  useEffect(() => {
+    if (!cfg || cfg.viewOnly) return undefined;
+    let alive = true;
+    setWalletsLoaded(false);
+    accountsService.getFinAccounts()
+      .then(list => {
+        if (!alive) return;
+        const active = (list || []).filter(w => w.status === 'active');
+        setWallets(active);
+        const def = active.find(w => w.isDefault) || active[0] || null;
+        if (def) { setWalletId(def.id); setMethod(def.name); }
+        else { setWalletId(''); }
+        setWalletsLoaded(true);
+      })
+      .catch(() => { if (alive) { setWallets([]); setWalletId(''); setWalletsLoaded(true); } });
+    return () => { alive = false; };
+  }, [cfg]);
   /* Optional note for THIS installment. receive-payment API me remarks field
      nahi hai, is liye ye session receipt (pay object) par store hoti hai — dekho
      handleReceive payload.remarks + parent handleSaveReceipt. */
@@ -6168,6 +6305,8 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
       reg: student.reg, monthIdx,
       studentName: student.name,
       date, method, ref, txn, remarks,
+      /* Chuna hua wallet — receive-installment ka walletId. */
+      walletId: wallets.length > 0 ? (Number(walletId) || 0) : 0,
       amount: receivingNow,
       perHead,
       pendByHead,
@@ -6257,13 +6396,26 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
               <div className="fee-field">
                 <span className="fee-label">Payment Method</span>
                 <div className="fee-select-wrap">
-                  <select className="fee-select" value={method} onChange={e => setMethod(e.target.value)}>
-                    <option>Cash</option>
-                    <option>Bank Transfer</option>
-                    <option>Cheque</option>
-                    <option>Card</option>
-                    <option>Online / App</option>
-                  </select>
+                  {wallets.length > 0 ? (
+                    /* Wallets — value = wallet id, naam paymentMethod me jata hai. */
+                    <select
+                      className="fee-select"
+                      value={walletId}
+                      onChange={e => {
+                        const w = wallets.find(x => x.id === e.target.value);
+                        setWalletId(e.target.value);
+                        if (w) setMethod(w.name);
+                      }}
+                    >
+                      {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                  ) : (
+                    /* Static Cash / Bank options hata diye — sirf wallets. Load ho rahe hon ya koi
+                       Active wallet na ho to khaali (disabled) dropdown. */
+                    <select className="fee-select" value="" disabled>
+                      <option value="">{walletsLoaded ? 'No active wallet found' : 'Loading wallets…'}</option>
+                    </select>
+                  )}
                   <i className="fa-solid fa-chevron-down"></i>
                 </div>
               </div>
@@ -8768,6 +8920,7 @@ function FeeReceivingIndividual({ toast }) {
         fine: payload.fine || 0,
         /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
         fineBilled: payload.fineBilled || 0,
+        walletId: payload.walletId || 0,
         newHeads: payload.newHeads || [],
       });
       if (!recvBody.detailRows.length) {
@@ -10113,6 +10266,7 @@ function FamilyTreeReceiving({ toast }) {
         fine: payload.fine || 0,
         /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
         fineBilled: payload.fineBilled || 0,
+        walletId: payload.walletId || 0,
         newHeads: payload.newHeads || [],
       });
       if (!recvBody.detailRows.length) {
@@ -14075,6 +14229,14 @@ const isLedgerCarryRow = (r) => isAggregateCarryRow(r);
    receiving-time discount (recvDiscount) aur kis user ne liya (createdBy).
    Negative advance-consumption rows (challanAmount < 0, received −X) cash nahi —
    skip. Installments na hon (purana record) to ek synthetic receipt detail totals se. */
+/* Ek challan ki ASLI wasooli receipts — Collection & Advance Adjustment reports ke liye.
+   Har "Pay Now" = ek receipt. Group installmentNo par NAHI, SAVE-TIME par (modifiedAt /
+   createdAt, second tak): server har head ka installment number alag ginta hai aur naye
+   receive ki raqam head ke khaali purane slot (Inst 1) me bhar deta hai — number se
+   jodne par ek receiving ke heads alag receipts me bat jaate the (aur ek head doosri
+   date me chala jata tha). Ek receive call ke saare heads ek hi waqt save hote hain.
+   Negative advance-consumption rows (challanAmount < 0, received −X) cash nahi — skip.
+   Installments na hon (purana record) to ek synthetic receipt detail totals se. */
 function ledgerInstallmentReceipts(rec) {
   if (!rec || !Array.isArray(rec.detailRows)) return [];
   const rows = rec.detailRows.filter(r => !((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)));
@@ -14083,21 +14245,26 @@ function ledgerInstallmentReceipts(rec) {
     const recv = +inst.receivedAmount || 0;
     const give = Math.max(0, +inst.recvDiscount || 0);
     if (!recv && !give) return;
-    const no = +inst.installmentNo || 0;
-    const g = groups.get(no) || { no, date: '', time: '', amount: 0, give: 0, by: null };
+    /* Receiving ka waqt — slot-fill par createdAt challan banne ka hota hai, is liye
+       modifiedAt pehle (receiving list / slip bhi yahi use karte hain). */
+    const stamp = String(inst.modifiedAt || inst.createdAt || '').slice(0, 19);
+    const key = stamp || `no-${+inst.installmentNo || 0}`;
+    const g = groups.get(key) || { stamp, date: '', time: '', amount: 0, give: 0, by: null };
     g.amount += recv;
     g.give += give;
+    /* Cashier ki chuni hui receiving date (pehli mili hui) — overwrite nahi. */
     const d = String(inst.receivedDate || '').slice(0, 10);
-    if (d) g.date = d;
-    const t = String(inst.createdAt || '');
-    if (t.length >= 16) g.time = t.slice(11, 16);
-    if (inst.createdBy) g.by = inst.createdBy;
-    groups.set(no, g);
+    if (d && !g.date) g.date = d;
+    if (!g.time && stamp.length >= 16) g.time = stamp.slice(11, 16);
+    if (!g.by && (inst.modifiedBy || inst.createdBy)) g.by = inst.modifiedBy || inst.createdBy;
+    groups.set(key, g);
   }));
   if (groups.size) {
     return [...groups.values()]
-      .map(g => ({ ...g, date: g.date || String(rec.receivedDate || '').slice(0, 10) }))
-      .sort((a, b) => a.no - b.no);
+      .map(g => ({ ...g, date: g.date || g.stamp.slice(0, 10) || String(rec.receivedDate || '').slice(0, 10) }))
+      .sort((a, b) => `${a.date} ${a.stamp}`.localeCompare(`${b.date} ${b.stamp}`))
+      /* no = receipt ka sequence (Installment 1, 2, …) — voucher CH-{id}/{no} aur row key. */
+      .map((g, i) => ({ no: i + 1, date: g.date, time: g.time, amount: g.amount, give: g.give, by: g.by }));
   }
   const amount = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const give = rows.reduce((a, r) => a + Math.max(0, +r.recvDiscount || 0), 0);
@@ -14699,66 +14866,104 @@ function ReportPanelDefaulter({ toast }) {
     return () => { alive = false; };
   }, [classes]);
 
-  /* Defaulter = baqaya > 0 AUR aaj > due date */
+  /* Late fine ki settings — challan par bill na hui fine (due guzarne ke baad) bhi Pending me. */
+  const { data: fineSettings = {} } = useAsync(feeService.getFeeSettings, []);
+
+  /* ── Defaulter hisaab — CHALLAN jo kehta hai wahi (previous dues samet) ──
+     Monthly Fee Defaulters: chune hue mahine ka challan bana AUR us par kuch receive NAHI
+       hua → poora challan payable (previous + is mahina). Partial hote hi Monthly se bahar.
+     All Fee Defaulters: har student jis ke latest challan par baqaya > 0 (unpaid + partial).
+     Due date ki koi shart nahi — challan bante hi defaulter.
+     Har head: challan − discount + us head ka previous − received. Saare heads (Pending Due /
+     Previous Due / Old Dues Till Date samet); sirf aggregate "Previous Pending" row tab skip
+     jab previous pehle hi heads par ho (double na ho). Total Pending = heads ka jod (+ fine). */
   const { groups, totals } = useMemo(() => {
-    const today = localTodayISO();
     const nowD = new Date();
     const yy = Number(year) || nowD.getFullYear();
     const endM = seg === 'month'
       ? FEE_MONTHS.indexOf(month) + 1
       : (yy === nowD.getFullYear() ? nowD.getMonth() + 1 : 12);
     const monthKey = yy * 12 + endM;
-    const cutoffISO = `${yy}-${String(endM).padStart(2, '0')}-${String(new Date(yy, endM, 0).getDate()).padStart(2, '0')}`;
+    const startOf = (r) => Number(r.startYear || r.year) * 12 + Number(r.startMonth || r.month);
+    const endOf = (r) => Number(r.endYear || r.startYear || r.year) * 12 + Number(r.endMonth || r.startMonth || r.month);
+    const hpOf = (r) => Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+    const fmtAmt = (n) => Math.round(n).toLocaleString('en-PK');
+
+    /* Monthly: us mahine ka apna challan (warna us mahine ko cover karne wala multi-month).
+       All: as-of mahine tak ka sab se naya challan. recs pehle se mahine-wise (purana → naya). */
+    const pickRec = (recs) => {
+      const list = (recs || []).filter(r => startOf(r) <= monthKey);
+      if (!list.length) return null;
+      if (seg === 'month') {
+        return list.find(r => Number(r.year) * 12 + Number(r.month) === monthKey)
+          || list.find(r => startOf(r) <= monthKey && monthKey <= endOf(r))
+          || null;
+      }
+      return list[list.length - 1];
+    };
+
+    /* Ek challan ke heads ka baqaya. */
+    const challanDues = (rec) => {
+      const rows = rec.detailRows || [];
+      const headWise = rows.some(r => !isAggregateCarryRow(r) && !feeService.isLateFineRow(r) && hpOf(r) !== 0);
+      const heads = [];
+      let total = 0, finePend = 0, oldD = 0, anyRecv = false;
+      rows.forEach(r => {
+        if ((+r.receivedAmount || 0) !== 0 || (+r.recvDiscount || 0) > 0) anyRecv = true;
+        if (isAggregateCarryRow(r) && headWise) return;                       // previous heads par hai
+        if (isAggregateCarryRow(r) && (+r.challanAmount || 0) < 0) return;    // advance-consumption row
+        const hp = isAggregateCarryRow(r) ? 0 : hpOf(r);
+        const pend = (+r.challanAmount || 0) - (+r.discount || 0) + hp - (+r.receivedAmount || 0);
+        if (feeService.isLateFineRow(r)) { finePend += Math.max(0, pend); return; }
+        total += pend;
+        if (Math.round(pend) !== 0) heads.push({ name: r.subHead || r.head || '—', amt: pend });
+        if (pend > 0 && isOldDuesName(r)) oldD += pend;
+      });
+      /* Fine abhi challan par bill nahi hui magar due date guzar chuki → aaj tak ki fine. */
+      if (billedFineOf(rec) <= 0) finePend += Math.max(0, challanAccruedFine(rec, fineSettings) || 0);
+      return { heads, total: total + finePend, finePend, oldD, anyRecv };
+    };
+
     const t = { def: 0, pend: 0, fine: 0, finePend: 0, oldDues: 0, n: 0, paid: 0 };
     const out = classes.map(c => {
       const list = [];
       (studentsMap[c.key] || []).forEach(s => {
         const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
-        if (!m) return;
-        /* per-head baqaya (carry-forward samet) — Old Dues Till Date bhi yahin se */
-        const entries = [...ledgerPendingAsOf(m.recs || [], monthKey, cutoffISO).entries()]
-          .map(([name, amt]) => ({ name, amt: Math.round(+amt || 0) }))
-          .filter(e => e.amt > 0 && !feeService.isLateFineRow({ subHead: e.name }));
-        let rem = m.remaining;
-        let oldD = entries
-          .filter(e => isOldDuesName({ subHead: e.name }))
-          .reduce((a, e) => a + e.amt, 0) || (m.oldDues || 0);
-        let due = m.dueISO || '';
-        /* Unpaid Heads = har baqaya head, Previous Due / Pending Due / Old Dues Till Date samet.
-           Alag "Old Dues" column nahi. */
-        const byName = new Map(entries.map(e => [e.name, e.amt]));
-        const latestRec = (m.recs || [])[Math.max(0, (m.recs || []).length - 1)];
-        (latestRec?.detailRows || []).forEach(r => {
-          if (feeService.isLateFineRow(r) || isAggregateCarryRow(r)) return;
-          const name = r.subHead || r.head || '';
-          if (!name) return;
-          const named = isOldDuesName(r) || /previous|pending|arrear/i.test(name);
-          if (!named || byName.has(name)) return;
-          const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
-          const pend = Math.round((+r.challanAmount || 0) - (+r.discount || 0) + hp - ledgerRowRecv(r));
-          if (pend > 0) byName.set(name, pend);
-        });
-        let heads = byName.size
-          ? [...byName.entries()].map(([name, amt]) => `${headLabel(name)} (${amt.toLocaleString('en-PK')})`)
-          : (m.unpaidHeads || []);
-        if (!m.billed && seg === 'all') {
+        const rec = m ? pickRec(m.recs) : null;
+
+        /* Challan hi nahi (window me) — All me sirf Old ERP ka baqaya, pehle jaisa. */
+        if (!rec) {
+          if (seg !== 'all') return;
           const o = oldErp.get(String(s.applicantsID ?? s.studentID)) || 0;
-          if (o > 0) { rem = o; oldD = o; due = ''; heads = [`Old Dues Till Date (${o.toLocaleString('en-PK')})`]; }
+          if (o <= 0) return;
+          t.n += 1;
+          list.push({ s, rem: o, oldD: o, due: '', heads: [`Old Dues Till Date (${fmtAmt(o)})`], finePend: 0 });
+          t.def += 1; t.pend += o; t.oldDues += o;
+          return;
         }
-        if (m.billed || rem > 0) t.n += 1;
-        if (rem <= 0) { if (m.billed) t.paid += 1; return; }
-        /* Old Dues pehle hi purane mahine ka hai → hamesha defaulter.
-           Baqi heads sirf due date guzarne ke baad. */
-        const overdue = oldD > 0 || !due || due < today;
-        if (!overdue) return;
-        list.push({ s, rem, oldD, due, heads, finePend: m.finePend || 0 });
-        t.def += 1; t.pend += rem; t.oldDues += oldD;
-        t.fine += m.fine || 0; t.finePend += m.finePend || 0;
+
+        const d = challanDues(rec);
+        const rem = Math.round(d.total);
+        t.n += 1;
+        if (rem <= 0) { t.paid += 1; return; }
+        /* Monthly: us challan par kuch bhi receive ho chuka → Monthly se bahar (All me rahega). */
+        if (seg === 'month' && d.anyRecv) return;
+
+        const heads = d.heads
+          .filter(h => h.amt > 0)
+          .map(h => `${headLabel(h.name)} (${fmtAmt(h.amt)})`);
+        /* Kisi head par advance (minus) ho to bhi dikhao — taake heads ka jod = Total Pending. */
+        const adv = d.heads.filter(h => h.amt < 0).reduce((a, h) => a + h.amt, 0);
+        if (Math.round(adv) < 0) heads.push(`Advance (${fmtAmt(adv)})`);
+
+        list.push({ s, rem, oldD: Math.round(d.oldD), due: challanDueISO(rec), heads, finePend: Math.round(d.finePend) });
+        t.def += 1; t.pend += rem; t.oldDues += Math.round(d.oldD);
+        t.fine += Math.round(d.finePend); t.finePend += Math.round(d.finePend);
       });
       return { c, list };
     });
     return { groups: out, totals: t };
-  }, [classes, studentsMap, allStudents, oldErp, seg,month, year]);
+  }, [classes, studentsMap, allStudents, oldErp, seg, month, year, fineSettings]);
 
   const reportTitle = `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`;
   const downloadReport = (style, format) => {
@@ -14780,9 +14985,9 @@ function ReportPanelDefaulter({ toast }) {
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
         <span>
-  A student becomes a defaulter when the <b>due date of the challan has passed</b> (e.g., if the due date is the 11th, then starting from the 12th) and there is an outstanding balance.
-  Previous Due and Old Dues Till Date are displayed under <b>Unpaid Heads</b>.
-</span>
+          <b>Monthly Fee Defaulters</b>: students whose challan for the selected month is generated and <b>nothing has been received</b> yet (full challan payable, previous dues included).{' '}
+          <b>All Fee Defaulters</b>: every student with an outstanding balance on their latest challan — unpaid or partially paid. All heads are listed under <b>Unpaid Heads</b>.
+        </span>
       </div>
 
       <RepLoadState loading={loading} error={error} />

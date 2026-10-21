@@ -19,6 +19,7 @@ import {
 } from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import { loadAcademicsContentPermissions } from '../services/academicsContentPermissions';
+import { loadExaminationContentPermissions } from '../services/examinationContentPermissions';
 import { startChatLoginWindow, pingChat, nudgeChatOnFocus, chatActive } from '../services/chatActivity';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
@@ -27,7 +28,7 @@ import feeReferenceAlignment from './feeReferenceAlignment';
 /* Registry module id → uska label (API menuName se match karta hai). */
 const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, m.label]));
 
-/* Extra Modules that are shown ONLY on the master branch (branchID === 1) and
+/* Extra modules that are shown ONLY on the master branch (branchID === 1) and
    stay hidden on every other branch. On branch 1 they still respect the user's
    role/permission. Keyed by sidebar nav id. */
 /* Chat yahan JAAN-BOOJH KAR nahi hai: wo har branch par khulta hai. Uska
@@ -76,7 +77,9 @@ function lazyTab(factory) {
   let pending;
   const load = () => (pending || (pending = factory()));
   modulePreloads.push(() => load().catch(() => {}));
-  return lazy(load);
+  const C = lazy(load);
+  C.preload = () => load().catch(() => {});
+  return C;
 }
 const Academics      = lazyTab(() => import(/* webpackChunkName: "mod-academics" */     './Academics'));
 const Examination    = lazyTab(() => import(/* webpackChunkName: "mod-examination" */   './Examination.jsx'));
@@ -105,6 +108,8 @@ const AuditLogs        = lazyTab(() => import(/* webpackChunkName: "mod-auditlog
 const LaunchSetup      = lazyTab(() => import(/* webpackChunkName: "mod-launchsetup" */  '../pages/LaunchSetup/LaunchSetup.jsx'));
 const Dashboard        = lazyTab(() => import(/* webpackChunkName: "mod-dashboard"   */  '../pages/Dashboard/Dashboard.jsx'));
 const MentorAI         = lazyTab(() => import(/* webpackChunkName: "mod-mentorai"    */  '../pages/MentorAI/MentorAI.jsx'));
+
+Dashboard.preload();
 
 /* ProfileModal is only mounted when the user opens "My Profile" from
    the avatar menu. Lazy-loading keeps its ~630 lines out of the initial
@@ -216,8 +221,15 @@ export default function App() {
     try { sessionStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
   }, [active]);
   /* Tab chunks load once after login. Opening a tab does not show a loader. */
-  useEffect(() => {
-    modulePreloads.forEach(run => run());
+    useEffect(() => {
+    const run = () => modulePreloads.forEach(r => r());
+    const id = ('requestIdleCallback' in window)
+      ? window.requestIdleCallback(run, { timeout: 2500 })
+      : setTimeout(run, 800);
+    return () => {
+      if ('cancelIdleCallback' in window) window.cancelIdleCallback(id);
+      else clearTimeout(id);
+    };
   }, []);
   /* Dashboard ke universal search se aaye params (jaise { studentReg }) —
      target module unhe istemal kar ke onFocusHandled se saaf kar deta hai. */
@@ -352,6 +364,7 @@ export default function App() {
      add-edit-delete isAccessable se chalen. */
   useEffect(() => {
     loadAcademicsContentPermissions().catch(() => {});
+    loadExaminationContentPermissions().catch(() => {});
   }, []);
 
   /* Branch header (name, logo, address) for the sidebar top — same API the
@@ -419,6 +432,14 @@ const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).joi
     /* Retire ho chuke modules kabhi visible nahi — chahe permission aur
        module-activation dono allow karti hon. */
     if (RETIRED_NAV.has(navId)) return false;
+    /* E-Tube / Chat / Notifications ab ERP User Permission se bhi governed hain
+       (PermissionsContext ke GATEABLE_MODULES me add). Grant na ho to neeche ke
+       mobile/branch gating se PEHLE hi hat jate hain. School Head / chain
+       (fullAccess / readOnly) par canModule true rehta hai, is liye unhe farq
+       nahi parta. Mobile-app ke flags (ChatType / eTube / MentorAI) phir bhi
+       neeche AND hote hain — dono allow karein tabhi module dikhta hai. */
+    const EXTRA_PERM_LABEL = { chat: 'Chat', etube: 'E-Tube', notifications: 'Notifications' };
+    if (EXTRA_PERM_LABEL[navId] && !(fullAccess || canModule(EXTRA_PERM_LABEL[navId]))) return false;
     /* Super Admin (ya chain portal) ne is school ke liye Chat / Mentor AI /
        eTube SAVE kiye hon to wahi flags maano.
          • Chat: har branch par khulta hai. Row ho to ChatType faisla karta
@@ -921,15 +942,16 @@ if (navId === 'mentorai') {
               </Suspense>
             )}
             {active === 'dashboard' && (
-              <Suspense fallback={null}>
+              <Suspense fallback={<PageSkeleton />}>
                 <Dashboard
                   toast={pushToast}
                   /* Universal search params bhi saath rakho (pehle gir jate
-                     the) — student chunne par Students us row par jump kare. */
+                                            the) — student chunne par Students us row par jump kare. */
+                  branchInfo={branchInfo}
                   navigate={(target, params) => { setNavFocus(params || null); setActive(target); }}
                   /* Drop the user straight onto Academics → Scheme of
-                     Studies → Calendar → Activity Calendar so the
-                     Upcoming Activities cards land in context. */
+                                            Studies → Calendar → Activity Calendar so the
+                                            Upcoming Activities cards land in context. */
                   openActivityCalendar={() => {
                     setL1('sos');
                     setL2('cal');
@@ -1037,6 +1059,19 @@ if (navId === 'mentorai') {
    at the bottom of this file) so dark mode + responsive padding behave
    consistently with the rest of the ERP shell.
    ───────────────────────────────────────────────────────────────────────── */
+ 
+   function PageSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading">
+      <div className="skel-block" style={{ height: 28, width: 220, marginBottom: 18 }} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 14 }}>
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skel-block" style={{ height: 96 }} />)}
+      </div>
+      <div className="skel-block" style={{ height: 260, marginTop: 18 }} />
+    </div>
+  );
+}
+
 function NavComingSoon({ label }) {
   return (
     <section
@@ -1303,6 +1338,8 @@ body.dark .play-dot::after  { border-color:rgba(59,130,246,.15); }
   background-size:400% 100%;animation:navSkel 1.2s ease-in-out infinite;
 }
 @keyframes navSkel { 0%{background-position:100% 50%} 100%{background-position:0 50%} }
+.skel-block{border-radius:var(--radius-md);background:linear-gradient(90deg,#F1F5FB 25%,#E7EDF7 37%,#F1F5FB 63%);background-size:400% 100%;animation:navSkel 1.2s ease-in-out infinite}
+[data-theme="dark"] .skel-block{background:linear-gradient(90deg,var(--bg-muted) 25%,var(--border-light) 37%,var(--bg-muted) 63%);background-size:400% 100%}
 @media (prefers-reduced-motion: reduce) { .nav-skel { animation:none; } }
 [data-theme="dark"] .nav-skel {
   background:linear-gradient(90deg,var(--bg-hover) 25%,var(--border-light) 37%,var(--bg-hover) 63%);

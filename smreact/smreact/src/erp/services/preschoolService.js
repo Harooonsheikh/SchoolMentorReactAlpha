@@ -44,6 +44,7 @@
 
 import {
   mockPreschoolLevels, mockPreschoolResultData, mockPRco,
+  mockLearningAreas, mockGradingScale, mockSloStatements, mockPsdFields,
 } from '../mock/preschool';
 import { delay, clone } from './_http';
 import { apiPost, apiGet, getBranchId } from './api';
@@ -82,6 +83,43 @@ let _sloCache = {};      // { [levelId]: { [laId]: [{ id, dbId, text }] } }
 let _psdCache = [];      // [{ id, dbId, label }]
 
 /* ════════════════════════════════════════════════════════════════
+   STATIC DEFAULTS — Result Setup me Learning Areas, Assessment
+   Criteria, SLOs aur PSD fields ki default values HAMESHA dikhti hain,
+   chahe backend pe kuch save ho ya na ho. GET ka data defaults ke
+   upar merge hota hai: jo default naam se backend me mil jaye uski
+   dbId/values use hoti hain; jo na mile wo bina dbId ke dikhta hai
+   (agli "Save Changes" pe insert ho jata hai). Backend me jo extra
+   rows hain (user ne khud add kiye) wo defaults ke baad append hote
+   hain. User ko defaults khud type nahi karne parte.
+   ════════════════════════════════════════════════════════════════ */
+const _norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
+
+/* GET calls ke liye: API hit na ho / error / response na aaye to throw mat
+   karo — khali data lautao, taake screen par mock/default values phir bhi
+   dikhti rahen (blank screen ya error na aaye). */
+async function apiGetOrEmpty(endpoint, payload) {
+  try {
+    return await apiPost(endpoint, payload);
+  } catch (err) {
+    console.warn(`[preschool] ${endpoint} failed — showing default data`, err);
+    return { data: null };
+  }
+}
+
+/* defaults (order rakhte hue) + saved rows ko naam se merge karta hai. */
+function mergeWithDefaults(saved, defaults, nameOf) {
+  const used = new Set();
+  const out = defaults.map(def => {
+    const hit = saved.find(s => !used.has(s) && _norm(nameOf(s)) === _norm(nameOf(def)));
+    if (!hit) return { ...def };
+    used.add(hit);
+    return { ...def, ...hit, icon: def.icon || hit.icon };
+  });
+  saved.forEach(s => { if (!used.has(s)) out.push(s); });
+  return out;
+}
+
+/* ════════════════════════════════════════════════════════════════
    ✅ 1. Learning Areas — REAL API (preschooling-learningareas-crud)
    ════════════════════════════════════════════════════════════════ */
    /* ════════════════════════════════════════════════════════════════
@@ -92,12 +130,13 @@ export async function getPreschoolLevels() {
   return clone(mockPreschoolLevels);
 }
 export async function getLearningAreas() {
-  const res = await apiPost('preschooling-learningareas-crud', {
+  const res = await apiGetOrEmpty('preschooling-learningareas-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const list = (res.data || []).map(row => ({
+  const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id, name: row.subjectName, icon: 'fa-book',
   }));
+  const list = mergeWithDefaults(saved, mockLearningAreas, x => x.name);
   _laCache = list;
   return clone(list);
 }
@@ -137,14 +176,27 @@ export async function saveLearningAreas(list, removedDbIds = []) {
    (preschooling-assessmentcriteria-crud)
    ════════════════════════════════════════════════════════════════ */
 export async function getGradingScale() {
-  const res = await apiPost('preschooling-assessmentcriteria-crud', {
+  const res = await apiGetOrEmpty('preschooling-assessmentcriteria-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const list = (res.data || []).map(row => ({
+  const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id,
     label: row.assessmentName, range: row.percentage, color: row.color,
     code: deriveCodeFromLabel(row.assessmentName),
   }));
+  /* 4 fixed slots: pehle label se match, phir bache hue saved rows (rename
+     kiye gaye) unmatched default slots ko order me bharte hain — taake
+     rename ke baad purana default label 5th row ban ke wapas na aaye. */
+  const used = new Set();
+  const slots = mockGradingScale.map(def => {
+    const hit = saved.find(s => !used.has(s) && _norm(s.label) === _norm(def.label));
+    if (hit) used.add(hit);
+    // default label match hua → default code (E/M/A/NY) hi rakho, "EE" na bane
+    return hit ? { ...def, ...hit, code: def.code, range: hit.range || def.range, color: hit.color || def.color } : null;
+  });
+  const rest = saved.filter(s => !used.has(s));
+  const list = slots.map((s, i) => s || (rest.length ? rest.shift() : { ...mockGradingScale[i], id: `grade_${i}` }));
+  list.push(...rest);
   _gradingCache = list;
   return clone(list);
 }
@@ -213,7 +265,7 @@ export async function getSloStatements() {
   Object.entries(PRESCHOOL_API_CLASS).forEach(([lid, cls]) => levelByName.set(norm(cls), lid));
   const laByName = new Map(areas.map(a => [norm(a.name), a.id]));
 
-  const res = await apiPost('preschooling-slos-crud', { id: 0, branchID: getBranchId(), action: 'get' });
+  const res = await apiGetOrEmpty('preschooling-slos-crud', { id: 0, branchID: getBranchId(), action: 'get' });
   const nested = {};
   (res.data || []).forEach(row => {
     const levelId = levelByName.get(norm(row.class));
@@ -222,6 +274,18 @@ export async function getSloStatements() {
     if (!nested[levelId]) nested[levelId] = {};
     if (!nested[levelId][laId]) nested[levelId][laId] = [];
     nested[levelId][laId].push({ id: String(row.id), dbId: row.id, text: row.assessmentName });
+  });
+
+  /* Default SLOs har level + learning area me merge karo. mockSloStatements
+     mock LA ids (la_1..) se keyed hain — naam ke zariye merged LA id pe map. */
+  const mockLaName = new Map(mockLearningAreas.map(a => [a.id, a.name]));
+  Object.entries(mockSloStatements).forEach(([levelId, byLa]) => {
+    Object.entries(byLa).forEach(([mockLaId, defs]) => {
+      const laId = laByName.get(norm(mockLaName.get(mockLaId)));
+      if (!laId) return;   // user ne ye default learning area hata diya
+      if (!nested[levelId]) nested[levelId] = {};
+      nested[levelId][laId] = mergeWithDefaults(nested[levelId][laId] || [], defs, s => s.text);
+    });
   });
   _sloCache = nested;
   return clone(nested);
@@ -293,12 +357,13 @@ export async function copyLevelSlo(fromLevel, toLevel) {
    (preschooling-personalsocial-crud)
    ════════════════════════════════════════════════════════════════ */
 export async function getPsdFields() {
-  const res = await apiPost('preschooling-personalsocial-crud', {
+  const res = await apiGetOrEmpty('preschooling-personalsocial-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const list = (res.data || []).map(row => ({
+  const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id, label: row.fieldName,
   }));
+  const list = mergeWithDefaults(saved, mockPsdFields, x => x.label);
   _psdCache = list;
   return clone(list);
 }
@@ -378,11 +443,16 @@ const PRCO_FIELD_MAP = [
 
 let _prcoDbId = 0;
 
-export async function getPRco() {
-  const res = await apiPost('preschooling-resultcard-crud', {
+export async function getPRcoState() {
+  const res = await apiGetOrEmpty('preschooling-resultcard-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const row = res?.data || {};
+  const row = res?.data;
+  /* API fail / koi saved row nahi → mock toggles (sab ON) dikhao. */
+  if (!row || typeof row !== 'object') {
+    _prcoDbId = 0;
+    return { id: 0, list: clone(mockPRco), reportType: 'monthly' };
+  }
   _prcoDbId = row.id || 0;
 
   const iconByLabel = {
@@ -397,23 +467,35 @@ export async function getPRco() {
     'Show Parent Teacher Meeting Section': 'fa-handshake',
     'Show Promotion / Retention Status': 'fa-arrow-up-right-from-square',
   };
-  const toggles = PRCO_FIELD_MAP.map(({ label, field }) => ({
+  const list = PRCO_FIELD_MAP.map(({ label, field }) => ({
     label, icon: iconByLabel[label], on: !!row[field],
   }));
 
-  return { toggles: clone(toggles), reportType: row.reportType || 'monthly' };
+  return { id: _prcoDbId, list: clone(list), reportType: row.reportType || 'monthly' };
 }
 
-export async function savePRco(list, reportType) {
+/* Purani shape ({ toggles, reportType }) un jagahon ke liye jo abhi getPRco use karti hain */
+export async function getPRco() {
+  const s = await getPRcoState();
+  return { toggles: s.list, reportType: s.reportType };
+}
+
+export async function savePRco(list, reportType, id) {
   const byLabel = {};
   (list || []).forEach(item => { byLabel[item.label] = item.on; });
 
-  const payload = { id: _prcoDbId, branchID: getBranchId(), reportType: reportType || 'monthly', action: 'save' };
+  const payload = {
+    id: Number(id) || _prcoDbId || 0,
+    branchID: getBranchId(),
+    reportType: reportType || 'monthly',
+    action: 'save',
+  };
   PRCO_FIELD_MAP.forEach(({ label, field }) => { payload[field] = !!byLabel[label]; });
 
   const res = await apiPost('preschooling-resultcard-crud', payload);
-  if (res?.id) _prcoDbId = res.id;
-  return clone(list);
+  const newId = res?.id ?? res?.Id ?? payload.id;
+  if (newId) _prcoDbId = newId;
+  return { id: _prcoDbId, list: clone(list) };
 }
 
 /* ════════════════════════════════════════════════════════════════

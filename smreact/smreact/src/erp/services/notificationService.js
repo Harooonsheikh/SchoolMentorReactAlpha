@@ -12,6 +12,17 @@ const api = axios.create({
   withCredentials: false,
 });
 
+/* Login stores these in sessionStorage as "UserID" / "branchID"
+   (see src/index.js + src/Pages/auth/LoginScreen.jsx). Send them on
+   every request as the UserId / BranchID headers the API expects. */
+api.interceptors.request.use((config) => {
+  const u = sessionStorage.getItem("UserID");
+  const b = sessionStorage.getItem("branchID");
+  if (u) config.headers["UserId"]   = u;
+  if (b) config.headers["BranchID"] = b;
+  return config;
+});
+
 // Get logged-in user notifications
 export const getUserNotifications = async (userId) => {
   try {

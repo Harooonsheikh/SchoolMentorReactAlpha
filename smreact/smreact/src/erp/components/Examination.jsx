@@ -15,6 +15,7 @@ import {
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
+import { useExaminationContentPerms, EXAMINATION_VIEW_ONLY_MSG } from '../services/examinationContentPermissions';
 import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
 import useAsync from '../hooks/useAsync';
@@ -951,6 +952,23 @@ function dsMapApiRow(item) {
 export default function Examination({ toast = () => { } }) {
   /* Logged-in user ki action-level permissions (School Head → sab true). */
   const { can } = usePermissions();
+  /* Chain Head Office ki content permissions (Exam Setup / Result Setup par
+     add/edit/delete). applies:false (chain ka hissa nahi) → sab true, school
+     ki apni role chalti hai. Per-user `can()` ke UPAR layer hoti hai: action
+     tabhi chalegi jab per-user AND head-office dono allow karein. */
+  const ecp = useExaminationContentPerms();
+  const hoExamAdd = ecp.can('examsetup', 'add');
+  const hoExamEdit = ecp.can('examsetup', 'edit');
+  const hoExamDelete = ecp.can('examsetup', 'delete');
+  /* Result Setup ki granular content permissions. Modal (Edit) ke andar har
+     action alag se gate hoti hai: Add rows → hoRsAdd, field edit → hoRsEdit,
+     Delete rows → hoRsDelete. Edit button tabhi khulta hai jab in me se koi
+     ek bhi allowed ho (hoRsAny). */
+  const hoRsAdd = ecp.can('resultsetup', 'add');
+  const hoRsEdit = ecp.can('resultsetup', 'edit');
+  const hoRsDelete = ecp.can('resultsetup', 'delete');
+  const hoRsAny = hoRsAdd || hoRsEdit || hoRsDelete;
+
   const canExamCreate = can('Examination', 'Exam Setup', 'Create');
   const canExamEdit = can('Examination', 'Exam Setup', 'Edit');
   const canExamDelete = can('Examination', 'Exam Setup', 'Delete');
@@ -1023,11 +1041,9 @@ export default function Examination({ toast = () => { } }) {
   const [rsModalOpen, setRsModalOpen] = useState(false);
   const [rsReportReq, setRsReportReq] = useState(null);      // truthy → picker open
   /* Preschool / Montessori — separate from the Grade 1-12 result state.
-     Preschool in branchon par live hai (toggle + per-class Preschool option +
-     Result Setup tab); baqi branches par sirf Grade 1-12 dikhta hai. Nayi branch
-     yahin add karo. */
-  const PRESCHOOL_BRANCH_IDS = new Set(['1', '15']);
-  const isPreschoolBranch = PRESCHOOL_BRANCH_IDS.has(String(sessionStorage.getItem('branchID') || '').trim());
+     Preschool har branch par live hai (toggle + per-class Preschool option +
+     Result Setup tab). */
+  const isPreschoolBranch = true;
   const [pResultType, setPResultType] = useState('grade');
   const [pRsL2, setPRsL2] = useState('setup');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
@@ -4584,21 +4600,23 @@ export default function Examination({ toast = () => { } }) {
             ))}
           </div>
           <div className="exam-action-bar">
-            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (termsLoading ? 'Loading terms…' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term'))}>
+            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (!hoExamAdd ? EXAMINATION_VIEW_ONLY_MSG : (termsLoading ? 'Loading terms…' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term')))}>
               <button className="exam-add-btn"
                 onClick={() => {
                   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                  if (ecp.denyWrite('examsetup', 'add', toast)) return;
                   // Term na ho to disable ke bajaye clickable rakhte hain taake toast dikhe.
                   if (termsLoading) { toast('Terms are still loading, please wait.', 'info'); return; }
                   if (!terms.length) { toast('There is no term soo to Add Exam Please add a term from Academics.', 'error'); return; }
                   openAdd();
                 }}
-                disabled={isOtherSession || !canExamCreate}
+                disabled={isOtherSession || !canExamCreate || !hoExamAdd}
                 title={!canExamCreate ? 'You do not have permission to create exams'
-                  : isOtherSession ? 'Editing is only allowed for the current session'
-                    : termsLoading ? 'Loading terms…'
-                      : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
-                style={(isOtherSession || termsLoading || !terms.length || !canExamCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                  : !hoExamAdd ? EXAMINATION_VIEW_ONLY_MSG
+                    : isOtherSession ? 'Editing is only allowed for the current session'
+                      : termsLoading ? 'Loading terms…'
+                        : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
+                style={(isOtherSession || termsLoading || !terms.length || !canExamCreate || !hoExamAdd) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
@@ -4656,10 +4674,10 @@ export default function Examination({ toast = () => { } }) {
                         </span>
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()}>
-                        <Tooltip text={!canExamEdit ? 'You do not have permission to edit exams' : `Edit ${ex.name}`}>
-                          <button className="exam-edit-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openEdit(ex); }}
-                            disabled={isOtherSession || !canExamEdit}
-                            style={(isOtherSession || !canExamEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                        <Tooltip text={!canExamEdit ? 'You do not have permission to edit exams' : (!hoExamEdit ? EXAMINATION_VIEW_ONLY_MSG : `Edit ${ex.name}`)}>
+                          <button className="exam-edit-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (ecp.denyWrite('examsetup', 'edit', toast)) return; openEdit(ex); }}
+                            disabled={isOtherSession || !canExamEdit || !hoExamEdit}
+                            style={(isOtherSession || !canExamEdit || !hoExamEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                             <i className="fa-solid fa-pen-to-square"></i> Edit
                           </button>
                         </Tooltip>
@@ -4679,12 +4697,12 @@ export default function Examination({ toast = () => { } }) {
                         </>)}
                       </div>
                       <div className="exam-td" style={{ justifyContent: 'flex-end', gap: 8 }} onClick={e => e.stopPropagation()}>
-                        <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : `Delete ${ex.name}`}>
+                        <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : (!hoExamDelete ? EXAMINATION_VIEW_ONLY_MSG : `Delete ${ex.name}`)}>
                           <button
                             className="exam-del-btn"
-                            disabled={isOtherSession || !canExamDelete}
-                            style={(isOtherSession || !canExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                            onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setConfirmDel(ex); }}
+                            disabled={isOtherSession || !canExamDelete || !hoExamDelete}
+                            style={(isOtherSession || !canExamDelete || !hoExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                            onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (ecp.denyWrite('examsetup', 'delete', toast)) return; setConfirmDel(ex); }}
                           >
                             <i className="fa-solid fa-trash"></i>
                           </button>
@@ -5316,10 +5334,10 @@ export default function Examination({ toast = () => { } }) {
                             <i className="fa-solid fa-file-pdf"></i> PDF
                           </button>
                         )}
-                        <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}
-                          disabled={isOtherSession || !canRsEdit}
-                          title={!canRsEdit ? 'You do not have permission to edit result setup' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                          style={(isOtherSession || !canRsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                        <button className="rs-edit-btn" onClick={() => { if (!hoRsAny) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return; } setRsModalOpen(true); }}
+                          disabled={isOtherSession || !canRsEdit || !hoRsAny}
+                          title={!canRsEdit ? 'You do not have permission to edit result setup' : !hoRsAny ? EXAMINATION_VIEW_ONLY_MSG : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                          style={(isOtherSession || !canRsEdit || !hoRsAny) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                           <i className="fa-solid fa-pen-to-square"></i> Edit
                         </button>
                       </div>
@@ -6047,13 +6065,13 @@ export default function Examination({ toast = () => { } }) {
                                       <i className="fa-solid fa-file-arrow-down"></i>
                                     </button>
                                   </Tooltip>
-                                  <Tooltip text="Delete class data"><button
+                                </>}
+                                 {/* <Tooltip text="Delete class data"><button
                                     className="ds-del-btn"
                                     onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resExamId, key, className }); }}
                                   >
                                     <i className="fa-solid fa-trash"></i>
-                                  </button></Tooltip>
-                                </>}
+                                  </button></Tooltip> */}
                                 <button
                                   className={`ds-expand-btn${isOpen ? ' open' : ''}`}
                                   onClick={e => {
@@ -7517,11 +7535,15 @@ export default function Examination({ toast = () => { } }) {
       {/* ── Result Setup — edit modal ── */}
       {rsModalOpen && (
         <ResultSetupModal
-          grades={rsGrades} remarks={rsRemarks}
+          grades={rsGrades}
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
           onAbsentChange={setRsAbsentMode}
+          /* Head Office content permissions — Add rows / edit existing rows / Delete rows. */
+          hoAdd={hoRsAdd}
+          hoEdit={hoRsEdit}
+          hoDelete={hoRsDelete}
           /* Save ke baad modal server se fresh rows le kar aata hai taake naye
              row ki asli DB id mil jaye (warna `temp_…` id rehti thi aur agla
              save UPDATE ki jagah dobara INSERT kar deta tha). */
@@ -7563,7 +7585,7 @@ export default function Examination({ toast = () => { } }) {
       {/* ── Result Setup — report picker ── */}
       {rsReportReq && (
         <ResultSetupReportPicker
-          grades={rsGrades} remarks={rsRemarks}
+          grades={rsGrades}
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
@@ -8033,14 +8055,23 @@ export default function Examination({ toast = () => { } }) {
               // se pehle sab kuch yahan save kar do — "Save Changes" button jo karta
               // hai, wahi yahan resave kar dete hain.
               try {
-                await Promise.all([
-                  preschoolService.saveLearningAreas(pLearningAreas, []),
+                // Learning areas pehle (SLOs inke naam pe save hote hain); returned
+                // dbIds state me wapis daalo warna har lock pe defaults dobara insert hote.
+                const savedLAs = await preschoolService.saveLearningAreas(pLearningAreas, []);
+                const [savedGrades, savedPsd, ...savedSlos] = await Promise.all([
                   preschoolService.saveGradingScale(pGradingScale, {}),
                   preschoolService.savePsdFields(pPsdFields, []),
-                  ...pLearningAreas.map(la =>
+                  ...savedLAs.map(la =>
                     preschoolService.saveSloStatements(levelId, la.id, pSlo[levelId]?.[la.id] || [], [])
                   ),
                 ]);
+                setPLearningAreas(savedLAs);
+                setPGradingScale(savedGrades);
+                setPPsdFields(savedPsd);
+                setPSlo(prev => ({
+                  ...prev,
+                  [levelId]: Object.fromEntries(savedLAs.map((la, i) => [la.id, savedSlos[i]])),
+                }));
               } catch (setupErr) {
                 console.error('Could not auto-save preschool result setup:', setupErr);
                 // chahain to yahan toast bhi fire kar sakte hain, warning ke tor par
@@ -10202,8 +10233,14 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
-
+  // const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+  /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
+    ? rcFilterZeroMarkSubjects(subjectsAll, st)
+    : (rsAbsentMode === 'zero' && rdProp
+        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+        : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -10552,7 +10589,13 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+  /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
+    ? rcFilterZeroMarkSubjects(subjectsAll, st)
+    : (rsAbsentMode === 'zero' && rdProp
+        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+        : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -10687,7 +10730,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           Subject Performance
         </div>
         {subjData.map((d, idx) => (
-          <div key={`bar-${idx}-${d.s}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+         <div key={`bar-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
             <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
             <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${d.isAbs ? 0 : d.pct}%`, background: d.isAbs ? 'rgba(217,119,6,.3)' : d.col, borderRadius: 4 }} />
@@ -10826,7 +10869,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+  // const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
+    /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
+    ? rcFilterZeroMarkSubjects(subjectsAll, st)
+    : (rsAbsentMode === 'zero' && rdProp
+        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+        : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -11063,8 +11113,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ fontSize: 8.5, color: C.textM }}>Page 1 of 2</div>
       </div>
 
-      {/* ── PAGE 2 ── */}
-      <div style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
+         {/* ── PAGE 2 ── */}
+      <div data-rc-page-break="1" style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.hdrText, letterSpacing: '-.01em' }}>Performance Analytics</div>
           <div style={{ fontSize: 10, color: C.hdrTextMut, marginTop: 1 }}>{st.name} &nbsp;·&nbsp; {ex.name}</div>
@@ -11085,7 +11135,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             const barC = d.isAbs ? 'rgba(217,119,6,.25)' : d.col;
             const lblC = d.isAbs ? '#B45309' : (d.pct >= 80 ? C.grn : d.pct >= 60 ? C.acc : C.red);
             return (
-              <div key={`ov-${idx}-${d.s}`} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div key={`ov-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: d.isAbs ? '#B45309' : C.textS, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
                 <div style={{ flex: 1, height: 10, borderRadius: 5, background: '#EFF6FF', overflow: 'hidden' }}>
                   <div style={{ height: '100%', width: `${barW}%`, background: barC, borderRadius: 5, position: 'relative' }}>
@@ -14187,7 +14237,6 @@ function ResultCardViewer({ student, rd, ex, template, school, grades, remarks =
 <title>Result Card — ${student.name}</title>
 
 <style>
-<style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
@@ -14199,12 +14248,19 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
   thead{display:table-header-group}
   tr{break-inside:avoid;page-break-inside:avoid}
 }
-.wrap{width:100%;max-width:210mm;margin:0 auto}
+.wrap{width:190mm;max-width:190mm;margin:0 auto}
+.wrap > *{max-width:none!important;width:100%!important;margin:0!important;box-shadow:none!important}
+@media print{
+  @page{size:A4 portrait;margin:0}
+  html,body{width:210mm;margin:0}
+  .wrap{width:210mm;max-width:210mm;padding:10mm}
+}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 /* Colorless overrides — recolor white text + decorative fills on the header. */
 .cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
+${RC_PRINT_CSS}
 .cl-doc-header div[style*="rgba(255,255,255"]{background:transparent !important;border-color:#D1D5DB !important;color:#0F172A !important}
 .cl-doc-header [style*="opacity:.75"],
 .cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
@@ -14216,6 +14272,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
+${RC_PRINT_FIT_SCRIPT}
 </body></html>`);
     w.document.close();
   };
@@ -14335,6 +14392,160 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
     document.body
   );
 }
+
+/* ── Result card PDF: A4 full-page print (Classic / Insight / Portfolio, single + bulk) ── */
+const RC_PRINT_CSS = `
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@page{size:A4 portrait;margin:0}
+.wrap,.bulk-card{width:210mm!important;max-width:210mm!important;padding:10mm!important;margin:0 auto!important;border-radius:0!important;box-shadow:none!important;overflow:visible!important;height:auto!important;background:#fff}
+.bulk-card + .bulk-card{break-before:page;page-break-before:always}
+.wrap > *,.bulk-card > *{max-width:none!important;width:100%!important;margin:0!important;box-shadow:none!important;border-radius:0!important;overflow:visible!important;height:auto!important}
+.wrap img,.bulk-card img{max-width:100%}
+.wrap td,.wrap th,.bulk-card td,.bulk-card th{overflow-wrap:anywhere}
+.rc-seg + .rc-seg{break-before:page;page-break-before:always}
+.wrap > * > *:not(:has(table)),.bulk-card > * > *:not(:has(table)),.rc-seg > *:not(:has(table)){break-inside:avoid;page-break-inside:avoid}
+@media print{
+  html,body{width:210mm}
+  .no-print{display:none!important}
+  thead{display:table-header-group}
+  tr{break-inside:avoid;page-break-inside:avoid}
+}
+`;
+const RC_PRINT_FIT_SCRIPT = `<script>
+(function(){
+  var MM = 96 / 25.4;
+   var PAGE_H = 277 * MM - 4;
+  var MIN_ZOOM = 0.8;
+  var MAX_ZOOM = 1.3;
+  var ROW_CAP = 120;
+  function zoomOf(el){ return parseFloat(el.style.zoom) || 1; }
+  function setZoom(el, z){
+    if (Math.abs(z - 1) < 0.002) { el.style.removeProperty('zoom'); el.style.removeProperty('width'); return; }
+    el.style.setProperty('zoom', String(z), 'important');
+    el.style.setProperty('width', (100 / z) + '%', 'important');
+  }
+  function fitZoom(seg){
+    var z = 1;
+    for (var i = 0; i < 6; i++) {
+      var h = H(seg); if (!h) return true;
+      var next = Math.min(MAX_ZOOM, z * PAGE_H / h);
+      if (next < MIN_ZOOM) { setZoom(seg, 1); return false; }
+      if (Math.abs(next - z) < 0.003) break;
+      z = next; setZoom(seg, z);
+    }
+    while (H(seg) > PAGE_H) {
+      z -= 0.01;
+      if (z < MIN_ZOOM) { setZoom(seg, 1); return false; }
+      setZoom(seg, z);
+    }
+    return true;
+  }
+  function growRows(seg, extra){
+    var z = zoomOf(seg);
+    var rows = [];
+    seg.querySelectorAll('tbody tr, [data-rc-row]').forEach(function(r){ if (visible(r)) rows.push(r); });
+    if (!rows.length) return;
+    var add = Math.min(ROW_CAP, extra * 0.5 / rows.length);
+    if (add < 1) return;
+    var info = rows.map(function(r){
+      var cs = getComputedStyle(r);
+      return { h: H(r), pt: parseFloat(cs.paddingTop) || 0, pb: parseFloat(cs.paddingBottom) || 0 };
+    });
+    rows.forEach(function(r, i){
+      if (r.tagName === 'TR') { r.style.height = ((info[i].h + add) / z) + 'px'; return; }
+      r.style.paddingTop = (info[i].pt + add / z / 2) + 'px';
+      r.style.paddingBottom = (info[i].pb + add / z / 2) + 'px';
+    });
+  }
+  function spreadGaps(seg){
+    var extra = PAGE_H - H(seg);
+    if (extra <= 2) return;
+    var z = zoomOf(seg);
+    var kids = Array.prototype.filter.call(seg.children, visible);
+    var targets = kids.filter(function(k, i){ return i > 0 && H(k) >= 8; });
+    if (!targets.length) return;
+    var g = extra / targets.length / z;
+    targets.forEach(function(k){
+      var mt = parseFloat(getComputedStyle(k).marginTop) || 0;
+      k.style.setProperty('margin-top', (mt + g) + 'px', 'important');
+    });
+    var over = H(seg) - PAGE_H;
+    if (over > 0) {
+      var last = targets[targets.length - 1];
+      var m = parseFloat(getComputedStyle(last).marginTop) || 0;
+      last.style.setProperty('margin-top', Math.max(0, m - over / z) + 'px', 'important');
+    }
+  }
+  function H(el){ return el.getBoundingClientRect().height; }
+  function visible(el){ return el.getBoundingClientRect().height > 0; }
+  function segmentsOf(root){
+    var kids = Array.prototype.slice.call(root.children);
+    var cut = -1;
+    kids.forEach(function(k, i){ if (cut < 0 && k.hasAttribute('data-rc-page-break')) cut = i; });
+    if (cut <= 0) return [root];
+    var a = document.createElement('div'), b = document.createElement('div');
+    a.className = 'rc-seg'; b.className = 'rc-seg';
+    kids.slice(0, cut).forEach(function(k){ a.appendChild(k); });
+    kids.slice(cut).forEach(function(k){ b.appendChild(k); });
+    root.appendChild(a); root.appendChild(b);
+    return [a, b];
+  }
+  function shrink(seg){
+    var z = 1;
+    for (var i = 0; i < 5 && H(seg) > PAGE_H; i++) {
+      z = z * PAGE_H / H(seg) - 0.005;
+      if (z < MIN_ZOOM) { seg.style.zoom = ''; seg.style.width = ''; return; }
+      seg.style.zoom = z;
+      seg.style.width = (100 / z) + '%';
+    }
+  }
+  function stretch(seg){
+    var extra = PAGE_H - H(seg);
+    if (extra <= 2) return;
+    var tbl = null;
+    seg.querySelectorAll('table').forEach(function(x){ if (!tbl || x.rows.length > tbl.rows.length) tbl = x; });
+    if (tbl) {
+      var rows = Array.prototype.filter.call(tbl.querySelectorAll('tbody tr'), visible);
+      if (rows.length) {
+        var add = Math.min(ROW_CAP, extra / rows.length);
+             rows.forEach(function(r){ r.style.height = (H(r) + add) + 'px'; });
+        extra = PAGE_H - H(seg);
+      }
+    }
+    var bars = Array.prototype.filter.call(seg.querySelectorAll('[data-rc-row]'), visible);
+    if (bars.length && extra > 2) {
+      var addB = Math.min(ROW_CAP, extra / bars.length);
+      bars.forEach(function(r){
+        var cs = getComputedStyle(r);
+        r.style.paddingTop = ((parseFloat(cs.paddingTop) || 0) + addB / 2) + 'px';
+        r.style.paddingBottom = ((parseFloat(cs.paddingBottom) || 0) + addB / 2) + 'px';
+      });
+      extra = PAGE_H - H(seg);
+    }
+    if (extra <= 2) return;
+    var kids = Array.prototype.filter.call(seg.children, visible);
+    if (kids.length < 2) return;
+    var target = kids[kids.length - 1];
+    var prev = kids[kids.length - 2];
+    if (kids.length >= 3 && H(target) < 50 && !prev.querySelector('table')) target = prev;
+    var mt = parseFloat(getComputedStyle(target).marginTop) || 0;
+    target.style.setProperty('margin-top', (mt + extra) + 'px', 'important');
+  }
+  function fit(){
+    document.querySelectorAll('.wrap > *, .bulk-card > *').forEach(function(root){
+      segmentsOf(root).forEach(function(seg){
+             if (H(seg) > PAGE_H) shrink(seg); else stretch(seg);
+      });
+    });
+  }
+  function run(){
+    var f = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+    f.then(function(){ try { fit(); } catch (e) { console.error('A4 fit failed', e); } });
+  }
+  if (document.readyState === 'complete') run(); else window.addEventListener('load', run);
+})();
+</script>`;
 
 function RcColorToggle({ isColor, setIsColor, accent = '#1E40AF' }) {
   return (
@@ -14494,7 +14705,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
-@page{size:A4 portrait;margin:12mm}
+@page{size:A4 portrait;margin:10mm;-webkit-print-color-adjust:exact}
 @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
   thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
 .bulk-card{max-width:210mm;margin:0 auto 12px;page-break-after:always;break-after:page;overflow:visible!important;height:auto!important}
@@ -14504,12 +14715,14 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 .cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
+${RC_PRINT_CSS}
 </style></head><body>
 ${node.innerHTML}
 <div class="print-bar no-print">
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
+${RC_PRINT_FIT_SCRIPT}
 </body></html>`);
     w.document.close();
   };
@@ -14781,12 +14994,14 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 .cl-doc-header, .cl-doc-header *{color:#0F172A !important;text-shadow:none !important}
+${RC_PRINT_CSS}
 </style></head><body>
 ${node.innerHTML}
 <div class="print-bar no-print">
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
+${RC_PRINT_FIT_SCRIPT}
 </body></html>`);
     w.document.close();
   };
@@ -14962,7 +15177,13 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
    RESULT SETUP — EDIT MODAL (4 tabs: grades, signatures, remarks, absent)
    ═══════════════════════════════════════════════════════════════════ */
 function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, onSave, onClose, toast,
-  reloadGrades, reloadSigs, reloadRemarks }) {
+  reloadGrades, reloadSigs, reloadRemarks,
+  /* Head Office content permissions — na diye jayein (purana caller) to sab allow.
+     Modal tabhi khulta hai jab koi write (add/edit/delete) allowed ho. Andar:
+     Add rows → hoAdd, Delete rows → hoDelete, existing rows ke fields edit →
+     hoEdit. Abhi tak save na hui (nayi) row hamesha editable rehti hai warna
+     Add-only user usay bhar hi nahi sakta. */
+  hoAdd = true, hoEdit = true, hoDelete = true }) {
   const [tab, setTab] = useState('grades');
   const [draftGrades, setDraftGrades] = useState(() => {
     if (grades && grades.length) {
@@ -15004,16 +15225,47 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
     }
   }, [remarks]);
 
-  const upGrade = (id, k, v) => setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
-  const upSig = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
-  const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
+  /* Nayi (abhi tak save na hui) row ki id `temp_…` hoti hai. Edit permission na
+     ho to sirf aisi nayi rows editable rehti hain — pehle se saved rows change
+     nahi hotin (Add-only user nayi entry bana sakta hai, purani badal nahi sakta). */
+  const isNewRow = (id) => typeof id === 'string' && String(id).startsWith('temp_');
+  const rowEditable = (id) => hoEdit || isNewRow(id);
+  /* Edit allowed na ho aur existing row badalne ki koshish ho → change rok do +
+     toast. UI waisa ka waisa (input disable nahi); sirf har keystroke par toast
+     spam na ho is liye 1.5s throttle. */
+  const editToastRef = useRef(0);
+  const blockEdit = (id) => {
+    if (rowEditable(id)) return false;
+    const now = Date.now();
+    if (now - editToastRef.current > 1500) { editToastRef.current = now; toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); }
+    return true;
+  };
+
+  /* Save par kis row ki write API bheji jaye:
+     - existing row (numeric id > 0) → UPDATE, sirf hoEdit par
+     - nayi row (temp_ id)           → INSERT, sirf hoAdd par
+     Add aur Edit dono na hon to kisi row par koi grading API hit nahi hoti. */
+  const canWriteRow = (id) => ((typeof id === 'number' && id > 0) ? hoEdit : hoAdd);
+  /* Add aur Edit dono ki permission na ho to Save ka koi faida nahi (add/update
+     dono band) — is liye Save button disable (delete trash foran alag API par
+     chalta hai, Save ka mohtaj nahi). */
+  const noWritePerm = !hoAdd && !hoEdit;
+
+  const upGrade = (id, k, v) => { if (blockEdit(id)) return; setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
+  const upSig = (id, k, v) => { if (blockEdit(id)) return; setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
+  const upRemark = (id, k, v) => { if (blockEdit(id)) return; setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
 
   /* Naye (abhi tak save na huye) row ki unique id. Sirf `Date.now()` se ek hi
      millisecond me add hui do rows ko same id mil jati thi — phir ek row edit
      karne par dono badal jati thin. */
   const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const addGrade = () =>
+  /* Head Office ne Add/Delete na di ho to action rok do + toast. */
+  const guardAdd = () => { if (!hoAdd) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return true; } return false; };
+  const guardDelete = () => { if (!hoDelete) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return true; } return false; };
+
+  const addGrade = () => {
+    if (guardAdd()) return;
     setDraftGrades(r => {
       // Jo grades pehle se use ho chuki hain unhe skip karke agli available grade
       // default karo (A+ used → A, phir B+ ...). Sab use ho gayi to blank.
@@ -15024,33 +15276,39 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         { id: tempId(), grade: nextGrade, cond: 'gte', pct: '', comment: '' }
       ];
     });
-  const addSig = () =>
+  };
+  const addSig = () => {
+    if (guardAdd()) return;
     setDraftSigs(r => [
       ...r,
       { id: tempId(), name: '', desig: '', img: '' }
     ]);
+  };
 
-  const addRemark = () =>
+  const addRemark = () => {
+    if (guardAdd()) return;
     setDraftRemarks(r => [
       ...r,
       { id: tempId(), cond: 'gte', pct: '', text: '' }
-    ]); const [rsConfirm, setRsConfirm] = useState(null);
+    ]);
+  };
+  const [rsConfirm, setRsConfirm] = useState(null);
 
-  const askDeleteGrade = g => setRsConfirm({
+  const askDeleteGrade = g => { if (guardDelete()) return; setRsConfirm({
     kind: 'grade', id: g.id,
     title: 'Delete Grade',
     message: `Delete grade rule for <strong>${g.grade || '—'}</strong>?`,
-  });
-  const askDeleteSig = s => setRsConfirm({
+  }); };
+  const askDeleteSig = s => { if (guardDelete()) return; setRsConfirm({
     kind: 'sig', id: s.id,
     title: 'Delete Signature',
     message: `Delete signature for <strong>${s.name?.trim() || 'this entry'}</strong>?`,
-  });
-  const askDeleteRemark = r => setRsConfirm({
+  }); };
+  const askDeleteRemark = r => { if (guardDelete()) return; setRsConfirm({
     kind: 'remark', id: r.id,
     title: 'Delete Remark',
     message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
-  });
+  }); };
 
   const runDelete = async () => {
     if (!rsConfirm) return;
@@ -15420,16 +15678,20 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         // Find deleted grades (present in original but not in new)
         const deletedGrades = grades.filter(g => !newGradeIds.has(g.id));
 
-        // Sirf COMPLETE grade rows save karo (grade + pct + comment).
+        // Sirf COMPLETE grade rows save karo (grade + pct + comment) — aur wahi
+        // jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const gradesToSave = draftGrades.filter(g =>
           String(g.grade ?? '').trim() && String(g.pct ?? '').trim() && String(g.comment ?? '').trim());
         for (const grade of gradesToSave) {
+          if (!canWriteRow(grade.id)) continue;   // permission nahi → API skip
           await saveGradeToAPI(grade);
         }
-        // Delete removed grades
-        for (const grade of deletedGrades) {
-          if (grade.id && typeof grade.id === 'number') {
-            await deleteGradeFromAPI(grade.id);
+        // Delete removed grades — sirf tab jab Delete permission ho.
+        if (hoDelete) {
+          for (const grade of deletedGrades) {
+            if (grade.id && typeof grade.id === 'number') {
+              await deleteGradeFromAPI(grade.id);
+            }
           }
         }
         freshGrades = await reloadGrades?.();
@@ -15439,15 +15701,19 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         const newSigIds = new Set(draftSigs.map(s => s.id).filter(id => typeof id === 'number'));
         const deletedSigs = sigs.filter(s => !newSigIds.has(s.id));
 
-        // Sirf COMPLETE signature rows save karo (name + designation + image).
+        // Sirf COMPLETE signature rows save karo (name + designation + image) —
+        // aur wahi jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const sigsToSave = draftSigs.filter(s =>
           String(s.name ?? '').trim() && String(s.desig ?? '').trim() && String(s.img ?? '').trim());
         for (const sig of sigsToSave) {
+          if (!canWriteRow(sig.id)) continue;   // permission nahi → API skip
           await saveSignatureToAPI(sig);
         }
-        for (const sig of deletedSigs) {
-          if (sig.id && typeof sig.id === 'number') {
-            await deleteSignatureFromAPI(sig.id);
+        if (hoDelete) {
+          for (const sig of deletedSigs) {
+            if (sig.id && typeof sig.id === 'number') {
+              await deleteSignatureFromAPI(sig.id);
+            }
           }
         }
         freshSigs = await reloadSigs?.();
@@ -15457,14 +15723,18 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         const newRemarkIds = new Set(draftRemarks.map(r => r.id).filter(id => typeof id === 'number'));
         const deletedRemarks = remarks.filter(r => !newRemarkIds.has(r.id));
 
-        // Sirf COMPLETE remark rows save karo (percentage + text).
+        // Sirf COMPLETE remark rows save karo (percentage + text) — aur wahi
+        // jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const remarksToSave = draftRemarks.filter(r => String(r.pct ?? '').trim() && String(r.text ?? '').trim());
         for (const remark of remarksToSave) {
+          if (!canWriteRow(remark.id)) continue;   // permission nahi → API skip
           await saveRemarkToAPI(remark);
         }
-        for (const remark of deletedRemarks) {
-          if (remark.id && typeof remark.id === 'number') {
-            await deleteRemarkFromAPI(remark.id);
+        if (hoDelete) {
+          for (const remark of deletedRemarks) {
+            if (remark.id && typeof remark.id === 'number') {
+              await deleteRemarkFromAPI(remark.id);
+            }
           }
         }
         freshRemarks = await reloadRemarks?.();
@@ -15533,6 +15803,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                     <select
                       className="rs-input"
                       value={g.grade || ''}
+                      disabled={!rowEditable(g.id)}
                       onChange={e => upGrade(g.id, 'grade', e.target.value)}
                     >
                       <option value="" disabled>Grade...</option>
@@ -15543,7 +15814,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         .filter(opt => opt === g.grade || !draftGrades.some(o => o.id !== g.id && o.grade === opt))
                         .map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
-                    <select className="rs-input" value={g.cond || 'gte'} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
+                    <select className="rs-input" value={g.cond || 'gte'} disabled={!rowEditable(g.id)} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
                       {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                     </select>
                     <input
@@ -15553,6 +15824,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       max={100}
                       value={g.pct || ''}
                       placeholder="Value"
+                      disabled={!rowEditable(g.id)}
                       onChange={e => {
                         let v = e.target.value;
                         if (v !== '' && Number(v) > 100) v = '100';
@@ -15566,8 +15838,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       placeholder="Comment (max 28 chars)"
                       onChange={v => upGrade(g.id, 'comment', v)}
                       toast={toast}
+                      disabled={!rowEditable(g.id)}
                     />
-                    <Tooltip text="Remove this grade band">
+                    <Tooltip text={hoDelete ? 'Remove this grade band' : EXAMINATION_VIEW_ONLY_MSG}>
                       <button className="rs-del" onClick={() => askDeleteGrade(g)}>
                         <i className="fa-solid fa-trash-can"></i>
                       </button>
@@ -15575,8 +15848,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new grade band">
-                <button className="rs-add" onClick={addGrade}>
+              <Tooltip text={hoAdd ? 'Add a new grade band' : EXAMINATION_VIEW_ONLY_MSG}>
+                <button className="rs-add" onClick={addGrade} disabled={!hoAdd}>
                   <i className="fa-solid fa-plus"></i> Add Grade
                 </button>
               </Tooltip>
@@ -15596,16 +15869,18 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       className="rs-input"
                       value={s.name || ''}
                       placeholder="Name"
+                      disabled={!rowEditable(s.id)}
                       onChange={e => upSig(s.id, 'name', e.target.value)}
                     />
                     <input
                       className="rs-input"
                       value={s.desig || ''}
                       placeholder="Designation"
+                      disabled={!rowEditable(s.id)}
                       onChange={e => upSig(s.id, 'desig', e.target.value)}
                     />
-                    <label className="rs-sig-upload">
-                      <input type="file" accept="image/*" onChange={e => uploadSig(s.id, e.target.files[0])} />
+                    <label className="rs-sig-upload" style={!rowEditable(s.id) ? { opacity: .55, pointerEvents: 'none' } : undefined}>
+                      <input type="file" accept="image/*" disabled={!rowEditable(s.id)} onChange={e => uploadSig(s.id, e.target.files[0])} />
                       {s.img ? (
                         <img src={s.img} alt="" />
                       ) : (
@@ -15615,7 +15890,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         </div>
                       )}
                     </label>
-                    <Tooltip text="Remove this signatory">
+                    <Tooltip text={hoDelete ? 'Remove this signatory' : EXAMINATION_VIEW_ONLY_MSG}>
                       <button className="rs-del" onClick={() => askDeleteSig(s)}>
                         <i className="fa-solid fa-trash-can"></i>
                       </button>
@@ -15623,8 +15898,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new signatory">
-                <button className="rs-add" onClick={addSig}>
+              <Tooltip text={hoAdd ? 'Add a new signatory' : EXAMINATION_VIEW_ONLY_MSG}>
+                <button className="rs-add" onClick={addSig} disabled={!hoAdd}>
                   <i className="fa-solid fa-plus"></i> Add Signature
                 </button>
               </Tooltip>
@@ -15641,7 +15916,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   <div key={r.id} className="rm-remark-row">
                     <div className="rm-remark-top">
                       <div className="rm-sno">{i + 1}</div>
-                      <select className="rs-input" value={r.cond || 'gte'} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
+                      <select className="rs-input" value={r.cond || 'gte'} disabled={!rowEditable(r.id)} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
                         {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                       </select>
                       <input
@@ -15651,6 +15926,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         max={100}
                         value={r.pct || ''}
                         placeholder="Percentage value"
+                        disabled={!rowEditable(r.id)}
                         onChange={e => {
                           let v = e.target.value;
                           if (v !== '' && Number(v) > 100) v = '100';
@@ -15658,7 +15934,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                           upRemark(r.id, 'pct', v);
                         }}
                       />
-                      <Tooltip text="Remove this remark">
+                      <Tooltip text={hoDelete ? 'Remove this remark' : EXAMINATION_VIEW_ONLY_MSG}>
                         <button className="rs-del" onClick={() => askDeleteRemark(r)}>
                           <i className="fa-solid fa-trash-can"></i>
                         </button>
@@ -15672,13 +15948,14 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         multiline
                         onChange={v => upRemark(r.id, 'text', v)}
                         toast={toast}
+                        disabled={!rowEditable(r.id)}
                       />
                     </div>
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new remark band">
-                <button className="rs-add" onClick={addRemark}>
+              <Tooltip text={hoAdd ? 'Add a new remark band' : EXAMINATION_VIEW_ONLY_MSG}>
+                <button className="rs-add" onClick={addRemark} disabled={!hoAdd}>
                   <i className="fa-solid fa-plus"></i> Add Remark
                 </button>
               </Tooltip>
@@ -15745,8 +16022,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
               <i className="fa-solid fa-xmark"></i> Cancel
             </button>
           </Tooltip>
-          <Tooltip text="Submit">
-            <button className="exam-submit-btn" onClick={submit} disabled={loading}>
+          <Tooltip text={noWritePerm ? EXAMINATION_VIEW_ONLY_MSG : 'Submit'}>
+            <button className="exam-submit-btn" onClick={submit} disabled={loading || noWritePerm}>
               {loading ? (
                 <><i className="fa-solid fa-spinner fa-spin"></i> Saving...</>
               ) : (
@@ -15796,7 +16073,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   );
 }
 
-function CharField({ value, max, placeholder, multiline = false, onChange, toast }) {
+function CharField({ value, max, placeholder, multiline = false, onChange, toast, disabled = false }) {
   const warnRef = useRef(false);
   const limitRef = useRef(false);
   const len = (value || '').length;
@@ -15832,6 +16109,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
           placeholder={placeholder}
           value={value || ''}
           onChange={e => handle(e.target.value)}
+          disabled={disabled}
           style={{ borderColor: bdrCol }}
         />
       ) : (
@@ -15841,6 +16119,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
           placeholder={placeholder}
           value={value || ''}
           onChange={e => handle(e.target.value)}
+          disabled={disabled}
           style={{ borderColor: bdrCol }}
         />
       )}

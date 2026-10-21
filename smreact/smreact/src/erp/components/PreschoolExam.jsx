@@ -393,19 +393,31 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
       return d.filter(x => x.id !== id);
     });
   };
+  const newItem = v => (showIcons ? { id: `la_${Date.now()}`, name: v, icon: 'fa-book' } : { id: `psd_${Date.now()}`, label: v });
   const add = () => {
     const v = newLabel.trim();
-    if (!v) { toast('Enter a name first', 'error'); return; }
-    const item = showIcons ? { id: `la_${Date.now()}`, name: v, icon: 'fa-book' } : { id: `psd_${Date.now()}`, label: v };
-    setDraft(d => [...d, item]);
+    if (!v) { toast(showIcons ? 'Type a learning area name in the box before clicking Add' : 'Type a field name in the box before clicking Add', 'info'); return; }
+    setDraft(d => [...d, newItem(v)]);
     setNewLabel('');
   };
   const save = async () => {
-    const saved = await service(draft, removedDbIds);
+  /* Add box me likha hua naam (Add dabaye baghair) bhi save me shamil karo. */
+  const pending = newLabel.trim();
+  const list = pending ? [...draft, newItem(pending)] : draft;
+  if (list.some(x => !String((showIcons ? x.name : x.label) || '').trim())) {
+    toast('A row is empty — type a name or remove it before saving', 'error');
+    return;
+  }
+  try {
+    const saved = await service(list, removedDbIds);
     onSaved(saved);
+    setNewLabel('');
     setRemovedDbIds([]);
     toast('Saved successfully!', 'success');
-  };
+  } catch (err) {
+    toast(err.message || 'Save failed, please try again', 'error');
+  }
+};
   return (
     <div className="rs-card">
       <div className="rs-card-head">
@@ -559,24 +571,37 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
   };
   const add = () => {
     const v = newText.trim();
-    if (!v) { toast('Enter an assessment statement first', 'error'); return; }
+    if (!v) { toast('Type an assessment statement in the box before clicking Add', 'info'); return; }
     setDraft(d => [...d, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: v }]);
     setNewText('');
   };
-  const save = async () => {
-    await preschoolService.saveSloStatements(activeLevel, activeId, draft, removedDbIds);
-    onSaved({ ...pSlo, [activeLevel]: { ...levelSlo, [activeId]: draft } });
+    const save = async () => {
+  try {
+    const pending = newText.trim();
+    const list = pending ? [...draft, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: pending }] : draft;
+    if (list.some(s => !String(s.text || '').trim())) { toast('A statement is empty — type it or remove it before saving', 'error'); return; }
+    const fresh = await preschoolService.saveSloStatements(activeLevel, activeId, list, removedDbIds);
+    setNewText('');
+    // sirf isi level + learning area ki list badlo, baaqi pSlo waisa hi rahe
+    onSaved(prev => ({ ...prev, [activeLevel]: { ...(prev?.[activeLevel] || {}), [activeId]: fresh } }));
     setRemovedDbIds([]);
     toast('Assessment points saved!', 'success');
-  };
-  const copyFromPrevious = async () => {
-    if (!prevLevel) return;
-    const hasExisting = Object.values(levelSlo).some(list => list?.length);
-    if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
-    const fresh = await preschoolService.copyLevelSlo(prevLevel.id, activeLevel);
+  } catch (err) {
+    toast(err.message || 'Save failed, please try again', 'error');
+  }
+};
+ const copyFromPrevious = async () => {
+  if (!prevLevel) return;
+  const hasExisting = Object.values(levelSlo).some(list => list?.length);
+  if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
+  try {
+    const fresh = await preschoolService.copyLevelSlo(prevLevel.id, activeLevel, pLearningAreas);
     onSaved(fresh);
     toast(`Copied all SLOs from ${prevLevel.name}!`, 'success');
-  };
+  } catch (err) {
+    toast(err.message || 'Copy failed, please try again', 'error');
+  }
+};
 
   return (
     <div className="rs-card">
@@ -644,6 +669,41 @@ function PreschoolResultSetup({
   pHelpOpen, setPHelpOpen,
   toast,
 }) {
+
+    const [pRcoId, setPRcoId] = useState(0);
+  const [pRcoSaving, setPRcoSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await preschoolService.getPRcoState();
+        if (!alive) return;
+        setPRco(s.list);
+        setPRcoId(s.id);
+        setPReportType(s.reportType);
+      } catch (err) {
+        toast(err.message || 'Could not load saved preferences', 'error');
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const savePrefs = async () => {
+    setPRcoSaving(true);
+    try {
+      const s = await preschoolService.savePRco(pRco, pReportType, pRcoId);
+      setPRcoId(s.id);
+      setPRco(s.list);
+      toast('Preferences saved!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed, please try again', 'error');
+    } finally {
+      setPRcoSaving(false);
+    }
+  };
+
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 4 }}>
@@ -773,8 +833,8 @@ function PreschoolResultSetup({
                   <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
                   Applies to Monthly, Term &amp; Annual Preschool report cards.
                 </div>
-                <button className="rco-save-btn" onClick={async () => { await preschoolService.savePRco(pRco, pReportType); toast('Preferences saved!', 'success'); }}>
-                  <i className="fa-solid fa-floppy-disk"></i> Save Preferences
+                <button className="rco-save-btn" onClick={savePrefs} disabled={pRcoSaving}>
+                  <i className="fa-solid fa-floppy-disk"></i> {pRcoSaving ? 'Saving…' : 'Save Preferences'}
                 </button>
               </div>
             </div>

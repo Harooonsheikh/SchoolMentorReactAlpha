@@ -164,6 +164,7 @@ function mapTxn(t = {}) {
     notes:        t.Remark || '',
     enteredBy:    t.EnteredBy || '',
     at:           t.CreatedAt || '',
+    walletId:     String(t.WalletID ?? t.walletID ?? t.walletId ?? ''),
     balanceAfter: Number(t.BalanceAfter) || 0,
     attachments,
   };
@@ -231,9 +232,11 @@ export async function deleteAccBook(bookId) {
    multipart/form-data so an optional AttachmentFile can ride along.
    `attachments` carries the local uploader items; the first one holding a
    raw File is uploaded, and any existing remote URL is preserved. */
-export async function saveAccBookTxn({ bookId, id = 0, type, amount, date, notes, attachments = [] }) {
+export async function saveAccBookTxn({ bookId, id = 0, type, amount, date, notes, walletId, attachments = [] }) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  // wallet is mandatory
+  if (!Number(walletId)) throw new Error('Please select a wallet');
   const fileAtt  = attachments.find(a => a && a.file);
   const urlAtt   = attachments.find(a => a && a.url);
 
@@ -248,6 +251,7 @@ export async function saveAccBookTxn({ bookId, id = 0, type, amount, date, notes
   fd.append('Attachment',  urlAtt?.url || '');
   fd.append('CreatedBy',   String(userID));
   fd.append('ModifiedBy',  String(userID));
+  fd.append('WalletID',    String(Number(walletId)));    
   if (fileAtt?.file) fd.append('AttachmentFile', fileAtt.file);
 
   // No Content-Type header — the browser sets the multipart boundary.

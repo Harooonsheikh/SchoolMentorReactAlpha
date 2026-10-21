@@ -6,6 +6,7 @@ import TutorialModal from './TutorialModal';
 import * as hrService from '../services/hrService';
 import * as accountsService from '../services/accountsService';
 import * as attendanceService from '../services/attendanceService';
+import * as approvalsService from '../services/approvalsService';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
 import { qrSVG } from '../utils/qrcode';
@@ -3667,9 +3668,60 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
     catch (e) { /* keep the current list if the reload fails */ }
   };
 
+  /* ── Approvals (Students / Fee / Accounts jaisa) ──
+     Approval on ho to add/edit/mark-inactive/restore turant apply NAHI hote —
+     request queue hoti hai. Employee ki row par "Pending #N" badge + Withdraw
+     dikhta hai. Approve/reject hote hi request approvals_by_user ki pending
+     list se nikal jaati hai, is liye badge khud saaf ho jata hai. */
+  const [pendingMap, setPendingMap] = useState({});   // employeeId → { approvalId, requestNo }
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { emp, pend }
+
+  const loadPending = async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const tag = `${r.module || ''} ${r.actionType || ''}`.toLowerCase();
+        const isEmp = tag.includes('employee') || tag.includes('staff');
+        if (r.status === 'pending' && isEmp && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal — badge just won't show */ }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadPending(); }, []);
+
+  /* Pending response aaya → toast + badge (optimistic), list me kuch apply nahi. */
+  const markPending = (empId, pend, fallbackMsg) => {
+    toast(pend.message || fallbackMsg, 'info');
+    if (empId) setPendingMap((m) => ({ ...m, [String(empId)]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+    loadPending();
+  };
+
+  const doWithdraw = async ({ emp, pend }) => {
+    try {
+      await approvalsService.withdrawRequest(pend.approvalId);
+    } catch (e) {
+      toast(e?.message || 'Could not withdraw request', 'error');
+      return;
+    }
+    toast('Request withdrawn', 'success');
+    setPendingMap((m) => { const n = { ...m }; delete n[String(emp?.id)]; return n; });
+    reloadEmps();
+    loadPending();
+  };
+
   const saveNewEmployee = async (payload) => {
     try {
-      await hrService.saveHrEmployee(payload);
+      const resp = await hrService.saveHrEmployee(payload);
+      if (resp?.pending) {
+        setAddOpen(false);
+        await reloadEmps();
+        markPending(resp.id, resp.pending, `${getFullName(payload)} sent for approval`);
+        return;
+      }
       await reloadEmps();
       setSub((payload.status || 'Active') === 'Active' ? 'active' : 'inactive');
       toast(`${getFullName(payload)} added`, 'success');
@@ -3683,7 +3735,12 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
 
   const saveEditedEmployee = async (payload) => {
     try {
-      await hrService.saveHrEmployee(payload);
+      const resp = await hrService.saveHrEmployee(payload);
+      if (resp?.pending) {
+        setEditFor(null);
+        markPending(payload.id, resp.pending, `Changes to ${getFullName(payload)} sent for approval`);
+        return;
+      }
       await reloadEmps();
       toast(`${getFullName(payload)} updated`, 'success');
       setEditFor(null);
@@ -3708,7 +3765,13 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
   const confirmMarkInactive = async (payload) => {
     const id = payload.id;
     try {
-      await hrService.deleteHrEmployee({ id });
+      const resp = await hrService.deleteHrEmployee({ id });
+      const pend = hrService.hrPendingInfo(resp);
+      if (pend) {   // approval on → employee Active hi rehta hai, sirf badge
+        setInactFor(null);
+        markPending(id, pend, `Mark inactive for ${payload.name} sent for approval`);
+        return;
+      }
       setEmps(prev => (prev || []).map(e => e.id === id ? {
         ...e,
         status: 'Inactive',
@@ -3725,7 +3788,12 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
   };
   const markActiveAgain = async (emp) => {
     try {
-      await hrService.restoreHrEmployee({ id: emp.id });
+      const resp = await hrService.restoreHrEmployee({ id: emp.id });
+      const pend = hrService.hrPendingInfo(resp);
+      if (pend) {   // approval on → employee Inactive hi rehta hai, sirf badge
+        markPending(emp.id, pend, `Restore for ${getFullName(emp)} sent for approval`);
+        return;
+      }
       setEmps(prev => (prev || []).map(e => e.id === emp.id ? {
         ...e,
         status: 'Active',
@@ -3972,6 +4040,8 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
                 onLetter={() => { setMenuOpenId(null); setLetterFor(e); }}
                 onInactive={() => { setMenuOpenId(null); setInactFor(e); }}
                 onRestore={() => { setMenuOpenId(null); markActiveAgain(e); }}
+                pend={pendingMap[String(e.id)]}
+                onWithdraw={() => setWithdrawCfg({ emp: e, pend: pendingMap[String(e.id)] })}
                 onViewLetter={viewLetter}
                 onDeleteLetter={(letter) => setLetterConfirm({ empId: e.id, letter })}
                 toast={toast}
@@ -4041,6 +4111,22 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
             </div>
           </div>
         </div>
+      )}
+      {/* Withdraw confirm — Fee module jaisa (same ConfirmDialog design + settings). */}
+      {withdrawCfg && (
+        <ConfirmDialog
+          cfg={{
+            title: 'Withdraw this request?',
+            message: 'The employee change will not be applied.',
+            confirmStyle: 'primary',
+            icon: 'fa-rotate-left',
+            iconBg: 'rgba(30,58,138,.1)',
+            iconColor: '#1E40AF',
+            confirmLabel: 'Yes, Withdraw',
+            onConfirm: () => doWithdraw(withdrawCfg),
+          }}
+          onClose={() => setWithdrawCfg(null)}
+        />
       )}
       {inactFor && (
         <MarkInactiveModal
@@ -4313,6 +4399,7 @@ function EmployeeRow({
   menuOpen, onToggleMenu, onCloseMenu,
   onEdit, onProfile, onIdCard, onLetter, onInactive, onRestore,
   onViewLetter, onDeleteLetter,
+  pend, onWithdraw,
   toast,
   canEdit = true, canDelete = true, canDownload = true, canAssign = true,
 }) {
@@ -4387,6 +4474,23 @@ function EmployeeRow({
           </div>
         </div>
         <div className="td emp-actions-cell">
+          {/* Pending approval badge + Withdraw — Fee module jaisa design. */}
+          {pend && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Tooltip text={`Employee request ${pend.requestNo || ''} awaiting approval`.trim()}>
+                <span className="hr-pending-badge" role="status">
+                  <i className="fa-solid fa-hourglass-half"></i>
+                  <span>Pending Approval</span>
+                  {pend.approvalId != null && <b className="hr-pending-id">#{pend.approvalId}</b>}
+                </span>
+              </Tooltip>
+              <Tooltip text="Withdraw this request">
+                <button type="button" className="hr-withdraw-btn" onClick={() => onWithdraw && onWithdraw()}>
+                  <i className="fa-solid fa-rotate-left"></i>
+                </button>
+              </Tooltip>
+            </span>
+          )}
           <div className="menu-wrap">
             <Tooltip text="More Actions">
               <button
@@ -5901,9 +6005,12 @@ function MarkInactiveModal({ emp, onClose, onConfirm }) {
    
    ═══════════════════════════════════════════════════════════════════ */
 function staffQrValue(emp) {
+  /* QR me Employee ID (EMP-019) — wahi jo card par "ID" me likha hai.
+     eid khali ho tab hi DB id par gir jao, taa-ke QR khali na rahe. */
+  const eid = String(emp?.eid || '').trim();
+  if (eid) return eid;
   const id = String(emp?.id ?? '').trim();
-  if (id && id !== '0') return id;
-  return String(emp?.eid || '').trim();
+  return id && id !== '0' ? id : '';
 }
 
 function staffQrSVG(value) {
@@ -8188,6 +8295,35 @@ export const HR_CSS = `
 
 /* Actions cell — keep buttons right-aligned */
 .emp-actions-cell { justify-content: flex-end; gap: 5px; }
+
+/* ── Pending-approval badge + Withdraw icon — Fee module (.fee-pending-badge /
+   .fee-withdraw-btn) ki exact copy, taake dono modules me ek jaisa dikhe. ── */
+.hr-pending-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  letter-spacing: .1px; white-space: nowrap;
+  color: #DC2626;
+  border: 1.5px solid rgba(220,38,38,.35);
+  border-radius: 999px;
+  background: rgba(220,38,38,.08);
+  box-shadow: 0 1px 2px rgba(220,38,38,.08);
+}
+.hr-pending-badge i { font-size: 10px; animation: hr-pending-pulse 1.8s ease-in-out infinite; }
+.hr-pending-badge .hr-pending-id {
+  font-weight: 800; font-size: 10.5px;
+  padding: 2px 6px; border-radius: 999px;
+  color: #fff; background: #DC2626;
+}
+@keyframes hr-pending-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.hr-withdraw-btn {
+  width: 26px; height: 26px; font-size: 11.5px; flex-shrink: 0;
+  border: 1.5px solid rgba(30,64,175,.3); border-radius: 7px;
+  background: rgba(30,64,175,.06); color: #1E40AF;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all .18s ease;
+}
+.hr-withdraw-btn:hover { background: #1E40AF; color: #fff; border-color: #1E40AF; }
 .emp-chev-cell    { justify-content: center; }
 
 /* 3-dots menu */

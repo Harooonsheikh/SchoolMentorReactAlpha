@@ -81,19 +81,19 @@ export const TUTORIAL_LINKS = {
     title: 'Accounts Tutorials',
     items: [
       { label: 'Accounts Overview', url: 'https://youtu.be/Ev_HpgCnrKw' },
-      { label: 'Chart of Accounts', url: '' },
-      { label: 'Transactions',      url: '' },
-      { label: 'Account Books',     url: '' },
-      { label: 'Reports',           url: '' },
+      { label: 'Chart of Accounts', url: 'https://youtu.be/evbYHrBeLYM' },
+      { label: 'Transactions',      url: 'https://youtu.be/sh0bAjirr-M' },
+      { label: 'Wallets',           url: 'https://youtu.be/8ZCRBD3l0B8' },
+      { label: 'Account Books',     url: 'https://youtu.be/RR5wGSnK7oo' },
+      { label: 'Reports',           url: 'https://youtu.be/54fdCHtovEQ' },
     ],
   },
   inventory: {
     title: 'Inventory Tutorials',
     items: [
-      { label: 'Categories',     url: '' },
-      { label: 'Items / Stock',  url: '' },
-      { label: 'Issue / Return', url: '' },
-      { label: 'Reports',        url: '' },
+      { label: 'Assets Management', url: 'https://youtu.be/kC7-MA2B3sU' },
+      { label: 'Point of Sale',     url: 'https://youtu.be/rYDjk2r6jEI' },
+      { label: 'Reports',           url: 'https://youtu.be/uq2rCJHhzkc' },
     ],
   },
   admissionCrm: {
@@ -108,6 +108,7 @@ export const TUTORIAL_LINKS = {
   students: {
     title: 'Students Tutorials',
     items: [
+      { label: 'Pre Enrollment',    url: 'https://youtu.be/QOv3lKzg1hQ' },
       { label: 'Active Students',   url: 'https://youtu.be/IWJ5v7hxFtw' },
       { label: 'Inactive Students', url: 'https://youtu.be/J5OIGaq-Q60' },
       { label: 'Family Tree',       url: 'https://youtu.be/yoaTL7MjCKs' },
@@ -117,7 +118,7 @@ export const TUTORIAL_LINKS = {
     title: 'Human Resource Tutorials',
     items: [
       { label: 'Basics',              url: 'https://youtu.be/IAWUptT6Lzo' },
-      { label: 'Employee Management', url: 'https://youtu.be/ANcHWr6jV0c' },
+      { label: 'Employee Management', url: 'https://youtu.be/6oITjBZM81Q' },
       { label: 'Financials',          url: 'https://youtu.be/sVqy-1uV7ME' },
       { label: 'Reports',             url: 'https://youtu.be/ZgFUzGp0ZxM' },
     ],

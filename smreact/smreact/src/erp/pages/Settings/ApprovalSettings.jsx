@@ -10,7 +10,11 @@ import { APPROVAL_ACTION_META } from '../../mock/approvals';
 const ACTION_DESCRIPTIONS = {
   fee_discount: 'A discount applied to a student’s fee head (flat or percentage) won’t reduce what they owe until a Super Admin approves it.',
   fee_delete_challan: 'Deleting an already-generated fee challan — for one student or a whole class — removes it only after approval, preventing accidental loss of billing records.',
-  fee_heads_update: 'Adding, editing or removing a class’s fee heads (via Update Fee Structure or Copy to All Classes) needs approval before the new structure applies to future challans.',
+  fee_create_challan: 'Generating a fee challan — for one student or a whole class — needs approval before it’s issued.',
+  fee_receive_challan: 'Recording a fee payment against a challan needs approval before it’s marked as received.',
+  fee_clear_receiving: 'Clearing (reversing) a fee receiving needs approval before the payment is removed.',
+  fee_grade_head: 'Adding or changing a fee head for a grade/class needs approval before it applies.',
+  fee_heads_update:'Adding, editing or removing a class’s fee heads (via Update Fee Structure or Copy to All Classes) needs approval before the new structure applies to future challans.',
   accounts_head: 'Adding, editing or deleting an account head (Chart of Accounts) needs approval before it’s saved or removed.',
   accounts_add_entry: 'Adding a new Accounts ledger entry (revenue or expense) needs approval before it’s posted to the books.',
   accounts_edit_entry: 'Editing an existing Accounts ledger entry — amount, date, detail, etc. — requires approval before the change is saved.',
@@ -31,6 +35,20 @@ const ACTION_DESCRIPTIONS = {
   students_discount: 'Changing a student’s per-fee-head discount (from the Edit Student form) needs approval before it applies.',
   students_dues_discount: 'Waiving part of an inactive student’s outstanding dues during settlement needs approval before the balance is reduced — any cash actually received still applies immediately.',
   students_preenroll_admission: 'A Pre-Enrollment student stays out of Active Students — Challan, Receiving, Print Slips and Enroll all stay disabled — until a Super Admin approves the admission and fee setup.',
+  preenroll_create_challan: 'Generating a fee challan for a Pre-Enrollment student needs approval before it’s issued.',
+  preenroll_receive_challan: 'Recording a fee payment for a Pre-Enrollment student needs approval before it’s marked as received.',
+  preenroll_delete_challan: 'Deleting a fee challan for a Pre-Enrollment student needs approval before it’s removed.',
+  preenroll_clear_receiving: 'Clearing (reversing) a fee receiving for a Pre-Enrollment student needs approval before the payment is removed.',
+  students_add_edit: 'Adding a new student or editing an existing student’s details needs approval before the change is saved.',
+  students_delete: 'Deleting a student record needs approval before it’s permanently removed.',
+  fee_transport_setup: 'Setting up or changing a student’s transport fee needs approval before it takes effect.',
+  inventory_add_edit_product: 'Adding a new product or editing an existing product in Inventory needs approval before it’s saved.',
+  hr_loan_repayment: 'Recording a repayment against an employee’s existing advance/loan needs approval before it’s applied.',
+  hr_payroll_payment: 'Marking an employee’s payroll as paid needs approval before the payment is recorded.',
+  hr_delete_payroll: 'Deleting a payroll record needs approval before it’s removed.',
+  hr_add_edit_employee: 'Adding a new employee or editing an existing employee’s details needs approval before the change is saved.',
+  hr_deactivate_employee: 'Deactivating an employee needs approval before they’re removed from active staff.',
+  hr_delete_employee: 'Deleting an employee record needs approval before it’s permanently removed.',
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -186,7 +204,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
                   <i className={`fa-solid ${item.icon}`} aria-hidden="true"></i> {item.label}
                   {ACTION_DESCRIPTIONS[item.key] && (
                     <Tooltip text={ACTION_DESCRIPTIONS[item.key]}>
-                      <i className="fa-solid fa-circle-info as-info" aria-hidden="true" onClick={(e) => e.preventDefault()}></i>
+                      <i className="fa-
+                      solid fa-circle-info as-info" aria-hidden="true" onClick={(e) => e.preventDefault()}></i>
                     </Tooltip>
                   )}
                 </label>

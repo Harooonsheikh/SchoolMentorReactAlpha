@@ -1,5 +1,23 @@
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl, approvalPending } from '../../utils/apiConfig';
+
+/* Approvals: employee save/delete/restore APIs pending-approval info nested
+   `approval:{}` me ya TOP-LEVEL (`pendingApproval, approvalID, requestNo`) de
+   sakti hain — (save-employee me `data[0]` ke andar bhi). Dono shapes check.
+   Pending ho to { approvalId, requestNo, message } warna null. */
+export function hrPendingInfo(json) {
+  if (!json || typeof json !== 'object') return null;
+  const inner = Array.isArray(json.data) ? json.data[0] : (json.data && typeof json.data === 'object' ? json.data : null);
+  const isFlag = (v) => v === true || v === 'true' || v === 1;
+  const src = [json, inner].find(o => o && (approvalPending(o) || isFlag(o.pendingApproval ?? o.PendingApproval)));
+  if (!src) return null;
+  const ap = src.approval || src.Approval || src;
+  return {
+    approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+    requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+    message: apiMessage(json) || apiMessage(inner) || null,
+  };
+}
 
 /* The three allowance heads the backend stores as fixed employee columns
    (basicSalary + these 3 = the "4 basic" salary values). They render as
@@ -240,7 +258,8 @@ export async function getHrEmployees() {
   return [...activeList, ...inactiveList].map(mapApiEmployeeToEmp);
 }
 export async function restoreHrEmployee({ id }) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/restore-employee/${id}`), {
+  const modifiedBy = Number(sessionStorage.getItem('UserID')) || 0;   // jis user ne restore kiya
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/restore-employee/${id}?modifiedBy=${modifiedBy}`), {
     method: 'PUT',
     headers: { Accept: '*/*' },
   });
@@ -1159,6 +1178,16 @@ export async function saveHrEmployee(payload = {}) {
   const json1 = await res1.json().catch(() => null);
   if (!res1.ok) throw new Error(apiMessage(json1) || 'Could not save employee');
 
+  /* Approval on → employee add/edit queue ho gaya, abhi apply NAHI hua. Baqi
+     steps (employment/salary/leaves/docs/assignments) yahin rok do warna wo
+     approval ke baghair apply ho jate. Caller badge + withdraw dikhata hai. */
+  const pending1 = hrPendingInfo(json1);
+  if (pending1) {
+    const d0 = json1?.data;
+    const pid = (Array.isArray(d0) ? (d0[0]?.id ?? d0[0]?.ID) : (d0?.id ?? d0?.ID)) ?? payload.id ?? 0;
+    return { id: pid, pending: pending1 };
+  }
+
   /* Duplicate (phone/CNIC) par backend HTTP 200 + data[0] = { Success:0,
      Message:"Number already exist" } deta hai. Isy fail samjho — aur agar number-
      duplicate hai to error par flag lagao taake caller email-popup dikha sake. */
@@ -1331,7 +1360,8 @@ async function syncSubjectAssignments(employeeId, desired = {}, original = {}, b
   }
 }
 export async function deleteHrEmployee({ id }) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-employee/${id}`), {
+  const modifiedBy = Number(sessionStorage.getItem('UserID')) || 0;   // jis user ne inactive kiya
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-employee/${id}?modifiedBy=${modifiedBy}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });

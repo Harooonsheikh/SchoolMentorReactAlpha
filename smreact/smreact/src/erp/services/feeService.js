@@ -1038,6 +1038,17 @@ export async function saveStudentTransport(classKey, reg, payload) {
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => null);
+  /* Approval-gated: transport fee change approval ke intezaar me ho to backend
+     pendingApproval:true (ya message "…sent for approval") deta hai aur asal
+     record nahi banta. Aise me RAW json wapas do — caller pendingFromResp se
+     badge + Withdraw dikhata hai. (Mapped object pendingApproval fields gira
+     deta tha, is liye badge kabhi nahi aata tha.) */
+  const pendMsg = String(json?.message || json?.Message || '');
+  const isPending = (json?.pendingApproval ?? json?.PendingApproval) === true
+    || (json?.pendingApproval ?? json?.PendingApproval) === 1
+    || /sent for approval/i.test(pendMsg);
+  if (isPending) return json;
+
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not save transport fee setup');
   }
@@ -2213,6 +2224,8 @@ export function buildReceiveInstallmentRequest({
   receivedDate = '',
   modifiedBy = 0,
   isReceiving = true,
+  /* Receiving popup me chuna wallet (Accounts) — paisa isi wallet me. 0 = koi nahi. */
+  walletId = 0,
   detailRows = [],
   perHead = {},
   giveDisc = {},
@@ -2308,12 +2321,18 @@ export function buildReceiveInstallmentRequest({
     });
   });
 
+  /* walletId HAR row par bhi (installment-level) — top-level ke saath, taake backend
+     dono jagah se wallet pehchan le. */
+  const walletIdNum = Number(walletId) || 0;
+  rows.forEach(r => { r.walletId = walletIdNum; });
+
   return {
     ledgerId: Number(ledgerId) || 0,
     paymentMethod: paymentMethod || 'Cash',
     receivedDate: String(receivedDate || '').slice(0, 10),
     modifiedBy: Number(modifiedBy) || 0,
     isReceiving: !!isReceiving,
+    walletId: walletIdNum,
     detailRows: rows,
   };
 }
@@ -2326,8 +2345,10 @@ export function buildReceivePaymentInstallmentRequest({
   receivedDate = '',
   modifiedBy = 0,
   isReceiving = true,
+  walletId = 0,
   detailRows = [],
 } = {}) {
+  const walletIdNum = Number(walletId) || 0;
   const rows = (Array.isArray(detailRows) ? detailRows : [])
     .filter(r => r && (Number(r.id) || Number(r.receivedAmount) || Number(r.discount)))
     .map(r => {
@@ -2335,6 +2356,7 @@ export function buildReceivePaymentInstallmentRequest({
         id: Number(r.id) || 0,
         receivedAmount: Math.max(0, Math.round(Number(r.receivedAmount) || 0)),
         discount: Math.max(0, Math.round(Number(r.discount) || 0)),
+        walletId: walletIdNum,
       };
       if (!out.id && (r.head || r.subHead)) {
         out.head = r.head || '';
@@ -2348,6 +2370,7 @@ export function buildReceivePaymentInstallmentRequest({
     receivedDate: String(receivedDate || '').slice(0, 10),
     modifiedBy: Number(modifiedBy) || 0,
     isReceiving: !!isReceiving,
+    walletId: walletIdNum,
     detailRows: rows,
   };
 }

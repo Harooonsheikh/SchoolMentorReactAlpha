@@ -708,8 +708,15 @@ export async function deleteStuStudentDocument(documentId) {
    shows up in the inactive list (get-...?isActive=false). The reason rides
    along as a query param. id 0 is a no-op. */
 export async function markStuInactive(id, reason = '') {
-  const qs   = reason ? `?reason=${encodeURIComponent(reason)}` : '';
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student/${id || 0}${qs}`), {
+  /* ModifiedBy (logged-in user) zaroori hai — is branch me student ko inactive
+     karna approval maangta hai, aur backend ko pata hona chahiye kis ne request
+     kiya (approval row isi par banti hai). Baqi delete endpoints (account book /
+     book entry) bhi isi tarah ?modifiedBy= bhejte hain. */
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const params = new URLSearchParams();
+  if (reason) params.set('reason', reason);
+  params.set('modifiedBy', String(userID));
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student/${id || 0}?${params.toString()}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });

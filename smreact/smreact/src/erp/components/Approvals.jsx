@@ -134,15 +134,27 @@ function GroupCard({ label, value, tone }) {
 }
 
 export default function Approvals({ toast = () => {} }) {
-  const { can } = usePermissions();
+  const { can, failOpen } = usePermissions();
   /* Layer 1 — tabs gated by View on their governing screen; Layer 2 —
      row actions gated by their own action. Approve/Reject = Approve on
      Pending Approvals & History.
      Revoke (apni PENDING request wapas lena) har requester ka haq hai — ye
      Delete permission par gate NAHI, warna Teacher jaise roles ko My Requests
      me apni pending request ke saamne revert icon milta hi nahi tha. */
-  const canDecide = can('Approvals', 'Pending Approvals & History', 'Approve');
-  const visibleTabs = TABS.filter(t => can('Approvals', t.screen, 'View'));
+  /* Review queue (Pending Approvals & History) sab se sensitive hai — doosron
+     ke Fee/Accounts/HR changes approve/reject yahin hote hain. Is liye ye SIRF
+     tab khulti hai jab permission waqai GRANTED ho. Agar access "fail-open" ki
+     wajah se mila (permissions load hi na ho payi — khaali/error), to ye screen
+     band rakhte hain, warna bina grant ke user doosron ki requests review kar
+     leta (dekhein PermissionsContext ka failOpen). My Requests is se mustasna
+     hai — apni request to har user dekh/utha sakta hai. */
+  const canReview = (menu, sub, action) => can(menu, sub, action) && !failOpen;
+  const canDecide = canReview('Approvals', 'Pending Approvals & History', 'Approve');
+  const visibleTabs = TABS.filter(t => (
+    t.screen === 'Pending Approvals & History'
+      ? canReview('Approvals', t.screen, 'View')
+      : can('Approvals', t.screen, 'View')
+  ));
 
   const [tab, setTab] = useState('pending');
   const [currentUser, setCurrentUser] = useState('');
@@ -418,6 +430,8 @@ export default function Approvals({ toast = () => {} }) {
         <ApprovalDetailModal
           request={selected}
           mode={reviewMode}
+          canDecide={canDecide}
+          onSetMode={setReviewMode}
           onClose={closeDetail}
           onDecide={handleDecision}
         />
@@ -439,7 +453,7 @@ function Stat({ tone, icon, label, value, sub }) {
   );
 }
 
-function ApprovalDetailModal({ request, mode, onClose, onDecide }) {
+function ApprovalDetailModal({ request, mode, canDecide, onSetMode, onClose, onDecide }) {
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -576,6 +590,19 @@ function ApprovalDetailModal({ request, mode, onClose, onDecide }) {
 
         <div className="up-modal-foot">
           <button type="button" className="up-btn up-btn-ghost" onClick={onClose}>Close</button>
+          {/* View se khula modal (mode null) — jo approve kar sakta hai, usay
+             yahin se bhi Approve/Reject mile. Click par mode set ho kar comment
+             box + confirm button isi modal me khul jate hain (row buttons jaisa). */}
+          {!mode && canDecide && request.status === 'pending' && onSetMode && (
+            <>
+              <button type="button" className="up-btn ap-btn-reject" onClick={() => onSetMode('reject')}>
+                <i className="fa-solid fa-xmark" aria-hidden="true"></i> Reject
+              </button>
+              <button type="button" className="up-btn ap-btn-approve" onClick={() => onSetMode('approve')}>
+                <i className="fa-solid fa-check" aria-hidden="true"></i> Approve
+              </button>
+            </>
+          )}
           {mode === 'approve' && (
             <button type="button" className="up-btn ap-btn-approve" disabled={busy} onClick={submit}>
               <i className="fa-solid fa-check" aria-hidden="true"></i> {busy ? 'Approving…' : 'Approve Request'}

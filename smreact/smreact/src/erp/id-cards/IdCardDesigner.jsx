@@ -309,7 +309,11 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     qrSizePct: design.qr?.sizePct || 100,
     idText: item.idValue,
     showPhoto,
-    backOptions: design.backOptions,
+    /* Student ID card par QR ke neeche koi number (idText) nahi dikhana —
+       preview, Generate aur Bulk Sheet sabhi isi buildFaceCtx se bante hain. */
+    backOptions: kind === 'student'
+      ? { ...design.backOptions, showIdText: false }
+      : design.backOptions,
     backRows: resolveDisplayFields(kind, design.backFields || [], item.entity, { ...item.ctx, school: branding, issueDate, expiryDate }),
   });
 

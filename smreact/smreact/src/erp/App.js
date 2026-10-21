@@ -1,8 +1,23 @@
 import { useEffect } from 'react';
 import SchoolMentorShell from './components/App';
-import { ModuleProvider } from './context/ModuleContext';
-import { PermissionsProvider } from './context/PermissionsContext';
+import { ModuleProvider, useModules } from './context/ModuleContext';
+import { PermissionsProvider, usePermissions  } from './context/PermissionsContext';
 import { setErpNavHandlers } from './utils/auth';
+
+
+function ShellGate() {
+  const { ready: modulesReady } = useModules();
+  const { ready: permsReady } = usePermissions();
+  if (!modulesReady || !permsReady) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', background: 'var(--bg-base, #F0F4FF)' }}>
+        <div className="shell-spinner" aria-label="Loading" />
+      </div>
+    );
+  }
+  return <SchoolMentorShell />;
+}
+
 
 function App({ onExitToSetup, onLogout }) {
   // Register the host's in-app navigation callbacks so the ERP's logout /
@@ -14,7 +29,7 @@ function App({ onExitToSetup, onLogout }) {
   return (
     <ModuleProvider>
       <PermissionsProvider>
-        <SchoolMentorShell />
+        <ShellGate />
       </PermissionsProvider>
     </ModuleProvider>
   );
