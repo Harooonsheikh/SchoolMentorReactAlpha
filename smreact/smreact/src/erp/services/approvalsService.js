@@ -212,6 +212,20 @@ const ACTION_TO_API = {
   fee_clear_receiving:      'clearFeeReceiving',
   fee_grade_head:           'gradeFeeHead',
   students_preenroll_admission: 'preEnrollStudent',
+  preenroll_create_challan:    'preEnrollCreateChallan',
+  preenroll_receive_challan:   'preEnrollReceiveChallan',
+  preenroll_delete_challan:    'preEnrollDeleteChallan',
+  preenroll_clear_receiving:   'preEnrollClearReceiving',
+  students_add_edit:           'addEditStudent',
+  students_delete:              'deleteStudent',
+  fee_transport_setup:          'transportFeeSetup',
+  inventory_add_edit_product:   'inventoryProduct',
+  hr_loan_repayment:            'loanRepayment',
+  hr_payroll_payment:           'payrollPayment',
+  hr_delete_payroll:            'deletePayroll',
+  hr_add_edit_employee:         'addEditEmployee',
+  hr_deactivate_employee:       'deactivateEmployee',
+  hr_delete_employee:           'deleteEmployee',
 };
 
 /* Every approval switch the backend stores (swagger
@@ -226,7 +240,8 @@ const ALL_API_FLAGS = [
   'payRollDeductionWaiver', 'payRollBonusAward', 'salaryDetailsUpdate', 'leavePolicyUpdate', 'employeeLoanApproval',
   'inventoryPriceEdit', 'deleteInventoryProduct', 'markStudentInactive', 'studentFeeDiscount', 'duesSettelmentDiscount',
   'createFeeChallan', 'receiveFeeChallan', 'clearFeeReceiving', 'gradeFeeHead', 'walletTransaction', 'walletAccount',
-  'walletTransfer', 'accountHead', 'addAccountEntry', 'accountBook', 'bookPayment',
+  'walletTransfer', 'accountHead', 'addAccountEntry', 'accountBook', 'bookPayment', 'preEnrollCreateChallan', 'preEnrollReceiveChallan', 'preEnrollDeleteChallan', 'preEnrollClearReceiving',
+  'addEditStudent', 'deleteStudent', 'transportFeeSetup', 'inventoryProduct', 'loanRepayment', 'payrollPayment', 'deletePayroll', 'addEditEmployee', 'deactivateEmployee', 'deleteEmployee',
 ];
 
 /* Full flag set from the last GET, so SAVE can preserve switches this UI

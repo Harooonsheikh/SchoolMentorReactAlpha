@@ -35,6 +35,20 @@ const ACTION_DESCRIPTIONS = {
   students_discount: 'Changing a student’s per-fee-head discount (from the Edit Student form) needs approval before it applies.',
   students_dues_discount: 'Waiving part of an inactive student’s outstanding dues during settlement needs approval before the balance is reduced — any cash actually received still applies immediately.',
   students_preenroll_admission: 'A Pre-Enrollment student stays out of Active Students — Challan, Receiving, Print Slips and Enroll all stay disabled — until a Super Admin approves the admission and fee setup.',
+  preenroll_create_challan: 'Generating a fee challan for a Pre-Enrollment student needs approval before it’s issued.',
+  preenroll_receive_challan: 'Recording a fee payment for a Pre-Enrollment student needs approval before it’s marked as received.',
+  preenroll_delete_challan: 'Deleting a fee challan for a Pre-Enrollment student needs approval before it’s removed.',
+  preenroll_clear_receiving: 'Clearing (reversing) a fee receiving for a Pre-Enrollment student needs approval before the payment is removed.',
+  students_add_edit: 'Adding a new student or editing an existing student’s details needs approval before the change is saved.',
+  students_delete: 'Deleting a student record needs approval before it’s permanently removed.',
+  fee_transport_setup: 'Setting up or changing a student’s transport fee needs approval before it takes effect.',
+  inventory_add_edit_product: 'Adding a new product or editing an existing product in Inventory needs approval before it’s saved.',
+  hr_loan_repayment: 'Recording a repayment against an employee’s existing advance/loan needs approval before it’s applied.',
+  hr_payroll_payment: 'Marking an employee’s payroll as paid needs approval before the payment is recorded.',
+  hr_delete_payroll: 'Deleting a payroll record needs approval before it’s removed.',
+  hr_add_edit_employee: 'Adding a new employee or editing an existing employee’s details needs approval before the change is saved.',
+  hr_deactivate_employee: 'Deactivating an employee needs approval before they’re removed from active staff.',
+  hr_delete_employee: 'Deleting an employee record needs approval before it’s permanently removed.',
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -190,7 +204,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
                   <i className={`fa-solid ${item.icon}`} aria-hidden="true"></i> {item.label}
                   {ACTION_DESCRIPTIONS[item.key] && (
                     <Tooltip text={ACTION_DESCRIPTIONS[item.key]}>
-                      <i className="fa-solid fa-circle-info as-info" aria-hidden="true" onClick={(e) => e.preventDefault()}></i>
+                      <i className="fa-
+                      solid fa-circle-info as-info" aria-hidden="true" onClick={(e) => e.preventDefault()}></i>
                     </Tooltip>
                   )}
                 </label>
