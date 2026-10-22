@@ -12,7 +12,9 @@ import ExamConfirm from './ExamConfirm'
    expand to show class/duration/date tiles. The Add/Edit modal uses a
    class multi-select (tags + searchable dropdown).
    ═══════════════════════════════════════════════════════════════════ */
-export default function AddExamTab({ store, commit, flash }) {
+const off = { opacity: .45, cursor: 'not-allowed' }
+
+export default function AddExamTab({ store, commit, flash, canCreate = true, canEdit = true, canDelete = true, canDownload = true }) {
   const classes = examClasses()
   const session = examSession()
   const [termId, setTermId] = useState(store.terms[0]?.id || null)
@@ -123,8 +125,8 @@ export default function AddExamTab({ store, commit, flash }) {
           </div>
 
           <div className="exm-action-bar">
-            <button className="exm-add-btn" onClick={() => setEditing({ name: '', classIds: [], from: '', to: '' })}><i className="fa-solid fa-plus" /> Add Exam</button>
-            {list.length > 0 && (
+            <button className="exm-add-btn" disabled={!canCreate} style={!canCreate ? off : undefined} onClick={() => { if (canCreate) setEditing({ name: '', classIds: [], from: '', to: '' }) }}><i className="fa-solid fa-plus" /> Add Exam</button>
+            {list.length > 0 && canDownload && (
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="exm-export pdf" onClick={() => pdf('all', 'pdf')}><i className="fa-solid fa-file-pdf" /> PDF</button>
                 <button className="exm-export word" onClick={() => pdf('all', 'word')}><i className="fa-brands fa-microsoft" /> Word</button>
@@ -164,14 +166,14 @@ export default function AddExamTab({ store, commit, flash }) {
                       <span className={`exm-ex-badge ${st.cls}`}><i className={`fa-solid ${st.icon}`} /> {st.label}</span>
                     </div>
                     <div className="exm-ex-td" onClick={(e) => e.stopPropagation()}>
-                      <button className="exm-ex-edit" onClick={() => setEditing({ ...ex })}><i className="fa-solid fa-pen-to-square" /> Edit</button>
+                      <button className="exm-ex-edit" disabled={!canEdit} style={!canEdit ? off : undefined} onClick={() => { if (canEdit) setEditing({ ...ex }) }}><i className="fa-solid fa-pen-to-square" /> Edit</button>
                     </div>
                     <div className="exm-ex-td" style={{ gap: 6 }} onClick={(e) => e.stopPropagation()}>
-                      <button className="exm-export pdf" title={`PDF for ${ex.name}`} onClick={() => pdf(ex, 'pdf')}><i className="fa-solid fa-file-pdf" /> PDF</button>
-                      <button className="exm-export word" title={`Word for ${ex.name}`} onClick={() => pdf(ex, 'word')}><i className="fa-brands fa-microsoft" /> Word</button>
+                      {canDownload && <button className="exm-export pdf" title={`PDF for ${ex.name}`} onClick={() => pdf(ex, 'pdf')}><i className="fa-solid fa-file-pdf" /> PDF</button>}
+                      {canDownload && <button className="exm-export word" title={`Word for ${ex.name}`} onClick={() => pdf(ex, 'word')}><i className="fa-brands fa-microsoft" /> Word</button>}
                     </div>
                     <div className="exm-ex-td" style={{ justifyContent: 'flex-end', gap: 8 }} onClick={(e) => e.stopPropagation()}>
-                      <button className="exm-ex-del" title="Delete exam" onClick={() => setDel(ex)}><i className="fa-solid fa-trash" /></button>
+                      <button className="exm-ex-del" title={canDelete ? 'Delete exam' : 'No delete permission'} disabled={!canDelete} style={!canDelete ? off : undefined} onClick={() => { if (canDelete) setDel(ex) }}><i className="fa-solid fa-trash" /></button>
                       <button className={`exm-ex-expand${open ? ' open' : ''}`} title={open ? 'Hide details' : 'Show details'} onClick={(e) => { e.stopPropagation(); setOpenId(open ? null : ex.id) }}><i className="fa-solid fa-chevron-down" /></button>
                     </div>
                   </div>

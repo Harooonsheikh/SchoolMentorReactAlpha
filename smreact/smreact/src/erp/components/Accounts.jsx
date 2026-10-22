@@ -305,13 +305,13 @@ function PendingBadge({ pend, onWithdraw, disabled }) {
       <Tooltip text={`Request ${pend.requestNo || ''} awaiting approval`.trim()}>
         <span role="status" className="acc-pending-badge">
           <i className="fa-solid fa-hourglass-half"></i>
-          Pending Approval
+          <span>Pending Approval</span>
           {pend.approvalId != null && <b>#{pend.approvalId}</b>}
         </span>
       </Tooltip>
       <Tooltip text="Withdraw this request">
         <button
-          className="fee-iconbtn"
+          className="fee-iconbtn fee-withdraw-btn"
           onClick={onWithdraw}
           disabled={disabled}
           style={disabled ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -731,13 +731,13 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                       <Tooltip text={`Request ${pendingMap[String(h.recordId)].requestNo || ''} awaiting approval`.trim()}>
                                         <span role="status" className="acc-pending-badge">
                                           <i className="fa-solid fa-hourglass-half"></i>
-                                          Pending Approval
+                                          <span>Pending Approval</span>
                                           {pendingMap[String(h.recordId)].approvalId != null && <b>#{pendingMap[String(h.recordId)].approvalId}</b>}
                                         </span>
                                       </Tooltip>
                                       <Tooltip text="Withdraw this request">
                                         <button
-                                          className="fee-iconbtn"
+                                          className="fee-iconbtn fee-withdraw-btn"
                                           onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } requestWithdrawHead(h); }}
                                           disabled={isOtherSession}
                                           style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -7677,16 +7677,34 @@ const ACC_CSS = `
 .acc-head-desc { color: var(--text-muted); }
 .acc-heads-actions { display: inline-flex; gap: 7px; align-items: center; }
 
-/* Row-level "Pending Approval #id" chip (mirrors the Fee module). */
+/* Row-level Pending Approval chip — Fee ke .fee-pending-badge / .fee-withdraw-btn. */
 .acc-pending-badge {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 10px; border-radius: 999px;
-  background: rgba(234,88,12,.10); color: #C2410C;
-  border: 1px solid rgba(234,88,12,.25);
-  font-family: var(--st-font); font-size: 11.5px; font-weight: 800; white-space: nowrap;
+  height: 26px; padding: 0 10px;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  letter-spacing: .1px; white-space: nowrap;
+  color: #DC2626;
+  border: 1.5px solid rgba(220,38,38,.35);
+  border-radius: 999px;
+  background: rgba(220,38,38,.08);
+  box-shadow: 0 1px 2px rgba(220,38,38,.08);
 }
-.acc-pending-badge b { font-weight: 800; }
-[data-theme="dark"] .acc-pending-badge { background: rgba(251,146,60,.14); color: #FDBA74; border-color: rgba(251,146,60,.3); }
+.acc-pending-badge i { font-size: 10px; animation: acc-pending-pulse 1.8s ease-in-out infinite; }
+.acc-pending-badge b {
+  font-weight: 800; font-size: 10.5px;
+  padding: 2px 6px; border-radius: 999px;
+  color: #fff; background: #DC2626;
+}
+@keyframes acc-pending-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.fee-iconbtn.fee-withdraw-btn {
+  width: 26px; height: 26px; font-size: 11.5px; padding: 0;
+  color: #1E40AF; border-color: rgba(30,64,175,.3); background: rgba(30,64,175,.06);
+}
+.fee-iconbtn.fee-withdraw-btn:hover { background: #1E40AF; color: #fff; border-color: #1E40AF; }
+[data-theme="dark"] .acc-pending-badge { color: #FCA5A5; border-color: rgba(220,38,38,.4); background: rgba(220,38,38,.15); }
+[data-theme="dark"] .acc-pending-badge b { background: #EF4444; color: #fff; }
+[data-theme="dark"] .fee-iconbtn.fee-withdraw-btn { background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.35); color: #93C5FD; }
+[data-theme="dark"] .fee-iconbtn.fee-withdraw-btn:hover { background: #2563EB; color: #fff; border-color: #2563EB; }
 
 .acc-heads-empty {
   padding: 28px 18px;
@@ -8121,6 +8139,7 @@ const ACC_CSS = `
 [data-theme="dark"] .acc-wallet-bal.current .acc-wallet-bal-val { color: #22D3EE; }
 .acc-wallet-foot { padding: 11px 14px; border-top: 1px solid var(--border-light); display: flex; align-items: center; gap: 8px; background: var(--bg-muted); flex-wrap: wrap; }
 .acc-wallet-foot .fee-iconbtn { width: auto; padding: 6px 11px; gap: 6px; font-size: 11.5px; font-weight: 700; border-radius: var(--radius-md); }
+.acc-wallet-foot .fee-iconbtn.fee-withdraw-btn { width: 26px; height: 26px; padding: 0; font-weight: 400; border-radius: 7px; }
 .acc-wallet-stmtbtn { flex: 1; justify-content: center; min-width: 120px; }
 [data-theme="dark"] .acc-wallet-card, [data-theme="dark"] .acc-wallet-bal { background: var(--bg-card); border-color: var(--border-light); }
 [data-theme="dark"] .acc-wallet-name, [data-theme="dark"] .acc-wallet-bal-val { color: #E2E8F8; }

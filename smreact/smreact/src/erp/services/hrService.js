@@ -1370,6 +1370,20 @@ export async function deleteHrEmployee({ id }) {
   return json;
 }
 
+/* Inactive tab ka "Delete Employee" — record PERMANENTLY hata deta hai
+   (DELETE delete-employee-permanent/{id}?modifiedBy=). Approval on ho to
+   pending envelope aata hai (hrPendingInfo se check). */
+export async function deleteHrEmployeePermanent({ id }) {
+  const modifiedBy = Number(sessionStorage.getItem('UserID')) || 0;   // jis user ne delete kiya
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-employee-permanent/${id}?modifiedBy=${modifiedBy}`), {
+    method: 'DELETE',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not delete employee');
+  return json;
+}
+
 /* ─── HR Module — Payroll (Step 5) ─── */
 export async function saveHrPayrollRun(run)    { await delay(); return clone({ ...run, ok: true }); }
 export async function deleteHrPayrollRun({ id }){ await delay(); return { id, deleted: true }; }

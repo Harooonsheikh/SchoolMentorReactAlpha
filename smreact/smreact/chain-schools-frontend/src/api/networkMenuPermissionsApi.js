@@ -16,6 +16,7 @@
    Row na ho → khali array (naya user → sab unchecked).
    ═══════════════════════════════════════════════════════════════════ */
 
+import { useCallback, useEffect, useState } from 'react'
 import { CHAIN_API_BASE } from '@/config/env'
 import { getStoredUser } from '@/auth/tokenStorage'
 import { currentNetworkId } from './networkSchoolsApi'
@@ -94,6 +95,7 @@ export async function saveNetworkMenuPermissions({ employeeId, permissions, netw
 export const NAV_MENU_NAME = {
   dashboard:       'Dashboard',
   academics:       'Academics',
+  examination:     'Examination',
   permissions:     'School Permissions',
   progress:        'School Progress',
   payments:        'School Payments',
@@ -164,11 +166,62 @@ export async function fetchUserModuleAccess() {
   }
 }
 
-/* Ye nav item dikhana hai? access null (abhi load nahi hua) ya fullAccess →
-   dikhao; warna sirf wo jiska menuName granted set me ho. */
+/* Ye nav item dikhana hai? access abhi na aaya (null) → chhupa do, taake
+   API se pehle saare modules flash na hon. fullAccess (Head Office) → dikhao.
+   Warna sirf wo jiska menuName granted set me ho. */
 export function isUserNavItemAllowed(key, access) {
-  if (!access || access.fullAccess) return true
+  if (!access) return false
+  if (access.fullAccess) return true
   const menuName = NAV_MENU_NAME[key]
   if (!menuName) return true
   return access.modules.has(menuName.trim().toLowerCase())
+}
+
+const normPerm = (s) => String(s ?? '').trim().toLowerCase()
+
+/* Screen ke andar View / Create / Edit / Delete. Head Office → sab true.
+   Staff ki saved rows (menu||submenu||action) se match. Jab tak API ka
+   jawab na aaye, can() false — pehle sab tabs dikha kar phir chhupana nahi.
+   API fail → fail-open. */
+export function useNetworkMenuPerms() {
+  const head = isHeadOffice()
+  const [state, setState] = useState(() => (
+    head
+      ? { ready: true, fullAccess: true, grants: new Set() }
+      : { ready: false, fullAccess: false, grants: new Set() }
+  ))
+
+  useEffect(() => {
+    if (head) return undefined
+    let alive = true
+    const employeeId = currentEmployeeId()
+    const networkId = currentNetworkId()
+    if (!employeeId || !networkId) {
+      setState({ ready: true, fullAccess: true, grants: new Set() })
+      return undefined
+    }
+    getNetworkMenuPermissions(employeeId, networkId)
+      .then((rows) => {
+        if (!alive) return
+        const grants = new Set()
+        ;(rows || []).forEach((p) => {
+          if (!p?.isAccessable) return
+          grants.add(`${normPerm(p.menuName)}||${normPerm(p.subMenuName)}||${normPerm(p.action)}`)
+        })
+        setState({ ready: true, fullAccess: false, grants })
+      })
+      .catch((err) => {
+        console.error('Could not load menu permissions:', err)
+        if (alive) setState({ ready: true, fullAccess: true, grants: new Set() })
+      })
+    return () => { alive = false }
+  }, [head])
+
+  const can = useCallback((menu, sub, action) => {
+    if (!state.ready) return false
+    if (state.fullAccess) return true
+    return state.grants.has(`${normPerm(menu)}||${normPerm(sub)}||${normPerm(action)}`)
+  }, [state])
+
+  return { ready: state.ready, fullAccess: state.fullAccess, can }
 }

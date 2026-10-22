@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as inventoryService from '../services/inventoryService';
+import * as approvalsService from '../services/approvalsService';
 import useAsync from '../hooks/useAsync';
 import {
   StandardReportPicker, buildStandardReportHtml,
@@ -811,6 +812,9 @@ function InventoryManagement({ toast }) {
 
   const detailItem = detailId ? list.find(i => i.id === detailId) : null;
 
+  /* Approvals — pending badge + withdraw (Fee jaisa). */
+  const { pendingMap, handlePending, askWithdraw, withdrawDialog } = useInvPending(toast, reloadItems);
+
   /* ─── Actions (persist to API, then re-fetch the server list) ─── */
   const handleSave = async ({ name, cat, code, qty, date, cond, status, loc, desc, img }) => {
     if (!name.trim()) { toast('Please enter an item name', 'error'); return; }
@@ -819,7 +823,7 @@ function InventoryManagement({ toast }) {
     const isEdit = editCfg?.mode === 'edit' && editCfg.item;
 
     try {
-      await inventoryService.saveInvItem({
+      const resp = await inventoryService.saveInvItem({
         id:   isEdit ? editCfg.item.id : 0,
         name: name.trim(), cat, code: finalCode, qty: Number(qty) || 0,
         low:  isEdit ? editCfg.item.low : 0,
@@ -827,6 +831,10 @@ function InventoryManagement({ toast }) {
         img:  img ?? (isEdit ? editCfg.item.img : null),
         active: isEdit ? editCfg.item.active : true,
       });
+      if (handlePending(resp, isEdit ? editCfg.item.id : 0, isEdit ? 'Asset update sent for approval' : 'New asset sent for approval')) {
+        setEditCfg(null);
+        return;
+      }
       toast(isEdit ? 'Item updated successfully' : 'Item added successfully', 'success');
       setEditCfg(null);
       reloadItems();
@@ -839,7 +847,8 @@ function InventoryManagement({ toast }) {
     kind: 'inactive', item,
     onYes: async () => {
       try {
-        await inventoryService.saveInvItem({ ...item, active: false });
+        const resp = await inventoryService.saveInvItem({ ...item, active: false });
+        if (handlePending(resp, item.id, 'Mark inactive sent for approval')) { setConfirmCfg(null); return; }
         toast('Item marked inactive', 'info');
         setConfirmCfg(null);
         if (detailId === item.id) setDetailId(null);
@@ -850,7 +859,8 @@ function InventoryManagement({ toast }) {
 
   const restore = async (item) => {
     try {
-      await inventoryService.saveInvItem({ ...item, active: true });
+      const resp = await inventoryService.saveInvItem({ ...item, active: true });
+      if (handlePending(resp, item.id, 'Restore sent for approval')) return;
       toast('Item restored to active', 'success');
       reloadItems();
     } catch (e) { toast(e.message || 'Could not restore item', 'error'); }
@@ -860,7 +870,8 @@ function InventoryManagement({ toast }) {
     kind: 'delete', item,
     onYes: async () => {
       try {
-        await inventoryService.deleteInvItem(item);
+        const resp = await inventoryService.deleteInvItem(item);
+        if (handlePending(resp, item.id, 'Delete sent for approval')) { setConfirmCfg(null); return; }
         toast('Item permanently deleted', 'info');
         setConfirmCfg(null);
         if (detailId === item.id) setDetailId(null);
@@ -884,7 +895,10 @@ function InventoryManagement({ toast }) {
           onPrintLabel={() => openPrintFor(detailItem)}
           onToggle={() => detailItem.active ? askMarkInactive(detailItem) : restore(detailItem)}
           onDelete={() => askDelete(detailItem)}
+          pend={pendingMap[String(detailItem.id)]}
+          onWithdraw={() => askWithdraw(detailItem)}
         />
+        {withdrawDialog}
         {printTarget && (
           <InvBarcodeSizeModal
             target={printTarget}
@@ -1092,10 +1106,13 @@ function InventoryManagement({ toast }) {
               onMarkInactive={() => askMarkInactive(i)}
               onRestore={() => restore(i)}
               onDelete={() => askDelete(i)}
+              pend={pendingMap[String(i.id)]}
+              onWithdraw={() => askWithdraw(i)}
             />
           ))}
         </div>
       )}
+      {withdrawDialog}
 
       {/* Item Add/Edit modal */}
       {editCfg && (
@@ -1121,7 +1138,7 @@ function InventoryManagement({ toast }) {
 }
 
 /* ─── Item card (grid tile) ─── */
-function InvItemCard({ item, onOpen, onEdit, onMarkInactive, onRestore, onDelete }) {
+function InvItemCard({ item, onOpen, onEdit, onMarkInactive, onRestore, onDelete, pend, onWithdraw }) {
   return (
     <div className={`inv-card${item.active ? '' : ' inactive'}`} onClick={onOpen}>
       <div className="inv-card-img">
@@ -1137,6 +1154,7 @@ function InvItemCard({ item, onOpen, onEdit, onMarkInactive, onRestore, onDelete
           <span><i className="fa-solid fa-hashtag"></i> Qty: <strong>{fmtMoney(item.qty)}</strong></span>
           <span><i className="fa-solid fa-location-dot"></i> {item.loc || '—'}</span>
         </div>
+        <InvPendingBadge pend={pend} onWithdraw={onWithdraw} />
       </div>
       <div className="inv-card-foot" onClick={(e) => e.stopPropagation()}>
         <Tooltip text="View full details">
@@ -1177,7 +1195,7 @@ function InvItemCard({ item, onOpen, onEdit, onMarkInactive, onRestore, onDelete
 }
 
 /* ─── Item detail view ─── */
-function InvItemDetail({ item, onBack, onEdit, onPrintLabel, onToggle, onDelete }) {
+function InvItemDetail({ item, onBack, onEdit, onPrintLabel, onToggle, onDelete, pend, onWithdraw }) {
   const history = (item.history || []).slice().reverse();
   return (
     <>
@@ -1191,6 +1209,7 @@ function InvItemDetail({ item, onBack, onEdit, onPrintLabel, onToggle, onDelete 
           <i className={`fa-solid ${catIcon(item.cat)}`}></i> {item.name}
         </div>
         <div className="inv-subbar-spacer"></div>
+        <InvPendingBadge pend={pend} onWithdraw={onWithdraw} />
         <Tooltip text="Print the printable barcode label">
           <button className="fee-btn fee-btn-ghost fee-btn-sm" onClick={onPrintLabel}>
             <i className="fa-solid fa-barcode"></i> Print Barcode
@@ -1564,6 +1583,139 @@ function InvConfirmDialog({ cfg, onClose }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   APPROVALS — Assets (items) + POS products (Students / Fee / HR jaisa).
+   Approval on ho to add/edit/inactive/restore/delete turant apply NAHI
+   hote — request queue hoti hai. Us card par Fee jaisa "Pending Approval
+   #N" badge + Withdraw dikhta hai. Items aur products ek hi table
+   (Branch_Inventory) ke hain, is liye ek hi id-keyed map dono ke liye.
+   Approve/reject hote hi request approvals_by_user ki pending list se
+   nikal jaati hai, badge khud saaf ho jata hai.
+   ═══════════════════════════════════════════════════════════════════ */
+function useInvPending(toast, onAfterWithdraw) {
+  const [pendingMap, setPendingMap]   = useState({});   // id → { approvalId, requestNo }
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { name, id, pend }
+
+  const loadPending = async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const tag = `${r.module || ''} ${r.actionType || ''}`.toLowerCase();
+        const isInv = tag.includes('invent') || tag.includes('product') || tag.includes('asset');
+        if (r.status === 'pending' && isInv && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      setPendingMap(m);
+    } catch (e) { /* non-fatal — badge just won't show */ }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadPending(); }, []);
+
+  /* Save/delete ka response check — pending ho to toast + badge, aur true
+     lautao taake caller change apply/success-toast na kare. */
+  const handlePending = (resp, id, fallbackMsg) => {
+    const pend = inventoryService.invPendingInfo(resp);
+    if (!pend) return false;
+    toast(pend.message || fallbackMsg, 'info');
+    if (id) setPendingMap((m) => ({ ...m, [String(id)]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+    loadPending();
+    return true;
+  };
+
+  const askWithdraw = (row) => {
+    const pend = pendingMap[String(row.id)];
+    if (pend) setWithdrawCfg({ id: row.id, name: row.name, pend });
+  };
+
+  const doWithdraw = async ({ id, pend }) => {
+    try {
+      await approvalsService.withdrawRequest(pend.approvalId);
+    } catch (e) {
+      toast(e?.message || 'Could not withdraw request', 'error');
+      return;
+    }
+    toast('Request withdrawn', 'success');
+    setPendingMap((m) => { const n = { ...m }; delete n[String(id)]; return n; });
+    loadPending();
+    if (onAfterWithdraw) onAfterWithdraw();
+  };
+
+  const withdrawDialog = withdrawCfg && (
+    <InvWithdrawDialog
+      cfg={withdrawCfg}
+      onConfirm={() => doWithdraw(withdrawCfg)}
+      onClose={() => setWithdrawCfg(null)}
+    />
+  );
+
+  return { pendingMap, handlePending, askWithdraw, withdrawDialog };
+}
+
+/* Pending badge + Withdraw icon — Fee ke .fee-pending-badge / .fee-withdraw-btn. */
+function InvPendingBadge({ pend, onWithdraw }) {
+  if (!pend) return null;
+  return (
+    <span className="inv-pend-row" onClick={(e) => e.stopPropagation()}>
+      <Tooltip text={`Request ${pend.requestNo || ''} awaiting approval`.replace(/\s+/g, ' ').trim()}>
+        <span className="fee-pending-badge" role="status">
+          <i className="fa-solid fa-hourglass-half"></i>
+          <span>Pending Approval</span>
+          {pend.approvalId != null && <b className="fee-pending-id">#{pend.approvalId}</b>}
+        </span>
+      </Tooltip>
+      <Tooltip text="Withdraw this request">
+        <button className="fee-iconbtn fee-withdraw-btn" onClick={onWithdraw} aria-label="Withdraw this request">
+          <i className="fa-solid fa-rotate-left"></i>
+        </button>
+      </Tooltip>
+    </span>
+  );
+}
+
+/* Withdraw confirm — Fee ke FeeConfirmDialog ki exact copy (primary style,
+   wahi title/icon/rang), taake dono modules me ek jaisa dikhe. */
+function InvWithdrawDialog({ cfg, onConfirm, onClose }) {
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fee-confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-confirm-dialog">
+        <div className="fee-confirm-glow" style={{ background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+        <div className="fee-confirm-hero fee-confirm-hero--primary">
+          <div className="fee-confirm-ring fee-confirm-ring--primary">
+            <div className="fee-confirm-icon-wrap" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF' }}>
+              <i className="fa-solid fa-rotate-left"></i>
+            </div>
+          </div>
+        </div>
+        <div className="fee-confirm-body">
+          <div className="fee-confirm-title">Withdraw this request?</div>
+          <div className="fee-confirm-msg">
+            The pending change for <strong>{cfg.name || 'this record'}</strong> will not be applied.
+          </div>
+        </div>
+        <div className="fee-confirm-footer">
+          <button className="fee-confirm-btn fee-confirm-btn--cancel" onClick={onClose}>Cancel</button>
+          <button className="fee-confirm-btn fee-confirm-btn--confirm primary-style" onClick={() => { onConfirm(); onClose(); }}>
+            Yes, Withdraw
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    POINT OF SALE — school shop counter. Three sub-tabs:
      • New Sale       — products + cart + checkout (this step)
      • Products       — manage shop products    (step 4)
@@ -1706,9 +1858,9 @@ function PointOfSale({ toast }) {
       ) : sub === 'products' ? (
         <PosProductsView
           products={productList}
-          onAdd={async (p) => { await inventoryService.saveInvProduct(p); reloadProducts(); }}
-          onUpdate={async (p) => { await inventoryService.saveInvProduct(p); reloadProducts(); }}
-          onDelete={async (p) => { await inventoryService.deleteInvProduct(p); reloadProducts(); }}
+          onAdd={async (p) => { const r = await inventoryService.saveInvProduct(p); reloadProducts(); return r; }}
+          onUpdate={async (p) => { const r = await inventoryService.saveInvProduct(p); reloadProducts(); return r; }}
+          onDelete={async (p) => { const r = await inventoryService.deleteInvProduct(p); reloadProducts(); return r; }}
           toast={toast}
         />
       ) : sub === 'sales' ? (
@@ -2137,11 +2289,15 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
     return out;
   }, [products, search, catFilter]);
 
+  /* Approvals — pending badge + withdraw (Fee jaisa). */
+  const { pendingMap, handlePending, askWithdraw, withdrawDialog } = useInvPending(toast);
+
   const askDelete = (p) => setConfirmCfg({
     product: p,
     onYes: async () => {
       try {
-        await onDelete(p);
+        const resp = await onDelete(p);
+        if (handlePending(resp, p.id, 'Product delete sent for approval')) { setConfirmCfg(null); return; }
         toast('Product deleted', 'info');
         setConfirmCfg(null);
       } catch (e) { toast(e.message || 'Could not delete product', 'error'); }
@@ -2241,6 +2397,7 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
                     <span><i className="fa-solid fa-tag"></i> Rs {fmtMoney(p.price)}</span>
                     <span><i className="fa-solid fa-cubes"></i> Stock: <strong>{fmtMoney(p.stock)}</strong></span>
                   </div>
+                  <InvPendingBadge pend={pendingMap[String(p.id)]} onWithdraw={() => askWithdraw(p)} />
                 </div>
                 <div className="inv-card-foot">
                   <Tooltip text="Edit this product">
@@ -2276,11 +2433,11 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
           onSave={async (payload) => {
             try {
               if (editCfg.mode === 'edit') {
-                await onUpdate({ ...editCfg.product, ...payload });
-                toast('Product updated', 'success');
+                const resp = await onUpdate({ ...editCfg.product, ...payload });
+                if (!handlePending(resp, editCfg.product.id, 'Product update sent for approval')) toast('Product updated', 'success');
               } else {
-                await onAdd(payload);
-                toast('Product added', 'success');
+                const resp = await onAdd(payload);
+                if (!handlePending(resp, 0, 'New product sent for approval')) toast('Product added', 'success');
               }
               setEditCfg(null);
             } catch (e) {
@@ -2297,6 +2454,7 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
           onClose={() => setConfirmCfg(null)}
         />
       )}
+      {withdrawDialog}
 
       {printTarget && (
         <InvBarcodeSizeModal
@@ -4898,4 +5056,212 @@ textarea.fee-input { height: auto; padding: 10px 14px; resize: vertical; line-he
   .fee-subtab { padding: 9px 12px; font-size: 12px; }
   .inv-pos-products { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Confirm dialog + Pending-approval badge/Withdraw — Fee module (Fee.jsx) ki exact copy,
+   taake Inventory/POS ka approval UI Fee jaisa dikhe. ── */
+.fee-confirm-overlay {
+  position: fixed; inset: 0;
+  z-index: 9999;
+  background: rgba(10,22,40,.55);
+  backdrop-filter: blur(8px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.fee-confirm-overlay.open { display: flex; }
+.fee-confirm-dialog {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 24px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.2), 0 8px 24px rgba(0,0,0,.1);
+  animation: feeConfirmIn .32s cubic-bezier(.34,1.3,.64,1) both;
+  overflow: hidden;
+}
+@keyframes feeConfirmIn {
+  from { opacity: 0; transform: scale(.88) translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+.fee-confirm-glow {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 24px 24px 0 0;
+}
+.fee-confirm-hero {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 28px 10px;
+}
+.fee-confirm-hero--danger  { background: linear-gradient(180deg, rgba(220,38,38,.03), transparent); }
+.fee-confirm-hero--primary { background: linear-gradient(180deg, rgba(30,58,138,.04), transparent); }
+.fee-confirm-ring {
+  position: relative;
+  width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center;
+}
+.fee-confirm-ring::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  animation: feeConfirmRing 3s linear infinite;
+  opacity: .4;
+}
+.fee-confirm-ring--danger::before  { border-top-color: #EF4444; border-right-color: #EF4444; }
+.fee-confirm-ring--primary::before { border-top-color: #2563EB; border-right-color: #2563EB; }
+@keyframes feeConfirmRing { to { transform: rotate(360deg); } }
+.fee-confirm-icon-wrap {
+  width: 60px; height: 60px;
+  border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  position: relative; z-index: 1;
+  box-shadow: 0 8px 24px rgba(220,38,38,.18);
+  transition: all .3s ease;
+}
+.fee-confirm-hero--primary .fee-confirm-icon-wrap { box-shadow: 0 8px 24px rgba(30,58,138,.2); }
+.fee-confirm-body { padding: 16px 28px 8px; text-align: center; }
+.fee-confirm-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  letter-spacing: -.02em;
+}
+.fee-confirm-msg {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.75;
+  margin-bottom: 14px;
+}
+.fee-confirm-msg strong { color: var(--text-primary); font-weight: 700; }
+.fee-confirm-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  text-align: left;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.fee-confirm-hint--danger {
+  background: rgba(220,38,38,.05);
+  border: 1px solid rgba(220,38,38,.15);
+  color: #991B1B;
+}
+.fee-confirm-hint--danger i { color: #DC2626; font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.fee-confirm-hint--primary {
+  background: rgba(30,58,138,.05);
+  border: 1px solid rgba(30,58,138,.15);
+  color: #1E3A5F;
+}
+.fee-confirm-hint--primary i { color: #1E40AF; font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.fee-confirm-footer {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 10px;
+  padding: 20px 28px 28px;
+}
+.fee-confirm-btn {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  height: 46px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 700;
+  transition: all .2s cubic-bezier(.4,0,.2,1);
+  letter-spacing: .01em;
+}
+.fee-confirm-btn--cancel {
+  background: var(--bg-muted);
+  border: 1.5px solid var(--border-light);
+  color: var(--text-muted);
+}
+.fee-confirm-btn--cancel:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-med);
+}
+.fee-confirm-btn--confirm {
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(220,38,38,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.fee-confirm-btn--confirm:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(220,38,38,.5);
+}
+.fee-confirm-btn--confirm.primary-style {
+  background: linear-gradient(135deg, #1D4ED8, #1E3A8A);
+  box-shadow: 0 4px 14px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.fee-confirm-btn--confirm.primary-style:hover {
+  box-shadow: 0 8px 24px rgba(30,58,138,.5);
+}
+.fee-confirm-btn:active { transform: scale(.97) translateY(0) !important; }
+.fee-pending-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  letter-spacing: .1px; white-space: nowrap;
+  color: #DC2626;
+  border: 1.5px solid rgba(220,38,38,.35);
+  border-radius: 999px;
+  background: rgba(220,38,38,.08);
+  box-shadow: 0 1px 2px rgba(220,38,38,.08);
+}
+.fee-pending-badge i { font-size: 10px; animation: fee-pending-pulse 1.8s ease-in-out infinite; }
+.fee-pending-badge .fee-pending-id {
+  font-weight: 800; font-size: 10.5px;
+  padding: 2px 6px; border-radius: 999px;
+  color: #fff; background: #DC2626;
+}
+@keyframes fee-pending-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.fee-iconbtn.fee-withdraw-btn {
+  color: #1E40AF; border-color: rgba(30,64,175,.3); background: rgba(30,64,175,.06);
+}
+.fee-iconbtn.fee-withdraw-btn:hover { background: #1E40AF; color: #fff; border-color: #1E40AF; }
+[data-theme="dark"] .fee-confirm-overlay { background: rgba(0,0,0,.65); }
+[data-theme="dark"] .fee-confirm-dialog {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 8px 24px rgba(0,0,0,.4);
+}
+[data-theme="dark"] .fee-confirm-hero--danger  { background: linear-gradient(180deg, rgba(239,68,68,.10), transparent); }
+[data-theme="dark"] .fee-confirm-hero--primary { background: linear-gradient(180deg, rgba(59,130,246,.10), transparent); }
+[data-theme="dark"] .fee-confirm-title { color: var(--text-primary); }
+[data-theme="dark"] .fee-confirm-msg   { color: var(--text-secondary); }
+[data-theme="dark"] .fee-confirm-msg strong { color: var(--text-primary); }
+[data-theme="dark"] .fee-confirm-hint--danger {
+  background: rgba(239,68,68,.10);
+  border-color: rgba(239,68,68,.3);
+  color: #FCA5A5;
+}
+[data-theme="dark"] .fee-confirm-hint--danger i { color: #FCA5A5; }
+[data-theme="dark"] .fee-confirm-hint--primary {
+  background: rgba(59,130,246,.10);
+  border-color: rgba(59,130,246,.3);
+  color: #BFD2F8;
+}
+[data-theme="dark"] .fee-confirm-hint--primary i { color: #93C5FD; }
+[data-theme="dark"] .fee-confirm-btn--cancel {
+  background: var(--bg-muted);
+  border-color: var(--border-light);
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .fee-confirm-btn--cancel:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-med);
+}
+/* Card ke andar pending badge + withdraw ki line */
+.inv-pend-row { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 `;

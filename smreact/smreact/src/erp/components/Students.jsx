@@ -51,6 +51,76 @@ const stuHasDiscount = (s) => {
   return Object.values(s._disc).some(v => Number(v) > 0);
 };
 
+/* Pending Approval badge + Withdraw icon — Fee / Accounts jaisa. */
+function StuPendingActions({ pend, onWithdraw }) {
+  if (!pend) return null;
+  return (
+    <span className="stu-pending-wrap">
+      <Tooltip text={`Request ${pend.requestNo || ''} awaiting approval`.trim()}>
+        <span className="stu-pending-badge" role="status">
+          <i className="fa-solid fa-hourglass-half"></i>
+          <span>Pending Approval</span>
+          {pend.approvalId != null && <b className="stu-pending-id">#{pend.approvalId}</b>}
+        </span>
+      </Tooltip>
+      <Tooltip text="Withdraw this request">
+        <button type="button" className="stu-withdraw-btn" onClick={() => onWithdraw && onWithdraw()} aria-label="Withdraw this request">
+          <i className="fa-solid fa-rotate-left"></i>
+        </button>
+      </Tooltip>
+    </span>
+  );
+}
+
+/* Withdraw confirm — FeeConfirmDialog / AccConfirmDialog ka primary hero. */
+function StuWithdrawDialog({ cfg, onClose, onConfirm }) {
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+  const name = cfg.student ? (cfg.student.name || stuFullName(cfg.student)) : 'this student';
+  const req = cfg.pend?.requestNo || `#${cfg.pend?.approvalId}`;
+  const handle = () => { onConfirm && onConfirm(); onClose(); };
+
+  return createPortal(
+    <div className="stu-wd-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="stu-wd-dialog">
+        <div className="stu-wd-glow" />
+        <div className="stu-wd-hero">
+          <div className="stu-wd-ring">
+            <div className="stu-wd-icon">
+              <i className="fa-solid fa-rotate-left"></i>
+            </div>
+          </div>
+        </div>
+        <div className="stu-wd-body">
+          <div className="stu-wd-title">Withdraw this request?</div>
+          <div className="stu-wd-msg">
+            The pending change for <strong>{name}</strong> (request {req}) will be withdrawn and not applied.
+          </div>
+          <div className="stu-wd-hint">
+            <i className="fa-solid fa-triangle-exclamation"></i>
+            <span>You can raise it again later if needed.</span>
+          </div>
+        </div>
+        <div className="stu-wd-footer">
+          <button type="button" className="stu-wd-btn stu-wd-btn--cancel" onClick={onClose}>Cancel</button>
+          <button type="button" className="stu-wd-btn stu-wd-btn--confirm" onClick={handle}>Yes, Withdraw</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /* ─── ID Card theme palette (10 presets + custom) ─── */
 const STU_ID_THEMES = [
   { key: 'blue',   name: 'Blue',   c1: '#2D7DD2', c2: '#1ABCCD', mid: '#4FA3E8', ink: '#0D2B5E' },
@@ -2160,31 +2230,7 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
         />
       )}
 
-      {withdrawCfg && createPortal(
-        <div className="stu-modal-ov" style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 4000, padding: 16 }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setWithdrawCfg(null); }}>
-          <div style={{ width: 'min(440px, 100%)', background: 'var(--bg-card, #fff)', color: 'var(--text-primary, #111827)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(217,119,6,.12)', color: '#D97706' }}>
-                <i className="fa-solid fa-rotate-left"></i>
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>Withdraw this request?</div>
-            </div>
-            <div style={{ padding: '16px 18px', fontSize: 13.5, lineHeight: 1.5 }}>
-              The pending change for <strong>{withdrawCfg.student ? (withdrawCfg.student.name || stuFullName(withdrawCfg.student)) : 'this student'}</strong>
-              {' '}(request {withdrawCfg.pend?.requestNo || `#${withdrawCfg.pend?.approvalId}`}) will be withdrawn and not applied.
-              <div style={{ marginTop: 8, color: 'var(--text-muted, #6b7280)', fontSize: 12.5 }}>You can raise it again later if needed.</div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border-light, #e5e7eb)' }}>
-              <button onClick={() => setWithdrawCfg(null)}
-                style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={doWithdrawStudent}
-                style={{ padding: '9px 16px', borderRadius: 9, border: 'none', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-rotate-left"></i> Yes, Withdraw</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <StuWithdrawDialog cfg={withdrawCfg} onClose={() => setWithdrawCfg(null)} onConfirm={doWithdrawStudent} />
 
       {rpCfg && (
         <StuReportPicker
@@ -2472,22 +2518,7 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
       <div className="td stu-dob-cell">{stuFmtDate(s.dob)}</div>
       <div className="td stu-contact-cell">{s.mobile || '—'}</div>
       <div className="td c" ref={anchorRef} style={{ gap: 6 }}>
-        {pend && (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%' }}>
-            <Tooltip text={`Pending Approval — request ${pend.requestNo || `#${pend.approvalId}`}`}>
-              <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: '#D97706', background: 'rgba(217,119,6,.1)', border: '1px solid rgba(217,119,6,.25)', whiteSpace: 'nowrap' }}>
-                <i className="fa-solid fa-hourglass-half"></i>
-                Pending{pend.approvalId != null && <> #{pend.approvalId}</>}
-              </span>
-            </Tooltip>
-            <Tooltip text="Withdraw this request">
-              <button onClick={() => onWithdraw && onWithdraw()}
-                style={{ display: 'inline-grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 auto', borderRadius: 7, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', cursor: 'pointer' }}>
-                <i className="fa-solid fa-rotate-left"></i>
-              </button>
-            </Tooltip>
-          </div>
-        )}
+        <StuPendingActions pend={pend} onWithdraw={onWithdraw} />
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
@@ -3702,31 +3733,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
         ))}
       </div>
 
-      {withdrawCfg && createPortal(
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 4000, padding: 16 }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setWithdrawCfg(null); }}>
-          <div style={{ width: 'min(440px, 100%)', background: 'var(--bg-card, #fff)', color: 'var(--text-primary, #111827)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(217,119,6,.12)', color: '#D97706' }}>
-                <i className="fa-solid fa-rotate-left"></i>
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>Withdraw this request?</div>
-            </div>
-            <div style={{ padding: '16px 18px', fontSize: 13.5, lineHeight: 1.5 }}>
-              The pending change for <strong>{withdrawCfg.student ? (withdrawCfg.student.name || stuFullName(withdrawCfg.student)) : 'this student'}</strong>
-              {' '}(request {withdrawCfg.pend?.requestNo || `#${withdrawCfg.pend?.approvalId}`}) will be withdrawn and not applied.
-              <div style={{ marginTop: 8, color: 'var(--text-muted, #6b7280)', fontSize: 12.5 }}>You can raise it again later if needed.</div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border-light, #e5e7eb)' }}>
-              <button onClick={() => setWithdrawCfg(null)}
-                style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={doWithdrawInactive}
-                style={{ padding: '9px 16px', borderRadius: 9, border: 'none', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-rotate-left"></i> Yes, Withdraw</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <StuWithdrawDialog cfg={withdrawCfg} onClose={() => setWithdrawCfg(null)} onConfirm={doWithdrawInactive} />
 
       <CrmConfirmStyleReactivate cfg={reactCfg} onClose={() => setReactCfg(null)} onConfirm={reactivate} />
 
@@ -3803,7 +3810,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
             </div>
           </div>
 
-          <div className="stu-list-head stu-in-list-head" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 176px' }}>
+          <div className="stu-list-head stu-in-list-head" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 270px' }}>
             <div className="th c">#</div>
             <div className="th c">Photo</div>
             <div className="th">Reg No</div>
@@ -3868,7 +3875,7 @@ function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, on
   const fire = (fn) => { setMenuOpen(false); fn(); };
 
   return (
-    <div className={`stu-srow stu-srow-inactive${flash ? ' flash' : ''}`} style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 176px' }} data-inreg={s.reg}>
+    <div className={`stu-srow stu-srow-inactive${flash ? ' flash' : ''}`} style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 270px' }} data-inreg={s.reg}>
       <div className="td c"><div className="stu-srow-sn">{i}</div></div>
       <div className="td c">
         <div className="stu-avatar" style={{ background: 'rgba(220,38,38,.10)', color: '#DC2626' }}>
@@ -3888,22 +3895,7 @@ function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, on
       </div>
       <div className="td stu-reason-cell">{s.reason || '—'}</div>
       <div className="td c stu-in-actions" ref={anchorRef}>
-        {pend && (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%' }}>
-            <Tooltip text={`Pending Approval — request ${pend.requestNo || `#${pend.approvalId}`}`}>
-              <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: '#D97706', background: 'rgba(217,119,6,.1)', border: '1px solid rgba(217,119,6,.25)', whiteSpace: 'nowrap' }}>
-                <i className="fa-solid fa-hourglass-half"></i>
-                Pending{pend.approvalId != null && <> #{pend.approvalId}</>}
-              </span>
-            </Tooltip>
-            <Tooltip text="Withdraw this request">
-              <button onClick={() => onWithdraw && onWithdraw()}
-                style={{ display: 'inline-grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 auto', borderRadius: 7, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', cursor: 'pointer' }}>
-                <i className="fa-solid fa-rotate-left"></i>
-              </button>
-            </Tooltip>
-          </div>
-        )}
+        <StuPendingActions pend={pend} onWithdraw={onWithdraw} />
         {/* Delete ka apna icon. Pehle ye sirf 3-dot menu ke andar dabba hua tha,
             is liye inactive student ko mitana nazar hi nahi aata tha. Amal wahi
             hai jo menu wale "Delete Permanently" ka — wahi permission
@@ -6367,31 +6359,7 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
         ))}
       </div>
 
-      {withdrawCfg && createPortal(
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 4000, padding: 16 }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setWithdrawCfg(null); }}>
-          <div style={{ width: 'min(440px, 100%)', background: 'var(--bg-card, #fff)', color: 'var(--text-primary, #111827)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(217,119,6,.12)', color: '#D97706' }}>
-                <i className="fa-solid fa-rotate-left"></i>
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>Withdraw this request?</div>
-            </div>
-            <div style={{ padding: '16px 18px', fontSize: 13.5, lineHeight: 1.5 }}>
-              The pending change for <strong>{withdrawCfg.student ? stuFullName(withdrawCfg.student) : 'this student'}</strong>
-              {' '}(request {withdrawCfg.pend?.requestNo || `#${withdrawCfg.pend?.approvalId}`}) will be withdrawn and not applied.
-              <div style={{ marginTop: 8, color: 'var(--text-muted, #6b7280)', fontSize: 12.5 }}>You can raise it again later if needed.</div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border-light, #e5e7eb)' }}>
-              <button onClick={() => setWithdrawCfg(null)}
-                style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={doWithdrawPre}
-                style={{ padding: '9px 16px', borderRadius: 9, border: 'none', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-rotate-left"></i> Yes, Withdraw</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <StuWithdrawDialog cfg={withdrawCfg} onClose={() => setWithdrawCfg(null)} onConfirm={doWithdrawPre} />
 
       {addOpen && (
         <StuStudentModal
@@ -6518,22 +6486,7 @@ function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject,
       <div className="td">{s.cls}{s.sec ? ` (${s.sec})` : ''}</div>
       <div className="td stu-contact-cell">{s.mobile || '—'}</div>
       <div className="td c" ref={anchorRef} style={{ gap: 6 }}>
-        {pend && (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%' }}>
-            <Tooltip text={`Pending Approval — request ${pend.requestNo || `#${pend.approvalId}`}`}>
-              <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: '#D97706', background: 'rgba(217,119,6,.1)', border: '1px solid rgba(217,119,6,.25)', whiteSpace: 'nowrap' }}>
-                <i className="fa-solid fa-hourglass-half"></i>
-                Pending{pend.approvalId != null && <> #{pend.approvalId}</>}
-              </span>
-            </Tooltip>
-            <Tooltip text="Withdraw this request">
-              <button onClick={() => onWithdraw && onWithdraw()}
-                style={{ display: 'inline-grid', placeItems: 'center', width: 26, height: 26, flex: '0 0 auto', borderRadius: 7, border: '1px solid var(--border-light, #e5e7eb)', background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #475569)', cursor: 'pointer' }}>
-                <i className="fa-solid fa-rotate-left"></i>
-              </button>
-            </Tooltip>
-          </div>
-        )}
+        <StuPendingActions pend={pend} onWithdraw={onWithdraw} />
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
@@ -7701,14 +7654,14 @@ const STU_CSS = `
 /* Roster (per-class student rows) — hide DOB + Father at narrow widths
    to prevent the 8-col grid from overflowing on tablets/phones. */
 @media (max-width: 900px) {
-  .stu-list-head, .stu-srow { grid-template-columns: 40px 50px 1fr 1.2fr 1fr 150px !important; gap: 8px !important; }
+  .stu-list-head, .stu-srow { grid-template-columns: 40px 50px 1fr 1.2fr 1fr 270px !important; gap: 8px !important; }
   .stu-list-head .th:nth-child(5),
   .stu-list-head .th:nth-child(6),
   .stu-srow .td:nth-child(5),
   .stu-srow .td:nth-child(6) { display: none; }
 }
 @media (max-width: 600px) {
-  .stu-list-head, .stu-srow { grid-template-columns: 34px 46px 1fr 140px !important; gap: 6px !important; }
+  .stu-list-head, .stu-srow { grid-template-columns: 34px 46px 1fr 270px !important; gap: 6px !important; }
   .stu-list-head .th:nth-child(3),
   .stu-list-head .th:nth-child(7),
   .stu-srow .td:nth-child(3),
@@ -7927,7 +7880,7 @@ const STU_CSS = `
 /* Student list (inner) */
 .stu-list-head {
   display: grid;
-  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 170px;
+  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 270px;
   gap: 10px;
   padding: 10px 14px;
   background: var(--bg-card);
@@ -7943,7 +7896,7 @@ const STU_CSS = `
 .stu-srow {
   position: relative;
   display: grid;
-  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 170px;
+  grid-template-columns: 46px 58px 1.1fr 1.3fr 1.1fr 1fr 1.1fr 270px;
   gap: 10px;
   padding: 12px 14px;
   background: var(--bg-card);
@@ -10391,4 +10344,133 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   .fee-filters { flex-direction: column; align-items: stretch; }
   .fee-stud-meta { grid-template-columns: 1fr; }
 }
+
+/* Pending Approval badge + Withdraw — Fee ke .fee-pending-badge / .fee-withdraw-btn. */
+.stu-pending-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; flex: 0 0 auto; }
+.stu-pending-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  letter-spacing: .1px; white-space: nowrap;
+  color: #DC2626;
+  border: 1.5px solid rgba(220,38,38,.35);
+  border-radius: 999px;
+  background: rgba(220,38,38,.08);
+  box-shadow: 0 1px 2px rgba(220,38,38,.08);
+}
+.stu-pending-badge i { font-size: 10px; animation: stu-pending-pulse 1.8s ease-in-out infinite; }
+.stu-pending-badge .stu-pending-id {
+  font-weight: 800; font-size: 10.5px;
+  padding: 2px 6px; border-radius: 999px;
+  color: #fff; background: #DC2626;
+}
+@keyframes stu-pending-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.stu-withdraw-btn {
+  width: 26px; height: 26px; font-size: 11.5px; flex-shrink: 0;
+  border: 1.5px solid rgba(30,64,175,.3); border-radius: 7px;
+  background: rgba(30,64,175,.06); color: #1E40AF;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: .15s ease;
+}
+.stu-withdraw-btn:hover { background: #1E40AF; color: #fff; border-color: #1E40AF; }
+[data-theme="dark"] .stu-pending-badge { color: #FCA5A5; border-color: rgba(220,38,38,.4); background: rgba(220,38,38,.15); }
+[data-theme="dark"] .stu-pending-badge .stu-pending-id { background: #EF4444; color: #fff; }
+[data-theme="dark"] .stu-withdraw-btn { background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.35); color: #93C5FD; }
+[data-theme="dark"] .stu-withdraw-btn:hover { background: #2563EB; color: #fff; border-color: #2563EB; }
+
+/* Withdraw confirm — Fee / Accounts hero dialog. Own classes so the existing
+   reactivate dialog (.stu-confirm-*) stays as it is. */
+.stu-wd-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(10,22,40,.55);
+  backdrop-filter: blur(8px);
+  display: none; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.stu-wd-overlay.open { display: flex; }
+.stu-wd-dialog {
+  position: relative;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 24px;
+  width: 100%; max-width: 380px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.2), 0 8px 24px rgba(0,0,0,.1);
+  animation: stuWdIn .32s cubic-bezier(.34,1.3,.64,1) both;
+  overflow: hidden;
+}
+@keyframes stuWdIn {
+  from { opacity: 0; transform: scale(.88) translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+.stu-wd-glow {
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A);
+}
+.stu-wd-hero {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 28px 10px;
+  background: linear-gradient(180deg, rgba(30,58,138,.04), transparent);
+}
+.stu-wd-ring {
+  position: relative; width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center;
+}
+.stu-wd-ring::before {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid transparent; border-top-color: #2563EB; border-right-color: #2563EB;
+  animation: stuWdRing 3s linear infinite; opacity: .4;
+}
+@keyframes stuWdRing { to { transform: rotate(360deg); } }
+.stu-wd-icon {
+  width: 60px; height: 60px; border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; position: relative; z-index: 1;
+  background: rgba(30,58,138,.1); color: #1E40AF;
+  box-shadow: 0 8px 24px rgba(30,58,138,.2);
+}
+.stu-wd-body { padding: 16px 28px 8px; text-align: center; }
+.stu-wd-title {
+  font-size: 20px; font-weight: 800; color: var(--text-primary, #0F172A);
+  margin-bottom: 10px; letter-spacing: -.02em;
+}
+.stu-wd-msg {
+  font-size: 13.5px; color: var(--text-muted, #64748B);
+  line-height: 1.75; margin-bottom: 14px;
+}
+.stu-wd-msg strong { color: var(--text-primary, #0F172A); font-weight: 700; }
+.stu-wd-hint {
+  display: flex; align-items: flex-start; gap: 9px; text-align: left;
+  padding: 11px 14px; border-radius: 12px;
+  font-size: 12px; font-weight: 600; line-height: 1.5;
+  background: rgba(30,58,138,.05); border: 1px solid rgba(30,58,138,.15); color: #1E3A5F;
+}
+.stu-wd-hint i { color: #1E40AF; font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.stu-wd-footer {
+  display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px;
+  padding: 20px 28px 28px;
+}
+.stu-wd-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  height: 46px; border-radius: 12px; border: none; cursor: pointer;
+  font-family: var(--font-body, inherit); font-size: 14px; font-weight: 700;
+  transition: all .2s cubic-bezier(.4,0,.2,1);
+}
+.stu-wd-btn--cancel {
+  background: var(--bg-muted, #F1F5F9);
+  border: 1.5px solid var(--border-light, #E2E8F0);
+  color: var(--text-muted, #64748B);
+}
+.stu-wd-btn--cancel:hover { background: var(--bg-card, #fff); color: var(--text-primary, #0F172A); border-color: var(--border-med, #CBD5E1); }
+.stu-wd-btn--confirm {
+  background: linear-gradient(135deg, #1D4ED8, #1E3A8A); color: #fff;
+  box-shadow: 0 4px 14px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.stu-wd-btn--confirm:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(30,58,138,.5); }
+.stu-wd-btn:active { transform: scale(.97) translateY(0) !important; }
+[data-theme="dark"] .stu-wd-overlay { background: rgba(0,0,0,.65); }
+[data-theme="dark"] .stu-wd-dialog { box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 8px 24px rgba(0,0,0,.4); }
+[data-theme="dark"] .stu-wd-hero { background: linear-gradient(180deg, rgba(59,130,246,.10), transparent); }
+[data-theme="dark"] .stu-wd-hint { background: rgba(59,130,246,.10); border-color: rgba(59,130,246,.3); color: #BFD2F8; }
+[data-theme="dark"] .stu-wd-hint i { color: #93C5FD; }
+[data-theme="dark"] .stu-wd-btn--cancel { background: var(--bg-muted); border-color: var(--border-light); color: var(--text-secondary); }
 `;

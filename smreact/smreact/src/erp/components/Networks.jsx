@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Tooltip from './Tooltip';
 import { buildChainApiUrl } from '../../utils/apiConfig';
+import { usePermissions } from '../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    NETWORKS — join / manage the school's network memberships.
@@ -83,6 +84,9 @@ const TABS = [
    header nahi dikhate; alag module ke taur par khule to poora header aata
    hai (filhal wo raasta band hai — dekhein App.js ka RETIRED_NAV). */
 export default function Networks({ toast = () => {}, embedded = false }) {
+  const { can } = usePermissions();
+  const canCreate = can('Settings', 'Networks', 'Create');
+  const canDelete = can('Settings', 'Networks', 'Delete');
   const [tab, setTab] = useState('mine');
   const [requests, setRequests] = useState([]);
   const [selected, setSelected] = useState('');          // selected network id (string)
@@ -222,6 +226,7 @@ export default function Networks({ toast = () => {}, embedded = false }) {
     : `This school is already part of ${nameOf(openReq.networkId)}. Leave that network first to join another one.`);
 
   const sendInvite = async () => {
+    if (!canCreate) { toast('You do not have permission to send a network invite', 'error'); return; }
     if (!selected) { toast('Please select a network first', 'warning'); return; }
     if (requestedIds.has(String(selected))) { toast('You already have a request for this network', 'info'); return; }
     /* Aik hi khuli request ki hadd — button band hone ke bawajood dobara
@@ -271,6 +276,7 @@ export default function Networks({ toast = () => {}, embedded = false }) {
   const [confirmRow, setConfirmRow] = useState(null);
 
   const removeRequest = async (row) => {
+    if (!canDelete) { toast('You do not have permission to remove a network request', 'error'); setConfirmRow(null); return; }
     setConfirmRow(null);
     setBusyId(row.id);
     try {
@@ -399,7 +405,7 @@ export default function Networks({ toast = () => {}, embedded = false }) {
                   <select
                     className="net-select"
                     value={selected}
-                    disabled={loading || !!loadErr || networks.length === 0 || !!openReq}
+                    disabled={loading || !!loadErr || networks.length === 0 || !!openReq || !canCreate}
                     onChange={(e) => setSelected(e.target.value)}
                   >
                     <option value="">
@@ -419,8 +425,8 @@ export default function Networks({ toast = () => {}, embedded = false }) {
                   <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-chevron-down'}`} />
                 </div>
               </div>
-              <Tooltip text={blockedMsg || 'Send a join request to the selected network'}>
-                <button className="net-btn net-btn-primary" onClick={sendInvite} disabled={loading || sending || !selected || !!openReq}>
+              <Tooltip text={!canCreate ? 'You do not have permission to send a network invite' : (blockedMsg || 'Send a join request to the selected network')}>
+                <button className="net-btn net-btn-primary" onClick={sendInvite} disabled={loading || sending || !selected || !!openReq || !canCreate}>
                   <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} />
                   {sending ? 'Sending…' : 'Send Invite'}
                 </button>
@@ -465,11 +471,11 @@ export default function Networks({ toast = () => {}, embedded = false }) {
                         </td>
                         <td className="net-center">{r.date}</td>
                         <td className="net-center">
-                          <Tooltip text={r.status === 'Accepted' ? 'Leave this network' : 'Remove this request'}>
+                          <Tooltip text={!canDelete ? 'You do not have permission to remove a network request' : (r.status === 'Accepted' ? 'Leave this network' : 'Remove this request')}>
                             <button
                               className="net-iconbtn danger"
-                              onClick={() => setConfirmRow(r)}
-                              disabled={busyId === r.id}
+                              onClick={() => { if (canDelete) setConfirmRow(r); }}
+                              disabled={busyId === r.id || !canDelete}
                               aria-label="Remove request"
                             >
                               <i className={`fa-solid ${busyId === r.id ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} />

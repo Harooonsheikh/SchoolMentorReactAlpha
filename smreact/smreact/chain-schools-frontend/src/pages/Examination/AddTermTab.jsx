@@ -9,7 +9,9 @@ import ExamConfirm from './ExamConfirm'
    a stat-card strip + an editable terms table + "Add new term".
    Terms defined here drive the Add Exam tab's term selector.
    ═══════════════════════════════════════════════════════════════════ */
-export default function AddTermTab({ store, commit, flash }) {
+const off = { opacity: .45, cursor: 'not-allowed' }
+
+export default function AddTermTab({ store, commit, flash, canCreate = true, canEdit = true, canDelete = true }) {
   const ss = examSession()
   const [draft, setDraft] = useState({})
   const [del, setDel] = useState(null)
@@ -42,7 +44,10 @@ export default function AddTermTab({ store, commit, flash }) {
 
   const setRow = (id, k, v) => setDraft((s) => ({ ...s, [id]: { ...s[id], [k]: v } }))
 
-  const addTerm = () => commit({ ...store, terms: [...store.terms, { id: newId(), name: '', start: ss.start || '', end: '' }] })
+  const addTerm = () => {
+    if (!canCreate) return
+    commit({ ...store, terms: [...store.terms, { id: newId(), name: '', start: ss.start || '', end: '' }] })
+  }
 
   const saveRow = async (id) => {
     const d = draft[id] || {}
@@ -113,16 +118,19 @@ export default function AddTermTab({ store, commit, flash }) {
                 </td></tr>
               ) : store.terms.map((t, i) => {
                 const d = draft[t.id] || {}
+                const fresh = !t.serverId
+                const editOk = canEdit || (canCreate && fresh)
+                const delOk = canDelete || (canCreate && fresh)
                 return (
                   <tr key={t.id}>
                     <td style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{i + 1}</td>
-                    <td><input className="exm-input" value={d.name || ''} placeholder="Enter term name" onChange={(e) => setRow(t.id, 'name', e.target.value)} /></td>
-                    <td><input className="exm-input" type="date" value={d.start || ''} onChange={(e) => setRow(t.id, 'start', e.target.value)} /></td>
-                    <td><input className="exm-input" type="date" value={d.end || ''} onChange={(e) => setRow(t.id, 'end', e.target.value)} /></td>
+                    <td><input className="exm-input" value={d.name || ''} placeholder="Enter term name" disabled={!editOk} onChange={(e) => setRow(t.id, 'name', e.target.value)} /></td>
+                    <td><input className="exm-input" type="date" value={d.start || ''} disabled={!editOk} onChange={(e) => setRow(t.id, 'start', e.target.value)} /></td>
+                    <td><input className="exm-input" type="date" value={d.end || ''} disabled={!editOk} onChange={(e) => setRow(t.id, 'end', e.target.value)} /></td>
                     <td>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                        <SpinnerButton className="exm-icon-btn" title="Save" icon="fa-check" style={{ color: '#16a34a', borderColor: 'rgba(22,163,74,.4)' }} onClick={() => saveRow(t.id)} />
-                        <button className="exm-icon-btn danger" title="Delete" onClick={() => setDel({ id: t.id, name: t.name })}><i className="fa-solid fa-xmark" /></button>
+                        <SpinnerButton className="exm-icon-btn" title={editOk ? 'Save' : 'No edit permission'} icon="fa-check" disabled={!editOk} style={{ color: '#16a34a', borderColor: 'rgba(22,163,74,.4)', ...(!editOk ? off : {}) }} onClick={() => { if (editOk) saveRow(t.id) }} />
+                        <button className="exm-icon-btn danger" title={delOk ? 'Delete' : 'No delete permission'} disabled={!delOk} style={!delOk ? off : undefined} onClick={() => { if (delOk) setDel({ id: t.id, name: t.name }) }}><i className="fa-solid fa-xmark" /></button>
                       </div>
                     </td>
                   </tr>
@@ -132,7 +140,7 @@ export default function AddTermTab({ store, commit, flash }) {
           </table>
         </div>
 
-        <button className="exm-add-row" onClick={addTerm}>
+        <button className="exm-add-row" onClick={addTerm} disabled={!canCreate} style={!canCreate ? off : undefined}>
           <span className="exm-add-ic"><i className="fa-solid fa-plus" /></span>
           <span className="exm-add-main">Add new term</span>
           <span className="exm-add-hint">Click to add another academic term</span>

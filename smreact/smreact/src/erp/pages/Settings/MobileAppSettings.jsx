@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import * as parentAppSettingsService from '../../services/parentAppSettingsService';
 import { PARENT_APP_FEATURE_META } from './parentAppFeatures';
+import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    PARENTS APP SETTINGS — Settings sub-tab.
@@ -9,9 +10,9 @@ import { PARENT_APP_FEATURE_META } from './parentAppFeatures';
    School Mentor mobile app. The Parent app itself has no master on/off
    switch — it is always available to parents; this screen only controls
    which individual features are visible, via a per-feature checklist.
-   Deliberately kept OUT of User Permissions — User Permissions governs
-   staff/admin/teacher accounts, this governs what the school exposes to
-   parent accounts as a whole. Ported from School-Mentor-Front-end.
+   Staff access to this screen is User Permissions → Settings → Parents
+   App Settings (View / Edit). The checklist itself is what parents see.
+   Ported from School-Mentor-Front-end.
 
    Save Changes → POST /manage-parent-app-permission (action SAVE) via
    parentAppSettingsService; checkbox keys wahi hain jo API bhejti hai.
@@ -21,6 +22,8 @@ import { PARENT_APP_FEATURE_META } from './parentAppFeatures';
    local stylesheet for the feature grouping.
    ═══════════════════════════════════════════════════════════════════ */
 export default function MobileAppSettings({ toast = () => {} }) {
+  const { can } = usePermissions();
+  const canEdit = can('Settings', 'Parents App Settings', 'Edit');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [featureEnabled, setFeatureEnabled] = useState({});
@@ -51,6 +54,7 @@ export default function MobileAppSettings({ toast = () => {} }) {
   };
 
   const handleSave = async () => {
+    if (!canEdit) { toast('You do not have permission to change parents app settings', 'error'); return; }
     setSaving(true);
     try {
       const result = await parentAppSettingsService.saveParentAppSettings({ id: recordId, featureEnabled });
@@ -98,7 +102,8 @@ export default function MobileAppSettings({ toast = () => {} }) {
               <input
                 type="checkbox"
                 checked={!!featureEnabled[key]}
-                onChange={() => toggleFeature(key)}
+                disabled={!canEdit}
+                onChange={() => { if (canEdit) toggleFeature(key); }}
               />
               <i className={`fa-solid ${meta.icon}`} aria-hidden="true"></i> {meta.label}
             </label>
@@ -110,7 +115,7 @@ export default function MobileAppSettings({ toast = () => {} }) {
         <button
           type="button"
           className="settings-btn settings-btn-primary"
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || !canEdit}
           onClick={handleSave}
         >
           {saving

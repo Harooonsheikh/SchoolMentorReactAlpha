@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNetworkMenuPerms } from '../../api/networkMenuPermissionsApi'
 import { createPortal } from 'react-dom'
 import TutorialButton from '../../components/TutorialButton'
 import { loadExam, saveExam } from './examStore'
@@ -22,6 +23,9 @@ const TABS = [
 ]
 
 export default function Examination() {
+  const { can, ready } = useNetworkMenuPerms()
+  const allow = (screen, action) => can('Examination', screen, action)
+  const tabs = TABS.filter((t) => allow(t.label, 'View'))
   const [tab, setTab] = useState('terms')
   const [store, setStore] = useState(loadExam)
   const [toast, setToast] = useState(null)
@@ -58,6 +62,11 @@ export default function Examination() {
   const flash = (text, type = 'success') => setToast({ type, text })
   const commit = (next) => { saveExam(next); setStore(next) }
 
+  useEffect(() => {
+    if (!tabs.length) return
+    if (!tabs.some((t) => t.key === tab)) setTab(tabs[0].key)
+  }, [tabs, tab])
+
   return (
     <>
       <div className="page-header">
@@ -73,17 +82,42 @@ export default function Examination() {
         </div>
       </div>
 
-      <div className="exm-tabs" role="tablist">
-        {TABS.map((t) => (
-          <button key={t.key} role="tab" aria-selected={tab === t.key} className={`exm-tab${tab === t.key ? ' on' : ''}`} onClick={() => setTab(t.key)}>
-            <i className={`fa-solid ${t.icon}`} /> {t.label}
-          </button>
-        ))}
-      </div>
+      {!ready ? (
+        <div className="exm-panel">
+          <div className="exm-empty-inline">Loading examination access…</div>
+        </div>
+      ) : tabs.length === 0 ? (
+        <div className="exm-panel">
+          <div className="exm-empty">
+            <div className="exm-empty-icon"><i className="fa-solid fa-lock" /></div>
+            <h3>No examination access</h3>
+            <p>Ask your head office to grant View on Term Setup, Exam Setup, or Result Setup.</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="exm-tabs" role="tablist">
+            {tabs.map((t) => (
+              <button key={t.key} role="tab" aria-selected={tab === t.key} className={`exm-tab${tab === t.key ? ' on' : ''}`} onClick={() => setTab(t.key)}>
+                <i className={`fa-solid ${t.icon}`} /> {t.label}
+              </button>
+            ))}
+          </div>
 
-      {tab === 'terms' && <AddTermTab store={store} commit={commit} flash={flash} />}
-      {tab === 'exams' && <AddExamTab store={store} commit={commit} flash={flash} />}
-      {tab === 'result' && <AddResultTab store={store} commit={commit} flash={flash} />}
+          {tab === 'terms' && (
+            <AddTermTab store={store} commit={commit} flash={flash}
+              canCreate={allow('Term Setup', 'Create')} canEdit={allow('Term Setup', 'Edit')} canDelete={allow('Term Setup', 'Delete')} />
+          )}
+          {tab === 'exams' && (
+            <AddExamTab store={store} commit={commit} flash={flash}
+              canCreate={allow('Exam Setup', 'Create')} canEdit={allow('Exam Setup', 'Edit')} canDelete={allow('Exam Setup', 'Delete')} canDownload={allow('Exam Setup', 'Download')} />
+          )}
+          {tab === 'result' && (
+            <AddResultTab store={store} commit={commit} flash={flash}
+              canCreate={allow('Result Setup', 'Create')} canEdit={allow('Result Setup', 'Edit')} canDelete={allow('Result Setup', 'Delete')} />
+          )}
+        </>
+      )}
 
       {toast && createPortal(
         <div className="exm-toast-wrap" role="status" aria-live="polite">

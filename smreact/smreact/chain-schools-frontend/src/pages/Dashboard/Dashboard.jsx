@@ -199,10 +199,11 @@ function HeadOfficeDashboard({ d }) {
     fetchUserModuleAccess().then((a) => { if (alive) setUserAccess(a) }).catch(() => {})
     return () => { alive = false }
   }, [])
-  const canGo = (key) => isUserNavItemAllowed(key, userAccess)
+  const permsReady = userAccess != null
+  const canGo = (key) => permsReady && isUserNavItemAllowed(key, userAccess)
   const NO_PERM = 'No permission for this module — please ask your admin to enable it.'
   const go = (key, path) => { if (canGo(key)) navigate(path) }
-  const lockStyle = (key) => (canGo(key) ? undefined : { opacity: 0.55, cursor: 'not-allowed' })
+  const lockStyle = (key) => (!permsReady || canGo(key) ? undefined : { opacity: 0.55, cursor: 'not-allowed' })
 
   return (
     <>
@@ -214,11 +215,11 @@ function HeadOfficeDashboard({ d }) {
             <div className="hero-title">Network Executive Overview</div>
             <div className="hero-sub">Aggregated platform usage and operational performance across all {schoolCount} connected schools — usage analytics, finances, HR and attendance at a glance.</div>
             <div className="hero-actions">
-              <button className="hero-btn-white" onClick={() => go('progress', '/school-progress')} aria-disabled={!canGo('progress')} data-tip={canGo('progress') ? undefined : NO_PERM} style={lockStyle('progress')}>
-                <i className={`fa-solid ${canGo('progress') ? 'fa-chart-line' : 'fa-lock'}`} /> School Progress
+              <button className="hero-btn-white" onClick={() => go('progress', '/school-progress')} aria-disabled={permsReady && !canGo('progress')} data-tip={permsReady && !canGo('progress') ? NO_PERM : undefined} style={lockStyle('progress')}>
+                <i className={`fa-solid ${!permsReady || canGo('progress') ? 'fa-chart-line' : 'fa-lock'}`} /> School Progress
               </button>
-              <button className="hero-btn-outline" onClick={() => go('payments', '/school-payments')} aria-disabled={!canGo('payments')} data-tip={canGo('payments') ? undefined : NO_PERM} style={lockStyle('payments')}>
-                <i className={`fa-solid ${canGo('payments') ? 'fa-credit-card' : 'fa-lock'}`} /> Payments
+              <button className="hero-btn-outline" onClick={() => go('payments', '/school-payments')} aria-disabled={permsReady && !canGo('payments')} data-tip={permsReady && !canGo('payments') ? NO_PERM : undefined} style={lockStyle('payments')}>
+                <i className={`fa-solid ${!permsReady || canGo('payments') ? 'fa-credit-card' : 'fa-lock'}`} /> Payments
               </button>
               <TutorialButton />
             </div>

@@ -49,7 +49,8 @@ export default function SettingsModule({ toast = () => {} }) {
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   /* Layer 1 — only show sub-tabs the user can View. Tab labels map 1:1
-     to the `can()` submenu strings ('Academic Sessions' / 'Signature Management'). */
+     to the `can()` submenu strings (Academic Sessions, Signature Management,
+     Networks, Parents App Settings, Approvals). */
   /* Branch-1-only tabs (e.g. Approvals) stay hidden on other branches. */
   const isBranch1 = String(sessionStorage.getItem('branchID') || '') === '1';
   const visibleSubtabs = SETTINGS_SUBTABS.filter(t => (!t.branch1Only || isBranch1) && can('Settings', t.label, 'View'));

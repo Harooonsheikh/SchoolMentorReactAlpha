@@ -311,9 +311,12 @@ export const MODULE_TREE = [
     ] },
   { id: 'settings',    label: 'Settings',          icon: 'fa-gear',
     children: [
-      /* ── 2 L1 sub-tabs (SETTINGS_SUBTABS @ SettingsModule.jsx:20). */
+      /* SETTINGS_SUBTABS @ SettingsModule.jsx — label wahi jo can() match karta hai. */
       { id: 'set.sessions',   label: 'Academic Sessions' },
       { id: 'set.signatures', label: 'Signature Management' },
+      { id: 'set.networks',   label: 'Networks' },
+      { id: 'set.mobileapp',  label: 'Parents App Settings' },
+      { id: 'set.approvals',  label: 'Approvals' },
     ] },
   { id: 'permissions', label: 'User Permissions',  icon: 'fa-shield-halved',
     children: [
@@ -952,7 +955,7 @@ export const MODULE_PERMISSIONS = {
 
   /* ─── SETTINGS — derived from real buttons in
          SessionManagement.jsx + SignatureManagement.jsx
-         (audited 2026-05-31). 2 L1 sub-tabs. */
+         (audited 2026-05-31). L1 sub-tabs match SettingsModule. */
 
   /* L1 → Academic Sessions
      SessionManagement.jsx
@@ -966,6 +969,18 @@ export const MODULE_PERMISSIONS = {
      Real buttons: Add signature, View preview, Edit, Activate /
                    Deactivate, Delete. */
   'set.signatures':     ['view', 'create', 'edit', 'delete'],
+
+  /* L1 → Networks (Networks.jsx, Settings ke andar)
+     Send Invite = Create, Remove / Leave = Delete. */
+  'set.networks':       ['view', 'create', 'delete'],
+
+  /* L1 → Parents App Settings (MobileAppSettings.jsx)
+     Feature checklist + Save Changes. */
+  'set.mobileapp':      ['view', 'edit'],
+
+  /* L1 → Approvals (ApprovalSettings.jsx)
+     Master switch, per-action toggles, Save Changes. */
+  'set.approvals':      ['view', 'edit'],
 
   /* ─── LAUNCH SETUP — sidebar entry exists but the screen has
          NOT been implemented yet (active='launch' falls through to

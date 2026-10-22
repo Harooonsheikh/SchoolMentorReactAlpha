@@ -1,4 +1,22 @@
-import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl, approvalPending } from '../../utils/apiConfig';
+
+/* Approvals: asset/product insert/update/delete (manage) pending-approval
+   info nested `approval:{}`, TOP-LEVEL (`pendingApproval, approvalID,
+   requestNo`) ya `data[0]` ke andar de sakta hai — teeno check. Pending ho
+   to { approvalId, requestNo, message } warna null (change apply ho gaya). */
+export function invPendingInfo(json) {
+  if (!json || typeof json !== 'object') return null;
+  const inner = Array.isArray(json.data) ? json.data[0] : (json.data && typeof json.data === 'object' ? json.data : null);
+  const isFlag = (v) => v === true || v === 'true' || v === 1;
+  const src = [json, inner].find(o => o && (approvalPending(o) || isFlag(o.pendingApproval ?? o.PendingApproval)));
+  if (!src) return null;
+  const ap = src.approval || src.Approval || src;
+  return {
+    approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+    requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+    message: apiMessage(json) || apiMessage(inner) || null,
+  };
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Inventory Module — real API wiring.

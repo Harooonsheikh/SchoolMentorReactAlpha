@@ -3807,6 +3807,24 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
       toast(err.message || 'Could not mark employee active', 'error');
     }
   };
+  /* Inactive tab → "Delete Employee": permanent delete. Approval on ho to
+     employee list me hi rehta hai, sirf Pending badge + Withdraw lagta hai. */
+  const [delFor, setDelFor] = useState(null);   // emp to permanently delete
+  const deleteEmployeePermanent = async (emp) => {
+    try {
+      const resp = await hrService.deleteHrEmployeePermanent({ id: emp.id });
+      const pend = hrService.hrPendingInfo(resp);
+      if (pend) {
+        markPending(emp.id, pend, `Delete for ${getFullName(emp)} sent for approval`);
+        return;
+      }
+      setEmps(prev => (prev || []).filter(e => e.id !== emp.id));
+      toast(`${getFullName(emp)} deleted permanently`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not delete employee', 'error');
+    }
+  };
+
   /* Fetch an employee's issued letters (from the branch endpoint, filtered)
      and store them on emp.letters so the detail panel lists them. */
   const loadEmpLetters = async (empId) => {
@@ -4040,6 +4058,7 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
                 onLetter={() => { setMenuOpenId(null); setLetterFor(e); }}
                 onInactive={() => { setMenuOpenId(null); setInactFor(e); }}
                 onRestore={() => { setMenuOpenId(null); markActiveAgain(e); }}
+                onDelete={() => { setMenuOpenId(null); setDelFor(e); }}
                 pend={pendingMap[String(e.id)]}
                 onWithdraw={() => setWithdrawCfg({ emp: e, pend: pendingMap[String(e.id)] })}
                 onViewLetter={viewLetter}
@@ -4111,6 +4130,20 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
             </div>
           </div>
         </div>
+      )}
+      {delFor && (
+        <ConfirmDialog
+          cfg={{
+            title: 'Delete Employee',
+            message: `Permanently delete <strong>${getFullName(delFor).replace(/</g, '&lt;')}</strong>?`,
+            hint: 'This removes the employee record permanently and cannot be undone.',
+            confirmLabel: 'Yes, Delete',
+            confirmStyle: 'danger',
+            icon: 'fa-trash',
+            onConfirm: () => deleteEmployeePermanent(delFor),
+          }}
+          onClose={() => setDelFor(null)}
+        />
       )}
       {/* Withdraw confirm — Fee module jaisa (same ConfirmDialog design + settings). */}
       {withdrawCfg && (
@@ -4397,7 +4430,7 @@ function EmployeeRow({
   idx, emp, depts, desigs, deptName, desigName,
   isOpen, onToggleOpen,
   menuOpen, onToggleMenu, onCloseMenu,
-  onEdit, onProfile, onIdCard, onLetter, onInactive, onRestore,
+  onEdit, onProfile, onIdCard, onLetter, onInactive, onRestore, onDelete,
   onViewLetter, onDeleteLetter,
   pend, onWithdraw,
   toast,
@@ -4522,7 +4555,7 @@ function EmployeeRow({
                       <i className="fa-solid fa-user-check" aria-hidden="true"></i> Mark Active Again
                     </button>
                     {canDelete && (
-                      <button type="button" className="drop-item red" onClick={() => stubAction('Delete Employee')}>
+                      <button type="button" className="drop-item red" onClick={onDelete}>
                         <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete Employee
                       </button>
                     )}

@@ -5334,12 +5334,13 @@ export default function Examination({ toast = () => { } }) {
                             <i className="fa-solid fa-file-pdf"></i> PDF
                           </button>
                         )}
-                        <button className="rs-edit-btn" onClick={() => { if (!hoRsAny) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return; } setRsModalOpen(true); }}
-                          disabled={isOtherSession || !canRsEdit || !hoRsAny}
-                          title={!canRsEdit ? 'You do not have permission to edit result setup' : !hoRsAny ? EXAMINATION_VIEW_ONLY_MSG : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                          style={(isOtherSession || !canRsEdit || !hoRsAny) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                          <i className="fa-solid fa-pen-to-square"></i> Edit
-                        </button>
+                        <Tooltip text={!canRsEdit ? 'You do not have permission to edit result setup' : !hoRsAny ? EXAMINATION_VIEW_ONLY_MSG : isOtherSession ? 'Editing is only allowed for the current session' : 'Edit result setup'}>
+                          <button className="rs-edit-btn" onClick={() => { if (isOtherSession || !canRsEdit || !hoRsAny) return; setRsModalOpen(true); }}
+                            disabled={isOtherSession || !canRsEdit || !hoRsAny}
+                            style={(isOtherSession || !canRsEdit || !hoRsAny) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                            <i className="fa-solid fa-pen-to-square"></i> Edit
+                          </button>
+                        </Tooltip>
                       </div>
 
                       {/* Grade Card */}
@@ -15232,16 +15233,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
      nahi hotin (Add-only user nayi entry bana sakta hai, purani badal nahi sakta). */
   const isNewRow = (id) => typeof id === 'string' && String(id).startsWith('temp_');
   const rowEditable = (id) => hoEdit || isNewRow(id);
-  /* Edit allowed na ho aur existing row badalne ki koshish ho → change rok do +
-     toast. UI waisa ka waisa (input disable nahi); sirf har keystroke par toast
-     spam na ho is liye 1.5s throttle. */
-  const editToastRef = useRef(0);
-  const blockEdit = (id) => {
-    if (rowEditable(id)) return false;
-    const now = Date.now();
-    if (now - editToastRef.current > 1500) { editToastRef.current = now; toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); }
-    return true;
-  };
+  /* Edit allowed na ho to change rok do. Field pehle se disabled hai —
+     toaster nahi, sirf extra guard. */
+  const blockEdit = (id) => !rowEditable(id);
 
   /* Save par kis row ki write API bheji jaye:
      - existing row (numeric id > 0) → UPDATE, sirf hoEdit par
@@ -15262,9 +15256,12 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
      karne par dono badal jati thin. */
   const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  /* Head Office ne Add/Delete na di ho to action rok do + toast. */
-  const guardAdd = () => { if (!hoAdd) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return true; } return false; };
-  const guardDelete = () => { if (!hoDelete) { toast(EXAMINATION_VIEW_ONLY_MSG, 'error'); return true; } return false; };
+  /* Head Office ne Add/Delete na di ho to action ruk jati hai. Button disabled
+     hota hai — click par toaster nahi. Abhi tak save na hui row (temp_) bina
+     Delete permission ke hata sakte hain, warna Add-only user atak jata. */
+  const guardAdd = () => !hoAdd;
+  const canDeleteRow = (id) => hoDelete || isNewRow(id);
+  const guardDelete = (id) => !canDeleteRow(id);
 
   const addGrade = () => {
     if (guardAdd()) return;
@@ -15296,17 +15293,17 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   };
   const [rsConfirm, setRsConfirm] = useState(null);
 
-  const askDeleteGrade = g => { if (guardDelete()) return; setRsConfirm({
+  const askDeleteGrade = g => { if (guardDelete(g.id)) return; setRsConfirm({
     kind: 'grade', id: g.id,
     title: 'Delete Grade',
     message: `Delete grade rule for <strong>${g.grade || '—'}</strong>?`,
   }); };
-  const askDeleteSig = s => { if (guardDelete()) return; setRsConfirm({
+  const askDeleteSig = s => { if (guardDelete(s.id)) return; setRsConfirm({
     kind: 'sig', id: s.id,
     title: 'Delete Signature',
     message: `Delete signature for <strong>${s.name?.trim() || 'this entry'}</strong>?`,
   }); };
-  const askDeleteRemark = r => { if (guardDelete()) return; setRsConfirm({
+  const askDeleteRemark = r => { if (guardDelete(r.id)) return; setRsConfirm({
     kind: 'remark', id: r.id,
     title: 'Delete Remark',
     message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
@@ -15842,8 +15839,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       toast={toast}
                       disabled={!rowEditable(g.id)}
                     />
-                    <Tooltip text={hoDelete ? 'Remove this grade band' : EXAMINATION_VIEW_ONLY_MSG}>
-                      <button className="rs-del" onClick={() => askDeleteGrade(g)}>
+                    <Tooltip text={canDeleteRow(g.id) ? 'Remove this grade band' : EXAMINATION_VIEW_ONLY_MSG}>
+                      <button className="rs-del" onClick={() => askDeleteGrade(g)} disabled={!canDeleteRow(g.id)}
+                        style={!canDeleteRow(g.id) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                         <i className="fa-solid fa-trash-can"></i>
                       </button>
                     </Tooltip>
@@ -15851,7 +15849,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                 ))
               )}
               <Tooltip text={hoAdd ? 'Add a new grade band' : EXAMINATION_VIEW_ONLY_MSG}>
-                <button className="rs-add" onClick={addGrade} disabled={!hoAdd}>
+                <button className="rs-add" onClick={addGrade} disabled={!hoAdd}
+                  style={!hoAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                   <i className="fa-solid fa-plus"></i> Add Grade
                 </button>
               </Tooltip>
@@ -15892,8 +15891,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         </div>
                       )}
                     </label>
-                    <Tooltip text={hoDelete ? 'Remove this signatory' : EXAMINATION_VIEW_ONLY_MSG}>
-                      <button className="rs-del" onClick={() => askDeleteSig(s)}>
+                    <Tooltip text={canDeleteRow(s.id) ? 'Remove this signatory' : EXAMINATION_VIEW_ONLY_MSG}>
+                      <button className="rs-del" onClick={() => askDeleteSig(s)} disabled={!canDeleteRow(s.id)}
+                        style={!canDeleteRow(s.id) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                         <i className="fa-solid fa-trash-can"></i>
                       </button>
                     </Tooltip>
@@ -15901,7 +15901,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                 ))
               )}
               <Tooltip text={hoAdd ? 'Add a new signatory' : EXAMINATION_VIEW_ONLY_MSG}>
-                <button className="rs-add" onClick={addSig} disabled={!hoAdd}>
+                <button className="rs-add" onClick={addSig} disabled={!hoAdd}
+                  style={!hoAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                   <i className="fa-solid fa-plus"></i> Add Signature
                 </button>
               </Tooltip>
@@ -15936,8 +15937,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                           upRemark(r.id, 'pct', v);
                         }}
                       />
-                      <Tooltip text={hoDelete ? 'Remove this remark' : EXAMINATION_VIEW_ONLY_MSG}>
-                        <button className="rs-del" onClick={() => askDeleteRemark(r)}>
+                      <Tooltip text={canDeleteRow(r.id) ? 'Remove this remark' : EXAMINATION_VIEW_ONLY_MSG}>
+                        <button className="rs-del" onClick={() => askDeleteRemark(r)} disabled={!canDeleteRow(r.id)}
+                          style={!canDeleteRow(r.id) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                           <i className="fa-solid fa-trash-can"></i>
                         </button>
                       </Tooltip>
@@ -15957,7 +15959,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                 ))
               )}
               <Tooltip text={hoAdd ? 'Add a new remark band' : EXAMINATION_VIEW_ONLY_MSG}>
-                <button className="rs-add" onClick={addRemark} disabled={!hoAdd}>
+                <button className="rs-add" onClick={addRemark} disabled={!hoAdd}
+                  style={!hoAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                   <i className="fa-solid fa-plus"></i> Add Remark
                 </button>
               </Tooltip>
@@ -15991,7 +15994,10 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                   <div
                     key={opt.v}
                     className={`rs-abs-opt${isSel ? ' selected' : ''}`}
+                    style={!hoEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    title={!hoEdit ? EXAMINATION_VIEW_ONLY_MSG : undefined}
                     onClick={() => {
+                      if (!hoEdit) return;
                       const next = draftAbsent === opt.v ? '' : opt.v;
                       setDraftAbsent(next);
                       onAbsentChange?.(next);
@@ -16025,7 +16031,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
             </button>
           </Tooltip>
           <Tooltip text={noWritePerm ? EXAMINATION_VIEW_ONLY_MSG : 'Submit'}>
-            <button className="exam-submit-btn" onClick={submit} disabled={loading || noWritePerm}>
+            <button className="exam-submit-btn" onClick={submit} disabled={loading || noWritePerm}
+              style={noWritePerm ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               {loading ? (
                 <><i className="fa-solid fa-spinner fa-spin"></i> Saving...</>
               ) : (

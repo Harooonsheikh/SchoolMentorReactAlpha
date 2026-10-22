@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import * as approvalsService from '../../services/approvalsService';
 import { APPROVAL_ACTION_META } from '../../mock/approvals';
+import { usePermissions } from '../../context/PermissionsContext';
 
 /* Per-action explanations shown via the info icon next to each toggle
    below — kept local to this screen (UI copy, not shared metadata) so
@@ -66,6 +67,8 @@ const ACTION_DESCRIPTIONS = {
    ing the pattern ChainSchool.jsx uses for its own CS_CSS.
    ═══════════════════════════════════════════════════════════════════ */
 export default function ApprovalSettings({ toast = () => {} }) {
+  const { can } = usePermissions();
+  const canEdit = can('Settings', 'Approvals', 'Edit');
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
   const [enabled, setEnabled]   = useState(true);
@@ -111,6 +114,7 @@ export default function ApprovalSettings({ toast = () => {} }) {
   };
 
   const handleSave = async () => {
+    if (!canEdit) { toast('You do not have permission to change approval settings', 'error'); return; }
     setSaving(true);
     try {
       const result = await approvalsService.saveApprovalSettings({ id: recordId, enabled, actionTypeEnabled });
@@ -171,7 +175,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
             <input
               type="checkbox"
               checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
+              disabled={!canEdit}
+              onChange={(e) => { if (canEdit) setEnabled(e.target.checked); }}
               aria-label="Approvals Active"
             />
             <span className="as-toggle-track"><span className="as-toggle-thumb"></span></span>
@@ -198,8 +203,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
                   <input
                     type="checkbox"
                     checked={!!actionTypeEnabled[item.key]}
-                    disabled={!enabled}
-                    onChange={() => toggleAction(item.key)}
+                    disabled={!enabled || !canEdit}
+                    onChange={() => { if (canEdit) toggleAction(item.key); }}
                   />
                   <i className={`fa-solid ${item.icon}`} aria-hidden="true"></i> {item.label}
                   {ACTION_DESCRIPTIONS[item.key] && (
@@ -219,7 +224,7 @@ export default function ApprovalSettings({ toast = () => {} }) {
         <button
           type="button"
           className="settings-btn settings-btn-primary"
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || !canEdit}
           onClick={handleSave}
         >
           {saving

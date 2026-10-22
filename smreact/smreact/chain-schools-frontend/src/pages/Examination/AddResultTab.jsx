@@ -11,9 +11,12 @@ import ExamConfirm from './ExamConfirm'
    (Grade · Signature · Final Remarks) with a single Edit modal that
    edits all three via inner tabs.
    ═══════════════════════════════════════════════════════════════════ */
-export default function AddResultTab({ store, commit, flash }) {
+const off = { opacity: .45, cursor: 'not-allowed' }
+
+export default function AddResultTab({ store, commit, flash, canCreate = true, canEdit = true, canDelete = true }) {
   const [editOpen, setEditOpen] = useState(false)
   const [loading, setLoading] = useState(true) // initial server fetch
+  const canWrite = canCreate || canEdit || canDelete
   const r = store.result
   const grades = r.grades || []
   const sigs = r.signatures || []
@@ -109,7 +112,7 @@ export default function AddResultTab({ store, commit, flash }) {
     <>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
         <button className="exm-export pdf" onClick={() => downloadPdf('pdf')}><i className="fa-solid fa-file-pdf" /> PDF</button>
-        <button className="exm-btn primary" onClick={() => setEditOpen(true)}><i className="fa-solid fa-pen-to-square" /> Edit</button>
+        <button className="exm-btn primary" disabled={!canWrite} style={!canWrite ? off : undefined} onClick={() => { if (canWrite) setEditOpen(true) }}><i className="fa-solid fa-pen-to-square" /> Edit</button>
       </div>
 
       {loading ? (
@@ -160,18 +163,22 @@ export default function AddResultTab({ store, commit, flash }) {
       </div>
       </>)}
 
-      {editOpen && <ResultEditModal result={r} onClose={() => setEditOpen(false)} onSave={save} flash={flash} />}
+      {editOpen && <ResultEditModal result={r} onClose={() => setEditOpen(false)} onSave={save} flash={flash} canCreate={canCreate} canEdit={canEdit} canDelete={canDelete} />}
     </>
   )
 }
 
 /* ── Edit modal: Grade / Signature / Final Remarks tabs ── */
-function ResultEditModal({ result, onClose, onSave, flash }) {
+function ResultEditModal({ result, onClose, onSave, flash, canCreate = true, canEdit = true, canDelete = true }) {
   const [tab, setTab] = useState('grades')
   const [grades, setGrades] = useState(() => JSON.parse(JSON.stringify(result.grades || [])))
   const [sigs, setSigs] = useState(() => JSON.parse(JSON.stringify(result.signatures || [])))
   const [remarks, setRemarks] = useState(() => JSON.parse(JSON.stringify(result.remarks || [])))
   const [del, setDel] = useState(null) // { kind, id }
+  const [fresh, setFresh] = useState(() => new Set())
+  const rowEdit = (id) => canEdit || fresh.has(id)
+  const rowDel = (id) => canDelete || fresh.has(id)
+  const canWriteModal = canCreate || canEdit || canDelete
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -184,13 +191,27 @@ function ResultEditModal({ result, onClose, onSave, flash }) {
   const upSig = (id, k, v) => setSigs((rows) => rows.map((x) => (x.id === id ? { ...x, [k]: v } : x)))
   const upRem = (id, k, v) => setRemarks((rows) => rows.map((x) => (x.id === id ? { ...x, [k]: v } : x)))
 
+  const markFresh = (id) => setFresh((s) => new Set(s).add(id))
   const addGrade = () => {
+    if (!canCreate) return
     const used = grades.map((g) => g.grade)
     const next = RS_GRADE_LIST.find((g) => !used.includes(g)) || ''
-    setGrades((r) => [...r, { id: newId(), grade: next, cond: 'gte', pct: '', comment: '' }])
+    const id = newId()
+    markFresh(id)
+    setGrades((r) => [...r, { id, grade: next, cond: 'gte', pct: '', comment: '' }])
   }
-  const addSig = () => setSigs((r) => [...r, { id: newId(), name: '', desig: '', img: '' }])
-  const addRem = () => setRemarks((r) => [...r, { id: newId(), cond: 'gte', pct: '', text: '' }])
+  const addSig = () => {
+    if (!canCreate) return
+    const id = newId()
+    markFresh(id)
+    setSigs((r) => [...r, { id, name: '', desig: '', img: '' }])
+  }
+  const addRem = () => {
+    if (!canCreate) return
+    const id = newId()
+    markFresh(id)
+    setRemarks((r) => [...r, { id, cond: 'gte', pct: '', text: '' }])
+  }
 
   const uploadSig = (id, file) => {
     if (!file) return
@@ -243,19 +264,19 @@ function ResultEditModal({ result, onClose, onSave, flash }) {
               {grades.map((g, i) => (
                 <div key={g.id} className="exm-rm-grade-row">
                   <div className="exm-rm-sno">{i + 1}</div>
-                  <select className="exm-input" value={g.grade || ''} onChange={(e) => upGrade(g.id, 'grade', e.target.value)}>
+                  <select className="exm-input" value={g.grade || ''} disabled={!rowEdit(g.id)} onChange={(e) => { if (rowEdit(g.id)) upGrade(g.id, 'grade', e.target.value) }}>
                     <option value="" disabled>Grade…</option>
                     {RS_GRADE_LIST.filter((o) => o === g.grade || !grades.some((x) => x.id !== g.id && x.grade === o)).map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
-                  <select className="exm-input" value={g.cond || 'gte'} onChange={(e) => upGrade(g.id, 'cond', e.target.value)}>
+                  <select className="exm-input" value={g.cond || 'gte'} disabled={!rowEdit(g.id)} onChange={(e) => { if (rowEdit(g.id)) upGrade(g.id, 'cond', e.target.value) }}>
                     {RS_COND_LIST.map((c) => <option key={c.v} value={c.v}>{c.l}</option>)}
                   </select>
-                  <input className="exm-input" type="number" min={0} max={100} placeholder="Value" value={g.pct} onChange={(e) => upGrade(g.id, 'pct', clampPct(e.target.value))} />
-                  <input className="exm-input" placeholder="Comment (max 28)" maxLength={28} value={g.comment || ''} onChange={(e) => upGrade(g.id, 'comment', e.target.value)} />
-                  <button className="exm-rm-del" title="Remove" onClick={() => setDel({ kind: 'grade', id: g.id })}><i className="fa-solid fa-trash-can" /></button>
+                  <input className="exm-input" type="number" min={0} max={100} placeholder="Value" value={g.pct} disabled={!rowEdit(g.id)} onChange={(e) => { if (rowEdit(g.id)) upGrade(g.id, 'pct', clampPct(e.target.value)) }} />
+                  <input className="exm-input" placeholder="Comment (max 28)" maxLength={28} value={g.comment || ''} disabled={!rowEdit(g.id)} onChange={(e) => { if (rowEdit(g.id)) upGrade(g.id, 'comment', e.target.value) }} />
+                  <button className="exm-rm-del" title={rowDel(g.id) ? 'Remove' : 'No delete permission'} disabled={!rowDel(g.id)} style={!rowDel(g.id) ? off : undefined} onClick={() => { if (rowDel(g.id)) setDel({ kind: 'grade', id: g.id }) }}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               ))}
-              <button className="exm-rm-add" onClick={addGrade}><i className="fa-solid fa-plus" /> Add Grade</button>
+              <button className="exm-rm-add" onClick={addGrade} disabled={!canCreate} style={!canCreate ? off : undefined}><i className="fa-solid fa-plus" /> Add Grade</button>
             </div>
           )}
 
@@ -265,16 +286,16 @@ function ResultEditModal({ result, onClose, onSave, flash }) {
               {sigs.map((s, i) => (
                 <div key={s.id} className="exm-rm-sig-row">
                   <div className="exm-rm-sno">{i + 1}</div>
-                  <input className="exm-input" placeholder="Name" value={s.name || ''} onChange={(e) => upSig(s.id, 'name', e.target.value)} />
-                  <input className="exm-input" placeholder="Designation" value={s.desig || ''} onChange={(e) => upSig(s.id, 'desig', e.target.value)} />
-                  <label className="exm-sig-upload">
-                    <input type="file" accept="image/*" onChange={(e) => uploadSig(s.id, e.target.files[0])} />
+                  <input className="exm-input" placeholder="Name" value={s.name || ''} disabled={!rowEdit(s.id)} onChange={(e) => { if (rowEdit(s.id)) upSig(s.id, 'name', e.target.value) }} />
+                  <input className="exm-input" placeholder="Designation" value={s.desig || ''} disabled={!rowEdit(s.id)} onChange={(e) => { if (rowEdit(s.id)) upSig(s.id, 'desig', e.target.value) }} />
+                  <label className="exm-sig-upload" style={!rowEdit(s.id) ? { opacity: .45, pointerEvents: 'none' } : undefined}>
+                    <input type="file" accept="image/*" disabled={!rowEdit(s.id)} onChange={(e) => { if (rowEdit(s.id)) uploadSig(s.id, e.target.files[0]) }} />
                     {s.img ? <img src={s.img} alt="" /> : <span className="exm-sig-upload-ph"><i className="fa-solid fa-plus" /> Upload</span>}
                   </label>
-                  <button className="exm-rm-del" title="Remove" onClick={() => setDel({ kind: 'sig', id: s.id })}><i className="fa-solid fa-trash-can" /></button>
+                  <button className="exm-rm-del" title={rowDel(s.id) ? 'Remove' : 'No delete permission'} disabled={!rowDel(s.id)} style={!rowDel(s.id) ? off : undefined} onClick={() => { if (rowDel(s.id)) setDel({ kind: 'sig', id: s.id }) }}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               ))}
-              <button className="exm-rm-add" onClick={addSig}><i className="fa-solid fa-plus" /> Add Signature</button>
+              <button className="exm-rm-add" onClick={addSig} disabled={!canCreate} style={!canCreate ? off : undefined}><i className="fa-solid fa-plus" /> Add Signature</button>
             </div>
           )}
 
@@ -285,16 +306,16 @@ function ResultEditModal({ result, onClose, onSave, flash }) {
                 <div key={m.id} className="exm-rm-rem-row">
                   <div className="exm-rm-rem-top">
                     <div className="exm-rm-sno">{i + 1}</div>
-                    <select className="exm-input" value={m.cond || 'gte'} onChange={(e) => upRem(m.id, 'cond', e.target.value)}>
+                    <select className="exm-input" value={m.cond || 'gte'} disabled={!rowEdit(m.id)} onChange={(e) => { if (rowEdit(m.id)) upRem(m.id, 'cond', e.target.value) }}>
                       {RS_COND_LIST.map((c) => <option key={c.v} value={c.v}>{c.l}</option>)}
                     </select>
-                    <input className="exm-input" type="number" min={0} max={100} placeholder="Percentage" value={m.pct} onChange={(e) => upRem(m.id, 'pct', clampPct(e.target.value))} />
-                    <button className="exm-rm-del" title="Remove" onClick={() => setDel({ kind: 'rem', id: m.id })}><i className="fa-solid fa-trash-can" /></button>
+                    <input className="exm-input" type="number" min={0} max={100} placeholder="Percentage" value={m.pct} disabled={!rowEdit(m.id)} onChange={(e) => { if (rowEdit(m.id)) upRem(m.id, 'pct', clampPct(e.target.value)) }} />
+                    <button className="exm-rm-del" title={rowDel(m.id) ? 'Remove' : 'No delete permission'} disabled={!rowDel(m.id)} style={!rowDel(m.id) ? off : undefined} onClick={() => { if (rowDel(m.id)) setDel({ kind: 'rem', id: m.id }) }}><i className="fa-solid fa-trash-can" /></button>
                   </div>
-                  <input className="exm-input" placeholder="Final remarks — max 200 characters" maxLength={200} value={m.text || ''} onChange={(e) => upRem(m.id, 'text', e.target.value)} />
+                  <input className="exm-input" placeholder="Final remarks — max 200 characters" maxLength={200} value={m.text || ''} disabled={!rowEdit(m.id)} onChange={(e) => { if (rowEdit(m.id)) upRem(m.id, 'text', e.target.value) }} />
                 </div>
               ))}
-              <button className="exm-rm-add" onClick={addRem}><i className="fa-solid fa-plus" /> Add Remark</button>
+              <button className="exm-rm-add" onClick={addRem} disabled={!canCreate} style={!canCreate ? off : undefined}><i className="fa-solid fa-plus" /> Add Remark</button>
             </div>
           )}
         </div>
@@ -303,7 +324,7 @@ function ResultEditModal({ result, onClose, onSave, flash }) {
           <span />
           <div className="exm-foot-btns">
             <button type="button" className="exm-btn ghost" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-            <SpinnerButton className="exm-btn primary" icon="fa-floppy-disk" onClick={submit}>Save</SpinnerButton>
+            <SpinnerButton className="exm-btn primary" icon="fa-floppy-disk" disabled={!canWriteModal} style={!canWriteModal ? off : undefined} onClick={() => { if (canWriteModal) submit() }}>Save</SpinnerButton>
           </div>
         </div>
       </div>
