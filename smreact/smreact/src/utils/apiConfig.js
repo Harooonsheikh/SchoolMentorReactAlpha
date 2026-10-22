@@ -18,7 +18,8 @@ const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
 //     on its own origin and IIS reverse-proxies those to https://alphaapi.schoolmentor.ai
 //     (see the rewrite rules in public/web.config). No mixed content, no CORS.
 // const DEV_URL = 'http://210.56.9.60:1123';
-const DEV_URL  =  'http://50.190.164.42:4100';
+// const DEV_URL  =  'http://50.190.164.42:4100';
+const DEV_URL  =  'https://sandbox-alphaapi.schoolmentor.ai';
 const PROD_URL = 'https://erp.schoolmentor.ai';
 
 const DEFAULT_URL = stripSlash(process.env.REACT_APP_API_BASE_URL)
@@ -503,27 +504,6 @@ function ensureFetchWrapper() {
   };
   window.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : (input && input.url) || '';
-    /* Audit logging (AHM_Activity_Logs): har ERP API call par logged-in user ki
-       pehchaan bhejo — UserId / BranchID headers. Login inhe sessionStorage me
-       'UserID' / 'branchID' ke naam se rakhta hai (dekhein LoginScreen.jsx + index.js).
-       Yahan central lagaya hai is liye 65+ fetch call sites me kuch nahi karna.
-       `new Headers(...)` purane headers (Accept / Authorization / Content-Type)
-       ko rakhta hai chahe wo plain object hon ya Headers instance. "0"/khali id
-       nahi bhejte (backend use N/A likh deta). */
-    if (isApiUrl(url)) {
-      try {
-        const uid = sessionStorage.getItem('UserID');
-        const bid = sessionStorage.getItem('branchID');
-        const ok = (v) => v && v !== '0';
-        if (ok(uid) || ok(bid)) {
-          init = { ...(init || {}) };
-          const h = new Headers(init.headers || {});
-          if (ok(uid) && !h.has('UserId'))   h.set('UserId', uid);
-          if (ok(bid) && !h.has('BranchID')) h.set('BranchID', bid);
-          init.headers = h;
-        }
-      } catch (e) { /* private mode / no sessionStorage */ }
-    }
     if (window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url) && !hasValidSession()) {
       trigger();
       const err = new Error('Your session has ended');
