@@ -358,7 +358,11 @@ export default function AuditLogs({ toast = () => {} }) {
           <div className="al-table-title">
             <i className="fa-solid fa-list-check" aria-hidden="true"></i>
             <span>Activity History</span>
-            <span className="al-count-badge">{totalRecords} {totalRecords === 1 ? 'entry' : 'entries'}</span>
+            {!logsLoading && (
+    <span className="al-count-badge">
+      {totalRecords} {totalRecords === 1 ? 'entry' : 'entries'}
+    </span>
+  )}
           </div>
         </div>
 
