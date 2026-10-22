@@ -784,7 +784,18 @@ export async function deleteStuFamily({ id } = {}) {
    ke andar call lagani hogi — screen ko haath nahi lagega. */
 
 /** Inactive karne ki wajuhat ki lookup list. */
-export async function getStuInactiveReasons() { return []; }
+/** Mark Inactive modal ke "Reason (quick pick)" dropdown ki list.
+    "Other" chunne par neeche Reason box khali ho jata hai taake user khud likhe. */
+export async function getStuInactiveReasons() {
+  return [
+    'Transferred to another city',
+    'Family relocated',
+    'Withdrawn — admission elsewhere',
+    'Struck off — non-payment',
+    'Completed schooling',
+    'Other',
+  ];
+}
 
 /** Agla registration number (0 = maloom nahi). */
 export async function getStuNextReg() { return 0; }

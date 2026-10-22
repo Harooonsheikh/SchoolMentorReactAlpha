@@ -2434,7 +2434,13 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
         setCertOpen(false);
       }
     };
-    const onScroll = () => { setMenuOpen(false); setCertOpen(false); };
+      /* Menu ke ANDAR ka scroll (uska apna scrollbar) menu band na kare — sirf page /
+       table ka scroll band kare. Pehle har scroll par band ho jata tha, is liye
+       menu ka scrollbar neeche jata hi nahi tha. */
+    const onScroll = (e) => {
+      if (e && e.type === 'scroll' && anchorRef.current && e.target instanceof Node && anchorRef.current.contains(e.target)) return;
+      setMenuOpen(false); setCertOpen(false);
+    };
     document.addEventListener('mousedown', onClick);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
@@ -8022,6 +8028,9 @@ const STU_CSS = `
   scrollbar-width: thin;
   scrollbar-color: #94A3B8 transparent;
 }
+/* Flex column + max-height me items pichak jate the (flex-shrink) — scrollbar aata tha
+   magar neeche ke options nazar nahi aate the. Items apni asal height par rahein. */
+.stu-actmenu > * { flex-shrink: 0; }
 .stu-actmenu::-webkit-scrollbar { width: 7px; }
 .stu-actmenu::-webkit-scrollbar-track { background: transparent; }
 .stu-actmenu::-webkit-scrollbar-thumb {
