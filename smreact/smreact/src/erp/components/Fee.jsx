@@ -5,6 +5,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
 import * as accountsService from '../services/accountsService';
+import * as dashboardService from '../services/dashboardService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
@@ -14237,7 +14238,7 @@ const isLedgerCarryRow = (r) => isAggregateCarryRow(r);
    date me chala jata tha). Ek receive call ke saare heads ek hi waqt save hote hain.
    Negative advance-consumption rows (challanAmount < 0, received −X) cash nahi — skip.
    Installments na hon (purana record) to ek synthetic receipt detail totals se. */
-function ledgerInstallmentReceipts(rec) {
+export function ledgerInstallmentReceipts(rec) {
   if (!rec || !Array.isArray(rec.detailRows)) return [];
   const rows = rec.detailRows.filter(r => !((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)));
   const groups = new Map();
@@ -14869,6 +14870,28 @@ function ReportPanelDefaulter({ toast }) {
   /* Late fine ki settings — challan par bill na hui fine (due guzarne ke baad) bhi Pending me. */
   const { data: fineSettings = {} } = useAsync(feeService.getFeeSettings, []);
 
+  /* Report-mahine se PEHLE ke 12 mahine ka running-ledger (head-wise baqaya) — receiving popup
+     jaisa. Backend sirf naye challan ke heads ka previous carry karta hai; jo head is mahine
+     challan me chuna hi nahi (BOARD ENROLLMENT 3,000) ya jis ki row par previous 0 aaya, us
+     ka pichhla baqaya ledger se aata hai. */
+  const [ledgerPrev, setLedgerPrev] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const nowD = new Date();
+    const yy = Number(year) || nowD.getFullYear();
+    const endM = seg === 'month'
+      ? FEE_MONTHS.indexOf(month) + 1
+      : (yy === nowD.getFullYear() ? nowD.getMonth() + 1 : 12);
+    let toM = endM - 1, toY = yy;
+    if (toM === 0) { toM = 12; toY -= 1; }
+    let fromM = toM - 11, fromY = toY;
+    while (fromM <= 0) { fromM += 12; fromY -= 1; }
+    feeService.getLedgerRange(fromM, fromY, toM, toY)
+      .then(rows => { if (alive) setLedgerPrev(prevOutFromLedgerRows(rows, endM, yy) || {}); })
+      .catch(() => { if (alive) setLedgerPrev({}); });
+    return () => { alive = false; };
+  }, [seg, month, year]);
+
   /* ── Defaulter hisaab — CHALLAN jo kehta hai wahi (previous dues samet) ──
      Monthly Fee Defaulters: chune hue mahine ka challan bana AUR us par kuch receive NAHI
        hua → poora challan payable (previous + is mahina). Partial hote hi Monthly se bahar.
@@ -14902,23 +14925,49 @@ function ReportPanelDefaulter({ toast }) {
       return list[list.length - 1];
     };
 
-    /* Ek challan ke heads ka baqaya. */
-    const challanDues = (rec) => {
+    /* Ek challan ke heads ka baqaya. ledgerByHead (sirf report-mahine ke challan par): jo head
+       ka previous backend ne carry NAHI kiya (row par previous 0, ya head is challan me hai hi
+       nahi) us ka pichhla baqaya ledger se — receiving popup jaisa. Jin heads par backend ne
+       previous likha hai wo jaisa hai waisa (override nahi). Aggregate "Previous Pending" row
+       ho to ledger nahi jodte (previous wahan pehle se hai — double na ho). */
+    const challanDues = (rec, ledgerByHead = null) => {
       const rows = rec.detailRows || [];
       const headWise = rows.some(r => !isAggregateCarryRow(r) && !feeService.isLateFineRow(r) && hpOf(r) !== 0);
+      const hasAggCarry = rows.some(r => isAggregateCarryRow(r) && (+r.challanAmount || 0) !== 0);
+      const useLedger = !!(ledgerByHead && !hasAggCarry && Object.keys(ledgerByHead).length);
+      const normName = (v) => String(v || '').toLowerCase().trim();
+      const ledgerOf = (name) => {
+        if (!useLedger) return 0;
+        const k = Object.keys(ledgerByHead).find(x => normName(x) === normName(name));
+        return k != null ? Math.max(0, Math.round(+ledgerByHead[k] || 0)) : 0;
+      };
+      const seen = new Set();
       const heads = [];
       let total = 0, finePend = 0, oldD = 0, anyRecv = false;
       rows.forEach(r => {
         if ((+r.receivedAmount || 0) !== 0 || (+r.recvDiscount || 0) > 0) anyRecv = true;
         if (isAggregateCarryRow(r) && headWise) return;                       // previous heads par hai
         if (isAggregateCarryRow(r) && (+r.challanAmount || 0) < 0) return;    // advance-consumption row
-        const hp = isAggregateCarryRow(r) ? 0 : hpOf(r);
+        if (!isAggregateCarryRow(r) && !feeService.isLateFineRow(r)) seen.add(normName(r.subHead || r.head));
+        let hp = isAggregateCarryRow(r) ? 0 : hpOf(r);
+        if (hp === 0 && !isAggregateCarryRow(r) && !feeService.isLateFineRow(r)) hp = ledgerOf(r.subHead || r.head);
         const pend = (+r.challanAmount || 0) - (+r.discount || 0) + hp - (+r.receivedAmount || 0);
         if (feeService.isLateFineRow(r)) { finePend += Math.max(0, pend); return; }
         total += pend;
         if (Math.round(pend) !== 0) heads.push({ name: r.subHead || r.head || '—', amt: pend });
         if (pend > 0 && isOldDuesName(r)) oldD += pend;
       });
+      /* Ledger ke unpaid heads jo is challan me chune hi nahi gaye (BOARD ENROLLMENT 3,000). */
+      if (useLedger) {
+        Object.keys(ledgerByHead).forEach(k => {
+          if (seen.has(normName(k))) return;
+          const v = Math.round(+ledgerByHead[k] || 0);
+          if (v <= 0 || feeService.isLateFineRow({ subHead: k })) return;
+          total += v;
+          heads.push({ name: k, amt: v });
+          if (isOldDuesName({ subHead: k })) oldD += v;
+        });
+      }
       /* Fine abhi challan par bill nahi hui magar due date guzar chuki → aaj tak ki fine. */
       if (billedFineOf(rec) <= 0) finePend += Math.max(0, challanAccruedFine(rec, fineSettings) || 0);
       return { heads, total: total + finePend, finePend, oldD, anyRecv };
@@ -14942,7 +14991,10 @@ function ReportPanelDefaulter({ toast }) {
           return;
         }
 
-        const d = challanDues(rec);
+        /* Report-mahine ka single-month challan → un-carried heads ka ledger baqaya bhi. */
+        const po = ledgerPrev[String(s.studentID)] || ledgerPrev[String(s.applicantsID)] || null;
+        const isViewMonth = Number(rec.year) * 12 + Number(rec.month) === monthKey && !isMultiMonthChallan(rec);
+        const d = challanDues(rec, (po && isViewMonth) ? (po.byHead || null) : null);
         const rem = Math.round(d.total);
         t.n += 1;
         if (rem <= 0) { t.paid += 1; return; }
@@ -14963,7 +15015,7 @@ function ReportPanelDefaulter({ toast }) {
       return { c, list };
     });
     return { groups: out, totals: t };
-  }, [classes, studentsMap, allStudents, oldErp, seg, month, year, fineSettings]);
+  }, [classes, studentsMap, allStudents, oldErp, seg, month, year, fineSettings, ledgerPrev]);
 
   const reportTitle = `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`;
   const downloadReport = (style, format) => {
@@ -16017,8 +16069,38 @@ function ReportPanelSummary({ toast }) {
       sectionsData: classes.filter(c => (studentsMap[c.key] || []).length).map(c => byClass[c.key] || { label: `${c.cls} ${c.sec}`, e: 0, r: 0 }),
     };
   }, [allStudents, classes, studentsMap, selM, selY]);
-  const totals = data.totals;
-  const real = totals.exp ? Math.round(totals.recv / totals.exp * 100) : 0;
+  /* Headline cards DASHBOARD jaise — wahi /financial-summary (FeeAnalytics) API, chuna mahina:
+       Expected = TotalNetReceivable · Collected = FeeReceived · Realised = CollectionPercent
+       Discount = ChallanDiscount + ReceivingDiscount · Outstanding = PendingFee (StudentsWithDues).
+     API na mile to neeche wala ledger hisaab. Section bars / payment-mode ledger receipts se. */
+  const [feeApi, setFeeApi] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    setFeeApi(null);
+    dashboardService.getFinancialSummary({ feeMonth: selM, feeYear: selY })
+      .then(d => { if (alive) setFeeApi((d && d.FeeAnalytics) || null); })
+      .catch(() => { if (alive) setFeeApi(null); });
+    return () => { alive = false; };
+  }, [selM, selY]);
+  const totals = useMemo(() => {
+    const base = data.totals;
+    const a = feeApi;
+    if (!a) return base;
+    const num = (v, fb) => (v != null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : fb);
+    return {
+      ...base,
+      exp:  num(a.TotalNetReceivable, base.exp),
+      recv: num(a.FeeReceived, base.recv),
+      disc: num(a.ChallanDiscount, 0) + num(a.ReceivingDiscount, 0),
+      pend: num(a.PendingFee, base.pend),
+      def:  num(a.StudentsWithDues, base.def),
+      paid: num(a.StudentsPaid, base.paid),
+      pct:  a.CollectionPercent,
+    };
+  }, [data.totals, feeApi]);
+  const real = (totals.pct != null && !Number.isNaN(Number(totals.pct)))
+    ? Math.round(Number(totals.pct) * 100) / 100
+    : (totals.exp ? Math.round(totals.recv / totals.exp * 100) : 0);
   const modes = data.modes;
   const modeTot = modes.reduce((a, m) => a + m.amt, 0) || 1;
   const sectionsData = data.sectionsData;
