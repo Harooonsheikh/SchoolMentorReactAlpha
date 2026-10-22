@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import { loadAssign, saveAssign, ERP_SCHOOLS, INACTIVE_SCHOOLS, initialsOf } from './data'
-import { permStats, permsForUser, saveUserPerms } from './permissionsData'
+import { permStats, permsFromApiPermissions, saveUserPerms } from './permissionsData'
+import { getNetworkMenuPermissions } from '../../api/networkMenuPermissionsApi'
 import PermissionMatrixModal from './PermissionMatrixModal'
 import { fullName } from '../HumanResource/data'
 import * as hrApi from '../../api/hrApi'
@@ -143,16 +144,39 @@ function AssignTab({ users, assignStore, commit, fire }) {
 function UsersPermTab({ users, loading, fire }) {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState(null)
+  /* Badge localStorage se nahi — get-network-menu-permissions se.
+     Warna save API par ho jata hai aur list "No access" dikhati rehti hai. */
+  const [counts, setCounts] = useState({})
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return users.filter((u) => !q || u.fullName.toLowerCase().includes(q))
   }, [users, search])
 
-  /* Modal API par save kar chuka — yahan sirf local mirror (list ka badge)
-     update karo + toast + band. */
+  useEffect(() => {
+    if (!users.length) return undefined
+    let alive = true
+    Promise.all(users.map(async (u) => {
+      try {
+        const rows = await getNetworkMenuPermissions(u.id)
+        return [u.id, permStats(permsFromApiPermissions(rows)).active]
+      } catch (err) {
+        console.error('Could not load permission count:', u.id, err)
+        return [u.id, 0]
+      }
+    })).then((pairs) => {
+      if (!alive) return
+      const next = {}
+      pairs.forEach(([id, n]) => { next[id] = n })
+      setCounts(next)
+    })
+    return () => { alive = false }
+  }, [users])
+
+  /* Modal API par save kar chuka — badge turant usi count par, phir band. */
   const save = (perms) => {
     saveUserPerms(editing.id, perms)
+    setCounts((prev) => ({ ...prev, [editing.id]: permStats(perms).active }))
     fire('Permissions updated')
     setEditing(null)
   }
@@ -174,13 +198,17 @@ function UsersPermTab({ users, loading, fire }) {
             ) : filtered.length === 0 ? (
               <tr><td colSpan={5} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No staff found</td></tr>
             ) : filtered.map((u, i) => {
-              const stats = permStats(permsForUser(u.id))
+              const active = counts[u.id]
               return (
                 <tr key={u.id}>
                   <td data-label="Sr #" style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                   <td data-label="Staff"><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><div className="um-avatar">{initialsOf(u.fullName)}</div><span style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</span></div></td>
                   <td data-label="Status"><span className={`badge ${u.status === 'Active' ? 'b-green' : 'b-gray'}`}>{u.status}</span></td>
-                  <td data-label="Permissions">{stats.active > 0 ? <span className="badge b-blue">{stats.active} active</span> : <span className="badge b-gray">No access</span>}</td>
+                  <td data-label="Permissions">{active == null
+                    ? <span className="badge b-gray">…</span>
+                    : active > 0
+                      ? <span className="badge b-blue">{active} active</span>
+                      : <span className="badge b-gray">No access</span>}</td>
                   <td data-label="Actions"><button className="um-edit-perm-btn" onClick={() => setEditing(u)}><i className="fa-solid fa-sliders" /> Edit Permissions</button></td>
                 </tr>
               )

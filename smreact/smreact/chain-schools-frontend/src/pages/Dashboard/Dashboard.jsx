@@ -282,6 +282,9 @@ function HeadOfficeDashboard({ d }) {
         <MiniCard accent="m-slate" icon="fa-user-xmark" val={fmtNum(chain.inactiveStudents)} lbl="Inactive Students" />
         <MiniCard accent="m-info" icon="fa-person" val={fmtNum(chain.male)} lbl="Male Students" />
         <MiniCard accent="m-pink" icon="fa-person-dress" val={fmtNum(chain.female)} lbl="Female Students" />
+        {chain.unspecified > 0 && (
+          <MiniCard accent="m-slate" icon="fa-user" val={fmtNum(chain.unspecified)} lbl="Gender Not Set" />
+        )}
         <MiniCard accent="m-green" icon="fa-user-tie" val={chain.activeStaff} lbl="Active Staff" />
         <MiniCard accent="m-slate" icon="fa-user-slash" val={chain.inactiveStaff} lbl="Inactive Staff" />
         <MiniCard accent="m-green" icon="fa-plug-circle-check" val={chain.erpActive} lbl="ERP Active Schools" />
@@ -291,8 +294,16 @@ function HeadOfficeDashboard({ d }) {
       <div className="chart-grid" style={{ marginTop: 16 }}>
         <ChartCard icon="fa-venus-mars" title="Gender Distribution">
           <div className="donut-wrap">
-            <Donut big={fmtShort(chain.students)} cap="Students" segments={[{ value: chain.male, color: '#0284c7' }, { value: chain.female, color: '#db2777' }]} />
-            <Legend items={[{ name: 'Male', val: fmtNum(chain.male), color: '#0284c7' }, { name: 'Female', val: fmtNum(chain.female), color: '#db2777' }]} />
+            <Donut big={fmtShort(chain.students)} cap="Students" segments={[
+              { value: chain.male, color: '#0284c7' },
+              { value: chain.female, color: '#db2777' },
+              ...(chain.unspecified > 0 ? [{ value: chain.unspecified, color: '#64748b' }] : []),
+            ]} />
+            <Legend items={[
+              { name: 'Male', val: fmtNum(chain.male), color: '#0284c7' },
+              { name: 'Female', val: fmtNum(chain.female), color: '#db2777' },
+              ...(chain.unspecified > 0 ? [{ name: 'Not set', val: fmtNum(chain.unspecified), color: '#64748b' }] : []),
+            ]} />
           </div>
         </ChartCard>
         <ChartCard icon="fa-arrow-trend-up" title="Chain Growth (Monthly Logins)">
