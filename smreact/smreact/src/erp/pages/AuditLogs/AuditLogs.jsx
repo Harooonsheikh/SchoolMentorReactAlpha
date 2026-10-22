@@ -4,11 +4,9 @@ import TutorialModal from '../../components/TutorialModal';
 import LogDetailsModal from './LogDetailsModal';
 import ReportsPanel from './ReportsPanel';
 import { usePermissions } from '../../context/PermissionsContext';
-import { getActivityLogsByDateRange, logRangeLastDays } from '../../services/rolesService';
+import { getAuditLogsByBranch, getAuditLogFilters } from '../../services/auditLogsService';
 import {
   hydrateLog,
-  filterLogs,
-  summaryStats,
   quickRange,
   formatDate,
   initialsOf,
@@ -16,11 +14,6 @@ import {
 
 /* ═══════════════════════════════════════════════════════════════════
    AUDIT LOGS — central activity tracking screen
-
-   Every entry in `INITIAL_LOGS` is read-only — this component does
-   not expose any edit/delete primitives. The page is built out of
-   reused ERP design-system patterns (stat cards, filter bar, table,
-   tooltips) so it blends with HR / Settings / User Permissions.
    ═══════════════════════════════════════════════════════════════════ */
 
 const QUICK_RANGES = [
@@ -33,125 +26,100 @@ const QUICK_RANGES = [
 ];
 
 const REPORT_TYPES = [
-  { id: 'summary', label: 'Audit Summary Report',  icon: 'fa-file-lines',    desc: 'High-level summary of every activity in the range' },
-  { id: 'user',    label: 'User Activity Report',  icon: 'fa-user-check',    desc: 'Per-user breakdown of activities performed' },
-  { id: 'module',  label: 'Module Activity Report', icon: 'fa-grid-2',        desc: 'Per-module breakdown of activities performed' },
+  { id: 'summary', label: 'Audit Summary Report',  icon: 'fa-file-lines',  desc: 'High-level summary of every activity in the range' },
+  { id: 'user',    label: 'User Activity Report',  icon: 'fa-user-check',  desc: 'Per-user breakdown of activities performed' },
+  { id: 'module',  label: 'Module Activity Report', icon: 'fa-grid-2',     desc: 'Per-module breakdown of activities performed' },
 ];
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 50;
 
 export default function AuditLogs({ toast = () => {} }) {
-  /* ─── Logs ab LIVE aati hain:
-         GET /get-activity-logs-by-date-range/{branchId}/{from}/{to}
+  const [logs, setLogs]                     = useState([]);
+  const [logsLoading, setLogsLoading]       = useState(true);
+  const [totalRecords, setTotalRecords]     = useState(0);
+  const [apiStats, setApiStats]             = useState({ today: 0, week: 0, month: 0, total: 0, activeToday: 0 });
+  const [tutorialOpen, setTutorialOpen]     = useState(false);
 
-         Pehle ye screen mock INITIAL_LOGS par chalti thi. Branch-wala
-         purana endpoint poori branch ka record ek saath laata tha aur
-         timeout kar jata tha — is liye har fetch ek date range par
-         mehdood hai. Default AAJ ka din — ek busy branch ke 30 din ~26 MB
-         bante hain jo is server se minton me utarte hain. */
-  const [logs, setLogs] = useState([]);
-  const [logsLoading, setLogsLoading] = useState(true);
-  const [tutorialOpen, setTutorialOpen] = useState(false);
-
-  /* ─── Per-user permissions — the Reports export/print actions are
-         gated on the logged-in user's rights. FAIL-OPEN via can(). */
   const { can } = usePermissions();
   const canDownload = can('Audit Logs', 'Activity Logs', 'Download');
   const canPrint    = can('Audit Logs', 'Activity Logs', 'Print');
 
-  /* ─── Filters — date range default aaj (API isi se chalti hai) ─── */
-  const [fromDate, setFromDate] = useState(() => logRangeLastDays(1).from);
-  const [toDate,   setToDate]   = useState(() => logRangeLastDays(1).to);
+  /* First visit → From / To are pre-filled with today, so the table only
+     loads the current day instead of the whole history. */
+  const [fromDate, setFromDate] = useState(() => quickRange('today').fromDate);
+  const [toDate,   setToDate]   = useState(() => quickRange('today').toDate);
   const [moduleF,  setModuleF]  = useState('');
   const [userF,    setUserF]    = useState('');
   const [actionF,  setActionF]  = useState('');
   const [search,   setSearch]   = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [quick,    setQuick]    = useState('today');
   const [page,     setPage]     = useState(1);
 
-  /* ─── Modals / drawers ─── */
   const [selected,    setSelected]    = useState(null);
   const [reportsOpen, setReportsOpen] = useState(false);
-  const [reportsTab,  setReportsTab]  = useState(null);   /* 'summary' | 'user' | 'module' */
+  const [reportsTab,  setReportsTab]  = useState(null);
   const [menuOpen,    setMenuOpen]    = useState(false);
 
-  /* ─── Range badle → server se dobara mangwao. Module/user/action/search
-         filters client-side hi rehte hain (laayi hui rows par). */
-  /* toast ref me — App ka pushToast har render par naya function hota hai.
-     Wo effect ki deps me ho to har App re-render par chalti request chhor
-     kar nayi shuru hoti thi, aur ~20s wala jawab kabhi screen tak na
-     pohanchta (loading hi chalti rehti). */
   const toastRef = useRef(toast);
   toastRef.current = toast;
 
   useEffect(() => {
-    if (!fromDate || !toDate) { setLogs([]); setLogsLoading(false); return undefined; }
-    let alive = true;
-    /* Range badle / screen band ho → purana (bhaari) download foran band. */
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  /* Fetch logs — API returns { rows, totalRecords, stats } */
+  useEffect(() => {
     const ctrl = new AbortController();
-    setLogs([]);
     setLogsLoading(true);
-    /* normalizeActivityLog() ki row → is screen ki shakal. userId/module
-       ki mock ids yahan nahi hotin, is liye naam hi value bante hain aur
-       dropdowns bhi inhi rows se bante hain (neeche). */
-    const toScreenRow = (r, i) => ({
-          id:        r.id ?? `al-${i}`,
-          date:      r.dateISO,
-          time:      r.time,
-          userId:    r.user,
-          userName:  r.user,
-          userRole:  r.role || '—',
-          module:    r.module,
-          moduleLabel: r.module,
-          screen:    r.screen,
-          action:    r.action,
-          actionLabel: r.action,
-          record:    r.record,
-          details:   r.detail,
-          performedBy: r.performedBy,
-          oldValue:  r.oldValue || '—',
-          newValue:  r.newValue || '—',
-          ipAddress: r.ipAddress,
-          device:    r.device,
-    });
-    /* Jawab 7+ MB hai aur dheere utarta hai — rows jaise jaise aayein
-       table me daalte jao (streaming), poore jawab ka intezar nahi. */
-    let seen = 0;
-    getActivityLogsByDateRange(fromDate, toDate, {
-      signal: ctrl.signal,
-      onRows: (batch) => {
-        if (!alive) return;
-        const mapped = batch.map((r) => toScreenRow(r, seen++));
-        setLogs((prev) => prev.concat(mapped));
+    getAuditLogsByBranch(
+      {
+        pageNumber: page,
+        pageSize:   PAGE_SIZE,
+        fromDate,
+        toDate,
+        module:     moduleF,
+        userId:     userF,
+        action:     actionF,
+        search:     debouncedSearch,
       },
-    })
-      .catch((err) => {
-        if (!alive) return;
-        console.error('Could not load activity logs:', err);
-        /* Jo rows aa chuki hain wo rehne do — sirf batao ke baqi nahi aayin. */
-        toastRef.current(err.message || 'Could not load activity logs', 'error');
+      { signal: ctrl.signal },
+    )
+      .then((res) => {
+        setLogs(res?.rows ?? []);
+        setTotalRecords(res?.totalRecords ?? 0);
+        setApiStats(res?.stats ?? { today: 0, week: 0, month: 0, total: 0, activeToday: 0 });
       })
-      .finally(() => { if (alive) setLogsLoading(false); });
-    return () => { alive = false; ctrl.abort(); };
-  }, [fromDate, toDate]);
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('Could not load audit logs:', err);
+        setLogs([]);
+        setTotalRecords(0);
+        toastRef.current(err.message || 'Could not load audit logs', 'error');
+      })
+      .finally(() => { if (!ctrl.signal.aborted) setLogsLoading(false); });
+    return () => ctrl.abort();
+  }, [page, fromDate, toDate, moduleF, userF, actionF, debouncedSearch]);
 
-  /* Dropdown options laayi hui rows se — MODULES/USERS/ACTIONS constants
-     mock ids par bane the, jo live data se match hi nahi karte. */
-  const moduleOptions = useMemo(
-    () => [...new Set(logs.map(l => l.module).filter(Boolean))].sort(),
-    [logs],
-  );
-  const userOptions = useMemo(
-    () => [...new Set(logs.map(l => l.userId).filter(Boolean))].sort(),
-    [logs],
-  );
-  const actionOptions = useMemo(
-    () => [...new Set(logs.map(l => l.action).filter(Boolean))].sort(),
-    [logs],
-  );
+  const [filterOpts, setFilterOpts] = useState({ modules: [], actions: [], users: [] });
 
-  /* ─── Apply a quick-range pill. Custom keeps the existing date
-         inputs editable; the other presets snap them to a range. */
+  useEffect(() => {
+    const ctrl = new AbortController();
+    getAuditLogFilters(undefined, { signal: ctrl.signal })
+      .then(setFilterOpts)
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('Could not load audit log filters:', err);
+        toastRef.current(err.message || 'Could not load filters', 'error');
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const moduleOptions = filterOpts.modules;
+  const userOptions   = filterOpts.users;
+  const actionOptions = filterOpts.actions;
+
   const applyQuick = (preset) => {
     setQuick(preset);
     setPage(1);
@@ -162,34 +130,22 @@ export default function AuditLogs({ toast = () => {} }) {
   };
 
   const clearFilters = () => {
-    /* Range ko khali NAHI karte — khali range ka matlab "koi fetch nahi".
-       Wapas default (aaj) par le aate hain. */
-    const r = logRangeLastDays(1);
-    setFromDate(r.from); setToDate(r.to);
+    const r = quickRange('today');
+    setFromDate(r.fromDate);
+    setToDate(r.toDate);
     setModuleF(''); setUserF(''); setActionF('');
     setSearch(''); setQuick('today'); setPage(1);
   };
 
-  /* ─── Filtered list — sorted newest first by date then time. */
-  const filtered = useMemo(() => {
-    const out = filterLogs(logs, {
-      fromDate, toDate,
-      module: moduleF, user: userF, action: actionF,
-      search,
-    }).slice().sort((a, b) => {
-      if (a.date === b.date) return a.time < b.time ? 1 : -1;
-      return a.date < b.date ? 1 : -1;
-    });
-    return out;
-  }, [logs, fromDate, toDate, moduleF, userF, actionF, search]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);
-  const pageRows   = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageRows   = logs;
 
-  /* ─── Summary stats use the *whole* log set, not the filtered view,
-         so the cards represent the entire activity. */
-  const stats = useMemo(() => summaryStats(logs), [logs]);
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [totalPages, page]);
+
+  const stats = apiStats;
 
   const openReport = (id) => {
     setReportsTab(id);
@@ -197,16 +153,27 @@ export default function AuditLogs({ toast = () => {} }) {
     setMenuOpen(false);
   };
 
-  const hydratedSelected = selected ? hydrateLog(selected) : null;
+  const hydratedRows     = useMemo(() => pageRows.map(hydrateLog), [pageRows]);
+  const hydratedSelected = useMemo(
+    () => (selected ? hydrateLog(selected) : null),
+    [selected],
+  );
 
-  /* Are any filters active? Drives the "active filters" pill row. */
-  const hasFilters = !!(fromDate || toDate || moduleF || userF || actionF || search || quick);
+  /* "Filters active" only when something differs from the default
+     (today's date range, nothing else selected). */
+  const todayR = quickRange('today');
+  const hasFilters = !!(
+    moduleF || userF || actionF || search ||
+    fromDate !== todayR.fromDate || toDate !== todayR.toDate
+  );
+
+  const showingFrom = totalRecords === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const showingTo   = Math.min(totalRecords, safePage * PAGE_SIZE);
 
   return (
     <>
       <style>{AL_CSS}</style>
 
-      {/* ── Page header ── */}
       <div className="page-header">
         <div className="page-title-row">
           <div className="page-title-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}>
@@ -218,7 +185,6 @@ export default function AuditLogs({ toast = () => {} }) {
           </div>
         </div>
         <div className="al-header-actions">
-          {/* Reports — dropdown with three report kinds */}
           <div className="al-menu-wrap">
             <Tooltip text="Generate Report">
               <button
@@ -270,7 +236,6 @@ export default function AuditLogs({ toast = () => {} }) {
         </div>
       </div>
 
-      {/* ── Read-only banner — reminds Super Admins that logs are immutable */}
       <div className="al-banner" role="note" aria-live="polite">
         <i className="fa-solid fa-lock" aria-hidden="true"></i>
         <span>
@@ -278,16 +243,14 @@ export default function AuditLogs({ toast = () => {} }) {
         </span>
       </div>
 
-      {/* ── Stat strip — 5 cards: Today / Week / Month / Total / Active Today */}
       <div className="al-stats">
-        <Stat tone="blue"   icon="fa-bolt"            label="Today's Activities"      value={stats.today} sub="Events recorded today" />
-        <Stat tone="indigo" icon="fa-calendar-week"   label="This Week"               value={stats.week}  sub="Last 7 days" />
-        <Stat tone="green"  icon="fa-calendar"        label="This Month"              value={stats.month} sub={formatMonthLabel()} />
-        <Stat tone="amber"  icon="fa-database"        label="Total Log Entries"       value={stats.total} sub="All-time activity" />
+        <Stat tone="blue"   icon="fa-bolt"            label="Today's Activities"      value={stats.today}       sub="Events recorded today" />
+        <Stat tone="indigo" icon="fa-calendar-week"   label="This Week"               value={stats.week}        sub="Last 7 days" />
+        <Stat tone="green"  icon="fa-calendar"        label="This Month"              value={stats.month}       sub={formatMonthLabel()} />
+        <Stat tone="amber"  icon="fa-database"        label="Total Log Entries"       value={stats.total}       sub="All-time activity" />
         <Stat tone="purple" icon="fa-user-clock"      label="Active Users Today"      value={stats.activeToday} sub={stats.activeToday === 1 ? '1 user signed in' : `${stats.activeToday} users signed in`} />
       </div>
 
-      {/* ── Filter section ── */}
       <div className="al-filter-card">
         <div className="al-filter-h">
           <div className="al-filter-title">
@@ -300,7 +263,7 @@ export default function AuditLogs({ toast = () => {} }) {
             )}
           </div>
           {hasFilters && (
-            <Tooltip text="Clear all active filters">
+            <Tooltip text="Reset to today's logs">
               <button type="button" className="up-btn up-btn-ghost up-btn-sm" onClick={clearFilters}>
                 <i className="fa-solid fa-broom" aria-hidden="true"></i> Clear All
               </button>
@@ -308,7 +271,6 @@ export default function AuditLogs({ toast = () => {} }) {
           )}
         </div>
 
-        {/* Quick range pills */}
         <div className="al-quick">
           {QUICK_RANGES.map(q => (
             <Tooltip key={q.id} text={`Filter to ${q.label}`}>
@@ -323,8 +285,6 @@ export default function AuditLogs({ toast = () => {} }) {
           ))}
         </div>
 
-        {/* Date range + selects + search — 6-column grid that collapses
-             to 2 cols on tablets and 1 col on phones. */}
         <div className="al-filter-grid">
           <label className="al-field">
             <span>From Date</span>
@@ -363,7 +323,7 @@ export default function AuditLogs({ toast = () => {} }) {
               onChange={(e) => { setUserF(e.target.value); setPage(1); }}
             >
               <option value="">All Users</option>
-              {userOptions.map(u => <option key={u} value={u}>{u}</option>)}
+              {userOptions.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
             </select>
           </label>
           <label className="al-field">
@@ -393,34 +353,28 @@ export default function AuditLogs({ toast = () => {} }) {
         </div>
       </div>
 
-      {/* ── Table ── */}
       <div className="al-table-card">
         <div className="al-table-h">
           <div className="al-table-title">
             <i className="fa-solid fa-list-check" aria-hidden="true"></i>
             <span>Activity History</span>
-            <span className="al-count-badge">{filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}</span>
-            {logsLoading && logs.length > 0 && (
-              <span className="al-count-badge">
-                <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading more…
-              </span>
-            )}
+            <span className="al-count-badge">{totalRecords} {totalRecords === 1 ? 'entry' : 'entries'}</span>
           </div>
         </div>
 
-        {logsLoading && logs.length === 0 ? (
+        {logsLoading ? (
           <div className="up-empty">
             <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
             <div className="up-empty-t">Loading activity logs…</div>
-            <div className="up-empty-s">Fetching {formatDate(fromDate)} → {formatDate(toDate)}.</div>
+            <div className="up-empty-s">Please wait…</div>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : logs.length === 0 ? (
           <div className="up-empty">
             <div className="up-empty-ic"><i className="fa-solid fa-clipboard-list" aria-hidden="true"></i></div>
             <div className="up-empty-t">No log entries match these filters</div>
             <div className="up-empty-s">Adjust the date range, user, or module filters to widen the search.</div>
             {hasFilters && (
-              <Tooltip text="Reset all filters">
+              <Tooltip text="Reset to today's logs">
                 <button type="button" className="up-btn up-btn-ghost" onClick={clearFilters} style={{ marginTop: 12 }}>
                   <i className="fa-solid fa-broom" aria-hidden="true"></i> Clear Filters
                 </button>
@@ -429,7 +383,6 @@ export default function AuditLogs({ toast = () => {} }) {
           </div>
         ) : (
           <>
-            {/* Desktop / Tablet — full table */}
             <div className="al-table-scroll">
               <table className="al-table">
                 <thead>
@@ -447,8 +400,8 @@ export default function AuditLogs({ toast = () => {} }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {pageRows.map(log => {
-                    const h = hydrateLog(log);
+                  {hydratedRows.map((h, i) => {
+                    const log = pageRows[i];
                     return (
                       <tr key={log.id}>
                         <td className="al-td-date">{formatDate(h.date)}</td>
@@ -473,7 +426,10 @@ export default function AuditLogs({ toast = () => {} }) {
                           <span className={`up-badge up-badge--${h.actionTone}`}>{h.actionLabel}</span>
                         </td>
                         <td className="al-td-record">{h.record}</td>
-                        <td className="al-td-details">{h.details}</td>
+                        {/* Backend `details` only — never originalDetails */}
+                        <td className="al-td-details">
+                          <div className="al-td-details-in" title={log.details || ''}>{log.details || '—'}</div>
+                        </td>
                         <td style={{ textAlign: 'right' }}>
                           <Tooltip text="View Details">
                             <button
@@ -493,10 +449,9 @@ export default function AuditLogs({ toast = () => {} }) {
               </table>
             </div>
 
-            {/* Mobile — card list (visible only at ≤640 px via CSS) */}
             <div className="al-cards">
-              {pageRows.map(log => {
-                const h = hydrateLog(log);
+              {hydratedRows.map((h, i) => {
+                const log = pageRows[i];
                 return (
                   <div className="al-card" key={`m-${log.id}`}>
                     <div className="al-card-h">
@@ -516,7 +471,7 @@ export default function AuditLogs({ toast = () => {} }) {
                       <span className="al-card-time">{formatDate(h.date)} · {h.time}</span>
                     </div>
                     <div className="al-card-record">{h.record}</div>
-                    <div className="al-card-details">{h.details}</div>
+                    <div className="al-card-details">{log.details || '—'}</div>
                     <Tooltip text="View full log details">
                       <button
                         type="button"
@@ -532,7 +487,6 @@ export default function AuditLogs({ toast = () => {} }) {
               })}
             </div>
 
-            {/* Pagination */}
             {totalPages > 1 && (
               <div className="al-pager">
                 <Tooltip text="Previous page">
@@ -547,7 +501,9 @@ export default function AuditLogs({ toast = () => {} }) {
                 </Tooltip>
                 <div className="al-pager-info">
                   Page <b>{safePage}</b> of <b>{totalPages}</b>
-                  <span className="al-pager-hint">  · Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(filtered.length, safePage * PAGE_SIZE)} of {filtered.length}</span>
+                  <span className="al-pager-hint">
+                    {' '}· Showing {showingFrom}–{showingTo} of {totalRecords}
+                  </span>
                 </div>
                 <Tooltip text="Next page">
                   <button
@@ -565,7 +521,6 @@ export default function AuditLogs({ toast = () => {} }) {
         )}
       </div>
 
-      {/* ── Log details modal (read-only) ── */}
       {hydratedSelected && (
         <LogDetailsModal
           log={hydratedSelected}
@@ -573,10 +528,9 @@ export default function AuditLogs({ toast = () => {} }) {
         />
       )}
 
-      {/* ── Reports panel — pre-filter + A4 viewer ── */}
       {reportsOpen && (
         <ReportsPanel
-          type={reportsTab}
+          type={reportsTab ?? 'summary'}
           allLogs={logs}
           onChangeType={setReportsTab}
           onClose={() => setReportsOpen(false)}
@@ -611,8 +565,8 @@ function Stat({ tone, icon, label, value, sub }) {
 
 function formatMonthLabel() {
   const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  /* Fixed demo clock — see auditLogsData.isoToday() */
-  return `${months[4]} 2026`;
+  const now = new Date();
+  return `${months[now.getMonth()]} ${now.getFullYear()}`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -897,6 +851,12 @@ const AL_CSS = `
 .al-td-time  { white-space: nowrap; color: var(--text-muted, #64748B); font-variant-numeric: tabular-nums; }
 .al-td-record { font-weight: 600; max-width: 240px; }
 .al-td-details { color: var(--text-muted, #64748B); max-width: 260px; }
+/* Long backend details are clamped to 2 lines; full text is in the tooltip + modal */
+.al-td-details-in {
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; word-break: break-word;
+}
 
 .al-user-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .al-user-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -933,7 +893,12 @@ const AL_CSS = `
 .al-card-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .al-card-time { font: 500 11px/1.2 var(--al-font); color: var(--text-muted, #64748B); }
 .al-card-record { font: 700 13px/1.4 var(--al-font); color: var(--text-primary); margin-bottom: 4px; }
-.al-card-details { font: 500 12px/1.4 var(--al-font); color: var(--text-muted, #64748B); }
+.al-card-details {
+  font: 500 12px/1.4 var(--al-font); color: var(--text-muted, #64748B);
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3; line-clamp: 3;
+  overflow: hidden; word-break: break-word;
+}
 
 /* Pagination */
 .al-pager {

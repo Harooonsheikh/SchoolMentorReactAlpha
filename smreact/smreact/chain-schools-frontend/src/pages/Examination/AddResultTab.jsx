@@ -176,8 +176,10 @@ function ResultEditModal({ result, onClose, onSave, flash, canCreate = true, can
   const [remarks, setRemarks] = useState(() => JSON.parse(JSON.stringify(result.remarks || [])))
   const [del, setDel] = useState(null) // { kind, id }
   const [fresh, setFresh] = useState(() => new Set())
+  /* Nayi row ke fields Create se bharne ke liye khule rehte hain.
+     Delete hamesha Delete permission maangta hai — nayi grade/signature/remark bhi. */
   const rowEdit = (id) => canEdit || fresh.has(id)
-  const rowDel = (id) => canDelete || fresh.has(id)
+  const rowDel = () => canDelete
   const canWriteModal = canCreate || canEdit || canDelete
 
   useEffect(() => {
@@ -223,6 +225,7 @@ function ResultEditModal({ result, onClose, onSave, flash, canCreate = true, can
   const clampPct = (v) => { if (v === '') return ''; let n = Number(v); if (n > 100) n = 100; if (n < 0) n = 0; return String(n) }
 
   const runDel = () => {
+    if (!canDelete) { setDel(null); return }
     if (del.kind === 'grade') setGrades((r) => r.filter((x) => x.id !== del.id))
     if (del.kind === 'sig') setSigs((r) => r.filter((x) => x.id !== del.id))
     if (del.kind === 'rem') setRemarks((r) => r.filter((x) => x.id !== del.id))

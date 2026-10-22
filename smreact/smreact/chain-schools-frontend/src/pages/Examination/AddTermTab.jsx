@@ -60,16 +60,33 @@ export default function AddTermTab({ store, commit, flash, canCreate = true, can
     /* Pehle server par (insert/update) — id mile to rakho; API band ho to
        sirf local save (sync tab hoga jab SP deploy ho). */
     let serverId = term.serverId || (typeof id === 'number' ? id : 0)
+    const inserting = !serverId
+    let saved = false
     try {
       const r = await saveTerm({ id: serverId, name: d.name.trim(), start: d.start, end: d.end, sessionYearID: term.sessionYearID })
-      if (r?.id) serverId = r.id
+      saved = true
+      if (!inserting && r?.id) serverId = r.id
+      /* Insert ka jawab kabhi poori list ka pehla id hota hai, kabhi id hi
+         nahi. Is term ka asal id naam + dates se lo, warna tick on reh jata. */
+      if (inserting) {
+        const list = await fetchTerms().catch(() => [])
+        const match = [...list].reverse().find((t) => t.name === d.name.trim() && t.start === d.start && t.end === d.end)
+        if (match?.id) serverId = match.id
+        else if (r?.id) serverId = r.id
+      }
     } catch { /* local fallback */ }
-    commit({ ...store, terms: store.terms.map((t) => (t.id === id ? { ...t, name: d.name.trim(), start: d.start, end: d.end, serverId } : t)) })
+    commit({
+      ...store,
+      terms: store.terms.map((t) => (t.id === id
+        ? { ...t, name: d.name.trim(), start: d.start, end: d.end, serverId: serverId || t.serverId, saved: saved || !!serverId }
+        : t)),
+    })
     flash(`“${d.name.trim()}” saved`)
     return undefined
   }
 
   const doDel = async () => {
+    if (!canDelete) { setDel(null); return }
     const term = store.terms.find((t) => t.id === del.id)
     const sid = term?.serverId || (typeof del.id === 'number' ? del.id : 0)
     if (sid) { try { await deleteTerm(sid) } catch { /* local still removes */ } }
@@ -118,9 +135,11 @@ export default function AddTermTab({ store, commit, flash, canCreate = true, can
                 </td></tr>
               ) : store.terms.map((t, i) => {
                 const d = draft[t.id] || {}
-                const fresh = !t.serverId
+                /* Abhi tak save na hui row Create se likhi ja sakti hai.
+                   Save ke baad (saved / serverId) tick sirf Edit permission se. */
+                const fresh = !t.serverId && !t.saved
                 const editOk = canEdit || (canCreate && fresh)
-                const delOk = canDelete || (canCreate && fresh)
+                const delOk = canDelete
                 return (
                   <tr key={t.id}>
                     <td style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{i + 1}</td>
@@ -129,7 +148,7 @@ export default function AddTermTab({ store, commit, flash, canCreate = true, can
                     <td><input className="exm-input" type="date" value={d.end || ''} disabled={!editOk} onChange={(e) => setRow(t.id, 'end', e.target.value)} /></td>
                     <td>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                        <SpinnerButton className="exm-icon-btn" title={editOk ? 'Save' : 'No edit permission'} icon="fa-check" disabled={!editOk} style={{ color: '#16a34a', borderColor: 'rgba(22,163,74,.4)', ...(!editOk ? off : {}) }} onClick={() => { if (editOk) saveRow(t.id) }} />
+                        <SpinnerButton className="exm-icon-btn" title={editOk ? (fresh ? 'Save new term' : 'Save') : 'No edit permission'} icon="fa-check" disabled={!editOk} style={{ color: '#16a34a', borderColor: 'rgba(22,163,74,.4)', ...(!editOk ? off : {}) }} onClick={() => { if (editOk) saveRow(t.id) }} />
                         <button className="exm-icon-btn danger" title={delOk ? 'Delete' : 'No delete permission'} disabled={!delOk} style={!delOk ? off : undefined} onClick={() => { if (delOk) setDel({ id: t.id, name: t.name }) }}><i className="fa-solid fa-xmark" /></button>
                       </div>
                     </td>
