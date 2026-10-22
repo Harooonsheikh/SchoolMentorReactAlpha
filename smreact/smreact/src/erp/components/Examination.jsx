@@ -1147,7 +1147,7 @@ export default function Examination({ toast = () => { } }) {
   }, [pCardCtx]);
   const [pConfirmPublish, setPConfirmPublish] = useState(null);
   const [pLevelPickCtx, setPLevelPickCtx] = useState(null);
-
+  const [pConfirmDeleteRecords, setPConfirmDeleteRecords] = useState(null);
   /* ── Single Assessment state ── */
   const [resTerm, setResTerm] = useState('2nd');
   const [resExamId, setResExamId] = useState(null);
@@ -2473,7 +2473,39 @@ export default function Examination({ toast = () => { } }) {
       setResConfirmPublish(null);
     }
   };
-
+  const handleDeletePreschoolRecords = async () => {
+    if (!pConfirmDeleteRecords) return;
+    if (isOtherSession) { toast('Method not allowed', 'error'); setPConfirmDeleteRecords(null); return; }
+    const { key, className, classID, sectionID, selectExam, termID } = pConfirmDeleteRecords;
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const params = new URLSearchParams({
+        branchId: String(branchID),
+        termId: String(termID ?? ''),
+        examId: String(selectExam ?? ''),
+        classId: String(classID),
+        sectionId: String(sectionID),
+      });
+      const res = await fetch(buildUrl(`/delete-preschool-exam-records?${params.toString()}`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        toast(`Preschool records deleted (${data.data?.marksDeleted ?? 0} marks, ${data.data?.attendanceRemarksDeleted ?? 0} remarks)`, 'success');
+        // List ka progress/status refresh karo
+        loadPreMarkCounts(key, { classID, sectionID }, selectExam, termID);
+        setPResultData(await preschoolService.getPreschoolResultData());
+      } else {
+        toast(data?.message || 'Failed to delete records', 'error');
+      }
+    } catch (err) {
+      console.error('Error deleting preschool exam records:', err);
+      toast('Error deleting preschool exam records', 'error');
+    }
+    setPConfirmDeleteRecords(null);
+  };
   /* Date Sheet / Syllabus publish toggle — backend release API call karta hai
      (query params, isRelease true/false), phir local badge state update. */
   const handleDsSylConfirmPublish = async () => {
@@ -6067,12 +6099,25 @@ export default function Examination({ toast = () => { } }) {
                                     </button>
                                   </Tooltip>
                                 </>}
-                                 {/* <Tooltip text="Delete class data"><button
+                                <Tooltip text="Delete preschool exam records for this class">
+                                  <button
                                     className="ds-del-btn"
-                                    onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resExamId, key, className }); }}
+                                    disabled={isOtherSession}
+                                    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                      setPConfirmDeleteRecords({
+                                        key, className,
+                                        classID: cls.classID, sectionID: cls.sectionID,
+                                        selectExam: resCurrentExam?.selectExam,
+                                        termID: resCurrentExam?.termID ?? selectedTermId,
+                                      });
+                                    }}
                                   >
                                     <i className="fa-solid fa-trash"></i>
-                                  </button></Tooltip> */}
+                                  </button>
+                                </Tooltip>
                                 <button
                                   className={`ds-expand-btn${isOpen ? ' open' : ''}`}
                                   onClick={e => {
@@ -6156,14 +6201,16 @@ export default function Examination({ toast = () => { } }) {
                                                 <td>
                                                   <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
                                                     <Tooltip text="Enter/Edit assessment">
-                                                      <button className="res-action-btn" onClick={() => { loadPromoteClasses(); setPAssessCtx({
-                                                        examId: resExamId, key, className, student: st,
-                                                        examName: resCurrentExam?.name || '', termLabel: resCurrentExam?.name || '',
-                                                        classID: cls.classID, sectionID: cls.sectionID,
-                                                        /* preschool marks API ke liye asli exam/term id (jaisa baaqi result code bhejta hai). */
-                                                        apiExamId: resCurrentExam?.selectExam ?? resExamId,
-                                                        apiTermId: resCurrentExam?.termID ?? selectedTermId,
-                                                      }); }}>
+                                                      <button className="res-action-btn" onClick={() => {
+                                                        loadPromoteClasses(); setPAssessCtx({
+                                                          examId: resExamId, key, className, student: st,
+                                                          examName: resCurrentExam?.name || '', termLabel: resCurrentExam?.name || '',
+                                                          classID: cls.classID, sectionID: cls.sectionID,
+                                                          /* preschool marks API ke liye asli exam/term id (jaisa baaqi result code bhejta hai). */
+                                                          apiExamId: resCurrentExam?.selectExam ?? resExamId,
+                                                          apiTermId: resCurrentExam?.termID ?? selectedTermId,
+                                                        });
+                                                      }}>
                                                         <i className="fa-solid fa-pen-to-square"></i> Assess
                                                       </button>
                                                     </Tooltip>
@@ -6205,185 +6252,185 @@ export default function Examination({ toast = () => { } }) {
                                     liye. Preschool class apni Assess list upar (ternary) me dikhati hai,
                                     is liye ye yahan render na ho warna dono lists ek saath aati thin. */}
                                 {!isPreschool && (
-                                <div className="res-student-scroll">
-                                  <table className="res-student-table">
-                                    <thead>
-                                      <tr>
-                                        <th>#</th>
-                                        <th>Student Name</th>
-                                        <th>Father Name</th>
-                                        <th style={{ textAlign: 'center' }}>Subjects</th>
-                                        <th>Progress</th>
-                                        <th>Status</th>
-                                        <th style={{ textAlign: 'center' }}>Grade</th>
-                                        <th>Actions</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {(() => {
-                                        const apiStudents = resStudentData[key]?.students || [];
-                                        const apiMarks = resStudentData[key]?.marks || [];
-                                        const apiSubjects = resStudentData[key]?.subjects || [];
-                                        const apiRankings = resStudentData[key]?.rankings || [];
+                                  <div className="res-student-scroll">
+                                    <table className="res-student-table">
+                                      <thead>
+                                        <tr>
+                                          <th>#</th>
+                                          <th>Student Name</th>
+                                          <th>Father Name</th>
+                                          <th style={{ textAlign: 'center' }}>Subjects</th>
+                                          <th>Progress</th>
+                                          <th>Status</th>
+                                          <th style={{ textAlign: 'center' }}>Grade</th>
+                                          <th>Actions</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(() => {
+                                          const apiStudents = resStudentData[key]?.students || [];
+                                          const apiMarks = resStudentData[key]?.marks || [];
+                                          const apiSubjects = resStudentData[key]?.subjects || [];
+                                          const apiRankings = resStudentData[key]?.rankings || [];
 
-                                        // FIX 1 — Total/subject-count SIRF Launch-Setup mapped subjects se.
-                                        // getsasubjectbybranchclassandtermtotalsum rows: har row me per-subject
-                                        // `totalMarks` + `subjectID`; row[0].totalMarksSum = poore (possibly unmapped)
-                                        // class ka sum. Isliye [0].totalMarksSum ko blindly trust na kar ke, mapped
-                                        // subjects ke per-subject totalMarks ko sum karte hain.
-                                        // apiMarks (getsauploadmarksbystudentbranchsum) per-student ek PRE-SUMMED
-                                        // obtainedMarks deta hai (koi per-subject breakdown nahi) — isliye obtained ko
-                                        // mapped-subjects tak scope nahi kar sakte; obtMarks jaisa ka waisa rehta hai,
-                                        // magar denominator/subject-count ab sahi (mapped) hai.
-                                        const mappedIDs = (resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean);
-                                        const mappedSet = new Set(mappedIDs);
-                                        // Per-subject total (getsasubjectbybranchclassandtermtotalsum) subjectID ke against.
-                                        const totalByID = {};
-                                        apiSubjects.forEach(s => {
-                                          const id = Number(s.subjectID ?? s.SubjectID ?? 0);
-                                          if (id) totalByID[id] = Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0;
-                                        });
-                                        // Subject list = SAARE Launch-Setup mapped subjects (authoritative). Jo subject
-                                        // mapped hai magar exam me total configure nahi (e.g. "Social Studies Spoken")
-                                        // wo bhi ginte hain (total 0) — isse count 16 aata hai (15 nahi), aur SA-only
-                                        // stale/unmapped subjects nikal jate hain. Mapped set khaali (API fail) → purana
-                                        // behavior (list kabhi 0/— na dikhaye).
-                                        const scopedActive = mappedSet.size > 0;
-                                        const subjCount = scopedActive ? mappedIDs.length : apiSubjects.length;
-                                        const totalMarksSum = scopedActive
-                                          ? mappedIDs.reduce((a, id) => a + (totalByID[id] || 0), 0)
-                                          : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
-                                        // Obtained ko bhi mapped subjects tak scope karo (loadResClassData me per-subject
-                                        // fetch se bana scopedObtained). Denominator scoped hai to numerator bhi scoped —
-                                        // warna >100% aata tha. Scoped obtained na mile to pre-summed obtainedMarks fallback.
-                                        const scopedObt = resStudentData[key]?.scopedObtained || null;
-                                        const useScopedObt = scopedActive && !!resStudentData[key]?.scopedObtainedOk && !!scopedObt;
+                                          // FIX 1 — Total/subject-count SIRF Launch-Setup mapped subjects se.
+                                          // getsasubjectbybranchclassandtermtotalsum rows: har row me per-subject
+                                          // `totalMarks` + `subjectID`; row[0].totalMarksSum = poore (possibly unmapped)
+                                          // class ka sum. Isliye [0].totalMarksSum ko blindly trust na kar ke, mapped
+                                          // subjects ke per-subject totalMarks ko sum karte hain.
+                                          // apiMarks (getsauploadmarksbystudentbranchsum) per-student ek PRE-SUMMED
+                                          // obtainedMarks deta hai (koi per-subject breakdown nahi) — isliye obtained ko
+                                          // mapped-subjects tak scope nahi kar sakte; obtMarks jaisa ka waisa rehta hai,
+                                          // magar denominator/subject-count ab sahi (mapped) hai.
+                                          const mappedIDs = (resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean);
+                                          const mappedSet = new Set(mappedIDs);
+                                          // Per-subject total (getsasubjectbybranchclassandtermtotalsum) subjectID ke against.
+                                          const totalByID = {};
+                                          apiSubjects.forEach(s => {
+                                            const id = Number(s.subjectID ?? s.SubjectID ?? 0);
+                                            if (id) totalByID[id] = Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0;
+                                          });
+                                          // Subject list = SAARE Launch-Setup mapped subjects (authoritative). Jo subject
+                                          // mapped hai magar exam me total configure nahi (e.g. "Social Studies Spoken")
+                                          // wo bhi ginte hain (total 0) — isse count 16 aata hai (15 nahi), aur SA-only
+                                          // stale/unmapped subjects nikal jate hain. Mapped set khaali (API fail) → purana
+                                          // behavior (list kabhi 0/— na dikhaye).
+                                          const scopedActive = mappedSet.size > 0;
+                                          const subjCount = scopedActive ? mappedIDs.length : apiSubjects.length;
+                                          const totalMarksSum = scopedActive
+                                            ? mappedIDs.reduce((a, id) => a + (totalByID[id] || 0), 0)
+                                            : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
+                                          // Obtained ko bhi mapped subjects tak scope karo (loadResClassData me per-subject
+                                          // fetch se bana scopedObtained). Denominator scoped hai to numerator bhi scoped —
+                                          // warna >100% aata tha. Scoped obtained na mile to pre-summed obtainedMarks fallback.
+                                          const scopedObt = resStudentData[key]?.scopedObtained || null;
+                                          const useScopedObt = scopedActive && !!resStudentData[key]?.scopedObtainedOk && !!scopedObt;
 
-                                        if (!apiStudents.length) {
-                                          return (
-                                            <tr>
-                                              <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-                                                No students found for this class.
-                                              </td>
-                                            </tr>
-                                          );
-                                        }
+                                          if (!apiStudents.length) {
+                                            return (
+                                              <tr>
+                                                <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+                                                  No students found for this class.
+                                                </td>
+                                              </tr>
+                                            );
+                                          }
 
-                                        return apiStudents.map((st, si) => {
-                                          const marksEntry = apiMarks.find(m => m.studentID === st.id);
-                                          const rankEntry = apiRankings.find(r => r.studentID === st.id);
-                                          const obtMarks = useScopedObt
-                                            ? (Number(scopedObt[String(st.id)]) || 0)
-                                            : (marksEntry ? Number(marksEntry.obtainedMarks) : 0);
-                                          const pct = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
-                                          // Grade card jaisa — gradingcrud (rsGrades) se % ke hisaab se, taake table & card SAME.
-                                          const grade = (obtMarks > 0 && totalMarksSum > 0)
-                                            ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obtMarks, totalMarksSum))
-                                            : null;
-                                          const gradeBg = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
-                                          const hasMarks = obtMarks > 0;
-                                          const stStatus = hasMarks ? 'Complete' : 'Incomplete';
-                                          const stStatusCls = hasMarks ? 'complete' : 'incomplete';
-                                          const stStatusIcon = hasMarks ? 'fa-circle-check' : 'fa-circle-half-stroke';
-                                          const progW = totalMarksSum > 0 ? Math.min(100, Math.round((obtMarks / totalMarksSum) * 100)) : 0;
-                                          const progColor = hasMarks ? '#16A34A' : '#E2E8F0';
+                                          return apiStudents.map((st, si) => {
+                                            const marksEntry = apiMarks.find(m => m.studentID === st.id);
+                                            const rankEntry = apiRankings.find(r => r.studentID === st.id);
+                                            const obtMarks = useScopedObt
+                                              ? (Number(scopedObt[String(st.id)]) || 0)
+                                              : (marksEntry ? Number(marksEntry.obtainedMarks) : 0);
+                                            const pct = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
+                                            // Grade card jaisa — gradingcrud (rsGrades) se % ke hisaab se, taake table & card SAME.
+                                            const grade = (obtMarks > 0 && totalMarksSum > 0)
+                                              ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obtMarks, totalMarksSum))
+                                              : null;
+                                            const gradeBg = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
+                                            const hasMarks = obtMarks > 0;
+                                            const stStatus = hasMarks ? 'Complete' : 'Incomplete';
+                                            const stStatusCls = hasMarks ? 'complete' : 'incomplete';
+                                            const stStatusIcon = hasMarks ? 'fa-circle-check' : 'fa-circle-half-stroke';
+                                            const progW = totalMarksSum > 0 ? Math.min(100, Math.round((obtMarks / totalMarksSum) * 100)) : 0;
+                                            const progColor = hasMarks ? '#16A34A' : '#E2E8F0';
 
-                                          return (
-                                            <tr key={st.id}>
-                                              <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
-                                              <td style={{ minWidth: 120 }}>
-                                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
-                                                  {st.studentName}
-                                                </div>
-                                                <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
-                                                  {st.registrationNumber || '—'}
-                                                </div>
-                                              </td>
-                                              <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>
-                                                {st.fatherName}
-                                              </td>
-                                              <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>
-                                                {subjCount}
-                                              </td>
-                                              <td style={{ minWidth: 110 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                  <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
-                                                    <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
+                                            return (
+                                              <tr key={st.id}>
+                                                <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
+                                                <td style={{ minWidth: 120 }}>
+                                                  <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+                                                    {st.studentName}
                                                   </div>
-                                                  <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>
-                                                    {obtMarks}/{totalMarksSum || '—'}
+                                                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                                                    {st.registrationNumber || '—'}
+                                                  </div>
+                                                </td>
+                                                <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>
+                                                  {st.fatherName}
+                                                </td>
+                                                <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>
+                                                  {subjCount}
+                                                </td>
+                                                <td style={{ minWidth: 110 }}>
+                                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+                                                      <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
+                                                    </div>
+                                                    <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>
+                                                      {obtMarks}/{totalMarksSum || '—'}
+                                                    </span>
+                                                  </div>
+                                                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                                                    {pct > 0 ? `${pct}%` : 'No marks'}
+                                                  </div>
+                                                </td>
+                                                <td>
+                                                  <span className={`res-st-badge ${stStatusCls}`}>
+                                                    <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
                                                   </span>
-                                                </div>
-                                                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                                                  {pct > 0 ? `${pct}%` : 'No marks'}
-                                                </div>
-                                              </td>
-                                              <td>
-                                                <span className={`res-st-badge ${stStatusCls}`}>
-                                                  <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
-                                                </span>
-                                              </td>
-                                              <td style={{ textAlign: 'center' }}>
-                                                {grade ? (
-                                                  <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
-                                                ) : '—'}
-                                              </td>
-                                              <td>
-                                                <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-                                                  <Tooltip text="Update marks for this student">
-                                                    <button
-                                                      className="res-action-btn"
-                                                      disabled={isOtherSession}
-                                                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                                                      onClick={async () => {
-                                                        if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-                                                        const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
-                                                        if (!saSubjects.length) {
-                                                          toast('No exam subjects found for this class', 'error');
-                                                          return;
-                                                        }
-                                                        setResUpdateCtx({
-                                                          examId: resExamId,
-                                                          key,
-                                                          studentId: st.id,
-                                                          subjects: saSubjects,
-                                                          classID: cls.classID,
-                                                          sectionID: cls.sectionID,
-                                                          selectExam: resCurrentExam?.selectExam || 0,
-                                                          termID: selectedTermId
-                                                        });
-                                                      }}
-                                                    >
-                                                      <i className="fa-solid fa-pen-to-square"></i> Marks
-                                                    </button>
-                                                  </Tooltip>
-                                                  <Tooltip text="Add or edit remarks for this student">
-                                                    <button
-                                                      className="res-action-btn remarks"
-                                                      disabled={isOtherSession}
-                                                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                                                      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } fetchStudentRemarks(cls, st, key); }}
-                                                    >
-                                                      <i className="fa-solid fa-comment-dots"></i> Remarks
-                                                    </button>
-                                                  </Tooltip>
-                                                  <Tooltip text="View this student's result card">
-                                                    <button
-                                                      className="res-action-btn view"
-                                                      onClick={() => { setResCardMarks(null); loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
-                                                    >
-                                                      <i className="fa-solid fa-eye"></i> Card
-                                                    </button>
-                                                  </Tooltip>
-                                                </div>
-                                              </td>
-                                            </tr>
-                                          );
-                                        });
-                                      })()}
-                                    </tbody>
-                                  </table>
-                                </div>
+                                                </td>
+                                                <td style={{ textAlign: 'center' }}>
+                                                  {grade ? (
+                                                    <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
+                                                  ) : '—'}
+                                                </td>
+                                                <td>
+                                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                                                    <Tooltip text="Update marks for this student">
+                                                      <button
+                                                        className="res-action-btn"
+                                                        disabled={isOtherSession}
+                                                        style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                                        onClick={async () => {
+                                                          if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                                          const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
+                                                          if (!saSubjects.length) {
+                                                            toast('No exam subjects found for this class', 'error');
+                                                            return;
+                                                          }
+                                                          setResUpdateCtx({
+                                                            examId: resExamId,
+                                                            key,
+                                                            studentId: st.id,
+                                                            subjects: saSubjects,
+                                                            classID: cls.classID,
+                                                            sectionID: cls.sectionID,
+                                                            selectExam: resCurrentExam?.selectExam || 0,
+                                                            termID: selectedTermId
+                                                          });
+                                                        }}
+                                                      >
+                                                        <i className="fa-solid fa-pen-to-square"></i> Marks
+                                                      </button>
+                                                    </Tooltip>
+                                                    <Tooltip text="Add or edit remarks for this student">
+                                                      <button
+                                                        className="res-action-btn remarks"
+                                                        disabled={isOtherSession}
+                                                        style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                                        onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } fetchStudentRemarks(cls, st, key); }}
+                                                      >
+                                                        <i className="fa-solid fa-comment-dots"></i> Remarks
+                                                      </button>
+                                                    </Tooltip>
+                                                    <Tooltip text="View this student's result card">
+                                                      <button
+                                                        className="res-action-btn view"
+                                                        onClick={() => { setResCardMarks(null); loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
+                                                      >
+                                                        <i className="fa-solid fa-eye"></i> Card
+                                                      </button>
+                                                    </Tooltip>
+                                                  </div>
+                                                </td>
+                                              </tr>
+                                            );
+                                          });
+                                        })()}
+                                      </tbody>
+                                    </table>
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -8242,7 +8289,38 @@ export default function Examination({ toast = () => { } }) {
           </div>
         </div>
       )}
-
+      {pConfirmDeleteRecords && (
+        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setPConfirmDeleteRecords(null); }}>
+          <div className="confirm-dialog">
+            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+            <div className="confirm-hero">
+              <div className="confirm-ring">
+                <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+                  <i className="fa-solid fa-trash"></i>
+                </div>
+              </div>
+            </div>
+            <div className="confirm-body">
+              <div className="confirm-title">Delete Preschool Records</div>
+              <div className="confirm-msg" dangerouslySetInnerHTML={{
+                __html: `Delete all preschool exam marks and attendance remarks for <strong>${pConfirmDeleteRecords.className}</strong>?`,
+              }} />
+              <div className="confirm-hint">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                <span>This permanently removes assessment marks and attendance remarks for this class. Cannot be undone.</span>
+              </div>
+            </div>
+            <div className="confirm-footer">
+              <Tooltip text="Cancel and close">
+                <button className="confirm-btn confirm-btn--cancel" onClick={() => setPConfirmDeleteRecords(null)}>Cancel</button>
+              </Tooltip>
+              <Tooltip text="Yes, Delete (confirm)">
+                <button className="confirm-btn confirm-btn--confirm" onClick={handleDeletePreschoolRecords}>Yes, Delete</button>
+              </Tooltip>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── Bulk Result Cards (all students of a class) ── */}
       {bulkCardCtx && (
         <BulkCardModal
@@ -10240,8 +10318,8 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
     ? rcFilterZeroMarkSubjects(subjectsAll, st)
     : (rsAbsentMode === 'zero' && rdProp
-        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
-        : subjectsAll);
+      ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+      : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -10595,8 +10673,8 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
     ? rcFilterZeroMarkSubjects(subjectsAll, st)
     : (rsAbsentMode === 'zero' && rdProp
-        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
-        : subjectsAll);
+      ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+      : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -10731,7 +10809,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           Subject Performance
         </div>
         {subjData.map((d, idx) => (
-         <div key={`bar-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+          <div key={`bar-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
             <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
             <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${d.isAbs ? 0 : d.pct}%`, background: d.isAbs ? 'rgba(217,119,6,.3)' : d.col, borderRadius: 4 }} />
@@ -10871,13 +10949,13 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   // const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
-    /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
-     lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
+  /* "Count Absent Subjects as Zero Marks": absent subjects AB/0 ke saath total me shamil rehte hain,
+   lekin jis subject ka Total Marks 0 (ya set nahi) ho woh result card par nahi aata. */
   const subjects = rcHideZeroMarkSubjects(rsAbsentMode)
     ? rcFilterZeroMarkSubjects(subjectsAll, st)
     : (rsAbsentMode === 'zero' && rdProp
-        ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
-        : subjectsAll);
+      ? subjectsAll.filter(s => Number((rd.totalMarks || {})[s]) > 0)
+      : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
   const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
@@ -11114,7 +11192,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ fontSize: 8.5, color: C.textM }}>Page 1 of 2</div>
       </div>
 
-         {/* ── PAGE 2 ── */}
+      {/* ── PAGE 2 ── */}
       <div data-rc-page-break="1" style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.hdrText, letterSpacing: '-.01em' }}>Performance Analytics</div>
@@ -11136,7 +11214,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             const barC = d.isAbs ? 'rgba(217,119,6,.25)' : d.col;
             const lblC = d.isAbs ? '#B45309' : (d.pct >= 80 ? C.grn : d.pct >= 60 ? C.acc : C.red);
             return (
-        <div key={`ov-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div key={`ov-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: d.isAbs ? '#B45309' : C.textS, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
                 <div style={{ flex: 1, height: 10, borderRadius: 5, background: '#EFF6FF', overflow: 'hidden' }}>
                   <div style={{ height: '100%', width: `${barW}%`, background: barC, borderRadius: 5, position: 'relative' }}>
@@ -15120,12 +15198,12 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
         {/* Sub-tabs */}
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 0 }}>
-          <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
-            <i className="fa-solid fa-file"></i> Single Assessment
-          </button>
-          <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
-            <i className="fa-solid fa-layer-group"></i> Combined Assessment
-          </button>
+            <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
+              <i className="fa-solid fa-file"></i> Single Assessment
+            </button>
+            <button type="button" style={mode === 'combined' ? tabActive : tabBase} onClick={() => setMode('combined')}>
+              <i className="fa-solid fa-layer-group"></i> Combined Assessment
+            </button>
           </div>
           <div style={{ marginBottom: 8 }}>
             <RcColorToggle isColor={isColor} setIsColor={setIsColor} accent={t.accent} />
@@ -15293,21 +15371,27 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   };
   const [rsConfirm, setRsConfirm] = useState(null);
 
-  const askDeleteGrade = g => { if (guardDelete(g.id)) return; setRsConfirm({
-    kind: 'grade', id: g.id,
-    title: 'Delete Grade',
-    message: `Delete grade rule for <strong>${g.grade || '—'}</strong>?`,
-  }); };
-  const askDeleteSig = s => { if (guardDelete(s.id)) return; setRsConfirm({
-    kind: 'sig', id: s.id,
-    title: 'Delete Signature',
-    message: `Delete signature for <strong>${s.name?.trim() || 'this entry'}</strong>?`,
-  }); };
-  const askDeleteRemark = r => { if (guardDelete(r.id)) return; setRsConfirm({
-    kind: 'remark', id: r.id,
-    title: 'Delete Remark',
-    message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
-  }); };
+  const askDeleteGrade = g => {
+    if (guardDelete(g.id)) return; setRsConfirm({
+      kind: 'grade', id: g.id,
+      title: 'Delete Grade',
+      message: `Delete grade rule for <strong>${g.grade || '—'}</strong>?`,
+    });
+  };
+  const askDeleteSig = s => {
+    if (guardDelete(s.id)) return; setRsConfirm({
+      kind: 'sig', id: s.id,
+      title: 'Delete Signature',
+      message: `Delete signature for <strong>${s.name?.trim() || 'this entry'}</strong>?`,
+    });
+  };
+  const askDeleteRemark = r => {
+    if (guardDelete(r.id)) return; setRsConfirm({
+      kind: 'remark', id: r.id,
+      title: 'Delete Remark',
+      message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
+    });
+  };
 
   const runDelete = async () => {
     if (!rsConfirm) return;
