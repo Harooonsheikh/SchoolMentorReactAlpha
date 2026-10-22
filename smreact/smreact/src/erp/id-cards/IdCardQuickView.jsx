@@ -74,8 +74,9 @@ export default function IdCardQuickView({ kind, entity, ctx = {}, idValue, displ
     ), document.body);
   }
 
-  const issueDate = todayIso();
-  const expiryDate = plusOneYearIso();
+  /* Designer me chuni hui tareekhein; na chuni hon to aaj / aaj + 1 saal. */
+  const issueDate = design.issueDate || todayIso();
+  const expiryDate = design.expiryDate || plusOneYearIso();
   const fullCtx = { ...ctx, school: branding, issueDate, expiryDate };
   const rows = resolveDisplayFields(kind, design.fields, entity, fullCtx);
   const backRows = resolveDisplayFields(kind, design.backFields || [], entity, fullCtx);

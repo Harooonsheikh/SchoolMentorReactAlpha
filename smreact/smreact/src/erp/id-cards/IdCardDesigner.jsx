@@ -154,15 +154,17 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     };
   }, [design.themeId, design.branding.primaryColor, design.branding.secondaryColor]);
   const current = entities[Math.min(previewIdx, entities.length - 1)] || entities[0];
-  const issueDate = todayIso();
-  const expiryDate = plusOneYearIso();
+  /* Issue / Expiry date — user Designer me khud chun sakta hai (design me save hoti hain).
+     Khali ho to purana default: aaj ki tareekh aur aaj se 1 saal baad. */
+  const issueDate = design.issueDate || todayIso();
+  const expiryDate = design.expiryDate || plusOneYearIso();
 
   const rows = useMemo(() => {
     if (!current) return [];
     const ctx = { ...current.ctx, school: branding, issueDate, expiryDate };
     return resolveDisplayFields(kind, design.fields, current.entity, ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, design.fields, branding, kind]);
+}, [current, design.fields, branding, kind, issueDate, expiryDate]);
 
   /* Back-of-card extra fields — independent selection/order from the
      front's `rows`, same resolver + same catalog (a school might want
@@ -172,7 +174,7 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     const ctx = { ...current.ctx, school: branding, issueDate, expiryDate };
     return resolveDisplayFields(kind, design.backFields || [], current.entity, ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, design.backFields, branding, kind]);
+}, [current, design.backFields, branding, kind, issueDate, expiryDate]);
 
   /* QR/barcode each have independent Front/Back visibility (design.qr /
      design.barcode) — "enabled" just means at least one side wants it,
@@ -542,6 +544,31 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
                         </div>
                       );
                     })}
+
+                    <div className="idcd-field-label" style={{ marginTop: 18 }}>Issue &amp; Expiry Date</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                        Issue Date
+                        <input type="date" value={issueDate}
+                          onChange={(e) => patchDesign({ issueDate: e.target.value })}
+                          style={{ height: 34, padding: '0 8px', border: '1px solid var(--border-light, #E2E8F0)', borderRadius: 8, fontSize: 12.5, fontFamily: 'inherit' }} />
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                        Expiry Date
+                        <input type="date" value={expiryDate} min={issueDate}
+                          onChange={(e) => patchDesign({ expiryDate: e.target.value })}
+                          style={{ height: 34, padding: '0 8px', border: '1px solid var(--border-light, #E2E8F0)', borderRadius: 8, fontSize: 12.5, fontFamily: 'inherit' }} />
+                      </label>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted, #64748B)', marginTop: 6 }}>
+                      To show these on the card, tick Issue Date / Expiry Date under "Add More Fields → Additional Information".
+                      {(design.issueDate || design.expiryDate) && (
+                        <button type="button" onClick={() => patchDesign({ issueDate: '', expiryDate: '' })}
+                          style={{ marginLeft: 6, border: 'none', background: 'none', color: 'var(--brand-primary, #2563EB)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0 }}>
+                          Reset to default
+                        </button>
+                      )}
+                    </div>
 
                     <div className="idcd-field-label" style={{ marginTop: 18 }}>Photo</div>
                     <label className="idcd-check-row">
