@@ -981,49 +981,77 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
      2 kiye to 2. Row ki id (load/pehle save se) ho to action:'update' us id ke
      saath, warna action:'insert' (response se nayi id milti hai, sloDbIds me store).
      Har call allSettled se independent — ek fail ho to baqi phir bhi chalein. */
-  const flushSloAssessments = async () => {
-    const ops = [];
-    Object.entries(achievements).forEach(([laId, slos]) => {
-      if (Number.isNaN(Number(laId))) return;   // local-only la id (real DB id nahi)
-      Object.entries(slos || {}).forEach(([sloId, code]) => {
-        if (Number.isNaN(Number(sloId)) || code == null || code === '') return;
-        const rowId = sloDbIds[laId]?.[sloId] || 0;   // id ho to update, warna insert
-        ops.push(
-          preschoolService.saveSloAssessment({
-            id: rowId, gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
-            preSubjectId: Number(laId), preSLOId: Number(sloId), code, examId, termId,
-          }).then(newId => ({ laId, sloId, newId })),
-        );
-      });
+const flushSloAssessments = async () => {
+  const jobs = [];
+  let skipped = 0;
+
+  Object.entries(achievements).forEach(([laId, slos]) => {
+    Object.entries(slos || {}).forEach(([sloId, code]) => {
+      if (code == null || code === '') return;
+      // local-only (default) id: real DB id nahi, save nahi ho sakti
+      if (Number.isNaN(Number(laId)) || Number.isNaN(Number(sloId))) { skipped++; return; }
+      const rowId = sloDbIds[laId]?.[sloId] || 0;
+      // pehle se saved aur badli nahi to dobara bhejne ki zaroorat nahi
+      if (rowId && !sloDirtyRef.current.has(`${laId}_${sloId}`)) return;
+      jobs.push({ laId, sloId, code, rowId });
     });
-    if (!ops.length) return true;
-    setSloSaving(s => ({ ...s, __all: true }));
-    try {
-      const settled = await Promise.allSettled(ops);
-      const ok = settled.filter(r => r.status === 'fulfilled').map(r => r.value);
-      const failed = settled.length - ok.length;
-      setSloDbIds(prev => {
-        const next = { ...prev };
-        ok.forEach(({ laId, sloId, newId }) => { if (newId) next[laId] = { ...(next[laId] || {}), [sloId]: newId }; });
-        return next;
-      });
-      sloDirtyRef.current.clear();
-      if (failed) { toast(`${failed} rating(s) could not be saved — please try again`, 'error'); return false; }
-      return true;
-    } catch (e) {
-      console.error('Could not save SLO assessments:', e);
-      toast('Some ratings could not be saved — please try again', 'error');
-      return false;
-    } finally {
-      setSloSaving(s => { const n = { ...s }; delete n.__all; return n; });
+  });
+
+  if (skipped) {
+    toast(`${skipped} rating(s) save nahi huin — pehle Result Setup me in SLOs ko "Save Changes" karein`, 'error');
+  }
+  if (!jobs.length) return true;
+
+  setSloSaving(s => ({ ...s, __all: true }));
+  let failed = 0;
+  try {
+    // ek ek karke (parallel nahi) taake backend race condition me sirf 1 row na bachaye
+    for (const j of jobs) {
+      try {
+        const newId = await preschoolService.saveSloAssessment({
+          id: j.rowId, gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
+          preSubjectId: Number(j.laId), preSLOId: Number(j.sloId), code: j.code, examId, termId,
+        });
+        if (newId) {
+          setSloDbIds(prev => ({ ...prev, [j.laId]: { ...(prev[j.laId] || {}), [j.sloId]: newId } }));
+        }
+      } catch (e) {
+        failed++;
+        console.error('SLO save failed', j, e);
+      }
     }
-  };
+
+    // DB se dobara load karke ids sync karo (taake agli save duplicate insert na kare)
+    try {
+      const map = await preschoolService.getStudentSloAssessments({
+        gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id, examId, termId,
+      });
+      const ids = {};
+      Object.keys(map).forEach(la => {
+        ids[la] = {};
+        Object.keys(map[la]).forEach(s => { ids[la][s] = map[la][s].id; });
+      });
+      setSloDbIds(ids);
+    } catch (e) { console.error('Resync failed', e); }
+
+    sloDirtyRef.current.clear();
+    if (failed) { toast(`${failed} rating(s) save nahi huin — dobara try karein`, 'error'); return false; }
+    return true;
+  } finally {
+    setSloSaving(s => { const n = { ...s }; delete n.__all; return n; });
+  }
+};
 
   const buildPayload = () => ({ achievements, psd, attendance, teacherRemarks, finalRemarks, ptm, promotion, attRemarksId });
   /* shouldClose lets the footer tell onSave whether this was "Save & Next"
      (stay open, just move tabs) or "Save & Close" (dismiss the modal). Save par
      pehle SLO ratings API (action:insert) jati hain, phir onSave. */
-  const saveAndNext = async () => { await flushSloAssessments(); onSave(buildPayload(), false); if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1); };
+ const saveAndNext = async () => {
+  const ok = await flushSloAssessments();
+  if (!ok) return;
+  onSave(buildPayload(), false);
+  if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1);
+};
   const saveAndClose = async () => { const ok = await flushSloAssessments(); if (ok) onSave(buildPayload(), true); };
 
   return createPortal(

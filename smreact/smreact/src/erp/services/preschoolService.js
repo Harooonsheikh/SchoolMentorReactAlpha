@@ -690,8 +690,8 @@ export async function saveSloAssessment({ id, gradeId, sectionId, studentId, pre
     modifiedAt: now,
     action: action || (isUpdate ? 'update' : 'insert'),
   };
-  const res = await apiPost(SLO_ASSESS_ENDPOINT, payload);
-  return res?.id ?? res?.Id ?? id ?? 0;
+ const res = await apiPost(SLO_ASSESS_ENDPOINT, payload);
+return res?.id ?? res?.Id ?? res?.data?.id ?? res?.data?.Id ?? id ?? 0;
 }
 
 /* Modal open par saved Attendance/Remarks/PTM laao — preschooling-attendance-remarks-crud
