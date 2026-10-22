@@ -203,6 +203,18 @@ export function deleteNetworkProduct(product, networkId = currentNetworkId()) {
   return call('/manage', { method: 'POST', body: inventoryBody({ ...product, active: false }, { action: 'delete', isPOS: true, networkId }) })
 }
 
+/* Delete a POS sale (receipt). Sales ki apni delete alag hai — items/products
+   /manage action:delete se jate hain, lekin sale ka apna REST endpoint hai:
+     DELETE /api/Inventory/delete/{id}?modifiedBy=
+   (ERP ke inventoryService me documented: "delete a SALE"). Stock wapasi aur
+   financial reversal server-side transaction me hoti hai, is liye frontend
+   sirf call kar ke reload karta hai — manually stock chedna double-adjust ka
+   khatra hai. id = numeric sale id (RCP-{id} ka {id}). */
+export function deleteNetworkSale(saleId) {
+  const id = Number(saleId) || 0
+  return call(`/delete/${id}?modifiedBy=${currentUserId()}`, { method: 'DELETE' })
+}
+
 /* Record a POS sale. cart lines: { id, name, price, qty, cat?, barcode? }.
    inHouse: product add ki tarah is tab se — Internal Sale → true, External → false.
    faderate: checkbox on → true + amount/description; off → false, amount 0, description ''. */

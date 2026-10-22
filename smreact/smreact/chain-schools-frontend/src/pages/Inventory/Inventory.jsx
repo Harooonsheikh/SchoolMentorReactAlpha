@@ -8,7 +8,7 @@ import {
 } from './data'
 import {
   fetchInventory, saveNetworkItem, deleteNetworkItem,
-  saveNetworkProduct, deleteNetworkProduct, saveNetworkSale,
+  saveNetworkProduct, deleteNetworkProduct, saveNetworkSale, deleteNetworkSale,
 } from '../../api/inventoryApi'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './Inventory.css'
@@ -271,6 +271,8 @@ function POS({ inv, reload, fire }) {
   const [faderateDesc, setFaderateDesc] = useState('')
   const [prodModal, setProdModal] = useState(null)
   const [del, setDel] = useState(null)
+  /* Sales History me delete karne wali sale (receipt). ConfirmModal is par khulta hai. */
+  const [delSale, setDelSale] = useState(null)
   const mi = POS_MODES[mode]
 
   /* Is tab (Internal/External) ke products — inHouse se. Internal → inHouse true. */
@@ -281,7 +283,7 @@ function POS({ inv, reload, fire }) {
   const today = todayISO()
   const todaySales = modeSales.filter((s) => s.date === today)
   const lowCount = modeProducts.filter((p) => p.stock <= p.low).length
-  const total = cart.reduce((a, l) => a + l.qty * l.price, 0)
+  const total = cart.reduce((a, l) => a + (Number(l.qty) || 0) * l.price, 0)
 
   const addToCart = (p) => {
     if (p.stock <= 0) return fire('Out of stock', 'warn')
@@ -291,11 +293,29 @@ function POS({ inv, reload, fire }) {
       return [...c, { id: p.id, name: p.name, price: p.price, qty: 1, stock: p.stock, cat: p.cat, barcode: p.barcode }]
     })
   }
-  const setQty = (id, q) => setCart((c) => c.map((l) => (l.id === id ? { ...l, qty: Math.max(1, Math.min(q, l.stock)) } : l)))
+  const setQty = (id, q) => setCart((c) => c.map((l) => {
+    if (l.id !== id) return l
+    const n = Math.floor(Number(q))
+    return { ...l, qty: Math.max(1, Math.min(Number.isFinite(n) ? n : 1, l.stock)) }
+  }))
+  /* Manual qty typing: allow empty transient value while editing (no NaN/reset),
+     accept only positive whole numbers, and clamp to available stock. */
+  const onQtyInput = (id, raw) => {
+    if (raw === '') { setCart((c) => c.map((l) => (l.id === id ? { ...l, qty: '' } : l))); return }
+    if (!/^\d+$/.test(raw)) return
+    const n = parseInt(raw, 10)
+    setCart((c) => c.map((l) => {
+      if (l.id !== id) return l
+      if (n > l.stock) { fire(`Only ${l.stock} in stock`, 'warn'); return { ...l, qty: l.stock } }
+      return { ...l, qty: n }
+    }))
+  }
+  const onQtyBlur = (id) => setCart((c) => c.map((l) => (l.id === id ? { ...l, qty: Math.max(1, Math.min(Number(l.qty) || 1, l.stock)) } : l)))
   const removeLine = (id) => setCart((c) => c.filter((l) => l.id !== id))
 
   const checkout = async () => {
     if (!cart.length) return fire('Cart is empty', 'warn')
+    if (cart.some((l) => !(Number.isInteger(Number(l.qty)) && Number(l.qty) >= 1))) return fire('Enter a valid quantity for every item', 'warn')
     try {
       /* inHouse is tab se: Internal Sale → true, External Sale → false (product add jaisa).
          faderate off ho to amount 0 / description '' jata hai (true tabhi jab checkbox on). */
@@ -327,6 +347,18 @@ function POS({ inv, reload, fire }) {
       setDel(null); fire('Product deleted', 'info')
       await reload()
     } catch (e) { fire(e.message || 'Could not delete product', 'warn') }
+  }
+  /* Sale delete: backend /delete/{id} par jata hai (stock & totals ki wapasi
+     server-side transaction me). Yahan sirf call → modal band → reload, taake
+     products ka stock, KPIs aur history sab dubara fetch ho jayen (checkout
+     jaisa). ConfirmModal ka SpinnerButton loading me disabled rehta hai, is
+     liye double-delete nahi hota. Error aaye to toast, data waisa ka waisa. */
+  const doDelSale = async () => {
+    try {
+      await deleteNetworkSale(delSale.id)
+      setDelSale(null); fire('Sales record deleted', 'info')
+      await reload()
+    } catch (e) { fire(e.message || 'Could not delete sales record', 'warn') }
   }
 
   const prodList = modeProducts.filter((p) => { const q = search.trim().toLowerCase(); return !q || `${p.name}${p.barcode}`.toLowerCase().includes(q) })
@@ -377,10 +409,12 @@ function POS({ inv, reload, fire }) {
                 : cart.map((l) => (
                   <div className="inv-cart-line" key={l.id}>
                     <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)' }}>{l.name}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{rs(l.price)} each</div></div>
-                    <button className="inv-qty-btn" onClick={() => setQty(l.id, l.qty - 1)}>−</button>
-                    <span style={{ minWidth: 22, textAlign: 'center', fontWeight: 700 }}>{l.qty}</span>
-                    <button className="inv-qty-btn" onClick={() => setQty(l.id, l.qty + 1)}>+</button>
-                    <span style={{ minWidth: 60, textAlign: 'right', fontWeight: 800 }}>{num(l.qty * l.price)}</span>
+                    <button className="inv-qty-btn" onClick={() => setQty(l.id, (Number(l.qty) || 0) - 1)}>−</button>
+                    <input className="inv-qty-input" type="text" inputMode="numeric" value={l.qty}
+                      onChange={(e) => onQtyInput(l.id, e.target.value)} onBlur={() => onQtyBlur(l.id)}
+                      onFocus={(e) => e.target.select()} aria-label={`Quantity for ${l.name}`} />
+                    <button className="inv-qty-btn" onClick={() => setQty(l.id, (Number(l.qty) || 0) + 1)}>+</button>
+                    <span style={{ minWidth: 60, textAlign: 'right', fontWeight: 800 }}>{num((Number(l.qty) || 0) * l.price)}</span>
                     <button className="inv-qty-btn" style={{ borderColor: 'var(--err)', color: 'var(--err)' }} onClick={() => removeLine(l.id)}><i className="fa-solid fa-xmark" /></button>
                   </div>
                 ))}
@@ -439,9 +473,9 @@ function POS({ inv, reload, fire }) {
           <div className="card-header"><div className="card-title"><i className="fa-solid fa-receipt" /> {mi.title} History</div></div>
           <div className="tbl-wrap">
             <table className="inv-table">
-              <thead><tr><th>Receipt #</th><th>Date</th><th>School Owner</th><th>Items</th><th className="c">Qty</th><th className="r">Amount</th><th className="c">Receipt</th></tr></thead>
+              <thead><tr><th>Receipt #</th><th>Date</th><th>School Owner</th><th>Items</th><th className="c">Qty</th><th className="r">Amount</th><th className="c">Receipt</th><th className="c">Action</th></tr></thead>
               <tbody>
-                {modeSales.length === 0 ? <tr><td colSpan={7}><div className="inv-empty"><i className="fa-solid fa-receipt" /><div style={{ fontSize: 13, fontWeight: 700 }}>No {mode} sales yet</div></div></td></tr>
+                {modeSales.length === 0 ? <tr><td colSpan={8}><div className="inv-empty"><i className="fa-solid fa-receipt" /><div style={{ fontSize: 13, fontWeight: 700 }}>No {mode} sales yet</div></div></td></tr>
                   : modeSales.map((s) => (
                     <tr key={s.no}>
                       <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--brand)' }}>{s.no}</td>
@@ -451,6 +485,7 @@ function POS({ inv, reload, fire }) {
                       <td className="c">{s.lines.reduce((a, l) => a + l.qty, 0)}</td>
                       <td className="r" style={{ fontWeight: 800 }}>{rs(s.total)}</td>
                       <td className="c"><button className="btn-sm" style={{ height: 28 }} onClick={() => printReceipt(s, fire)}><i className="fa-solid fa-print" /></button></td>
+                      <td className="c"><button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} title="Delete sales record" onClick={() => setDelSale(s)}><i className="fa-solid fa-trash-can" /></button></td>
                     </tr>
                   ))}
               </tbody>
@@ -461,6 +496,7 @@ function POS({ inv, reload, fire }) {
 
       {prodModal && <ProductModal modal={prodModal} onClose={() => setProdModal(null)} onSave={saveProd} onToast={fire} />}
       {del && <ConfirmModal title="Delete Product?" body={`“${del.name}” will be removed from the shop.`} onClose={() => setDel(null)} onConfirm={doDelProd} />}
+      {delSale && <ConfirmModal title="Delete Sales Record?" body={`Are you sure you want to delete sales record ${delSale.no}? This action cannot be undone.`} confirmLabel="Yes, Delete" onClose={() => setDelSale(null)} onConfirm={doDelSale} />}
     </>
   )
 }
@@ -922,7 +958,7 @@ function Shell({ title, icon, maxWidth, foot, children, onClose }) {
   )
 }
 
-function ConfirmModal({ title, body, onClose, onConfirm }) {
+function ConfirmModal({ title, body, onClose, onConfirm, confirmLabel = 'Delete' }) {
   return createPortal(
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="modal" style={{ maxWidth: 420 }}>
@@ -932,7 +968,7 @@ function ConfirmModal({ title, body, onClose, onConfirm }) {
           <div className="confirm-sub">{body}</div>
           <div className="confirm-btns">
             <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <SpinnerButton className="btn-danger" icon="fa-trash-can" onClick={onConfirm}>Delete</SpinnerButton>
+            <SpinnerButton className="btn-danger" icon="fa-trash-can" onClick={onConfirm}>{confirmLabel}</SpinnerButton>
           </div>
         </div>
       </div>

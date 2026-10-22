@@ -84,6 +84,9 @@ textarea.inv-input { height: auto; padding: 9px 12px; resize: vertical; }
 .inv-cart-line { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--bl); }
 .inv-cart-line:last-child { border-bottom: none; }
 .inv-qty-btn { width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--bl); background: var(--card); color: var(--t2); cursor: pointer; font-size: 11px; }
+.inv-qty-input { width: 44px; height: 24px; border-radius: 6px; border: 1.5px solid var(--bl); background: var(--card); color: var(--t1); text-align: center; font-size: 12px; font-weight: 700; padding: 0 2px; }
+.inv-qty-input:focus { outline: none; border-color: var(--brand); }
+.inv-qty-input::-webkit-outer-spin-button, .inv-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .inv-cart-foot { padding: 14px 16px; border-top: 1px solid var(--bl); }
 .inv-cart-total { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .inv-cart-total-val { font-size: 22px; font-weight: 800; color: var(--brand); }
