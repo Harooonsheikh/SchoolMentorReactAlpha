@@ -14415,7 +14415,9 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 const RC_PRINT_FIT_SCRIPT = `<script>
 (function(){
   var MM = 96 / 25.4;
-   var PAGE_H = 277 * MM - 4;
+   /* 4px bohot kam tha — print ke waqt rows ki rounding se 7+ subjects par
+      footer agle page par chala jata tha. ~8mm ki gunjaish rakhi hai. */
+   var PAGE_H = 277 * MM - 30;
   var MIN_ZOOM = 0.8;
   var MAX_ZOOM = 1.3;
   var ROW_CAP = 120;
@@ -18082,7 +18084,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
    ═══════════════════════════════════════════════════════════════════ */
 .res-table-head {
   display:grid;
-  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 190px;
+  grid-template-columns: 56px minmax(150px, 1.3fr) 60px 88px 115px 140px 125px 175px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -18108,7 +18110,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-row.open { background:#EFF6FF; }
 .res-td { display:flex; align-items:center; min-width:0; }
 .res-td.cls-name { gap:9px; }
-.res-td.cls-name span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.res-td.cls-name span { white-space:normal; overflow-wrap:anywhere; line-height:1.3; }
 
 .res-released-badge {
   display:inline-flex; align-items:center; gap:5px;
