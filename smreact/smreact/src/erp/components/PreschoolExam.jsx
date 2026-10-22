@@ -998,7 +998,10 @@ const flushSloAssessments = async () => {
   });
 
   if (skipped) {
-    toast(`${skipped} rating(s) save nahi huin — pehle Result Setup me in SLOs ko "Save Changes" karein`, 'error');
+   toast(
+  `${skipped} rating(s) could not be saved. Please save your changes in Result Setup before submitting these SLO ratings.`,
+  'error'
+);
   }
   if (!jobs.length) return true;
 
