@@ -5,7 +5,9 @@ import { getBaseUrl } from '../../utils/apiConfig';
    live (Production). Kisi aur base URL par kuch nahi dikhta. */
 function apiEnvLabel() {
   const base = getBaseUrl().toLowerCase();
-  if (base.startsWith('https://sandbox-alphaapi.schoolmentor.ai')) return { text: 'Dev Env', cls: 'dev' };
+  // Dev: sandbox domains (sandbox-alphaapi or sandbox-erp)
+  if (base.includes('sandbox')) return { text: 'Dev Env', cls: 'dev' };
+  // Production: erp.schoolmentor.ai (but NOT sandbox-erp)
   if (base.startsWith('https://erp.schoolmentor.ai')) return { text: 'Production Env', cls: 'prod' };
   return null;
 }
