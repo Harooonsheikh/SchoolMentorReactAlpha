@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { buildUrl } from '../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
 import { useSetupTabPerms, NO_EDIT_TIP } from '../utils/setupPermissions';
 
@@ -267,20 +267,9 @@ console.log("================================");
 
 if (savedLogo) {
 
-  if (/^https?:\/\//i.test(savedLogo) || savedLogo.startsWith('data:')) {
-
-    console.log("Using Existing Full Logo URL:", savedLogo);
-    setLogoPreview(savedLogo);
-
-  } else {
-
-    const finalLogoUrl = buildUrl(
-      savedLogo.startsWith('/') ? savedLogo : `/${savedLogo}`
-    );
-
-    console.log("Converted Relative Logo URL:", finalLogoUrl);
-    setLogoPreview(finalLogoUrl);
-  }
+  const finalLogoUrl = resolveMediaUrl(savedLogo);
+  console.log("Resolved Logo URL:", finalLogoUrl);
+  setLogoPreview(finalLogoUrl);
 
 } else {
 
