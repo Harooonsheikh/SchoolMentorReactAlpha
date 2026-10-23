@@ -116,6 +116,13 @@ Dashboard.preload();
    shell bundle until the modal is actually requested. */
 const ProfileModal   = lazy(() => import(/* webpackChunkName: "mod-profile" */       './ProfileModal'));
 
+/* Password Manager — sirf apne liye, sirf local dev (npm start) me chalta hai.
+   Production build (npm run build) me ye file shamil hi nahi hoti.
+   Kholne ke liye: ERP me login karke URL ke aakhir me ?pm=1 lagao. */
+const PasswordManagerScreen =
+  process.env.NODE_ENV === 'development'
+    ? lazy(() => import('../../Pages/auth/PasswordManagerScreen'))
+    : null;
 const NAV_LABELS = {
   dashboard: 'Dashboard',
   mentorai: 'Mentor AI',
@@ -601,6 +608,13 @@ if (navId === 'mentorai') {
 
   const toggleTheme = () => setTheme(t => (t === 'light' ? 'dark' : 'light'));
 
+  if (PasswordManagerScreen && new URLSearchParams(window.location.search).get('pm') === '1') {
+    return (
+      <Suspense fallback={null}>
+        <PasswordManagerScreen onClose={() => (window.location.search = '')} />
+      </Suspense>
+    );
+  }
   return (
     <SettingsProvider>
       <style>{CSS}</style>
