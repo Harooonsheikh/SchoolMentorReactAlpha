@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
+import { useNetworkMenuPerms } from '../../api/networkMenuPermissionsApi'
 import { createPortal } from 'react-dom'
 import { loadAcademics, saveAcademics, className, subjectName, subjectsOfClass, sessionStats, vacationSpan, loadResources, saveResources, RES_CATEGORIES, RES_STATUS, resCategory, nextResourceId } from '../../config/academicsStore'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
@@ -76,6 +77,11 @@ const GROUPS = {
 
 export default function Academics() {
   const { schools: connectedSchools } = useView()
+  /* Per-staff permissions (chain User Permissions matrix). Head Office → sab
+     allow. Staff → sirf wahi screens jin par View di gayi — bilkul Examination
+     module jaisa. */
+  const { can, ready: permsReady } = useNetworkMenuPerms()
+  const allow = useCallback((screen, action) => can('Academics', screen, action), [can])
   const [a, setA] = useState(null)
   const [group, setGroup] = useState('scheme')
   const [sub, setSub] = useState('act-cal')
@@ -114,6 +120,18 @@ export default function Academics() {
 
   useEffect(() => { setA(loadAcademics()) }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
+
+  /* Jab permissions aa jayein, agar mojooda tab par View nahi to pehle allowed
+     tab par chale jao — warna staff ko aisi screen dikh jaati jo usay allowed
+     nahi (bilkul Examination ki tarah). */
+  useEffect(() => {
+    if (!permsReady) return
+    const allowed = Object.keys(GROUPS).filter((g) => allow(GROUPS[g].label, 'View'))
+    if (allowed.length && !allowed.includes(group)) {
+      setGroup(allowed[0])
+      setSub(GROUPS[allowed[0]].subs[0][0])
+    }
+  }, [permsReady, allow, group])
 
   /* Releasable content — modal khulte hi ginti sahi dikhni chahiye. Mount par
      ek dafa, aur uske baad har content change par (neeche wala effect). */
@@ -169,10 +187,16 @@ export default function Academics() {
   const commit = (next) => { setA(next); saveAcademics(next) }
   if (!a) return null
 
+  /* Sirf wahi L1 tabs jin par is staff ko View di gayi (Head Office → sab). */
+  const allowedGroupKeys = permsReady ? Object.keys(GROUPS).filter((g) => allow(GROUPS[g].label, 'View')) : []
+  const hasAcademicsAccess = allowedGroupKeys.length > 0
+  /* Release Control (Master/Sub) ki apni permission — na ho to release wale
+     panels chhupa do (content tabs phir bhi apni View permission par chalte). */
+  const canReleaseControl = allow('Release Control (Master/Sub)', 'View')
+
   const switchGroup = (g) => { setGroup(g); setSub(GROUPS[g].subs[0][0]) }
-  /* Term Breakup apne exam store par chalta hai, kisi release workspace me
-     nahi aata — is liye us tab par release wale cards nahi dikhte. */
-  const isBreakup = group === 'breakup'
+  /* Term Breakup ab releasable hai — release panels (Live / Drafts / Release
+     Control) har content tab ki tarah uske upar bhi dikhte hain. */
   const releases = a.releases || []
   const draftReleases = releases.filter((r) => releaseStatusOf(r) !== 'ACTIVE') // Releases & Drafts (non-live)
 
@@ -231,6 +255,7 @@ export default function Academics() {
       lessons: new Set((selectedIds.lessons || []).map(Number)),
       notebooks: new Set((selectedIds.notebooks || []).map(Number)),
       resources: new Set((selectedIds.resources || []).map(Number)),
+      termBreakups: new Set((selectedIds.termBreakups || []).map(Number)),
     } : null
     const isMaster = type === 'master'
     const releaseType = isMaster ? 'MASTER_RELEASE' : 'SUB_RELEASE'
@@ -266,6 +291,15 @@ export default function Academics() {
       if (selPick) live = filterReleaseContent(live, selPick)
     } catch {
       /* Taza index na mile to modal wala content hi sahi. */
+    }
+
+    /* Term Breakup — modal me jo select hue wahi seedhe le lo. Re-fetch ki
+       id-matching (aur purane releases ke khali termBreakupIds) is naye content
+       type ko kabhi gira deti thi, is liye yeh child2 me aate hi nahi the.
+       `content` (modal ka selectedContent) me pehle hi sirf selected term
+       breakups hain, data (id/class/subject) stable hai. */
+    if (content && Array.isArray(content.termBreakups)) {
+      live = { ...live, termBreakups: content.termBreakups }
     }
 
     /* Khali release na banao — na server par, na yahan. Ab jaanch TAZA content
@@ -327,6 +361,7 @@ export default function Academics() {
       lessonPlanIds: live.lessons.map((x) => x.id),
       notebookPlanIds: live.notebooks.map((x) => x.id),
       resourceLibraryIds: live.resources.map((x) => x.id),
+      termBreakupIds: live.termBreakups.map((x) => x.id),
       snapshot,
     }
     commit({ ...a, released: true, releasedAt: relOn, releaseSeq: seq, release, releases: [...releases, release] })
@@ -383,11 +418,23 @@ export default function Academics() {
         <TutorialButton />
       </div>
 
+      {!permsReady ? (
+        <div className="section-card" style={{ padding: 28, textAlign: 'center', color: 'var(--tm)', fontWeight: 700, fontSize: 13 }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8, color: 'var(--brand)' }} /> Loading academics access…
+        </div>
+      ) : !hasAcademicsAccess ? (
+        <div className="section-card" style={{ padding: 40, textAlign: 'center' }}>
+          <div style={{ fontSize: 30, color: 'var(--tm)', opacity: 0.5, marginBottom: 12 }}><i className="fa-solid fa-lock" /></div>
+          <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>No academics access</h3>
+          <p style={{ margin: 0, color: 'var(--tm)', fontSize: 13 }}>Ask your head office to grant View on Activity Calendar, Lesson Plans, Resource Library, or Term Breakup.</p>
+        </div>
+      ) : (
+      <>
       {/* 1 — Currently live */}
-      {!isBreakup && <LiveReleasesCard releases={releases} canRelease={canReleaseWorkspace} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />}
+      {canReleaseControl && <LiveReleasesCard releases={releases} canRelease={canReleaseWorkspace} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />}
 
       {/* 2 — Releases & Drafts (only non-live editable workspaces) */}
-      {!isBreakup && (
+      {canReleaseControl && (
       <div className="ac-rel-bar">
         <span className="ac-rel-bar-lbl"><i className="fa-solid fa-layer-group" /> Releases &amp; Drafts</span>
         <div className="ac-rel-btns">
@@ -401,29 +448,29 @@ export default function Academics() {
       )}
 
       {/* 3 — Release Control panel (contextual to selected workspace) */}
-      {!isBreakup && (
+      {canReleaseControl && (
       <div ref={relBarRef}>
         <ReleaseBar workspaceName={workspaceName} content={workspaceRelContent} isCurrent={view === 'current'} isLiveView={isLiveView} onCreate={setModalType} />
       </div>
       )}
 
       {/* Live read-only notice */}
-      {!isBreakup && isLiveView && (
+      {canReleaseControl && isLiveView && (
         <div className="ac-rel-viewing">
           <i className="fa-solid fa-eye" /> <span>Viewing live release snapshot of <strong>{viewedRelease.label}</strong> ({viewedRelease.batchId}) — live for {viewedRelease.appliesToAllSchools ? 'all member schools' : `${viewedRelease.schoolCount} selected school${viewedRelease.schoolCount !== 1 ? 's' : ''}`}{viewedRelease.validUntil ? `, valid until ${fmtDate(viewedRelease.validUntil)}` : ''}. Revoke this release if you need to edit and release it again.</span>
           <button className="btn-sm res-keep" onClick={() => setView('current')}><i className="fa-solid fa-arrow-left" /> Back to Current Draft</button>
         </div>
       )}
-      {!isBreakup && viewedRelease && !isLiveView && (
+      {canReleaseControl && viewedRelease && !isLiveView && (
         <div className="ac-rel-editing">
           <i className="fa-solid fa-pen" /> <span>Editing <strong>{viewedRelease.label}</strong> ({viewedRelease.batchId}) — {releaseStatusOf(viewedRelease) === 'EXPIRED' ? 'expired' : 'revoked'} workspace. Make changes, then release it again from Release Control above.</span>
           <button className="btn-sm res-keep" onClick={() => setView('current')}><i className="fa-solid fa-arrow-left" /> Back to Current Draft</button>
         </div>
       )}
 
-      {/* 4 — Academic content tabs */}
+      {/* 4 — Academic content tabs — sirf wahi jin par View di gayi. */}
       <div className="ac-l1">
-        {Object.entries(GROUPS).map(([g, cfg]) => (
+        {Object.entries(GROUPS).filter(([g]) => allowedGroupKeys.includes(g)).map(([g, cfg]) => (
           <button key={g} className={`ac-l1-tab${group === g ? ' active' : ''}`} onClick={() => switchGroup(g)}><i className={`fa-solid ${cfg.icon}`} /> {cfg.label}</button>
         ))}
       </div>
@@ -437,11 +484,15 @@ export default function Academics() {
       )}
 
       <div key={`${view}-${contentEpoch}`} className={isLiveView ? 'ac-readonly' : undefined}>
-        {sub === 'act-cal' && <ActivityCalendar a={aView} commit={commitView} fire={fire} live={!viewedRelease} />}
+        {sub === 'act-cal' && <ActivityCalendar a={aView} commit={commitView} fire={fire} live={!viewedRelease}
+          canCreate={allow('Activity Calendar', 'Create')} canEdit={allow('Activity Calendar', 'Edit')} canDelete={allow('Activity Calendar', 'Delete')} canDownload={allow('Activity Calendar', 'Download')} />}
         {/* LIVE — apna data khud API se lati hai (networkID par), is liye
             release-snapshot wale aView/commitView isay nahi milte. */}
-        {sub === 'create-lp' && <CreateLessonPlans toast={fire} />}
-        {sub === 'resources' && <OtherResources a={aView} fire={fire} resources={resourcesView} onResources={onResourcesView} />}
+        {sub === 'create-lp' && <CreateLessonPlans toast={fire}
+          canLpCreate={allow('Lesson Plans', 'Create')} canLpEdit={allow('Lesson Plans', 'Edit')} canLpDelete={allow('Lesson Plans', 'Delete')} canLpDownload={allow('Lesson Plans', 'Download')}
+          canNbCreate={allow('Notebook Plans', 'Create')} canNbEdit={allow('Notebook Plans', 'Edit')} canNbDelete={allow('Notebook Plans', 'Delete')} canNbDownload={allow('Notebook Plans', 'Download')} />}
+        {sub === 'resources' && <OtherResources a={aView} fire={fire} resources={resourcesView} onResources={onResourcesView}
+          canCreate={allow('Resource Library', 'Create')} canEdit={allow('Resource Library', 'Edit')} canDelete={allow('Resource Library', 'Delete')} canDownload={allow('Resource Library', 'Download')} />}
         {/* legacy screens (kept for data; no tabs render these now) */}
         {sub === 'textbooks' && <Textbooks a={aView} commit={commitView} fire={fire} />}
         {sub === 'terms' && <TermSettings a={aView} commit={commitView} fire={fire} />}
@@ -449,8 +500,11 @@ export default function Academics() {
         {sub === 'acad-cal' && <AcademicCalendar a={aView} commit={commitView} fire={fire} />}
         {sub === 'breakup' && <TermBreakups a={aView} commit={commitView} fire={fire} />}
         {/* Term Breakup — Examination module wala component, apne exam store par. */}
-        {sub === 'term-breakup' && <TermBreakup store={examStore} commit={examCommit} flash={fire} />}
+        {sub === 'term-breakup' && <TermBreakup store={examStore} commit={examCommit} flash={fire}
+          canCreate={allow('Term Breakup', 'Create')} canEdit={allow('Term Breakup', 'Edit')} canDelete={allow('Term Breakup', 'Delete')} canDownload={allow('Term Breakup', 'Download')} />}
       </div>
+      </>
+      )}
 
       {modalType && <ReleaseModal type={modalType} releases={releases} relContent={relContent} baseRelease={viewedRelease} baseLabel={workspaceName} busy={relBusy} onClose={() => setModalType(null)} onRelease={applyRelease} />}
 
@@ -532,6 +586,7 @@ function adoptApiRelease(r) {
       notebooks: r.counts.notebooks,
       resourceFiles: r.counts.resources,
       activities: r.counts.activities,
+      termBreakups: idsOfType(r, 'termbreakup').length,
     },
     classWiseSummary: [],
     /* `typeKey` releaseApi banata hai — nayi aur purani dono spelling usi
@@ -540,6 +595,7 @@ function adoptApiRelease(r) {
     lessonPlanIds: idsOfType(r, 'lesson'),
     notebookPlanIds: idsOfType(r, 'notebook'),
     resourceLibraryIds: idsOfType(r, 'resource'),
+    termBreakupIds: idsOfType(r, 'termbreakup'),
     snapshot: { lessonPlans: [], notebookPlans: [], activityCalendar: [], resources: [] },
   }
 }
@@ -589,6 +645,7 @@ function ReleaseBar({ workspaceName, content, isCurrent, isLiveView, onCreate })
             <span><i className="fa-solid fa-list-ul" /> {t.lessons} Lesson Plans</span>
             <span><i className="fa-solid fa-book-open" /> {t.notebooks} Notebook Plans</span>
             <span><i className="fa-solid fa-folder-open" /> {t.resourceFiles} Resource Files</span>
+            <span><i className="fa-solid fa-table-list" /> {t.termBreakups || 0} Term Breakups</span>
           </div>
         </div>
       </div>
@@ -680,6 +737,7 @@ const REL_TYPES = [
   { key: 'lesson', field: 'lessons', label: 'Lesson Plans', icon: 'fa-list-ul' },
   { key: 'notebook', field: 'notebooks', label: 'Notebook Plans', icon: 'fa-book-open' },
   { key: 'resource', field: 'resources', label: 'Resource Library', icon: 'fa-folder-open' },
+  { key: 'termbreakup', field: 'termBreakups', label: 'Term Breakup', icon: 'fa-table-list' },
 ]
 
 function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy, onClose, onRelease }) {
@@ -705,7 +763,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
      release me kaunsi Activities / Lesson Plans / Notebook Plans / Resources
      jayengi. Sets me row ki ASLI server id hoti hai (wahi jo child2 me typeID
      ban kar jati hai), is liye chhaant seedhi hai. */
-  const emptySel = () => ({ activities: new Set(), lessons: new Set(), notebooks: new Set(), resources: new Set() })
+  const emptySel = () => ({ activities: new Set(), lessons: new Set(), notebooks: new Set(), resources: new Set(), termBreakups: new Set() })
   const [sel, setSel] = useState(emptySel)
   /* Kaun se type is release me ja rahe hain. Khali = kuch nahi — Head Office
      pehle type chunta hai, phir chahe to usi type ke andar se items chhaant
@@ -773,6 +831,25 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content])
 
+  /* Term Breakup — Class → Subject → items (har master ek class+subject+term).
+     Lesson/Notebook/Resource jaisa drill-down. */
+  const termBreakupTree = useMemo(() => {
+    const byClass = new Map()
+    content.termBreakups.forEach((tb) => {
+      const cid = Number(tb.classID) || 0
+      const sid = Number(tb.subjectID) || 0
+      if (!byClass.has(cid)) byClass.set(cid, new Map())
+      const bySubj = byClass.get(cid)
+      if (!bySubj.has(sid)) bySubj.set(sid, [])
+      bySubj.get(sid).push(tb)
+    })
+    return [...byClass.entries()].map(([cid, bySubj]) => ({
+      classId: cid, name: classNameOf(cid),
+      subjects: [...bySubj.entries()].map(([sid, items]) => ({ subjectId: sid, name: subjNameOf(sid), items })),
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content])
+
   /* Source badle to selection reset, aur pehla worked example khol do taake
      drill-down foran nazar aaye. */
   useEffect(() => {
@@ -782,6 +859,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
     if (lessonTree[0]) { next.add(`lp-c-${lessonTree[0].classId}`); if (lessonTree[0].subjects[0]) next.add(`lp-c-${lessonTree[0].classId}-s-${lessonTree[0].subjects[0].subjectId}`) }
     if (notebookTree[0]) { next.add(`nb-c-${notebookTree[0].classId}`); if (notebookTree[0].subjects[0]) next.add(`nb-c-${notebookTree[0].classId}-s-${notebookTree[0].subjects[0].subjectId}`) }
     if (resourceTree[0]) { next.add(`res-c-${resourceTree[0].classId}`); if (resourceTree[0].subjects[0]) next.add(`res-c-${resourceTree[0].classId}-s-${resourceTree[0].subjects[0].subjectId}`) }
+    if (termBreakupTree[0]) { next.add(`tb-c-${termBreakupTree[0].classId}`); if (termBreakupTree[0].subjects[0]) next.add(`tb-c-${termBreakupTree[0].classId}-s-${termBreakupTree[0].subjects[0].subjectId}`) }
     setOpenKeys(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source])
@@ -798,6 +876,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
       lessons: pick('lesson', 'lessons'),
       notebooks: pick('notebook', 'notebooks'),
       resources: pick('resource', 'resources'),
+      termBreakups: pick('termbreakup', 'termBreakups'),
     }
   }, [content, sel, types])
   const noTypes = types.size === 0
@@ -883,6 +962,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
     selectedIds: {
       activities: [...sel.activities], lessons: [...sel.lessons],
       notebooks: [...sel.notebooks], resources: [...sel.resources],
+      termBreakups: [...sel.termBreakups],
     },
   }, summary)
 
@@ -1145,6 +1225,56 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
                 </div>
               )}
 
+              {/* Term Breakup — Class → Subject → items */}
+              {types.has('termbreakup') && termBreakupTree.length > 0 && (
+                <div className="rel-pick">
+                  <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-table-list" /> Term Breakup <span className="rel-sec-count">{sel.termBreakups.size} selected</span></div>
+                  {termBreakupTree.map((c) => {
+                    const ckey = `tb-c-${c.classId}`
+                    const cKeys = c.subjects.flatMap((s) => s.items.map((it) => it.id))
+                    return (
+                      <div className={`rel-cls${openKeys.has(ckey) ? ' open' : ''}`} key={ckey}>
+                        <button className="rel-cls-head" onClick={() => toggleOpen(ckey)}>
+                          <TriCheckbox state={triState(cKeys, sel.termBreakups)} onChange={() => toggleKeys('termBreakups', cKeys)} />
+                          <div className="rel-cls-ic"><i className="fa-solid fa-chalkboard-user" /></div>
+                          <div className="rel-cls-main"><div className="rel-cls-name">{c.name}</div><div className="rel-cls-sub">{cKeys.length} term breakup{cKeys.length !== 1 ? 's' : ''} available</div></div>
+                          <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(ckey) ? ' open' : ''}`} />
+                        </button>
+                        {openKeys.has(ckey) && (
+                          <div className="rel-cls-body rel-cls-body-tree">
+                            {c.subjects.map((s) => {
+                              const skey = `${ckey}-s-${s.subjectId}`
+                              const sKeys = s.items.map((it) => it.id)
+                              return (
+                                <div className="rel-acc2" key={skey}>
+                                  <button className="rel-acc2-head" onClick={() => toggleOpen(skey)}>
+                                    <TriCheckbox state={triState(sKeys, sel.termBreakups)} onChange={() => toggleKeys('termBreakups', sKeys)} />
+                                    <span className="rel-acc2-name">{s.name}</span>
+                                    <span className="rel-cls-total">{sKeys.length}</span>
+                                    <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(skey) ? ' open' : ''}`} />
+                                  </button>
+                                  {openKeys.has(skey) && (
+                                    <div className="rel-schools rel-acc3-list">
+                                      {s.items.map((it) => (
+                                        <label key={it.id} className={`rel-school${sel.termBreakups.has(it.id) ? ' on' : ''}`}>
+                                          <input type="checkbox" checked={sel.termBreakups.has(it.id)} onChange={() => toggleOne('termBreakups', it.id)} />
+                                          <span className="rel-school-name">Term Breakup{it.termID ? ` — Term #${it.termID}` : ''}</span>
+                                          <span className="rel-school-city"><i className="fa-solid fa-table-list" /> #{it.id}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
               {!noTypes && nothingSelected && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one content item to release.</div>}
 
               {/* Top summary cards — selected content only */}
@@ -1154,6 +1284,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
                 {card('fa-list-ul', t.lessons, 'Lesson Plans', 'r-teal')}
                 {card('fa-book-open', t.notebooks, 'Notebook Plans', 'r-purple')}
                 {card('fa-folder-open', t.resourceFiles, 'Resource Files', 'r-amber')}
+                {card('fa-table-list', t.termBreakups || 0, 'Term Breakups', 'r-teal')}
                 {card('fa-chalkboard', t.classes, 'Classes', 'r-blue')}
                 {card('fa-hourglass-half', validDays ? `${dn}d` : '—', 'Validity', 'r-green')}
               </div>
@@ -1870,7 +2001,7 @@ function EntryModal({ modal, onClose, onSave, onToast }) {
    `live` sirf mojooda draft ke liye true hai. Koi purana release dekhte waqt
    uska snapshot dikhta hai — wo tareekhi record hai, us par API ko haath
    nahi lagaya jata aur purana localStorage rasta hi chalta hai. */
-function ActivityCalendar({ a, commit, fire, live = true }) {
+function ActivityCalendar({ a, commit, fire, live = true, canCreate = true, canEdit = true, canDelete = true, canDownload = true }) {
   const networkId = live ? currentNetworkId() : 0
   const now = new Date()
   const [calY, setCalY] = useState(now.getFullYear())
@@ -2044,8 +2175,8 @@ function ActivityCalendar({ a, commit, fire, live = true }) {
                 <button className="ac-nav-btn" onClick={next}><i className="fa-solid fa-chevron-right" /></button>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button className="ac-exp pdf" onClick={() => exportReport(report(), 'pdf', fire)}><i className="fa-solid fa-file-pdf" /> PDF</button>
-                <button className="ac-exp word" onClick={() => exportReport(report(), 'word', fire)}><i className="fa-brands fa-microsoft" /> Word</button>
+                <button className="ac-exp pdf" disabled={!canDownload} title={!canDownload ? 'You do not have permission to download' : undefined} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (canDownload) exportReport(report(), 'pdf', fire) }}><i className="fa-solid fa-file-pdf" /> PDF</button>
+                <button className="ac-exp word" disabled={!canDownload} title={!canDownload ? 'You do not have permission to download' : undefined} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (canDownload) exportReport(report(), 'word', fire) }}><i className="fa-brands fa-microsoft" /> Word</button>
               </div>
             </div>
             <div className="ac-dow-row">{DOW.map((d) => <div className="ac-dow" key={d}>{d}</div>)}</div>
@@ -2073,7 +2204,7 @@ function ActivityCalendar({ a, commit, fire, live = true }) {
               <div className="card-title"><i className="fa-solid fa-list" /> Activities</div>
               <div className="card-sub">{acts.length} activit{acts.length === 1 ? 'y' : 'ies'} scheduled</div>
             </div>
-            <button className="btn-primary" onClick={() => setModal({ mode: 'add' })} disabled={busy}><i className="fa-solid fa-plus" /> Add Activity</button>
+            <button className="btn-primary" onClick={() => setModal({ mode: 'add' })} disabled={busy || !canCreate} title={!canCreate ? 'You do not have permission to add' : undefined} style={!canCreate ? { opacity: .45, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-plus" /> Add Activity</button>
           </div>
 
           {/* Search + ek cycling status filter — ERP ke act-search-row jaisa. */}
@@ -2115,8 +2246,8 @@ function ActivityCalendar({ a, commit, fire, live = true }) {
                     {x.purpose && <div className="ac-evt-purpose">{x.purpose}</div>}
                   </div>
                   <div className="act-event-actions">
-                    <button className="btn-sm" style={{ height: 28 }} title="Edit activity" disabled={busy} onClick={() => setModal({ mode: 'edit', act: x })}><i className="fa-solid fa-pen" /></button>
-                    <button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} title="Delete activity" disabled={busy} onClick={() => setDel(x)}><i className="fa-solid fa-trash-can" /></button>
+                    <button className="btn-sm" style={{ height: 28, ...(canEdit ? {} : { opacity: .45, cursor: 'not-allowed' }) }} title={canEdit ? 'Edit activity' : 'No permission to edit'} disabled={busy || !canEdit} onClick={() => setModal({ mode: 'edit', act: x })}><i className="fa-solid fa-pen" /></button>
+                    <button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)', ...(canDelete ? {} : { opacity: .45, cursor: 'not-allowed' }) }} title={canDelete ? 'Delete activity' : 'No permission to delete'} disabled={busy || !canDelete} onClick={() => setDel(x)}><i className="fa-solid fa-trash-can" /></button>
                   </div>
                 </div>
               )
@@ -2348,7 +2479,7 @@ ${r.desc ? `<div class="desc">${esc(r.desc)}</div>` : ''}
        dropdowns bhi LaunchSetup ki asli ids se bharte hain.
      • snapshot (release ka frozen copy) → wahi purana local behaviour;
        release ka data jama hua hai, use API par nahi le jate. */
-function OtherResources({ a, fire, resources, onResources }) {
+function OtherResources({ a, fire, resources, onResources, canCreate = true, canEdit = true, canDelete = true, canDownload = true }) {
   // resources prop + onResources → editable snapshot; resources prop only → read-only; neither → live API
   const snapshot = resources !== undefined
   const live = !snapshot
@@ -2498,7 +2629,7 @@ function OtherResources({ a, fire, resources, onResources }) {
     <div className="section-card">
       <div className="card-header">
         <div><div className="card-title"><i className="fa-solid fa-folder-open" /> Resource Library</div><div className="card-sub">Upload class-wise &amp; subject-wise PDF resources for connected schools.</div></div>
-        {!readOnly && <button className="btn-primary" disabled={live && (loading || busy)} onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-upload" /> Add Resource</button>}
+        {!readOnly && <button className="btn-primary" disabled={(live && (loading || busy)) || !canCreate} title={!canCreate ? 'No permission to add' : undefined} style={!canCreate ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-upload" /> Add Resource</button>}
       </div>
       <div style={{ padding: 16 }}>
         <div className="ac-info-strip"><i className="fa-solid fa-circle-info" /><span>Upload class-wise and subject-wise academic resources such as worksheets, summer vacation work, question papers, or other PDF documents. These resources can later be viewed by connected schools.</span></div>
@@ -2543,9 +2674,9 @@ function OtherResources({ a, fire, resources, onResources }) {
                     <div className="res-card-file"><i className="fa-solid fa-file-pdf" /> <span className="res-file-name">{r.fileName || 'No file attached'}</span>{r.uploadDate && <span className="res-card-date"><i className="fa-regular fa-calendar" /> {fmtDate(r.uploadDate)}</span>}</div>
                     <div className="res-card-actions">
                       <button className="btn-sm res-keep" onClick={() => viewPdf(r)}><i className="fa-solid fa-eye" /> View</button>
-                      <button className="btn-sm res-keep" onClick={() => downloadPdf(r)}><i className="fa-solid fa-download" /> Download</button>
-                      {!readOnly && <button className="btn-sm" disabled={busy} onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen" /> Edit</button>}
-                      {!readOnly && <button className="btn-sm" disabled={busy} style={{ borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(r)}><i className="fa-solid fa-trash-can" /></button>}
+                      <button className="btn-sm res-keep" disabled={!canDownload} title={!canDownload ? 'No permission to download' : undefined} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => downloadPdf(r)}><i className="fa-solid fa-download" /> Download</button>
+                      {!readOnly && <button className="btn-sm" disabled={busy || !canEdit} title={!canEdit ? 'No permission to edit' : undefined} style={!canEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen" /> Edit</button>}
+                      {!readOnly && <button className="btn-sm" disabled={busy || !canDelete} title={!canDelete ? 'No permission to delete' : undefined} style={{ borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)', ...(canDelete ? {} : { opacity: .45, cursor: 'not-allowed' }) }} onClick={() => setDel(r)}><i className="fa-solid fa-trash-can" /></button>}
                     </div>
                   </div>
                 )

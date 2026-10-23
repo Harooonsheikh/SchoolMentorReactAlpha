@@ -56,6 +56,7 @@ export const CHILD_TYPE = {
   notebook: 'NoteBook Plan',
   lesson: 'Lesson Plan',
   resource: 'Resource File',
+  termbreakup: 'Term Breakup',
 }
 
 /* Parhte waqt purani spelling bhi chalti hai: jo releases pehle ban chuke
@@ -69,6 +70,7 @@ const TYPE_ALIASES = {
   lesson: ['Lesson Plan', 'Lesson Plans', 'classworklessonplan'],
   notebook: ['NoteBook Plan', 'NoteBook Plans', 'notebooklessonplan'],
   resource: ['Resource File', 'Resource Files', 'resourcelibrary'],
+  termbreakup: ['Term Breakup', 'Term Breakups', 'TermBreakup', 'TermBreakups', 'lptermbreakup'],
 }
 const TYPE_KEY = new Map()
 Object.entries(TYPE_ALIASES).forEach(([key, names]) => names.forEach((n) => TYPE_KEY.set(norm(n), key)))

@@ -7,6 +7,7 @@ import * as hrService from '../services/hrService';
 import * as accountsService from '../services/accountsService';
 import * as attendanceService from '../services/attendanceService';
 import * as approvalsService from '../services/approvalsService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
 import { qrSVG } from '../utils/qrcode';
@@ -3675,6 +3676,9 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
      list se nikal jaati hai, is liye badge khud saaf ho jata hai. */
   const [pendingMap, setPendingMap] = useState({});   // employeeId → { approvalId, requestNo }
   const [withdrawCfg, setWithdrawCfg] = useState(null); // { emp, pend }
+  /* Pending-add ghost employees (newly added, awaiting approval, no real row
+     yet). Hydrated from sessionStorage so a refresh keeps them visible. */
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(HR_PENDING_MOD));
 
   const loadPending = async () => {
     try {
@@ -3687,11 +3691,42 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
           m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
         }
       });
+      /* Drop ghost add-rows whose request left "pending"; badge the rest. */
+      const ghosts = reconcilePendingAdds(HR_PENDING_MOD, reqs);
+      ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      setPendingAddRows(ghosts);
       setPendingMap(m);
     } catch (e) { /* non-fatal — badge just won't show */ }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadPending(); }, []);
+
+  /* Approval kahin aur (Approvals screen) se hone ke baad jab user is list par
+     wapas aaye / tab focus kare, to employee list + pending dono refresh —
+     taake approve-shuda employee ki asli row (apne actions menu ke saath) aa
+     jaye aur ghost row khud hat jaye. */
+  useEffect(() => {
+    const refresh = () => { reloadEmps(); loadPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* While anything is awaiting approval, poll lightly so an approval done
+     elsewhere (even via in-app navigation, which fires no window focus)
+     reflects here within a few seconds. Stops once nothing is pending. */
+  const hasPending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
+  useEffect(() => {
+    if (!hasPending) return undefined;
+    const t = setInterval(() => { reloadEmps(); loadPending(); }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPending]);
 
   /* Pending response aaya → toast + badge (optimistic), list me kuch apply nahi. */
   const markPending = (empId, pend, fallbackMsg) => {
@@ -3709,6 +3744,8 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
     }
     toast('Request withdrawn', 'success');
     setPendingMap((m) => { const n = { ...m }; delete n[String(emp?.id)]; return n; });
+    /* If it was a pending-add ghost row, drop it immediately. */
+    if (emp?._pendingAdd) setPendingAddRows(removePendingAdd(HR_PENDING_MOD, emp.id));
     reloadEmps();
     loadPending();
   };
@@ -3719,7 +3756,31 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
       if (resp?.pending) {
         setAddOpen(false);
         await reloadEmps();
-        markPending(resp.id, resp.pending, `${getFullName(payload)} sent for approval`);
+        /* Add approval-pending: backend ne abhi asli employee nahi banaya.
+           Form data se ghost row banate hain jo list me Pending badge +
+           Withdraw ke saath dikhe — normal insertion jaisa. */
+        const pend = resp.pending;
+        const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+        const ghostRow = {
+          id: rid,
+          _pendingAdd: true,
+          firstName: payload.firstName || '',
+          lastName: payload.lastName || '',
+          name: payload.name || '',
+          eid: payload.eid || '',
+          dId: payload.dId || 0,
+          desId: payload.desId || 0,
+          phone: payload.phone || '',
+          photo: payload.photo || '',
+          status: 'Active',
+          tasks: [], letters: [], docs: [], subjects: {}, attendance: [],
+        };
+        setPendingAddRows(addPendingAdd(HR_PENDING_MOD, {
+          rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row: ghostRow,
+        }));
+        setPendingMap((m) => ({ ...m, [rid]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+        toast(pend.message || `${getFullName(payload)} sent for approval`, 'info');
+        loadPending();
         return;
       }
       await reloadEmps();
@@ -3877,7 +3938,7 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
     const qq = q.trim().toLowerCase();
     const fd = Number(fDept) || 0;
     const fds = Number(fDesig) || 0;
-    return emps.filter(e => {
+    return mergeHrGhosts(emps, pendingAddRows).filter(e => {
       const isInactive = e.status !== 'Active';
       if (sub === 'inactive' && !isInactive) return false;
       if (sub === 'active' && isInactive) return false;
@@ -4226,6 +4287,34 @@ function getFullName(e) {
   return `${e.firstName || e.name || ''}${e.lastName ? ' ' + e.lastName : ''}`.trim() || '—';
 }
 
+/* Pending-add ghost store module key (Employee Management). */
+const HR_PENDING_MOD = 'employee';
+
+/* Merge pending-add ghost employees into the list so a freshly added
+   (approval-pending) employee shows as a normal row with a Pending badge,
+   even though the backend hasn't created the real record yet. A ghost is
+   dropped once a real employee with the same EID appears (approved). */
+function mergeHrGhosts(emps, ghosts) {
+  const base = Array.isArray(emps) ? emps : [];
+  if (!ghosts || !ghosts.length) return base;
+  const real = base.filter((e) => !e._pendingAdd);
+  const realEids = new Set(real.map((e) => String(e.eid || '').trim().toLowerCase()).filter(Boolean));
+  const realNames = new Set(real.map((e) => getFullName(e).trim().toLowerCase()).filter((n) => n && n !== '—'));
+  const add = ghosts
+    .map((g) => g && g.row)
+    .filter((r) => {
+      if (!r) return false;
+      const eid = String(r.eid || '').trim().toLowerCase();
+      const nm = getFullName(r).trim().toLowerCase();
+      /* Once the real (approved) employee shows up — by EID or name — drop the
+         ghost so the normal row (with its actions menu) takes over. */
+      if (eid && realEids.has(eid)) return false;
+      if (nm && nm !== '—' && realNames.has(nm)) return false;
+      return true;
+    });
+  return [...add, ...base];
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    LETTER VIEW MODAL — ERP-themed viewer for a saved issue letter.
    The stored file is served as application/msword (so a raw new-tab open
@@ -4525,6 +4614,7 @@ function EmployeeRow({
             </span>
           )}
           <div className="menu-wrap">
+            {!emp._pendingAdd && (
             <Tooltip text="More Actions">
               <button
                 type="button"
@@ -4537,6 +4627,7 @@ function EmployeeRow({
                 <i className="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i>
               </button>
             </Tooltip>
+            )}
             {menuOpen && (
               <div className="drop-menu" role="menu">
                 {isInactive ? (

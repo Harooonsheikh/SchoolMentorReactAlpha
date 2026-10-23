@@ -22,7 +22,7 @@ import SpinnerButton from '../../components/SpinnerButton'
    network level) via examinationApi.js, with the examination store
    (store.termBreakups) as a local-first cache/fallback.
    ═══════════════════════════════════════════════════════════════════ */
-export default function TermBreakup({ store, commit, flash, onBack }) {
+export default function TermBreakup({ store, commit, flash, onBack, canCreate = true, canEdit = true, canDelete = true, canDownload = true }) {
   const session = examSession()
   const networkId = currentNetworkId()
   const [classes, setClasses] = useState([])   // asli grades: [{ id (gradeID), name }]
@@ -186,9 +186,9 @@ export default function TermBreakup({ store, commit, flash, onBack }) {
                 <div className="exm-tb-name">{c.name}</div>
                 <div className="exm-tb-sub">{subjects.length} subject{subjects.length !== 1 ? 's' : ''}</div>
               </div>
-              <button className="exm-export pdf" onClick={(e) => { e.stopPropagation(); exportReport(classReport(c), 'pdf', flash) }}><i className="fa-solid fa-file-pdf" /> PDF</button>
-              <button className="exm-export word" onClick={(e) => { e.stopPropagation(); exportReport(classReport(c), 'word', flash) }}><i className="fa-brands fa-microsoft" /> Word</button>
-              <button className="exm-ex-edit" onClick={(e) => { e.stopPropagation(); setEdit(c) }}><i className="fa-solid fa-pen" /> Update</button>
+              <button className="exm-export pdf" disabled={!canDownload} title={!canDownload ? 'No permission to download' : undefined} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={(e) => { e.stopPropagation(); exportReport(classReport(c), 'pdf', flash) }}><i className="fa-solid fa-file-pdf" /> PDF</button>
+              <button className="exm-export word" disabled={!canDownload} title={!canDownload ? 'No permission to download' : undefined} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={(e) => { e.stopPropagation(); exportReport(classReport(c), 'word', flash) }}><i className="fa-brands fa-microsoft" /> Word</button>
+              <button className="exm-ex-edit" disabled={!(canCreate || canEdit || canDelete)} title={!(canCreate || canEdit || canDelete) ? 'No permission' : undefined} style={!(canCreate || canEdit || canDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={(e) => { e.stopPropagation(); setEdit(c) }}><i className="fa-solid fa-pen" /> Update</button>
               <button className={`exm-ex-expand${open ? ' open' : ''}`} title={open ? 'Hide details' : 'Show details'} onClick={(e) => { e.stopPropagation(); openClass(c) }}><i className="fa-solid fa-chevron-down" /></button>
             </div>
             {open && (
@@ -219,13 +219,13 @@ export default function TermBreakup({ store, commit, flash, onBack }) {
         )
       })}
 
-      {edit && <BreakupModal cls={edit} subjects={subjectsOf(edit.id)} store={store} session={session} flash={flash} onClose={() => setEdit(null)} onSave={(wb) => saveBreakup(edit.id, wb)} onPersist={persistCombo} />}
+      {edit && <BreakupModal cls={edit} subjects={subjectsOf(edit.id)} store={store} session={session} flash={flash} onClose={() => setEdit(null)} onSave={(wb) => saveBreakup(edit.id, wb)} onPersist={persistCombo} canCreate={canCreate} canEdit={canEdit} canDelete={canDelete} />}
     </div>
   )
 }
 
 /* ── Update modal: term tabs + subject tabs + units/topics editor ── */
-function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSave, onPersist }) {
+function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSave, onPersist, canCreate = true, canEdit = true, canDelete = true }) {
   const [mTerm, setMTerm] = useState(store.terms[0]?.id || null)
   const [mSubj, setMSubj] = useState(subjects[0]?.id || null)
   const [wb, setWb] = useState(() => JSON.parse(JSON.stringify(store.termBreakups?.[cls.id] || {})))
@@ -367,10 +367,10 @@ function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSa
                     <input className="exm-input" type="number" min="0" value={u.weeks} style={{ textAlign: 'center' }} onChange={(e) => setUnit(ui, 'weeks', e.target.value)} placeholder="Weeks" />
                   </div>
                   <div className="tbm-unit-top-btns">
-                    <button className="tbm-unit-save-btn" title={unitReady ? 'Update weeks' : 'Unit number, name & weeks (> 0) required'} disabled={saving || !unitReady} onClick={() => updateWeeks(ui)}>
+                    <button className="tbm-unit-save-btn" title={!canEdit ? 'No permission to edit' : (unitReady ? 'Update weeks' : 'Unit number, name & weeks (> 0) required')} disabled={saving || !unitReady || !canEdit} style={!canEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => updateWeeks(ui)}>
                       <i className="fa-solid fa-pen" />
                     </button>
-                    <button className="tbm-topic-del-btn" title="Remove unit" disabled={saving} onClick={() => delUnit(ui)}>
+                    <button className="tbm-topic-del-btn" title={!canDelete ? 'No permission to delete' : 'Remove unit'} disabled={saving || !canDelete} style={!canDelete ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => delUnit(ui)}>
                       <i className="fa-solid fa-trash-can" />
                     </button>
                   </div>
@@ -389,10 +389,10 @@ function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSa
                         <input className="exm-input" type="number" min="0" value={tp.periods} style={{ textAlign: 'center' }} onChange={(e) => setTopic(ui, ti, 'periods', e.target.value)} placeholder="0" />
                       </div>
                       <div className="tbm-topic-action-cell">
-                        <button className="tbm-unit-save-btn" title={unitReady ? 'Save unit' : 'Unit number, name & weeks (> 0) required'} disabled={saving || !unitReady} onClick={persistCurrent}>
+                        <button className="tbm-unit-save-btn" title={!(canCreate || canEdit) ? 'No permission to save' : (unitReady ? 'Save unit' : 'Unit number, name & weeks (> 0) required')} disabled={saving || !unitReady || !(canCreate || canEdit)} style={!(canCreate || canEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={persistCurrent}>
                           <i className="fa-solid fa-floppy-disk" />
                         </button>
-                        <button className="tbm-topic-del-btn" title="Delete topic" disabled={saving} onClick={() => delTopic(ui, ti)}>
+                        <button className="tbm-topic-del-btn" title={!canDelete ? 'No permission to delete' : 'Delete topic'} disabled={saving || !canDelete} style={!canDelete ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => delTopic(ui, ti)}>
                           <i className="fa-solid fa-trash" />
                         </button>
                       </div>
@@ -401,20 +401,20 @@ function BreakupModal({ cls, subjects = [], store, session, flash, onClose, onSa
                 </div>
 
                 <div style={{ padding: '0 2px 6px' }}>
-                  <button className="tbm-topic-add-btn" onClick={() => addTopic(ui)}><i className="fa-solid fa-plus" /> Add Topic</button>
+                  <button className="tbm-topic-add-btn" disabled={!canCreate} title={!canCreate ? 'No permission to add' : undefined} style={!canCreate ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => addTopic(ui)}><i className="fa-solid fa-plus" /> Add Topic</button>
                 </div>
               </div>
               )
             })}
 
-          <button className="exm-btn primary" onClick={addUnit} disabled={!mTerm || !mSubj}><i className="fa-solid fa-plus" /> Add More Units</button>
+          <button className="exm-btn primary" onClick={addUnit} disabled={!mTerm || !mSubj || !canCreate} title={!canCreate ? 'No permission to add' : undefined} style={!canCreate ? { opacity: .45, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-plus" /> Add More Units</button>
         </div>
 
         <div className="exm-modal-foot">
           <span />
           <div className="exm-foot-btns">
             <button className="exm-btn ghost" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-            <SpinnerButton className="exm-btn primary" icon="fa-floppy-disk" onClick={save}>Save Breakup</SpinnerButton>
+            <SpinnerButton className="exm-btn primary" icon="fa-floppy-disk" disabled={!(canCreate || canEdit)} title={!(canCreate || canEdit) ? 'No permission to save' : undefined} style={!(canCreate || canEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={save}>Save Breakup</SpinnerButton>
           </div>
         </div>
       </div>

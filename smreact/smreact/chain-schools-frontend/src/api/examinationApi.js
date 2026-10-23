@@ -376,6 +376,31 @@ export async function fetchTermBreakupId({ classId, subjectId, termId }, network
   return Number(pick(list[0] || {}, 'id', 'ID', 'termBreakupID', 'TermBreakupID')) || 0
 }
 
+/* Saare term breakup masters is network ke — release index (releaseContent)
+   ke liye. classID/subjectID/termID 0 bhej kar sab maangte hain; har master me
+   classID + subjectID hoti hai (release child2 ki gradeID/subjectID isi se).
+   SP list na de (ya khali) to khali array — release bina term breakup ke chalta
+   rahe. */
+export async function fetchAllNetworkTermBreakups(networkId = currentNetworkId()) {
+  const nid = Number(networkId) || 0
+  if (!nid) return []
+  const params = new URLSearchParams({
+    networkID: String(nid), classID: '0', subjectID: '0', termID: '0',
+    sessionID: String(NETWORK_SESSION_YEAR_ID), pageNo: '1', pageCount: '1000',
+  })
+  let json
+  try { json = await call(`/gettermbreakups?${params.toString()}`) }
+  catch { return [] }
+  return rows(json)
+    .map((r) => ({
+      id: Number(pick(r, 'id', 'ID', 'termBreakupID', 'TermBreakupID')) || 0,
+      classID: Number(pick(r, 'classID', 'ClassID', 'gradeID', 'GradeID')) || 0,
+      subjectID: Number(pick(r, 'subjectID', 'SubjectID')) || 0,
+      termID: Number(pick(r, 'termID', 'TermID')) || 0,
+    }))
+    .filter((x) => x.id > 0)
+}
+
 /* Detail rows → UI units. Rows ko unitNumber+unitName+weekRequired par group. */
 function mapBreakupDetails(list) {
   const map = new Map()

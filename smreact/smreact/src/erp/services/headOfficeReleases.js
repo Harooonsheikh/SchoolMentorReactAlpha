@@ -242,12 +242,13 @@ const TYPE_ALIASES = {
   lesson: ['Lesson Plan', 'Lesson Plans', 'classworklessonplan'],
   notebook: ['NoteBook Plan', 'NoteBook Plans', 'notebooklessonplan'],
   resource: ['Resource File', 'Resource Files', 'resourcelibrary'],
+  termbreakup: ['Term Breakup', 'Term Breakups', 'TermBreakup', 'TermBreakups', 'lptermbreakup'],
 };
 const TYPE_KEY = new Map();
 Object.entries(TYPE_ALIASES).forEach(([key, names]) => names.forEach((n) => TYPE_KEY.set(normType(n), key)));
 const typeKeyOf = (raw) => TYPE_KEY.get(normType(raw)) || '';
 
-const TYPE = { activity: 'activity', lesson: 'lesson', notebook: 'notebook', resource: 'resource' };
+const TYPE = { activity: 'activity', lesson: 'lesson', notebook: 'notebook', resource: 'resource', termbreakup: 'termbreakup' };
 
 const groupBy = (arr, key) => {
   const m = new Map();
@@ -365,6 +366,28 @@ export async function fetchHeadOfficeReleases() {
       lessonPlans: pickOf(TYPE.lesson, content.lessons),
       notebookPlans: pickOf(TYPE.notebook, content.notebooks),
       resources: pickOf(TYPE.resource, content.resources),
+      /* Term Breakup ka apna network-content fetch nahi — iski row seedhe
+         Child2Raw (Type/TypeID/GradeID/SubjectID) se banti hai; class/subject
+         ke naam network content ke maps se. typeId = termBreakupID (Save par
+         duplicate-release-data ko yehi jata hai). */
+      termBreakups: items
+        .filter((it) => typeKeyOf(it.Type) === TYPE.termbreakup)
+        .map((it) => {
+          const tid = num(it.TypeID);
+          if (!tid) return null;
+          const gid = num(it.GradeID);
+          const sid = num(it.SubjectID);
+          return {
+            id: `termbreakup-${tid}`,
+            typeId: tid,
+            title: 'Term Breakup',
+            hoClass: content.className.get(gid) || (gid ? `Class #${gid}` : '—'),
+            hoSubject: content.subjectName.get(sid) || (sid ? `Subject #${sid}` : '—'),
+            _gradeId: gid,
+            _subjectId: sid,
+          };
+        })
+        .filter(Boolean),
     };
   });
 
@@ -395,6 +418,7 @@ export const RELEASE_TYPE = {
   lesson: 'Lesson Plan',
   notebook: 'NoteBook Plan',
   resource: 'Resource File',
+  termbreakup: 'Term Breakup',
 };
 
 const DUPLICATE_URL = () => buildChainApiUrl('/api/Network_Setup/duplicate-release-data');

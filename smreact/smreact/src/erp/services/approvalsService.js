@@ -208,6 +208,7 @@ const ACTION_TO_API = {
   inventory_price_edit:     'inventoryPriceEdit',
   inventory_delete_product: 'deleteInventoryProduct',
   students_mark_inactive:   'markStudentInactive',
+  students_reactivate:      'reactivateStudent',
   students_discount:        'studentFeeDiscount',
   students_dues_discount:   'duesSettelmentDiscount',
   fee_create_challan:       'createFeeChallan',
@@ -241,7 +242,7 @@ const ACTION_TO_API = {
 const ALL_API_FLAGS = [
   'feeDiscount', 'deleteFeeChallan', 'feeHeadUpdate', 'editAccoutEntry', 'deleteAccountEntry',
   'payRollDeductionWaiver', 'payRollBonusAward', 'salaryDetailsUpdate', 'leavePolicyUpdate', 'employeeLoanApproval',
-  'inventoryPriceEdit', 'deleteInventoryProduct', 'markStudentInactive', 'studentFeeDiscount', 'duesSettelmentDiscount',
+  'inventoryPriceEdit', 'deleteInventoryProduct', 'markStudentInactive', 'reactivateStudent', 'studentFeeDiscount', 'duesSettelmentDiscount',
   'createFeeChallan', 'receiveFeeChallan', 'clearFeeReceiving', 'gradeFeeHead', 'walletTransaction', 'walletAccount',
   'walletTransfer', 'accountHead', 'addAccountEntry', 'accountBook', 'bookPayment', 'preEnrollCreateChallan', 'preEnrollReceiveChallan', 'preEnrollDeleteChallan', 'preEnrollClearReceiving',
   'addEditStudent', 'deleteStudent', 'transportFeeSetup', 'inventoryProduct', 'loanRepayment', 'payrollPayment', 'deletePayroll', 'addEditEmployee', 'deactivateEmployee', 'deleteEmployee',

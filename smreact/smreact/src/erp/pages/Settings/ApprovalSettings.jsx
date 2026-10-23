@@ -33,6 +33,7 @@ const ACTION_DESCRIPTIONS = {
   inventory_price_edit: 'Changing a product’s selling price in Inventory / POS needs approval before the new price takes effect.',
   inventory_delete_product: 'Deleting a product from Inventory needs approval before it’s removed from the catalogue.',
   students_mark_inactive: 'Marking an active student as Inactive needs approval before they’re removed from the active rolls.',
+  students_reactivate: 'Restoring an inactive student back to active (Make Active Again) needs approval before they return to the active rolls.',
   students_discount: 'Changing a student’s per-fee-head discount (from the Edit Student form) needs approval before it applies.',
   students_dues_discount: 'Waiving part of an inactive student’s outstanding dues during settlement needs approval before the balance is reduced — any cash actually received still applies immediately.',
   students_preenroll_admission: 'A Pre-Enrollment student stays out of Active Students — Challan, Receiving, Print Slips and Enroll all stay disabled — until a Super Admin approves the admission and fee setup.',

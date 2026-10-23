@@ -5,6 +5,7 @@ import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
 import * as approvalsService from '../services/approvalsService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
@@ -45,6 +46,65 @@ const pendFromResp = (resp) => {
   };
 };
 const stuMoney = (n) => 'Rs. ' + Number(n || 0).toLocaleString('en-PK');
+
+/* Pending-add ghost store module key (Active Students). */
+const STU_PENDING_MOD = 'student';
+
+/* Merge pending-add ghost students into the class list so a freshly added
+   (approval-pending) student shows as a normal row with a Pending badge,
+   even though the backend hasn't created the real record yet. A ghost is
+   dropped once a real student with the same reg appears (approved). */
+function mergeStuGhosts(classes, ghosts) {
+  if (!Array.isArray(classes)) return classes;
+  if (!ghosts || !ghosts.length) return classes;
+  const out = classes.map((c) => ({ ...c, students: [...(c.students || [])] }));
+  ghosts.forEach((g) => {
+    const st = g && g.row;
+    if (!st) return;
+    /* Once the real (approved) student shows up — by reg or by name — drop the
+       ghost so the normal row (with its actions menu) takes over. */
+    const ghostName = stuFullName(st).trim().toLowerCase();
+    const hasReal = out.some((c) => c.students.some((s) => {
+      if (s._pendingAdd) return false;
+      if (st.reg && String(s.reg) === String(st.reg)) return true;
+      return ghostName && stuFullName(s).trim().toLowerCase() === ghostName;
+    }));
+    if (hasReal) return;
+    let grp = out.find((c) => c.cls === st.cls && c.sec === st.sec);
+    if (!grp) {
+      grp = { key: `pending-${g.rid}`, cls: st.cls, sec: st.sec, students: [], _gradeId: 0, _sectionId: 0, _pendingGroup: true };
+      out.push(grp);
+    }
+    if (!grp.students.some((s) => String(s._id) === String(st._id))) grp.students.unshift(st);
+  });
+  return out;
+}
+
+/* Pending-add ghost store module key (Pre-Enrollment). */
+const PRE_PENDING_MOD = 'preEnroll';
+
+/* Prepend pending-add ghost students to the pre-enrollment list (flat array)
+   so a freshly added (approval-pending) pre-student shows as a normal row with
+   a Pending badge. Dropped once a real pre-student with the same reg/name
+   appears (approved). */
+function mergePreGhosts(students, ghosts) {
+  const base = Array.isArray(students) ? students : [];
+  if (!ghosts || !ghosts.length) return base;
+  const real = base.filter((s) => !s._pendingAdd);
+  const realRegs = new Set(real.map((s) => String(s.reg || '').trim()).filter(Boolean));
+  const realNames = new Set(real.map((s) => stuFullName(s).trim().toLowerCase()).filter(Boolean));
+  const add = ghosts
+    .map((g) => g && g.row)
+    .filter((r) => {
+      if (!r) return false;
+      if (r.reg && realRegs.has(String(r.reg).trim())) return false;
+      const nm = stuFullName(r).trim().toLowerCase();
+      if (nm && realNames.has(nm)) return false;
+      return true;
+    });
+  return [...add, ...base];
+}
+
 const STU_PRE_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const stuHasDiscount = (s) => {
   if (!s._disc) return false;
@@ -1487,7 +1547,11 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
     [linkedIds, linkedRegs]
   );
 
-  const list = classes;
+  /* Pending-add ghost students (newly added, awaiting approval, no real row
+     yet). Hydrated from sessionStorage so a refresh keeps them visible; the
+     list below merges them in as normal rows carrying a Pending badge. */
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(STU_PENDING_MOD));
+  const list = useMemo(() => mergeStuGhosts(classes, pendingAddRows), [classes, pendingAddRows]);
   void inactive; // accepted for parity; only setInactive is used here
 
   const [nextReg, setNextReg] = useState(null);
@@ -1767,6 +1831,11 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
           m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
         }
       });
+      /* Drop ghost add-rows whose request left "pending"; keep the rest and
+         give each a pending badge entry (keyed by its synthetic row id). */
+      const ghosts = reconcilePendingAdds(STU_PENDING_MOD, reqs);
+      ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      setPendingAddRows(ghosts);
       setPendingMap(m);
     } catch (e) { /* non-fatal — badge just won't show */ }
   }, []);
@@ -1793,6 +1862,9 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
       return;
     }
     toast('Request withdrawn', 'success');
+    /* If it was a pending-add ghost row, drop it immediately. */
+    const rid = withdrawCfg.student?._id;
+    if (rid != null) setPendingAddRows(removePendingAdd(STU_PENDING_MOD, rid));
     setWithdrawCfg(null);
     reloadClasses();
     loadPending();
@@ -1847,6 +1919,31 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
     reloadClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* Approval kahin aur se hone ke baad jab user wapas aaye / tab focus kare,
+     to students + pending dono refresh — approve-shuda student ki asli row
+     (apne actions menu ke saath) aa jati hai, ghost row khud hat jati hai. */
+  useEffect(() => {
+    const refresh = () => { reloadClasses(); loadPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Jab tak kuch approval ke intezar me hai, halki polling — in-app approval
+     bhi kuch second me reflect ho jaye. Pending khatam → band. */
+  const hasStuPending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
+  useEffect(() => {
+    if (!hasStuPending) return undefined;
+    const t = setInterval(() => { reloadClasses(); loadPending(); }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasStuPending]);
 
   const handleSaveStudent = async (payload) => {
     const { cKey, mode, id } = editCfg;
@@ -1907,16 +2004,36 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
         setEditCfg(null);
         const built = await studentService.getStuClasses();
         setClasses(built);
-        /* Badge key: edit me _id maloom; add me response ke data.id se (backend
-           pending student ki record id yahan deta hai), warna reg se fallback. */
-        const respId = resp?.data?.id ?? resp?.data?.ID ?? resp?.data?.studentID ?? resp?.data?.studentId;
-        let key = existing?._id != null ? String(existing._id) : (respId != null ? String(respId) : null);
-        if (key == null && Array.isArray(built) && payload.reg) {
-          for (const c of built) {
-            const f = (c.students || []).find((st) => String(st.reg) === String(payload.reg));
-            if (f) { key = String(f._id); break; }
-          }
+        if (mode === 'add') {
+          /* Add approval-pending: backend ne abhi asli student nahi banaya.
+             Form ke data se ek ghost row banate hain jo isi class/section me
+             Pending badge + Withdraw ke saath dikhe — normal insertion jaisa. */
+          const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+          const ghostRow = {
+            _id: rid,
+            _pendingAdd: true,
+            reg: payload.reg || '',
+            adm: payload.adm || '',
+            name: `${payload.first || ''} ${payload.last || ''}`.trim(),
+            first: payload.first || '',
+            last: payload.last || '',
+            father: payload.father || '',
+            dob: payload.dob || '',
+            mobile: payload.mobile || '',
+            gender: payload.gender || '',
+            photo: payload.photo || '',
+            cls: payload.cls,
+            sec: payload.sec,
+          };
+          setPendingAddRows(addPendingAdd(STU_PENDING_MOD, {
+            rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row: ghostRow,
+          }));
+          setPendingMap((m) => ({ ...m, [rid]: pend }));
+          loadPending();
+          return;
         }
+        /* Edit approval-pending: badge on the existing student row. */
+        const key = existing?._id != null ? String(existing._id) : null;
         if (key != null) setPendingMap((m) => ({ ...m, [key]: pend }));
         loadPending();
         return;
@@ -2519,12 +2636,14 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
       <div className="td stu-contact-cell">{s.mobile || '—'}</div>
       <div className="td c" ref={anchorRef} style={{ gap: 6 }}>
         <StuPendingActions pend={pend} onWithdraw={onWithdraw} />
+        {!s._pendingAdd && (
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
           </button>
         </Tooltip>
-        {menuOpen && (
+        )}
+        {menuOpen && !s._pendingAdd && (
           <div className={`stu-actmenu${menuUp ? ' stu-actmenu--up' : ''}`}>
             <div className="stu-actmenu-lbl">{stuFullName(s)} · {s.reg}</div>
             {canStuEdit && (
@@ -5931,7 +6050,10 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   void inactive;
 
   const [students, setStudents] = useState(null);
-  const list = useMemo(() => students || [], [students]);
+  /* Pending-add ghost pre-students (newly added, awaiting approval, no real
+     row yet). Hydrated from sessionStorage so a refresh keeps them visible. */
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(PRE_PENDING_MOD));
+  const list = useMemo(() => mergePreGhosts(students, pendingAddRows), [students, pendingAddRows]);
 
   const hydrateChallans = useCallback(async (rows) => {
     if (!rows?.length) return;
@@ -6016,10 +6138,36 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
           m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
         }
       });
+      /* Drop ghost add-rows whose request left "pending"; badge the rest. */
+      const ghosts = reconcilePendingAdds(PRE_PENDING_MOD, reqs);
+      ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      setPendingAddRows(ghosts);
       setPendingMap(m);
     } catch (e) { /* non-fatal */ }
   }, []);
   useEffect(() => { loadPrePending(); }, [loadPrePending]);
+
+  /* Approval kahin aur se hone ke baad jab user wapas aaye / tab focus kare, to
+     list + pending refresh; aur jab tak kuch pending hai halki polling. */
+  useEffect(() => {
+    const refresh = () => { reloadList(); loadPrePending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hasPrePending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
+  useEffect(() => {
+    if (!hasPrePending) return undefined;
+    const t = setInterval(() => { reloadList(); loadPrePending(); }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPrePending]);
 
   const setPrePend = (student, resp) => {
     const id = student?._id;
@@ -6038,6 +6186,8 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
     try { await approvalsService.withdrawRequest(withdrawCfg.pend.approvalId); }
     catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
     toast('Request withdrawn', 'success');
+    const rid = withdrawCfg.student?._id;
+    if (rid != null) setPendingAddRows(removePendingAdd(PRE_PENDING_MOD, rid));
     setWithdrawCfg(null);
     reloadList();
     loadPrePending();
@@ -6068,21 +6218,44 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
 
   /* Pre-enroll student save pending → us student ki row par badge. Edit me
      existing._id; add me response ke data.id (warna reload ke baad reg se). */
-  const handlePreSavePending = async (resp, { existing, reg }) => {
+  const handlePreSavePending = async (resp, { existing, reg, payload }) => {
     toast(apiMessage(resp) || 'Pre-enrollment sent for approval', 'info');
     const rows = await preEnrollmentService.getPreEnrollStudents().then(d => (Array.isArray(d) ? d.map(preLocalMerge) : [])).catch(() => []);
     setStudents(rows);
+    const pend = pendFromResp(resp);
+    /* Add approval-pending: backend ne abhi asli pre-student nahi banaya.
+       Form ke data se ek ghost row banate hain jo list me Pending badge +
+       Withdraw ke saath dikhe — normal insertion jaisa. */
+    if (existing == null && payload) {
+      const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+      const ghostRow = {
+        _id: rid, preId: rid, _pendingAdd: true,
+        reg: payload.reg || '', adm: payload.adm || '',
+        name: `${payload.first || ''} ${payload.last || ''}`.trim(),
+        first: payload.first || '', last: payload.last || '',
+        father: payload.father || '', mobile: payload.mobile || '',
+        gender: payload.gender || '', photo: payload.photo || '',
+        cls: payload.cls, sec: payload.sec, challan: null, payments: [],
+      };
+      setPendingAddRows(addPendingAdd(PRE_PENDING_MOD, {
+        rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row: ghostRow,
+      }));
+      setPendingMap((m) => ({ ...m, [rid]: pend }));
+      loadPrePending();
+      return;
+    }
+    /* Edit approval-pending: badge on the existing row. */
     const respId = resp?.data?.id ?? resp?.data?.ID;
     let key = existing?._id != null ? String(existing._id) : (respId != null ? String(respId) : null);
     if (key == null && reg) { const f = rows.find((st) => String(st.reg) === String(reg)); if (f) key = String(f._id); }
-    if (key != null) setPendingMap((m) => ({ ...m, [key]: pendFromResp(resp) }));
+    if (key != null) setPendingMap((m) => ({ ...m, [key]: pend }));
     loadPrePending();
   };
 
   const handleSaveStudent = async (payload) => {
     const { ok, resp } = await persistStudent(payload, null);
     if (!ok) return;
-    if (stuPending(resp)) { setAddOpen(false); await handlePreSavePending(resp, { existing: null, reg: payload.reg }); return; }
+    if (stuPending(resp)) { setAddOpen(false); await handlePreSavePending(resp, { existing: null, reg: payload.reg, payload }); return; }
     await reloadList();
     toast(`${`${payload.first || ''} ${payload.last || ''}`.trim()} pre-enrolled successfully`, 'success');
     setAddOpen(false);
@@ -6487,12 +6660,14 @@ function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject,
       <div className="td stu-contact-cell">{s.mobile || '—'}</div>
       <div className="td c" ref={anchorRef} style={{ gap: 6 }}>
         <StuPendingActions pend={pend} onWithdraw={onWithdraw} />
+        {!s._pendingAdd && (
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
           </button>
         </Tooltip>
-        {menuOpen && (
+        )}
+        {menuOpen && !s._pendingAdd && (
           <div className={`stu-actmenu${menuUp ? ' stu-actmenu--up' : ''}`}>
             <div className="stu-actmenu-lbl">{stuFullName(s)}{s.reg ? ` · ${s.reg}` : ''}</div>
             <button className="stu-actitem" onClick={() => fire(onEdit)}>

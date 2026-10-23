@@ -571,6 +571,9 @@ export async function saveVehicle(vehicle) {
     createdBy: userID,
     modifiedBy: userID,
   });
+  /* Approval-gated → raw envelope wapas do taake caller (VehicleManagement)
+     pending ghost row + badge dikha sake (baqi fee flows jaisa). */
+  if (isApprovalPending(json)) return json;
   return json?.data ? mapVehicleFromApi(json.data) : { ...vehicle, id: numId };
 }
 

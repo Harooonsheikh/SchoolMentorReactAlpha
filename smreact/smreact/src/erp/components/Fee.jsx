@@ -5,8 +5,10 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
 import * as accountsService from '../services/accountsService';
+import * as approvalsService from '../services/approvalsService';
 import * as dashboardService from '../services/dashboardService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
@@ -1143,10 +1145,56 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
    kisi student ko "Transport Fee Assignment" ke edit modal se assign
    hoti hai. Backend: feeService.getVehicles/saveVehicle/deleteVehicle
    → POST /api/TransportFeeSetup/manage_vehicle (action get/insert/update/delete). */
+/* Pending-add ghost store key + merge for the Vehicle Fleet. A newly added
+   (approval-pending) vehicle shows as a normal row with a Pending badge +
+   Withdraw, dropped once the real vehicle (same reg) appears (approved). */
+const FEE_VEHICLE_MOD = 'feeVehicle';
+function mergeVehicleGhosts(vehicles, ghosts) {
+  const base = Array.isArray(vehicles) ? vehicles : [];
+  if (!ghosts || !ghosts.length) return base;
+  const realRegs = new Set(base.filter((v) => !v._pendingAdd).map((v) => String(v.regNo || '').trim().toLowerCase()).filter(Boolean));
+  const realNames = new Set(base.filter((v) => !v._pendingAdd).map((v) => String(v.name || '').trim().toLowerCase()).filter(Boolean));
+  const add = ghosts.map((g) => g && g.row).filter((r) => {
+    if (!r) return false;
+    const reg = String(r.regNo || '').trim().toLowerCase();
+    const nm = String(r.name || '').trim().toLowerCase();
+    if (reg && realRegs.has(reg)) return false;
+    if (nm && realNames.has(nm)) return false;
+    return true;
+  });
+  return [...add, ...base];
+}
+
 function VehicleManagement({ toast }) {
   const { data: vehicles = [], loading, error, refetch } = useAsync(feeService.getVehicles, []);
   const [editing, setEditing] = useState(null); // {} = new, {...vehicle} = edit
   const [confirm, setConfirm] = useState(null);
+  /* Pending-add ghost vehicles (new, awaiting approval, no real row yet). */
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(FEE_VEHICLE_MOD));
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { v }
+  const displayVehicles = useMemo(() => mergeVehicleGhosts(vehicles, pendingAddRows), [vehicles, pendingAddRows]);
+
+  const loadVehPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      setPendingAddRows(reconcilePendingAdds(FEE_VEHICLE_MOD, reqs));
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { loadVehPending(); }, [loadVehPending]);
+  /* Approval kahin aur se hone par wapas aate hi / tab focus par refresh. */
+  useEffect(() => {
+    const refresh = () => { refetch(); loadVehPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVis); };
+  }, [refetch, loadVehPending]);
+  const hasVehPending = pendingAddRows.length > 0;
+  useEffect(() => {
+    if (!hasVehPending) return undefined;
+    const t = setInterval(() => { refetch(); loadVehPending(); }, 10000);
+    return () => clearInterval(t);
+  }, [hasVehPending, refetch, loadVehPending]);
 
   const openAdd = useCallback(() => setEditing({}), []);
   const openEdit = useCallback((v) => setEditing(v), []);
@@ -1155,14 +1203,46 @@ function VehicleManagement({ toast }) {
   const saveVehicle = useCallback(async (payload) => {
     const isNew = !editing?.id;
     try {
-      await feeService.saveVehicle({ id: editing?.id, ...payload });
+      const resp = await feeService.saveVehicle({ id: editing?.id, ...payload });
+      /* Approval on + naya vehicle: backend ne asli row nahi banayi — form se
+         ghost row bana kar list me Pending badge + Withdraw ke saath dikhate. */
+      const pend = isNew ? pendingFromResp(resp, 'Vehicle sent for approval') : null;
+      if (pend) {
+        const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+        const row = {
+          id: rid, _pendingAdd: true,
+          name: payload.name || '', regNo: payload.regNo || '', route: payload.route || '',
+          _approvalId: pend.approvalId, _requestNo: pend.requestNo,
+        };
+        setPendingAddRows(addPendingAdd(FEE_VEHICLE_MOD, { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+        closeEdit();
+        toast(pend.message || 'Vehicle sent for approval', 'info');
+        loadVehPending();
+        return;
+      }
       await refetch();          // server se real id ke saath dobara load
       closeEdit();
       toast(isNew ? 'Vehicle added' : 'Vehicle updated', 'success');
     } catch (e) {
       toast(e.message || 'Could not save vehicle', 'error');
     }
-  }, [editing, refetch, closeEdit, toast]);
+  }, [editing, refetch, closeEdit, toast, loadVehPending]);
+
+  const doWithdrawVehicle = async () => {
+    if (!withdrawCfg) return;
+    const v = withdrawCfg.v;
+    try {
+      await approvalsService.withdrawRequest(v._approvalId);
+    } catch (e) {
+      toast(e?.message || 'Could not withdraw request', 'error');
+      return;
+    }
+    toast('Request withdrawn', 'success');
+    setPendingAddRows(removePendingAdd(FEE_VEHICLE_MOD, v.id));
+    setWithdrawCfg(null);
+    refetch();
+    loadVehPending();
+  };
 
   const requestDelete = (v) => {
     setConfirm({
@@ -1199,7 +1279,7 @@ function VehicleManagement({ toast }) {
             <div className="fee-section-icon"><i className="fa-solid fa-bus-simple"></i></div>
             <div>
               <div className="fee-section-name">Vehicle Fleet</div>
-              <div className="fee-section-sub">{vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'} added</div>
+              <div className="fee-section-sub">{displayVehicles.length} vehicle{displayVehicles.length === 1 ? '' : 's'} added</div>
             </div>
           </div>
           <Tooltip text="Add a new vehicle to the fleet">
@@ -1222,15 +1302,30 @@ function VehicleManagement({ toast }) {
                 </tr>
               </thead>
               <tbody>
-                {vehicles.length === 0 ? (
+                {displayVehicles.length === 0 ? (
                   <tr><td colSpan="5" className="fee-stbl-empty">No vehicles added yet. Click <strong>Add New Vehicle</strong> to get started.</td></tr>
-                ) : vehicles.map((v, i) => (
+                ) : displayVehicles.map((v, i) => (
                   <tr key={v.id}>
                     <td className="fee-num">{i + 1}</td>
                     <td><b>{v.name}</b></td>
                     <td>{v.regNo}</td>
                     <td>{v.route ? v.route : <span className="fee-muted-dash">—</span>}</td>
                     <td className="fee-center fee-st-actions">
+                      {v._pendingAdd ? (
+                        <span className="fee-pending-wrap" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <Tooltip text={`Request ${v._requestNo || ''} awaiting approval`.trim()}>
+                            <span className="fee-pending-badge" role="status">
+                              <i className="fa-solid fa-hourglass-half"></i><span>Pending Approval</span>
+                              {v._approvalId != null && <b className="fee-pending-id">#{v._approvalId}</b>}
+                            </span>
+                          </Tooltip>
+                          <Tooltip text="Withdraw this request">
+                            <button className="fee-iconbtn fee-withdraw-btn" onClick={() => setWithdrawCfg({ v })} aria-label="Withdraw this request">
+                              <i className="fa-solid fa-rotate-left"></i>
+                            </button>
+                          </Tooltip>
+                        </span>
+                      ) : (<>
                       <Tooltip text={`Edit ${v.name}`}>
                         <button className="fee-iconbtn" onClick={() => openEdit(v)}>
                           <i className="fa-solid fa-pen"></i>
@@ -1241,6 +1336,7 @@ function VehicleManagement({ toast }) {
                           <i className="fa-solid fa-trash-can"></i>
                         </button>
                       </Tooltip>
+                      </>)}
                     </td>
                   </tr>
                 ))}
@@ -1259,6 +1355,14 @@ function VehicleManagement({ toast }) {
       />
 
       <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <FeeConfirmDialog
+        cfg={withdrawCfg ? {
+          title: 'Withdraw this request?',
+          message: <span>The pending approval request for <strong>{withdrawCfg.v.name}</strong> will be withdrawn.</span>,
+          onConfirm: doWithdrawVehicle,
+        } : null}
+        onClose={() => setWithdrawCfg(null)}
+      />
     </>
   );
 }
