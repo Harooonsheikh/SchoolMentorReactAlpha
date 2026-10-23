@@ -5889,11 +5889,18 @@ function repMonthsBetween(fromM, toM) {
   let [fy, fm] = fromM.split('-').map(Number);
   const [ty, tm] = toM.split('-').map(Number);
   if (!fy || !fm || !ty || !tm) return out;
-  while (fy < ty || (fy === ty && fm <= tm)) {
+  // while (fy < ty || (fy === ty && fm <= tm)) {
+  //   out.push(`${fy}-${String(fm).padStart(2, '0')}`);
+  //   fm += 1;
+  //   if (fm > 12) { fm = 1; fy += 1; }
+  //   if (out.length > 60) break;
+  // }
+
+      while (fy < ty || (fy === ty && fm <= tm)) {
     out.push(`${fy}-${String(fm).padStart(2, '0')}`);
     fm += 1;
     if (fm > 12) { fm = 1; fy += 1; }
-    if (out.length > 60) break;
+    if (out.length > 120) break;
   }
   return out;
 }
