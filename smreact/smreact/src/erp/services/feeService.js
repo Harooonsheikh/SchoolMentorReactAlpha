@@ -627,7 +627,9 @@ const FEE_SETTINGS_DEFAULTS = {
   psidInstallments:        true,
   /* Create Installment Challan. API field exactly `particalChallan`.
      Pehli value false — button tab tak chhupa jab tak toggle ON save na ho. */
-  installmentChallan:      false,
+   installmentChallan:      false,
+  /* Month Closing — default OFF. */
+  enableMonthClosing:      false,
   /* Note on Challan — toggle + text (max 50 words). Enabled hone par har NAYE
      challan par ye note print hota hai. Backend field na ho to localStorage
      fallback (bank details jaisa). */
@@ -671,6 +673,7 @@ function mapFeeSettingsFromApi(row = {}) {
                               : FEE_SETTINGS_DEFAULTS.psidInstallments),
     /* Installment Challan ↔ API `particalChallan`. null (not saved yet) = false. */
     installmentChallan:      row.particalChallan === true,
+    enableMonthClosing:      row.enableMonthClosing === true,
     /* Note on Challan — backend field na ho to niche getFeeSettings me localStorage overlay. */
     challanNoteEnabled:      (typeof row.challanNoteEnabled === 'boolean' ? row.challanNoteEnabled
                               : typeof row.showChallanNote === 'boolean' ? row.showChallanNote
@@ -700,7 +703,8 @@ function blankFeeSettings() {
     prevMonthChallan: false,
     nextMonthChallan: false,
     fineEnabled:      false,
-    fineAmt:          0,
+      fineAmt:          0,
+    enableMonthClosing: false,
     createdDate:  null,
     modifiedDate: null,
     createdBy:    null,
@@ -739,7 +743,9 @@ function mapFeeSettingsToApi(settings = {}) {
     psidInstallmentPayments:   settings.psidInstallments !== false,
     psidInstallments:          settings.psidInstallments !== false, /* alias, harmless */
     /* UI key installmentChallan → API particalChallan. Pehli save false. */
-    particalChallan:           settings.installmentChallan === true,
+      particalChallan:           settings.installmentChallan === true,
+    enableMonthClosing:        settings.enableMonthClosing === true,
+    nextMonth:                 0,
     /* Note on Challan — backend field aane tak harmless; localStorage bhi persist karti hai. */
     challanNoteEnabled:        settings.challanNoteEnabled === true,
     showChallanNote:           settings.challanNoteEnabled === true, /* alias, harmless */
@@ -791,6 +797,16 @@ function apiRowHasChallanNote(row) {
   return typeof row.challanNoteEnabled === 'boolean'
       || typeof row.showChallanNote === 'boolean'
       || typeof row.challanNote === 'string';
+}
+
+/* Month Closing — backend field aane tak localStorage fallback. */
+function monthClosingLsKey() { return `fee.enableMonthClosing.${feeSettingsBranchID()}`; }
+function readMonthClosingLs() {
+  try { const v = localStorage.getItem(monthClosingLsKey()); return v == null ? null : v === '1'; }
+  catch { return null; }
+}
+function writeMonthClosingLs(on) {
+  try { localStorage.setItem(monthClosingLsKey(), on ? '1' : '0'); } catch { /* ignore */ }
 }
 
 /* Fee Module feature controls — API ab columns bhejta hai. localStorage
@@ -869,8 +885,12 @@ export async function getFeeSettings() {
     const ls = readBankDetailsLs();
     if (ls != null) settings.showBankDetails = ls;
   }
-  /* Note on Challan: backend field na ho to localStorage se overlay. */
-  if (!rows.length || !apiRowHasChallanNote(rows[0])) {
+  /* Month Closing: backend boolean na bheje to localStorage overlay. */
+  if (!rows.length || typeof rows[0].enableMonthClosing !== 'boolean') {
+    const ls = readMonthClosingLs();
+    if (ls != null) settings.enableMonthClosing = ls;
+  }
+  /* Note on Challan: backend field na ho to localStorage se overlay. */  if (!rows.length || !apiRowHasChallanNote(rows[0])) {
     const ls = readChallanNoteLs();
     if (ls) {
       settings.challanNoteEnabled = !!ls.enabled;
@@ -1076,7 +1096,7 @@ export async function saveStudentTransport(classKey, reg, payload) {
 export async function saveFeeSettings(payload) {
   /* Bank-details toggle localStorage me bhi save — backend field aane tak persist rahe. */
   writeBankDetailsLs(payload?.showBankDetails === true);
-  /* Note on Challan localStorage me bhi save — backend field aane tak persist rahe. */
+  writeMonthClosingLs(payload?.enableMonthClosing === true);  /* Note on Challan localStorage me bhi save — backend field aane tak persist rahe. */
   writeChallanNoteLs(
     payload?.challanNoteEnabled === true,
     payload?.challanNoteEnabled === true ? (payload?.challanNote || '') : '',
