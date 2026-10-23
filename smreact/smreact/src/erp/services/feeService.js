@@ -1,5 +1,5 @@
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, buildSuperAdminUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
@@ -2943,3 +2943,36 @@ export async function saveFamilyReceipt(payload) {
 
 export async function getReceipts() { return []; }
 export async function getFamilyReceipts() { return []; }
+
+/* OneLink Payments — Fee → Reports → OneLink Payment Report ka APNA call (dashboard ki
+   service par depend nahi). Super-Admin API, dashboard card wali hi:
+     GET /api/AHM_School_Progress/branch_onelink-payments?branchId&filterType
+         &fromDate&toDate&singleDate&month&year
+   filterType: Month (month+year) | FromTo (fromDate+toDate) | SingleDate (singleDate).
+   Response.data = { Summary:{ OnelinkTransactions, TotalReceived, TotalCharges, GrossAmount },
+                     Transactions:[{ PSID, TotalAmountReceived, CostPerTransaction, PaymentDate, … }] } */
+export async function getOneLinkPayments(opts = {}) {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const todayISO = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const monthStartISO = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+  const branchID = Number(opts.branchId) || Number(sessionStorage.getItem('branchID')) || 0;
+  const params = new URLSearchParams({
+    branchId:   String(branchID),
+    filterType: opts.filterType || 'Month',
+    fromDate:   opts.fromDate   || monthStartISO,
+    toDate:     opts.toDate     || todayISO,
+    singleDate: opts.singleDate || todayISO,
+    month:      String(opts.month || now.getMonth() + 1),
+    year:       String(opts.year  || now.getFullYear()),
+  });
+  const res = await fetch(
+    buildSuperAdminUrl(`/api/AHM_School_Progress/branch_onelink-payments?${params.toString()}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load OneLink payments');
+  }
+  return json?.data || {};
+}

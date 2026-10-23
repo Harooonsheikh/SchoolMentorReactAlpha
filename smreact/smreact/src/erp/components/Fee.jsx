@@ -16583,44 +16583,76 @@ function ReportPanelOneLink({ toast }) {
   const [from, setFrom] = useState(today.slice(0, 8) + '01');
   const [to, setTo] = useState(today);
 
-  const periods = useMemo(() => {
+  /* DASHBOARD jaisa — wahi Super-Admin API (branch_onelink-payments), wahi filter:
+       Month → filterType Month (month+year) · Date Range → FromTo · Single Date → SingleDate.
+     KPI (Transactions / Total Received) API ke Summary se; class-wise list API ke
+     Transactions se, student roster se mila kar. Jis branch ka API me record nahi uska
+     report khaali — koi dummy / ledger-guess data nahi. */
+  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
+  const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  const [olData, setOlData] = useState(null);     // { Summary, Transactions } | null (loading)
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    setOlData(null); setError(null);
     const y = Number(year) || new Date().getFullYear();
-    if (seg === 'daily') { const [yy, mm] = String(date || '').split('-'); return [{ month: Number(mm) || 1, year: Number(yy) || y }]; }
-    if (seg === 'range') {
-      const [fy, fm] = String(from || '').split('-'); const [ty, tm] = String(to || '').split('-');
-      return ledgerPeriods(Number(fm) || 1, Number(fy) || y, Number(tm) || 12, Number(ty) || y);
-    }
-    return [{ month: FEE_MONTHS.indexOf(month) + 1, year: y }];
+    let q;
+    if (seg === 'range') q = { filterType: 'FromTo', fromDate: from, toDate: to };
+    else if (seg === 'daily') q = { filterType: 'SingleDate', singleDate: date };
+    else q = { filterType: 'Month', month: FEE_MONTHS.indexOf(month) + 1, year: y };
+    feeService.getOneLinkPayments(q)
+      .then(d => { if (alive) setOlData(d || {}); })
+      .catch(e => { if (alive) { setOlData({}); setError(e.message || 'Could not load OneLink payments'); } });
+    return () => { alive = false; };
   }, [seg, date, from, to, month, year]);
+  const loading = olData === null;
 
-  const { classes, allStudents, loading, error } = useLedgerReportData(periods);
-
-  const txByClass = useMemo(() => {
-    const isOnelink = (raw) => /one\s*link|1\s*link|bank/i.test(feeService.paymentMethodDisplay(raw));
-    const inPeriod = (d) => {
-      if (!d) return false;
-      if (seg === 'daily') return d === date;
-      if (seg === 'range') return d >= from && d <= to;
-      const dd = new Date(d);
-      return dd.getMonth() === FEE_MONTHS.indexOf(month) && dd.getFullYear() === (Number(year) || dd.getFullYear());
-    };
+  /* API Transactions → class-wise { s, p }. Student ka naam / reg / id API se (backend in
+     fields ko Transactions me bhejega); roster se class/section milate hain. */
+  const { txByClass, classList } = useMemo(() => {
+    const pick = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && o[k] !== '') return o[k]; } return ''; };
+    const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const byId = new Map(), byReg = new Map(), byName = new Map();
+    (classes || []).forEach(c => (studentsMap[c.key] || []).forEach(st => {
+      const who = { c, s: st };
+      if (st.studentID != null) byId.set(String(st.studentID), who);
+      if (st.applicantsID != null && !byId.has(String(st.applicantsID))) byId.set(String(st.applicantsID), who);
+      if (st.reg) byReg.set(norm(st.reg), who);
+      if (st.name && !byName.has(norm(st.name))) byName.set(norm(st.name), who);
+    }));
     const map = {};
-    allStudents.forEach(({ c, s, m }) => {
-      (m.recs || []).forEach(rec => {
-        if (!isOnelink(rec.paymentMethod)) return;
-        const received = (rec.detailRows || []).reduce((a, r) => a + Math.max(0, +r.receivedAmount || 0), 0);
-        if (received <= 0) return;
-        const d = String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10);
-        if (!inPeriod(d)) return;
-        (map[c.key] ||= []).push({ s, p: { amount: received, date: d, time: '', method: feeService.paymentMethodDisplay(rec.paymentMethod), source: 'onelink', txn: feeService.psidOf(rec) } });
-      });
+    const extra = {};
+    (Array.isArray(olData?.Transactions) ? olData.Transactions : []).forEach(x => {
+      const sid = String(pick(x, 'StudentID', 'studentID', 'studentId', 'StudentId', 'ApplicantID', 'applicantID', 'ApplicantsID', 'applicantsID'));
+      const reg = String(pick(x, 'RegNo', 'regNo', 'RegistrationNo', 'RegistrationNumber', 'registrationNumber', 'reg', 'Reg'));
+      const name = String(pick(x, 'StudentName', 'studentName', 'Name', 'name', 'StudentFullName', 'ApplicantName'));
+      const who = (sid && byId.get(sid)) || (reg && byReg.get(norm(reg))) || (name && byName.get(norm(name))) || null;
+      const amount = Number(pick(x, 'TotalAmountReceived', 'totalAmountReceived', 'TotalReceived', 'totalReceived', 'NetReceived', 'netReceived', 'ReceivedAmount', 'receivedAmount', 'Amount', 'amount', 'NetAmount')) || 0;
+      const d = String(pick(x, 'PaymentDate', 'paymentDate', 'TransactionDate', 'transactionDate', 'ReceivedDate', 'receivedDate', 'Date', 'date', 'CreatedAt', 'createdAt'));
+      const p = {
+        amount, date: d.slice(0, 10), time: d.length >= 16 ? d.slice(11, 16) : '',
+        method: String(pick(x, 'PaymentMethod', 'paymentMethod', 'Method', 'method', 'Channel', 'channel') || 'OneLink'),
+        source: 'onelink',
+        txn: String(pick(x, 'PSID', 'Psid', 'psid', 'TransactionNo', 'transactionNo', 'TransactionID', 'transactionID', 'ReferenceNo', 'referenceNo', 'VoucherNo')),
+      };
+      if (who) {
+        (map[who.c.key] ||= []).push({ s: who.s, p });
+      } else {
+        /* Roster me na mila — API ke apne class/section naam se alag group (koi transaction gum na ho). */
+        const cls = String(pick(x, 'ClassName', 'className', 'GradeName', 'gradeName', 'Grade', 'Class') || 'Other');
+        const sec = String(pick(x, 'SectionName', 'sectionName', 'Section', 'section') || '—');
+        const key = `ol-${norm(cls)}|${norm(sec)}`;
+        if (!extra[key]) extra[key] = { key, cls, sec };
+        (map[key] ||= []).push({ s: { name: name || '—', reg: reg || '—' }, p });
+      }
     });
-    return map;
-  }, [allStudents, seg, date, from, to, month, year]);
+    return { txByClass: map, classList: [...(classes || []), ...Object.values(extra)] };
+  }, [olData, classes, studentsMap]);
 
+  const summary = olData?.Summary || {};
   const allTx = useMemo(() => Object.values(txByClass).flat(), [txByClass]);
-  const totalTx = allTx.length;
-  const totalAmt = allTx.reduce((a, x) => a + (+x.p.amount || 0), 0);
+  const totalTx = Number(summary.OnelinkTransactions ?? summary.onelinkTransactions) || allTx.length;
+  const totalAmt = Number(summary.TotalReceived ?? summary.totalReceived) || allTx.reduce((a, x) => a + (+x.p.amount || 0), 0);
   const modeBreak = useMemo(() => {
     const map = {};
     allTx.forEach(x => { const k = x.p.method || 'Bank Transfer'; map[k] = (map[k] || 0) + (+x.p.amount || 0); });
@@ -16630,7 +16662,7 @@ function ReportPanelOneLink({ toast }) {
 
   const reportTitle = `OneLink Payment Report — ${periodLabel}`;
   const downloadReport = (style, format) => {
-    const html = buildRepOneLinkHTML({ classes, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: style === 'bw', school });
+    const html = buildRepOneLinkHTML({ classes: classList, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: style === 'bw', school });
     openPrintReport(html, reportTitle, toast, format);
   };
 
@@ -16650,7 +16682,7 @@ function ReportPanelOneLink({ toast }) {
 
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span>All payments received through <strong>OneLink / Bank</strong> — read from the ledger and filtered by month, date range or a single date.</span>
+        <span>All payments received through <strong>OneLink / Bank</strong> — same data as the Dashboard's OneLink Payments card, filtered by month, date range or a single date.</span>
       </div>
 
       <RepLoadState loading={loading} error={error} />
@@ -16717,9 +16749,9 @@ function ReportPanelOneLink({ toast }) {
           <div className="fee-th fee-center">Section</div>
           <div className="fee-th fee-center">Details</div>
         </div>
-        {totalTx === 0 ? (
+        {allTx.length === 0 ? (
           <div className="fee-empty">No OneLink payments in this period.</div>
-        ) : classes.map((c, i) => {
+        ) : classList.map((c, i) => {
           const list = txByClass[c.key] || [];
           if (!list.length) return null;
           const colTot = list.reduce((a, x) => a + (+x.p.amount || 0), 0);
