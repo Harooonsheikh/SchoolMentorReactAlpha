@@ -1,4 +1,14 @@
 import '../../styles/auth.css';
+import { getBaseUrl } from '../../utils/apiConfig';
+
+/* Login par batata hai ke app kis API se baat kar raha hai — sandbox (Dev) ya
+   live (Production). Kisi aur base URL par kuch nahi dikhta. */
+function apiEnvLabel() {
+  const base = getBaseUrl().toLowerCase();
+  if (base.startsWith('https://sandbox-alphaapi.schoolmentor.ai')) return { text: 'Dev Env', cls: 'dev' };
+  if (base.startsWith('https://erp.schoolmentor.ai')) return { text: 'Production Env', cls: 'prod' };
+  return null;
+}
 
 /* Brand lockup: graduation-cap icon + live text wordmark ("SchoolMentor" +
    "Creating the Future"). Text ab image nahi, real text hai — har screen par
@@ -132,6 +142,7 @@ export default function AuthLayout({
   totalSteps,
 }) {
   const data = ILLUSTRATIONS[illustration] || ILLUSTRATIONS.login;
+  const env = illustration === 'login' ? apiEnvLabel() : null;
 
   return (
     <div className="auth-page">
@@ -190,6 +201,12 @@ export default function AuthLayout({
             </span>
             <span className="auth-story-foot-text">{data.foot}</span>
           </div>
+          {env && (
+            <div className={`auth-env-badge auth-env-${env.cls}`}>
+              <span className="auth-env-dot" />
+              {env.text}
+            </div>
+          )}
         </div>
       </div>
 

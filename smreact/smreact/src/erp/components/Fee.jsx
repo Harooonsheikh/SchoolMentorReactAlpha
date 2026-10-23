@@ -2202,37 +2202,16 @@ function FamilyTreeChallansList({ toast }) {
   return (
     <>
       {/* Filters + smart search */}
+      <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
             <div className="fee-field">
-              <span className="fee-label">Month</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
-                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
+              <span className="fee-label">Active Fee Period</span>
+              <div className="fee-active-month-badge">
+                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
               </div>
             </div>
-            <div className="fee-field">
-              <span className="fee-label">Year</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
-                  <option>2025</option><option>2026</option><option>2027</option>
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <Tooltip text="Load family challan data for the selected month and year">
-              <button className="fee-btn fee-btn-primary" onClick={apply}>
-                <i className="fa-solid fa-filter"></i> Get Families
-              </button>
-            </Tooltip>
-            <Tooltip text="Reset filters and search to defaults">
-              <button className="fee-btn fee-btn-ghost" onClick={resetFilters}>
-                <i className="fa-solid fa-rotate-left"></i> Reset
-              </button>
-            </Tooltip>
           </div>
 
           <div className="fee-searchrow">
@@ -2753,6 +2732,23 @@ function challanFullyPaid(rec, byHead = null) {
   return Math.round(outstanding) <= 0 && (anyRecv !== 0 || billed > 0);
 }
 
+/* Active fee period (Fee Challans) — localStorage only until a backend exists.
+   { m: monthIdx, y: year, history: [{ m, y }] } — history = closed periods. */
+const FEE_PERIOD_KEY = 'sm_fee_active_period';
+function readFeePeriod() {
+  try {
+    const p = JSON.parse(localStorage.getItem(FEE_PERIOD_KEY) || 'null');
+    if (p && Number.isInteger(p.m) && Number.isInteger(p.y)) {
+      return { m: p.m, y: p.y, history: Array.isArray(p.history) ? p.history : [] };
+    }
+  } catch (e) { /* ignore */ }
+  const d = new Date();
+  return { m: d.getMonth(), y: d.getFullYear(), history: [] };
+}
+function writeFeePeriod(p) {
+  try { localStorage.setItem(FEE_PERIOD_KEY, JSON.stringify(p)); } catch (e) { /* ignore */ }
+}
+
 function FeeChallansList({ toast }) {
   /* Classes API ke fee heads (feeStructureID + name) — Discount Manager ke
      heads render + saved-discount ko headID se resolve karne ke liye. */
@@ -2773,10 +2769,55 @@ function FeeChallansList({ toast }) {
 
   /* Filters */
   const today = new Date();
-  const [month, setMonth] = useState(FEE_MONTHS[today.getMonth()]);
-  const [year, setYear] = useState(String(today.getFullYear()));
+  const [feePeriod, setFeePeriod] = useState(readFeePeriod);
+  const [month, setMonth] = useState(FEE_MONTHS[feePeriod.m]);
+  const [year, setYear] = useState(String(feePeriod.y));
   const [appliedMonth, setAppliedMonth] = useState(month);
   const [appliedYear, setAppliedYear] = useState(year);
+
+  /* Active fee period badge + Close / Undo — frontend-only (no backend API
+     yet). Closing just moves the active period to the next month. */
+  const applyFeePeriod = (next) => {
+    setFeePeriod(next);
+    writeFeePeriod(next);
+    const mName = FEE_MONTHS[next.m], yStr = String(next.y);
+    setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr);
+  };
+  const lastClosing = feePeriod.history[feePeriod.history.length - 1];
+  const requestClosePeriod = () => {
+    const nm = (feePeriod.m + 1) % 12;
+    const ny = feePeriod.m === 11 ? feePeriod.y + 1 : feePeriod.y;
+    setConfirm({
+      title: `Close ${appliedMonth} ${appliedYear}?`,
+      message: `${FEE_MONTHS[nm]} ${ny} will become the active fee period for the whole school.`,
+      confirmStyle: 'primary',
+      icon: 'fa-right-to-bracket',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Close Period',
+      onConfirm: () => {
+        applyFeePeriod({ m: nm, y: ny, history: [...feePeriod.history, { m: feePeriod.m, y: feePeriod.y }] });
+        toast(`${appliedMonth} ${appliedYear} closed — now operating on ${FEE_MONTHS[nm]} ${ny}.`, 'success');
+      },
+    });
+  };
+  const requestUndoClosing = () => {
+    if (!lastClosing) return;
+    const label = `${FEE_MONTHS[lastClosing.m]} ${lastClosing.y}`;
+    setConfirm({
+      title: 'Undo last closing?',
+      message: `${label} will become the active fee period again.`,
+      confirmStyle: 'primary',
+      icon: 'fa-rotate-left',
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      confirmLabel: 'Yes, Undo',
+      onConfirm: () => {
+        applyFeePeriod({ m: lastClosing.m, y: lastClosing.y, history: feePeriod.history.slice(0, -1) });
+        toast(`Reopened ${label}.`, 'success');
+      },
+    });
+  };
 
   /* Smart search */
   const [searchQ, setSearchQ] = useState('');
@@ -3822,41 +3863,32 @@ function FeeChallansList({ toast }) {
   return (
     <>
       {/* Filters + smart search */}
+      <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
             <div className="fee-field">
-              <span className="fee-label">Month</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
-                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
+              <span className="fee-label">Active Fee Period</span>
+              <div className="fee-active-month-badge">
+                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
               </div>
             </div>
-            <div className="fee-field">
-              <span className="fee-label">Year</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
-                  <option>2025</option><option>2026</option><option>2027</option>
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <Tooltip text="Load challan data for the selected month and year">
-              <button className="fee-btn fee-btn-primary" onClick={apply}>
-                <i className="fa-solid fa-filter"></i> Fetch Details
+            <Tooltip text={`Close ${appliedMonth} ${appliedYear} and activate the next fee period for the whole school`}>
+              <button className="fee-btn fee-btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={requestClosePeriod}>
+                <i className="fa-solid fa-right-to-bracket"></i> Close Current Fee Period & Activate Next Period
               </button>
             </Tooltip>
-            <Tooltip text="Reset filters and search to defaults">
-              <button className="fee-btn fee-btn-ghost" onClick={resetFilters}>
-                <i className="fa-solid fa-rotate-left"></i> Reset
-              </button>
-            </Tooltip>
+            {lastClosing && (
+              <Tooltip text={`Undo closing ${FEE_MONTHS[lastClosing.m]} ${lastClosing.y}`}>
+                <button className="fee-btn fee-btn-ghost" onClick={requestUndoClosing}>
+                  <i className="fa-solid fa-rotate-left"></i> Undo Last Closing
+                </button>
+              </Tooltip>
+            )}
           </div>
 
           <div className="fee-searchrow fee-searchrow--export">
-            <div className="fee-field">
+            <div className="fee-field" style={{ width: '100%' }}>
               <span className="fee-label">Search Student</span>
               <div className="fee-search-anchor" ref={searchAnchorRef}>
                 <div className="fee-search-box">
@@ -9097,37 +9129,24 @@ function FeeReceivingIndividual({ toast }) {
   return (
     <>
       {/* Filters + smart search */}
+      <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
             <div className="fee-field">
-              <span className="fee-label">Month</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
-                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
+              <span className="fee-label">Active Fee Period</span>
+              <div className="fee-active-month-badge">
+                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
               </div>
             </div>
-            <div className="fee-field">
-              <span className="fee-label">Year</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
-                  <option>2025</option><option>2026</option><option>2027</option>
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <Tooltip text="Load receipts for the selected month and year">
-              <button className="fee-btn fee-btn-primary" onClick={apply}>
-                <i className="fa-solid fa-filter"></i> Fetch Details
-              </button>
-            </Tooltip>
-            <Tooltip text="Reset filters and search to defaults">
-              <button className="fee-btn fee-btn-ghost" onClick={resetFilters}>
-                <i className="fa-solid fa-rotate-left"></i> Reset Filter
-              </button>
-            </Tooltip>
+          </div>
+          <div className="fee-info" style={{ marginBottom: 14 }}>
+            <i className="fa-solid fa-circle-info"></i>
+            <span>
+              You are currently receiving fees for <b>{appliedMonth} {appliedYear}</b>. Payments recorded here will be allocated according to the
+              active fee period and the selected student's eligible challans. Payments against previous outstanding dues must
+              continue to follow the existing fee allocation rules.
+            </span>
           </div>
 
           <div className="fee-searchrow">
@@ -10507,37 +10526,16 @@ function FamilyTreeReceiving({ toast }) {
 
   return (
     <>
+      <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
             <div className="fee-field">
-              <span className="fee-label">Month</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
-                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
+              <span className="fee-label">Active Fee Period</span>
+              <div className="fee-active-month-badge">
+                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
               </div>
             </div>
-            <div className="fee-field">
-              <span className="fee-label">Year</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
-                  <option>2025</option><option>2026</option><option>2027</option>
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <Tooltip text="Load family receipts for the selected month and year">
-              <button className="fee-btn fee-btn-primary" onClick={apply}>
-                <i className="fa-solid fa-filter"></i> Get Family
-              </button>
-            </Tooltip>
-            <Tooltip text="Reset filters and search to defaults">
-              <button className="fee-btn fee-btn-ghost" onClick={resetFilters}>
-                <i className="fa-solid fa-rotate-left"></i> Reset Filter
-              </button>
-            </Tooltip>
           </div>
 
           <div className="fee-searchrow">
