@@ -401,23 +401,23 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
     setNewLabel('');
   };
   const save = async () => {
-  /* Add box me likha hua naam (Add dabaye baghair) bhi save me shamil karo. */
-  const pending = newLabel.trim();
-  const list = pending ? [...draft, newItem(pending)] : draft;
-  if (list.some(x => !String((showIcons ? x.name : x.label) || '').trim())) {
-    toast('A row is empty — type a name or remove it before saving', 'error');
-    return;
-  }
-  try {
-    const saved = await service(list, removedDbIds);
-    onSaved(saved);
-    setNewLabel('');
-    setRemovedDbIds([]);
-    toast('Saved successfully!', 'success');
-  } catch (err) {
-    toast(err.message || 'Save failed, please try again', 'error');
-  }
-};
+    /* Add box me likha hua naam (Add dabaye baghair) bhi save me shamil karo. */
+    const pending = newLabel.trim();
+    const list = pending ? [...draft, newItem(pending)] : draft;
+    if (list.some(x => !String((showIcons ? x.name : x.label) || '').trim())) {
+      toast('A row is empty — type a name or remove it before saving', 'error');
+      return;
+    }
+    try {
+      const saved = await service(list, removedDbIds);
+      onSaved(saved);
+      setNewLabel('');
+      setRemovedDbIds([]);
+      toast('Saved successfully!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed, please try again', 'error');
+    }
+  };
   return (
     <div className="rs-card">
       <div className="rs-card-head">
@@ -575,33 +575,33 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
     setDraft(d => [...d, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: v }]);
     setNewText('');
   };
-    const save = async () => {
-  try {
-    const pending = newText.trim();
-    const list = pending ? [...draft, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: pending }] : draft;
-    if (list.some(s => !String(s.text || '').trim())) { toast('A statement is empty — type it or remove it before saving', 'error'); return; }
-    const fresh = await preschoolService.saveSloStatements(activeLevel, activeId, list, removedDbIds);
-    setNewText('');
-    // sirf isi level + learning area ki list badlo, baaqi pSlo waisa hi rahe
-    onSaved(prev => ({ ...prev, [activeLevel]: { ...(prev?.[activeLevel] || {}), [activeId]: fresh } }));
-    setRemovedDbIds([]);
-    toast('Assessment points saved!', 'success');
-  } catch (err) {
-    toast(err.message || 'Save failed, please try again', 'error');
-  }
-};
- const copyFromPrevious = async () => {
-  if (!prevLevel) return;
-  const hasExisting = Object.values(levelSlo).some(list => list?.length);
-  if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
-  try {
-    const fresh = await preschoolService.copyLevelSlo(prevLevel.id, activeLevel, pLearningAreas);
-    onSaved(fresh);
-    toast(`Copied all SLOs from ${prevLevel.name}!`, 'success');
-  } catch (err) {
-    toast(err.message || 'Copy failed, please try again', 'error');
-  }
-};
+  const save = async () => {
+    try {
+      const pending = newText.trim();
+      const list = pending ? [...draft, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: pending }] : draft;
+      if (list.some(s => !String(s.text || '').trim())) { toast('A statement is empty — type it or remove it before saving', 'error'); return; }
+      const fresh = await preschoolService.saveSloStatements(activeLevel, activeId, list, removedDbIds);
+      setNewText('');
+      // sirf isi level + learning area ki list badlo, baaqi pSlo waisa hi rahe
+      onSaved(prev => ({ ...prev, [activeLevel]: { ...(prev?.[activeLevel] || {}), [activeId]: fresh } }));
+      setRemovedDbIds([]);
+      toast('Assessment points saved!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed, please try again', 'error');
+    }
+  };
+  const copyFromPrevious = async () => {
+    if (!prevLevel) return;
+    const hasExisting = Object.values(levelSlo).some(list => list?.length);
+    if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
+    try {
+      const fresh = await preschoolService.copyLevelSlo(prevLevel.id, activeLevel, pLearningAreas);
+      onSaved(fresh);
+      toast(`Copied all SLOs from ${prevLevel.name}!`, 'success');
+    } catch (err) {
+      toast(err.message || 'Copy failed, please try again', 'error');
+    }
+  };
 
   return (
     <div className="rs-card">
@@ -670,7 +670,7 @@ function PreschoolResultSetup({
   toast,
 }) {
 
-    const [pRcoId, setPRcoId] = useState(0);
+  const [pRcoId, setPRcoId] = useState(0);
   const [pRcoSaving, setPRcoSaving] = useState(false);
 
   useEffect(() => {
@@ -926,7 +926,7 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
-const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRowId } }
+  const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRowId } }
   const [sloSaving, setSloSaving] = useState({});  // { 'laId_sloId': true } jab tak save ho raha ho
   const sloDirtyRef = useRef(new Set());           // 'laId_sloId' jo modal me badli; Save par API jayengi
 
@@ -968,9 +968,9 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
 
   const activeTab = areaTabs[tabIdx];
   const setPsdCode = (fieldId, code) => setPsd(p => ({ ...p, [fieldId]: code }));
-   /* Rating button sirf local state update + dirty mark. Asli API ab footer ke
-      Save par chalti hai (flushSloAssessments). */
-   const setSlo = (laId, sloId, code) => {
+  /* Rating button sirf local state update + dirty mark. Asli API ab footer ke
+     Save par chalti hai (flushSloAssessments). */
+  const setSlo = (laId, sloId, code) => {
     setAchievements(a => ({ ...a, [laId]: { ...(a[laId] || {}), [sloId]: code } }));
     // Local-only id (jaise "la_171234") par real DB id nahi hoti — API skip.
     if (Number.isNaN(Number(laId)) || Number.isNaN(Number(sloId))) return;
@@ -981,80 +981,80 @@ const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRo
      2 kiye to 2. Row ki id (load/pehle save se) ho to action:'update' us id ke
      saath, warna action:'insert' (response se nayi id milti hai, sloDbIds me store).
      Har call allSettled se independent — ek fail ho to baqi phir bhi chalein. */
-const flushSloAssessments = async () => {
-  const jobs = [];
-  let skipped = 0;
+  const flushSloAssessments = async () => {
+    const jobs = [];
+    let skipped = 0;
 
-  Object.entries(achievements).forEach(([laId, slos]) => {
-    Object.entries(slos || {}).forEach(([sloId, code]) => {
-      if (code == null || code === '') return;
-      // local-only (default) id: real DB id nahi, save nahi ho sakti
-      if (Number.isNaN(Number(laId)) || Number.isNaN(Number(sloId))) { skipped++; return; }
-      const rowId = sloDbIds[laId]?.[sloId] || 0;
-      // pehle se saved aur badli nahi to dobara bhejne ki zaroorat nahi
-      if (rowId && !sloDirtyRef.current.has(`${laId}_${sloId}`)) return;
-      jobs.push({ laId, sloId, code, rowId });
+    Object.entries(achievements).forEach(([laId, slos]) => {
+      Object.entries(slos || {}).forEach(([sloId, code]) => {
+        if (code == null || code === '') return;
+        // local-only (default) id: real DB id nahi, save nahi ho sakti
+        if (Number.isNaN(Number(laId)) || Number.isNaN(Number(sloId))) { skipped++; return; }
+        const rowId = sloDbIds[laId]?.[sloId] || 0;
+        // pehle se saved aur badli nahi to dobara bhejne ki zaroorat nahi
+        if (rowId && !sloDirtyRef.current.has(`${laId}_${sloId}`)) return;
+        jobs.push({ laId, sloId, code, rowId });
+      });
     });
-  });
 
-  if (skipped) {
-   toast(
-  `${skipped} rating(s) could not be saved. Please save your changes in Result Setup before submitting these SLO ratings.`,
-  'error'
-);
-  }
-  if (!jobs.length) return true;
-
-  setSloSaving(s => ({ ...s, __all: true }));
-  let failed = 0;
-  try {
-    // ek ek karke (parallel nahi) taake backend race condition me sirf 1 row na bachaye
-    for (const j of jobs) {
-      try {
-        const newId = await preschoolService.saveSloAssessment({
-          id: j.rowId, gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
-          preSubjectId: Number(j.laId), preSLOId: Number(j.sloId), code: j.code, examId, termId,
-        });
-        if (newId) {
-          setSloDbIds(prev => ({ ...prev, [j.laId]: { ...(prev[j.laId] || {}), [j.sloId]: newId } }));
-        }
-      } catch (e) {
-        failed++;
-        console.error('SLO save failed', j, e);
-      }
+    if (skipped) {
+      toast(
+        `${skipped} rating(s) could not be saved. Please save your changes in Result Setup before submitting these SLO ratings.`,
+        'error'
+      );
     }
+    if (!jobs.length) return true;
 
-    // DB se dobara load karke ids sync karo (taake agli save duplicate insert na kare)
+    setSloSaving(s => ({ ...s, __all: true }));
+    let failed = 0;
     try {
-      const map = await preschoolService.getStudentSloAssessments({
-        gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id, examId, termId,
-      });
-      const ids = {};
-      Object.keys(map).forEach(la => {
-        ids[la] = {};
-        Object.keys(map[la]).forEach(s => { ids[la][s] = map[la][s].id; });
-      });
-      setSloDbIds(ids);
-    } catch (e) { console.error('Resync failed', e); }
+      // ek ek karke (parallel nahi) taake backend race condition me sirf 1 row na bachaye
+      for (const j of jobs) {
+        try {
+          const newId = await preschoolService.saveSloAssessment({
+            id: j.rowId, gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
+            preSubjectId: Number(j.laId), preSLOId: Number(j.sloId), code: j.code, examId, termId,
+          });
+          if (newId) {
+            setSloDbIds(prev => ({ ...prev, [j.laId]: { ...(prev[j.laId] || {}), [j.sloId]: newId } }));
+          }
+        } catch (e) {
+          failed++;
+          console.error('SLO save failed', j, e);
+        }
+      }
 
-    sloDirtyRef.current.clear();
-    if (failed) { toast(`${failed} rating(s) save nahi huin — dobara try karein`, 'error'); return false; }
-    return true;
-  } finally {
-    setSloSaving(s => { const n = { ...s }; delete n.__all; return n; });
-  }
-};
+      // DB se dobara load karke ids sync karo (taake agli save duplicate insert na kare)
+      try {
+        const map = await preschoolService.getStudentSloAssessments({
+          gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id, examId, termId,
+        });
+        const ids = {};
+        Object.keys(map).forEach(la => {
+          ids[la] = {};
+          Object.keys(map[la]).forEach(s => { ids[la][s] = map[la][s].id; });
+        });
+        setSloDbIds(ids);
+      } catch (e) { console.error('Resync failed', e); }
+
+      sloDirtyRef.current.clear();
+      if (failed) { toast(`${failed} rating(s) save nahi huin — dobara try karein`, 'error'); return false; }
+      return true;
+    } finally {
+      setSloSaving(s => { const n = { ...s }; delete n.__all; return n; });
+    }
+  };
 
   const buildPayload = () => ({ achievements, psd, attendance, teacherRemarks, finalRemarks, ptm, promotion, attRemarksId });
   /* shouldClose lets the footer tell onSave whether this was "Save & Next"
      (stay open, just move tabs) or "Save & Close" (dismiss the modal). Save par
      pehle SLO ratings API (action:insert) jati hain, phir onSave. */
- const saveAndNext = async () => {
-  const ok = await flushSloAssessments();
-  if (!ok) return;
-  onSave(buildPayload(), false);
-  if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1);
-};
+  const saveAndNext = async () => {
+    const ok = await flushSloAssessments();
+    if (!ok) return;
+    onSave(buildPayload(), false);
+    if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1);
+  };
   const saveAndClose = async () => { const ok = await flushSloAssessments(); if (ok) onSave(buildPayload(), true); };
 
   return createPortal(
@@ -1221,24 +1221,24 @@ const flushSloAssessments = async () => {
                 </div>
               ))}
             </div>
-          ):(
+          ) : (
             <div className="pms-slo-list">
               {(pSlo[activeTab.id] || []).map(s => (
                 <div key={s.id} className="pms-slo-row">
                   <span className="pms-slo-text">{s.text}</span>
                   <div className="pms-grade-picker">
                     {pGradingScale.map(g => (
-  <button
-    key={g.code}
-    type="button"
-    className={`pms-grade-btn${achievements[activeTab.id]?.[s.id] === g.code ? ' active' : ''}`}
-    style={{ '--g-color': g.color }}
-    disabled={!!sloSaving[`${activeTab.id}_${s.id}`]}
-    onClick={() => setSlo(activeTab.id, s.id, g.code)}
-  >
-    {g.code}
-  </button>
-))}
+                      <button
+                        key={g.code}
+                        type="button"
+                        className={`pms-grade-btn${achievements[activeTab.id]?.[s.id] === g.code ? ' active' : ''}`}
+                        style={{ '--g-color': g.color }}
+                        disabled={!!sloSaving[`${activeTab.id}_${s.id}`]}
+                        onClick={() => setSlo(activeTab.id, s.id, g.code)}
+                      >
+                        {g.code}
+                      </button>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -1279,17 +1279,42 @@ function pAgeFromDob(dob) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   PreschoolResultCard — the one shared render for all 3 report
-   "templates" (Monthly / Term / Annual). They differ only in period
-   scope/label, not in visual structure, per the brief — a single
-   variant-aware component instead of 3 near-duplicate ones. Plain
-   JSX, inline-styled (same convention as ClassicResultCard etc.) so
-   PreschoolResultCardViewer.printPdf() can serialise it the same way.
+   PreschoolResultCardViewer — mirrors ResultCardViewer exactly
+   (same live-DOM-innerHTML print approach, same A4 print CSS shell). ─
    ═══════════════════════════════════════════════════════════════════ */
-function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE_P_STUDENT, cls = SAMPLE_P_CLS, ad = SAMPLE_P_AD, la, slo, gradingScale, psdFields, assessment = SAMPLE_P_ASSESSMENT, previous = null }) {
+/* Single source of truth for the print/PDF window shell around a
+   rendered PreschoolResultCard — used both by the on-screen viewer's
+   own PDF button AND by the Result History Download icon, so a
+   downloaded report can never drift from what the preview shows. */
+function pPrintPreschoolCard(html, studentName, toast) {
+  const w = window.open('', '_blank', 'width=960,height=820');
+  if (!w) { toast('Pop-up blocker prevented opening', 'error'); return false; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Preschool Result — ${studentName}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
+@page{size:A4 portrait;margin:12mm}
+@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important} }
+.wrap{width:100%;max-width:210mm;margin:0 auto}
+.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
+.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
+.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
+</style></head><body>
+<div class="wrap">${html}</div>
+<div class="print-bar no-print">
+  <button onclick="window.print()">🖨 Save as PDF</button>
+  <button class="close-btn" onclick="window.close()">Close</button>
+</div>
+</body></html>`);
+  w.document.close();
+  return true;
+}
+
+function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE_P_STUDENT, cls = SAMPLE_P_CLS, ad = SAMPLE_P_AD, la, slo, gradingScale, psdFields, assessment = SAMPLE_P_ASSESSMENT, previous = null, school = null }) {
   const opt = {};
   (pRco || []).forEach(o => { opt[o.label] = o.on; });
   const t = P_TEMPLATES.find(x => x.id === variant) || P_TEMPLATES[0];
+  const schoolName = school?.name || 'The Oxford System, Lahore Campus';
   const counts = pAchievementCounts(gradingScale, ad);
   const totalRated = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
   const attPct = ad.attendance?.workingDays ? Math.round((ad.attendance.presentDays / ad.attendance.workingDays) * 100) : 0;
@@ -1302,9 +1327,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
   const textMut = '#64748B';
   const rowAlt = '#F8FAFF';
 
-  // Document-style section heading — accent bar + icon + uppercase label,
-  // matching the shared report vocabulary used across the ERP's other
-  // result cards (ClassicResultCard, rhBuildSingleCardReport).
   const SecHead = ({ icon, children, sub }) => (
     <div style={{ marginBottom: 9 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1319,12 +1341,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
     const g = pGradeInfo(gradingScale, code);
     return <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 24, padding: '2px 8px', borderRadius: 6, background: g.color, color: '#fff', fontSize: 10.5, fontWeight: 800, flexShrink: 0 }}>{g.code}</span>;
   };
-  // Small circular progress ring for the one headline stat (Overall
-  // Performance) — same 0-36-viewBox convention as the dashboard's
-  // MiniRing. Everywhere else on the card uses flat div/CSS bars: a
-  // bigger inline-SVG donut was tried and dropped elsewhere in this
-  // app because it clipped in narrow card columns, so bars stay the
-  // default for anything wider than a small badge.
   const Ring = ({ pct, color, size = 54 }) => {
     const c = Math.max(0, Math.min(100, pct));
     return (
@@ -1338,9 +1354,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
       </div>
     );
   };
-  // Flat horizontal bar — the card's default "score at a glance" visual
-  // (attendance %, per-learning-area strength, PSD summary), matching
-  // the app's own established pi-bar-track/pi-bar-fill convention.
   const Bar = ({ pct, color }) => (
     <div style={{ height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
       <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, pct))}%`, background: color, borderRadius: 3 }} />
@@ -1353,12 +1366,14 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
       {/* Header */}
       <div className="pms-card-head" style={{ background: `linear-gradient(135deg,${t.accent} 0%,${t.accent}CC 100%)`, color: '#fff', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
         {opt['Show School Logo'] && (
-          <div style={{ width: 42, height: 42, borderRadius: 10, background: 'rgba(255,255,255,.2)', border: '1.5px solid rgba(255,255,255,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
-            <i className="fa-solid fa-school"></i>
+          <div style={{ width: 42, height: 42, borderRadius: 10, background: school?.logo ? '#fff' : 'rgba(255,255,255,.2)', border: '1.5px solid rgba(255,255,255,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0, overflow: 'hidden' }}>
+            {school?.logo
+              ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              : <i className="fa-solid fa-school"></i>}
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>The Oxford System, Lahore Campus</div>
+          <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{schoolName}</div>
           <div style={{ fontSize: 10.5, opacity: 0.8, marginTop: 2 }}>{t.name} · {assessment.label}</div>
         </div>
         {opt['Show Student Photo'] && (
@@ -1385,8 +1400,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
       </div>
 
       <div style={{ padding: '14px 18px' }}>
-        {/* Overall Performance — indicative grade + percentage summary, with
-            a comparison against the child's last Preschool assessment. */}
         {opt['Show Overall Performance Summary'] && overallInfo && (
           <div style={{ marginBottom: 14, padding: '10px 14px', borderRadius: 10, background: accentBg, border: `1px solid ${accentBdr}`, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -1411,9 +1424,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Grading Scale — always visible (not gated by any Result Card
-            Options toggle) as a single compact legend row, so parents and
-            teachers always know what each achievement level means. */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px 14px', padding: '7px 12px', marginBottom: 14, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8 }}>
           {(gradingScale || []).map(g => (
             <span key={g.code} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 9.5, fontWeight: 600, color: '#475569' }}>
@@ -1423,7 +1433,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           ))}
         </div>
 
-        {/* Attendance Summary */}
         {opt['Show Attendance Summary'] && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-calendar-check" sub={ad.attendance?.mode === 'manual' ? 'Entered manually by teacher' : 'Auto-fetched from attendance records'}>Attendance Summary</SecHead>
@@ -1439,7 +1448,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Performance Summary + chart */}
         {opt['Show Performance Chart'] && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-chart-pie">Performance Summary</SecHead>
@@ -1459,7 +1467,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Subject-wise Assessment */}
         {opt['Show Subject-wise Assessment'] && (la || []).some(area => ad.achievements?.[area.id] && Object.keys(ad.achievements[area.id]).length) && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-book">Subject-wise Assessment</SecHead>
@@ -1493,7 +1500,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Personal & Social Development */}
         {opt['Show Personal & Social Development'] && (psdFields || []).some(f => ad.psd?.[f.id]) && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-people-arrows">Personal &amp; Social Development</SecHead>
@@ -1525,8 +1531,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Final Remarks — overall summary, mirrors the Grade 1-12
-            percentage-band final remarks concept but achievement-based. */}
         {opt['Show Teacher Observation Remarks'] && ad.finalRemarks && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-star">Final Remarks</SecHead>
@@ -1534,7 +1538,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Teacher Observation Remarks */}
         {opt['Show Teacher Observation Remarks'] && ad.teacherRemarks && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-comment-dots">Teacher Observation Remarks</SecHead>
@@ -1542,7 +1545,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Parent Teacher Meeting */}
         {opt['Show Parent Teacher Meeting Section'] && ad.ptm?.enabled && (
           <div style={{ marginBottom: 14 }}>
             <SecHead icon="fa-handshake">Parent Teacher Meeting</SecHead>
@@ -1555,9 +1557,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Promotion / Retention Status — hidden entirely if the teacher
-            left it "Not Set" for this student, regardless of the
-            admin-wide toggle. */}
         {opt['Show Promotion / Retention Status'] && ad.promotion?.status && (
           <div style={{ marginBottom: 4 }}>
             <SecHead icon="fa-route">Promotion Status</SecHead>
@@ -1573,7 +1572,6 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {/* Signatures */}
         {sigs && sigs.length > 0 && (
           <div style={{ display: 'flex', gap: 18, marginTop: 20, paddingTop: 14, borderTop: '1px solid #E2E8F0' }}>
             {sigs.map(s => (
@@ -1589,45 +1587,12 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
 
       <div style={{ padding: '8px 18px', background: accentBg, borderTop: `1px solid ${accentBdr}`, display: 'flex', justifyContent: 'space-between', fontSize: 9, color: textMut, flexWrap: 'wrap', gap: 5 }}>
         <span>School Mentor ERP · Preschool / Montessori Result</span>
-        <span>Confidential · The Oxford System, Lahore Campus</span>
+        <span>Confidential · {schoolName}</span>
       </div>
     </div>
   );
 }
-
-/* ═══════════════════════════════════════════════════════════════════
-   PreschoolResultCardViewer — mirrors ResultCardViewer exactly
-   (same live-DOM-innerHTML print approach, same A4 print CSS shell). ─
-   ═══════════════════════════════════════════════════════════════════ */
-/* Single source of truth for the print/PDF window shell around a
-   rendered PreschoolResultCard — used both by the on-screen viewer's
-   own PDF button AND by the Result History Download icon, so a
-   downloaded report can never drift from what the preview shows. */
-function pPrintPreschoolCard(html, studentName, toast) {
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (!w) { toast('Pop-up blocker prevented opening', 'error'); return false; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Preschool Result — ${studentName}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
-@page{size:A4 portrait;margin:12mm}
-@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important} }
-.wrap{width:100%;max-width:210mm;margin:0 auto}
-.print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
-.print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
-.print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
-</style></head><body>
-<div class="wrap">${html}</div>
-<div class="print-bar no-print">
-  <button onclick="window.print()">🖨 Save as PDF</button>
-  <button class="close-btn" onclick="window.close()">Close</button>
-</div>
-</body></html>`);
-  w.document.close();
-  return true;
-}
-
-function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, rsSigs, previous, onClose, toast }) {
+function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, rsSigs, previous, school, onClose, toast }) {
   const cardRef = useRef(null);
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -1667,7 +1632,7 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#F1F5F9' }}>
           <div ref={cardRef} style={{ maxWidth: 720, margin: '0 auto', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
-            <PreschoolResultCard variant={template} pRco={pRco} sigs={rsSigs} student={student} cls={cls} ad={ad} la={pLearningAreas} slo={pSlo} gradingScale={pGradingScale} psdFields={pPsdFields} assessment={assessment} previous={previous} />
+            <PreschoolResultCard variant={template} pRco={pRco} sigs={rsSigs} student={student} cls={cls} ad={ad} la={pLearningAreas} slo={pSlo} gradingScale={pGradingScale} psdFields={pPsdFields} assessment={assessment} previous={previous} school={school} />
           </div>
         </div>
       </div>
@@ -1675,7 +1640,6 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
     document.body
   );
 }
-
 /* ═══════════════════════════════════════════════════════════════════
    PreschoolCardDownloader — the Result History Download icon's target.
    Renders the exact same <PreschoolResultCard> the "View" button shows
@@ -1684,7 +1648,7 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
    own PDF button uses — so the downloaded report can never drift from
    the preview. One click, no intermediate picker, byte-for-byte match.
    ═══════════════════════════════════════════════════════════════════ */
-function PreschoolCardDownloader({ assessment, cls, student, ad, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, rsSigs, previous, onDone, toast }) {
+function PreschoolCardDownloader({ assessment, cls, student, ad, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, rsSigs, previous, school, onDone, toast }) {
   const cardRef = useRef(null);
   useEffect(() => {
     const node = cardRef.current;
@@ -1696,7 +1660,7 @@ function PreschoolCardDownloader({ assessment, cls, student, ad, template, pRco,
   return createPortal(
     <div style={{ position: 'fixed', left: -99999, top: 0, width: 720 }} aria-hidden="true">
       <div ref={cardRef}>
-        <PreschoolResultCard variant={template} pRco={pRco} sigs={rsSigs} student={student} cls={cls} ad={ad} la={pLearningAreas} slo={pSlo} gradingScale={pGradingScale} psdFields={pPsdFields} assessment={assessment} previous={previous} />
+        <PreschoolResultCard variant={template} pRco={pRco} sigs={rsSigs} student={student} cls={cls} ad={ad} la={pLearningAreas} slo={pSlo} gradingScale={pGradingScale} psdFields={pPsdFields} assessment={assessment} previous={previous} school={school} />
       </div>
     </div>,
     document.body

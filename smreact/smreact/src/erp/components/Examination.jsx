@@ -1181,6 +1181,7 @@ export default function Examination({ toast = () => { } }) {
     (async () => {
       try {
         const res = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        console.log(buildUrl(`/report-header/${sessionStorage.getItem('branchID')}`));
         const json = await res.json();
         if (!cancelled && json?.success) {
           const d = json.data || {};
@@ -8207,30 +8208,29 @@ export default function Examination({ toast = () => { } }) {
         />
       )}
 
-      {pCardCtx && (() => {
-        const ad = pCardAd || (pResultData[pCardCtx.key]?.students || []).find(s => String(s.studentId) === String(pCardCtx.student?.id));
-        if (!ad) return null;   // abhi load ho raha hai (real API) — ready hote hi card khul jayega
-        return (
-          <PreschoolResultCardViewer
-            assessment={{ name: pCardCtx.examName, label: pCardCtx.examName }}
-            cls={{ cls: pCardCtx.className, sec: '' }}
-            student={pCardCtx.student}
-            ad={ad}
-            /* Selected design (Result Card Options) — sessionStorage/pReportType se;
-               na mile to exam-naam se infer. */
-            template={(() => { try { return sessionStorage.getItem('preschoolReportType'); } catch { return null; } })() || pReportType || pTemplateForExam(pCardCtx.examName)}
-            pRco={pRco}
-            pLearningAreas={pLearningAreas}
-            pSlo={pSlo[pClassLevels[pCardCtx.key] || 'kg'] || {}}
-            pGradingScale={pGradingScale}
-            pPsdFields={pPsdFields}
-            rsSigs={rsSigs}
-            previous={null}
-            onClose={() => setPCardCtx(null)}
-            toast={toast}
-          />
-        );
-      })()}
+{pCardCtx && (() => {
+  const ad = pCardAd || (pResultData[pCardCtx.key]?.students || []).find(s => String(s.studentId) === String(pCardCtx.student?.id));
+  if (!ad) return null;
+  return (
+    <PreschoolResultCardViewer
+      assessment={{ name: pCardCtx.examName, label: pCardCtx.examName }}
+      cls={{ cls: pCardCtx.className, sec: '' }}
+      student={pCardCtx.student}
+      ad={ad}
+      school={branchSchool}   
+      template={(() => { try { return sessionStorage.getItem('preschoolReportType'); } catch { return null; } })() || pReportType || pTemplateForExam(pCardCtx.examName)}
+      pRco={pRco}
+      pLearningAreas={pLearningAreas}
+      pSlo={pSlo[pClassLevels[pCardCtx.key] || 'kg'] || {}}
+      pGradingScale={pGradingScale}
+      pPsdFields={pPsdFields}
+      rsSigs={rsSigs}
+      previous={null}
+      onClose={() => setPCardCtx(null)}
+      toast={toast}
+    />
+  );
+})()}
 
       {pPreviewId && (
         <PreschoolTemplatePreviewModal
