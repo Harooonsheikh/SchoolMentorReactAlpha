@@ -20,8 +20,8 @@ const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
 // const DEV_URL = 'http://210.56.9.60:1123';
 // const DEV_URL  =  'http://50.190.164.42:4100';
 const DEV_URL  =  'https://sandbox-alphaapi.schoolmentor.ai';
-// const PROD_URL  =  'https://sandbox-alphaapi.schoolmentor.ai';
-const PROD_URL = 'https://erp.schoolmentor.ai';
+const PROD_URL  =  'https://sandbox-alphaapi.schoolmentor.ai';
+// const PROD_URL = 'https://erp.schoolmentor.ai';
 
 const DEFAULT_URL = stripSlash(process.env.REACT_APP_API_BASE_URL)
   || (process.env.NODE_ENV === 'production' ? PROD_URL : DEV_URL);
