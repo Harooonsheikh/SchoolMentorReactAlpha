@@ -2936,7 +2936,7 @@ function FeeChallansList({ toast }) {
   useEffect(() => {
     if (settings.enableMonthClosing === undefined) return;
     const d = new Date();
-    const p = settings.enableMonthClosing === true ? periodFromSettings(settings, readFeePeriod().history) : { m: d.getMonth(), y: d.getFullYear() };
+    const p = settings.enableMonthClosing === true ? periodFromSettings(settings, readFeePeriod().history) : { m: d.getMonth(), y: d.getFullYear(), history: readFeePeriod().history };
     const mName = FEE_MONTHS[p.m], yStr = String(p.y);
     setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr); setFeePeriod(p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
