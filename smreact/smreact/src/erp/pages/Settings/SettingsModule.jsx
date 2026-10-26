@@ -4,6 +4,7 @@ import TutorialModal from '../../components/TutorialModal';
 import SessionManagement from './SessionManagement';
 import SignatureManagement from './SignatureManagement';
 import Networks from '../../components/Networks.jsx';
+import BranchClassMapping from './BranchClassMapping';
 import MobileAppSettings from './MobileAppSettings';
 // TODO: Re-enable once the Approvals API is ready.
 import ApprovalSettings from './ApprovalSettings';
@@ -111,7 +112,13 @@ export default function SettingsModule({ toast = () => {} }) {
       <div role="tabpanel">
         {sub === 'sessions'   && <SessionManagement   toast={toast} />}
         {sub === 'signatures' && <SignatureManagement toast={toast} />}
-        {sub === 'networks'   && <Networks            toast={toast} embedded />}
+        {sub === 'networks'   && (
+          <>
+            <Networks            toast={toast} embedded />
+            {/* Branch Class Mapping — sits under Networks; driven by the Head Office payload. */}
+            <BranchClassMapping toast={toast} />
+          </>
+        )}
         {sub === 'mobileapp'  && <MobileAppSettings   toast={toast} />}
         {sub === 'approvals'  && <ApprovalSettings    toast={toast} />}
       </div>
@@ -1415,4 +1422,11 @@ select.settings-input {
     font-size: 10px !important;
   }
 }
+.cs-card { background:var(--bg-card,#fff); border:1.5px solid var(--border-light,#E2E8F0); border-radius:18px; padding:22px; box-shadow:var(--shadow-sm,0 1px 2px rgba(15,23,42,.05)); }
+.cs-card-head { display:flex; align-items:center; gap:14px; margin-bottom:18px; }
+.cs-card-title { font-size:17px; font-weight:800; color:var(--text-primary,#0F172A); }
+.cs-card-sub { font-size:12.5px; color:var(--text-muted,#64748B); margin-top:3px; }
+.cs-status-badge { display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:800; padding:8px 13px; border-radius:12px; flex-shrink:0; }
+.cs-status-badge.pending { color:#B45309; background:rgba(217,119,6,.12); }
+.cs-status-badge.active { color:#15803D; background:rgba(22,163,74,.12); }
 `;

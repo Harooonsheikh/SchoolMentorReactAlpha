@@ -2093,8 +2093,8 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
             const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
             const payKey = `${e.id}_${monthKey}`;
             const rec = getRec(e.id);
-            const deletePendingFromLocal = rec && rec.id ? payrollDeletePendingMap[rec.id] : null;
-            const deletePendingFromApi = rec && rec.id ? pendingApprovals.find(a => a.entityId === rec.id && a.actionType && a.actionType.includes('delete')) : null;
+            const deletePendingFromLocal = rec?.payrollID ? payrollDeletePendingMap[rec.payrollID] : null;
+            const deletePendingFromApi = rec?.payrollID ? pendingApprovals.find(a => a.entityId === rec.payrollID && a.actionType && a.actionType.includes('delete')) : null;
             return (
             <PayrollRow
               key={e.id}
