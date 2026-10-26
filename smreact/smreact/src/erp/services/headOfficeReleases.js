@@ -425,10 +425,12 @@ const DUPLICATE_URL = () => buildChainApiUrl('/api/Network_Setup/duplicate-relea
 
 /**
  * Ek released item ki copy is branch me banao.
- * @param {{type:string, typeID:number, branchGradeID?:number, branchSubjectID?:number, branchSectionID?:number}} item
+ * `branchTermID` sirf Term Breakup ke liye lazmi hai (woh class+subject+TERM se
+ * bandha hota hai) — baqi types me 0.
+ * @param {{type:string, typeID:number, branchGradeID?:number, branchSubjectID?:number, branchSectionID?:number, branchTermID?:number}} item
  */
 export async function duplicateReleaseData({
-  type, typeID, branchGradeID = 0, branchSubjectID = 0, branchSectionID = 0,
+  type, typeID, branchGradeID = 0, branchSubjectID = 0, branchSectionID = 0, branchTermID = 0,
 }) {
   const bid = branchId();
   const networkID = await fetchBranchNetworkId();
@@ -443,5 +445,6 @@ export async function duplicateReleaseData({
     branchGradeID: num(branchGradeID),
     branchSubjectID: num(branchSubjectID),
     branchSectionID: num(branchSectionID),
+    branchTermID: num(branchTermID),
   });
 }

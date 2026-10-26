@@ -3801,6 +3801,8 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       branchGradeID: extra.classId,
       branchSubjectID: extra.subjectId,
       branchSectionID: extra.sectionId,
+      /* Term Breakup ke liye branch ka chuna hua term — baqi types me 0. */
+      branchTermID: extra.termId,
     }).catch(err => toast(err?.message || 'Saved here, but the Head Office copy could not be created.', 'error'));
   };
 
@@ -3900,7 +3902,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       localTargetModule: 'TERM_BREAKUP', localClassId: classId, localSectionId: extra.sectionId || null,
       localSubjectId: subjectName, localCategory: null,
     });
-    pushToPortal(RELEASE_TYPE.termbreakup, tb, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId });
+    pushToPortal(RELEASE_TYPE.termbreakup, tb, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId, termId: extra.termId });
     toast('Term breakup saved to your portal.', 'success');
   };
 
@@ -3966,6 +3968,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
                     <span><i className="fa-solid fa-list-ul"></i> {s.lessons} Lesson Plans</span>
                     <span><i className="fa-solid fa-book-open"></i> {s.notebooks} Notebook Plans</span>
                     <span><i className="fa-solid fa-folder-open"></i> {s.resources} Resource Files</span>
+                    <span><i className="fa-solid fa-table-list"></i> {s.termBreakups} Term Breakups</span>
                   </div>
                   <button className="btn btn-primary ho-rel-view" onClick={() => setDetail(r)}><i className="fa-solid fa-eye"></i> View Details</button>
                 </div>
@@ -4232,6 +4235,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
 
 function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
   const isResource = kind === 'resource';
+  const isTermBreakup = kind === 'termbreakup';
   const [classId, setClassId] = useState('');
   const [sectionId, setSectionId] = useState('');
   const [subjectId, setSubjectId] = useState('');
@@ -4240,9 +4244,30 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
   const [localClasses, setLocalClasses] = useState(classesData);
   const [classesLoading, setClassesLoading] = useState(false);
   const [category, setCategory] = useState(isResource ? (item.category || 'worksheet') : '');
+  /* Term Breakup ke liye branch ka apna term — duplicate-release-data ko
+     branchTermID chahiye (term breakup class+subject+TERM se bandha hota hai). */
+  const [terms, setTerms] = useState([]);
+  const [termId, setTermId] = useState('');
+  const [termsLoading, setTermsLoading] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => { setLocalClasses(classesData); }, [classesData]);
+
+  /* Term Breakup save par branch ke terms laao (termscrud get). */
+  useEffect(() => {
+    if (!isTermBreakup) return undefined;
+    let alive = true;
+    setTermsLoading(true);
+    termsCrud({ id: 0, branchID: termsBranchID(), term: 'string', sessionYearID: termsSessionYearID(), action: 'get' })
+      .then(res => {
+        if (!alive) return;
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        setTerms(list.map(t => ({ id: t.id, name: t.term || t.name || 'Unnamed term' })));
+      })
+      .catch(() => { if (alive) setTerms([]); })
+      .finally(() => { if (alive) setTermsLoading(false); });
+    return () => { alive = false; };
+  }, [isTermBreakup]);
 
   useEffect(() => {
     if (classesData.length) return undefined;
@@ -4299,11 +4324,13 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
     if (!sectionId) { setErr('Please select a section.'); return; }
     if (!subjectId) { setErr('Please select a subject.'); return; }
     if (isResource && !category) { setErr('Please select a category.'); return; }
+    if (isTermBreakup && !termId) { setErr('Please select a term.'); return; }
     const sub = subjects.find(x => String(x.id) === String(subjectId));
     onSave(classId, sub ? sub.name : '', category, {
       sectionId,
       sectionName: sec?.sectionName || '',
       subjectId,
+      termId,
     });
   };
 
@@ -4313,7 +4340,7 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
         <div className="modal-header">
           <div>
             <div className="modal-title"><i className="fa-solid fa-download" style={{ marginRight: 8 }}></i> {title}</div>
-            <div className="modal-sub">Choose class, section and subject in your school portal.</div>
+            <div className="modal-sub">Choose class, section{isTermBreakup ? ', subject and term' : ' and subject'} in your school portal.</div>
           </div>
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
@@ -4351,6 +4378,15 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
               <label className="form-label">Select Category <span className="req-star">*</span></label>
               <select className="form-input" value={category} onChange={e => setCategory(e.target.value)}>
                 {RL_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+            </div>
+          )}
+          {isTermBreakup && (
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Select Term <span className="req-star">*</span></label>
+              <select className="form-input" value={termId} onChange={e => { setTermId(e.target.value); setErr(''); }} disabled={termsLoading}>
+                <option value="">{termsLoading ? 'Loading terms…' : (terms.length ? 'Select term' : 'No terms set up — add terms first')}</option>
+                {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
           )}
