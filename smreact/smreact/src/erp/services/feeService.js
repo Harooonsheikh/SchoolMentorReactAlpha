@@ -631,6 +631,7 @@ const FEE_SETTINGS_DEFAULTS = {
    installmentChallan:      false,
   /* Month Closing — default OFF. */
   enableMonthClosing:      false,
+  nextMonth:               0,
   /* Note on Challan — toggle + text (max 50 words). Enabled hone par har NAYE
      challan par ye note print hota hai. Backend field na ho to localStorage
      fallback (bank details jaisa). */
@@ -675,6 +676,8 @@ function mapFeeSettingsFromApi(row = {}) {
     /* Installment Challan ↔ API `particalChallan`. null (not saved yet) = false. */
     installmentChallan:      row.particalChallan === true,
     enableMonthClosing:      row.enableMonthClosing === true,
+    /* Active fee period — YYYYMM (Nov 2026 = 202611); 0 = khali → aaj ka mahina. */
+    nextMonth:               Number(row.nextMonth) || 0,
     /* Note on Challan — backend field na ho to niche getFeeSettings me localStorage overlay. */
     challanNoteEnabled:      (typeof row.challanNoteEnabled === 'boolean' ? row.challanNoteEnabled
                               : typeof row.showChallanNote === 'boolean' ? row.showChallanNote
@@ -706,6 +709,7 @@ function blankFeeSettings() {
     fineEnabled:      false,
       fineAmt:          0,
     enableMonthClosing: false,
+    nextMonth: 0,
     createdDate:  null,
     modifiedDate: null,
     createdBy:    null,
@@ -746,7 +750,7 @@ function mapFeeSettingsToApi(settings = {}) {
     /* UI key installmentChallan → API particalChallan. Pehli save false. */
       particalChallan:           settings.installmentChallan === true,
     enableMonthClosing:        settings.enableMonthClosing === true,
-    nextMonth:                 0,
+    nextMonth:                 Number(settings.nextMonth) || 0,
     /* Note on Challan — backend field aane tak harmless; localStorage bhi persist karti hai. */
     challanNoteEnabled:        settings.challanNoteEnabled === true,
     showChallanNote:           settings.challanNoteEnabled === true, /* alias, harmless */
