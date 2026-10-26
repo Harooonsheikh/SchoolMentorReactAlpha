@@ -1490,6 +1490,10 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
          remaining, createdAt }                          */
   const [empLoans, setEmpLoans] = useState({});
 
+  /* Payroll payment pending approvals: tracks which payroll payments are awaiting approval.
+     Key format: `${empId}_${monthKey}` (e.g. "123_2026-10"), value: { approvalId, requestNo, message } */
+  const [paymentPendingMap, setPaymentPendingMap] = useState({});
+
   /* Fetch (or refresh) one employee's loans into empLoans[empId]. */
   const loadEmpLoans = async (empId) => {
     if (!empId) return;
@@ -1621,8 +1625,9 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
       && (!payload.installmentType || !(Number(payload.installmentAmount) > 0))) {
       toast('Please complete installment details', 'error'); return false;
     }
+    let loanPending = null;
     try {
-      await hrService.saveHrEmployeeLoan({
+      const resp = await hrService.saveHrEmployeeLoan({
         employeeID: empId,
         loanAmount: amount,
         comments: payload.comment || '',
@@ -1631,9 +1636,14 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
         installmentType: payload.repaymentType === 'Installment' ? payload.installmentType : '',
         installmentAmount: payload.repaymentType === 'Installment' ? (Number(payload.installmentAmount) || 0) : amount,
       });
+      loanPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not save loan', 'error');
       return false;
+    }
+    if (loanPending) {
+      toast(`Loan sent for approval (Request #${loanPending.requestNo || loanPending.approvalId})`, 'info');
+      return true;
     }
     await loadEmpLoans(empId);
     toast(`Loan of PKR ${fmtMoney(amount)} set up successfully`, 'success');
@@ -1650,16 +1660,22 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
       toast(`Amount cannot exceed remaining balance (PKR ${fmtMoney(loan.remaining)})`, 'error');
       return false;
     }
+    let repaymentPending = null;
     try {
-      await hrService.saveHrEmployeeLoanRepayment({
+      const resp = await hrService.saveHrEmployeeLoanRepayment({
         loanID: payload.loanId,
         amount: amt,
         repaymentDate: payload.date,
         comments: payload.comment || '',
       });
+      repaymentPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not record repayment', 'error');
       return false;
+    }
+    if (repaymentPending) {
+      toast(`Loan repayment sent for approval (Request #${repaymentPending.requestNo || repaymentPending.approvalId})`, 'info');
+      return true;
     }
     await loadEmpLoans(empId);
     toast(`Loan repayment of PKR ${fmtMoney(amt)} recorded`, 'success');
@@ -1855,8 +1871,10 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
     const { emp: e, payrollID, mode } = delPay;
     const force = mode === 'force';
     setDelBusy(true);
+    let deletePending = null;
     try {
-      await hrService.deleteHrPayroll(payrollID, { force });
+      const resp = await hrService.deleteHrPayroll(payrollID, { force });
+      deletePending = hrService.hrPendingInfo(resp);
     } catch (err) {
       setDelBusy(false);
       // Blocked by recorded payments — switch the popup to force-confirm mode.
@@ -1865,6 +1883,12 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
         return;
       }
       toast(err.message || 'Could not delete payroll', 'error');
+      return;
+    }
+    if (deletePending) {
+      setDelBusy(false);
+      setDelPay(null);
+      toast(`Payroll deletion sent for approval (Request #${deletePending.requestNo || deletePending.approvalId})`, 'info');
       return;
     }
     removeRec(e.id, month, year);
@@ -1923,6 +1947,11 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
                 <i className="fa-solid fa-circle" aria-hidden="true"></i> Partially Paid
               </span>
             </Tooltip>
+            <Tooltip text="Payment recorded but awaiting approval">
+              <span className="pay-status-chip pay-status-chip--pending">
+                <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Pending Approval
+              </span>
+            </Tooltip>
             <Tooltip text="Salary fully paid for this month">
               <span className="pay-status-chip pay-status-chip--paid">
                 <i className="fa-solid fa-circle" aria-hidden="true"></i> Paid
@@ -1958,14 +1987,19 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
             sub="Add active employees first to process payroll."
           />
         ) : (
-          activeEmps.map((e, i) => (
+          activeEmps.map((e, i) => {
+            const mNum = PAY_MONTHS.indexOf(month) + 1;
+            const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
+            const payKey = `${e.id}_${monthKey}`;
+            const rec = getRec(e.id);
+            return (
             <PayrollRow
               key={e.id}
               idx={i + 1}
               emp={e}
               month={month}
               year={year}
-              rec={getRec(e.id)}
+              rec={rec ? { ...rec, paymentPending: paymentPendingMap[payKey] || rec.paymentPending } : null}
               loanRemaining={getLoanRemaining(e.id)}
               desigName={getDesigName(e.desId)}
               isOpen={openId === e.id}
@@ -1983,7 +2017,8 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
               canDelete={canDelete}
               canDownload={canDownload}
             />
-          ))
+            );
+          })
         )}
       </div>
 
@@ -2000,6 +2035,7 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
           onSaveSetup={(rec) => upsertRec(prFor.id, month, year, rec)}
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
           onDelete={() => { removeRec(prFor.id, month, year); setPrFor(null); }}
+          onPaymentPending={setPaymentPendingMap}
           toast={toast}
           canCreate={canCreate}
           canApprove={canApprove}
@@ -2068,10 +2104,11 @@ function PayrollRow({
 
   let status, statusLabel, statusIcon;
   if (!rec) { status = 'notgen'; statusLabel = 'Not Generated'; statusIcon = 'fa-circle'; }
+  else if (rec.paymentPending) { status = 'pending'; statusLabel = 'Payment Pending Approval'; statusIcon = 'fa-hourglass-half'; }
   else if (rec.status === 'Paid') { status = 'paid'; statusLabel = 'Paid'; statusIcon = 'fa-circle-check'; }
   else if (rec.status === 'Partially Paid') { status = 'partial'; statusLabel = 'Partially Paid'; statusIcon = 'fa-circle-half-stroke'; }
   else { status = 'gen'; statusLabel = 'Generated'; statusIcon = 'fa-clock'; }
-  const canPay = status !== 'paid';
+  const canPay = status !== 'paid' && status !== 'pending';
 
   return (
     <div>
@@ -2346,7 +2383,7 @@ function PayRollModal({
   emp, month, year, rec: existingRec,
   loanRemaining = 0, monthlyLoanDeduct = 0,
   prevMonthDue = { total: 0, key: '' },
-  onClose, onSaveSetup, onRecordPayment, onDelete, toast,
+  onClose, onSaveSetup, onRecordPayment, onDelete, onPaymentPending, toast,
   canCreate = true, canApprove = true, canDelete = true,
 }) {
   const [tab, setTab] = useState(0);
@@ -2528,6 +2565,7 @@ function PayRollModal({
     /* Persist the setup values to the backend, then update the local record. */
     setSavingSetup(true);
     let payrollID = existingRec?.payrollID || 0;
+    let setupPending = null;
     try {
       const resp = await hrService.saveHrPayrollSetup({
         employeeID: emp.id,
@@ -2546,12 +2584,19 @@ function PayRollModal({
         absentComment,
       });
       payrollID = hrService.payrollIdFromSetupResponse(resp) || payrollID;
+      setupPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not save payroll setup', 'error');
       setSavingSetup(false);
       return;
     }
     setSavingSetup(false);
+
+    /* If payroll setup is pending approval, show that message and don't proceed */
+    if (setupPending) {
+      toast(`Payroll setup sent for approval (Request #${setupPending.requestNo || setupPending.approvalId})`, 'info');
+      return;
+    }
 
     /* Backend apna Net Payable / deductions KHUD (re)compute karke store karta hai —
        frontend ka computed net us se thoda alag ho sakta hai (e.g. scheduled loan
@@ -2619,14 +2664,17 @@ function PayRollModal({
 
     /* Record the payment on the backend before updating the local record. */
     setPayingNow(true);
+    let paymentPending = null;
     try {
-      await hrService.saveHrPayrollPayment({
+      const resp = await hrService.saveHrPayrollPayment({
         payrollID: existingRec.payrollID,
         amount: amt,
         comment: payComment.trim(),
         paymentDate: new Date().toISOString(),
         wallatID: payWalletId,
       });
+      /* Check if payment approval is pending */
+      paymentPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not record payment', 'error');
       setPayingNow(false);
@@ -2639,15 +2687,39 @@ function PayRollModal({
     const paidAmount = newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const newRemaining = recNet - paidAmount;
     const fullyPaid = newRemaining <= 0.01;
+
+    /* If approval pending → don't update to Paid, keep current status + mark as pending */
+    const newStatus = paymentPending ? existingRec.status : (fullyPaid ? 'Paid' : 'Partially Paid');
+
+    /* Track payment pending approval in the map for persistence across modal close/reopen */
+    if (onPaymentPending) {
+      const mNum = PAY_MONTHS.indexOf(month) + 1;
+      const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
+      const payKey = `${emp.id}_${monthKey}`;
+      if (paymentPending) {
+        onPaymentPending(m => ({ ...m, [payKey]: paymentPending }));
+      } else {
+        onPaymentPending(m => {
+          const updated = { ...m };
+          delete updated[payKey];
+          return updated;
+        });
+      }
+    }
+
     onRecordPayment({
       ...existingRec,
       payments: newPayments,
       paidAmount,
       paidDate: today,
-      status: fullyPaid ? 'Paid' : 'Partially Paid',
+      status: newStatus,
+      paymentPending: paymentPending || null,
       loanRecorded: existingRec.loanRecorded || (fullyPaid && (existingRec.loanDeduct > 0 || existingRec.customLoan > 0)),
     });
-    if (fullyPaid) {
+
+    if (paymentPending) {
+      toast(`Payment of PKR ${fmtMoney(amt)} sent for approval (Request #${paymentPending.requestNo || paymentPending.approvalId})`, 'info');
+    } else if (fullyPaid) {
       toast(`Final payment of PKR ${fmtMoney(amt)} recorded — payroll fully settled`, 'success');
       onClose();
     } else {
@@ -10268,13 +10340,15 @@ export const HR_CSS = `
 .pay-status-chip--gen     i { color: #D97706; }
 .pay-status-chip--partial { background: rgba(2, 132, 199, .08); border-color: rgba(2, 132, 199, .2); }
 .pay-status-chip--partial i { color: #0284C7; }
+.pay-status-chip--pending { background: rgba(220, 38, 38, .08); border-color: rgba(220, 38, 38, .2); }
+.pay-status-chip--pending i { color: #DC2626; }
 .pay-status-chip--paid    { background: rgba(22, 163, 74, .08); border-color: rgba(22, 163, 74, .2); }
 .pay-status-chip--paid    i { color: #16A34A; }
 
 /* Table head + row (8-col grid) */
 .pay-t-head {
   display: grid;
-  grid-template-columns: 44px 50px 1.05fr 145px 130px 110px 50px 40px;
+  grid-template-columns: 44px 50px 1.05fr 145px 185px 110px 50px 40px;
   padding: 0 14px;
   gap: 6px;
   background: linear-gradient(135deg, rgba(30, 58, 138, .06), rgba(30, 58, 138, .02));
@@ -10290,7 +10364,9 @@ export const HR_CSS = `
 }
 .pay-row {
   display: grid;
-  grid-template-columns: 44px 50px 1.05fr 145px 130px 110px 50px 40px;
+  /* Status column 185px — "Payment Pending Approval" (sabse lambi) ek line me aa jaye
+     aur Reports button par overlap na kare. */
+  grid-template-columns: 44px 50px 1.05fr 145px 185px 110px 50px 40px;
   align-items: center;
   min-height: 64px;
   padding: 0 14px;
@@ -10309,14 +10385,21 @@ export const HR_CSS = `
   gap: 5px;
   padding: 4px 11px;
   border-radius: var(--r-f);
-  font: 800 10.5px/1 var(--hr-font);
+  font: 800 10.5px/1.25 var(--hr-font);
   letter-spacing: .2px;
-  white-space: nowrap;
+  /* Cell se bahar na nikle — jagah kam ho (chhoti screen) to wrap ho jaye,
+     overlap na kare. Desktop par 185px me ek line me aata hai. */
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
 }
 .pay-status.notgen  { background: rgba(100, 116, 139, .12); color: #64748B; border: 1px solid rgba(100, 116, 139, .25); }
 .pay-status.gen     { background: rgba(217, 119, 6, .12);  color: #D97706; border: 1px solid rgba(217, 119, 6, .25); }
 .pay-status.partial { background: rgba(2, 132, 199, .12);  color: #0284C7; border: 1px solid rgba(2, 132, 199, .25); }
+.pay-status.pending { background: rgba(220, 38, 38, .12);  color: #DC2626; border: 1px solid rgba(220, 38, 38, .25); animation: pay-status-pulse 1.8s ease-in-out infinite; }
+.pay-status.pending i { animation: pay-status-pulse 1.8s ease-in-out infinite; }
 .pay-status.paid    { background: rgba(22, 163, 74, .12);  color: #16A34A; border: 1px solid rgba(22, 163, 74, .25); }
+@keyframes pay-status-pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
 
 /* Reports button */
 .btn-reports {

@@ -18358,7 +18358,7 @@ function feeBankBlockHtml(school, { thermal = false } = {}) {
     </div>`;
 }
 
-/* "Note on Challan" — Fee Settings se aaya custom note (max 50 words). Toggle ON
+/* "Note on Challan" — Fee Settings se aaya custom note (max 100 words). Toggle ON
    aur text ho to hi print hota hai. A4 (psid-block style) aur thermal dono. */
 function feeChallanNoteHtml(settings, { thermal = false } = {}) {
   if (!settings || settings.challanNoteEnabled !== true) return '';
@@ -19889,7 +19889,7 @@ function FeeChallanSettings({ toast }) {
                   />
                 </Tooltip>
               </div>
-              <div className="fee-set-desc">Print a custom note on every newly generated challan (max 50 words).</div>
+              <div className="fee-set-desc">Print a custom note on every newly generated challan (max 100 words).</div>
               {value.challanNoteEnabled && (() => {
                 const text = value.challanNote || '';
                 const count = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -19905,15 +19905,15 @@ function FeeChallanSettings({ toast }) {
                       onChange={e => {
                         const raw = e.target.value;
                         const w = raw.trim() ? raw.trim().split(/\s+/) : [];
-                        /* 50 words se zyada par pehle 50 words tak trim. */
-                        set({ challanNote: w.length > 50 ? w.slice(0, 50).join(' ') : raw });
+                        /* 100 words se zyada par pehle 100 words tak trim. */
+                        set({ challanNote: w.length > 100 ? w.slice(0, 100).join(' ') : raw });
                       }}
                     />
                     <div
                       className="fee-mini-label"
-                      style={{ marginTop: 4, textAlign: 'right', color: count >= 50 ? '#B91C1C' : '#64748B' }}
+                      style={{ marginTop: 4, textAlign: 'right', color: count >= 100 ? '#B91C1C' : '#64748B' }}
                     >
-                      {count} / 50 words
+                      {count} / 100 words
                     </div>
                   </div>
                 );

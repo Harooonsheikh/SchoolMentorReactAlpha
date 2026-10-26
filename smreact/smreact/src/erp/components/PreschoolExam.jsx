@@ -929,6 +929,18 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
   const [sloDbIds, setSloDbIds] = useState({});   // { [laId]: { [sloId]: realDbRowId } }
   const [sloSaving, setSloSaving] = useState({});  // { 'laId_sloId': true } jab tak save ho raha ho
   const sloDirtyRef = useRef(new Set());           // 'laId_sloId' jo modal me badli; Save par API jayengi
+  /* PSD (Personal & Social Dev.) tab bhi preschooling-marks-crud me save hota hai —
+     SLO jaisa hi insert/update loop. PSD fields ka subject = "Personal & Social
+     Development" Learning Area (preschooling-learningareas-crud, branch ke against
+     shared). Us subject ki id preSubjectId me jati hai; preSLOId = PSD field ki id.
+     Learning area na mile to 0. */
+  const PSD_SUBJECT_ID = Number(
+    (pLearningAreas || []).find(la =>
+      /personal/i.test(la.name || '') && /social/i.test(la.name || '')
+    )?.id
+  ) || 0;
+  const [psdDbIds, setPsdDbIds] = useState({});    // { [fieldId]: realDbRowId }
+  const psdDirtyRef = useRef(new Set());           // 'fieldId' jo badli
 
   // Modal khulte hi is student ki asal (real API) SLO ratings load karo —
   // taake pehle se save hui selection buttons par highlighted dikhe.
@@ -940,24 +952,42 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
           gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id, examId, termId,
         });
         if (cancelled) return;
+        /* Row ko PSD field id (preSLOId) se pehchano: preSLOId agar kisi PSD field ki id ho
+           = PSD rating (psd state); warna learning-area SLO (achievements). PSD ka preSubjectId
+           ab asli subject id hota hai (0 nahi), is liye subject se split nahi karte. */
+        const psdFieldIds = new Set((pPsdFields || []).map(f => String(f.id)));
+        const slaAchv = {}, slaIdMap = {}, psdCodes = {}, psdIdMap = {};
+        Object.keys(map).forEach(subId => {
+          Object.keys(map[subId]).forEach(sloId => {
+            const { id, code } = map[subId][sloId];
+            if (psdFieldIds.has(String(sloId))) {
+              psdCodes[sloId] = code; psdIdMap[sloId] = id;
+            } else {
+              (slaAchv[subId] = slaAchv[subId] || {})[sloId] = code;
+              (slaIdMap[subId] = slaIdMap[subId] || {})[sloId] = id;
+            }
+          });
+        });
         setAchievements(prev => {
           const next = { ...prev };
-          Object.keys(map).forEach(laId => {
-            next[laId] = { ...(next[laId] || {}) };
-            Object.keys(map[laId]).forEach(sloId => {
-              if (next[laId][sloId] == null) next[laId][sloId] = map[laId][sloId].code;
-            });
+          Object.keys(slaAchv).forEach(subId => {
+            next[subId] = { ...(next[subId] || {}) };
+            Object.keys(slaAchv[subId]).forEach(sloId => { if (next[subId][sloId] == null) next[subId][sloId] = slaAchv[subId][sloId]; });
           });
           return next;
         });
         setSloDbIds(prev => {
           const next = { ...prev };
-          Object.keys(map).forEach(laId => {
-            next[laId] = { ...(next[laId] || {}) };
-            Object.keys(map[laId]).forEach(sloId => { next[laId][sloId] = map[laId][sloId].id; });
+          Object.keys(slaIdMap).forEach(subId => {
+            next[subId] = { ...(next[subId] || {}) };
+            Object.keys(slaIdMap[subId]).forEach(sloId => { next[subId][sloId] = slaIdMap[subId][sloId]; });
           });
           return next;
         });
+        if (Object.keys(psdCodes).length) {
+          setPsd(prev => { const next = { ...prev }; Object.keys(psdCodes).forEach(f => { if (next[f] == null) next[f] = psdCodes[f]; }); return next; });
+          setPsdDbIds(prev => { const next = { ...prev }; Object.keys(psdIdMap).forEach(f => { next[f] = psdIdMap[f]; }); return next; });
+        }
       } catch (e) {
         console.error('Could not load existing SLO assessments:', e);
       }
@@ -967,7 +997,11 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
   }, []);
 
   const activeTab = areaTabs[tabIdx];
-  const setPsdCode = (fieldId, code) => setPsd(p => ({ ...p, [fieldId]: code }));
+  const setPsdCode = (fieldId, code) => {
+    setPsd(p => ({ ...p, [fieldId]: code }));
+    /* Save par preschooling-marks-crud jaye — sirf real (numeric) field id par. */
+    if (!Number.isNaN(Number(fieldId))) psdDirtyRef.current.add(String(fieldId));
+  };
   /* Rating button sirf local state update + dirty mark. Asli API ab footer ke
      Save par chalti hai (flushSloAssessments). */
   const setSlo = (laId, sloId, code) => {
@@ -993,8 +1027,20 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
         const rowId = sloDbIds[laId]?.[sloId] || 0;
         // pehle se saved aur badli nahi to dobara bhejne ki zaroorat nahi
         if (rowId && !sloDirtyRef.current.has(`${laId}_${sloId}`)) return;
-        jobs.push({ laId, sloId, code, rowId });
+        jobs.push({ type: 'slo', laId, sloId, code, rowId });
       });
+    });
+
+    /* PSD (Personal & Social Dev.) fields — SLO jaisa hi, magar preSubjectId = PSD_SUBJECT_ID
+       aur preSLOId = field ki db id. Har chosen+dirty (ya naya) field ek call. */
+    Object.entries(psd || {}).forEach(([fieldId, code]) => {
+      if (code == null || code === '') return;
+      if (Number.isNaN(Number(fieldId))) { skipped++; return; }
+      const rowId = psdDbIds[fieldId] || 0;
+      if (rowId && !psdDirtyRef.current.has(String(fieldId))) return;
+      /* Is PSD field ka asli subject id (getPsdFields se) — preSubjectId me yahi jaye. */
+      const subjectId = Number((pPsdFields || []).find(f => String(f.id) === String(fieldId))?.subjectId) || PSD_SUBJECT_ID;
+      jobs.push({ type: 'psd', fieldId, code, rowId, subjectId });
     });
 
     if (skipped) {
@@ -1011,16 +1057,22 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
       // ek ek karke (parallel nahi) taake backend race condition me sirf 1 row na bachaye
       for (const j of jobs) {
         try {
+          const preSubjectId = j.type === 'psd' ? (j.subjectId || PSD_SUBJECT_ID) : Number(j.laId);
+          const preSLOId     = j.type === 'psd' ? Number(j.fieldId) : Number(j.sloId);
           const newId = await preschoolService.saveSloAssessment({
             id: j.rowId, gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id,
-            preSubjectId: Number(j.laId), preSLOId: Number(j.sloId), code: j.code, examId, termId,
+            preSubjectId, preSLOId, code: j.code, examId, termId,
           });
           if (newId) {
-            setSloDbIds(prev => ({ ...prev, [j.laId]: { ...(prev[j.laId] || {}), [j.sloId]: newId } }));
+            if (j.type === 'psd') {
+              setPsdDbIds(prev => ({ ...prev, [j.fieldId]: newId }));
+            } else {
+              setSloDbIds(prev => ({ ...prev, [j.laId]: { ...(prev[j.laId] || {}), [j.sloId]: newId } }));
+            }
           }
         } catch (e) {
           failed++;
-          console.error('SLO save failed', j, e);
+          console.error('Preschool mark save failed', j, e);
         }
       }
 
@@ -1029,16 +1081,22 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
         const map = await preschoolService.getStudentSloAssessments({
           gradeId: cls.classID, sectionId: cls.sectionID, studentId: student.id, examId, termId,
         });
+        const psdFieldIds = new Set((pPsdFields || []).map(f => String(f.id)));
         const ids = {};
-        Object.keys(map).forEach(la => {
-          ids[la] = {};
-          Object.keys(map[la]).forEach(s => { ids[la][s] = map[la][s].id; });
+        const pIds = {};
+        Object.keys(map).forEach(sub => {
+          Object.keys(map[sub]).forEach(s => {
+            if (psdFieldIds.has(String(s))) { pIds[s] = map[sub][s].id; }
+            else { (ids[sub] = ids[sub] || {})[s] = map[sub][s].id; }
+          });
         });
         setSloDbIds(ids);
+        setPsdDbIds(pIds);
       } catch (e) { console.error('Resync failed', e); }
 
       sloDirtyRef.current.clear();
-      if (failed) { toast(`${failed} rating(s) save nahi huin — dobara try karein`, 'error'); return false; }
+      psdDirtyRef.current.clear();
+      if (failed) { toast(`${failed} rating(s) could not be saved — please try again`, 'error'); return false; }
       return true;
     } finally {
       setSloSaving(s => { const n = { ...s }; delete n.__all; return n; });

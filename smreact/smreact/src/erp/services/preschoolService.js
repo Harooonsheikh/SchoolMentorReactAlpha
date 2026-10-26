@@ -362,6 +362,12 @@ export async function getPsdFields() {
   });
   const saved = (res.data || []).map(row => ({
     id: String(row.id), dbId: row.id, label: row.fieldName,
+    /* PSD field ka Learning Area / Subject id (preschooling-marks-crud ke preSubjectId
+       ke liye). Response me jis bhi naam se aaye wahi lo. */
+    subjectId: Number(
+      row.preSubjectId ?? row.preSubjectID ?? row.subjectId ?? row.subjectID
+      ?? row.learningAreaId ?? row.learningAreaID ?? row.subId
+    ) || 0,
   }));
   const list = mergeWithDefaults(saved, mockPsdFields, x => x.label);
   _psdCache = list;

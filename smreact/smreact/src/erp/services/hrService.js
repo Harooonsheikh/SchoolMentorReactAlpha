@@ -580,8 +580,9 @@ export async function saveHrPayrollSetup(p = {}) {
    and retry with force:true, which forces the delete through. */
 export async function deleteHrPayroll(payrollID, { force = false } = {}) {
   if (!payrollID) throw new Error('Missing payroll id');
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
   const res = await fetch(
-    buildUrl(`/api/HR/delete-employee-payroll/${payrollID}?force=${force ? 'true' : 'false'}`),
+    buildUrl(`/api/HR/delete-employee-payroll/${payrollID}?modifiedBy=${userID}&force=${force ? 'true' : 'false'}`),
     { method: 'DELETE', headers: { Accept: '*/*' } }
   );
   const json = await res.json().catch(() => null);
@@ -607,7 +608,8 @@ export function payrollIdFromSetupResponse(json) {
   return Number(d) || 0;
 }
 
-/* Record a payment against a saved payroll record. POST /api/HR/save-payroll-payment. */
+/* Record a payment against a saved payroll record. POST /api/HR/save-payroll-payment.
+   Returns { success, message, approval: { pendingApproval, approvalID, requestNo } } if approval needed. */
 export async function saveHrPayrollPayment({ payrollID, amount, comment, paymentDate } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const userID   = Number(sessionStorage.getItem('UserID')) || 0;
@@ -621,6 +623,7 @@ export async function saveHrPayrollPayment({ payrollID, amount, comment, payment
       comment:     comment || '',
       paymentDate: paymentDate || new Date().toISOString(),
       createdBy:   userID,
+      modifiedBy:  userID,
     }),
   });
   const json = await res.json().catch(() => null);
@@ -983,10 +986,13 @@ export async function saveHrSalaryHead({ id = 0, employeeID, headName, amount, i
    is one of HR_EMP_DOC_TYPES for the fixed cards, or any free-text "Other" name. */
 export async function uploadHrEmployeeDocument({ employeeId, documentType, file }) {
   const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
   const fd = new FormData();
   fd.append('employeeId',   employeeId ?? 0);
   fd.append('branchId',     branchId);
   fd.append('documentType', documentType || '');
+  fd.append('createdBy',    userID);
+  fd.append('modifiedBy',   userID);
   fd.append('DocumentFile', file);
   const res  = await fetch(buildUrl('/api/HR/upload-employee-document'), {
     method: 'POST', headers: { Accept: '*/*' }, body: fd,
@@ -998,7 +1004,8 @@ export async function uploadHrEmployeeDocument({ employeeId, documentType, file 
 
 /* DELETE /api/HR/delete-employee-document/{id}. */
 export async function deleteHrEmployeeDocument(documentId) {
-  const res  = await fetch(buildUrl(`/api/HR/delete-employee-document/${documentId || 0}`), {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/api/HR/delete-employee-document/${documentId || 0}?modifiedBy=${userID}`), {
     method: 'DELETE', headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -1092,7 +1099,8 @@ export async function getHrIssueLettersByEmployee(employeeId) {
 
 /* DELETE /api/HR/delete-issue-letter/{id}. */
 export async function deleteHrIssueLetter(id) {
-  const res  = await fetch(buildUrl(`/api/HR/delete-issue-letter/${id || 0}`), {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/api/HR/delete-issue-letter/${id || 0}?modifiedBy=${userID}`), {
     method: 'DELETE', headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -1102,7 +1110,8 @@ export async function deleteHrIssueLetter(id) {
 
 /* DELETE /api/HR/delete-salary-head/{id}. */
 export async function deleteHrSalaryHead(id) {
-  const res  = await fetch(buildUrl(`/api/HR/delete-salary-head/${id || 0}`), {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/api/HR/delete-salary-head/${id || 0}?modifiedBy=${userID}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });
