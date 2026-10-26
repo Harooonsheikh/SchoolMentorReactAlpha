@@ -239,29 +239,14 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   /* ─── Tab 1: Holidays Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false }) {
     const { can } = usePermissions();
     const canHolCreate   = can("Attendance", "Holidays Setup", "Create");
     const canHolEdit     = can("Attendance", "Holidays Setup", "Edit");
     const canHolDelete   = can("Attendance", "Holidays Setup", "Delete");
     const canHolDownload = can("Attendance", "Holidays Setup", "Download");
     const [openMonth, setOpenMonth] = useState(null);
-    const [holYear, setHolYear] = useState("");
-
-    // Current academic session ka naam — fixed (active session only, non-changeable).
-    useEffect(() => {
-      let alive = true;
-      (async () => {
-        try {
-          const active = await attendanceService.getActiveSession();
-          if (!alive) return;
-          if (active?.SessionName) setHolYear(active.SessionName);
-        } catch (err) {
-          console.error("Could not load active session", err);
-        }
-      })();
-      return () => { alive = false; };
-    }, []);
+      const holYear = sessionName;
 
     return (
       <>
@@ -407,7 +392,13 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
               <i className="fa-solid fa-circle-info"></i>
               <span>Special holidays will apply only to selected classes. Tap a month to expand.</span>
             </div>
-            <div className="att-months-grid">
+                  {holidaysLoading && (
+              <div className="att-empty">
+                <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+                <div className="att-empty-title">Loading session &amp; holidays…</div>
+              </div>
+            )}
+            <div className="att-months-grid" style={holidaysLoading ? { display: "none" } : undefined}>
               {MONTHS.map((m, i) => {
                 const hols = holidays.filter((h) => h.month === i);
                 const isOpen = openMonth === i;
@@ -425,8 +416,8 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
                         {canHolCreate && (
                         <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : `Add a new holiday in ${m}`}>
                           <button
-                            className="att-add-holiday-btn"
-                            disabled={isOtherSession}
+                                              className="att-add-holiday-btn"
+                            disabled={isOtherSession || holidaysLoading}
                             style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                             onClick={(e) => { e.stopPropagation(); openHolModal(null, i); }}
                           >
@@ -3547,10 +3538,47 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     // Holidays load per-month from the API when a month is expanded.
     const [holidays, setHolidays]         = useState([]);
     const [loadingMonth, setLoadingMonth] = useState(null); // month idx currently fetching
-    const [activeSessionID, setActiveSessionID] = useState(0);
+    const [holidaysLoading, setHolidaysLoading] = useState(false);
+    // const [activeSessionID, setActiveSessionID] = useState(0);
     const [classList, setClassList] = useState([]); // branch class+section list (for name lookup)
     const { toasts, toast } = useToasts(onToast);
 
+    /* ── Active session: SAB APIs se pehle. Jab tak load na ho → loader. ── */
+    const [activeSessionID, setActiveSessionID]     = useState(0);
+    const [activeSessionName, setActiveSessionName] = useState("");
+    const [sessionLoading, setSessionLoading]       = useState(true);
+    const sessionPromiseRef = React.useRef(null);
+
+    // Ek hi promise share hota hai — session API do dafa hit nahi hogi.
+    const loadActiveSession = useCallback(() => {
+      if (!sessionPromiseRef.current) {
+        sessionPromiseRef.current = (async () => {
+          const [active, sidRaw] = await Promise.all([
+            attendanceService.getActiveSession().catch(() => null),
+            attendanceService.getActiveSessionID().catch(() => 0),
+          ]);
+          const sid  = Number(sidRaw) || Number(active?.ID ?? active?.SessionID ?? active?.id) || 0;
+          const name = active?.SessionName || "";
+          if (!sid) sessionPromiseRef.current = null; // fail → agli dafa retry
+          return { sid, name };
+        })();
+      }
+      return sessionPromiseRef.current;
+    }, []);
+
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        setSessionLoading(true);
+        const { sid, name } = await loadActiveSession();
+        if (!alive) return;
+        setActiveSessionID(sid);
+        setActiveSessionName(name);
+        setSessionLoading(false);
+        if (!sid) toast("Active session load nahi ho saka.", "error");
+      })();
+      return () => { alive = false; };
+    }, [loadActiveSession, toast]);
     /* ── Session gating (same as Paper Generator) ─────────────────────────────
        Attendance module ka checkbox current session mein OFF ho, ya session
        "Current" na ho, ya aaj ki date session ki StartDate–EndDate range se
@@ -3686,7 +3714,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [indivTarget,    setIndivTarget]    = useState(null); // { type, name, detail, id } | null
     const [branchSchool,   setBranchSchool]   = useState(null); // /report-header → { name, logo, address, session }
     const [reportSessions, setReportSessions] = useState([]);   // [{ ID, SessionName }] for report filters
-    const [activeSessionName, setActiveSessionName] = useState(""); // active session ka SessionName (e.g. "2026-2027")
+    // const [activeSessionName, setActiveSessionName] = useState(""); // active session ka SessionName (e.g. "2026-2027")
 
     // Report header (branch info) + session list — for the Holiday report picker.
     useEffect(() => {
@@ -3695,11 +3723,11 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
         catch (err) { console.error("Could not load report header:", err); }
         try { setReportSessions(await attendanceService.getSessionsForBranch()); }
         catch (err) { console.error("Could not load sessions:", err); }
-        // Active session ka naam — poore module mein "Academic Year"/Session yahi dikhega.
-        try {
-          const active = await attendanceService.getActiveSession();
-          if (active?.SessionName) setActiveSessionName(active.SessionName);
-        } catch (err) { console.error("Could not load active session name:", err); }
+        // // Active session ka naam — poore module mein "Academic Year"/Session yahi dikhega.
+        // try {
+        //   const active = await attendanceService.getActiveSession();
+        //   if (active?.SessionName) setActiveSessionName(active.SessionName);
+        // } catch (err) { console.error("Could not load active session name:", err); }
       })();
     }, []);
 // Attendance component mein, useAsync ki jagah yeh use karo
@@ -4094,26 +4122,12 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
     toast(isOff ? `${DAYS_F[dayToggleIdx]} marked as Working Day` : `${DAYS_F[dayToggleIdx]} marked as Weekly Off`, "success");
     setDayToggleIdx(null);
   }, [dayToggleIdx, weeklyOff, toast, setWeeklyOff, blockIfReadOnly]);
-    // Active session — same active-session API examination uses. Cached once.
-    useEffect(() => {
-      let alive = true;
-      (async () => {
-        try {
-          const sid = Number(await attendanceService.getActiveSessionID()) || 0;
-          if (alive && sid) setActiveSessionID(sid);
-        } catch (err) { console.error("Could not load active session:", err); }
-      })();
-      return () => { alive = false; };
-    }, []);
-
+       // Har API isi se sessionID leti hai — session API complete hone ka intezar karti hai.
     const ensureSessionID = useCallback(async () => {
       if (activeSessionID) return activeSessionID;
-      try {
-        const sid = Number(await attendanceService.getActiveSessionID()) || 0;
-        if (sid) { setActiveSessionID(sid); return sid; }
-      } catch (err) { console.error("Could not load active session:", err); }
-      return Number(sessionStorage.getItem("sessionID")) || 0; // fallback
-    }, [activeSessionID]);
+      const { sid } = await loadActiveSession();
+      return sid;
+    }, [activeSessionID, loadActiveSession]);
 
     // employee id → full name (resolve CreatedBy on attendance records → Class Teacher).
     const employeeNameById = useMemo(() => {
@@ -4208,6 +4222,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       // Past-date marking passes the selected date; otherwise → today (unchanged).
       const attendanceDate = dateOverride || todayStr;
       // Session-date guard: attendance date current session ki UTC window ke andar ho.
+        if (!sessionID) { toast("Session load nahi hua, dobara try karein.", "error"); throw new Error("no-session"); }
       const dateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
       if (!dateChk.ok) { toast(dateChk.message, "error"); throw new Error("out-of-session"); }
       // Only students that were actually marked (blank = untouched → skip).
@@ -4607,6 +4622,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const sessionID  = await ensureSessionID();
       const classes    = await ensureClasses();
+         if (!sessionID) return;
       setLoadingMonth(monthIdx);
       try {
         const res = await attendanceService.monthlySetup({
@@ -4639,6 +4655,8 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const branchID   = Number(sessionStorage.getItem("branchID"));
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const sessionID  = await ensureSessionID();
+      if (!sessionID) return; // session nahi → monthly-setup API hit nahi
+      setHolidaysLoading(true);
       const classes    = await ensureClasses();
       try {
         const results = await Promise.all(
@@ -4652,9 +4670,11 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           )
         );
         // Flat rows → grouped by holiday ID (each holiday once, all classes inside).
-        setHolidays(groupHolidayRows(results.flat(), classes));
+             setHolidays(groupHolidayRows(results.flat(), classes));
       } catch (err) {
         console.error("Error loading holidays:", err);
+      } finally {
+        setHolidaysLoading(false);
       }
     }, [ensureSessionID, ensureClasses]);
 // Attendance component mein loadStaffAttendance function add karo
@@ -4843,15 +4863,14 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tab, staffData.length]);
     useEffect(() => {
-      if (tab === "holidays") loadAllHolidays();
+        if (tab === "holidays" && activeSessionID) loadAllHolidays();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tab]);
-
+    }, [tab, activeSessionID]);
     // Student/Reports tab open (aur data ready) → saari classes ki attendance GET.
     useEffect(() => {
-      if ((tab === "student" || tab === "reports") && studentData.length) loadAllStudentMarks();
+       if ((tab === "student" || tab === "reports") && studentData.length && activeSessionID) loadAllStudentMarks();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tab, studentData.length]);
+    }, [tab, studentData.length, activeSessionID]);
 
     // Yearly Holiday report picker open → classes list ready karo (class filter ke liye).
     useEffect(() => {
@@ -5115,6 +5134,8 @@ const saveHoliday = useCallback(async (payload) => {
             toast={toast}
                           onSaveWeeklyOff={onSaveWeeklyOff}
             weeklyOffLoading={weeklyOffLoading}
+            sessionName={activeSessionName}
+            holidaysLoading={sessionLoading || holidaysLoading}
             onExpandMonth={loadMonthHolidays}
             loadingMonth={loadingMonth}
             isOtherSession={isOtherSession}
@@ -5134,7 +5155,7 @@ const saveHoliday = useCallback(async (payload) => {
             teacherMap={teacherMap}
                 onSelectDate={loadDateAttendance}
             dateAttendance={dateAttendance}
-            studentLoading={studentLoading}
+             studentLoading={studentLoading || sessionLoading}
             isOtherSession={isOtherSession}
             prevDaysAttendance={prevDaysAttendance}
           />

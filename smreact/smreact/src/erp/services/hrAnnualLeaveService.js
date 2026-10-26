@@ -1,140 +1,198 @@
-/* ═══════════════════════════════════════════════════════════════════
-   HR Annual Leave Summary & Individual Statement — computation service.
+/* HR → Reports → Annual Leave Summary — REAL data (no mock).
+   Leave availed = staff attendance me "Leave" mark din
+   Absent        = staff attendance me "Absent" mark din
+   Working days  = weekly-off + holidays setup se */
 
-   Reuses, never duplicates:
-   - mockHrEmployees' own `leaves` object (mock/hr.js) for entitlement
-     (`leaves.annual`) AND the existing deduction configuration
-     (`leaves.deductEn`, `leaves.absentDed`) — see the honest mapping
-     note below, nothing new is added to the employee model.
-   - mockStaffLeaveApplications / mockStaffAttendanceHistory
-     (mock/staffLeaveAbsenteeism.js) — the SAME dataset the Staff Leave
-     & Absenteeism report (Attendance module) already uses. That file's
-     date range was widened (not duplicated into a second dataset) to
-     also cover the real academic session this report must scope to —
-     see its own header comment.
-   - fullName/deptName/desigName/overlaps/activeEmployees/
-     scheduledWorkingDays/classify from staffLeaveAbsenteeismService.js
-     — exported from there specifically so this file doesn't reimplement
-     them.
-   - Session start/end dates come from the real Settings module
-     (src/pages/Settings/settingsStore.js's useSettings()/currentSession)
-     — passed into every function below as plain {sessionStart,
-     sessionEnd} strings so this file stays decoupled from React context
-     itself (the UI layer reads useSettings() and passes the dates in).
+import { buildUrl } from '../../utils/apiConfig';
+import { getHrLeaveSettings } from './hrService';
+import { getWeeklyOffSetup, monthlySetup } from './attendanceService';
 
-   HONEST FIELD-MAPPING NOTE (confirmed by inspecting PayRollModal in
-   HumanResource.jsx before writing this): the employee's existing
-   `leaves.absentDed` / `leaves.unpaidDed` fields are real, but neither
-   is actually "a deduction rate per excess annual leave day" in the
-   codebase today — PayRollModal applies `absentDed` x a manually-typed
-   monthly "leave count" and `unpaidDed` x a manually-typed monthly
-   "absent count", with zero link to `leaves.annual`/entitlement, and
-   `deductEn` is displayed but never actually gates that calculation.
-   There is no "excess leave" concept anywhere before this feature.
-   This report reuses the EXISTING `absentDed` field as its "deduction
-   rate per excess annual leave day" (its on-screen label is "Deduction
-   of one day", its typical configured value of PKR 100 matches this
-   brief's own worked example exactly — PKR 100 x 5 excess days = PKR
-   500), and DOES properly gate on `deductEn` (unlike the existing
-   payroll calculation) since this brief explicitly asks for that. This
-   is a new, additive calculation built on the existing configured
-   rate — not a new deduction field, and not a change to
-   PayRollModal's own existing (differently-wired) calculation, which
-   is left completely untouched. */
-
-import { mockHrEmployees, mockHrDepts, mockHrDesigs } from '../mock/hr';
-import { mockStaffLeaveApplications, mockStaffAttendanceHistory, isNonWorkingDay } from '../mock/staffLeaveAbsenteeism';
-import {
-  fullName, deptName, desigName, overlaps, activeEmployees, scheduledWorkingDays, classify,
-} from './staffLeaveAbsenteeismService';
-import { delay, clone } from './_http';
-
+const DAYS_MON0 = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const STATUS_CODE = { 1: 'present', 2: 'absent', 3: 'leave', 4: 'late' };
+const CHUNK = 12;
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
-function dayName(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const jsDay = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  return DAY_NAMES[(jsDay + 6) % 7];
-}
-function addDaysISO(dateStr, n) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + n));
-  return dt.toISOString().slice(0, 10);
-}
+const pad2 = (n) => String(n).padStart(2, '0');
+const toISO = (dt) => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+const fromISO = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
+const todayISO = () => toISO(new Date());
+const dowMon0 = (iso) => (fromISO(iso).getDay() + 6) % 7;
+export const dayName = (iso) => DAYS_MON0[dowMon0(iso)];
 
-export async function getAnnualLeaveFilterOptions() {
-  await delay();
-  const emps = activeEmployees().map(e => ({
-    id: e.id, eid: e.eid, name: fullName(e), dId: e.dId, desId: e.desId,
-    deptName: deptName(e.dId), desigName: desigName(e.desId),
+function datesBetween(from, to) {
+  const out = [];
+  for (let d = fromISO(from), end = fromISO(to); d <= end; d.setDate(d.getDate() + 1)) out.push(toISO(d));
+  return out;
+}
+const timeVal = (v) => {
+  if (v == null || typeof v === 'object') return '';
+  const m = String(v).match(/(\d{1,2}):(\d{2})/);
+  return m ? `${pad2(m[1])}:${m[2]}` : String(v);
+};
+const normStatus = (raw) => { const s = String(raw ?? '').trim().toLowerCase(); return STATUS_CODE[s] || s; };
+
+/* Weekly off + holidays */
+async function loadNonWorking(sessionStart, sessionEnd, sessionId) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  let weeklyOff = [];
+  try {
+    const res = await getWeeklyOffSetup();
+    weeklyOff = (res?.data || []).map((r) => DAYS_MON0.indexOf(r.WeekDay ?? r.weekDay)).filter((i) => i !== -1);
+  } catch (e) { console.error('Annual leave: weekly-off load failed', e); }
+
+  const months = [];
+  for (let d = fromISO(`${sessionStart.slice(0, 7)}-01`), end = fromISO(sessionEnd); d <= end; d.setMonth(d.getMonth() + 1)) months.push(d.getMonth() + 1);
+  const holidays = new Map();
+  await Promise.all([...new Set(months)].map(async (month) => {
+    try {
+      const res = await monthlySetup({
+        id: 0, branchID, sessionID: Number(sessionId) || 0, holidayTitle: '', description: '',
+        dateFrom: '', dateTo: '', month, action: 'get', createdBy: 0, modifiedBy: 0, classIDs: [],
+      });
+      (res?.data || []).forEach((h) => {
+        const from = String(h.DateFrom ?? h.dateFrom ?? '').slice(0, 10);
+        const to = String(h.DateTo ?? h.dateTo ?? '').slice(0, 10);
+        if (!from || !to) return;
+        datesBetween(from, to).forEach((d) => { if (d >= sessionStart && d <= sessionEnd) holidays.set(d, h.HolidayTitle ?? h.holidayTitle ?? 'Holiday'); });
+      });
+    } catch (e) { console.error(`Annual leave: holidays load failed (month ${month})`, e); }
   }));
-  return clone({
-    employees: emps,
-    departments: mockHrDepts.map(d => ({ id: d.id, name: d.name })),
-    designations: mockHrDesigs.map(d => ({ id: d.id, dId: d.dId, name: d.name })),
-  });
+  return { weeklyOff, holidays };
 }
 
-/* Core per-employee annual-leave + deduction row — shared by both
-   Report 1 (one row per employee) and Report 2 (this employee's own
-   entitlement section), so the two screens can never disagree. */
-function annualRowForEmployee(emp, sessionStart, sessionEnd) {
-  const annualApps = mockStaffLeaveApplications.filter(a => a.empId === emp.eid
-    && a.leaveType === 'Annual'
-    && overlaps(a.fromDate, a.toDate, sessionStart, sessionEnd));
-  const approved = annualApps.filter(a => a.status === 'approved');
-  const pending = annualApps.filter(a => a.status === 'pending');
+/* Ek din ki staff attendance (saare staff) */
+async function fetchStaffAttendanceDay(dateStr, branchID, token) {
+  const res = await fetch(buildUrl('/api/staff-attendance'), {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({
+      id: 0, staffID: 0, branchID, attendanceDate: dateStr, checkInTime: '', checkOutTime: '',
+      status: '', platform: '', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json().catch(() => null);
+  const byStaff = new Map();
+  (json?.data || []).forEach((r) => {
+    if (String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) !== dateStr) return;
+    byStaff.set(String(r.StaffID ?? r.staffID), {
+      status: normStatus(r.Status ?? r.status),
+      inTime: timeVal(r.CheckInTime ?? r.checkInTime),
+      outTime: timeVal(r.CheckOutTime ?? r.checkOutTime),
+      platform: r.Platform ?? r.platform ?? '',
+    });
+  });
+  return byStaff;
+}
 
-  const annualLeavesAllowed = emp.leaves?.annual == null ? null : emp.leaves.annual;
-  const annualLeavesAvailed = approved.reduce((s, a) => s + a.days, 0);
-  const annualLeavesRemaining = annualLeavesAllowed == null ? null : Math.max(0, annualLeavesAllowed - annualLeavesAvailed);
-  const excessLeaves = annualLeavesAllowed == null ? 0 : Math.max(0, annualLeavesAvailed - annualLeavesAllowed);
-  const pendingRequests = pending.reduce((s, a) => s + a.days, 0);
+const _cache = new Map();
 
-  const absenceDays = mockStaffAttendanceHistory.filter(r => r.empId === emp.eid
-    && r.date >= sessionStart && r.date <= sessionEnd && r.status === 'absent').length;
+export async function loadSessionAttendance({ sessionStart, sessionEnd, sessionId, force = false } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const key = `${branchID}|${sessionId}|${sessionStart}|${sessionEnd}`;
+  const hit = _cache.get(key);
+  if (!force && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
 
-  const deductionEnabled = !!emp.leaves?.deductEn;
-  const deductionRate = Number(emp.leaves?.absentDed) || 0;
-  const totalDeductionAmount = deductionEnabled ? excessLeaves * deductionRate : 0;
+  const token = sessionStorage.getItem('token');
+  const today = todayISO();
+  const effectiveEnd = sessionEnd < today ? sessionEnd : today;
+  const nonWorking = await loadNonWorking(sessionStart, sessionEnd, sessionId);
+  const isOff = (d) => nonWorking.weeklyOff.includes(dowMon0(d)) || nonWorking.holidays.has(d);
+  const workingDates = sessionStart > effectiveEnd ? [] : datesBetween(sessionStart, effectiveEnd).filter((d) => !isOff(d));
 
+  const byDate = new Map();
+  let failedDays = 0;
+  for (let i = 0; i < workingDates.length; i += CHUNK) {
+    // eslint-disable-next-line no-await-in-loop
+    const results = await Promise.all(workingDates.slice(i, i + CHUNK).map(async (d) => {
+      try { return [d, await fetchStaffAttendanceDay(d, branchID, token)]; }
+      catch (e) { failedDays += 1; return [d, new Map()]; }
+    }));
+    results.forEach(([d, m]) => byDate.set(d, m));
+  }
+  const data = { sessionStart, sessionEnd, effectiveEnd, workingDates, nonWorking, byDate, failedDays };
+  _cache.set(key, { at: Date.now(), data });
+  return data;
+}
+
+/* Leave settings (quota + rates) */
+const hasLeaveSettings = (lv) => lv && lv.annual !== '' && lv.annual != null;
+export async function loadLeaveSettings(emps = []) {
+  const out = new Map();
+  const missing = [];
+  emps.forEach((e) => { if (hasLeaveSettings(e.leaves)) out.set(e.id, e.leaves); else missing.push(e); });
+  for (let i = 0; i < missing.length; i += 8) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(missing.slice(i, i + 8).map(async (e) => {
+      try { out.set(e.id, (await getHrLeaveSettings(e.id)) || e.leaves || null); }
+      catch { out.set(e.id, e.leaves || null); }
+    }));
+  }
+  return out;
+}
+
+const numOrNull = (v) => (v === '' || v == null || Number.isNaN(Number(v)) ? null : Number(v));
+const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+
+function tallyEmployee(empId, dataset, from, to) {
+  const sid = String(empId);
+  const t = { scheduled: 0, marked: 0, present: 0, late: 0, absent: 0, leave: 0, notMarked: 0 };
+  dataset.workingDates.forEach((d) => {
+    if ((from && d < from) || (to && d > to)) return;
+    t.scheduled += 1;
+    const rec = dataset.byDate.get(d)?.get(sid);
+    if (!rec) { t.notMarked += 1; return; }
+    t.marked += 1;
+    if (rec.status === 'absent') t.absent += 1;
+    else if (rec.status === 'leave') t.leave += 1;
+    else if (rec.status === 'late') { t.late += 1; t.present += 1; }
+    else t.present += 1;
+  });
+  return t;
+}
+
+export function annualRow(emp, leaves, dataset, { getDeptName, getDesigName } = {}) {
+  const lv = leaves || {};
+  const t = tallyEmployee(emp.id, dataset);
+  const allowed = numOrNull(lv.annual);
+  const availed = t.leave;
+  const remaining = allowed == null ? null : Math.max(0, allowed - availed);
+  const excess = allowed == null ? 0 : Math.max(0, availed - allowed);
+  const deductionEnabled = lv.deductEn !== false && lv.deductEn !== 'false' && lv.deductEn !== 0;
+  const leaveRate = Number(lv.unpaidDed) || 0;
+  const absentRate = Number(lv.absentDed) || 0;
+  const excessDeduction = deductionEnabled ? excess * leaveRate : 0;
+  const absentDeduction = deductionEnabled ? t.absent * absentRate : 0;
   return {
     employeeId: emp.id,
-    employeeName: fullName(emp),
-    employeeEid: emp.eid,
-    department: deptName(emp.dId),
-    designation: desigName(emp.desId),
-    annualLeavesAllowed,
-    annualLeavesAvailed,
-    annualLeavesRemaining,
-    excessLeaves,
-    absenceDays,
-    paidUnpaidAbsenceStatus: absenceDays > 0 ? 'Unpaid' : '—', // this app's attendance model has no separate "paid absence" concept — an unexcused absence is, by definition, unpaid
+    employeeName: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || `Employee #${emp.id}`,
+    employeeEid: emp.eid || `EMP-${pad2(emp.id)}`,
+    department: getDeptName ? (getDeptName(emp.dId) || '—') : '—',
+    designation: getDesigName ? (getDesigName(emp.desId) || '—') : '—',
+    joinDate: emp.join || '',
+    status: emp.status || '',
+    annualLeavesAllowed: allowed,
+    annualLeavesAvailed: availed,
+    annualLeavesRemaining: remaining,
+    excessLeaves: excess,
+    absenceDays: t.absent,
+    presentDays: t.present,
+    lateDays: t.late,
+    notMarkedDays: t.notMarked,
+    scheduledWorkingDays: t.scheduled,
+    attendancePercentage: pct(t.present, t.marked),
     deductionEnabled,
-    deductionRate,
-    totalDeductionAmount,
-    pendingRequests,
+    deductionRate: leaveRate,
+    paidUnpaidAbsenceStatus: t.absent > 0 ? 'Unpaid' : '—',
+    excessDeduction,
+    absentDeduction,
+    totalDeductionAmount: excessDeduction + absentDeduction,
   };
 }
 
-export async function computeAnnualLeaveSummary({
-  sessionStart, sessionEnd, employeeIds, department, status, query,
-} = {}) {
-  await delay();
-  let emps = activeEmployees();
-  if (employeeIds && employeeIds.length) { const idSet = new Set(employeeIds); emps = emps.filter(e => idSet.has(e.id)); }
-  if (department) emps = emps.filter(e => e.dId === department);
-  if (query && query.trim()) {
-    const q = query.trim().toLowerCase();
-    emps = emps.filter(e => `${fullName(e)} ${e.eid}`.toLowerCase().includes(q));
-  }
-
-  let rows = emps.map(e => annualRowForEmployee(e, sessionStart, sessionEnd));
-  if (status === 'exceeded') rows = rows.filter(r => r.excessLeaves > 0);
-  else if (status === 'within') rows = rows.filter(r => r.excessLeaves === 0);
-
-  const summary = rows.reduce((a, r) => ({
+function summarizeRows(rows) {
+  return rows.reduce((a, r) => ({
     totalActiveEmployees: a.totalActiveEmployees + 1,
     totalAllowed: a.totalAllowed + (r.annualLeavesAllowed || 0),
     totalAvailed: a.totalAvailed + r.annualLeavesAvailed,
@@ -142,106 +200,96 @@ export async function computeAnnualLeaveSummary({
     employeesExceeded: a.employeesExceeded + (r.excessLeaves > 0 ? 1 : 0),
     totalDeduction: a.totalDeduction + r.totalDeductionAmount,
   }), { totalActiveEmployees: 0, totalAllowed: 0, totalAvailed: 0, totalRemaining: 0, employeesExceeded: 0, totalDeduction: 0 });
-
-  return clone({ rows, summary, sessionStart, sessionEnd });
 }
 
-/* Report 2 — full per-employee statement: header info, entitlement
-   section, attendance breakdown, month-wise table, and day-wise
-   history, all scoped to [sessionStart, sessionEnd]. */
-export async function computeIndividualAnnualLeaveStatement({ employeeId, sessionStart, sessionEnd }) {
-  await delay();
-  const emp = mockHrEmployees.find(e => e.id === employeeId);
-  if (!emp) return null;
-
-  const annual = annualRowForEmployee(emp, sessionStart, sessionEnd);
-  const scheduled = scheduledWorkingDays(sessionStart, sessionEnd);
-  const empRows = mockStaffAttendanceHistory.filter(r => r.empId === emp.eid && r.date >= sessionStart && r.date <= sessionEnd);
-  const presentDays = empRows.filter(r => r.status === 'present').length;
-  const approvedLeaveDaysAll = empRows.filter(r => r.status === 'leave').length; // every leave type, not just Annual — "Approved Leave Days Availed" card
-  const absentDays = empRows.filter(r => r.status === 'absent').length;
-  const attendancePercentage = scheduled > 0 ? Math.round((presentDays / scheduled) * 1000) / 10 : null;
-  const absenteeismPercentage = scheduled > 0 ? Math.round((absentDays / scheduled) * 1000) / 10 : null;
-
-  const statusMessage = annual.annualLeavesAllowed == null
-    ? 'No annual leave entitlement has been configured for this employee yet.'
-    : annual.excessLeaves > 0
-      ? `You have been allocated ${annual.annualLeavesAllowed} annual leaves. You have availed ${annual.annualLeavesAvailed} leaves, exceeding your entitlement by ${annual.excessLeaves} day${annual.excessLeaves === 1 ? '' : 's'}.`
-        + (annual.deductionEnabled
-          ? ` Based on your configured deduction policy, the applicable deduction is PKR ${annual.totalDeductionAmount.toLocaleString('en-PK')}.`
-          : ' Leave deduction is not enabled for this employee, so no deduction applies.')
-      : `You have been allocated ${annual.annualLeavesAllowed} annual leaves. You have availed ${annual.annualLeavesAvailed} leaves, and ${annual.annualLeavesRemaining} leave${annual.annualLeavesRemaining === 1 ? ' is' : 's are'} remaining.`;
-
-  /* Month-wise table — only months that actually fall inside the
-     session, computed from the session's own real dates rather than a
-     fixed Jan-Dec year. */
-  const months = [];
-  let cursor = `${sessionStart.slice(0, 7)}-01`;
-  while (cursor <= sessionEnd) {
-    const [y, m] = cursor.split('-').map(Number);
-    const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-    const from = cursor > sessionStart ? cursor : sessionStart;
-    const to = monthEnd < sessionEnd ? monthEnd : sessionEnd;
-    const mScheduled = scheduledWorkingDays(from, to);
-    const mRows = empRows.filter(r => r.date >= from && r.date <= to);
-    const mPresent = mRows.filter(r => r.status === 'present').length;
-    const mAbsent = mRows.filter(r => r.status === 'absent').length;
-    const mLeave = mRows.filter(r => r.status === 'leave').length;
-    months.push({
-      month: `${MONTH_NAMES[m - 1]} ${y}`,
-      scheduledWorkingDays: mScheduled,
-      presentDays: mPresent,
-      absentDays: mAbsent,
-      halfDays: 0, // this app's attendance model has no half-day status yet — shown as 0, not omitted, so the column stays meaningful if/when it's added
-      approvedLeaveDays: mLeave,
-      attendancePercentage: mScheduled > 0 ? Math.round((mPresent / mScheduled) * 1000) / 10 : null,
-      absenteeismPercentage: mScheduled > 0 ? Math.round((mAbsent / mScheduled) * 1000) / 10 : null,
-    });
-    cursor = addDaysISO(monthEnd, 1);
+/* Report 1 — All Employees */
+export async function computeAnnualLeaveSummary({
+  emps = [], getDeptName, getDesigName, sessionId, sessionStart, sessionEnd, department, status, query, force,
+} = {}) {
+  const active = (emps || []).filter((e) => e.status === 'Active');
+  const [dataset, leavesMap] = await Promise.all([
+    loadSessionAttendance({ sessionStart, sessionEnd, sessionId, force }),
+    loadLeaveSettings(active),
+  ]);
+  let list = active;
+  if (department) list = list.filter((e) => Number(e.dId) === Number(department));
+  if (query && query.trim()) {
+    const q = query.trim().toLowerCase();
+    list = list.filter((e) => `${e.firstName || ''} ${e.lastName || ''} ${e.eid || ''}`.toLowerCase().includes(q));
   }
+  let rows = list.map((e) => annualRow(e, leavesMap.get(e.id), dataset, { getDeptName, getDesigName }));
+  if (status === 'exceeded') rows = rows.filter((r) => r.excessLeaves > 0);
+  else if (status === 'within') rows = rows.filter((r) => r.excessLeaves === 0);
+  return { rows, summary: summarizeRows(rows), sessionStart, sessionEnd, failedDays: dataset.failedDays };
+}
 
-  /* Day-wise detailed history — every working day in range that has
-     EITHER a real attendance row OR falls inside the session (so "No
-     Record" days are visible too, never silently skipped as if they
-     were non-working days). */
-  const history = [];
-  let d = sessionStart;
-  while (d <= sessionEnd) {
-    const day = d;
-    if (!isNonWorkingDay(day)) {
-      const row = empRows.find(r => r.date === day);
-      const leaveApp = row?.status === 'leave'
-        ? mockStaffLeaveApplications.find(a => a.empId === emp.eid && day >= a.fromDate && day <= a.toDate && a.status === 'approved')
-        : null;
-      history.push({
-        date: day,
-        day: dayName(day),
-        status: row ? row.status : null,
-        inTime: row?.inTime || null,
-        outTime: row?.outTime || null,
-        leaveType: row?.leaveType || null,
-        approvalStatus: leaveApp ? leaveApp.status : null,
-        classification: classify(row),
-        remarks: leaveApp?.remarks || '',
+/* Report 2 — Individual Statement */
+export async function computeIndividualAnnualLeaveStatement({
+  employeeId, emps = [], getDeptName, getDesigName, sessionId, sessionStart, sessionEnd,
+} = {}) {
+  const emp = (emps || []).find((e) => Number(e.id) === Number(employeeId));
+  if (!emp) return null;
+  const [dataset, leavesMap] = await Promise.all([
+    loadSessionAttendance({ sessionStart, sessionEnd, sessionId }),
+    loadLeaveSettings([emp]),
+  ]);
+  const a = annualRow(emp, leavesMap.get(emp.id), dataset, { getDeptName, getDesigName });
+  const sid = String(emp.id);
+
+  const months = [];
+  if (sessionStart <= dataset.effectiveEnd) {
+    for (let d = fromISO(`${sessionStart.slice(0, 7)}-01`), end = fromISO(dataset.effectiveEnd); d <= end; d.setMonth(d.getMonth() + 1)) {
+      const y = d.getFullYear(); const m = d.getMonth();
+      const t = tallyEmployee(emp.id, dataset, `${y}-${pad2(m + 1)}-01`, toISO(new Date(y, m + 1, 0)));
+      months.push({
+        month: `${MONTH_NAMES[m]} ${y}`,
+        scheduledWorkingDays: t.scheduled,
+        presentDays: t.present,
+        absentDays: t.absent,
+        halfDays: t.late,
+        approvedLeaveDays: t.leave,
+        attendancePercentage: pct(t.present, t.marked),
+        absenteeismPercentage: pct(t.absent, t.marked),
       });
     }
-    d = addDaysISO(d, 1);
   }
 
-  return clone({
-    employee: {
-      id: emp.id, eid: emp.eid, name: fullName(emp), department: deptName(emp.dId), designation: desigName(emp.desId),
-      joinDate: emp.join, status: emp.status,
-    },
-    sessionStart,
-    sessionEnd,
-    annual,
+  const history = dataset.workingDates.map((d) => {
+    const rec = dataset.byDate.get(d)?.get(sid);
+    const st = rec?.status || '';
+    const classification = !rec ? 'No Record'
+      : st === 'absent' ? 'Unexcused Absence'
+        : st === 'leave' ? 'Approved Leave'
+          : st === 'late' ? 'Present (Late)' : 'Present';
+    return {
+      date: d, day: dayName(d),
+      status: !rec ? null : (st === 'late' ? 'present' : st),
+      inTime: rec?.inTime || '', outTime: rec?.outTime || '',
+      leaveType: st === 'leave' ? 'Annual' : null, approvalStatus: null, classification,
+      remarks: rec?.platform ? `Marked from ${rec.platform}` : '',
+    };
+  }).reverse();
+
+  let statusMessage;
+  if (a.annualLeavesAllowed == null) {
+    statusMessage = `Annual leave quota is not configured for ${a.employeeName}. Set it in Employee → Leaves.`;
+  } else if (a.excessLeaves > 0) {
+    statusMessage = `${a.employeeName} was allocated ${a.annualLeavesAllowed} annual leaves and has availed ${a.annualLeavesAvailed}, exceeding the entitlement by ${a.excessLeaves} day${a.excessLeaves === 1 ? '' : 's'}.`
+      + (a.deductionEnabled ? '' : ' Leave deduction is disabled for this employee, so no deduction applies.');
+  } else {
+    statusMessage = `${a.employeeName} was allocated ${a.annualLeavesAllowed} annual leaves, has availed ${a.annualLeavesAvailed}, and ${a.annualLeavesRemaining} ${a.annualLeavesRemaining === 1 ? 'is' : 'are'} remaining.`;
+  }
+
+  return {
+    employee: { id: emp.id, eid: a.employeeEid, name: a.employeeName, department: a.department, designation: a.designation, joinDate: a.joinDate || '—', status: a.status },
+    sessionStart, sessionEnd,
+    annual: a,
     attendance: {
-      scheduledWorkingDays: scheduled, presentDays, absentDays, halfDays: 0,
-      approvedLeaveDays: approvedLeaveDaysAll, attendancePercentage, absenteeismPercentage,
+      scheduledWorkingDays: a.scheduledWorkingDays, presentDays: a.presentDays, absentDays: a.absenceDays,
+      halfDays: 0, approvedLeaveDays: a.annualLeavesAvailed, attendancePercentage: a.attendancePercentage,
     },
     statusMessage,
     months,
-    history: history.reverse(),
-  });
+    history,
+  };
 }

@@ -1219,8 +1219,8 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
 /* ── Annual Leave Summary Report modal wrapper ── */
 function AnnualLeaveSummaryReportModal({ emps, depts, desigs, getDeptName, getDesigName, toast, branchId, onClose }) {
   return createPortal(
-    <div className="overlay-backdrop" onClick={onClose}>
-      <div className="overlay-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '1400px', width: '95vw', maxHeight: '95vh', overflow: 'auto' }}>
+       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.55)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '3vh 12px', overflowY: 'auto' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 1400, background: 'var(--bg-base,#F0F4FF)', borderRadius: 18, boxShadow: '0 24px 60px rgba(15,23,42,.35)', padding: 18 }}>
         <AnnualLeaveSummaryReport
           emps={emps}
           depts={depts}

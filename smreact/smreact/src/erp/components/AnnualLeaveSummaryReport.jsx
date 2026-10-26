@@ -70,6 +70,126 @@ const HAL_CSS = `
 .hal-header-value { font:700 13px/1.3 var(--font-body,inherit); color:var(--text-primary); }
 `;
 
+/* reportKit cells ko column.key se padhta hai.
+   Excel "PKR 2,000" ko number bana ke column me fit na ho to ##### dikhata hai —
+   is liye har cell ko TEXT format (mso-number-format:@) dete hain + auto width. */
+const keyedTable = ({ columns, rows, ...rest }) => buildReportTableHtml({
+  ...rest,
+  columns: columns.map((c, i) => {
+    const longest = Math.max(String(c.label).length, ...rows.map((r) => String(r[i] ?? '').length));
+    return { ...c, key: `c${i}`, width: c.width || `${Math.min(260, longest * 8 + 24)}px` };
+  }),
+  rows: rows.map((r) => Object.fromEntries(r.map((v, i) => [`c${i}`, v]))),
+}).replace(/<td style="/g, '<td style="mso-number-format:\'\\@\';white-space:nowrap;');
+
+/* Print/Word/Excel: compact table (landscape me fit) + har cell TEXT (Excel me ##### nahi) */
+const compact = (html) => html
+  .replace(/white-space:nowrap;/g, '')
+  .replace(/;width:\d+px/g, '')
+  .replace(/padding:8px 10px;/g, 'padding:5px 6px;')
+  .replace(/padding:9px 10px;/g, 'padding:6px 6px;')
+  .replace('font-size:12.5px', 'font-size:10.5px')
+  .replace(/<td style="(?!mso)/g, '<td style="mso-number-format:\'\\@\';');
+
+/* Print window ko A4 sheet bana do: table page se bahar na jaye + screen par A4 kagaz jaisa */
+const a4 = (html) => html
+  .replace(/<table style="width:100%;border-collapse:collapse;/g, '<table style="width:100%;border-collapse:collapse;table-layout:fixed;word-wrap:break-word;')
+  .replace('</style>', '@media screen{html,body{background:#E5E7EB!important}body{padding:24px 0}.page{background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.18);min-height:210mm;overflow:hidden}}@page{size:A4 landscape;margin:10mm}</style>');
+
+/* Print report ke upar summary boxes */
+const summaryBoxes = (items) => `<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px 16px"><tr>${items.map(([label, val]) => `<td style="border:1px solid #BFDBFE;background:#EFF6FF;border-radius:8px;padding:8px 6px;text-align:center"><div style="font-size:9.5px;color:#64748B;text-transform:uppercase;font-weight:700">${label}</div><div style="font-size:16px;font-weight:800;color:#1E3A8A;margin-top:3px">${val}</div></td>`).join('')}</tr></table>`;
+
+/* Export PDF — asli A4 landscape PDF file (jsPDF), seedha Downloads me */
+async function downloadReportPdf({ title, subtitle, summary = [], sections = [], filename }) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const M = 28;
+  const tw = W - M * 2;
+  const school = sessionStorage.getItem('branchName') || '';
+  let y = 0;
+
+  const header = () => {
+    doc.setFillColor(30, 58, 138); doc.rect(0, 0, W, 58, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+    doc.text(title, M, 26);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text([school, subtitle].filter(Boolean).join('   |   '), M, 44);
+    doc.text(`Generated: ${new Date().toLocaleString('en-GB')}`, W - M, 44, { align: 'right' });
+    y = 74;
+  };
+  header();
+
+  if (summary.length) {
+    const gap = 6;
+    const bw = (tw - gap * (summary.length - 1)) / summary.length;
+    summary.forEach(([label, val], i) => {
+      const x = M + i * (bw + gap);
+      doc.setFillColor(239, 246, 255); doc.setDrawColor(191, 219, 254);
+      doc.roundedRect(x, y, bw, 40, 4, 4, 'FD');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+      doc.text(String(label).toUpperCase(), x + bw / 2, y + 14, { align: 'center' });
+      doc.setFontSize(12); doc.setTextColor(30, 58, 138);
+      doc.text(String(val), x + bw / 2, y + 31, { align: 'center' });
+    });
+    y += 54;
+  }
+
+  sections.forEach(({ heading, text, columns, rows = [] }) => {
+    if (heading) {
+      if (y > H - 90) { doc.addPage(); header(); }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(30, 58, 138);
+      doc.text(heading, M, y + 10); y += 18;
+    }
+    if (text) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(51, 65, 85);
+      const lines = doc.splitTextToSize(String(text), tw);
+      doc.text(lines, M, y + 8); y += lines.length * 12 + 8;
+    }
+    if (!columns) return;
+
+    /* Column width = content ke hisaab se, total page width me fit */
+    const lens = columns.map((c, i) => Math.min(28, Math.max(String(c).length, ...rows.map((r) => String(r[i] ?? '').length))) + 2);
+    const sum = lens.reduce((a, b) => a + b, 0);
+    const cw = lens.map((l) => (tw * l) / sum);
+
+    const drawHead = () => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      const hl = columns.map((c, i) => doc.splitTextToSize(String(c), cw[i] - 6));
+      const hh = Math.max(...hl.map((l) => l.length)) * 9 + 8;
+      doc.setFillColor(219, 234, 254); doc.rect(M, y, tw, hh, 'F');
+      doc.setTextColor(30, 58, 138);
+      let x = M;
+      hl.forEach((l, i) => { doc.text(l, x + 3, y + 11); x += cw[i]; });
+      y += hh;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    };
+    drawHead();
+
+    rows.forEach((r, ri) => {
+      const cl = r.map((v, i) => doc.splitTextToSize(String(v ?? '-'), cw[i] - 6));
+      const rh = Math.max(...cl.map((l) => l.length)) * 10 + 8;
+      if (y + rh > H - 28) { doc.addPage(); header(); drawHead(); }
+      if (ri % 2) { doc.setFillColor(248, 250, 255); doc.rect(M, y, tw, rh, 'F'); }
+      doc.setDrawColor(219, 234, 254); doc.line(M, y + rh, M + tw, y + rh);
+      doc.setTextColor(30, 41, 59);
+      let x = M;
+      cl.forEach((l, i) => { doc.text(l, x + 3, y + 11); x += cw[i]; });
+      y += rh;
+    });
+    if (!rows.length) { doc.setTextColor(100, 116, 139); doc.text('No records.', M + 3, y + 12); y += 20; }
+    y += 14;
+  });
+
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i += 1) {
+    doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+    doc.text(`Page ${i} of ${n}`, W - M, H - 14, { align: 'right' });
+  }
+  doc.save(filename);
+}
+
 const fmtPct = (v) => (v == null ? "N/A" : `${v}%`);
 const fmtNum = (v) => (v == null ? "Not Configured" : v);
 const fmtMoney = (v) => `PKR ${(Number(v) || 0).toLocaleString("en-PK")}`;
@@ -94,7 +214,7 @@ const GRAD = {
 };
 
 /* ─── Report 1: All Employees ─── */
-function AllEmployeesTab({ depts, sessionStart, sessionEnd, onViewDetails, toast }) {
+function AllEmployeesTab({ ctx, depts, sessionStart, sessionEnd, onViewDetails, toast }) {
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("");
   const [status, setStatus] = useState("");
@@ -105,7 +225,7 @@ function AllEmployeesTab({ depts, sessionStart, sessionEnd, onViewDetails, toast
     setLoading(true);
     try {
       const res = await hrAnnualLeaveService.computeAnnualLeaveSummary({
-        sessionStart, sessionEnd,
+        ...ctx, sessionStart, sessionEnd,
         department: department ? Number(department) : null,
         status: status || null,
         query,
@@ -118,13 +238,17 @@ function AllEmployeesTab({ depts, sessionStart, sessionEnd, onViewDetails, toast
     }
   };
 
-  useEffect(() => { if (sessionStart && sessionEnd) search(); }, [sessionStart, sessionEnd]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!sessionStart || !sessionEnd) return undefined;
+    const t = setTimeout(() => { search(); }, query ? 350 : 0);
+    return () => clearTimeout(t);
+  }, [sessionStart, sessionEnd, query, department, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const reset = () => { setQuery(""); setDepartment(""); setStatus(""); search(); };
+   const reset = () => { setQuery(""); setDepartment(""); setStatus(""); };
 
   const exportHtml = () => {
     if (!data) return null;
-    const tableHtml = buildReportTableHtml({
+    const tableHtml = keyedTable({
       columns: [
         { label: "#" }, { label: "Employee" }, { label: "ID" }, { label: "Department" }, { label: "Designation" },
         { label: "Allowed" }, { label: "Availed" }, { label: "Remaining" }, { label: "Excess" }, { label: "Absence Days" },
@@ -138,19 +262,57 @@ function AllEmployeesTab({ depts, sessionStart, sessionEnd, onViewDetails, toast
     });
     const s = data.summary;
     const bodyHtml = `
-      <p style="margin-bottom:14px;color:#555">Total Active Employees: ${s.totalActiveEmployees} · Total Allowed: ${s.totalAllowed} · Total Availed: ${s.totalAvailed} · Total Remaining: ${s.totalRemaining} · Employees Exceeded: ${s.employeesExceeded} · Total Deductions: ${fmtMoney(s.totalDeduction)}</p>
-      ${tableHtml}
+      ${summaryBoxes([
+        ['Active Employees', s.totalActiveEmployees],
+        ['Leaves Allowed', s.totalAllowed],
+        ['Leaves Availed', s.totalAvailed],
+        ['Leaves Remaining', s.totalRemaining],
+        ['Exceeded', s.employeesExceeded],
+        ['Calculated Deductions', fmtMoney(s.totalDeduction)],
+      ])}
+      ${compact(tableHtml)}
     `;
     return buildStandardReportHtml({
       title: "Annual Leave Summary — All Employees",
       isColor: true,
+      orientation: "landscape",
       bodyHtml,
-      subtitleLine: `Session: ${sessionStart} to ${sessionEnd}`,
+      subtitleLine: `Session: ${formatDate(sessionStart)} to ${formatDate(sessionEnd)}`,
     });
   };
-  const handlePrint = () => { const h = exportHtml(); if (h) openReportWindow(h); };
+const handlePrint = () => { const h = exportHtml(); if (h) openReportWindow(a4(h)); };
   const handleWord = () => { const h = exportHtml(); if (h) downloadReportAsWord(h, `${reportFileName("Annual-Leave-Summary")}.doc`); };
   const handleExcel = () => { const h = exportHtml(); if (h) downloadReportHtmlAsExcel(h, `${reportFileName("Annual-Leave-Summary")}.xls`); };
+  const handlePdf = () => {
+    if (!data) return;
+    const s = data.summary;
+    downloadReportPdf({
+      title: "Annual Leave Summary — All Employees",
+      subtitle: `Session: ${formatDate(sessionStart)} to ${formatDate(sessionEnd)}`,
+      summary: [
+        ["Active Employees", s.totalActiveEmployees],
+        ["Leaves Allowed",   s.totalAllowed],
+        ["Leaves Availed",   s.totalAvailed],
+        ["Leaves Remaining", s.totalRemaining],
+        ["Exceeded",         s.employeesExceeded],
+        ["Total Deductions", fmtMoney(s.totalDeduction)],
+      ],
+      sections: [{
+        heading: "Annual Leave Summary — All Employees",
+        columns: ["#", "Employee", "ID", "Department", "Designation",
+                  "Allowed", "Availed", "Remaining", "Excess", "Absence Days",
+                  "Deduct?", "Rate/Day", "Total Deduction"],
+        rows: data.rows.map((r, i) => [
+          i + 1, r.employeeName, r.employeeEid, r.department, r.designation,
+          fmtNum(r.annualLeavesAllowed), r.annualLeavesAvailed,
+          fmtNum(r.annualLeavesRemaining), r.excessLeaves, r.absenceDays,
+          r.deductionEnabled ? "Yes" : "No",
+          fmtMoney(r.deductionRate), fmtMoney(r.totalDeductionAmount),
+        ]),
+      }],
+      filename: `${reportFileName("Annual-Leave-Summary")}.pdf`,
+    }).catch(() => toast("PDF could not be created. Run: npm install jspdf", "error"));
+  };
 
   return (
     <div className="hal-root">
@@ -184,14 +346,15 @@ function AllEmployeesTab({ depts, sessionStart, sessionEnd, onViewDetails, toast
           {data && (
             <>
               <button type="button" className="hal-btn" onClick={handlePrint}><i className="fa-solid fa-print"></i> Print</button>
-              <button type="button" className="hal-btn" onClick={handleWord}><i className="fa-solid fa-file-word"></i> Export PDF/Word</button>
+<button type="button" className="hal-btn" onClick={handlePdf}><i className="fa-solid fa-file-pdf"></i> Export PDF</button>
+              <button type="button" className="hal-btn" onClick={handleWord}><i className="fa-solid fa-file-word"></i> Export Word</button>
               <button type="button" className="hal-btn" onClick={handleExcel}><i className="fa-solid fa-file-excel"></i> Export Excel</button>
             </>
           )}
         </div>
       </div>
 
-      {loading ? (
+        {loading && !data ? (
         <div className="hal-loading"><i className="fa-solid fa-circle-notch fa-spin"></i> Loading…</div>
       ) : !data ? null : (
         <>
@@ -249,7 +412,7 @@ function AllEmployeesTab({ depts, sessionStart, sessionEnd, onViewDetails, toast
 }
 
 /* ─── Report 2: Individual Statement ─── */
-function IndividualStatementTab({ employees, sessionStart, sessionEnd, empId, onEmpIdChange, toast }) {
+function IndividualStatementTab({ ctx, employees, sessionStart, sessionEnd, empId, onEmpIdChange, toast }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [monthFilter, setMonthFilter] = useState("");
@@ -260,7 +423,7 @@ function IndividualStatementTab({ employees, sessionStart, sessionEnd, empId, on
     if (!id) { setData(null); return; }
     setLoading(true);
     try {
-      const res = await hrAnnualLeaveService.computeIndividualAnnualLeaveStatement({ employeeId: Number(id), sessionStart, sessionEnd });
+      const res = await hrAnnualLeaveService.computeIndividualAnnualLeaveStatement({ ...ctx, employeeId: Number(id), sessionStart, sessionEnd });
       setData(res);
     } catch (e) {
       toast(e?.message || "Unable to load the employee statement.", "error");
@@ -280,12 +443,12 @@ function IndividualStatementTab({ employees, sessionStart, sessionEnd, empId, on
 
   const exportHtml = () => {
     if (!data) return null;
-    const monthsTable = buildReportTableHtml({
-      columns: [{ label: "Month" }, { label: "Scheduled" }, { label: "Present" }, { label: "Absent" }, { label: "Half-Days" }, { label: "Approved Leave" }, { label: "Attendance %" }, { label: "Absenteeism %" }],
+    const monthsTable = keyedTable({
+      columns: [{ label: "Month" }, { label: "Scheduled" }, { label: "Present" }, { label: "Absent" }, { label: "Late" }, { label: "Approved Leave" }, { label: "Attendance %" }, { label: "Absenteeism %" }],
       rows: data.months.map((m) => [m.month, m.scheduledWorkingDays, m.presentDays, m.absentDays, m.halfDays, m.approvedLeaveDays, fmtPct(m.attendancePercentage), fmtPct(m.absenteeismPercentage)]),
       isColor: true,
     });
-    const historyTable = buildReportTableHtml({
+    const historyTable = keyedTable({
       columns: [{ label: "Date" }, { label: "Day" }, { label: "Status" }, { label: "In" }, { label: "Out" }, { label: "Classification" }, { label: "Remarks" }],
       rows: data.history.map((h) => [h.date, h.day, h.status || "—", h.inTime || "—", h.outTime || "—", h.classification, h.remarks || "—"]),
       isColor: true,
@@ -294,18 +457,45 @@ function IndividualStatementTab({ employees, sessionStart, sessionEnd, empId, on
       <h2>${data.employee.name} (${data.employee.eid})</h2>
       <p style="color:#555">${data.employee.department} · ${data.employee.designation} · Joined ${data.employee.joinDate}</p>
       <p style="margin:12px 0;color:#333">${data.statusMessage}</p>
-      <h3 style="margin:16px 0 8px">Monthly Attendance Summary</h3>${monthsTable}
-      <h3 style="margin:16px 0 8px">Detailed Attendance &amp; Leave History</h3>${historyTable}
-    `;
+ <h3 style="margin:16px 0 8px">Monthly Attendance Summary</h3>${compact(monthsTable)}
+<h3 style="margin:16px 0 8px">Detailed Attendance &amp; Leave History</h3>${compact(historyTable)}    `;
     return buildStandardReportHtml({
       title: `Annual Leave & Attendance Statement — ${data.employee.name}`,
       isColor: true,
+      orientation: "landscape",
       bodyHtml,
-      subtitleLine: `Session: ${sessionStart} to ${sessionEnd}`,
+      subtitleLine: `Session: ${formatDate(sessionStart)} to ${formatDate(sessionEnd)}`,
     });
   };
   const handlePrint = () => { const h = exportHtml(); if (h) openReportWindow(h); };
-  const handleWord = () => { const h = exportHtml(); if (h) downloadReportAsWord(h, `${reportFileName(`Annual-Leave-Statement-${data?.employee?.eid || ""}`)}.doc`); };
+  const handleWord = () => { const h = exportHtml(); if (h) downloadReportAsWord(h, `${reportFileName(`Annual-Leave-Statement-${data?.employee?.eid || ""}`)}.docx`); };
+  const handlePdf = () => {
+    if (!data) return;
+    const a = data.annual;
+    downloadReportPdf({
+      title: `Annual Leave Statement - ${data.employee.name} (${data.employee.eid})`,
+      subtitle: `${data.employee.department} | ${data.employee.designation} | Session: ${formatDate(sessionStart)} to ${formatDate(sessionEnd)}`,
+      summary: [
+        ["Allowed", fmtNum(a.annualLeavesAllowed)], ["Availed", a.annualLeavesAvailed],
+        ["Remaining", fmtNum(a.annualLeavesRemaining)], ["Excess", a.excessLeaves],
+        ["Absent Days", a.absenceDays], ["Calculated Deduction", fmtMoney(a.totalDeductionAmount)],
+      ],
+      sections: [
+        { text: data.statusMessage },
+        {
+          heading: "Monthly Attendance Summary",
+          columns: ["Month", "Scheduled", "Present", "Absent", "Late", "Leave", "Attendance %", "Absenteeism %"],
+          rows: data.months.map((m) => [m.month, m.scheduledWorkingDays, m.presentDays, m.absentDays, m.halfDays, m.approvedLeaveDays, fmtPct(m.attendancePercentage), fmtPct(m.absenteeismPercentage)]),
+        },
+        {
+          heading: "Detailed Attendance & Leave History",
+          columns: ["Date", "Day", "Status", "In", "Out", "Classification", "Remarks"],
+          rows: data.history.map((h) => [h.date, h.day, h.status || "-", h.inTime || "-", h.outTime || "-", h.classification, h.remarks || "-"]),
+        },
+      ],
+      filename: `${reportFileName(`Annual-Leave-Statement-${data.employee.eid}`)}.pdf`,
+    }).catch(() => toast("PDF could not be created. Run: npm install jspdf", "error"));
+  };
   const handleExcel = () => { const h = exportHtml(); if (h) downloadReportHtmlAsExcel(h, `${reportFileName(`Annual-Leave-Statement-${data?.employee?.eid || ""}`)}.xls`); };
 
   return (
@@ -379,7 +569,7 @@ function IndividualStatementTab({ employees, sessionStart, sessionEnd, empId, on
             <div className="hal-section-title">Monthly Attendance Summary</div>
             <div className="hal-table-wrap" style={{ marginBottom: 18 }}>
               <table className="hal-table">
-                <thead><tr><th>Month</th><th>Scheduled</th><th>Present</th><th>Absent</th><th>Half-Days</th><th>Approved Leave</th><th>Attendance %</th><th>Absenteeism %</th></tr></thead>
+                <thead><tr><th>Month</th><th>Scheduled</th><th>Present</th><th>Absent</th><th>Late</th><th>Approved Leave</th><th>Attendance %</th><th>Absenteeism %</th></tr></thead>
                 <tbody>
                   {data.months.map((m) => (
                     <tr key={m.month}>
@@ -441,19 +631,11 @@ export default function AnnualLeaveSummaryReport({ emps, depts, desigs, getDeptN
 
   const session = useMemo(() => sessions.find((s) => s.id === sessionId) || currentSession, [sessions, sessionId, currentSession]);
 
-  const employees = useMemo(() => emps.filter((e) => e.status === "Active").map((e) => ({
+  const employees = useMemo(() => (emps || []).filter((e) => e.status === "Active").map((e) => ({
     id: e.id, eid: e.eid, name: `${e.firstName || ""} ${e.lastName || ""}`.trim(), deptName: getDeptName(e.dId), desigName: getDesigName(e.desId),
   })), [emps, getDeptName, getDesigName]);
 
-  if (branchId !== 1) {
-    return (
-      <div className="hal-root">
-        <style>{HAL_CSS}</style>
-        <div className="hal-empty"><i className="fa-solid fa-lock"></i>This report is only available for the main branch.</div>
-      </div>
-    );
-  }
-
+  const ctx = { emps: emps || [], getDeptName, getDesigName, sessionId: session?.id };
   if (!session) {
     return (
       <div className="hal-root">
@@ -491,6 +673,7 @@ export default function AnnualLeaveSummaryReport({ emps, depts, desigs, getDeptN
 
       {tab === "summary" ? (
         <AllEmployeesTab
+          ctx={ctx}
           depts={depts}
           sessionStart={session.startDate}
           sessionEnd={session.endDate}
@@ -498,7 +681,8 @@ export default function AnnualLeaveSummaryReport({ emps, depts, desigs, getDeptN
           onViewDetails={(id) => { setEmpId(id); setTab("individual"); }}
         />
       ) : (
-        <IndividualStatementTab
+          <IndividualStatementTab
+          ctx={ctx}
           employees={employees}
           sessionStart={session.startDate}
           sessionEnd={session.endDate}
