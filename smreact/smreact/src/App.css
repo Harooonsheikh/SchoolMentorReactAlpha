@@ -700,3 +700,10 @@ body{font-family:var(--font-body);background:var(--bg-base);color:var(--text-pri
 @media (max-width: 768px) {
   .save-bar { bottom: 0; z-index: 60; }
 }
+
+.mai-markdown{font-size:13.5px;line-height:1.65;color:var(--text-primary,#0F172A)}
+.mai-markdown p{margin:0 0 10px}
+.mai-markdown ul,.mai-markdown ol{margin:0 0 10px;padding-left:20px}
+.mai-markdown li{margin:3px 0}
+.mai-markdown strong{font-weight:700}
+.mai-markdown h1,.mai-markdown h2,.mai-markdown h3{font-size:14px;font-weight:700;margin:14px 0 6px}

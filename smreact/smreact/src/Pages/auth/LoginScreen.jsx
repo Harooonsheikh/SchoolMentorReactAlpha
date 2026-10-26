@@ -3,6 +3,7 @@ import ForgotPasswordScreen from './ForgotPasswordScreen';
 import { useState, useEffect } from 'react';
 import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
+import { clearMentorAiSession } from '../../erp/pages/Dashboard/_forked/services/mentorAiAgentService';
 import { clearAcademicsContentPerms, loadAcademicsContentPermissions } from '../../erp/services/academicsContentPermissions';
 
 /* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
@@ -266,6 +267,7 @@ export default function LoginScreen({ onLogin, onSignup }) {
       sessionStorage.removeItem('sm_chain_branch_for');
       sessionStorage.removeItem('sm_chain_network_id');
       clearAcademicsContentPerms();
+      clearMentorAiSession();
     } catch (_) { /* private mode */ }
 
     if (data?.branchID) {

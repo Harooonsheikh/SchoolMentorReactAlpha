@@ -1,29 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import UniversalSearch from '../../shared/UniversalSearch';
 import Tooltip from '../../shared/Tooltip';
 import mentorAILogo from '../../assets/images/mentorAILogo.png';
 import MentorAIPanel from './MentorAIPanel';
 
-/* ═══════════════════════════════════════════════════════════════════
-   MentorAISearchBar — drop-in replacement for <UniversalSearch/> that
-   adds the Mentor AI entry point beside it. Normal search behavior is
-   completely untouched: UniversalSearch is rendered exactly as before
-   and receives the same props it always did.
-
-     <MentorAISearchBar
-       onNavigate={...} canAccess={...} sessionId={...} toast={...}
-       placeholder="..."
-       ctx={{ role: 'admin' }}          // optional, forwarded to askMentorAI
-       schoolName="The Oxford System…"  // optional, PDF letterhead only
-     />
-
-   Everything Mentor-AI-specific (trigger, drawer, response rendering)
-   is additive and scoped under the `mai-*` class prefix so it can
-   never collide with the rest of the dashboard's CSS.
-   ═══════════════════════════════════════════════════════════════════ */
-
 export default function MentorAISearchBar({ ctx, schoolName, ...searchProps }) {
   const [open, setOpen] = useState(false);
+  const [canViewMentorAI, setCanViewMentorAI] = useState(false);
+
+  // Use useEffect to check storage after component mounts safely
+  useEffect(() => {
+    // 1. Check all possible spellings from sessionStorage & localStorage
+    let branchId = 
+      sessionStorage.getItem('branchId') || 
+      localStorage.getItem('branchId') || 
+      sessionStorage.getItem('branchID') ||
+      localStorage.getItem('branchID');
+    // 2. Fallback: URL Query string
+    if (!branchId && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      branchId = urlParams.get('branchId') || urlParams.get('branchID');
+    }
+
+    // 3. Fallback: Props (ctx)
+    if (!branchId && ctx) {
+      branchId = ctx.branchId || ctx.branchID;
+    }
+
+    // Condition: Convert to string and trim spaces to ensure "1" matches
+    if (branchId !== null && branchId !== undefined) {
+      const cleanBranchId = String(branchId).trim();
+      if (cleanBranchId === '1') {
+        setCanViewMentorAI(true);
+      }
+    }
+  }, [ctx]);
 
   return (
     <>
@@ -31,28 +42,33 @@ export default function MentorAISearchBar({ ctx, schoolName, ...searchProps }) {
         <div className="mai-searchrow-input">
           <UniversalSearch {...searchProps} />
         </div>
-        <div className="mai-divider" aria-hidden="true" />
-        <Tooltip text="Ask Mentor AI">
-          <button
-            type="button"
-            className="mai-trigger"
-            onClick={() => setOpen(true)}
-            aria-label="Ask Mentor AI — ERP Intelligence Assistant"
-          >
-            <img src={mentorAILogo} alt="" aria-hidden="true" className="mai-trigger-logo" />
-          </button>
-        </Tooltip>
+        
+        {/* Render only if condition is met */}
+        {canViewMentorAI && (
+          <>
+            <div className="mai-divider" aria-hidden="true" />
+            <Tooltip text="Ask Mentor AI">
+              <button
+                type="button"
+                className="mai-trigger"
+                onClick={() => setOpen(true)}
+                aria-label="Ask Mentor AI — ERP Intelligence Assistant"
+              >
+                <img src={mentorAILogo} alt="" aria-hidden="true" className="mai-trigger-logo" />
+              </button>
+            </Tooltip>
+          </>
+        )}
       </div>
 
-      <MentorAIPanel open={open} onClose={() => setOpen(false)} ctx={ctx} schoolName={schoolName} />
+      {canViewMentorAI && (
+        <MentorAIPanel open={open} onClose={() => setOpen(false)} ctx={ctx} schoolName={schoolName} />
+      )}
     </>
   );
 }
 
-/* ─── One-time stylesheet, mirrors UniversalSearch.jsx's own pattern.
-       Covers the trigger, the drawer, and every MentorAIResponseParts
-       class — this is the feature's single entry point so it's the
-       one place guaranteed to mount before any child renders. ─── */
+/* ─── Stylesheet (Waisa hi rahega, ismein koi tabdeeli nahi ki gayi) ─── */
 if (typeof document !== 'undefined') {
   let el = document.getElementById('mai-style');
   if (!el) {

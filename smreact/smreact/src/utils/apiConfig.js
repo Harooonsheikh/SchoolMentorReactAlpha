@@ -59,6 +59,24 @@ export function buildUrl(path = '') {
   return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+
+// ── Mentor AI (agentic) API ─────────────────────────────────────
+// local → AI server seedha; prod → apna origin (IIS /ai/* ko AI server par forward kare)
+const MENTOR_AI_LOCAL = 'http://50.190.164.42:8000';
+export const MENTOR_AI_BASE = stripSlash(process.env.REACT_APP_MENTOR_AI_URL)
+  || (process.env.NODE_ENV === 'production' ? PROD_URL : MENTOR_AI_LOCAL);
+
+export function buildMentorAiUrl(path = '') {
+  return `${MENTOR_AI_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+/* AI URLs ERP guard (session-expired / view-only / slow-offline monitor) se bahar hain —
+   warna AI token ka 401 user ko ERP se logout kar deta. */
+export function isMentorAiUrl(url) {
+  return /(^|\/)ai\/api\/|\/api\/ask\//i.test(String(url || ''));
+}
+
+
 // ── Super-Admin API ─────────────────────────────────────────────
 // School/branch-level configuration (module activation waghera) alag
 // Super-Admin service par rehti hai, jiska apna base path hai:
@@ -376,6 +394,7 @@ export function hasValidSession() {
 /** Does this URL look like an ERP backend call (vs a static asset)? */
 function isApiUrl(url) {
   const u = String(url || '');
+  if (isMentorAiUrl(u)) return false;
   const base = getBaseUrl();
   if (base && u.startsWith(base)) return true;
   return /(^|\/)(api|SchoolMentorSuperAdminAPI)\//i.test(u)

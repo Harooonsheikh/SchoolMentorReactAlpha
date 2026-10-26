@@ -28,7 +28,7 @@ const SECTION_RENDERERS = {
    trick already established in Fee.jsx's downloadHtmlAsWord — copied
    here verbatim (Word) plus a new Excel twin, rather than pulling in a
    docx/xlsx generation library for a mock prototype. ─── */
-function escapeHtml(v) {
+export function escapeHtml(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
@@ -85,7 +85,7 @@ function buildExportHtml(response, schoolName) {
   </body></html>`;
 }
 
-function downloadBlob(content, filename, mimeType) {
+export function downloadBlob(content, filename, mimeType) {
   const blob = new Blob(['﻿', content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -166,3 +166,4 @@ export default function MentorAIResponse({ response, schoolName, onFollowUp }) {
     </div>
   );
 }
+
