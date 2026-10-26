@@ -26,8 +26,34 @@ const EMPTY_STUDENT = {
   bloodGroup: '', foodDietary: '', allergies: '', conditionOfChild: '', emergencyContact: '',
 };
 
-function StudentModal({ open, target, editIdx, editStudent, classesData, onClose, onSaved, showToast, manualReg }) {
-  const [formType, setFormType] = useState('quick');
+/* API ki kisi bhi date ko <input type="date"> ke YYYY-MM-DD format mein badalta hai.
+   Handle karta hai: ISO (2026-10-26T00:00:00), DD/MM/YYYY, MM/DD/YYYY hh:mm:ss AM,
+   aur .NET ki khaali date (0001-01-01). */
+const toInputDate = (v) => {
+  if (!v || v === 'string') return '';
+  const s = String(v).trim();
+  if (s.startsWith('0001-01-01')) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+
+  // 2026-10-26 ya 2026-10-26T00:00:00
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+
+  // 26/10/2026 ya 10/26/2026 12:00:00 AM
+  m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/);
+  if (m) {
+    let [, a, b, y] = m;
+    let day = a, month = b;                 // default DD/MM (template wala format)
+    if (Number(b) > 12) { day = b; month = a; } // MM/DD case
+    return `${y}-${pad(month)}-${pad(day)}`;
+  }
+
+  // Aakhri koshish: local time se banao (UTC shift se ek din peeche na jaye)
+  const d = new Date(s);
+  return isNaN(d) ? '' : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+function StudentModal({ open, target, editIdx, editStudent, classesData, onClose, onSaved, showToast, manualReg }) {  const [formType, setFormType] = useState('quick');
   const [openSec, setOpenSec] = useState({ reg: true, history: true, health: true });
   const [form, setForm] = useState(EMPTY_STUDENT);
   const [errors, setErrors] = useState({});
@@ -49,8 +75,7 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
           ...editStudent,
           registrationNo: editStudent.registerNo ?? editStudent.registrationNo ?? '',
           familyNo:       editStudent.familyNo ?? '',
-          // dateOfAdmission: editStudent.dateOfAdmission && editStudent.dateOfAdmission !== 'string' ? editStudent.dateOfAdmission : '',
-                  dateOfAdmission: editStudent.dateOfAdmission && editStudent.dateOfAdmission !== 'string' ? String(editStudent.dateOfAdmission).split('T')[0] : '',
+          dateOfAdmission: toInputDate(editStudent.dateOfAdmission ?? editStudent.DateOfAdmission ?? editStudent.admissionDate),
           name:           editStudent.firstName ?? editStudent.name ?? '',
           lastName:       editStudent.lastName ?? '',
           firstNameUrdu:  editStudent.firstNameInUrdu ?? '',
@@ -64,7 +89,7 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
           motherQualification: editStudent.motherQualification ?? '',
           motherOccupation:    editStudent.motherOccupation ?? '',
           gender:         editStudent.gander ?? editStudent.gender ?? '',
-          dob:            editStudent.dateOfBirth && editStudent.dateOfBirth !== 'string' ? String(editStudent.dateOfBirth).split('T')[0] : '',
+          dob:            toInputDate(editStudent.dateOfBirth ?? editStudent.DateOfBirth),
           caste:          editStudent.caste ?? '',
           nationality:    editStudent.nationality ?? '',
           postalAddress:  editStudent.postalAddress ?? '',

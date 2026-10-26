@@ -139,7 +139,9 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
     }
     setSaving(true);
     try {
-      const UserID = sessionStorage.getItem('UserID') || 0;
+      /* Login user id — ModifiedBy me yahi jata hai (StaffTab jaisa hi source).
+         Number() taake backend ko sahi int mile ("218" string nahi). */
+      const UserID = Number(sessionStorage.getItem('UserID')) || 0;
       const BranchID = sessionStorage.getItem('branchID') || 0;
       const fd = new FormData();
       fd.append('ID',                     schoolInfo.id              ?? schoolInfo.ID ?? 0);

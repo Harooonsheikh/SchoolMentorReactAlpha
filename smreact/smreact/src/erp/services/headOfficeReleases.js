@@ -242,12 +242,13 @@ const TYPE_ALIASES = {
   lesson: ['Lesson Plan', 'Lesson Plans', 'classworklessonplan'],
   notebook: ['NoteBook Plan', 'NoteBook Plans', 'notebooklessonplan'],
   resource: ['Resource File', 'Resource Files', 'resourcelibrary'],
+  termbreakup: ['Term Breakup', 'Term Breakups', 'TermBreakup', 'TermBreakups', 'lptermbreakup'],
 };
 const TYPE_KEY = new Map();
 Object.entries(TYPE_ALIASES).forEach(([key, names]) => names.forEach((n) => TYPE_KEY.set(normType(n), key)));
 const typeKeyOf = (raw) => TYPE_KEY.get(normType(raw)) || '';
 
-const TYPE = { activity: 'activity', lesson: 'lesson', notebook: 'notebook', resource: 'resource' };
+const TYPE = { activity: 'activity', lesson: 'lesson', notebook: 'notebook', resource: 'resource', termbreakup: 'termbreakup' };
 
 const groupBy = (arr, key) => {
   const m = new Map();
@@ -365,6 +366,28 @@ export async function fetchHeadOfficeReleases() {
       lessonPlans: pickOf(TYPE.lesson, content.lessons),
       notebookPlans: pickOf(TYPE.notebook, content.notebooks),
       resources: pickOf(TYPE.resource, content.resources),
+      /* Term Breakup ka apna network-content fetch nahi — iski row seedhe
+         Child2Raw (Type/TypeID/GradeID/SubjectID) se banti hai; class/subject
+         ke naam network content ke maps se. typeId = termBreakupID (Save par
+         duplicate-release-data ko yehi jata hai). */
+      termBreakups: items
+        .filter((it) => typeKeyOf(it.Type) === TYPE.termbreakup)
+        .map((it) => {
+          const tid = num(it.TypeID);
+          if (!tid) return null;
+          const gid = num(it.GradeID);
+          const sid = num(it.SubjectID);
+          return {
+            id: `termbreakup-${tid}`,
+            typeId: tid,
+            title: 'Term Breakup',
+            hoClass: content.className.get(gid) || (gid ? `Class #${gid}` : '—'),
+            hoSubject: content.subjectName.get(sid) || (sid ? `Subject #${sid}` : '—'),
+            _gradeId: gid,
+            _subjectId: sid,
+          };
+        })
+        .filter(Boolean),
     };
   });
 
@@ -395,16 +418,19 @@ export const RELEASE_TYPE = {
   lesson: 'Lesson Plan',
   notebook: 'NoteBook Plan',
   resource: 'Resource File',
+  termbreakup: 'Term Breakup',
 };
 
 const DUPLICATE_URL = () => buildChainApiUrl('/api/Network_Setup/duplicate-release-data');
 
 /**
  * Ek released item ki copy is branch me banao.
- * @param {{type:string, typeID:number, branchGradeID?:number, branchSubjectID?:number, branchSectionID?:number}} item
+ * `branchTermID` sirf Term Breakup ke liye lazmi hai (woh class+subject+TERM se
+ * bandha hota hai) — baqi types me 0.
+ * @param {{type:string, typeID:number, branchGradeID?:number, branchSubjectID?:number, branchSectionID?:number, branchTermID?:number}} item
  */
 export async function duplicateReleaseData({
-  type, typeID, branchGradeID = 0, branchSubjectID = 0, branchSectionID = 0,
+  type, typeID, branchGradeID = 0, branchSubjectID = 0, branchSectionID = 0, branchTermID = 0,
 }) {
   const bid = branchId();
   const networkID = await fetchBranchNetworkId();
@@ -419,5 +445,6 @@ export async function duplicateReleaseData({
     branchGradeID: num(branchGradeID),
     branchSubjectID: num(branchSubjectID),
     branchSectionID: num(branchSectionID),
+    branchTermID: num(branchTermID),
   });
 }

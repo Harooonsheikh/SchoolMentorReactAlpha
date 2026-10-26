@@ -12,6 +12,7 @@ import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal, { loadAppStatusCounts } from './AppPendingReportModal';
 import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvanceAdjustmentReportModal } from './DailyReceivingReport';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
+import InactiveFeeImpactCard from './InactiveFeeImpactCard';
 import { buildDiscountMap } from './feeDashboardExtra';
 import { useLedgerReportData, ledgerInstallmentReceipts } from '../../components/Fee';
 import * as feeService from '../../services/feeService';
@@ -1885,6 +1886,27 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
           </div>
           ) : <LockedCard title="Advance Payments Received" icon="fa-piggy-bank" />}
 
+          {/* ═════════ Inactive Students | Fee Impact — shows the
+              fee impact of students marked inactive during the selected
+              month. Rendered right after Advance Payments, as a
+              complementary informational card. ═════════ */}
+          {canSeeCard('fee_inactivestudents') ? (
+          <InactiveFeeImpactCard
+            feeData={{
+              classes: faClasses,
+              studentsMap: faStudentsMap,
+              headsMap: faHeadsMap,
+              discMap: faDiscMap,
+              generatedSet: faGeneratedSet,
+              receipts: faReceipts,
+              advanceLedger: faAdvanceLedger,
+            }}
+            monthIdx={feeMonthIdx}
+            monthLabel={feeMonthLabel}
+            duration={CHART_ANIM_MS}
+          />
+          ) : <LockedCard title="Inactive Students | Fee Impact" icon="fa-user-slash" />}
+
           {/* Download / Print Report link below the grid */}
           <div className="adm-link-row">
             <button
@@ -2911,18 +2933,32 @@ function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, to
   /* API Transactions ka exact shape abhi maaloom nahi (sample khali aata hai), is
      liye har field ke liye kai naam (camel/Pascal) try karte hain — jo na mile wo '—'. */
   const pick = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && o[k] !== '') return o[k]; } return ''; };
+  /* API Transactions: { StudentID, StudentName, RegNo, ClassName, SectionName, PSID,
+     TotalAmountReceived, CostPerTransaction, PaymentDate }. */
+  const fmt12 = (hhmm) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || ''));
+    if (!m) return '';
+    const h = Number(m[1]);
+    return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+  };
   const rows = (transactions || []).map((x, i) => {
-    const amt = Number(pick(x, 'amount', 'Amount', 'TotalReceived', 'ReceivedAmount', 'NetAmount')) || 0;
-    const date = String(pick(x, 'date', 'Date', 'PaymentDate', 'TransactionDate', 'CreatedAt')).slice(0, 10) || '—';
-    const time = String(pick(x, 'time', 'Time')).slice(0, 5);
+    const amt = Number(pick(x, 'TotalAmountReceived', 'TotalReceived', 'ReceivedAmount', 'Amount', 'amount')) || 0;
+    const charges = Number(pick(x, 'CostPerTransaction', 'Charges', 'TotalCharges')) || 0;
+    const raw = String(pick(x, 'PaymentDate', 'TransactionDate', 'Date', 'date', 'CreatedAt'));
+    const date = raw.slice(0, 10) || '—';
+    const time = raw.length >= 16 ? fmt12(raw.slice(11, 16)) : '';
+    const sid = pick(x, 'StudentID', 'studentID', 'StudentId');
+    const psid = pick(x, 'PSID', 'Psid', 'psid');
+    const cls = [pick(x, 'ClassName', 'className'), pick(x, 'SectionName', 'sectionName')].filter(Boolean).join(' – ');
     return `
     <tr>
       <td>${i + 1}</td>
-      <td><small>${esc(pick(x, 'txn', 'TransactionNo', 'TransactionID', 'ref', 'ReferenceNo', 'VoucherNo') || '—')}</small></td>
-      <td><b>${esc(pick(x, 'studentName', 'StudentName', 'student')?.name || pick(x, 'studentName', 'StudentName') || '—')}</b></td>
-      <td>${esc(pick(x, 'reg', 'RegNo', 'RegistrationNo', 'Registration') || '—')}</td>
+      <td><b>${esc(sid || '—')}</b>${psid ? `<br><small>PSID ${esc(psid)}</small>` : ''}</td>
+      <td><b>${esc(pick(x, 'StudentName', 'studentName', 'Name') || '—')}</b>${cls ? `<br><small>${esc(cls)}</small>` : ''}</td>
+      <td>${esc(pick(x, 'RegNo', 'RegistrationNo', 'RegistrationNumber') || '—')}</td>
       <td>${esc(date)}${time ? `<br><small>${esc(time)}</small>` : ''}</td>
-      <td>${esc(pick(x, 'method', 'PaymentMethod', 'Method', 'Channel') || 'OneLink')}</td>
+      <td>${esc(pick(x, 'PaymentMethod', 'Method') || 'OneLink')}</td>
+      <td style="text-align:right">${charges.toLocaleString('en-PK')}</td>
       <td style="text-align:right;font-weight:700;color:#16A34A">${amt.toLocaleString('en-PK')}</td>
     </tr>`;
   }).join('');
@@ -2938,8 +2974,8 @@ function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, to
     <div class="rep-filters"><span><b>Period:</b> ${esc(periodLabel)}</span><span><b>Generated:</b> ${esc(today)}</span></div>
     <div class="rep-secttl">Transaction Details</div>
     <table class="rep-tbl">
-      <thead><tr><th>Sn.</th><th>Txn / Ref No</th><th>Student</th><th>Reg No</th><th>Date &amp; Time</th><th>Method</th><th style="text-align:right">Amount</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#94A3B8;padding:20px">No OneLink payments in this period.</td></tr>'}</tbody>
+      <thead><tr><th>Sn.</th><th>Student ID / PSID</th><th>Student</th><th>Reg No</th><th>Date &amp; Time</th><th>Method</th><th style="text-align:right">Charges</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:#94A3B8;padding:20px">No OneLink payments in this period.</td></tr>'}</tbody>
     </table>`;
   return feeDashReportHTML({ accent, title: 'OneLink Payment Report', innerHtml: inner });
 }

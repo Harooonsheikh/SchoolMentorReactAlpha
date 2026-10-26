@@ -4,12 +4,14 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
 import * as approvalsService from '../services/approvalsService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import { saveWallatTransaction } from '../services/hrService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession, hasStoredActiveSessionCheck, apiMessage, approvalPending } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel } from '../reports/reportKit';
+import Billing from './Billing';
 
 /* Other modules broadcast this custom event after changing a session key
    (sessionStorage writes don't fire the native 'storage' event in the same tab).
@@ -70,6 +72,7 @@ const ACC_TABS = [
   { id: 'accounts', icon: 'fa-wallet',        label: 'Wallets' },
   { id: 'books',    icon: 'fa-book-open',     label: 'Account Books' },
   { id: 'reports',  icon: 'fa-chart-column',  label: 'Reports' },
+  { id: 'billing',  icon: 'fa-file-invoice-dollar', label: 'Billing' },
 ];
 
 /* Default empty transactions shape ({rev,exp}) — used by the ported Wallets
@@ -238,6 +241,8 @@ export default function Accounts({ toast }) {
         <AccountBooks toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'reports' ? (
         <Reports toast={toast} />
+      ) : tab === 'billing' ? (
+        <Billing onToast={toast} />
       ) : (
         <AccComingSoon label={activeMeta?.label || 'This screen'} icon={activeMeta?.icon || 'fa-hammer'} />
       )}
@@ -343,6 +348,35 @@ function confirmWithdraw({ pend, label, setConfirm, toast, onDone }) {
       onDone && onDone();
     },
   });
+}
+
+/* Nested approval envelope → { approvalId, requestNo, message } or null.
+   Accounts responses carry `approval:{ pendingApproval, approvalID, requestNo }`. */
+function accPendFromResp(resp) {
+  if (!approvalPending(resp)) return null;
+  const ap = (resp && (resp.approval || resp.Approval)) || {};
+  return {
+    approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
+    requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+    message: apiMessage(resp) || '',
+  };
+}
+
+/* Prepend pending-add ghost rows to a list; drop a ghost once a real row that
+   matches on any of `keyFields` (name/accountNo/…) appears (approved). */
+function mergeAccGhosts(rows, ghosts, keyFields = ['name']) {
+  const base = Array.isArray(rows) ? rows : [];
+  if (!ghosts || !ghosts.length) return base;
+  const realKeys = new Set();
+  base.filter((r) => !r._pendingAdd).forEach((r) => keyFields.forEach((k) => {
+    const v = String(r[k] ?? '').trim().toLowerCase();
+    if (v) realKeys.add(`${k}:${v}`);
+  }));
+  const add = ghosts.map((g) => g && g.row).filter((r) => r && !keyFields.some((k) => {
+    const v = String(r[k] ?? '').trim().toLowerCase();
+    return v && realKeys.has(`${k}:${v}`);
+  }));
+  return [...add, ...base];
 }
 
 function ChartOfAccounts({ toast, isOtherSession }) {
@@ -1166,6 +1200,25 @@ function Transactions({ toast, isOtherSession }) {
   const [dlReport, setDlReport] = useState(null);
   /* Entries awaiting approval (edit / delete) → row badge + Withdraw. */
   const [entryPending, reloadEntryPending] = usePendingApprovals(['accounts_edit_entry', 'accounts_delete_entry']);
+  /* Pending-add ghost entries (new, awaiting approval, no real row yet). */
+  const [entryGhosts, setEntryGhosts] = useState(() => getPendingAdds('accountEntry'));
+  const [entryGhostWithdraw, setEntryGhostWithdraw] = useState(null);
+  const reconcileEntryGhosts = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      setEntryGhosts(reconcilePendingAdds('accountEntry', reqs));
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { reconcileEntryGhosts(); }, [reconcileEntryGhosts]);
+  const doEntryGhostWithdraw = async () => {
+    if (!entryGhostWithdraw) return;
+    try { await approvalsService.withdrawRequest(entryGhostWithdraw._approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    setEntryGhosts(removePendingAdd('accountEntry', entryGhostWithdraw.id));
+    setEntryGhostWithdraw(null);
+    reconcileEntryGhosts();
+  };
 
   const segLabel  = seg === 'rev' ? 'Revenue'      : 'Expenditure';
   const segLabelP = seg === 'rev' ? 'Revenues'     : 'Expenditures';
@@ -1175,6 +1228,11 @@ function Transactions({ toast, isOtherSession }) {
     () => (list[seg] || []).filter(x => x.month === month),
     [list, seg, month],
   );
+  /* Ghost (pending-add) entries for the current segment + month, shown on top. */
+  const displayMonthList = useMemo(() => {
+    const gs = entryGhosts.map(g => g && g.row).filter(r => r && r._seg === seg && r.month === month);
+    return [...gs, ...monthList];
+  }, [entryGhosts, monthList, seg, month]);
 
   /* Smart-search matches — typeahead dropdown over the current month list. */
   const matches = useMemo(() => {
@@ -1270,12 +1328,28 @@ function Transactions({ toast, isOtherSession }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { toast(data?.message || 'Could not save entry', 'error'); return; }
-      /* Approval on (addAccountEntry / editAccoutEntry): queued, not saved —
-         close the form but DON'T reload, so the month list is unchanged. */
-      if (approvalPending(data)) {
-        toast(apiMessage(data) || 'Entry sent for approval', 'info');
+      /* Approval on (addAccountEntry / editAccoutEntry): queued, not saved.
+         Naya entry ho to ghost row (Pending badge + Withdraw) banate hain. */
+      const pendE = accPendFromResp(data);
+      if (pendE) {
+        if (!form.id) {
+          const rid = `pending-${pendE.requestNo || pendE.approvalId || Date.now()}`;
+          const gdate = form.date ? String(form.date).slice(0, 10) : '';
+          const row = {
+            id: rid, recordId: rid, _pendingAdd: true, _seg: seg,
+            branchAccountID: form.branchAccountID, headNo: form.branchAccountID,
+            head: form.headName || '—', date: gdate, month: gdate.slice(0, 7),
+            detail: form.detail || '', amount: Number(form.amount) || 0,
+            chqNo: form.chqNo || '', createdBy: '—', createdByName: '—', createdAt: new Date().toISOString(),
+            walletId: String(form.acctId || ''), acctId: String(form.acctId || ''),
+            _approvalId: pendE.approvalId, _requestNo: pendE.requestNo,
+          };
+          setEntryGhosts(addPendingAdd('accountEntry', { rid, requestNo: pendE.requestNo, approvalId: pendE.approvalId, row }));
+        }
+        toast(pendE.message || 'Entry sent for approval', 'info');
         setEntry(null);
         reloadEntryPending();
+        reconcileEntryGhosts();
         return;
       }
       toast(form.id ? 'Entry updated' : 'Entry added', 'success');
@@ -1509,7 +1583,7 @@ function Transactions({ toast, isOtherSession }) {
             <tbody>
                 {txns[seg] == null || loadingSeg ? (
                 <tr><td colSpan="7"><AccLoader title="Loading transactions…" /></td></tr>
-              ) : monthList.length === 0 ? (
+              ) : displayMonthList.length === 0 ? (
                 <tr><td colSpan="7">
                   <div className="acc-txn-empty">
                     <i className="fa-solid fa-inbox"></i>
@@ -1517,7 +1591,7 @@ function Transactions({ toast, isOtherSession }) {
                     Use <strong>New Entry</strong> to record one.
                   </div>
                 </td></tr>
-              ) : monthList.map(x => {
+              ) : displayMonthList.map(x => {
                 const isOpen = openRow === x.id;
                 /* Salary head (HR Payroll se aane wale expenditure — head "Salary Payment")
                    yahan se edit/delete NAHI ho sakta; payroll HR module se manage hota hai. */
@@ -1549,7 +1623,12 @@ function Transactions({ toast, isOtherSession }) {
                       <td className="r"><span className="acc-txn-amt">{fmtMoney(x.amount)}</span></td>
                       <td className="c" onClick={e => e.stopPropagation()}>
                         <div className="acc-txn-actions">
-                          {entryPending[String(x.recordId)] ? (
+                          {x._pendingAdd ? (
+                            <PendingBadge
+                              pend={{ approvalId: x._approvalId, requestNo: x._requestNo }}
+                              onWithdraw={() => setEntryGhostWithdraw(x)}
+                            />
+                          ) : entryPending[String(x.recordId)] ? (
                             <PendingBadge
                               pend={entryPending[String(x.recordId)]}
                               onWithdraw={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } confirmWithdraw({ pend: entryPending[String(x.recordId)], label: `${x.head || 'Entry'} — ${fmtMoney(x.amount)}`, setConfirm, toast, onDone: reloadEntryPending }); }}
@@ -1651,6 +1730,15 @@ function Transactions({ toast, isOtherSession }) {
       />
 
       <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <AccConfirmDialog
+        cfg={entryGhostWithdraw ? {
+          title: 'Withdraw this request?',
+          message: <span>The pending approval request for <strong>{entryGhostWithdraw.head || 'this entry'}</strong> will be withdrawn.</span>,
+          confirmLabel: 'Yes, Withdraw',
+          onConfirm: doEntryGhostWithdraw,
+        } : null}
+        onClose={() => setEntryGhostWithdraw(null)}
+      />
 
       <AccVoucherModal cfg={slip} onClose={() => setSlip(null)} toast={toast} />
 
@@ -1857,6 +1945,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
     onSave({
       id: cfg.mode === 'edit' ? (cfg.txn?.recordId || cfg.txn?.id || 0) : 0,
       branchAccountID: headId,
+      headName: (heads.find(h => String(h.id) === String(headId)) || {}).name || '',
          date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy,
       acctId,
       prevAcctId: cfg.mode === 'edit' ? (cfg.txn?.acctId || '') : '',
@@ -3153,6 +3242,31 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
   const [walletPending, reloadWalletPending] = usePendingApprovals('wallet_account');
   const [transferPending, reloadTransferPending] = usePendingApprovals('wallet_transfer');
 
+  /* Pending-add ghost rows (new wallet / transfer, awaiting approval, no real
+     row yet) — persisted so a refresh keeps them; reconciled via getMyRequests. */
+  const [walletGhosts, setWalletGhosts] = useState(() => getPendingAdds('walletAccount'));
+  const [transferGhosts, setTransferGhosts] = useState(() => getPendingAdds('walletTransfer'));
+  const [ghostWithdraw, setGhostWithdraw] = useState(null); // { mod, row }
+  const reconcileGhosts = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      setWalletGhosts(reconcilePendingAdds('walletAccount', reqs));
+      setTransferGhosts(reconcilePendingAdds('walletTransfer', reqs));
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { reconcileGhosts(); }, [reconcileGhosts]);
+  const doGhostWithdraw = async () => {
+    if (!ghostWithdraw) return;
+    const { mod, row } = ghostWithdraw;
+    try { await approvalsService.withdrawRequest(row._approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    if (mod === 'walletAccount') setWalletGhosts(removePendingAdd(mod, row.id));
+    else setTransferGhosts(removePendingAdd(mod, row.id));
+    setGhostWithdraw(null);
+    reconcileGhosts();
+  };
+
   const filtered = list.filter(a => {
     const q = search.trim().toLowerCase();
     const matchQ = !q || a.name.toLowerCase().includes(q) || (a.bankName || '').toLowerCase().includes(q) || (a.accountNo || '').includes(q) || finTypeMeta(a.type).label.toLowerCase().includes(q);
@@ -3179,12 +3293,27 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       toast(e?.message || 'Could not save this account. Please try again.', 'error');
       return;
     }
-    /* Approval on (walletAccount): queued, not saved — close the form but
-       DON'T reload, so the wallet list stays unchanged until approved. */
-    if (approvalPending(resp)) {
-      toast(apiMessage(resp) || 'Wallet account sent for approval', 'info');
+    /* Approval on (walletAccount): queued, not saved. Naya account ho to form
+       data se ghost card bana kar list me Pending badge + Withdraw ke saath
+       dikhate hain. */
+    const pend = accPendFromResp(resp);
+    if (pend) {
+      if (!isEdit) {
+        const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+        const row = {
+          id: rid, _pendingAdd: true,
+          name: payload.name || '', type: payload.type || '',
+          opening: Number(payload.opening) || 0, status: payload.status || 'active',
+          bankName: payload.bankName || '', accountNo: payload.accountNo || '',
+          description: payload.description || '', isDefault: false,
+          _approvalId: pend.approvalId, _requestNo: pend.requestNo,
+        };
+        setWalletGhosts(addPendingAdd('walletAccount', { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+      }
+      toast(pend.message || 'Wallet account sent for approval', 'info');
       setEditAccount(null);
       reloadWalletPending();
+      reconcileGhosts();
       return;
     }
     await reloadAccounts().catch(() => {});
@@ -3238,12 +3367,24 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       toast(e?.message || 'Could not save this transfer. Please try again.', 'error');
       return;
     }
-    /* Approval on (walletTransfer): queued, not saved — close the form but
-       DON'T move balances / reload until it's approved. */
-    if (approvalPending(resp)) {
-      toast(apiMessage(resp) || 'Transfer sent for approval', 'info');
+    /* Approval on (walletTransfer): queued, not saved. Ghost transfer row with
+       Pending badge + Withdraw. */
+    const pendT = accPendFromResp(resp);
+    if (pendT) {
+      const rid = `pending-${pendT.requestNo || pendT.approvalId || Date.now()}`;
+      const row = {
+        id: rid, _pendingAdd: true,
+        date: payload.date || new Date().toISOString().slice(0, 10),
+        fromId: payload.fromId, toId: payload.toId,
+        amount: Number(payload.amount) || 0, note: payload.note || '',
+        at: new Date().toISOString(), by: '—',
+        _approvalId: pendT.approvalId, _requestNo: pendT.requestNo,
+      };
+      setTransferGhosts(addPendingAdd('walletTransfer', { rid, requestNo: pendT.requestNo, approvalId: pendT.approvalId, row }));
+      toast(pendT.message || 'Transfer sent for approval', 'info');
       setTransferOpen(false);
       reloadTransferPending();
+      reconcileGhosts();
       return;
     }
     /* Balances can change server-side, so refresh both lists. */
@@ -3339,7 +3480,7 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       )}
       {accounts == null ? (
         <AccLoader title="Loading accounts…" />
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && walletGhosts.length === 0 ? (
         <div className="acc-ledger-empty">
           <i className="fa-solid fa-wallet"></i>
           No accounts found.<br/>
@@ -3347,9 +3488,9 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
         </div>
       ) : (
         <div className="acc-books-grid">
-          {filtered.map(a => {
+          {mergeAccGhosts(filtered, walletGhosts, ['name', 'accountNo']).map(a => {
             const tm = finTypeMeta(a.type);
-            const bal = balanceOf(a);
+            const bal = a._pendingAdd ? (Number(a.opening) || 0) : balanceOf(a);
             const sub = a.type === 'bank' && (a.bankName || a.accountNo)
               ? `${a.bankName || 'Bank'}${a.accountNo ? ` · ${a.accountNo}` : ''}`
               : (a.description || `${tm.label} account`);
@@ -3384,19 +3525,26 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                 </div>
 
                 <div className="acc-wallet-foot">
+                  {!a._pendingAdd && (
                   <Tooltip text={`View ${a.name}'s statement`}>
                     <button className="fee-iconbtn acc-wallet-stmtbtn" onClick={() => setStatementFor(a)}>
                       <i className="fa-solid fa-file-invoice-dollar"></i> View Statement
                     </button>
                   </Tooltip>
-                  {canAddTxn && (
+                  )}
+                  {canAddTxn && !a._pendingAdd && (
                   <Tooltip text="Add Transaction">
                     <button className="fee-iconbtn" onClick={() => setTxnFor(a)} aria-label="Add Transaction">
                       <i className="fa-solid fa-list-ul"></i>
                     </button>
                   </Tooltip>
                   )}
-                  {walletPending[String(a.id)] ? (
+                  {a._pendingAdd ? (
+                    <PendingBadge
+                      pend={{ approvalId: a._approvalId, requestNo: a._requestNo }}
+                      onWithdraw={() => setGhostWithdraw({ mod: 'walletAccount', row: a })}
+                    />
+                  ) : walletPending[String(a.id)] ? (
                     <PendingBadge
                       pend={walletPending[String(a.id)]}
                       onWithdraw={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } confirmWithdraw({ pend: walletPending[String(a.id)], label: a.name, setConfirm, toast, onDone: reloadWalletPending }); }}
@@ -3446,7 +3594,7 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
               <tbody>
                 <tr><td><AccLoader title="Loading transfers…" /></td></tr>
               </tbody>
-            ) : transferList.length === 0 ? (
+            ) : transferList.length === 0 && transferGhosts.length === 0 ? (
               <tbody>
                 <tr><td><div className="acc-txn-empty"><i className="fa-solid fa-right-left"></i>No transfers yet.<br/>Use <strong>Transfer Money</strong> to move a balance between accounts.</div></td></tr>
               </tbody>
@@ -3458,7 +3606,7 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...transferList].sort((a, b) => (b.date + b.at).localeCompare(a.date + a.at)).map(t => (
+                  {mergeAccGhosts([...transferList].sort((a, b) => (b.date + b.at).localeCompare(a.date + a.at)), transferGhosts, []).map(t => (
                     <tr key={t.id}>
                       <td><span className="acc-txn-date">{accFmtDate(t.date)}</span></td>
                       <td><span className="acc-stmt-tag debit"><i className="fa-solid fa-arrow-up-long"></i> {list.find(a => a.id === t.fromId)?.name || '—'}</span></td>
@@ -3471,7 +3619,12 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
                       <td><span className="acc-rep-user"><i className="fa-solid fa-user-pen"></i> {t.by || '—'}</span></td>
                       <td className="c">
                         <div className="acc-heads-actions">
-                          {transferPending[String(t.id)] ? (
+                          {t._pendingAdd ? (
+                            <PendingBadge
+                              pend={{ approvalId: t._approvalId, requestNo: t._requestNo }}
+                              onWithdraw={() => setGhostWithdraw({ mod: 'walletTransfer', row: t })}
+                            />
+                          ) : transferPending[String(t.id)] ? (
                             <PendingBadge
                               pend={transferPending[String(t.id)]}
                               onWithdraw={() => confirmWithdraw({ pend: transferPending[String(t.id)], label: `transfer of ${fmtMoney(t.amount)}`, setConfirm, toast, onDone: reloadTransferPending })}
@@ -3514,6 +3667,15 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
       />
       <WalletTxnModal account={txnFor} onClose={() => setTxnFor(null)} toast={toast} />
       <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <AccConfirmDialog
+        cfg={ghostWithdraw ? {
+          title: 'Withdraw this request?',
+          message: <span>The pending approval request for <strong>{ghostWithdraw.row.name || 'this transfer'}</strong> will be withdrawn.</span>,
+          confirmLabel: 'Yes, Withdraw',
+          onConfirm: doGhostWithdraw,
+        } : null}
+        onClose={() => setGhostWithdraw(null)}
+      />
     </>
   );
 }
@@ -4297,6 +4459,37 @@ function AccountBooks({ toast, isOtherSession }) {
   /* Books / book-payments awaiting approval → row badge + Withdraw. */
   const [bookPending, reloadBookPending]       = usePendingApprovals('accounts_book');
   const [paymentPending, reloadPaymentPending] = usePendingApprovals('accounts_book_payment');
+  /* Pending-add ghost books + ledger payments (new, awaiting approval). */
+  const [bookGhosts, setBookGhosts] = useState(() => getPendingAdds('accountsBook'));
+  const [paymentGhosts, setPaymentGhosts] = useState(() => getPendingAdds('bookPayment'));
+  const [bookGhostWithdraw, setBookGhostWithdraw] = useState(null);
+  const [paymentGhostWithdraw, setPaymentGhostWithdraw] = useState(null);
+  const reconcileBookGhosts = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      setBookGhosts(reconcilePendingAdds('accountsBook', reqs));
+      setPaymentGhosts(reconcilePendingAdds('bookPayment', reqs));
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { reconcileBookGhosts(); }, [reconcileBookGhosts]);
+  const doBookGhostWithdraw = async () => {
+    if (!bookGhostWithdraw) return;
+    try { await approvalsService.withdrawRequest(bookGhostWithdraw._approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    setBookGhosts(removePendingAdd('accountsBook', bookGhostWithdraw.id));
+    setBookGhostWithdraw(null);
+    reconcileBookGhosts();
+  };
+  const doPaymentGhostWithdraw = async () => {
+    if (!paymentGhostWithdraw) return;
+    try { await approvalsService.withdrawRequest(paymentGhostWithdraw._approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    setPaymentGhosts(removePendingAdd('bookPayment', paymentGhostWithdraw.id));
+    setPaymentGhostWithdraw(null);
+    reconcileBookGhosts();
+  };
   const [helpOpen, setHelpOpen]           = useState(false);
   const [ledgerSearch, setLedgerSearch]   = useState('');
   const [ledgerFilter, setLedgerFilter]   = useState('all');
@@ -4347,12 +4540,25 @@ function AccountBooks({ toast, isOtherSession }) {
       toast(err?.message || 'Could not save account book', 'error');
       return;
     }
-    /* Approval on (accountBook): queued, not saved — close the form but
-       DON'T refetch, so the book list stays unchanged until approved. */
-    if (approvalPending(resp)) {
-      toast(apiMessage(resp) || 'Account book sent for approval', 'info');
+    /* Approval on (accountBook): queued, not saved. Naya book ho to ghost card
+       (Pending badge + Withdraw). */
+    const pendB = accPendFromResp(resp);
+    if (pendB) {
+      if (!wasEdit) {
+        const rid = `pending-${pendB.requestNo || pendB.approvalId || Date.now()}`;
+        const row = {
+          id: rid, bookID: rid, _pendingAdd: true,
+          name: form.name || '', party: form.party || '', desc: form.desc || '',
+          type: form.type || 'payable', status: 'active',
+          opening: Number(form.opening) || 0, includeInCash: !!form.includeInCash, txns: [],
+          _approvalId: pendB.approvalId, _requestNo: pendB.requestNo,
+        };
+        setBookGhosts(addPendingAdd('accountsBook', { rid, requestNo: pendB.requestNo, approvalId: pendB.approvalId, row }));
+      }
+      toast(pendB.message || 'Account book sent for approval', 'info');
       setEditBook(null);
       reloadBookPending();
+      reconcileBookGhosts();
       return;
     }
     toast(wasEdit ? 'Book updated' : 'Account book created', 'success');
@@ -4374,12 +4580,25 @@ function AccountBooks({ toast, isOtherSession }) {
       toast(err?.message || 'Could not save transaction', 'error');
       return;
     }
-    /* Approval on (bookPayment): queued, not saved — close the form but
-       DON'T reload, so the ledger stays unchanged until approved. */
-    if (approvalPending(resp)) {
-      toast(apiMessage(resp) || 'Payment sent for approval', 'info');
+    /* Approval on (bookPayment): queued, not saved. Naya payment ho to ledger me
+       ghost row (Pending badge + Withdraw). */
+    const pendP = accPendFromResp(resp);
+    if (pendP) {
+      if (!form.id) {
+        const rid = `pending-${pendP.requestNo || pendP.approvalId || Date.now()}`;
+        const row = {
+          id: rid, _pendingAdd: true, _bookId: currentBookId,
+          type: form.type || 'received', date: form.date || new Date().toISOString().slice(0, 10),
+          amount: Number(form.amount) || 0, notes: form.notes || '', enteredBy: form.enteredBy || '—',
+          attachments: form.attachments || [], runningBalance: null, at: new Date().toISOString(),
+          _approvalId: pendP.approvalId, _requestNo: pendP.requestNo,
+        };
+        setPaymentGhosts(addPendingAdd('bookPayment', { rid, requestNo: pendP.requestNo, approvalId: pendP.approvalId, row }));
+      }
+      toast(pendP.message || 'Payment sent for approval', 'info');
       setEditTxn(null);
       reloadPaymentPending();
+      reconcileBookGhosts();
       return;
     }
     toast(editTxn.mode === 'edit' ? 'Transaction updated' : 'Transaction added', 'success');
@@ -4567,7 +4786,7 @@ function AccountBooks({ toast, isOtherSession }) {
 
           {booksLoading && list.length === 0 ? (
             <AccLoader title="Loading account books…" />
-          ) : filteredBooks.length === 0 ? (
+          ) : filteredBooks.length === 0 && bookGhosts.length === 0 ? (
             <div className="acc-ledger-empty">
               <i className="fa-solid fa-book-open"></i>
               No account books found.<br/>
@@ -4575,10 +4794,10 @@ function AccountBooks({ toast, isOtherSession }) {
             </div>
           ) : (
             <div className="acc-books-grid">
-              {filteredBooks.map(b => {
-                const c = bookCalc(b);
+              {mergeAccGhosts(filteredBooks, bookGhosts, ['name']).map(b => {
+                const c = b._pendingAdd ? { balance: Number(b.opening) || 0, totalIn: 0, returnedAll: 0, lastDate: '' } : bookCalc(b);
                 return (
-                  <button type="button" key={b.id} className="acc-book-card" onClick={() => openBook(b)}>
+                  <button type="button" key={b.id} className="acc-book-card" onClick={() => { if (!b._pendingAdd) openBook(b); }}>
                     <div className="acc-book-card-top">
                       <div className="acc-book-card-ic"><i className="fa-solid fa-book-bookmark"></i></div>
                       <div className="acc-book-card-tt">
@@ -4610,14 +4829,18 @@ function AccountBooks({ toast, isOtherSession }) {
                       </div>
                     </div>
                     <div className="acc-book-card-foot">
-                      {bookPending[String(b.bookID)]
+                      {b._pendingAdd
+                        ? <span className="acc-pending-wrap" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}><PendingBadge pend={{ approvalId: b._approvalId, requestNo: b._requestNo }} onWithdraw={() => setBookGhostWithdraw(b)} /></span>
+                        : bookPending[String(b.bookID)]
                         ? <span className="acc-pending-badge"><i className="fa-solid fa-hourglass-half"></i> Pending Approval{bookPending[String(b.bookID)].approvalId != null && <b>#{bookPending[String(b.bookID)].approvalId}</b>}</span>
                         : <span className="acc-book-card-meta"><i className="fa-regular fa-clock"></i> {accFmtDate(c.lastDate)}</span>}
                       <div className="acc-book-card-foot-r">
-                        {b.includeInCash
+                        {b._pendingAdd
+                          ? null
+                          : b.includeInCash
                           ? <span className="acc-book-cashtag"><i className="fa-solid fa-wallet"></i> In Cash</span>
                           : <span className="acc-book-card-meta">{b.txns.length} txns</span>}
-                        {canBkDownload && (
+                        {canBkDownload && !b._pendingAdd && (
                         <Tooltip text={`Download ${b.name} A4 ledger report`}>
                           <span
                             role="button"
@@ -4663,6 +4886,8 @@ function AccountBooks({ toast, isOtherSession }) {
           onWithdrawBook={() => confirmWithdraw({ pend: bookPending[String(currentBook.bookID)], label: currentBook.name, setConfirm, toast, onDone: reloadBookPending })}
           paymentPending={paymentPending}
           onWithdrawTxn={(t) => confirmWithdraw({ pend: paymentPending[String(t.id)], label: `${t.type} ${fmtMoney(Math.abs(t.amount))}`, setConfirm, toast, onDone: reloadPaymentPending })}
+          ghostTxns={paymentGhosts.map(g => g && g.row).filter(r => r && String(r._bookId) === String(currentBookId))}
+          onWithdrawGhostTxn={(t) => setPaymentGhostWithdraw(t)}
           canBkCreate={canBkCreate} canBkEdit={canBkEdit} canBkDelete={canBkDelete} canBkDownload={canBkDownload}
           toast={toast}
           isOtherSession={isOtherSession}
@@ -4672,6 +4897,24 @@ function AccountBooks({ toast, isOtherSession }) {
       <BookEditModal cfg={editBook} users={users} currentUser={currentUser} onClose={() => setEditBook(null)} onSave={handleSaveBook} toast={toast} />
       <BookTxnModal  cfg={editTxn}  users={users} currentUser={currentUser} book={currentBook} onClose={() => setEditTxn(null)} onSave={handleSaveBookTxn} toast={toast} />
       <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <AccConfirmDialog
+        cfg={bookGhostWithdraw ? {
+          title: 'Withdraw this request?',
+          message: <span>The pending approval request for <strong>{bookGhostWithdraw.name}</strong> will be withdrawn.</span>,
+          confirmLabel: 'Yes, Withdraw',
+          onConfirm: doBookGhostWithdraw,
+        } : null}
+        onClose={() => setBookGhostWithdraw(null)}
+      />
+      <AccConfirmDialog
+        cfg={paymentGhostWithdraw ? {
+          title: 'Withdraw this request?',
+          message: <span>The pending approval request for this ledger entry will be withdrawn.</span>,
+          confirmLabel: 'Yes, Withdraw',
+          onConfirm: doPaymentGhostWithdraw,
+        } : null}
+        onClose={() => setPaymentGhostWithdraw(null)}
+      />
       <BooksHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       {bookReportFor && (
         <StandardReportPicker
@@ -4693,6 +4936,7 @@ function BookDetail({
   ledgerSort, setLedgerSort, onBack, onEditBook, onDeleteBook, onDownloadReport,
   onAddTxn, onEditTxn, onDeleteTxn, isOtherSession,
   bookPend, onWithdrawBook, paymentPending = {}, onWithdrawTxn,
+  ghostTxns = [], onWithdrawGhostTxn,
   canBkCreate = true, canBkEdit = true, canBkDelete = true, canBkDownload = true,
 }) {
   const [openLedgerId, setOpenLedgerId] = useState(null);
@@ -4702,6 +4946,8 @@ function BookDetail({
   if (ledgerFilter !== 'all') rows = rows.filter(t => t.type === ledgerFilter);
   if (q) rows = rows.filter(t => `${t.notes || ''} ${t.enteredBy || ''} ${t.amount}`.toLowerCase().includes(q));
   rows.sort((a, b2) => ledgerSort === 'asc' ? (a.date < b2.date ? -1 : 1) : (a.date > b2.date ? -1 : 1));
+  /* Pending-add ghost ledger entries always on top (awaiting approval). */
+  if (ghostTxns && ghostTxns.length) rows = [...ghostTxns, ...rows];
 
   const TLABEL = { received: 'Received', returned: 'Returned', adjustment: 'Adjustment' };
   const SIGN   = { received: '+', returned: '−', adjustment: '' };
@@ -4903,7 +5149,7 @@ function BookDetail({
                       <div className={`acc-ledger-amt-v ${t.type}`}>
                         {SIGN[t.type]}{fmtMoney(Math.abs(t.amount))}
                       </div>
-                      <div className="acc-ledger-amt-bal">Bal: {fmtMoney(t.runningBalance)}</div>
+                      <div className="acc-ledger-amt-bal">Bal: {t._pendingAdd ? '—' : fmtMoney(t.runningBalance)}</div>
                     </div>
                     <Tooltip text={isOpen ? 'Hide details' : 'Show details'}>
                       <button
@@ -4973,7 +5219,12 @@ function BookDetail({
                       )}
 
                       <div className="acc-ledger-actions-row">
-                        {paymentPending[String(t.id)] ? (
+                        {t._pendingAdd ? (
+                          <PendingBadge
+                            pend={{ approvalId: t._approvalId, requestNo: t._requestNo }}
+                            onWithdraw={() => onWithdrawGhostTxn && onWithdrawGhostTxn(t)}
+                          />
+                        ) : paymentPending[String(t.id)] ? (
                           <PendingBadge
                             pend={paymentPending[String(t.id)]}
                             onWithdraw={() => onWithdrawTxn && onWithdrawTxn(t)}

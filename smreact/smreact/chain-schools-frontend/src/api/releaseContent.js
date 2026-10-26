@@ -21,10 +21,11 @@ import { fetchNetworkActivities } from './activityCalendarApi'
 import { fetchAllNetworkLessonMasters, fetchAllNetworkNotebookMasters } from './lessonPlansApi'
 import { fetchNetworkResources } from './resourceLibraryApi'
 import { fetchNetworkAcademics } from './academicsSetupApi'
+import { fetchAllNetworkTermBreakups } from './examinationApi'
 import { CHILD_TYPE } from './releaseApi'
 
 export const EMPTY_CONTENT = {
-  activities: [], lessons: [], notebooks: [], resources: [], classes: [], subjects: [],
+  activities: [], lessons: [], notebooks: [], resources: [], termBreakups: [], classes: [], subjects: [],
 }
 
 /**
@@ -34,11 +35,12 @@ export const EMPTY_CONTENT = {
  */
 export async function fetchReleaseContent(networkId = currentNetworkId()) {
   if (!networkId) return { ...EMPTY_CONTENT }
-  const [activities, lessons, notebooks, resources, setup] = await Promise.all([
+  const [activities, lessons, notebooks, resources, termBreakups, setup] = await Promise.all([
     fetchNetworkActivities(networkId).catch(() => []),
     fetchAllNetworkLessonMasters(networkId).catch(() => []),
     fetchAllNetworkNotebookMasters(networkId).catch(() => []),
     fetchNetworkResources(networkId).catch(() => []),
+    fetchAllNetworkTermBreakups(networkId).catch(() => []),
     fetchNetworkAcademics(networkId).catch(() => ({ classes: [], subjectRows: [] })),
   ])
   return {
@@ -46,6 +48,7 @@ export async function fetchReleaseContent(networkId = currentNetworkId()) {
     lessons,
     notebooks,
     resources: resources.filter((r) => r.id),
+    termBreakups: (termBreakups || []).filter((t) => t.id),
     classes: setup.classes || [],
     subjects: setup.subjectRows || [],
   }
@@ -69,6 +72,7 @@ export function filterReleaseContent(content = EMPTY_CONTENT, pick) {
     lessons: content.lessons.filter((x) => has(pick.lessons, x.id)),
     notebooks: content.notebooks.filter((x) => has(pick.notebooks, x.id)),
     resources: content.resources.filter((x) => has(pick.resources, x.id)),
+    termBreakups: content.termBreakups.filter((x) => has(pick.termBreakups, x.id)),
   }
 }
 
@@ -81,6 +85,7 @@ export function idSetsOf(release) {
     lessons: set(release.lessonPlanIds),
     notebooks: set(release.notebookPlanIds),
     resources: set(release.resourceLibraryIds),
+    termBreakups: set(release.termBreakupIds),
   }
 }
 
@@ -104,6 +109,9 @@ export function releaseItemsOf(content = EMPTY_CONTENT) {
     })),
     ...content.resources.map((x) => ({
       type: CHILD_TYPE.resource, typeID: x.id, gradeID: x.classId, subjectID: x.subjectId,
+    })),
+    ...content.termBreakups.map((x) => ({
+      type: CHILD_TYPE.termbreakup, typeID: x.id, gradeID: x.classID, subjectID: x.subjectID,
     })),
   ].filter((it) => it.typeID > 0)
 }
@@ -164,6 +172,7 @@ export function summarizeReleaseContent(content = EMPTY_CONTENT) {
     .sort((a, b) => a.name.localeCompare(b.name))
 
   const activities = content.activities.length
+  const termBreakups = content.termBreakups.length
   return {
     classes,
     subjectName: (id) => subjName.get(Number(id)) || `Subject #${id}`,
@@ -173,7 +182,8 @@ export function summarizeReleaseContent(content = EMPTY_CONTENT) {
       notebooks: classes.reduce((n, c) => n + c.notebooks, 0),
       resourceFiles: classes.reduce((n, c) => n + c.resourcesTotal, 0),
       activities,
+      termBreakups,
     },
-    general: { activities },
+    general: { activities, termBreakups },
   }
 }

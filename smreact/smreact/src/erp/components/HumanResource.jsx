@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
@@ -7,6 +7,7 @@ import * as hrService from '../services/hrService';
 import * as accountsService from '../services/accountsService';
 import * as attendanceService from '../services/attendanceService';
 import * as approvalsService from '../services/approvalsService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
 import { qrSVG } from '../utils/qrcode';
@@ -25,6 +26,7 @@ import {
   generateHrLeaveRegister,
   generateHrPayrollSummary,
 } from './hrReports';
+import AnnualLeaveSummaryReport from './AnnualLeaveSummaryReport';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { usePermissions } from '../context/PermissionsContext';
 
@@ -346,7 +348,12 @@ function HrBasics({
     };
 
     try {
-      await hrService.saveHrDept(apiPayload);
+      const resp = await hrService.saveHrDept(apiPayload);
+      const deptPending = hrService.hrPendingInfo(resp);
+      if (deptPending) {
+        toast(`Department ${isEdit ? 'update' : 'save'} sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+        return true;
+      }
       await reload();
       toast(isEdit ? 'Department updated' : 'Department added', 'success');
       return true;
@@ -367,7 +374,12 @@ function HrBasics({
       iconColor: '#DC2626',
       onConfirm: async () => {
         try {
-          await hrService.deleteHrDept({ id: dept.id });
+          const resp = await hrService.deleteHrDept({ id: dept.id });
+          const deptPending = hrService.hrPendingInfo(resp);
+          if (deptPending) {
+            toast(`Department deletion sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+            return;
+          }
           await reload();
           toast('Department deleted', 'success');
           if (openDeptId === dept.id) setOpenDeptId(null);
@@ -404,7 +416,12 @@ function HrBasics({
     };
 
     try {
-      await hrService.saveHrDesig(apiPayload);
+      const resp = await hrService.saveHrDesig(apiPayload);
+      const desigPending = hrService.hrPendingInfo(resp);
+      if (desigPending) {
+        toast(`Designation ${isEdit ? 'update' : 'save'} sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+        return true;
+      }
       await reload();
       toast(isEdit ? 'Designation updated' : 'Designation added', 'success');
       if (dId && openDeptId !== dId) setOpenDeptId(dId);
@@ -426,7 +443,12 @@ function HrBasics({
       iconColor: '#DC2626',
       onConfirm: async () => {
         try {
-          await hrService.deleteHrDesig({ id: desig.id });
+          const resp = await hrService.deleteHrDesig({ id: desig.id });
+          const desigPending = hrService.hrPendingInfo(resp);
+          if (desigPending) {
+            toast(`Designation deletion sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+            return;
+          }
           await reload();
           toast('Designation deleted', 'success');
         } catch (err) {
@@ -435,6 +457,20 @@ function HrBasics({
       },
     });
   };
+
+  /* Auto-refresh HR Basics when approvals are accepted elsewhere (Approvals screen)
+     or when user switches back to this tab. */
+  useEffect(() => {
+    const refresh = () => { reload(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="hrb-root">
@@ -970,6 +1006,7 @@ const HR_REPORT_META = {
   'dept-summary': { title: 'Department Summary', sub: 'Headcount, designations & salary cost per dept', icon: 'fa-building', gradFrom: 'rgba(2,132,199,.1)', gradTo: 'rgba(2,132,199,.18)', iconColor: '#0284C7', period: false, chips: ['Headcount', 'Cost Analysis', 'Dept-wise'], desc: 'Headcount, designations, salary cost & breakdown per department' },
   'leave-register': { title: 'Leave & Attendance Register', sub: 'Leave entitlements, balances & deduction policy', icon: 'fa-plane-departure', gradFrom: 'rgba(139,92,246,.1)', gradTo: 'rgba(139,92,246,.18)', iconColor: '#7C3AED', period: false, chips: ['Leave Balance', 'Policy', 'Deductions'], desc: 'Leave balances, entitlements, deductions & attendance policy per employee' },
   'payroll-summary': { title: 'Payroll Summary Report', sub: 'Month-wise payroll totals, deductions & status for all staff', icon: 'fa-chart-pie', gradFrom: 'rgba(15,118,110,.1)', gradTo: 'rgba(15,118,110,.18)', iconColor: '#0F766E', period: true, chips: ['Monthly', 'All Staff', 'Totals & Status'], desc: 'Month-wise payroll totals — gross pay, deductions, net payable & payment status overview' },
+  'annual-leave-summary': { title: 'Annual Leave Summary', sub: 'Annual leave entitlements, leaves, absenteeism & applicable salary deductions, per employee or for the whole school, for the active academic session', icon: 'fa-calendar-check', gradFrom: 'rgba(59,130,246,.1)', gradTo: 'rgba(59,130,246,.18)', iconColor: '#3B82F6', period: false, chips: ['Annual Leave Only', 'Session-wise', 'Deductions'], desc: 'Annual leave entitlements, leaves, absenteeism & applicable salary deductions, per employee or for the whole school, for the active academic session' },
 };
 
 function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
@@ -977,6 +1014,7 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
   const getDeptName = (id) => deptMap.get(id)?.name || '—';
   const getDesigName = (id) => desigMap.get(id)?.name || '—';
+  const branchId = Number(sessionStorage.getItem('branchID')) || 1;
 
   const [picker, setPicker] = useState(null); // { type }
   const [reportMonth, setReportMonth] = useState(() => {
@@ -1152,7 +1190,20 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
         />
       )}
 
-      {picker && picker.type !== 'directory' && (
+      {picker && picker.type === 'annual-leave-summary' && (
+        <AnnualLeaveSummaryReportModal
+          emps={emps}
+          depts={depts}
+          desigs={desigs}
+          getDeptName={getDeptName}
+          getDesigName={getDesigName}
+          toast={toast}
+          branchId={branchId}
+          onClose={() => setPicker(null)}
+        />
+      )}
+
+      {picker && picker.type !== 'directory' && picker.type !== 'annual-leave-summary' && (
         <HrRptModal
           type={picker.type}
           monthKey={reportMonth}
@@ -1162,6 +1213,27 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
         />
       )}
     </div>
+  );
+}
+
+/* ── Annual Leave Summary Report modal wrapper ── */
+function AnnualLeaveSummaryReportModal({ emps, depts, desigs, getDeptName, getDesigName, toast, branchId, onClose }) {
+  return createPortal(
+       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.55)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '3vh 12px', overflowY: 'auto' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 1400, background: 'var(--bg-base,#F0F4FF)', borderRadius: 18, boxShadow: '0 24px 60px rgba(15,23,42,.35)', padding: 18 }}>
+        <AnnualLeaveSummaryReport
+          emps={emps}
+          depts={depts}
+          desigs={desigs}
+          getDeptName={getDeptName}
+          getDesigName={getDesigName}
+          toast={toast}
+          branchId={branchId}
+          onBack={onClose}
+        />
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1489,6 +1561,17 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
          remaining, createdAt }                          */
   const [empLoans, setEmpLoans] = useState({});
 
+  /* Payroll payment pending approvals: tracks which payroll payments are awaiting approval.
+     Key format: `${empId}_${monthKey}` (e.g. "123_2026-10"), value: { approvalId, requestNo, message } */
+  const [paymentPendingMap, setPaymentPendingMap] = useState({});
+
+  /* Payroll deletion pending approvals: tracks which payroll records are awaiting deletion approval.
+     Key format: `${payrollID}`, value: { approvalId, requestNo, message } */
+  const [payrollDeletePendingMap, setPayrollDeletePendingMap] = useState({});
+
+  /* Pending approvals from the Approvals API — pulls ALL pending approvals across all modules. */
+  const [pendingApprovals, setPendingApprovals] = useState([]);
+
   /* Fetch (or refresh) one employee's loans into empLoans[empId]. */
   const loadEmpLoans = async (empId) => {
     if (!empId) return;
@@ -1510,27 +1593,34 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
         employee set) changes; month switching is instant since the whole
         year is already cached. ── */
   const [payrollLoading, setPayrollLoading] = useState(false);
-  useEffect(() => {
+
+  const loadPayroll = useCallback(async () => {
     if (!emps || !emps.length) return;
-    let alive = true;
     const y = Number(year);
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
     setPayrollLoading(true);
-    Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({}))))
-      .then((results) => {
-        if (!alive) return;
-        setEmpPayroll((prev) => {
-          const next = { ...prev };
-          results.forEach((map) => {
-            Object.entries(map).forEach(([eid, byKey]) => {
-              next[eid] = { ...(next[eid] || {}), ...byKey };
-            });
+    try {
+      const [results, approvals] = await Promise.all([
+        Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({})))),
+        approvalsService.getPendingApprovals().catch(() => []),
+      ]);
+      setEmpPayroll((prev) => {
+        const next = { ...prev };
+        results.forEach((map) => {
+          Object.entries(map).forEach(([eid, byKey]) => {
+            next[eid] = { ...(next[eid] || {}), ...byKey };
           });
-          return next;
         });
-      })
-      .finally(() => { if (alive) setPayrollLoading(false); });
-    return () => { alive = false; };
+        return next;
+      });
+      setPendingApprovals(approvals || []);
+    } finally {
+      setPayrollLoading(false);
+    }
+  }, [year, emps]);
+
+  useEffect(() => {
+    loadPayroll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, emps]);
 
@@ -1620,8 +1710,9 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
       && (!payload.installmentType || !(Number(payload.installmentAmount) > 0))) {
       toast('Please complete installment details', 'error'); return false;
     }
+    let loanPending = null;
     try {
-      await hrService.saveHrEmployeeLoan({
+      const resp = await hrService.saveHrEmployeeLoan({
         employeeID: empId,
         loanAmount: amount,
         comments: payload.comment || '',
@@ -1630,9 +1721,14 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
         installmentType: payload.repaymentType === 'Installment' ? payload.installmentType : '',
         installmentAmount: payload.repaymentType === 'Installment' ? (Number(payload.installmentAmount) || 0) : amount,
       });
+      loanPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not save loan', 'error');
       return false;
+    }
+    if (loanPending) {
+      toast(`Loan sent for approval (Request #${loanPending.requestNo || loanPending.approvalId})`, 'info');
+      return true;
     }
     await loadEmpLoans(empId);
     toast(`Loan of PKR ${fmtMoney(amount)} set up successfully`, 'success');
@@ -1649,16 +1745,22 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
       toast(`Amount cannot exceed remaining balance (PKR ${fmtMoney(loan.remaining)})`, 'error');
       return false;
     }
+    let repaymentPending = null;
     try {
-      await hrService.saveHrEmployeeLoanRepayment({
+      const resp = await hrService.saveHrEmployeeLoanRepayment({
         loanID: payload.loanId,
         amount: amt,
         repaymentDate: payload.date,
         comments: payload.comment || '',
       });
+      repaymentPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not record repayment', 'error');
       return false;
+    }
+    if (repaymentPending) {
+      toast(`Loan repayment sent for approval (Request #${repaymentPending.requestNo || repaymentPending.approvalId})`, 'info');
+      return true;
     }
     await loadEmpLoans(empId);
     toast(`Loan repayment of PKR ${fmtMoney(amt)} recorded`, 'success');
@@ -1854,8 +1956,10 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
     const { emp: e, payrollID, mode } = delPay;
     const force = mode === 'force';
     setDelBusy(true);
+    let deletePending = null;
     try {
-      await hrService.deleteHrPayroll(payrollID, { force });
+      const resp = await hrService.deleteHrPayroll(payrollID, { force });
+      deletePending = hrService.hrPendingInfo(resp);
     } catch (err) {
       setDelBusy(false);
       // Blocked by recorded payments — switch the popup to force-confirm mode.
@@ -1866,11 +1970,33 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
       toast(err.message || 'Could not delete payroll', 'error');
       return;
     }
+    if (deletePending) {
+      setDelBusy(false);
+      setPayrollDeletePendingMap(m => ({ ...m, [payrollID]: deletePending }));
+      setDelPay(null);
+      toast(`Payroll deletion sent for approval (Request #${deletePending.requestNo || deletePending.approvalId})`, 'info');
+      await loadPayroll();
+      return;
+    }
     removeRec(e.id, month, year);
     setDelBusy(false);
     setDelPay(null);
     toast('Payroll setup & payments deleted', 'success');
   };
+
+  /* Auto-refresh Financials when approvals are accepted elsewhere (Approvals screen)
+     or when user switches back to this tab. */
+  useEffect(() => {
+    const refresh = () => { loadPayroll(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadPayroll]);
 
   return (
     <div className="hrb-root">
@@ -1922,6 +2048,11 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
                 <i className="fa-solid fa-circle" aria-hidden="true"></i> Partially Paid
               </span>
             </Tooltip>
+            <Tooltip text="Payment recorded but awaiting approval">
+              <span className="pay-status-chip pay-status-chip--pending">
+                <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Pending Approval
+              </span>
+            </Tooltip>
             <Tooltip text="Salary fully paid for this month">
               <span className="pay-status-chip pay-status-chip--paid">
                 <i className="fa-solid fa-circle" aria-hidden="true"></i> Paid
@@ -1957,14 +2088,21 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
             sub="Add active employees first to process payroll."
           />
         ) : (
-          activeEmps.map((e, i) => (
+          activeEmps.map((e, i) => {
+            const mNum = PAY_MONTHS.indexOf(month) + 1;
+            const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
+            const payKey = `${e.id}_${monthKey}`;
+            const rec = getRec(e.id);
+            const deletePendingFromLocal = rec?.payrollID ? payrollDeletePendingMap[rec.payrollID] : null;
+            const deletePendingFromApi = rec?.payrollID ? pendingApprovals.find(a => a.entityId === rec.payrollID && a.actionType && a.actionType.includes('delete')) : null;
+            return (
             <PayrollRow
               key={e.id}
               idx={i + 1}
               emp={e}
               month={month}
               year={year}
-              rec={getRec(e.id)}
+              rec={rec ? { ...rec, paymentPending: paymentPendingMap[payKey] || rec.paymentPending, deletePending: deletePendingFromLocal || deletePendingFromApi } : null}
               loanRemaining={getLoanRemaining(e.id)}
               desigName={getDesigName(e.desId)}
               isOpen={openId === e.id}
@@ -1982,7 +2120,8 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
               canDelete={canDelete}
               canDownload={canDownload}
             />
-          ))
+            );
+          })
         )}
       </div>
 
@@ -1999,6 +2138,7 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
           onSaveSetup={(rec) => upsertRec(prFor.id, month, year, rec)}
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
           onDelete={() => { removeRec(prFor.id, month, year); setPrFor(null); }}
+          onPaymentPending={setPaymentPendingMap}
           toast={toast}
           canCreate={canCreate}
           canApprove={canApprove}
@@ -2067,10 +2207,12 @@ function PayrollRow({
 
   let status, statusLabel, statusIcon;
   if (!rec) { status = 'notgen'; statusLabel = 'Not Generated'; statusIcon = 'fa-circle'; }
+  else if (rec.deletePending) { status = 'delete-pending'; statusLabel = 'Delete Pending Approval'; statusIcon = 'fa-hourglass-half'; }
+  else if (rec.paymentPending) { status = 'pending'; statusLabel = 'Payment Pending Approval'; statusIcon = 'fa-hourglass-half'; }
   else if (rec.status === 'Paid') { status = 'paid'; statusLabel = 'Paid'; statusIcon = 'fa-circle-check'; }
   else if (rec.status === 'Partially Paid') { status = 'partial'; statusLabel = 'Partially Paid'; statusIcon = 'fa-circle-half-stroke'; }
   else { status = 'gen'; statusLabel = 'Generated'; statusIcon = 'fa-clock'; }
-  const canPay = status !== 'paid';
+  const canPay = status !== 'paid' && status !== 'pending';
 
   return (
     <div>
@@ -2250,11 +2392,13 @@ function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
   const payments = rec.payments || [];
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const remaining = Math.max(0, (rec.netPayable || net) - paid);
-  const statusClass = rec.status === 'Paid'
-    ? 'paid'
-    : rec.status === 'Partially Paid'
-      ? 'partial'
-      : (rec.status ? 'gen' : 'notgen');
+  const statusClass = rec.deletePending
+    ? 'delete-pending'
+    : rec.status === 'Paid'
+      ? 'paid'
+      : rec.status === 'Partially Paid'
+        ? 'partial'
+        : (rec.status ? 'gen' : 'notgen');
 
   const cls = (n) => n > 0 ? 'val neg' : 'val zero';
 
@@ -2275,7 +2419,7 @@ function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
         <div className="pay-detail-item">
           <label>Payment Status</label>
           <div className="val">
-            <span className={`pay-status ${statusClass}`}>{rec.status || 'Not Generated'}</span>
+            <span className={`pay-status ${statusClass}`}>{rec.deletePending ? 'Delete Pending Approval' : (rec.status || 'Not Generated')}</span>
           </div>
         </div>
         <div className="pay-detail-item">
@@ -2345,7 +2489,7 @@ function PayRollModal({
   emp, month, year, rec: existingRec,
   loanRemaining = 0, monthlyLoanDeduct = 0,
   prevMonthDue = { total: 0, key: '' },
-  onClose, onSaveSetup, onRecordPayment, onDelete, toast,
+  onClose, onSaveSetup, onRecordPayment, onDelete, onPaymentPending, toast,
   canCreate = true, canApprove = true, canDelete = true,
 }) {
   const [tab, setTab] = useState(0);
@@ -2527,6 +2671,7 @@ function PayRollModal({
     /* Persist the setup values to the backend, then update the local record. */
     setSavingSetup(true);
     let payrollID = existingRec?.payrollID || 0;
+    let setupPending = null;
     try {
       const resp = await hrService.saveHrPayrollSetup({
         employeeID: emp.id,
@@ -2545,12 +2690,19 @@ function PayRollModal({
         absentComment,
       });
       payrollID = hrService.payrollIdFromSetupResponse(resp) || payrollID;
+      setupPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not save payroll setup', 'error');
       setSavingSetup(false);
       return;
     }
     setSavingSetup(false);
+
+    /* If payroll setup is pending approval, show that message and don't proceed */
+    if (setupPending) {
+      toast(`Payroll setup sent for approval (Request #${setupPending.requestNo || setupPending.approvalId})`, 'info');
+      return;
+    }
 
     /* Backend apna Net Payable / deductions KHUD (re)compute karke store karta hai —
        frontend ka computed net us se thoda alag ho sakta hai (e.g. scheduled loan
@@ -2618,14 +2770,17 @@ function PayRollModal({
 
     /* Record the payment on the backend before updating the local record. */
     setPayingNow(true);
+    let paymentPending = null;
     try {
-      await hrService.saveHrPayrollPayment({
+      const resp = await hrService.saveHrPayrollPayment({
         payrollID: existingRec.payrollID,
         amount: amt,
         comment: payComment.trim(),
         paymentDate: new Date().toISOString(),
         wallatID: payWalletId,
       });
+      /* Check if payment approval is pending */
+      paymentPending = hrService.hrPendingInfo(resp);
     } catch (err) {
       toast(err.message || 'Could not record payment', 'error');
       setPayingNow(false);
@@ -2638,15 +2793,39 @@ function PayRollModal({
     const paidAmount = newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const newRemaining = recNet - paidAmount;
     const fullyPaid = newRemaining <= 0.01;
+
+    /* If approval pending → don't update to Paid, keep current status + mark as pending */
+    const newStatus = paymentPending ? existingRec.status : (fullyPaid ? 'Paid' : 'Partially Paid');
+
+    /* Track payment pending approval in the map for persistence across modal close/reopen */
+    if (onPaymentPending) {
+      const mNum = PAY_MONTHS.indexOf(month) + 1;
+      const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
+      const payKey = `${emp.id}_${monthKey}`;
+      if (paymentPending) {
+        onPaymentPending(m => ({ ...m, [payKey]: paymentPending }));
+      } else {
+        onPaymentPending(m => {
+          const updated = { ...m };
+          delete updated[payKey];
+          return updated;
+        });
+      }
+    }
+
     onRecordPayment({
       ...existingRec,
       payments: newPayments,
       paidAmount,
       paidDate: today,
-      status: fullyPaid ? 'Paid' : 'Partially Paid',
+      status: newStatus,
+      paymentPending: paymentPending || null,
       loanRecorded: existingRec.loanRecorded || (fullyPaid && (existingRec.loanDeduct > 0 || existingRec.customLoan > 0)),
     });
-    if (fullyPaid) {
+
+    if (paymentPending) {
+      toast(`Payment of PKR ${fmtMoney(amt)} sent for approval (Request #${paymentPending.requestNo || paymentPending.approvalId})`, 'info');
+    } else if (fullyPaid) {
       toast(`Final payment of PKR ${fmtMoney(amt)} recorded — payroll fully settled`, 'success');
       onClose();
     } else {
@@ -3675,6 +3854,9 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
      list se nikal jaati hai, is liye badge khud saaf ho jata hai. */
   const [pendingMap, setPendingMap] = useState({});   // employeeId → { approvalId, requestNo }
   const [withdrawCfg, setWithdrawCfg] = useState(null); // { emp, pend }
+  /* Pending-add ghost employees (newly added, awaiting approval, no real row
+     yet). Hydrated from sessionStorage so a refresh keeps them visible. */
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(HR_PENDING_MOD));
 
   const loadPending = async () => {
     try {
@@ -3687,11 +3869,42 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
           m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
         }
       });
+      /* Drop ghost add-rows whose request left "pending"; badge the rest. */
+      const ghosts = reconcilePendingAdds(HR_PENDING_MOD, reqs);
+      ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      setPendingAddRows(ghosts);
       setPendingMap(m);
     } catch (e) { /* non-fatal — badge just won't show */ }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadPending(); }, []);
+
+  /* Approval kahin aur (Approvals screen) se hone ke baad jab user is list par
+     wapas aaye / tab focus kare, to employee list + pending dono refresh —
+     taake approve-shuda employee ki asli row (apne actions menu ke saath) aa
+     jaye aur ghost row khud hat jaye. */
+  useEffect(() => {
+    const refresh = () => { reloadEmps(); loadPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* While anything is awaiting approval, poll lightly so an approval done
+     elsewhere (even via in-app navigation, which fires no window focus)
+     reflects here within a few seconds. Stops once nothing is pending. */
+  const hasPending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
+  useEffect(() => {
+    if (!hasPending) return undefined;
+    const t = setInterval(() => { reloadEmps(); loadPending(); }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPending]);
 
   /* Pending response aaya → toast + badge (optimistic), list me kuch apply nahi. */
   const markPending = (empId, pend, fallbackMsg) => {
@@ -3709,6 +3922,8 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
     }
     toast('Request withdrawn', 'success');
     setPendingMap((m) => { const n = { ...m }; delete n[String(emp?.id)]; return n; });
+    /* If it was a pending-add ghost row, drop it immediately. */
+    if (emp?._pendingAdd) setPendingAddRows(removePendingAdd(HR_PENDING_MOD, emp.id));
     reloadEmps();
     loadPending();
   };
@@ -3719,7 +3934,31 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
       if (resp?.pending) {
         setAddOpen(false);
         await reloadEmps();
-        markPending(resp.id, resp.pending, `${getFullName(payload)} sent for approval`);
+        /* Add approval-pending: backend ne abhi asli employee nahi banaya.
+           Form data se ghost row banate hain jo list me Pending badge +
+           Withdraw ke saath dikhe — normal insertion jaisa. */
+        const pend = resp.pending;
+        const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+        const ghostRow = {
+          id: rid,
+          _pendingAdd: true,
+          firstName: payload.firstName || '',
+          lastName: payload.lastName || '',
+          name: payload.name || '',
+          eid: payload.eid || '',
+          dId: payload.dId || 0,
+          desId: payload.desId || 0,
+          phone: payload.phone || '',
+          photo: payload.photo || '',
+          status: 'Active',
+          tasks: [], letters: [], docs: [], subjects: {}, attendance: [],
+        };
+        setPendingAddRows(addPendingAdd(HR_PENDING_MOD, {
+          rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row: ghostRow,
+        }));
+        setPendingMap((m) => ({ ...m, [rid]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+        toast(pend.message || `${getFullName(payload)} sent for approval`, 'info');
+        loadPending();
         return;
       }
       await reloadEmps();
@@ -3877,7 +4116,7 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
     const qq = q.trim().toLowerCase();
     const fd = Number(fDept) || 0;
     const fds = Number(fDesig) || 0;
-    return emps.filter(e => {
+    return mergeHrGhosts(emps, pendingAddRows).filter(e => {
       const isInactive = e.status !== 'Active';
       if (sub === 'inactive' && !isInactive) return false;
       if (sub === 'active' && isInactive) return false;
@@ -4226,6 +4465,34 @@ function getFullName(e) {
   return `${e.firstName || e.name || ''}${e.lastName ? ' ' + e.lastName : ''}`.trim() || '—';
 }
 
+/* Pending-add ghost store module key (Employee Management). */
+const HR_PENDING_MOD = 'employee';
+
+/* Merge pending-add ghost employees into the list so a freshly added
+   (approval-pending) employee shows as a normal row with a Pending badge,
+   even though the backend hasn't created the real record yet. A ghost is
+   dropped once a real employee with the same EID appears (approved). */
+function mergeHrGhosts(emps, ghosts) {
+  const base = Array.isArray(emps) ? emps : [];
+  if (!ghosts || !ghosts.length) return base;
+  const real = base.filter((e) => !e._pendingAdd);
+  const realEids = new Set(real.map((e) => String(e.eid || '').trim().toLowerCase()).filter(Boolean));
+  const realNames = new Set(real.map((e) => getFullName(e).trim().toLowerCase()).filter((n) => n && n !== '—'));
+  const add = ghosts
+    .map((g) => g && g.row)
+    .filter((r) => {
+      if (!r) return false;
+      const eid = String(r.eid || '').trim().toLowerCase();
+      const nm = getFullName(r).trim().toLowerCase();
+      /* Once the real (approved) employee shows up — by EID or name — drop the
+         ghost so the normal row (with its actions menu) takes over. */
+      if (eid && realEids.has(eid)) return false;
+      if (nm && nm !== '—' && realNames.has(nm)) return false;
+      return true;
+    });
+  return [...add, ...base];
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    LETTER VIEW MODAL — ERP-themed viewer for a saved issue letter.
    The stored file is served as application/msword (so a raw new-tab open
@@ -4525,6 +4792,7 @@ function EmployeeRow({
             </span>
           )}
           <div className="menu-wrap">
+            {!emp._pendingAdd && (
             <Tooltip text="More Actions">
               <button
                 type="button"
@@ -4537,6 +4805,7 @@ function EmployeeRow({
                 <i className="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i>
               </button>
             </Tooltip>
+            )}
             {menuOpen && (
               <div className="drop-menu" role="menu">
                 {isInactive ? (
@@ -10177,13 +10446,15 @@ export const HR_CSS = `
 .pay-status-chip--gen     i { color: #D97706; }
 .pay-status-chip--partial { background: rgba(2, 132, 199, .08); border-color: rgba(2, 132, 199, .2); }
 .pay-status-chip--partial i { color: #0284C7; }
+.pay-status-chip--pending { background: rgba(220, 38, 38, .08); border-color: rgba(220, 38, 38, .2); }
+.pay-status-chip--pending i { color: #DC2626; }
 .pay-status-chip--paid    { background: rgba(22, 163, 74, .08); border-color: rgba(22, 163, 74, .2); }
 .pay-status-chip--paid    i { color: #16A34A; }
 
 /* Table head + row (8-col grid) */
 .pay-t-head {
   display: grid;
-  grid-template-columns: 44px 50px 1.05fr 145px 130px 110px 50px 40px;
+  grid-template-columns: 44px 50px 1.05fr 145px 185px 110px 50px 40px;
   padding: 0 14px;
   gap: 6px;
   background: linear-gradient(135deg, rgba(30, 58, 138, .06), rgba(30, 58, 138, .02));
@@ -10199,7 +10470,9 @@ export const HR_CSS = `
 }
 .pay-row {
   display: grid;
-  grid-template-columns: 44px 50px 1.05fr 145px 130px 110px 50px 40px;
+  /* Status column 185px — "Payment Pending Approval" (sabse lambi) ek line me aa jaye
+     aur Reports button par overlap na kare. */
+  grid-template-columns: 44px 50px 1.05fr 145px 185px 110px 50px 40px;
   align-items: center;
   min-height: 64px;
   padding: 0 14px;
@@ -10218,14 +10491,23 @@ export const HR_CSS = `
   gap: 5px;
   padding: 4px 11px;
   border-radius: var(--r-f);
-  font: 800 10.5px/1 var(--hr-font);
+  font: 800 10.5px/1.25 var(--hr-font);
   letter-spacing: .2px;
-  white-space: nowrap;
+  /* Cell se bahar na nikle — jagah kam ho (chhoti screen) to wrap ho jaye,
+     overlap na kare. Desktop par 185px me ek line me aata hai. */
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
 }
 .pay-status.notgen  { background: rgba(100, 116, 139, .12); color: #64748B; border: 1px solid rgba(100, 116, 139, .25); }
 .pay-status.gen     { background: rgba(217, 119, 6, .12);  color: #D97706; border: 1px solid rgba(217, 119, 6, .25); }
 .pay-status.partial { background: rgba(2, 132, 199, .12);  color: #0284C7; border: 1px solid rgba(2, 132, 199, .25); }
+.pay-status.pending { background: rgba(220, 38, 38, .12);  color: #DC2626; border: 1px solid rgba(220, 38, 38, .25); animation: pay-status-pulse 1.8s ease-in-out infinite; }
+.pay-status.pending i { animation: pay-status-pulse 1.8s ease-in-out infinite; }
+.pay-status.delete-pending { background: rgba(220, 38, 38, .12);  color: #DC2626; border: 1px solid rgba(220, 38, 38, .25); animation: pay-status-pulse 1.8s ease-in-out infinite; }
+.pay-status.delete-pending i { animation: pay-status-pulse 1.8s ease-in-out infinite; }
 .pay-status.paid    { background: rgba(22, 163, 74, .12);  color: #16A34A; border: 1px solid rgba(22, 163, 74, .25); }
+@keyframes pay-status-pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
 
 /* Reports button */
 .btn-reports {

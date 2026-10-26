@@ -3764,6 +3764,7 @@ const hoSummary = r => ({
   lessons: r.lessonPlans.length,
   notebooks: r.notebookPlans.length,
   resources: r.resources.length,
+  termBreakups: (r.termBreakups || []).length,
 });
 
 /* Saved-items tracker — duplicate prevention + Saved badges (localStorage). */
@@ -3800,6 +3801,8 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       branchGradeID: extra.classId,
       branchSubjectID: extra.subjectId,
       branchSectionID: extra.sectionId,
+      /* Term Breakup ke liye branch ka chuna hua term — baqi types me 0. */
+      branchTermID: extra.termId,
     }).catch(err => toast(err?.message || 'Saved here, but the Head Office copy could not be created.', 'error'));
   };
 
@@ -3887,6 +3890,22 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
     toast('Resource saved to your Resource Library', 'success');
   };
 
+  /* Term Breakup — iska koi local ERP store nahi (term breakup API-backed hai),
+     is liye server par IS branch ki copy bana dete hain (duplicate-release-data
+     type 'Term Breakup') + Saved badge ke liye record. School apne Term Breakup
+     screen par ise dekh lega. */
+  const saveTermBreakup = (rel, tb, classId, subjectName, extra = {}) => {
+    if (isSaved(rel.id, tb.id)) return;
+    record({
+      headOfficeReleaseId: rel.id, headOfficeItemId: tb.id, itemType: 'TERM_BREAKUP',
+      savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School',
+      localTargetModule: 'TERM_BREAKUP', localClassId: classId, localSectionId: extra.sectionId || null,
+      localSubjectId: subjectName, localCategory: null,
+    });
+    pushToPortal(RELEASE_TYPE.termbreakup, tb, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId, termId: extra.termId });
+    toast('Term breakup saved to your portal.', 'success');
+  };
+
   if (!open) return null;
   return (
     <div className="ho-screen">
@@ -3949,6 +3968,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
                     <span><i className="fa-solid fa-list-ul"></i> {s.lessons} Lesson Plans</span>
                     <span><i className="fa-solid fa-book-open"></i> {s.notebooks} Notebook Plans</span>
                     <span><i className="fa-solid fa-folder-open"></i> {s.resources} Resource Files</span>
+                    <span><i className="fa-solid fa-table-list"></i> {s.termBreakups} Term Breakups</span>
                   </div>
                   <button className="btn btn-primary ho-rel-view" onClick={() => setDetail(r)}><i className="fa-solid fa-eye"></i> View Details</button>
                 </div>
@@ -3969,6 +3989,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
           onSaveLessonPlan={saveLessonPlan}
           onSaveNotebookPlan={saveNotebookPlan}
           onSaveResource={saveResource}
+          onSaveTermBreakup={saveTermBreakup}
           toast={toast}
         />
       )}
@@ -3976,7 +3997,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
   );
 }
 
-function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, onClose, isSaved, onSaveActivity, onSaveLessonPlan, onSaveNotebookPlan, onSaveResource, toast }) {
+function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, onClose, isSaved, onSaveActivity, onSaveLessonPlan, onSaveNotebookPlan, onSaveResource, onSaveTermBreakup, toast }) {
   const acp = useAcademicsContentPerms();
   const canActAdd = acp.can('activity', 'add');
   const canLpAdd = acp.can('lesson', 'add');
@@ -4000,6 +4021,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
     { key: 'lessons', label: 'Lesson Plans', icon: 'fa-list-ul', n: r.lessonPlans.length },
     { key: 'notebooks', label: 'Notebook Plans', icon: 'fa-book-open', n: r.notebookPlans.length },
     { key: 'resources', label: 'Resource Library', icon: 'fa-folder-open', n: s.resources },
+    { key: 'termbreakup', label: 'Term Breakup', icon: 'fa-table-list', n: s.termBreakups },
   ];
 
   return (
@@ -4019,6 +4041,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
             <div className="ho-sum" style={{ '--accent': '#16A34A' }}><i className="fa-solid fa-list-ul"></i><div><div className="ho-sum-v">{s.lessons}</div><div className="ho-sum-l">Lesson Plans</div></div></div>
             <div className="ho-sum" style={{ '--accent': '#7C3AED' }}><i className="fa-solid fa-book-open"></i><div><div className="ho-sum-v">{s.notebooks}</div><div className="ho-sum-l">Notebook Plans</div></div></div>
             <div className="ho-sum" style={{ '--accent': '#D97706' }}><i className="fa-solid fa-folder-open"></i><div><div className="ho-sum-v">{s.resources}</div><div className="ho-sum-l">Resource Files</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#0E7490' }}><i className="fa-solid fa-table-list"></i><div><div className="ho-sum-v">{s.termBreakups}</div><div className="ho-sum-l">Term Breakups</div></div></div>
           </div>
 
           {/* section tabs */}
@@ -4158,6 +4181,31 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
               })}
             </div>
           )}
+
+          {/* ── Term Breakup ── */}
+          {tab === 'termbreakup' && (
+            <div className="ho-sec">
+              {(r.termBreakups || []).length === 0 ? <div className="ho-none">No term breakups in this release.</div> : r.termBreakups.map(tb => {
+                const done = isSaved(r.id, tb.id);
+                return (
+                  <div className="ho-item" key={tb.id}>
+                    <div className="ho-item-main">
+                      <div className="ho-item-title">{tb.title || 'Term Breakup'}</div>
+                      <div className="ho-item-meta">
+                        <span><i className="fa-solid fa-chalkboard"></i> {tb.hoClass}</span>
+                        <span><i className="fa-solid fa-book"></i> {tb.hoSubject}</span>
+                      </div>
+                    </div>
+                    <div className="ho-item-actions">
+                      {done ? <SavedBadge /> : (
+                        <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'termbreakup', item: tb })}><i className="fa-solid fa-download"></i> Save to Portal</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <Tooltip text="Close"><button className="btn btn-secondary" onClick={onClose}>Close</button></Tooltip>
@@ -4173,6 +4221,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
           onSave={(classId, subjectName, category, extra) => {
             if (mapping.kind === 'lesson') onSaveLessonPlan(r, mapping.item, classId, subjectName, extra);
             else if (mapping.kind === 'notebook') onSaveNotebookPlan(r, mapping.item, classId, subjectName, extra);
+            else if (mapping.kind === 'termbreakup') onSaveTermBreakup(r, mapping.item, classId, subjectName, extra);
             else onSaveResource(r, mapping.item, classId, subjectName, category, extra);
             setMapping(null);
           }}
@@ -4186,6 +4235,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
 
 function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
   const isResource = kind === 'resource';
+  const isTermBreakup = kind === 'termbreakup';
   const [classId, setClassId] = useState('');
   const [sectionId, setSectionId] = useState('');
   const [subjectId, setSubjectId] = useState('');
@@ -4194,9 +4244,30 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
   const [localClasses, setLocalClasses] = useState(classesData);
   const [classesLoading, setClassesLoading] = useState(false);
   const [category, setCategory] = useState(isResource ? (item.category || 'worksheet') : '');
+  /* Term Breakup ke liye branch ka apna term — duplicate-release-data ko
+     branchTermID chahiye (term breakup class+subject+TERM se bandha hota hai). */
+  const [terms, setTerms] = useState([]);
+  const [termId, setTermId] = useState('');
+  const [termsLoading, setTermsLoading] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => { setLocalClasses(classesData); }, [classesData]);
+
+  /* Term Breakup save par branch ke terms laao (termscrud get). */
+  useEffect(() => {
+    if (!isTermBreakup) return undefined;
+    let alive = true;
+    setTermsLoading(true);
+    termsCrud({ id: 0, branchID: termsBranchID(), term: 'string', sessionYearID: termsSessionYearID(), action: 'get' })
+      .then(res => {
+        if (!alive) return;
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        setTerms(list.map(t => ({ id: t.id, name: t.term || t.name || 'Unnamed term' })));
+      })
+      .catch(() => { if (alive) setTerms([]); })
+      .finally(() => { if (alive) setTermsLoading(false); });
+    return () => { alive = false; };
+  }, [isTermBreakup]);
 
   useEffect(() => {
     if (classesData.length) return undefined;
@@ -4232,8 +4303,8 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
     return () => { alive = false; };
   }, [classId, sectionId]);
 
-  const title = kind === 'lesson' ? 'Save Lesson Plan to Portal' : kind === 'notebook' ? 'Save Notebook Plan to Portal' : 'Save Resource to Portal';
-  const btn = kind === 'lesson' ? 'Save Lesson Plan' : kind === 'notebook' ? 'Save Notebook Plan' : 'Save Resource';
+  const title = kind === 'lesson' ? 'Save Lesson Plan to Portal' : kind === 'notebook' ? 'Save Notebook Plan to Portal' : kind === 'termbreakup' ? 'Save Term Breakup to Portal' : 'Save Resource to Portal';
+  const btn = kind === 'lesson' ? 'Save Lesson Plan' : kind === 'notebook' ? 'Save Notebook Plan' : kind === 'termbreakup' ? 'Save Term Breakup' : 'Save Resource';
 
   const pickClass = (id) => {
     setClassId(id);
@@ -4253,11 +4324,13 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
     if (!sectionId) { setErr('Please select a section.'); return; }
     if (!subjectId) { setErr('Please select a subject.'); return; }
     if (isResource && !category) { setErr('Please select a category.'); return; }
+    if (isTermBreakup && !termId) { setErr('Please select a term.'); return; }
     const sub = subjects.find(x => String(x.id) === String(subjectId));
     onSave(classId, sub ? sub.name : '', category, {
       sectionId,
       sectionName: sec?.sectionName || '',
       subjectId,
+      termId,
     });
   };
 
@@ -4267,7 +4340,7 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
         <div className="modal-header">
           <div>
             <div className="modal-title"><i className="fa-solid fa-download" style={{ marginRight: 8 }}></i> {title}</div>
-            <div className="modal-sub">Choose class, section and subject in your school portal.</div>
+            <div className="modal-sub">Choose class, section{isTermBreakup ? ', subject and term' : ' and subject'} in your school portal.</div>
           </div>
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
@@ -4305,6 +4378,15 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
               <label className="form-label">Select Category <span className="req-star">*</span></label>
               <select className="form-input" value={category} onChange={e => setCategory(e.target.value)}>
                 {RL_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+            </div>
+          )}
+          {isTermBreakup && (
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Select Term <span className="req-star">*</span></label>
+              <select className="form-input" value={termId} onChange={e => { setTermId(e.target.value); setErr(''); }} disabled={termsLoading}>
+                <option value="">{termsLoading ? 'Loading terms…' : (terms.length ? 'Select term' : 'No terms set up — add terms first')}</option>
+                {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
           )}

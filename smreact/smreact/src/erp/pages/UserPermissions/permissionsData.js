@@ -128,7 +128,7 @@ export const MODULE_TREE = [
       /* ── Exactly the 4 L1 tabs in Attendance.jsx (TABS array @ 2951).
             Holidays Setup was previously unmapped despite being the
             first tab. */
-      { id: 'att.holidays', label: 'Holidays Setup' },
+      { id: 'att.holidays', label: 'Attendance Setup' },
       { id: 'att.student',  label: 'Student Attendance' },
       { id: 'att.staff',    label: 'Staff Attendance' },
       { id: 'att.reports',  label: 'Reports' },

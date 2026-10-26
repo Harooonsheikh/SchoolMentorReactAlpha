@@ -5,8 +5,10 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
 import * as accountsService from '../services/accountsService';
+import * as approvalsService from '../services/approvalsService';
 import * as dashboardService from '../services/dashboardService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
@@ -1143,10 +1145,56 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
    kisi student ko "Transport Fee Assignment" ke edit modal se assign
    hoti hai. Backend: feeService.getVehicles/saveVehicle/deleteVehicle
    → POST /api/TransportFeeSetup/manage_vehicle (action get/insert/update/delete). */
+/* Pending-add ghost store key + merge for the Vehicle Fleet. A newly added
+   (approval-pending) vehicle shows as a normal row with a Pending badge +
+   Withdraw, dropped once the real vehicle (same reg) appears (approved). */
+const FEE_VEHICLE_MOD = 'feeVehicle';
+function mergeVehicleGhosts(vehicles, ghosts) {
+  const base = Array.isArray(vehicles) ? vehicles : [];
+  if (!ghosts || !ghosts.length) return base;
+  const realRegs = new Set(base.filter((v) => !v._pendingAdd).map((v) => String(v.regNo || '').trim().toLowerCase()).filter(Boolean));
+  const realNames = new Set(base.filter((v) => !v._pendingAdd).map((v) => String(v.name || '').trim().toLowerCase()).filter(Boolean));
+  const add = ghosts.map((g) => g && g.row).filter((r) => {
+    if (!r) return false;
+    const reg = String(r.regNo || '').trim().toLowerCase();
+    const nm = String(r.name || '').trim().toLowerCase();
+    if (reg && realRegs.has(reg)) return false;
+    if (nm && realNames.has(nm)) return false;
+    return true;
+  });
+  return [...add, ...base];
+}
+
 function VehicleManagement({ toast }) {
   const { data: vehicles = [], loading, error, refetch } = useAsync(feeService.getVehicles, []);
   const [editing, setEditing] = useState(null); // {} = new, {...vehicle} = edit
   const [confirm, setConfirm] = useState(null);
+  /* Pending-add ghost vehicles (new, awaiting approval, no real row yet). */
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(FEE_VEHICLE_MOD));
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { v }
+  const displayVehicles = useMemo(() => mergeVehicleGhosts(vehicles, pendingAddRows), [vehicles, pendingAddRows]);
+
+  const loadVehPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      setPendingAddRows(reconcilePendingAdds(FEE_VEHICLE_MOD, reqs));
+    } catch (e) { /* non-fatal */ }
+  }, []);
+  useEffect(() => { loadVehPending(); }, [loadVehPending]);
+  /* Approval kahin aur se hone par wapas aate hi / tab focus par refresh. */
+  useEffect(() => {
+    const refresh = () => { refetch(); loadVehPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVis); };
+  }, [refetch, loadVehPending]);
+  const hasVehPending = pendingAddRows.length > 0;
+  useEffect(() => {
+    if (!hasVehPending) return undefined;
+    const t = setInterval(() => { refetch(); loadVehPending(); }, 10000);
+    return () => clearInterval(t);
+  }, [hasVehPending, refetch, loadVehPending]);
 
   const openAdd = useCallback(() => setEditing({}), []);
   const openEdit = useCallback((v) => setEditing(v), []);
@@ -1155,14 +1203,46 @@ function VehicleManagement({ toast }) {
   const saveVehicle = useCallback(async (payload) => {
     const isNew = !editing?.id;
     try {
-      await feeService.saveVehicle({ id: editing?.id, ...payload });
-      await refetch();          // server se real id ke saath dobara load
+      const resp = await feeService.saveVehicle({ id: editing?.id, ...payload });
+      const pend = pendingFromResp(resp, isNew ? 'Vehicle sent for approval' : 'Vehicle update sent for approval');
+      if (pend) {
+        if (isNew) {
+          const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+          const row = {
+            id: rid, _pendingAdd: true,
+            name: payload.name || '', regNo: payload.regNo || '', route: payload.route || '',
+            _approvalId: pend.approvalId, _requestNo: pend.requestNo,
+          };
+          setPendingAddRows(addPendingAdd(FEE_VEHICLE_MOD, { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+        }
+        closeEdit();
+        toast(pend.message || pend.approvalId || 'Request sent for approval', 'info');
+        loadVehPending();
+        return;
+      }
+      await refetch();
       closeEdit();
       toast(isNew ? 'Vehicle added' : 'Vehicle updated', 'success');
     } catch (e) {
       toast(e.message || 'Could not save vehicle', 'error');
     }
-  }, [editing, refetch, closeEdit, toast]);
+  }, [editing, refetch, closeEdit, toast, loadVehPending]);
+
+  const doWithdrawVehicle = async () => {
+    if (!withdrawCfg) return;
+    const v = withdrawCfg.v;
+    try {
+      await approvalsService.withdrawRequest(v._approvalId);
+    } catch (e) {
+      toast(e?.message || 'Could not withdraw request', 'error');
+      return;
+    }
+    toast('Request withdrawn', 'success');
+    setPendingAddRows(removePendingAdd(FEE_VEHICLE_MOD, v.id));
+    setWithdrawCfg(null);
+    refetch();
+    loadVehPending();
+  };
 
   const requestDelete = (v) => {
     setConfirm({
@@ -1171,7 +1251,13 @@ function VehicleManagement({ toast }) {
       hint: "Students already assigned to this vehicle keep their route & transport fee — they'll just need a new vehicle picked next time their record is edited.",
       onConfirm: async () => {
         try {
-          await feeService.deleteVehicle(v.id);
+          const resp = await feeService.deleteVehicle(v.id);
+          const pend = pendingFromResp(resp, 'Vehicle deletion sent for approval');
+          if (pend) {
+            toast(pend.message || 'Vehicle deletion sent for approval', 'info');
+            loadVehPending();
+            return;
+          }
           await refetch();
           toast('Vehicle removed', 'success');
         } catch (e) {
@@ -1199,7 +1285,7 @@ function VehicleManagement({ toast }) {
             <div className="fee-section-icon"><i className="fa-solid fa-bus-simple"></i></div>
             <div>
               <div className="fee-section-name">Vehicle Fleet</div>
-              <div className="fee-section-sub">{vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'} added</div>
+              <div className="fee-section-sub">{displayVehicles.length} vehicle{displayVehicles.length === 1 ? '' : 's'} added</div>
             </div>
           </div>
           <Tooltip text="Add a new vehicle to the fleet">
@@ -1222,15 +1308,30 @@ function VehicleManagement({ toast }) {
                 </tr>
               </thead>
               <tbody>
-                {vehicles.length === 0 ? (
+                {displayVehicles.length === 0 ? (
                   <tr><td colSpan="5" className="fee-stbl-empty">No vehicles added yet. Click <strong>Add New Vehicle</strong> to get started.</td></tr>
-                ) : vehicles.map((v, i) => (
+                ) : displayVehicles.map((v, i) => (
                   <tr key={v.id}>
                     <td className="fee-num">{i + 1}</td>
                     <td><b>{v.name}</b></td>
                     <td>{v.regNo}</td>
                     <td>{v.route ? v.route : <span className="fee-muted-dash">—</span>}</td>
                     <td className="fee-center fee-st-actions">
+                      {v._pendingAdd ? (
+                        <span className="fee-pending-wrap" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <Tooltip text={`Request ${v._requestNo || ''} awaiting approval`.trim()}>
+                            <span className="fee-pending-badge" role="status">
+                              <i className="fa-solid fa-hourglass-half"></i><span>Pending Approval</span>
+                              {v._approvalId != null && <b className="fee-pending-id">#{v._approvalId}</b>}
+                            </span>
+                          </Tooltip>
+                          <Tooltip text="Withdraw this request">
+                            <button className="fee-iconbtn fee-withdraw-btn" onClick={() => setWithdrawCfg({ v })} aria-label="Withdraw this request">
+                              <i className="fa-solid fa-rotate-left"></i>
+                            </button>
+                          </Tooltip>
+                        </span>
+                      ) : (<>
                       <Tooltip text={`Edit ${v.name}`}>
                         <button className="fee-iconbtn" onClick={() => openEdit(v)}>
                           <i className="fa-solid fa-pen"></i>
@@ -1241,6 +1342,7 @@ function VehicleManagement({ toast }) {
                           <i className="fa-solid fa-trash-can"></i>
                         </button>
                       </Tooltip>
+                      </>)}
                     </td>
                   </tr>
                 ))}
@@ -1259,6 +1361,14 @@ function VehicleManagement({ toast }) {
       />
 
       <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <FeeConfirmDialog
+        cfg={withdrawCfg ? {
+          title: 'Withdraw this request?',
+          message: <span>The pending approval request for <strong>{withdrawCfg.v.name}</strong> will be withdrawn.</span>,
+          onConfirm: doWithdrawVehicle,
+        } : null}
+        onClose={() => setWithdrawCfg(null)}
+      />
     </>
   );
 }
@@ -1830,6 +1940,16 @@ function FamilyTreeChallansList({ toast }) {
     setHighlightKey(null);
   };
 
+   /* Month Closing ON → active fee period (Challans tab jaisa); OFF → aaj ka mahina. */
+  useEffect(() => {
+    if (settings.enableMonthClosing === undefined) return;
+    const d = new Date();
+    const p = settings.enableMonthClosing === true ? readFeePeriod() : { m: d.getMonth(), y: d.getFullYear() };
+    const mName = FEE_MONTHS[p.m], yStr = String(p.y);
+    setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.enableMonthClosing]);
+
   const genCountFor = (famKey, children) => (children || []).reduce(
     (a, ch) => a + (genSet && genSet.has(keyOf(famKey, ch.reg)) ? 1 : 0), 0,
   );
@@ -2205,13 +2325,24 @@ function FamilyTreeChallansList({ toast }) {
       <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
-          <div className="fee-filters">
-            <div className="fee-field">
-              <span className="fee-label">Active Fee Period</span>
-              <div className="fee-active-month-badge">
-                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
+             <div className="fee-filters">
+            {typeof settings.enableMonthClosing !== 'boolean' ? (
+              <div className="fee-field">
+                <span className="fee-label">Fee Period</span>
+                <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                  <i className="fa-solid fa-spinner fa-spin"></i> Loading…
+                </div>
               </div>
-            </div>
+            ) : settings.enableMonthClosing !== true ? (
+              <FeeMonthPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} onReset={resetFilters} />
+            ) : (
+              <div className="fee-field">
+                <span className="fee-label">Active Fee Period</span>
+                <div className="fee-active-month-badge">
+                  <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="fee-searchrow">
@@ -2507,9 +2638,10 @@ function FamilyTreeChallansList({ toast }) {
         defaultYear={appliedYear}
         genSet={genSet}
         keyOf={keyOf}
-        onClose={() => setBulkGen(null)}
+          onClose={() => setBulkGen(null)}
         onGenerated={handleBulkGenerated}
         toast={toast}
+        monthClosing={settings.enableMonthClosing === true}
         familyMode
         singleMode={bulkGen?.mode === 'single'}
         /* Student ka saved discount family challan me bhi map ho. */
@@ -2734,10 +2866,45 @@ function challanFullyPaid(rec, byHead = null) {
 
 /* Active fee period (Fee Challans) — localStorage only until a backend exists.
    { m: monthIdx, y: year, history: [{ m, y }] } — history = closed periods. */
+/* Month Closing OFF hone par normal Month/Year selector. */
+function FeeMonthPicker({ month, setMonth, year, setYear, onApply, onReset }) {
+  const yrs = ['2025', '2026', '2027'];
+  return (
+    <>
+      <div className="fee-field">
+        <span className="fee-label">Month</span>
+        <div className="fee-select-wrap">
+          <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+            {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+          </select>
+          <i className="fa-solid fa-chevron-down"></i>
+        </div>
+      </div>
+      <div className="fee-field">
+        <span className="fee-label">Year</span>
+        <div className="fee-select-wrap">
+          <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+            {(yrs.includes(String(year)) ? yrs : [...yrs, String(year)]).map(y => <option key={y}>{y}</option>)}
+          </select>
+          <i className="fa-solid fa-chevron-down"></i>
+        </div>
+      </div>
+      <button className="fee-btn fee-btn-primary" onClick={onApply}>
+        <i className="fa-solid fa-filter"></i> Fetch Details
+      </button>
+      <button className="fee-btn fee-btn-ghost" onClick={onReset}>
+        <i className="fa-solid fa-rotate-left"></i> Reset
+      </button>
+    </>
+  );
+}
+
 const FEE_PERIOD_KEY = 'sm_fee_active_period';
+/* Branch-wise key — ek branch ka closing doosri par na lage. */
+const feePeriodKey = () => `${FEE_PERIOD_KEY}.${Number(sessionStorage.getItem('branchID')) || 0}`;
 function readFeePeriod() {
   try {
-    const p = JSON.parse(localStorage.getItem(FEE_PERIOD_KEY) || 'null');
+    const p = JSON.parse(localStorage.getItem(feePeriodKey()) || 'null');
     if (p && Number.isInteger(p.m) && Number.isInteger(p.y)) {
       return { m: p.m, y: p.y, history: Array.isArray(p.history) ? p.history : [] };
     }
@@ -2746,7 +2913,7 @@ function readFeePeriod() {
   return { m: d.getMonth(), y: d.getFullYear(), history: [] };
 }
 function writeFeePeriod(p) {
-  try { localStorage.setItem(FEE_PERIOD_KEY, JSON.stringify(p)); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(feePeriodKey(), JSON.stringify(p)); } catch (e) { /* ignore */ }
 }
 
 function FeeChallansList({ toast }) {
@@ -2783,6 +2950,16 @@ function FeeChallansList({ toast }) {
     const mName = FEE_MONTHS[next.m], yStr = String(next.y);
     setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr);
   };
+  /* Month Closing ON → stored active period; OFF → aaj ka mahina. */
+  useEffect(() => {
+    if (settings.enableMonthClosing === undefined) return;
+    const d = new Date();
+    const p = settings.enableMonthClosing === true ? readFeePeriod() : { m: d.getMonth(), y: d.getFullYear() };
+    const mName = FEE_MONTHS[p.m], yStr = String(p.y);
+    setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.enableMonthClosing]);
+
   const lastClosing = feePeriod.history[feePeriod.history.length - 1];
   const requestClosePeriod = () => {
     const nm = (feePeriod.m + 1) % 12;
@@ -2801,8 +2978,13 @@ function FeeChallansList({ toast }) {
       },
     });
   };
-  const requestUndoClosing = () => {
+   const requestUndoClosing = () => {
     if (!lastClosing) return;
+    /* Active period (e.g. Nov) me koi challan generate ho chuka ho to Undo mana. */
+    if (genSet && genSet.size > 0) {
+      toast(`Cannot undo — ${genSet.size} challan${genSet.size === 1 ? ' is' : 's are'} already generated for ${appliedMonth} ${appliedYear}. Delete them first.`, 'warning');
+      return;
+    }
     const label = `${FEE_MONTHS[lastClosing.m]} ${lastClosing.y}`;
     setConfirm({
       title: 'Undo last closing?',
@@ -2872,6 +3054,9 @@ function FeeChallansList({ toast }) {
   const viewKey = `${appliedMonth}|${appliedYear}`;
   const loadChallans = useCallback(async () => {
     if (!studentsMap || Object.keys(studentsMap).length === 0) return;
+    /* Settings aane tak load mat karo — warna pehle stored period load hota,
+       phir toggle ke mutabiq mahina badal kar dobara (galat mahina + double loading). */
+    if (typeof settings.enableMonthClosing !== 'boolean') return;
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     try {
       const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
@@ -2938,12 +3123,12 @@ function FeeChallansList({ toast }) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
       setChallanMap({});
-      setCoverMap({});
+       setCoverMap({});
       setPrevOutMap({});
     } finally {
       setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
-  }, [studentsMap, appliedMonth, appliedYear, toast]);
+  }, [studentsMap, appliedMonth, appliedYear, toast, settings.enableMonthClosing]);
 
   /* Load on mount and whenever the student roster or applied month/year change. */
   useEffect(() => { loadChallans(); }, [loadChallans]);
@@ -3866,7 +4051,17 @@ function FeeChallansList({ toast }) {
       <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
-          <div className="fee-filters">
+           <div className="fee-filters">
+            {typeof settings.enableMonthClosing !== 'boolean' ? (
+              <div className="fee-field">
+                <span className="fee-label">Fee Period</span>
+                <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                  <i className="fa-solid fa-spinner fa-spin"></i> Loading…
+                </div>
+              </div>
+            ) : settings.enableMonthClosing !== true ? (
+              <FeeMonthPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} onReset={resetFilters} />
+            ) : (<>
             <div className="fee-field">
               <span className="fee-label">Active Fee Period</span>
               <div className="fee-active-month-badge">
@@ -3879,12 +4074,15 @@ function FeeChallansList({ toast }) {
               </button>
             </Tooltip>
             {lastClosing && (
-              <Tooltip text={`Undo closing ${FEE_MONTHS[lastClosing.m]} ${lastClosing.y}`}>
-                <button className="fee-btn fee-btn-ghost" onClick={requestUndoClosing}>
+              <Tooltip text={genSet && genSet.size > 0
+                ? `Cannot undo — challans already generated for ${appliedMonth} ${appliedYear}`
+                : `Undo closing ${FEE_MONTHS[lastClosing.m]} ${lastClosing.y}`}>
+                        <button className="fee-btn fee-btn-ghost" onClick={requestUndoClosing}>
                   <i className="fa-solid fa-rotate-left"></i> Undo Last Closing
                 </button>
               </Tooltip>
             )}
+            </>)}
           </div>
 
           <div className="fee-searchrow fee-searchrow--export">
@@ -4385,8 +4583,9 @@ function FeeChallansList({ toast }) {
         genSet={genSet}
         keyOf={keyOf}
         onClose={() => setBulkGen(null)}
-        onGenerated={handleBulkGenerated}
+          onGenerated={handleBulkGenerated}
         toast={toast}
+        monthClosing={settings.enableMonthClosing === true}
         singleMode={bulkGen?.mode === 'single'}
         /* Generate se pehle live saved discounts (server + session edits) resolve karo. */
         fetchDiscounts={fetchStudentDiscounts}
@@ -4456,6 +4655,8 @@ function BulkGenerateModal({
   fetchDiscounts = null,
   genSet, keyOf, onClose, onGenerated, toast,
   familyMode = false, singleMode = false,
+  /* Month Closing ON → active period (defaultMonth) se aage ke mahine na dikhein. */
+  monthClosing = false,
 }) {
   /* Issue/Due date bhi LOCAL calendar par — challan ki due date hi late fine ka
      base hai, aur toISOString() (UTC) Pakistan me subah 5 baje se pehle dono ko
@@ -4479,6 +4680,15 @@ function BulkGenerateModal({
   const [progress, setProgress] = useState(null);    // null | { done, total, label }
   const cancelRef = useRef(false);
   const msAnchorRef = useRef(null);
+  /* Month — custom dropdown (native select screen ke bottom tak jaata tha). */
+  const [monthOpen, setMonthOpen] = useState(false);
+  useEffect(() => {
+    if (!monthOpen) return undefined;
+    const onDown = (e) => { if (!e.target.closest('[data-month-dd]')) setMonthOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [monthOpen]);
+
   /* Challan Type — custom dropdown (native <select> jagah kam ho to UPAR khulta tha);
      ye hamesha NEECHE khulta hai, lambi list scroll. */
   const [typeOpen, setTypeOpen] = useState(false);
@@ -4730,8 +4940,24 @@ function BulkGenerateModal({
             <div className="fee-field">
               <span className="fee-label">Month</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)} disabled={!!progress}>
-                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+<button type="button" data-month-dd className="fee-ms-toggle" onClick={() => !progress && setMonthOpen(o => !o)} disabled={!!progress}><span>{month}</span></button>
+                {monthOpen && (
+                  <div data-month-dd className="fee-ms-menu" style={{ minWidth: 0, maxHeight: 220 }}>
+                    {(monthClosing && FEE_MONTHS.indexOf(defaultMonth) >= 0
+                      ? FEE_MONTHS.slice(0, FEE_MONTHS.indexOf(defaultMonth) + 1)
+                      : FEE_MONTHS
+                    ).map(m => (
+                      <button type="button" key={m} className={`fee-ms-opt${month === m ? ' sel' : ''}`}
+                        style={month === m ? { background: 'var(--bg-muted)', color: '#1E3A8A' } : undefined}
+                        onClick={() => { setMonth(m); setMonthOpen(false); }}>{m}</button>
+                    ))}
+                  </div>
+                )}
+                <select hidden className="fee-select" value={month} onChange={e => setMonth(e.target.value)} disabled={!!progress}>
+                  {(monthClosing && FEE_MONTHS.indexOf(defaultMonth) >= 0
+                    ? FEE_MONTHS.slice(0, FEE_MONTHS.indexOf(defaultMonth) + 1)
+                    : FEE_MONTHS
+                  ).map(m => <option key={m}>{m}</option>)}
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -8397,6 +8623,9 @@ function FeeReceivingIndividual({ toast }) {
   const viewKey = `${appliedMonth}|${appliedYear}`;
   const loadChallans = useCallback(async () => {
     if (!studentsMap || Object.keys(studentsMap).length === 0) return;
+    /* Settings aane tak load mat karo — warna pehle aaj ka mahina load hota,
+       phir active period par switch ho kar dobara (double loading). */
+    if (typeof settings.enableMonthClosing !== 'boolean') return;
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     try {
       const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
@@ -8502,7 +8731,7 @@ function FeeReceivingIndividual({ toast }) {
     } finally {
       setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
-  }, [studentsMap, appliedMonth, appliedYear, toast]);
+  }, [studentsMap, appliedMonth, appliedYear, toast, settings.enableMonthClosing]);
 
   useEffect(() => { loadChallans(); }, [loadChallans]);
 
@@ -9101,6 +9330,15 @@ function FeeReceivingIndividual({ toast }) {
     setSearchQ('');
     setHighlightKey(null);
   };
+  /* Month Closing ON → active fee period (Challans tab jaisa); OFF → aaj ka mahina. */
+  useEffect(() => {
+    if (settings.enableMonthClosing === undefined) return;
+    const d = new Date();
+    const p = settings.enableMonthClosing === true ? readFeePeriod() : { m: d.getMonth(), y: d.getFullYear() };
+    const mName = FEE_MONTHS[p.m], yStr = String(p.y);
+    setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.enableMonthClosing]);
 
   const matches = useMemo(() => {
     if (!searchQ.trim()) return [];
@@ -9132,15 +9370,26 @@ function FeeReceivingIndividual({ toast }) {
       <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
-          <div className="fee-filters">
-            <div className="fee-field">
-              <span className="fee-label">Active Fee Period</span>
-              <div className="fee-active-month-badge">
-                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
+                   <div className="fee-filters">
+            {typeof settings.enableMonthClosing !== 'boolean' ? (
+              <div className="fee-field">
+                <span className="fee-label">Fee Period</span>
+                <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                  <i className="fa-solid fa-spinner fa-spin"></i> Loading…
+                </div>
               </div>
-            </div>
+            ) : settings.enableMonthClosing !== true ? (
+              <FeeMonthPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} onReset={resetFilters} />
+            ) : (
+              <div className="fee-field">
+                <span className="fee-label">Active Fee Period</span>
+                <div className="fee-active-month-badge">
+                  <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
+                </div>
+              </div>
+            )}
           </div>
-          <div className="fee-info" style={{ marginBottom: 14 }}>
+           <div className="fee-info" style={{ marginTop: 14, marginBottom: 14 }}>
             <i className="fa-solid fa-circle-info"></i>
             <span>
               You are currently receiving fees for <b>{appliedMonth} {appliedYear}</b>. Payments recorded here will be allocated according to the
@@ -9919,6 +10168,15 @@ function FamilyTreeReceiving({ toast }) {
     setSearchQ('');
     setHighlightKey(null);
   };
+  /* Month Closing ON → active fee period (Challans tab jaisa); OFF → aaj ka mahina. */
+  useEffect(() => {
+    if (settings.enableMonthClosing === undefined) return;
+    const d = new Date();
+    const p = settings.enableMonthClosing === true ? readFeePeriod() : { m: d.getMonth(), y: d.getFullYear() };
+    const mName = FEE_MONTHS[p.m], yStr = String(p.y);
+    setMonth(mName); setYear(yStr); setAppliedMonth(mName); setAppliedYear(yStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.enableMonthClosing]);
 
   /* Branch ke PENDING challans — GET /pending?branchId (poori branch EK call).
      { [studentID]: [challan…] } naya-pehle — child ka is mahine challan na ho magar
@@ -10529,13 +10787,24 @@ function FamilyTreeReceiving({ toast }) {
       <style>{`.fee-active-month-badge{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:8px;background:rgba(22,163,74,.1);color:#15803d;font-weight:600;font-size:13px;white-space:nowrap;}`}</style>
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
-          <div className="fee-filters">
-            <div className="fee-field">
-              <span className="fee-label">Active Fee Period</span>
-              <div className="fee-active-month-badge">
-                <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
+           <div className="fee-filters">
+            {typeof settings.enableMonthClosing !== 'boolean' ? (
+              <div className="fee-field">
+                <span className="fee-label">Fee Period</span>
+                <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                  <i className="fa-solid fa-spinner fa-spin"></i> Loading…
+                </div>
               </div>
-            </div>
+            ) : settings.enableMonthClosing !== true ? (
+              <FeeMonthPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} onReset={resetFilters} />
+            ) : (
+              <div className="fee-field">
+                <span className="fee-label">Active Fee Period</span>
+                <div className="fee-active-month-badge">
+                  <i className="fa-solid fa-calendar-check"></i> {appliedMonth} {appliedYear}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="fee-searchrow">
@@ -16583,44 +16852,76 @@ function ReportPanelOneLink({ toast }) {
   const [from, setFrom] = useState(today.slice(0, 8) + '01');
   const [to, setTo] = useState(today);
 
-  const periods = useMemo(() => {
+  /* DASHBOARD jaisa — wahi Super-Admin API (branch_onelink-payments), wahi filter:
+       Month → filterType Month (month+year) · Date Range → FromTo · Single Date → SingleDate.
+     KPI (Transactions / Total Received) API ke Summary se; class-wise list API ke
+     Transactions se, student roster se mila kar. Jis branch ka API me record nahi uska
+     report khaali — koi dummy / ledger-guess data nahi. */
+  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
+  const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  const [olData, setOlData] = useState(null);     // { Summary, Transactions } | null (loading)
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    setOlData(null); setError(null);
     const y = Number(year) || new Date().getFullYear();
-    if (seg === 'daily') { const [yy, mm] = String(date || '').split('-'); return [{ month: Number(mm) || 1, year: Number(yy) || y }]; }
-    if (seg === 'range') {
-      const [fy, fm] = String(from || '').split('-'); const [ty, tm] = String(to || '').split('-');
-      return ledgerPeriods(Number(fm) || 1, Number(fy) || y, Number(tm) || 12, Number(ty) || y);
-    }
-    return [{ month: FEE_MONTHS.indexOf(month) + 1, year: y }];
+    let q;
+    if (seg === 'range') q = { filterType: 'FromTo', fromDate: from, toDate: to };
+    else if (seg === 'daily') q = { filterType: 'SingleDate', singleDate: date };
+    else q = { filterType: 'Month', month: FEE_MONTHS.indexOf(month) + 1, year: y };
+    feeService.getOneLinkPayments(q)
+      .then(d => { if (alive) setOlData(d || {}); })
+      .catch(e => { if (alive) { setOlData({}); setError(e.message || 'Could not load OneLink payments'); } });
+    return () => { alive = false; };
   }, [seg, date, from, to, month, year]);
+  const loading = olData === null;
 
-  const { classes, allStudents, loading, error } = useLedgerReportData(periods);
-
-  const txByClass = useMemo(() => {
-    const isOnelink = (raw) => /one\s*link|1\s*link|bank/i.test(feeService.paymentMethodDisplay(raw));
-    const inPeriod = (d) => {
-      if (!d) return false;
-      if (seg === 'daily') return d === date;
-      if (seg === 'range') return d >= from && d <= to;
-      const dd = new Date(d);
-      return dd.getMonth() === FEE_MONTHS.indexOf(month) && dd.getFullYear() === (Number(year) || dd.getFullYear());
-    };
+  /* API Transactions → class-wise { s, p }. Student ka naam / reg / id API se (backend in
+     fields ko Transactions me bhejega); roster se class/section milate hain. */
+  const { txByClass, classList } = useMemo(() => {
+    const pick = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && o[k] !== '') return o[k]; } return ''; };
+    const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const byId = new Map(), byReg = new Map(), byName = new Map();
+    (classes || []).forEach(c => (studentsMap[c.key] || []).forEach(st => {
+      const who = { c, s: st };
+      if (st.studentID != null) byId.set(String(st.studentID), who);
+      if (st.applicantsID != null && !byId.has(String(st.applicantsID))) byId.set(String(st.applicantsID), who);
+      if (st.reg) byReg.set(norm(st.reg), who);
+      if (st.name && !byName.has(norm(st.name))) byName.set(norm(st.name), who);
+    }));
     const map = {};
-    allStudents.forEach(({ c, s, m }) => {
-      (m.recs || []).forEach(rec => {
-        if (!isOnelink(rec.paymentMethod)) return;
-        const received = (rec.detailRows || []).reduce((a, r) => a + Math.max(0, +r.receivedAmount || 0), 0);
-        if (received <= 0) return;
-        const d = String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10);
-        if (!inPeriod(d)) return;
-        (map[c.key] ||= []).push({ s, p: { amount: received, date: d, time: '', method: feeService.paymentMethodDisplay(rec.paymentMethod), source: 'onelink', txn: feeService.psidOf(rec) } });
-      });
+    const extra = {};
+    (Array.isArray(olData?.Transactions) ? olData.Transactions : []).forEach(x => {
+      const sid = String(pick(x, 'StudentID', 'studentID', 'studentId', 'StudentId', 'ApplicantID', 'applicantID', 'ApplicantsID', 'applicantsID'));
+      const reg = String(pick(x, 'RegNo', 'regNo', 'RegistrationNo', 'RegistrationNumber', 'registrationNumber', 'reg', 'Reg'));
+      const name = String(pick(x, 'StudentName', 'studentName', 'Name', 'name', 'StudentFullName', 'ApplicantName'));
+      const who = (sid && byId.get(sid)) || (reg && byReg.get(norm(reg))) || (name && byName.get(norm(name))) || null;
+      const amount = Number(pick(x, 'TotalAmountReceived', 'totalAmountReceived', 'TotalReceived', 'totalReceived', 'NetReceived', 'netReceived', 'ReceivedAmount', 'receivedAmount', 'Amount', 'amount', 'NetAmount')) || 0;
+      const d = String(pick(x, 'PaymentDate', 'paymentDate', 'TransactionDate', 'transactionDate', 'ReceivedDate', 'receivedDate', 'Date', 'date', 'CreatedAt', 'createdAt'));
+      const p = {
+        amount, date: d.slice(0, 10), time: d.length >= 16 ? d.slice(11, 16) : '',
+        method: String(pick(x, 'PaymentMethod', 'paymentMethod', 'Method', 'method', 'Channel', 'channel') || 'OneLink'),
+        source: 'onelink',
+        txn: String(pick(x, 'PSID', 'Psid', 'psid', 'TransactionNo', 'transactionNo', 'TransactionID', 'transactionID', 'ReferenceNo', 'referenceNo', 'VoucherNo')),
+      };
+      if (who) {
+        (map[who.c.key] ||= []).push({ s: who.s, p });
+      } else {
+        /* Roster me na mila — API ke apne class/section naam se alag group (koi transaction gum na ho). */
+        const cls = String(pick(x, 'ClassName', 'className', 'GradeName', 'gradeName', 'Grade', 'Class') || 'Other');
+        const sec = String(pick(x, 'SectionName', 'sectionName', 'Section', 'section') || '—');
+        const key = `ol-${norm(cls)}|${norm(sec)}`;
+        if (!extra[key]) extra[key] = { key, cls, sec };
+        (map[key] ||= []).push({ s: { name: name || '—', reg: reg || '—' }, p });
+      }
     });
-    return map;
-  }, [allStudents, seg, date, from, to, month, year]);
+    return { txByClass: map, classList: [...(classes || []), ...Object.values(extra)] };
+  }, [olData, classes, studentsMap]);
 
+  const summary = olData?.Summary || {};
   const allTx = useMemo(() => Object.values(txByClass).flat(), [txByClass]);
-  const totalTx = allTx.length;
-  const totalAmt = allTx.reduce((a, x) => a + (+x.p.amount || 0), 0);
+  const totalTx = Number(summary.OnelinkTransactions ?? summary.onelinkTransactions) || allTx.length;
+  const totalAmt = Number(summary.TotalReceived ?? summary.totalReceived) || allTx.reduce((a, x) => a + (+x.p.amount || 0), 0);
   const modeBreak = useMemo(() => {
     const map = {};
     allTx.forEach(x => { const k = x.p.method || 'Bank Transfer'; map[k] = (map[k] || 0) + (+x.p.amount || 0); });
@@ -16630,7 +16931,7 @@ function ReportPanelOneLink({ toast }) {
 
   const reportTitle = `OneLink Payment Report — ${periodLabel}`;
   const downloadReport = (style, format) => {
-    const html = buildRepOneLinkHTML({ classes, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: style === 'bw', school });
+    const html = buildRepOneLinkHTML({ classes: classList, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: style === 'bw', school });
     openPrintReport(html, reportTitle, toast, format);
   };
 
@@ -16650,7 +16951,7 @@ function ReportPanelOneLink({ toast }) {
 
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span>All payments received through <strong>OneLink / Bank</strong> — read from the ledger and filtered by month, date range or a single date.</span>
+        <span>All payments received through <strong>OneLink / Bank</strong> — same data as the Dashboard's OneLink Payments card, filtered by month, date range or a single date.</span>
       </div>
 
       <RepLoadState loading={loading} error={error} />
@@ -16717,9 +17018,9 @@ function ReportPanelOneLink({ toast }) {
           <div className="fee-th fee-center">Section</div>
           <div className="fee-th fee-center">Details</div>
         </div>
-        {totalTx === 0 ? (
+        {allTx.length === 0 ? (
           <div className="fee-empty">No OneLink payments in this period.</div>
-        ) : classes.map((c, i) => {
+        ) : classList.map((c, i) => {
           const list = txByClass[c.key] || [];
           if (!list.length) return null;
           const colTot = list.reduce((a, x) => a + (+x.p.amount || 0), 0);
@@ -18063,7 +18364,7 @@ function feeBankBlockHtml(school, { thermal = false } = {}) {
     </div>`;
 }
 
-/* "Note on Challan" — Fee Settings se aaya custom note (max 50 words). Toggle ON
+/* "Note on Challan" — Fee Settings se aaya custom note (max 100 words). Toggle ON
    aur text ho to hi print hota hai. A4 (psid-block style) aur thermal dono. */
 function feeChallanNoteHtml(settings, { thermal = false } = {}) {
   if (!settings || settings.challanNoteEnabled !== true) return '';
@@ -19488,6 +19789,16 @@ function FeeChallanSettings({ toast }) {
               info="Controls the Create Installment Challan button on Fee Challans (Individual and Family Tree). Saved as particalChallan. Starts OFF. ON: the button is available on every branch once a challan exists. OFF: the button is hidden."
             />
 
+            {/* Month Closing — default OFF. ON: Active Fee Period + Close/Undo.
+                OFF: normal Month/Year selection. */}
+            <SettingCard
+              name="Enable Month Closing"
+              desc="Lock fee work to one active period and close it month by month."
+              on={value.enableMonthClosing === true}
+              onToggle={() => set({ enableMonthClosing: value.enableMonthClosing !== true })}
+              info="OFF (default): Fee Challans / Fee Receiving show the normal Month & Year selection. ON: an Active Fee Period badge is shown, with 'Close Current Fee Period & Activate Next Period' and 'Undo Last Closing'."
+            />
+
             {/* NOTE — "Future Month Challan Printing" (sibling) is intentionally NOT
                 ported here. The ERP already gates future/adjacent months through the
                 Previous/Next Month Challan Receiving toggles + challanMonthLock()
@@ -19584,7 +19895,7 @@ function FeeChallanSettings({ toast }) {
                   />
                 </Tooltip>
               </div>
-              <div className="fee-set-desc">Print a custom note on every newly generated challan (max 50 words).</div>
+              <div className="fee-set-desc">Print a custom note on every newly generated challan (max 100 words).</div>
               {value.challanNoteEnabled && (() => {
                 const text = value.challanNote || '';
                 const count = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -19600,15 +19911,15 @@ function FeeChallanSettings({ toast }) {
                       onChange={e => {
                         const raw = e.target.value;
                         const w = raw.trim() ? raw.trim().split(/\s+/) : [];
-                        /* 50 words se zyada par pehle 50 words tak trim. */
-                        set({ challanNote: w.length > 50 ? w.slice(0, 50).join(' ') : raw });
+                        /* 100 words se zyada par pehle 100 words tak trim. */
+                        set({ challanNote: w.length > 100 ? w.slice(0, 100).join(' ') : raw });
                       }}
                     />
                     <div
                       className="fee-mini-label"
-                      style={{ marginTop: 4, textAlign: 'right', color: count >= 50 ? '#B91C1C' : '#64748B' }}
+                      style={{ marginTop: 4, textAlign: 'right', color: count >= 100 ? '#B91C1C' : '#64748B' }}
                     >
-                      {count} / 50 words
+                      {count} / 100 words
                     </div>
                   </div>
                 );

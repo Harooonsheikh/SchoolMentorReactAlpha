@@ -1,5 +1,6 @@
 import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession } from '../../utils/apiConfig';
 import { delay, clone } from './_http';
+import { mockAttendanceSetup } from '../mock/attendance';
 
 // src/services/attendanceService.js
 
@@ -392,4 +393,21 @@ export async function markStudentAttendance(classId, records) {
 export async function markStaffAttendance(records) {
   await delay();
   return { marked: records.length };
+}
+
+/* ─── Attendance Setup — Working Hours & Attendance Rules ───────────
+   Same mock + delay + clone contract as everything else here, so the
+   Save & Update button genuinely round-trips through the service layer
+   instead of only updating local state. Swap the body for a real HTTP
+   call once the backend exposes this (see the final report for the
+   endpoint this implies: GET/PUT school-level attendance-setup). */
+export async function getAttendanceSetup() {
+  await delay();
+  return clone(mockAttendanceSetup);
+}
+
+export async function saveAttendanceSetup(setup) {
+  await delay();
+  Object.assign(mockAttendanceSetup, setup);
+  return clone(mockAttendanceSetup);
 }

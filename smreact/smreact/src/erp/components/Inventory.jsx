@@ -4,11 +4,41 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as inventoryService from '../services/inventoryService';
 import * as approvalsService from '../services/approvalsService';
+import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import {
   StandardReportPicker, buildStandardReportHtml,
   downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName,
 } from '../reports/reportKit';
+
+/* Pending-add ghost store module keys (Assets vs POS products). */
+const INV_ASSET_PENDING_MOD = 'invAsset';
+const INV_PRODUCT_PENDING_MOD = 'invProduct';
+
+/* Prepend pending-add ghost rows to a rendered list so a freshly added
+   (approval-pending) asset/product shows as a normal row with a Pending
+   badge, even though the backend hasn't created the real record yet. A
+   ghost is dropped once a real row with the same code/name appears. */
+function mergeInvGhosts(rows, ghosts, keyField = 'code') {
+  const base = Array.isArray(rows) ? rows : [];
+  if (!ghosts || !ghosts.length) return base;
+  const real = base.filter((r) => !r._pendingAdd);
+  const realKeys = new Set(real.map((r) => String(r[keyField] || '').trim().toLowerCase()).filter(Boolean));
+  const realNames = new Set(real.map((r) => String(r.name || '').trim().toLowerCase()).filter(Boolean));
+  const add = ghosts
+    .map((g) => g && g.row)
+    .filter((r) => {
+      if (!r) return false;
+      const key = String(r[keyField] || '').trim().toLowerCase();
+      const nm = String(r.name || '').trim().toLowerCase();
+      /* Once the real (approved) row appears — by code/barcode or name — drop
+         the ghost so the normal row (with its action buttons) takes over. */
+      if (key && realKeys.has(key)) return false;
+      if (nm && realNames.has(nm)) return false;
+      return true;
+    });
+  return [...add, ...base];
+}
 
 /* ─── module-wide helpers (mirrors HTML reference) ─── */
 const CAT_ICON = {
@@ -813,7 +843,7 @@ function InventoryManagement({ toast }) {
   const detailItem = detailId ? list.find(i => i.id === detailId) : null;
 
   /* Approvals — pending badge + withdraw (Fee jaisa). */
-  const { pendingMap, handlePending, askWithdraw, withdrawDialog } = useInvPending(toast, reloadItems);
+  const { pendingMap, pendingAddRows, handlePending, askWithdraw, withdrawDialog } = useInvPending(toast, reloadItems, INV_ASSET_PENDING_MOD);
 
   /* ─── Actions (persist to API, then re-fetch the server list) ─── */
   const handleSave = async ({ name, cat, code, qty, date, cond, status, loc, desc, img }) => {
@@ -831,7 +861,12 @@ function InventoryManagement({ toast }) {
         img:  img ?? (isEdit ? editCfg.item.img : null),
         active: isEdit ? editCfg.item.active : true,
       });
-      if (handlePending(resp, isEdit ? editCfg.item.id : 0, isEdit ? 'Asset update sent for approval' : 'New asset sent for approval')) {
+      const ghostRow = isEdit ? null : {
+        name: name.trim(), cat, code: finalCode, qty: Number(qty) || 0, low: 0,
+        date, cond, status, loc: loc.trim(), desc: desc.trim(),
+        img: img ?? null, active: true,
+      };
+      if (handlePending(resp, isEdit ? editCfg.item.id : 0, isEdit ? 'Asset update sent for approval' : 'New asset sent for approval', ghostRow)) {
         setEditCfg(null);
         return;
       }
@@ -1097,11 +1132,11 @@ function InventoryManagement({ toast }) {
         </div>
       ) : (
         <div className="inv-grid">
-          {filtered.map(i => (
+          {mergeInvGhosts(filtered, seg === 'active' ? pendingAddRows : []).map(i => (
             <InvItemCard
               key={i.id}
               item={i}
-              onOpen={() => setDetailId(i.id)}
+              onOpen={() => { if (!i._pendingAdd) setDetailId(i.id); }}
               onEdit={() => setEditCfg({ mode: 'edit', item: i })}
               onMarkInactive={() => askMarkInactive(i)}
               onRestore={() => restore(i)}
@@ -1157,6 +1192,11 @@ function InvItemCard({ item, onOpen, onEdit, onMarkInactive, onRestore, onDelete
         <InvPendingBadge pend={pend} onWithdraw={onWithdraw} />
       </div>
       <div className="inv-card-foot" onClick={(e) => e.stopPropagation()}>
+        {item._pendingAdd ? (
+          <span className="fee-btn fee-btn-ghost fee-btn-xs" style={{ flex: 1, opacity: .7, cursor: 'default' }}>
+            <i className="fa-solid fa-hourglass-half"></i> Awaiting approval
+          </span>
+        ) : (<>
         <Tooltip text="View full details">
           <button className="fee-btn fee-btn-ghost fee-btn-xs" style={{ flex: 1 }} onClick={onOpen}>
             <i className="fa-solid fa-eye"></i> View
@@ -1189,6 +1229,7 @@ function InvItemCard({ item, onOpen, onEdit, onMarkInactive, onRestore, onDelete
             </Tooltip>
           </>
         )}
+        </>)}
       </div>
     </div>
   );
@@ -1591,9 +1632,12 @@ function InvConfirmDialog({ cfg, onClose }) {
    Approve/reject hote hi request approvals_by_user ki pending list se
    nikal jaati hai, badge khud saaf ho jata hai.
    ═══════════════════════════════════════════════════════════════════ */
-function useInvPending(toast, onAfterWithdraw) {
+function useInvPending(toast, onAfterWithdraw, mod) {
   const [pendingMap, setPendingMap]   = useState({});   // id → { approvalId, requestNo }
   const [withdrawCfg, setWithdrawCfg] = useState(null); // { name, id, pend }
+  /* Pending-add ghost rows (newly added, awaiting approval, no real row yet).
+     Hydrated from sessionStorage so a refresh keeps them visible. */
+  const [pendingAddRows, setPendingAddRows] = useState(() => (mod ? getPendingAdds(mod) : []));
 
   const loadPending = async () => {
     try {
@@ -1606,29 +1650,68 @@ function useInvPending(toast, onAfterWithdraw) {
           m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
         }
       });
+      /* Drop ghost add-rows whose request left "pending"; badge the rest. */
+      if (mod) {
+        const ghosts = reconcilePendingAdds(mod, reqs);
+        ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+        setPendingAddRows(ghosts);
+      }
       setPendingMap(m);
     } catch (e) { /* non-fatal — badge just won't show */ }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadPending(); }, []);
 
+  /* Approval kahin aur se hone ke baad jab user wapas aaye / tab focus kare,
+     to list + pending dono refresh — approve-shuda row (apne action buttons
+     ke saath) aa jati hai aur ghost khud hat jati hai. */
+  useEffect(() => {
+    const refresh = () => { if (onAfterWithdraw) onAfterWithdraw(); loadPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Jab tak kuch pending hai, halki polling — in-app approval bhi kuch second
+     me reflect ho jaye. Pending khatam → band. */
+  const hasInvPending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
+  useEffect(() => {
+    if (!hasInvPending) return undefined;
+    const t = setInterval(() => { if (onAfterWithdraw) onAfterWithdraw(); loadPending(); }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasInvPending]);
+
   /* Save/delete ka response check — pending ho to toast + badge, aur true
-     lautao taake caller change apply/success-toast na kare. */
-  const handlePending = (resp, id, fallbackMsg) => {
+     lautao taake caller change apply/success-toast na kare. `ghostRow` (sirf
+     naye add ke liye) diya ho to list me ek Pending row inject hoti hai. */
+  const handlePending = (resp, id, fallbackMsg, ghostRow) => {
     const pend = inventoryService.invPendingInfo(resp);
     if (!pend) return false;
     toast(pend.message || fallbackMsg, 'info');
-    if (id) setPendingMap((m) => ({ ...m, [String(id)]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+    if (id) {
+      setPendingMap((m) => ({ ...m, [String(id)]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+    } else if (mod && ghostRow) {
+      const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+      const row = { ...ghostRow, id: rid, _pendingAdd: true };
+      setPendingAddRows(addPendingAdd(mod, { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+      setPendingMap((m) => ({ ...m, [rid]: { approvalId: pend.approvalId, requestNo: pend.requestNo } }));
+    }
     loadPending();
     return true;
   };
 
   const askWithdraw = (row) => {
     const pend = pendingMap[String(row.id)];
-    if (pend) setWithdrawCfg({ id: row.id, name: row.name, pend });
+    if (pend) setWithdrawCfg({ id: row.id, name: row.name, pend, isGhost: !!row._pendingAdd });
   };
 
-  const doWithdraw = async ({ id, pend }) => {
+  const doWithdraw = async ({ id, pend, isGhost }) => {
     try {
       await approvalsService.withdrawRequest(pend.approvalId);
     } catch (e) {
@@ -1637,6 +1720,7 @@ function useInvPending(toast, onAfterWithdraw) {
     }
     toast('Request withdrawn', 'success');
     setPendingMap((m) => { const n = { ...m }; delete n[String(id)]; return n; });
+    if (isGhost && mod) setPendingAddRows(removePendingAdd(mod, id));
     loadPending();
     if (onAfterWithdraw) onAfterWithdraw();
   };
@@ -1649,7 +1733,7 @@ function useInvPending(toast, onAfterWithdraw) {
     />
   );
 
-  return { pendingMap, handlePending, askWithdraw, withdrawDialog };
+  return { pendingMap, pendingAddRows, handlePending, askWithdraw, withdrawDialog };
 }
 
 /* Pending badge + Withdraw icon — Fee ke .fee-pending-badge / .fee-withdraw-btn. */
@@ -1858,6 +1942,7 @@ function PointOfSale({ toast }) {
       ) : sub === 'products' ? (
         <PosProductsView
           products={productList}
+          onReload={reloadProducts}
           onAdd={async (p) => { const r = await inventoryService.saveInvProduct(p); reloadProducts(); return r; }}
           onUpdate={async (p) => { const r = await inventoryService.saveInvProduct(p); reloadProducts(); return r; }}
           onDelete={async (p) => { const r = await inventoryService.deleteInvProduct(p); reloadProducts(); return r; }}
@@ -2268,7 +2353,7 @@ function PosCheckoutModal({ cart, buyer, subtotal, discAmount, discType, discInp
    ═══════════════════════════════════════════════════════════════════ */
 const PRODUCT_CATS = ['Books', 'Notebooks', 'Stationery', 'Uniform', 'Other'];
 
-function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
+function PosProductsView({ products, onReload, onAdd, onUpdate, onDelete, toast }) {
   const { data: school = {} } = useAsync(inventoryService.getInvSchool, {});
   const [search, setSearch]   = useState('');
   const [catFilter, setCat]   = useState('all');
@@ -2290,7 +2375,7 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
   }, [products, search, catFilter]);
 
   /* Approvals — pending badge + withdraw (Fee jaisa). */
-  const { pendingMap, handlePending, askWithdraw, withdrawDialog } = useInvPending(toast);
+  const { pendingMap, pendingAddRows, handlePending, askWithdraw, withdrawDialog } = useInvPending(toast, onReload, INV_PRODUCT_PENDING_MOD);
 
   const askDelete = (p) => setConfirmCfg({
     product: p,
@@ -2373,7 +2458,7 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
         </div>
       ) : (
         <div className="inv-grid">
-          {filtered.map(p => {
+          {mergeInvGhosts(filtered, pendingAddRows, 'barcode').map(p => {
             const out = p.stock <= 0;
             const low = p.stock <= p.low && p.stock > 0;
             return (
@@ -2400,6 +2485,11 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
                   <InvPendingBadge pend={pendingMap[String(p.id)]} onWithdraw={() => askWithdraw(p)} />
                 </div>
                 <div className="inv-card-foot">
+                  {p._pendingAdd ? (
+                    <span className="fee-btn fee-btn-ghost fee-btn-xs" style={{ flex: 1, opacity: .7, cursor: 'default' }}>
+                      <i className="fa-solid fa-hourglass-half"></i> Awaiting approval
+                    </span>
+                  ) : (<>
                   <Tooltip text="Edit this product">
                     <button className="fee-btn fee-btn-ghost fee-btn-xs" style={{ flex: 1 }} onClick={() => setEditCfg({ mode: 'edit', product: p })}>
                       <i className="fa-solid fa-pen"></i> Edit
@@ -2418,6 +2508,7 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
                       <i className="fa-solid fa-trash-can"></i>
                     </button>
                   </Tooltip>
+                  </>)}
                 </div>
               </div>
             );
@@ -2437,7 +2528,7 @@ function PosProductsView({ products, onAdd, onUpdate, onDelete, toast }) {
                 if (!handlePending(resp, editCfg.product.id, 'Product update sent for approval')) toast('Product updated', 'success');
               } else {
                 const resp = await onAdd(payload);
-                if (!handlePending(resp, 0, 'New product sent for approval')) toast('Product added', 'success');
+                if (!handlePending(resp, 0, 'New product sent for approval', payload)) toast('Product added', 'success');
               }
               setEditCfg(null);
             } catch (e) {

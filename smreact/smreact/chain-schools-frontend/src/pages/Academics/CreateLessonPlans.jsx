@@ -64,13 +64,13 @@ function LpConfirm({ cfg, busy, onClose }) {
 
 /* ─────────────────── Empty state (no units yet) ─────────────────── */
 
-function EmptyUnits({ label, onAdd }) {
+function EmptyUnits({ label, onAdd, canAdd = true }) {
   return (
     <div className="clp2-empty-state" style={{ background: 'transparent', border: 'none' }}>
       <div className="clp2-empty-icon"><i className="fa-solid fa-layer-group" /></div>
       <div className="clp2-empty-title">No units yet</div>
       <div className="clp2-empty-sub">{label}</div>
-      <button className="lp-btn primary" title="Add the first unit" style={{ marginTop: 16 }} onClick={onAdd}>
+      <button className="lp-btn primary" title={canAdd ? 'Add the first unit' : 'No permission to add'} disabled={!canAdd} style={{ marginTop: 16, ...(canAdd ? {} : { opacity: .45, cursor: 'not-allowed' }) }} onClick={onAdd}>
         <i className="fa-solid fa-plus" /> Add Unit
       </button>
     </div>
@@ -79,7 +79,7 @@ function EmptyUnits({ label, onAdd }) {
 
 /* ─────────────────── Lesson-plans unit row (lessons) ─────────────────── */
 
-function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson }) {
+function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson, canEdit = true, canDelete = true, canDownload = true }) {
   const [open, setOpen] = useState(false)
   const manualCount = unit.lessons.filter((l) => l.source === 'manual').length
   const aiCount = unit.lessons.filter((l) => l.source === 'mentorai').length
@@ -107,13 +107,13 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
           </span>
         </div>
         <div className="clpr-unit-actions">
-          <button className="export-btn pdf" title="Download unit lesson plan as PDF" onClick={() => onReport('pdf')}>
+          <button className="export-btn pdf" title={canDownload ? 'Download unit lesson plan as PDF' : 'No permission to download'} disabled={!canDownload} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onReport('pdf')}>
             <i className="fa-solid fa-file-pdf" /> PDF
           </button>
-          <button className="export-btn word" title="Download unit lesson plan as Word" onClick={() => onReport('word')}>
+          <button className="export-btn word" title={canDownload ? 'Download unit lesson plan as Word' : 'No permission to download'} disabled={!canDownload} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onReport('word')}>
             <i className="fa-brands fa-microsoft" /> Word
           </button>
-          <button className="lp-icon-del" title="Delete unit" onClick={onDeleteUnit} aria-label="Delete unit">
+          <button className="lp-icon-del" title={canDelete ? 'Delete unit' : 'No permission to delete'} disabled={!canDelete} style={!canDelete ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={onDeleteUnit} aria-label="Delete unit">
             <i className="fa-solid fa-trash" />
           </button>
           <button
@@ -148,13 +148,13 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
                     : <><i className="fa-solid fa-pen-nib" /> Manual</>}
                 </span>
                 <div className="clpr-lesson-actions" onClick={(e) => e.stopPropagation()}>
-                  <button className="clpr-action-btn clpr-action-edit" title="Edit this lesson" onClick={() => onEditLesson(l)}>
+                  <button className="clpr-action-btn clpr-action-edit" title={canEdit ? 'Edit this lesson' : 'No permission to edit'} disabled={!canEdit} style={!canEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onEditLesson(l)}>
                     <i className="fa-solid fa-pen" /> <span>Edit</span>
                   </button>
-                  <button className="clpr-action-btn clpr-action-pdf" title="Download lesson as PDF" onClick={() => onReport('pdf', l)}>
+                  <button className="clpr-action-btn clpr-action-pdf" title={canDownload ? 'Download lesson as PDF' : 'No permission to download'} disabled={!canDownload} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onReport('pdf', l)}>
                     <i className="fa-solid fa-file-pdf" /> <span>PDF</span>
                   </button>
-                  <button className="clpr-action-btn clpr-action-del" title="Delete this lesson" onClick={() => onDeleteLesson(l)}>
+                  <button className="clpr-action-btn clpr-action-del" title={canDelete ? 'Delete this lesson' : 'No permission to delete'} disabled={!canDelete} style={!canDelete ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onDeleteLesson(l)}>
                     <i className="fa-solid fa-trash-can" />
                   </button>
                 </div>
@@ -169,7 +169,7 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
 
 /* ─────────────────── Notebook unit row (question types) ─────────────────── */
 
-function NbUnitRow({ unit, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey }) {
+function NbUnitRow({ unit, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey, canCreate = true, canEdit = true, canDelete = true, canDownload = true }) {
   const [open, setOpen] = useState(false)
   /* Question types unit khulne se PEHLE hi load ho jate hain taake counts
      row par dikhein; null = abhi load nahi hua. */
@@ -219,14 +219,14 @@ function NbUnitRow({ unit, onReport, onDeleteUnit, onAddType, onEditType, onDele
         </div>
 
         <div className="clpr-unit-right" onClick={(e) => e.stopPropagation()}>
-          <button className="nb-aq-pill" title="Add Questions" onClick={onAddType}>
+          <button className="nb-aq-pill" title={canCreate ? 'Add Questions' : 'No permission to add'} disabled={!canCreate} style={!canCreate ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={onAddType}>
             <i className="fa-solid fa-plus nb-aq-icon" />
             <span className="nb-aq-label">Add Questions</span>
           </button>
-          <button className="clpr-icon-btn clpr-icon-btn--pdf" title="Download PDF" onClick={() => onReport('pdf')} aria-label="Download notebook PDF">
+          <button className="clpr-icon-btn clpr-icon-btn--pdf" title={canDownload ? 'Download PDF' : 'No permission to download'} disabled={!canDownload} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onReport('pdf')} aria-label="Download notebook PDF">
             <i className="fa-solid fa-file-pdf" />
           </button>
-          <button className="clpr-icon-btn clpr-icon-btn--del" title="Delete unit" onClick={onDeleteUnit} aria-label="Delete unit">
+          <button className="clpr-icon-btn clpr-icon-btn--del" title={canDelete ? 'Delete unit' : 'No permission to delete'} disabled={!canDelete} style={!canDelete ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={onDeleteUnit} aria-label="Delete unit">
             <i className="fa-solid fa-trash-can" />
           </button>
           <button
@@ -266,13 +266,13 @@ function NbUnitRow({ unit, onReport, onDeleteUnit, onAddType, onEditType, onDele
                   </span>
                   <span className="clp-src-badge manual"><i className="fa-solid fa-pen-nib" /> Manual</span>
                   <div className="clpr-lesson-actions" onClick={(e) => e.stopPropagation()}>
-                    <button className="clpr-action-btn clpr-action-edit" title="Edit this question type" onClick={() => onEditType(q)}>
+                    <button className="clpr-action-btn clpr-action-edit" title={canEdit ? 'Edit this question type' : 'No permission to edit'} disabled={!canEdit} style={!canEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onEditType(q)}>
                       <i className="fa-solid fa-pen" /> <span>Edit</span>
                     </button>
-                    <button className="clpr-icon-btn clpr-icon-btn--pdf" title="Download PDF" onClick={() => onReport('pdf', q)} aria-label="Download question type PDF">
+                    <button className="clpr-icon-btn clpr-icon-btn--pdf" title={canDownload ? 'Download PDF' : 'No permission to download'} disabled={!canDownload} style={!canDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onReport('pdf', q)} aria-label="Download question type PDF">
                       <i className="fa-solid fa-file-pdf" />
                     </button>
-                    <button className="clpr-icon-btn clpr-icon-btn--del" title="Delete" onClick={() => onDeleteType(q)}>
+                    <button className="clpr-icon-btn clpr-icon-btn--del" title={canDelete ? 'Delete' : 'No permission to delete'} disabled={!canDelete} style={!canDelete ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => onDeleteType(q)}>
                       <i className="fa-solid fa-trash-can" />
                     </button>
                   </div>
@@ -288,7 +288,9 @@ function NbUnitRow({ unit, onReport, onDeleteUnit, onAddType, onEditType, onDele
 
 /* ═══════════════════════════ MAIN SCREEN ═══════════════════════════ */
 
-export default function CreateLessonPlans({ toast }) {
+export default function CreateLessonPlans({ toast,
+  canLpCreate = true, canLpEdit = true, canLpDelete = true, canLpDownload = true,
+  canNbCreate = true, canNbEdit = true, canNbDelete = true, canNbDownload = true }) {
   const [classes, setClasses] = useState([])
   const [subjects, setSubjects] = useState([])
   const [classId, setClassId] = useState('')
@@ -317,6 +319,13 @@ export default function CreateLessonPlans({ toast }) {
   const className = classes.find((c) => String(c.id) === String(classId))?.name || ''
   const subjectName = subjects.find((s) => String(s.id) === String(subjectId))?.name || ''
   const ctx = { classID: classId ? String(classId) : '', subjectID: subjectId ? String(subjectId) : '' }
+
+  /* Per-staff action permissions — current sub-tab (lesson vs notebook) ke
+     hisaab se. Create/Edit/Delete/Download alag-alag gate hote hain. */
+  const canCreate = subtab === 'notebook' ? canNbCreate : canLpCreate
+  const canEdit = subtab === 'notebook' ? canNbEdit : canLpEdit
+  const canDelete = subtab === 'notebook' ? canNbDelete : canLpDelete
+  const canDownload = subtab === 'notebook' ? canNbDownload : canLpDownload
 
   /* Network ki classes ek dafa load — Settings ▸ Classes & Subjects wahi list. */
   useEffect(() => {
@@ -559,7 +568,7 @@ export default function CreateLessonPlans({ toast }) {
                 <i className="fa-solid fa-book" /> Notebook Plans
               </button>
             </div>
-            <button className="clp2-add-btn" title="Manage units (add, rename, reorder)" onClick={() => setUnitMgrSource(subtab)}>
+            <button className="clp2-add-btn" title={canCreate ? 'Manage units (add, rename, reorder)' : 'No permission to add'} disabled={!canCreate} style={!canCreate ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => setUnitMgrSource(subtab)}>
               <i className="fa-solid fa-plus" /><span>Add Unit</span>
             </button>
           </div>
@@ -567,12 +576,13 @@ export default function CreateLessonPlans({ toast }) {
           <div className="clp2-table-card">
             {subtab === 'lesson' ? (
               units.length === 0 ? (
-                <EmptyUnits label="Click 'Add Unit' to create your first unit" onAdd={() => setUnitMgrSource('lesson')} />
+                <EmptyUnits label={canCreate ? "Click 'Add Unit' to create your first unit" : 'No units yet'} canAdd={canCreate} onAdd={() => setUnitMgrSource('lesson')} />
               ) : units.map((u, i) => (
                 <UnitRow
                   key={u.id}
                   unit={u}
                   index={i}
+                  canEdit={canEdit} canDelete={canDelete} canDownload={canDownload}
                   onReport={lessonReportFor(u)}
                   onDeleteUnit={() => removeUnit(u)}
                   onEditLesson={(l) => openLessonEditor(u, l)}
@@ -581,11 +591,12 @@ export default function CreateLessonPlans({ toast }) {
               ))
             ) : (
               nbUnits.length === 0 ? (
-                <EmptyUnits label="Click 'Add Unit' to create your first notebook unit" onAdd={() => setUnitMgrSource('notebook')} />
+                <EmptyUnits label={canCreate ? "Click 'Add Unit' to create your first notebook unit" : 'No units yet'} canAdd={canCreate} onAdd={() => setUnitMgrSource('notebook')} />
               ) : nbUnits.map((u) => (
                 <NbUnitRow
                   key={u.id}
                   unit={u}
+                  canCreate={canCreate} canEdit={canEdit} canDelete={canDelete} canDownload={canDownload}
                   onReport={nbReportFor(u)}
                   onDeleteUnit={() => removeUnit(u)}
                   onAddType={() => setNbAddCtx({ unitId: u.id })}

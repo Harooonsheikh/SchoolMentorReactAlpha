@@ -376,6 +376,31 @@ export async function fetchTermBreakupId({ classId, subjectId, termId }, network
   return Number(pick(list[0] || {}, 'id', 'ID', 'termBreakupID', 'TermBreakupID')) || 0
 }
 
+/* Saare term breakup masters is network ke — release index (releaseContent)
+   ke liye. classID/subjectID/termID 0 bhej kar sab maangte hain; har master me
+   classID + subjectID hoti hai (release child2 ki gradeID/subjectID isi se).
+   SP list na de (ya khali) to khali array — release bina term breakup ke chalta
+   rahe. */
+export async function fetchAllNetworkTermBreakups(networkId = currentNetworkId()) {
+  const nid = Number(networkId) || 0
+  if (!nid) return []
+  const params = new URLSearchParams({
+    networkID: String(nid), classID: '0', subjectID: '0', termID: '0',
+    sessionID: String(NETWORK_SESSION_YEAR_ID), pageNo: '1', pageCount: '1000',
+  })
+  let json
+  try { json = await call(`/gettermbreakups?${params.toString()}`) }
+  catch { return [] }
+  return rows(json)
+    .map((r) => ({
+      id: Number(pick(r, 'id', 'ID', 'termBreakupID', 'TermBreakupID')) || 0,
+      classID: Number(pick(r, 'classID', 'ClassID', 'gradeID', 'GradeID')) || 0,
+      subjectID: Number(pick(r, 'subjectID', 'SubjectID')) || 0,
+      termID: Number(pick(r, 'termID', 'TermID')) || 0,
+    }))
+    .filter((x) => x.id > 0)
+}
+
 /* Detail rows → UI units. Rows ko unitNumber+unitName+weekRequired par group. */
 function mapBreakupDetails(list) {
   const map = new Map()
@@ -431,6 +456,7 @@ function detailBody(action, termBreakupID, unit = {}, topic = {}, networkId) {
     weekRequired: String(unit.weeks ?? '0'),
     subTopic: String(topic.topic || '').trim(),
     periodRequired: String(topic.periods ?? '0'),
+    termBreakupDetailsData: '',
     type: '',
     action,
   }
@@ -452,7 +478,12 @@ export async function saveTermBreakup({ classId, subjectId, termId, units = [] }
   } catch { /* get fail → delete skip, insert phir bhi try */ }
   for (const r of existing) {
     const detailId = Number(pick(r, 'id', 'ID')) || 0
-    if (detailId) { try { await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('delete', termBreakupID, {}, { detailId }, networkId) }) } catch { /* ignore */ } }
+    if (detailId) {
+      /* delete payload me poori row ke fields (unit + topic) bhejo, sirf id nahi */
+      const unit = { unitNum: pick(r, 'unitNumber', 'UnitNumber'), unitName: pick(r, 'unitName', 'UnitName'), weeks: pick(r, 'weekRequired', 'WeekRequired') }
+      const topic = { detailId, topic: pick(r, 'subTopic', 'SubTopic'), periods: pick(r, 'periodRequired', 'PeriodRequired') }
+      try { await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('delete', termBreakupID, unit, topic, networkId) }) } catch { /* ignore */ }
+    }
   }
   /* nayi rows insert — ek topic = ek row */
   for (const u of units) {
@@ -465,16 +496,20 @@ export async function saveTermBreakup({ classId, subjectId, termId, units = [] }
 }
 
 /* Ek ya ziada detail rows server se delete (lptermbreakupdetailscrud action:'delete')
-   — subtopic / unit delete icon ke liye. detailIds = un rows ke server ids (jo
-   gettermbreakups se load hue the). Master id khud gettermbreakups se nikaal leta hai. */
-export async function deleteTermBreakupDetails({ classId, subjectId, termId, detailIds = [] }, networkId = currentNetworkId()) {
-  const ids = (detailIds || []).map(Number).filter((n) => n > 0)
-  if (!ids.length) return { deleted: 0 }
+   — subtopic / unit delete icon ke liye. `details` = un rows ki poori info
+   ({ detailId, unitNum, unitName, weeks, topic, periods }) taake delete payload me
+   bhi unit + topic ke fields jaayen, sirf id nahi. Master id khud gettermbreakups
+   se nikaal leta hai. */
+export async function deleteTermBreakupDetails({ classId, subjectId, termId, details = [] }, networkId = currentNetworkId()) {
+  const valid = (details || []).filter((d) => Number(d?.detailId) > 0)
+  if (!valid.length) return { deleted: 0 }
   const termBreakupID = await fetchTermBreakupId({ classId, subjectId, termId }, networkId)
   if (!termBreakupID) return { deleted: 0 }
   let deleted = 0
-  for (const detailId of ids) {
-    await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('delete', termBreakupID, {}, { detailId }, networkId) })
+  for (const d of valid) {
+    const unit = { unitNum: d.unitNum, unitName: d.unitName, weeks: d.weeks }
+    const topic = { detailId: d.detailId, topic: d.topic, periods: d.periods }
+    await call('/lptermbreakupdetailscrud', { method: 'POST', body: detailBody('delete', termBreakupID, unit, topic, networkId) })
     deleted += 1
   }
   return { deleted }

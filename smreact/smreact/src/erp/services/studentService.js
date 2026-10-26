@@ -333,7 +333,7 @@ async function fetchFamilies() {
 
 /* ─── Family Tree DETAIL (student ↔ family links) ───
    POST /api/FamilyTree/familytreedetailcrud
-     body: { action, id, treeID, branchID, applicantsID, gradeID, sectionID, createdBy }
+     body: { action, id, treeID, branchID, applicantsID, gradeID, sectionID, createdBy, modifiedBy }
    insert → link a student to a family (treeID = family id, applicantsID = student id);
    delete → remove a link by its detail id. */
 async function familyDetailCrud(fields = {}) {
@@ -348,6 +348,7 @@ async function familyDetailCrud(fields = {}) {
     gradeID:      0,
     sectionID:    0,
     createdBy:    userID,
+    modifiedBy:   userID,
     ...fields,
   };
   const res  = await fetch(buildUrl('/api/FamilyTree/familytreedetailcrud'), {
@@ -679,12 +680,15 @@ export async function uploadStuStudentPicture(studentId, file) {
    `documentType` is one of STU_DOC_TYPES for the fixed cards, or any free-text
    name for an "Other" document. Returns { id, studentId, documentType, documentPath }. */
 export async function uploadStuStudentDocument({ studentId, branchId, gradeId, sectionId, documentType, file } = {}) {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
   const fd = new FormData();
   fd.append('studentId',    studentId ?? 0);
   fd.append('branchId',     branchId ?? (Number(sessionStorage.getItem('branchID')) || 0));
   fd.append('gradeId',      gradeId ?? 0);
   fd.append('sectionId',    sectionId ?? 0);
   fd.append('documentType', documentType || '');
+  fd.append('createdBy',    userID);
+  fd.append('modifiedBy',   userID);
   fd.append('DocumentFile', file);
   const res  = await fetch(buildUrl('/api/LaunchSetup/upload-student-document'), {
     method: 'POST', headers: { Accept: '*/*' }, body: fd,
@@ -696,7 +700,8 @@ export async function uploadStuStudentDocument({ studentId, branchId, gradeId, s
 
 /* Delete one student document by its id. */
 export async function deleteStuStudentDocument(documentId) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student-document/${documentId || 0}`), {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student-document/${documentId || 0}?modifiedBy=${userID}`), {
     method: 'DELETE', headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -729,7 +734,8 @@ export async function markStuInactive(id, reason = '') {
    flips isActive → true, so the student returns to the active roster and leaves
    the inactive list. id 0 is a no-op. */
 export async function restoreStuStudent(id) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/restore-student/${id || 0}`), {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/restore-student/${id || 0}?modifiedBy=${userID}`), {
     method: 'PUT',
     headers: { Accept: '*/*' },
   });
@@ -741,7 +747,8 @@ export async function restoreStuStudent(id) {
    the record is gone for good (no restore). Called from the Inactive tab's row
    menu. DELETE /api/LaunchSetup/delete-student-permanent/{id}. id 0 is a no-op. */
 export async function permanentDeleteStuStudent(id) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student-permanent/${id || 0}`), {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student-permanent/${id || 0}?modifiedBy=${userID}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });
