@@ -11,6 +11,7 @@ import { buildUrl, resolveMediaUrl, activeSessionName, readStoredActiveSession, 
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import { StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel } from '../reports/reportKit';
+import Billing from './Billing';
 
 /* Other modules broadcast this custom event after changing a session key
    (sessionStorage writes don't fire the native 'storage' event in the same tab).
@@ -71,6 +72,7 @@ const ACC_TABS = [
   { id: 'accounts', icon: 'fa-wallet',        label: 'Wallets' },
   { id: 'books',    icon: 'fa-book-open',     label: 'Account Books' },
   { id: 'reports',  icon: 'fa-chart-column',  label: 'Reports' },
+  { id: 'billing',  icon: 'fa-file-invoice-dollar', label: 'Billing' },
 ];
 
 /* Default empty transactions shape ({rev,exp}) — used by the ported Wallets
@@ -239,6 +241,8 @@ export default function Accounts({ toast }) {
         <AccountBooks toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'reports' ? (
         <Reports toast={toast} />
+      ) : tab === 'billing' ? (
+        <Billing onToast={toast} />
       ) : (
         <AccComingSoon label={activeMeta?.label || 'This screen'} icon={activeMeta?.icon || 'fa-hammer'} />
       )}

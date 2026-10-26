@@ -5,6 +5,7 @@ import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
 import * as approvalsService from '../services/approvalsService';
+import * as hrService from '../services/hrService';
 import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
@@ -1775,12 +1776,18 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
     if (!s) return;
     try {
       /* insert a family-tree detail link: treeID = family, applicantsID = student. */
-      await studentService.linkStuToFamily({
+      const resp = await studentService.linkStuToFamily({
         treeID:       familyId,
         applicantsID: s._id,
         gradeID:      c._gradeId,
         sectionID:    c._sectionId,
       });
+      const linkPending = hrService.hrPendingInfo(resp);
+      if (linkPending) {
+        toast(`Student link sent for approval (Request #${linkPending.requestNo || linkPending.approvalId})`, 'info');
+        setAddFamCfg(null);
+        return;
+      }
       /* refresh families so the student shows under the family's members. */
       setFamilies(await studentService.getStuFamilies());
       const fam = famArr.find(f => f.id === familyId);
@@ -2063,18 +2070,28 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
       if (docUploads.length || removedDocIds.length) {
         if (studentId) {
           for (const id of removedDocIds) {
-            try { await studentService.deleteStuStudentDocument(id); }
+            try {
+              const delResp = await studentService.deleteStuStudentDocument(id);
+              const delPending = hrService.hrPendingInfo(delResp);
+              if (delPending) {
+                toast(`Document deletion sent for approval (Request #${delPending.requestNo || delPending.approvalId})`, 'info');
+              }
+            }
             catch (e) { toast(e.message || 'Could not remove a document', 'error'); }
           }
           for (const d of docUploads) {
             try {
-              await studentService.uploadStuStudentDocument({
+              const upResp = await studentService.uploadStuStudentDocument({
                 studentId,
                 gradeId:      row?._gradeId || 0,
                 sectionId:    row?._sectionId || 0,
                 documentType: d.documentType,
                 file:         d.file,
               });
+              const upPending = hrService.hrPendingInfo(upResp);
+              if (upPending) {
+                toast(`Document upload sent for approval (Request #${upPending.requestNo || upPending.approvalId})`, 'info');
+              }
             } catch (e) { toast(e.message || `Could not upload "${d.documentType}"`, 'error'); }
           }
         } else {
@@ -2098,15 +2115,23 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
         if (changed) {
           try {
             if (currentLink?.detailID) {
-              await studentService.unlinkStuFromFamily({ id: currentLink.detailID });
+              const unlinkResp = await studentService.unlinkStuFromFamily({ id: currentLink.detailID });
+              const unlinkPending = hrService.hrPendingInfo(unlinkResp);
+              if (unlinkPending) {
+                toast(`Student unlink sent for approval (Request #${unlinkPending.requestNo || unlinkPending.approvalId})`, 'info');
+              }
             }
             if (famId) {
-              await studentService.linkStuToFamily({
+              const linkResp = await studentService.linkStuToFamily({
                 treeID:       famId,
                 applicantsID: studentId,
                 gradeID:      row?._gradeId || 0,
                 sectionID:    row?._sectionId || 0,
               });
+              const linkPending = hrService.hrPendingInfo(linkResp);
+              if (linkPending) {
+                toast(`Student link sent for approval (Request #${linkPending.requestNo || linkPending.approvalId})`, 'info');
+              }
             }
             setFamilies(await studentService.getStuFamilies());
           } catch (e) {
@@ -5594,7 +5619,7 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
     if (!payload.name.trim()) { toast('Family name is required', 'error'); return; }
     const isEdit = editCfg.mode === 'edit';
     try {
-      await studentService.saveStuFamily({
+      const resp = await studentService.saveStuFamily({
         id:       isEdit ? editCfg.family.id : 0,
         name:     payload.name.trim(),
         guardian: payload.guardian,
@@ -5602,6 +5627,12 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
         email:    payload.email,
         details:  payload.details,
       });
+      const famPending = hrService.hrPendingInfo(resp);
+      if (famPending) {
+        toast(`Family ${isEdit ? 'update' : 'creation'} sent for approval (Request #${famPending.requestNo || famPending.approvalId})`, 'info');
+        setEditCfg(null);
+        return;
+      }
       setFamilies(await studentService.getStuFamilies());
       toast(isEdit ? `${payload.name} updated` : `${payload.name} created`, 'success');
     } catch (err) {
@@ -5613,9 +5644,15 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   /* action:delete via familytreecrud, then reload the list. */
   const handleDelete = async (family) => {
     try {
-      await studentService.deleteStuFamily({ id: family.id });
+      const resp = await studentService.deleteStuFamily({ id: family.id });
+      const famPending = hrService.hrPendingInfo(resp);
+      if (famPending) {
+        toast(`Family deletion sent for approval (Request #${famPending.requestNo || famPending.approvalId})`, 'info');
+        setDelCfg(null);
+        return;
+      }
       setFamilies(await studentService.getStuFamilies());
-      toast(`${family.name} deleted`, 'info');
+      toast(`${family.name} deleted`, 'success');
     } catch (err) {
       toast(err.message || 'Could not delete family', 'error');
     }
@@ -5625,9 +5662,16 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   /* Unlink a member: delete its family-tree detail by id, then reload families. */
   const handleUnlink = async (member) => {
     try {
-      await studentService.unlinkStuFromFamily({ id: member.detailID });
+      const resp = await studentService.unlinkStuFromFamily({ id: member.detailID });
+      const unlinkPending = hrService.hrPendingInfo(resp);
+
+      if (unlinkPending) {
+        toast(`Student unlink sent for approval (Request #${unlinkPending.requestNo || unlinkPending.approvalId})`, 'info');
+        return;
+      }
+
       setFamilies(await studentService.getStuFamilies());
-      toast('Student unlinked from family', 'info');
+      toast('Student unlinked from family', 'success');
     } catch (err) {
       toast(err.message || 'Could not unlink student', 'error');
     }

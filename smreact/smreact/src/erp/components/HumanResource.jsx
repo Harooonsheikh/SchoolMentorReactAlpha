@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
@@ -26,6 +26,7 @@ import {
   generateHrLeaveRegister,
   generateHrPayrollSummary,
 } from './hrReports';
+import AnnualLeaveSummaryReport from './AnnualLeaveSummaryReport';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { usePermissions } from '../context/PermissionsContext';
 
@@ -347,7 +348,12 @@ function HrBasics({
     };
 
     try {
-      await hrService.saveHrDept(apiPayload);
+      const resp = await hrService.saveHrDept(apiPayload);
+      const deptPending = hrService.hrPendingInfo(resp);
+      if (deptPending) {
+        toast(`Department ${isEdit ? 'update' : 'save'} sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+        return true;
+      }
       await reload();
       toast(isEdit ? 'Department updated' : 'Department added', 'success');
       return true;
@@ -368,7 +374,12 @@ function HrBasics({
       iconColor: '#DC2626',
       onConfirm: async () => {
         try {
-          await hrService.deleteHrDept({ id: dept.id });
+          const resp = await hrService.deleteHrDept({ id: dept.id });
+          const deptPending = hrService.hrPendingInfo(resp);
+          if (deptPending) {
+            toast(`Department deletion sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+            return;
+          }
           await reload();
           toast('Department deleted', 'success');
           if (openDeptId === dept.id) setOpenDeptId(null);
@@ -405,7 +416,12 @@ function HrBasics({
     };
 
     try {
-      await hrService.saveHrDesig(apiPayload);
+      const resp = await hrService.saveHrDesig(apiPayload);
+      const desigPending = hrService.hrPendingInfo(resp);
+      if (desigPending) {
+        toast(`Designation ${isEdit ? 'update' : 'save'} sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+        return true;
+      }
       await reload();
       toast(isEdit ? 'Designation updated' : 'Designation added', 'success');
       if (dId && openDeptId !== dId) setOpenDeptId(dId);
@@ -427,7 +443,12 @@ function HrBasics({
       iconColor: '#DC2626',
       onConfirm: async () => {
         try {
-          await hrService.deleteHrDesig({ id: desig.id });
+          const resp = await hrService.deleteHrDesig({ id: desig.id });
+          const desigPending = hrService.hrPendingInfo(resp);
+          if (desigPending) {
+            toast(`Designation deletion sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+            return;
+          }
           await reload();
           toast('Designation deleted', 'success');
         } catch (err) {
@@ -436,6 +457,20 @@ function HrBasics({
       },
     });
   };
+
+  /* Auto-refresh HR Basics when approvals are accepted elsewhere (Approvals screen)
+     or when user switches back to this tab. */
+  useEffect(() => {
+    const refresh = () => { reload(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="hrb-root">
@@ -971,6 +1006,7 @@ const HR_REPORT_META = {
   'dept-summary': { title: 'Department Summary', sub: 'Headcount, designations & salary cost per dept', icon: 'fa-building', gradFrom: 'rgba(2,132,199,.1)', gradTo: 'rgba(2,132,199,.18)', iconColor: '#0284C7', period: false, chips: ['Headcount', 'Cost Analysis', 'Dept-wise'], desc: 'Headcount, designations, salary cost & breakdown per department' },
   'leave-register': { title: 'Leave & Attendance Register', sub: 'Leave entitlements, balances & deduction policy', icon: 'fa-plane-departure', gradFrom: 'rgba(139,92,246,.1)', gradTo: 'rgba(139,92,246,.18)', iconColor: '#7C3AED', period: false, chips: ['Leave Balance', 'Policy', 'Deductions'], desc: 'Leave balances, entitlements, deductions & attendance policy per employee' },
   'payroll-summary': { title: 'Payroll Summary Report', sub: 'Month-wise payroll totals, deductions & status for all staff', icon: 'fa-chart-pie', gradFrom: 'rgba(15,118,110,.1)', gradTo: 'rgba(15,118,110,.18)', iconColor: '#0F766E', period: true, chips: ['Monthly', 'All Staff', 'Totals & Status'], desc: 'Month-wise payroll totals — gross pay, deductions, net payable & payment status overview' },
+  'annual-leave-summary': { title: 'Annual Leave Summary', sub: 'Annual leave entitlements, leaves, absenteeism & applicable salary deductions, per employee or for the whole school, for the active academic session', icon: 'fa-calendar-check', gradFrom: 'rgba(59,130,246,.1)', gradTo: 'rgba(59,130,246,.18)', iconColor: '#3B82F6', period: false, chips: ['Annual Leave Only', 'Session-wise', 'Deductions'], desc: 'Annual leave entitlements, leaves, absenteeism & applicable salary deductions, per employee or for the whole school, for the active academic session' },
 };
 
 function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
@@ -978,6 +1014,7 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
   const getDeptName = (id) => deptMap.get(id)?.name || '—';
   const getDesigName = (id) => desigMap.get(id)?.name || '—';
+  const branchId = Number(sessionStorage.getItem('branchID')) || 1;
 
   const [picker, setPicker] = useState(null); // { type }
   const [reportMonth, setReportMonth] = useState(() => {
@@ -1153,7 +1190,20 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
         />
       )}
 
-      {picker && picker.type !== 'directory' && (
+      {picker && picker.type === 'annual-leave-summary' && (
+        <AnnualLeaveSummaryReportModal
+          emps={emps}
+          depts={depts}
+          desigs={desigs}
+          getDeptName={getDeptName}
+          getDesigName={getDesigName}
+          toast={toast}
+          branchId={branchId}
+          onClose={() => setPicker(null)}
+        />
+      )}
+
+      {picker && picker.type !== 'directory' && picker.type !== 'annual-leave-summary' && (
         <HrRptModal
           type={picker.type}
           monthKey={reportMonth}
@@ -1163,6 +1213,27 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
         />
       )}
     </div>
+  );
+}
+
+/* ── Annual Leave Summary Report modal wrapper ── */
+function AnnualLeaveSummaryReportModal({ emps, depts, desigs, getDeptName, getDesigName, toast, branchId, onClose }) {
+  return createPortal(
+    <div className="overlay-backdrop" onClick={onClose}>
+      <div className="overlay-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '1400px', width: '95vw', maxHeight: '95vh', overflow: 'auto' }}>
+        <AnnualLeaveSummaryReport
+          emps={emps}
+          depts={depts}
+          desigs={desigs}
+          getDeptName={getDeptName}
+          getDesigName={getDesigName}
+          toast={toast}
+          branchId={branchId}
+          onBack={onClose}
+        />
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1515,27 +1586,30 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
         employee set) changes; month switching is instant since the whole
         year is already cached. ── */
   const [payrollLoading, setPayrollLoading] = useState(false);
-  useEffect(() => {
+
+  const loadPayroll = useCallback(async () => {
     if (!emps || !emps.length) return;
-    let alive = true;
     const y = Number(year);
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
     setPayrollLoading(true);
-    Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({}))))
-      .then((results) => {
-        if (!alive) return;
-        setEmpPayroll((prev) => {
-          const next = { ...prev };
-          results.forEach((map) => {
-            Object.entries(map).forEach(([eid, byKey]) => {
-              next[eid] = { ...(next[eid] || {}), ...byKey };
-            });
+    try {
+      const results = await Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({}))));
+      setEmpPayroll((prev) => {
+        const next = { ...prev };
+        results.forEach((map) => {
+          Object.entries(map).forEach(([eid, byKey]) => {
+            next[eid] = { ...(next[eid] || {}), ...byKey };
           });
-          return next;
         });
-      })
-      .finally(() => { if (alive) setPayrollLoading(false); });
-    return () => { alive = false; };
+        return next;
+      });
+    } finally {
+      setPayrollLoading(false);
+    }
+  }, [year, emps]);
+
+  useEffect(() => {
+    loadPayroll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, emps]);
 
@@ -1896,6 +1970,20 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
     setDelPay(null);
     toast('Payroll setup & payments deleted', 'success');
   };
+
+  /* Auto-refresh Financials when approvals are accepted elsewhere (Approvals screen)
+     or when user switches back to this tab. */
+  useEffect(() => {
+    const refresh = () => { loadPayroll(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadPayroll]);
 
   return (
     <div className="hrb-root">

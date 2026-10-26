@@ -117,17 +117,20 @@ export async function getHrDesigs() {
 /* Department add + edit share one endpoint; the caller builds the full
    save-department payload (id 0 = add, id > 0 = update). */
 export async function saveHrDept(payload) {
+  const userID = Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || 0);
   const res  = await fetch(buildUrl('/api/LaunchSetup/save-department'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, modifiedBy: userID }),
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not save department');
+  if (hrPendingInfo(json)) return json;
   return json;
 }
 export async function deleteHrDept({ id }) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-department/${id}`), {
+  const userID = Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || 0);
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-department/${id}?modifiedBy=${userID}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });
@@ -139,6 +142,7 @@ export async function deleteHrDept({ id }) {
     }
     throw new Error(msg || 'Could not delete department');
   }
+  if (hrPendingInfo(json)) return json;
   return json;
 }
 /* ─── Subject Assignment lookups (real grades/sections/subjects) ───
@@ -205,22 +209,26 @@ export async function getHrQualifications() {
 }
 /* Designation add + edit share one endpoint (designationID 0 = add). */
 export async function saveHrDesig(payload) {
+  const userID = Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || 0);
   const res  = await fetch(buildUrl('/api/LaunchSetup/save-department-designation'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, modifiedBy: userID }),
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not save designation');
+  if (hrPendingInfo(json)) return json;
   return json;
 }
 export async function deleteHrDesig({ id }) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-designation/${id}`), {
+  const userID = Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || 0);
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-designation/${id}?modifiedBy=${userID}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete designation');
+  if (hrPendingInfo(json)) return json;
   return json;
 }
 

@@ -88,6 +88,7 @@ const Attendance     = lazyTab(() => import(/* webpackChunkName: "mod-attendance
 const TimeTable      = lazyTab(() => import(/* webpackChunkName: "mod-timetable" */     './TimeTable.jsx'));
 const Fee            = lazyTab(() => import(/* webpackChunkName: "mod-fee" */           './Fee.jsx'));
 const Accounts       = lazyTab(() => import(/* webpackChunkName: "mod-accounts" */      './Accounts.jsx'));
+const Billing        = lazyTab(() => import(/* webpackChunkName: "mod-billing" */       './Billing.jsx'));
 const Inventory      = lazyTab(() => import(/* webpackChunkName: "mod-inventory" */     './Inventory.jsx'));
 const AdmissionCrm   = lazyTab(() => import(/* webpackChunkName: "mod-admissioncrm" */  './AdmissionCrm.jsx'));
 const Students       = lazyTab(() => import(/* webpackChunkName: "mod-students" */      './Students.jsx'));
@@ -133,6 +134,7 @@ const NAV_LABELS = {
   paper: 'Paper Generator',
   fee: 'Fee',
   accounts: 'Accounts',
+  billing: 'Billing',
   inventory: 'School Assets',
   students: 'Students',
   hr: 'Human Resource',
@@ -754,17 +756,24 @@ if (navId === 'mentorai') {
             </div>
           </div>
 
-          <div className="quick-bar">
-            <Tooltip text="Open your profile to view or update details">
-              <button className="qb-btn" onClick={() => setProfileOpen(true)}>
-                <i className="fa-solid fa-user-pen" style={{ fontSize: 11 }}></i> My Profile
+          <div className="quick-bar" style={{ flexDirection: 'column', gap: 8 }}>
+            <Tooltip text="View invoices and payment status">
+              <button className="qb-btn" onClick={() => setActive('billing')} style={{ border: '1.5px solid #2563EB', color: '#2563EB', background: 'transparent', fontWeight: 600, width: '100%' }}>
+                <i className="fa-solid fa-file-invoice-dollar" style={{ fontSize: 11 }}></i> Billing
               </button>
             </Tooltip>
-            <Tooltip text="Sign out of the ERP">
-              <button className="qb-btn danger" onClick={() => setLogoutOpen(true)}>
-                <i className="fa-solid fa-right-from-bracket" style={{ fontSize: 11 }}></i> Sign Out
-              </button>
-            </Tooltip>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Tooltip text="Open your profile to view or update details">
+                <button className="qb-btn" onClick={() => setProfileOpen(true)} style={{ flex: 1 }}>
+                  <i className="fa-solid fa-user-pen" style={{ fontSize: 11 }}></i> My Profile
+                </button>
+              </Tooltip>
+              <Tooltip text="Sign out of the ERP">
+                <button className="qb-btn danger" onClick={() => setLogoutOpen(true)} style={{ flex: 1 }}>
+                  <i className="fa-solid fa-right-from-bracket" style={{ fontSize: 11 }}></i> Sign Out
+                </button>
+              </Tooltip>
+            </div>
           </div>
         </aside>
 
@@ -874,6 +883,11 @@ if (navId === 'mentorai') {
             {active === 'accounts' && (
               <Suspense fallback={null}>
                 <Accounts toast={pushToast} />
+              </Suspense>
+            )}
+            {active === 'billing' && (
+              <Suspense fallback={null}>
+                <Billing onToast={pushToast} />
               </Suspense>
             )}
             {active === 'inventory' && (

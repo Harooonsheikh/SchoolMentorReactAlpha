@@ -1204,23 +1204,23 @@ function VehicleManagement({ toast }) {
     const isNew = !editing?.id;
     try {
       const resp = await feeService.saveVehicle({ id: editing?.id, ...payload });
-      /* Approval on + naya vehicle: backend ne asli row nahi banayi — form se
-         ghost row bana kar list me Pending badge + Withdraw ke saath dikhate. */
-      const pend = isNew ? pendingFromResp(resp, 'Vehicle sent for approval') : null;
+      const pend = pendingFromResp(resp, isNew ? 'Vehicle sent for approval' : 'Vehicle update sent for approval');
       if (pend) {
-        const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
-        const row = {
-          id: rid, _pendingAdd: true,
-          name: payload.name || '', regNo: payload.regNo || '', route: payload.route || '',
-          _approvalId: pend.approvalId, _requestNo: pend.requestNo,
-        };
-        setPendingAddRows(addPendingAdd(FEE_VEHICLE_MOD, { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+        if (isNew) {
+          const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+          const row = {
+            id: rid, _pendingAdd: true,
+            name: payload.name || '', regNo: payload.regNo || '', route: payload.route || '',
+            _approvalId: pend.approvalId, _requestNo: pend.requestNo,
+          };
+          setPendingAddRows(addPendingAdd(FEE_VEHICLE_MOD, { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+        }
         closeEdit();
-        toast(pend.message || 'Vehicle sent for approval', 'info');
+        toast(pend.message || pend.approvalId || 'Request sent for approval', 'info');
         loadVehPending();
         return;
       }
-      await refetch();          // server se real id ke saath dobara load
+      await refetch();
       closeEdit();
       toast(isNew ? 'Vehicle added' : 'Vehicle updated', 'success');
     } catch (e) {
@@ -1251,7 +1251,13 @@ function VehicleManagement({ toast }) {
       hint: "Students already assigned to this vehicle keep their route & transport fee — they'll just need a new vehicle picked next time their record is edited.",
       onConfirm: async () => {
         try {
-          await feeService.deleteVehicle(v.id);
+          const resp = await feeService.deleteVehicle(v.id);
+          const pend = pendingFromResp(resp, 'Vehicle deletion sent for approval');
+          if (pend) {
+            toast(pend.message || 'Vehicle deletion sent for approval', 'info');
+            loadVehPending();
+            return;
+          }
           await refetch();
           toast('Vehicle removed', 'success');
         } catch (e) {

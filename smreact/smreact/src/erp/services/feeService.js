@@ -578,10 +578,11 @@ export async function saveVehicle(vehicle) {
 }
 
 export async function deleteVehicle(id) {
-  await manageVehicle({
+  const json = await manageVehicle({
     action: 'delete', id: Number(id) || 0, branchID: transportFeeBranchID(),
     vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: transportFeeUserID(),
   });
+  if (isApprovalPending(json)) return json;
   return { id, deleted: true };
 }
 
