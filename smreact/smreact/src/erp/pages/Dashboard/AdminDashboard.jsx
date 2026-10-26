@@ -12,6 +12,7 @@ import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal, { loadAppStatusCounts } from './AppPendingReportModal';
 import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvanceAdjustmentReportModal } from './DailyReceivingReport';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
+import InactiveFeeImpactCard from './InactiveFeeImpactCard';
 import { buildDiscountMap } from './feeDashboardExtra';
 import { useLedgerReportData, ledgerInstallmentReceipts } from '../../components/Fee';
 import * as feeService from '../../services/feeService';
@@ -1884,6 +1885,27 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
             </div>
           </div>
           ) : <LockedCard title="Advance Payments Received" icon="fa-piggy-bank" />}
+
+          {/* ═════════ Inactive Students | Fee Impact — shows the
+              fee impact of students marked inactive during the selected
+              month. Rendered right after Advance Payments, as a
+              complementary informational card. ═════════ */}
+          {canSeeCard('fee_inactivestudents') ? (
+          <InactiveFeeImpactCard
+            feeData={{
+              classes: faClasses,
+              studentsMap: faStudentsMap,
+              headsMap: faHeadsMap,
+              discMap: faDiscMap,
+              generatedSet: faGeneratedSet,
+              receipts: faReceipts,
+              advanceLedger: faAdvanceLedger,
+            }}
+            monthIdx={feeMonthIdx}
+            monthLabel={feeMonthLabel}
+            duration={CHART_ANIM_MS}
+          />
+          ) : <LockedCard title="Inactive Students | Fee Impact" icon="fa-user-slash" />}
 
           {/* Download / Print Report link below the grid */}
           <div className="adm-link-row">

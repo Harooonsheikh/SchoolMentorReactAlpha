@@ -191,6 +191,30 @@ export const feeAnalyticsHelpContent = {
       note: 'Example only (for illustration, not live data). The PKR 20,000 applied is what appears on this card, and is subtracted from Pending Fee.',
     },
   },
+
+  inactiveFeeImpact: {
+    title: 'Inactive Students | Fee Impact',
+    icon: 'fa-user-slash',
+    tone: 'slate',
+    scope: 'Students marked as inactive during the selected month, and their financial impact.',
+    description:
+      'Inactive Students | Fee Impact shows students who were marked as inactive during the selected month, and calculates what their fee amounts would contribute if they were actively included. It uses the exact same formulas as the 8 main Fee Analytics cards, but applies them only to students flagged as inactive. This card does not automatically exclude inactive students from the other cards — it reports what an exclusion would show, helping you understand the financial impact of inactivated students.',
+    dataPoints: [
+      'Number of students inactivated during the selected month',
+      'Total fee amount that would be excluded if inactive students were filtered out',
+      'Breakdown: Current Challans, Previous Dues, Fee Received, Receiving Discounts, Advance Adjustments',
+      'Unused Advance Balance: remaining advance credit carried by these students',
+      'Uses identical formulas to all 8 main Fee Analytics cards',
+    ],
+    example: {
+      note: 'Example only (for illustration, not live data)',
+      rows: [
+        ['Students inactivated', '8'],
+        ['Total fee amount excluded', 'PKR 1,288,375'],
+        ['Unused advance balance', 'PKR 43,950'],
+      ],
+    },
+  },
 };
 
 /* Card → flow order, used to render the small "how the cards relate"
