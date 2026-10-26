@@ -734,8 +734,19 @@ export async function getAttendanceRemarks({ studentId, classId, sectionId, term
     parentAttendance: (row.parentAttendance ?? row.ParentAttendance) === true,
     parentComment: row.parentComment ?? row.ParentComment ?? '',
     teacherComment: row.teacherComment ?? row.TeacherComment ?? '',
-    promotionDecision: row.promotionDecision ?? row.PromotionDecision ?? '',
-    promotedClassId: Number(row.promotedClassId ?? row.PromotedClassId) || 0,
+    /* Promotion decision string ya boolean dono soorton me aa sakti hai —
+       dono handle karo taake re-open par "Promoted/Retained" select ho. */
+    promotionDecision: (() => {
+      const v = row.promotionDecision ?? row.PromotionDecision ?? row.promotionStatus ?? row.PromotionStatus;
+      if (v) return String(v).toLowerCase().includes('retain') ? 'retained'
+        : String(v).toLowerCase().includes('promot') ? 'promoted' : String(v);
+      if ((row.isPromoted ?? row.IsPromoted ?? row.promoted ?? row.Promoted) === true) return 'promoted';
+      if ((row.isRetained ?? row.IsRetained ?? row.retained ?? row.Retained) === true) return 'retained';
+      return '';
+    })(),
+    promotedClassId: Number(
+      row.promotedClassId ?? row.PromotedClassId ?? row.promotedClassID ?? row.promoteToClassId ?? row.PromoteToClassId
+    ) || 0,
   };
 }
 

@@ -891,7 +891,7 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
   const [teacherRemarks, setTeacherRemarks] = useState(existing?.teacherRemarks || '');
   const [finalRemarks, setFinalRemarks] = useState(existing?.finalRemarks || pGetFinalRemarks(pGradingScale, existing) || '');
   const [ptm, setPtm] = useState(existing?.ptm || { enabled: false, date: '', parentAttendance: false, parentComments: '', teacherComments: '' });
-  const [promotion, setPromotion] = useState(existing?.promotion || { status: null, toClass: '' }); // status: null | 'retained' | 'promoted' — null = "unselected", hidden from the result card
+  const [promotion, setPromotion] = useState(existing?.promotion || { status: null, toClass: '', toClassId: 0 }); // status: null | 'retained' | 'promoted' — null = "unselected", hidden from the result card
   const [attRemarksId, setAttRemarksId] = useState(0);   // saved row id → agli save UPDATE jaye
 
   /* Modal open: saved Attendance/Remarks/PTM get (action:'get') se laa kar fields bhar do. */
@@ -909,7 +909,13 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
           parentComments: r.parentComment || '', teacherComments: r.teacherComment || '',
         });
         if (r.promotionDecision) {
-          setPromotion({ status: r.promotionDecision, toClass: r.promotedClassId ? (resolvePromoteName?.(r.promotedClassId) || '') : '' });
+          /* toClassId bhi rakho — promote classes (id→name map) baad me load hon
+             to neeche wala effect naam resolve kar le (warna dropdown khali rehta). */
+          setPromotion({
+            status: r.promotionDecision,
+            toClass: r.promotedClassId ? (resolvePromoteName?.(r.promotedClassId) || '') : '',
+            toClassId: r.promotedClassId || 0,
+          });
         }
         if (r.workingDays || r.presentDays) {
           manualTouched.current = true;   // saved values hain → API-attendance se overwrite na ho
@@ -920,6 +926,20 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* Promote classes (id→name map) async load hote hain — jab aa jayen aur promotion
+     "promoted" ho magar naam resolve na hua ho (toClass khali), to toClassId se naam
+     nikaal kar dropdown select kar do. */
+  useEffect(() => {
+    setPromotion(p => {
+      if (p.status === 'promoted' && !p.toClass && p.toClassId) {
+        const nm = resolvePromoteName?.(p.toClassId) || '';
+        if (nm) return { ...p, toClass: nm };
+      }
+      return p;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allClasses]);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };

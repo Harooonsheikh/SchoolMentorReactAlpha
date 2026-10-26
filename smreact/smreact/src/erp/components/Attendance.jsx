@@ -3,10 +3,14 @@
   import Tooltip from "./Tooltip";
   import TutorialModal from "./TutorialModal";
   import * as attendanceService from "../services/attendanceService";
+  import * as profileService from "../services/profileService";
   import useAsync from "../hooks/useAsync";
   import { useModuleReadOnly, validateSessionDateFromStorage } from "../pages/Settings/settingsStore";
   import { usePermissions } from "../context/PermissionsContext";
 import { rankedMatches } from "../utils/studentSearch";
+import {
+  DEFAULT_ATTENDANCE_SETUP, validateAttendanceSetup, isGeofenceConfigured, describeAttendanceRules,
+} from "../utils/attendanceRules";
 import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
 import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName, StandardReportPicker, reportAcademicYear } from '../reports/reportKit';
   /* ============================================================================
@@ -15,7 +19,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     Faithful React port of the original vanilla-JS Attendance screen.
     - Vanilla DOM manipulation (getElementById / innerHTML / onclick) has been
       replaced with React state (useState) and real event handlers.
-    - Four tabs: Holidays Setup · Student Attendance · Staff Attendance · Reports
+    - Four tabs: Attendance Setup · Student Attendance · Staff Attendance · Reports
     - Inline styles + CSS variables, matching the original blue-gradient design.
 
     Drop-in usage:
@@ -236,15 +240,563 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
 
   // InfoBar/ReportBtn/StatusBadge removed — superseded by att-* CSS classes.
 
-  /* ─── Tab 1: Holidays Setup ─────────────────────────────────────────────────
+  /* ─── Working Hours & Attendance Rules ──────────────────────────────────────
+     The centralized configuration that src/utils/attendanceRules.js turns
+     into Present/Late/Short Leave/Full Day. Lives inside Attendance Setup
+     (formerly Holidays Setup) because it is now the broader attendance
+     configuration section, not just holidays. */
+  /* Simple two-option pill toggle, reused by both the Staff and Student
+     Working Hours sections for their own Time Tracking Mode — plain
+     inline styling (no new att-seg-* CSS) since .att-radio-btn's active
+     colors are hard-wired to the P/A/L/H letter classes. */
+  function TrackingModeToggle({ value, onChange }) {
+    const opt = (v, label, icon) => (
+      <button
+        type="button"
+        className="att-radio-btn"
+        style={value === v
+          ? { borderColor: "var(--brand-solid, #1E40AF)", background: "rgba(var(--brand-primary-rgb), .1)", color: "var(--brand-solid, #1E40AF)", fontWeight: 700 }
+          : undefined}
+        onClick={() => onChange(v)}
+      >
+        <i className={`fa-solid ${icon}`} style={{ marginRight: 5 }}></i>{label}
+      </button>
+    );
+    return (
+      <div className="att-radio-group">
+        {opt("in_out", "Time In & Time Out", "fa-right-left")}
+        {opt("in_only", "Time In Only", "fa-right-to-bracket")}
+      </div>
+    );
+  }
+
+  function WorkingHoursSection({ setup, onSave, saving }) {
+    const [draft, setDraft] = useState(setup);
+    useEffect(() => { setDraft(setup); }, [setup]);
+
+    const trackTimeOut = draft.staffTrackingMode !== "in_only";
+    const errors  = useMemo(() => validateAttendanceSetup(draft), [draft]);
+    const summary = useMemo(() => describeAttendanceRules({ ...draft, trackTimeOut }), [draft, trackTimeOut]);
+
+    const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    const save = () => onSave(draft);
+
+    const chipClass = (label) => (
+      label === "Present" ? "present" :
+      label === "Late" ? "late" :
+      label === "Short Leave" ? "short-leave" :
+      label === "Full Day" ? "full-day" : "neutral"
+    );
+
+    const Field = ({ field, label, help }) => (
+      <div>
+        <label className="att-label">{label} *</label>
+        <input
+          type="time"
+          className={`att-input${errors[field] ? " error" : ""}`}
+          value={draft[field] || ""}
+          onChange={(e) => set(field, e.target.value)}
+        />
+        {errors[field]
+          ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors[field]}</div>
+          : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>{help}</div>}
+      </div>
+    );
+
+    return (
+      <div className="att-section">
+        <div className="att-section-header">
+          <div className="att-section-title">
+            <div className="att-section-icon"><i className="fa-solid fa-business-time"></i></div>
+            <div>
+              <div className="att-section-name">Working Hours &amp; Attendance Rules — Staff</div>
+              <div className="att-section-sub">Configure staff working hours and automatically determine attendance status from time in and time out.</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div className="att-toggle-row">
+              <span className="att-toggle-label">{draft.isEnabled ? "Enabled" : "Disabled"}</span>
+              <Tooltip text={draft.isEnabled ? "Turn off automatic status calculation" : "Turn on automatic status calculation"}>
+                <button
+                  type="button"
+                  className={`att-toggle${draft.isEnabled ? " on" : ""}`}
+                  onClick={() => set("isEnabled", !draft.isEnabled)}
+                  aria-pressed={draft.isEnabled}
+                  aria-label="Enable automatic attendance rules"
+                >
+                  <span className="att-toggle-knob" />
+                </button>
+              </Tooltip>
+            </div>
+            <Tooltip text="Save working hours and attendance rules">
+              <button className="att-btn-save-small" disabled={saving} onClick={save}>
+                <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+        <div className="att-section-body">
+          {!draft.isEnabled && (
+            <div className="att-setup-disabled-note">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>Automatic status calculation is off. Staff attendance keeps using manual status selection until you enable this.</span>
+            </div>
+          )}
+          <div className="att-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>These rules are evaluated after holidays, weekly off days and approved leave — a non-working day is never reclassified as Present or Late.</span>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-left"></i> Time Tracking</div>
+            <TrackingModeToggle value={draft.staffTrackingMode || "in_out"} onChange={(v) => set("staffTrackingMode", v)} />
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 7 }}>
+              {trackTimeOut
+                ? "Staff Time Out is tracked — it stays visible on the marking screen, the staff list, and every staff report."
+                : "Time In only. Staff Time Out is hidden everywhere — the marking screen, the staff list, and every staff report."}
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-school"></i> Working Hours</div>
+            <div className="att-field-row">
+              <Field field="schoolStartTime" label="School Start Time" help="The official start time of the school day." />
+              <Field field="schoolEndTime" label="School End Time" help="The official end time of the school day." />
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-to-bracket"></i> Time In Rules</div>
+            <div className="att-field-row cols-3">
+              <Field field="attendanceStartTime" label="Attendance Start Time" help="Earliest time a check-in counts toward today's attendance." />
+              <Field field="normalTimeInUntil" label="Normal Time-In Until" help="Attendance marked on or before this time will be considered Present." />
+              <Field field="lateAfter" label="Late After" help="Attendance marked after this time will automatically be considered Late." />
+            </div>
+          </div>
+
+          {trackTimeOut && (
+            <div className="att-subsection">
+              <div className="att-subsection-title"><i className="fa-solid fa-right-from-bracket"></i> Time Out Rules</div>
+              <div className="att-field-row">
+                <Field field="shortLeaveFrom" label="Short Leave Before" help="Teachers checking out before this time will be marked as Short Leave." />
+                <Field field="fullDayTimeOut" label="Full Day Time-Out" help="Teachers checking out at or after this time will complete the normal full working day." />
+              </div>
+            </div>
+          )}
+
+          <div className="att-rule-summary">
+            <div className="att-rule-summary-title"><i className="fa-solid fa-wand-magic-sparkles"></i> Attendance Rules Summary</div>
+            <div className="att-rule-group">
+              <div className="att-rule-group-label">Time In</div>
+              {summary.timeIn.map((row) => (
+                <div className="att-rule-row" key={`in-${row.label}`}>
+                  <span className="att-rule-range">{row.range}</span>
+                  <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                  <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                </div>
+              ))}
+            </div>
+            {trackTimeOut && (
+              <div className="att-rule-group">
+                <div className="att-rule-group-label">Time Out</div>
+                {summary.timeOut.map((row) => (
+                  <div className="att-rule-row" key={`out-${row.label}`}>
+                    <span className="att-rule-range">{row.range}</span>
+                    <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                    <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="att-info" style={{ marginBottom: 0, marginTop: 14 }}>
+            <i className="fa-solid fa-circle-info"></i>
+            <span>
+              {trackTimeOut
+                ? "Attendance status is calculated automatically using your school's configured timings. Time In determines whether a teacher is Present or Late, while Time Out determines whether the teacher qualifies for Short Leave or completes the full working day."
+                : "Attendance status is calculated automatically using your school's configured timings. Time In determines whether a teacher is Present or Late — this school only tracks Time In, so Short Leave and Full Day do not apply."}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Working Hours & Attendance Rules — Students ───────────────────────────
+     Same shape and engine as the Staff section above, but entirely its own
+     fields (student*-prefixed) and its own enable switch — a school's class
+     timings are usually different from staff timings, so this is independent,
+     not a copy that has to match. Validates locally (it reuses
+     validateAttendanceSetup/describeAttendanceRules on a reshaped slice of
+     just the student* fields) rather than relying on the parent save gate,
+     which only ever checked the staff field names.
+
+     What this configures vs. what Student Attendance's own marking screen
+     does: Mark Attendance stays a teacher's direct judgment call (Present /
+     Late / Absent / Leave) — there's no per-student check-in timestamp in this
+     app to run through a rule engine. These rules are the school's official
+     policy: a reference for admins, and what a future automatic source (the
+     mobile app, a biometric gate) would apply once one exists. */
+  function StudentWorkingHoursSection({ setup, onSave, saving, toast }) {
+    const [draft, setDraft] = useState(setup);
+    useEffect(() => { setDraft(setup); }, [setup]);
+
+    const trackTimeOut = draft.studentTrackingMode !== "in_only";
+    const slice = useMemo(() => ({
+      isEnabled: draft.studentRulesEnabled,
+      schoolStartTime: draft.studentSchoolStartTime,
+      schoolEndTime: draft.studentSchoolEndTime,
+      attendanceStartTime: draft.studentAttendanceStartTime,
+      normalTimeInUntil: draft.studentNormalTimeInUntil,
+      lateAfter: draft.studentLateAfter,
+      shortLeaveFrom: draft.studentShortLeaveFrom,
+      fullDayTimeOut: draft.studentFullDayTimeOut,
+      trackTimeOut,
+    }), [draft, trackTimeOut]);
+
+    const errors  = useMemo(() => validateAttendanceSetup(slice), [slice]);
+    const summary = useMemo(() => describeAttendanceRules(slice), [slice]);
+
+    const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    const save = () => {
+      if (Object.keys(errors).length) { toast("Fix the highlighted fields before saving.", "error"); return; }
+      onSave(draft);
+    };
+
+    const chipClass = (label) => (
+      label === "Present" ? "present" :
+      label === "Late" ? "late" :
+      label === "Short Leave" ? "short-leave" :
+      label === "Full Day" ? "full-day" : "neutral"
+    );
+
+    const Field = ({ field, draftField, label, help }) => (
+      <div>
+        <label className="att-label">{label} *</label>
+        <input
+          type="time"
+          className={`att-input${errors[field] ? " error" : ""}`}
+          value={draft[draftField] || ""}
+          onChange={(e) => set(draftField, e.target.value)}
+        />
+        {errors[field]
+          ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors[field]}</div>
+          : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>{help}</div>}
+      </div>
+    );
+
+    return (
+      <div className="att-section">
+        <div className="att-section-header">
+          <div className="att-section-title">
+            <div className="att-section-icon"><i className="fa-solid fa-user-graduate"></i></div>
+            <div>
+              <div className="att-section-name">Working Hours &amp; Attendance Rules — Students</div>
+              <div className="att-section-sub">Configure class timings and the school's policy for when a student is considered late.</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div className="att-toggle-row">
+              <span className="att-toggle-label">{draft.studentRulesEnabled ? "Enabled" : "Disabled"}</span>
+              <Tooltip text={draft.studentRulesEnabled ? "Turn off the student attendance policy" : "Turn on the student attendance policy"}>
+                <button
+                  type="button"
+                  className={`att-toggle${draft.studentRulesEnabled ? " on" : ""}`}
+                  onClick={() => set("studentRulesEnabled", !draft.studentRulesEnabled)}
+                  aria-pressed={draft.studentRulesEnabled}
+                  aria-label="Enable student attendance rules"
+                >
+                  <span className="att-toggle-knob" />
+                </button>
+              </Tooltip>
+            </div>
+            <Tooltip text="Save student working hours and attendance rules">
+              <button className="att-btn-save-small" disabled={saving} onClick={save}>
+                <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+        <div className="att-section-body">
+          {!draft.studentRulesEnabled && (
+            <div className="att-setup-disabled-note">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>This policy is off. It's shown here for reference only — marking a student Late in Student Attendance is always the teacher's own call, on or off.</span>
+            </div>
+          )}
+          <div className="att-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Student Attendance is marked directly by the teacher (Present / Late / Absent / Leave) — these timings don't auto-mark anyone. They're the school's official policy: a clear reference for staff, and what a future automatic source (the mobile app, a biometric gate) would apply.</span>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-left"></i> Time Tracking</div>
+            <TrackingModeToggle value={draft.studentTrackingMode || "in_out"} onChange={(v) => set("studentTrackingMode", v)} />
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 7 }}>
+              {trackTimeOut
+                ? "Student Time Out (class dismissal time) is tracked."
+                : "Time In only. Student Time Out is hidden everywhere it would otherwise appear."}
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-school"></i> Class Hours</div>
+            <div className="att-field-row">
+              <Field field="schoolStartTime" draftField="studentSchoolStartTime" label="School Start Time" help="The official start time of the school day for students." />
+              <Field field="schoolEndTime" draftField="studentSchoolEndTime" label="School End Time" help="The official end time of the school day for students." />
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-to-bracket"></i> Time In Rules</div>
+            <div className="att-field-row cols-3">
+              <Field field="attendanceStartTime" draftField="studentAttendanceStartTime" label="Attendance Start Time" help="Earliest time counted toward today's attendance." />
+              <Field field="normalTimeInUntil" draftField="studentNormalTimeInUntil" label="Normal Time-In Until" help="A student arriving on or before this time is Present." />
+              <Field field="lateAfter" draftField="studentLateAfter" label="Late After" help="A student arriving after this time is Late." />
+            </div>
+          </div>
+
+          {trackTimeOut && (
+            <div className="att-subsection">
+              <div className="att-subsection-title"><i className="fa-solid fa-right-from-bracket"></i> Time Out Rules</div>
+              <div className="att-field-row">
+                <Field field="shortLeaveFrom" draftField="studentShortLeaveFrom" label="Short Leave Before" help="A student leaving before this time is a Short Leave." />
+                <Field field="fullDayTimeOut" draftField="studentFullDayTimeOut" label="Full Day Time-Out" help="A student leaving at or after this time completes the normal full day." />
+              </div>
+            </div>
+          )}
+
+          <div className="att-rule-summary">
+            <div className="att-rule-summary-title"><i className="fa-solid fa-wand-magic-sparkles"></i> Attendance Rules Summary</div>
+            <div className="att-rule-group">
+              <div className="att-rule-group-label">Time In</div>
+              {summary.timeIn.map((row) => (
+                <div className="att-rule-row" key={`in-${row.label}`}>
+                  <span className="att-rule-range">{row.range}</span>
+                  <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                  <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                </div>
+              ))}
+            </div>
+            {trackTimeOut && (
+              <div className="att-rule-group">
+                <div className="att-rule-group-label">Time Out</div>
+                {summary.timeOut.map((row) => (
+                  <div className="att-rule-row" key={`out-${row.label}`}>
+                    <span className="att-rule-range">{row.range}</span>
+                    <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                    <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Geo-Fenced Attendance ──────────────────────────────────────────────────
+     Lets a school enter its own location once, and turn on/off letting Admin
+     and Teacher staff mark their OWN attendance (Time In / Time Out) from the
+     mobile app, restricted to being physically within the radius below of that
+     location. This screen only configures the location + radius that the
+     mobile app's own geofence check reads — it doesn't do the checking itself
+     (that happens on the staff member's device, and again, authoritatively,
+     on the server, every time they mark attendance). Disabled by default, same
+     "nothing changes until a school turns it on" convention as every other
+     setting in this tab. Field names (latitude/longitude/geofenceRadiusMeters/
+     maxAccuracyMeters) match what the real backend's school-location API is
+     expected to return, so this isn't just a mock shape — it's the same one a
+     real API can be wired into later with no restructuring. */
+  function GeofenceSection({ setup, onSave, saving, toast }) {
+    const [draft, setDraft] = useState(setup);
+    useEffect(() => { setDraft(setup); }, [setup]);
+    const [locating, setLocating] = useState(false);
+
+    /* School / Campus Name is never typed here — it's the same school
+       name already used everywhere else in this ERP (profileService),
+       so staff on the mobile app see the one real school name, never a
+       second, independently-typed copy that could drift out of sync. */
+    const { data: profile } = useAsync(profileService.getProfile, []);
+    const schoolDisplayName = profile?.campus || profile?.name || "";
+
+    const errors = useMemo(() => validateAttendanceSetup(draft), [draft]);
+    const configured = isGeofenceConfigured(draft);
+
+    const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    const save = () => onSave({ ...draft, schoolLocationName: schoolDisplayName });
+
+    const useMyLocation = () => {
+      if (!navigator.geolocation) { toast("This browser/device does not support location.", "error"); return; }
+      setLocating(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          set("latitude", Number(pos.coords.latitude.toFixed(6)));
+          set("longitude", Number(pos.coords.longitude.toFixed(6)));
+          setLocating(false);
+          toast("Location captured from this device.", "success");
+        },
+        () => {
+          setLocating(false);
+          toast("Could not get this device's location. Please allow location access and try again.", "error");
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    };
+
+    return (
+      <div className="att-section">
+        <div className="att-section-header">
+          <div className="att-section-title">
+            <div className="att-section-icon"><i className="fa-solid fa-location-dot"></i></div>
+            <div>
+              <div className="att-section-name">Geo-Fenced Attendance</div>
+              <div className="att-section-sub">Let Admin and Teacher staff mark their own attendance from the mobile app, only when they are physically inside the school's boundary.</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div className="att-toggle-row">
+              <span className="att-toggle-label">{draft.geofenceEnabled ? "Enabled" : "Disabled"}</span>
+              <Tooltip text={draft.geofenceEnabled ? "Turn off self-attendance from the mobile app" : "Turn on self-attendance from the mobile app"}>
+                <button
+                  type="button"
+                  className={`att-toggle${draft.geofenceEnabled ? " on" : ""}`}
+                  onClick={() => set("geofenceEnabled", !draft.geofenceEnabled)}
+                  aria-pressed={draft.geofenceEnabled}
+                  aria-label="Enable geo-fenced attendance"
+                >
+                  <span className="att-toggle-knob" />
+                </button>
+              </Tooltip>
+            </div>
+            <Tooltip text="Save the school location and geofence settings">
+              <button className="att-btn-save-small" disabled={saving} onClick={save}>
+                <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="att-section-body">
+          {!draft.geofenceEnabled && (
+            <div className="att-setup-disabled-note">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>Geo-fenced attendance is off. Admin and Teacher staff cannot mark their own attendance from the mobile app until you enable this and set the school's location below.</span>
+            </div>
+          )}
+          {draft.geofenceEnabled && !configured && (
+            <div className="att-setup-disabled-note">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <span>This is turned on, but the school's location isn't set yet. Enter it below, or use "Use This Device's Location" while standing at the school, then save.</span>
+            </div>
+          )}
+          <div className="att-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Once enabled, a staff member must be within the radius below of this location to mark Time In / Time Out from the mobile app. The device checks this first for quick feedback; the server checks it again and is always the final authority — this screen only sets where "the school" is and how wide that boundary is.</span>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-school"></i> School Location</div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">School / Campus Name</label>
+                <input
+                  type="text"
+                  className="att-input"
+                  value={schoolDisplayName}
+                  disabled
+                  readOnly
+                  style={{ background: "var(--bg-muted, #F1F5F9)", color: "var(--text-secondary, #475569)", cursor: "not-allowed" }}
+                />
+                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>Your school's name, same as the rest of School Mentor. Shown to staff on the mobile app so they know which location they're being checked against.</div>
+              </div>
+              <div>
+                <label className="att-label">&nbsp;</label>
+                <Tooltip text="Fill in Latitude and Longitude from this device's current location">
+                  <button type="button" className="att-btn-secondary" disabled={locating} onClick={useMyLocation} style={{ height: 42, width: "100%", justifyContent: "center" }}>
+                    <i className={`fa-solid ${locating ? "fa-spinner fa-spin" : "fa-location-crosshairs"}`}></i> {locating ? "Locating…" : "Use This Device's Location"}
+                  </button>
+                </Tooltip>
+                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>Easiest way to set this: open this page on a phone or laptop while standing at the school, then tap this.</div>
+              </div>
+            </div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">Latitude {draft.geofenceEnabled && "*"}</label>
+                <input
+                  type="number" step="0.000001"
+                  className={`att-input${errors.latitude ? " error" : ""}`}
+                  value={draft.latitude ?? ""}
+                  onChange={(e) => set("latitude", e.target.value === "" ? null : Number(e.target.value))}
+                  placeholder="e.g. 31.520400"
+                />
+                {errors.latitude && <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.latitude}</div>}
+              </div>
+              <div>
+                <label className="att-label">Longitude {draft.geofenceEnabled && "*"}</label>
+                <input
+                  type="number" step="0.000001"
+                  className={`att-input${errors.longitude ? " error" : ""}`}
+                  value={draft.longitude ?? ""}
+                  onChange={(e) => set("longitude", e.target.value === "" ? null : Number(e.target.value))}
+                  placeholder="e.g. 74.358700"
+                />
+                {errors.longitude && <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.longitude}</div>}
+              </div>
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-draw-polygon"></i> Geofence Boundary</div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">Geofence Radius (metres) {draft.geofenceEnabled && "*"}</label>
+                <input
+                  type="number" min="10" max="5000" step="10"
+                  className={`att-input${errors.geofenceRadiusMeters ? " error" : ""}`}
+                  value={draft.geofenceRadiusMeters ?? ""}
+                  onChange={(e) => set("geofenceRadiusMeters", e.target.value === "" ? "" : Number(e.target.value))}
+                />
+                {errors.geofenceRadiusMeters
+                  ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.geofenceRadiusMeters}</div>
+                  : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>How far from the location above a staff member is still allowed to mark attendance. A typical school campus uses 150–300 metres.</div>}
+              </div>
+              <div>
+                <label className="att-label">Maximum GPS Accuracy (metres)</label>
+                <input
+                  type="number" min="10" max="1000" step="10"
+                  className={`att-input${errors.maxAccuracyMeters ? " error" : ""}`}
+                  value={draft.maxAccuracyMeters ?? ""}
+                  onChange={(e) => set("maxAccuracyMeters", e.target.value === "" ? "" : Number(e.target.value))}
+                />
+                {errors.maxAccuracyMeters
+                  ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.maxAccuracyMeters}</div>
+                  : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>Rejects a check-in from a device whose GPS signal is too weak to trust, even if it looks close enough.</div>}
+              </div>
+            </div>
+          </div>
+
+          <div className="att-info">
+            <i className={`fa-solid ${configured ? "fa-circle-check" : "fa-circle-xmark"}`} style={{ color: configured ? "#16A34A" : "#DC2626" }}></i>
+            <span>{configured ? "School location is configured." : "School location is not configured yet."} Student and Staff Attendance in the ERP keep working exactly as before either way — this setting only controls whether Admin/Teacher can additionally self-mark their own attendance from the mobile app.</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+
+  /* ─── Tab 1: Attendance Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onSaveAttendanceSetup, savingSetup = false }) {
     const { can } = usePermissions();
-    const canHolCreate   = can("Attendance", "Holidays Setup", "Create");
-    const canHolEdit     = can("Attendance", "Holidays Setup", "Edit");
-    const canHolDelete   = can("Attendance", "Holidays Setup", "Delete");
-    const canHolDownload = can("Attendance", "Holidays Setup", "Download");
+    const canHolCreate   = can("Attendance", "Attendance Setup", "Create");
+    const canHolEdit     = can("Attendance", "Attendance Setup", "Edit");
+    const canHolDelete   = can("Attendance", "Attendance Setup", "Delete");
+    const canHolDownload = can("Attendance", "Attendance Setup", "Download");
     const [openMonth, setOpenMonth] = useState(null);
       const holYear = sessionName;
 
@@ -480,6 +1032,12 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             </div>
           </div>
         </div>
+        {/* Working Hours & Attendance Rules — centralized via src/utils/attendanceRules.js */}
+        <WorkingHoursSection setup={attendanceSetup} onSave={onSaveAttendanceSetup} saving={savingSetup} />
+        <StudentWorkingHoursSection setup={attendanceSetup} onSave={onSaveAttendanceSetup} saving={savingSetup} toast={toast} />
+
+        {/* Geo-Fenced Attendance — school location + radius for mobile self-attendance */}
+        <GeofenceSection setup={attendanceSetup} onSave={onSaveAttendanceSetup} saving={savingSetup} toast={toast} />
       </>
     );
   }
@@ -3519,7 +4077,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
   /* ─── Main component ──────────────────────────────────────────────────────── */
   export default function Attendance({ onToast }) {
     const ALL_TABS = [
-      { id: "holidays", label: "Holidays Setup",     icon: "fa-umbrella-beach" },
+      { id: "holidays", label: "Attendance Setup",     icon: "fa-umbrella-beach" },
       { id: "student",  label: "Student Attendance", icon: "fa-user-graduate" },
       { id: "staff",    label: "Staff Attendance",   icon: "fa-users" },
       { id: "reports",  label: "Reports",            icon: "fa-chart-bar" },
@@ -3731,6 +4289,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       })();
     }, []);
 // Attendance component mein, useAsync ki jagah yeh use karo
+const { data: attendanceSetup = DEFAULT_ATTENDANCE_SETUP, setData: setAttendanceSetup } = useAsync(attendanceService.getAttendanceSetup, [], DEFAULT_ATTENDANCE_SETUP);
+const [savingSetup, setSavingSetup] = useState(false);
 const [weeklyOff, setWeeklyOff] = useState([]);
 const [weeklyOffLoading, setWeeklyOffLoading] = useState(true);
 
@@ -4649,7 +5209,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       }
     }, [ensureSessionID, ensureClasses, toast]);
 
-    // Holidays Setup tab active hote hi saara data API se laao (action:"get").
+    // Attendance Setup tab active hote hi saara data API se laao (action:"get").
     // UI kahi change nahi — bas har month ka data fetch karke populate hota hai.
     const loadAllHolidays = useCallback(async () => {
       const branchID   = Number(sessionStorage.getItem("branchID"));
@@ -4917,6 +5477,29 @@ useEffect(() => {
     }, [blockIfReadOnly]);
     // YEH CODE Attendance component ke ANDAR add karo (around line 2530)
 // Attendance component mein onSaveWeeklyOff ko update karo
+/* Working Hours & Attendance Rules — validates, then round-trips through
+   attendanceService before confirming success, same loading/error handling
+   every other Save & Update in this module follows. */
+const saveAttendanceSetupDraft = useCallback(async (draft) => {
+  if (blockIfReadOnly()) return {};
+  const errors = validateAttendanceSetup(draft);
+  if (Object.keys(errors).length) {
+    toast("Fix the highlighted fields before saving.", "error");
+    return errors;
+  }
+  setSavingSetup(true);
+  try {
+    const saved = await attendanceService.saveAttendanceSetup(draft);
+    setAttendanceSetup(saved);
+    toast("Attendance rules saved", "success");
+  } catch {
+    toast("Could not save attendance rules. Please try again.", "error");
+  } finally {
+    setSavingSetup(false);
+  }
+  return {};
+}, [blockIfReadOnly, toast, setAttendanceSetup]);
+
 const onSaveWeeklyOff = useCallback(async () => {
   if (blockIfReadOnly()) return;
   const branchID = Number(sessionStorage.getItem("branchID"));
@@ -5141,6 +5724,9 @@ const saveHoliday = useCallback(async (payload) => {
             isOtherSession={isOtherSession}
             prevDaysAttendance={prevDaysAttendance}
             onTogglePrevDays={togglePrevDaysAttendance}
+            attendanceSetup={attendanceSetup}
+            onSaveAttendanceSetup={saveAttendanceSetupDraft}
+            savingSetup={savingSetup}
           />
         )}
         {tab === "student" && (
@@ -6071,4 +6657,32 @@ const saveHoliday = useCallback(async (payload) => {
     .att-confirm-btns { flex-direction:column; gap:8px; }
     .att-confirm-btns > * { width:100%; }
   }
+  .att-field-error { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:#DC2626; margin-top:5px; }
+  
+  /* Working Hours & Attendance Rules */
+  .att-subsection { margin-bottom:18px; }
+  .att-subsection-title { display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:800; color:#1E3A8A; letter-spacing:.3px; text-transform:uppercase; margin-bottom:12px; }
+  .att-subsection-title i { font-size:11px; color:#2563EB; }
+  .att-toggle-row { display:flex; align-items:center; gap:10px; }
+  .att-toggle-label { font-size:12.5px; font-weight:700; color:#1E3A5F; }
+  .att-toggle { position:relative; width:42px; height:24px; border-radius:9999px; border:none; background:#CBD5E1; cursor:pointer; transition:all .2s; flex-shrink:0; padding:0; }
+  .att-toggle.on { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); }
+  .att-toggle-knob { position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:all .2s; }
+  .att-toggle.on .att-toggle-knob { left:21px; }
+  .att-setup-disabled-note { display:flex; align-items:flex-start; gap:9px; background:#FFF7ED; border:1px solid #FDE4B8; border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:12px; color:#92400E; line-height:1.55; }
+  .att-setup-disabled-note i { color:#D97706; flex-shrink:0; margin-top:1px; }
+  .att-rule-summary { background:#F8FAFF; border:1px solid #BFDBFE; border-radius:12px; padding:14px 16px; }
+  .att-rule-summary-title { font-size:12px; font-weight:800; color:#1E3A8A; margin-bottom:10px; display:flex; align-items:center; gap:7px; }
+  .att-rule-group { margin-bottom:12px; }
+  .att-rule-group:last-child { margin-bottom:0; }
+  .att-rule-group-label { font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:.3px; margin-bottom:7px; }
+  .att-rule-row { display:flex; align-items:center; gap:10px; padding:7px 0; font-size:12.5px; }
+  .att-rule-range { color:#1E3A5F; font-weight:600; flex:1; }
+  .att-rule-arrow { color:#94A3B8; }
+  .att-rule-chip { display:inline-flex; align-items:center; padding:3px 11px; border-radius:9999px; font-size:11px; font-weight:800; white-space:nowrap; }
+  .att-rule-chip.present { background:#DCFCE7; color:#16A34A; }
+  .att-rule-chip.late { background:#FEF3C7; color:#B45309; }
+  .att-rule-chip.short-leave { background:#EDE9FE; color:#6D28D9; }
+  .att-rule-chip.full-day { background:#DBEAFE; color:#1E40AF; }
+  .att-rule-chip.neutral { background:#F1F5F9; color:#64748B; }
   `;

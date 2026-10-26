@@ -1565,6 +1565,13 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
      Key format: `${empId}_${monthKey}` (e.g. "123_2026-10"), value: { approvalId, requestNo, message } */
   const [paymentPendingMap, setPaymentPendingMap] = useState({});
 
+  /* Payroll deletion pending approvals: tracks which payroll records are awaiting deletion approval.
+     Key format: `${payrollID}`, value: { approvalId, requestNo, message } */
+  const [payrollDeletePendingMap, setPayrollDeletePendingMap] = useState({});
+
+  /* Pending approvals from the Approvals API — pulls ALL pending approvals across all modules. */
+  const [pendingApprovals, setPendingApprovals] = useState([]);
+
   /* Fetch (or refresh) one employee's loans into empLoans[empId]. */
   const loadEmpLoans = async (empId) => {
     if (!empId) return;
@@ -1593,7 +1600,10 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
     setPayrollLoading(true);
     try {
-      const results = await Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({}))));
+      const [results, approvals] = await Promise.all([
+        Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({})))),
+        approvalsService.getPendingApprovals().catch(() => []),
+      ]);
       setEmpPayroll((prev) => {
         const next = { ...prev };
         results.forEach((map) => {
@@ -1603,6 +1613,7 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
         });
         return next;
       });
+      setPendingApprovals(approvals || []);
     } finally {
       setPayrollLoading(false);
     }
@@ -1961,8 +1972,10 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
     }
     if (deletePending) {
       setDelBusy(false);
+      setPayrollDeletePendingMap(m => ({ ...m, [payrollID]: deletePending }));
       setDelPay(null);
       toast(`Payroll deletion sent for approval (Request #${deletePending.requestNo || deletePending.approvalId})`, 'info');
+      await loadPayroll();
       return;
     }
     removeRec(e.id, month, year);
@@ -2080,6 +2093,8 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
             const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
             const payKey = `${e.id}_${monthKey}`;
             const rec = getRec(e.id);
+            const deletePendingFromLocal = rec && rec.id ? payrollDeletePendingMap[rec.id] : null;
+            const deletePendingFromApi = rec && rec.id ? pendingApprovals.find(a => a.entityId === rec.id && a.actionType && a.actionType.includes('delete')) : null;
             return (
             <PayrollRow
               key={e.id}
@@ -2087,7 +2102,7 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
               emp={e}
               month={month}
               year={year}
-              rec={rec ? { ...rec, paymentPending: paymentPendingMap[payKey] || rec.paymentPending } : null}
+              rec={rec ? { ...rec, paymentPending: paymentPendingMap[payKey] || rec.paymentPending, deletePending: deletePendingFromLocal || deletePendingFromApi } : null}
               loanRemaining={getLoanRemaining(e.id)}
               desigName={getDesigName(e.desId)}
               isOpen={openId === e.id}
@@ -2192,6 +2207,7 @@ function PayrollRow({
 
   let status, statusLabel, statusIcon;
   if (!rec) { status = 'notgen'; statusLabel = 'Not Generated'; statusIcon = 'fa-circle'; }
+  else if (rec.deletePending) { status = 'delete-pending'; statusLabel = 'Delete Pending Approval'; statusIcon = 'fa-hourglass-half'; }
   else if (rec.paymentPending) { status = 'pending'; statusLabel = 'Payment Pending Approval'; statusIcon = 'fa-hourglass-half'; }
   else if (rec.status === 'Paid') { status = 'paid'; statusLabel = 'Paid'; statusIcon = 'fa-circle-check'; }
   else if (rec.status === 'Partially Paid') { status = 'partial'; statusLabel = 'Partially Paid'; statusIcon = 'fa-circle-half-stroke'; }
@@ -2376,11 +2392,13 @@ function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
   const payments = rec.payments || [];
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const remaining = Math.max(0, (rec.netPayable || net) - paid);
-  const statusClass = rec.status === 'Paid'
-    ? 'paid'
-    : rec.status === 'Partially Paid'
-      ? 'partial'
-      : (rec.status ? 'gen' : 'notgen');
+  const statusClass = rec.deletePending
+    ? 'delete-pending'
+    : rec.status === 'Paid'
+      ? 'paid'
+      : rec.status === 'Partially Paid'
+        ? 'partial'
+        : (rec.status ? 'gen' : 'notgen');
 
   const cls = (n) => n > 0 ? 'val neg' : 'val zero';
 
@@ -2401,7 +2419,7 @@ function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
         <div className="pay-detail-item">
           <label>Payment Status</label>
           <div className="val">
-            <span className={`pay-status ${statusClass}`}>{rec.status || 'Not Generated'}</span>
+            <span className={`pay-status ${statusClass}`}>{rec.deletePending ? 'Delete Pending Approval' : (rec.status || 'Not Generated')}</span>
           </div>
         </div>
         <div className="pay-detail-item">
@@ -10486,6 +10504,8 @@ export const HR_CSS = `
 .pay-status.partial { background: rgba(2, 132, 199, .12);  color: #0284C7; border: 1px solid rgba(2, 132, 199, .25); }
 .pay-status.pending { background: rgba(220, 38, 38, .12);  color: #DC2626; border: 1px solid rgba(220, 38, 38, .25); animation: pay-status-pulse 1.8s ease-in-out infinite; }
 .pay-status.pending i { animation: pay-status-pulse 1.8s ease-in-out infinite; }
+.pay-status.delete-pending { background: rgba(220, 38, 38, .12);  color: #DC2626; border: 1px solid rgba(220, 38, 38, .25); animation: pay-status-pulse 1.8s ease-in-out infinite; }
+.pay-status.delete-pending i { animation: pay-status-pulse 1.8s ease-in-out infinite; }
 .pay-status.paid    { background: rgba(22, 163, 74, .12);  color: #16A34A; border: 1px solid rgba(22, 163, 74, .25); }
 @keyframes pay-status-pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
 

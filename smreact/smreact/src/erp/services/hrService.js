@@ -618,7 +618,7 @@ export function payrollIdFromSetupResponse(json) {
 
 /* Record a payment against a saved payroll record. POST /api/HR/save-payroll-payment.
    Returns { success, message, approval: { pendingApproval, approvalID, requestNo } } if approval needed. */
-export async function saveHrPayrollPayment({ payrollID, amount, comment, paymentDate } = {}) {
+export async function saveHrPayrollPayment({ payrollID, amount, comment, paymentDate, wallatID } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const userID   = Number(sessionStorage.getItem('UserID')) || 0;
   const res  = await fetch(buildUrl('/api/HR/save-payroll-payment'), {
@@ -627,6 +627,7 @@ export async function saveHrPayrollPayment({ payrollID, amount, comment, payment
     body: JSON.stringify({
       payrollID:   Number(payrollID) || 0,
       branchID,
+      wallatID:    Number(wallatID) || 0,
       amount:      Number(amount) || 0,
       comment:     comment || '',
       paymentDate: paymentDate || new Date().toISOString(),
