@@ -106,6 +106,29 @@ function mergePreGhosts(students, ghosts) {
   return [...add, ...base];
 }
 
+/* Pending-add ghost store module key (Family Tree). */
+const FAM_PENDING_MOD = 'familyTree';
+
+/* Prepend pending-add ghost families so a freshly created (approval-pending)
+   family shows as a normal row with a Pending badge — same pattern Accounts
+   uses for a new account head. Dropped once a real family with the same name
+   appears (approved). */
+function mergeFamGhosts(families, ghosts) {
+  const base = Array.isArray(families) ? families : [];
+  if (!ghosts || !ghosts.length) return base;
+  const real = base.filter((f) => !f._pendingAdd);
+  const realNames = new Set(real.map((f) => String(f.name || '').trim().toLowerCase()).filter(Boolean));
+  const add = ghosts
+    .map((g) => g && g.row)
+    .filter((r) => {
+      if (!r) return false;
+      const nm = String(r.name || '').trim().toLowerCase();
+      if (nm && realNames.has(nm)) return false;
+      return true;
+    });
+  return [...add, ...base];
+}
+
 const STU_PRE_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const stuHasDiscount = (s) => {
   if (!s._disc) return false;
@@ -1785,6 +1808,9 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
       const linkPending = hrService.hrPendingInfo(resp);
       if (linkPending) {
         toast(`Student link sent for approval (Request #${linkPending.requestNo || linkPending.approvalId})`, 'info');
+        /* Badge on the student row (Accounts / Active Students pattern). */
+        setPendingMap((m) => ({ ...m, [String(s._id)]: linkPending }));
+        loadPending();
         setAddFamCfg(null);
         return;
       }
@@ -1832,8 +1858,8 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
       const reqs = await approvalsService.getMyRequests();
       const m = {};
       (reqs || []).forEach((r) => {
-        const isStudent = String(r.module || '').toLowerCase().includes('student')
-          || String(r.actionType || '').toLowerCase().includes('student');
+        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
+        const isStudent = hay.includes('student') || hay.includes('family');
         if (r.status === 'pending' && isStudent && r.entityId != null) {
           m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
         }
@@ -2119,6 +2145,8 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
               const unlinkPending = hrService.hrPendingInfo(unlinkResp);
               if (unlinkPending) {
                 toast(`Student unlink sent for approval (Request #${unlinkPending.requestNo || unlinkPending.approvalId})`, 'info');
+                setPendingMap((m) => ({ ...m, [String(studentId)]: unlinkPending }));
+                loadPending();
               }
             }
             if (famId) {
@@ -2131,6 +2159,8 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
               const linkPending = hrService.hrPendingInfo(linkResp);
               if (linkPending) {
                 toast(`Student link sent for approval (Request #${linkPending.requestNo || linkPending.approvalId})`, 'info');
+                setPendingMap((m) => ({ ...m, [String(studentId)]: linkPending }));
+                loadPending();
               }
             }
             setFamilies(await studentService.getStuFamilies());
@@ -5584,6 +5614,56 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   const [editCfg, setEditCfg] = useState(null);  // {mode:'add'|'edit', family?}
   const [delCfg, setDelCfg]   = useState(null);
 
+  /* Family id → pending approval. Add / Update / Delete / Unlink jab approval
+     ke intezar me ho to us family ki row par badge + Withdraw (Accounts jaisa). */
+  const [pendingMap, setPendingMap] = useState({});
+  const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(FAM_PENDING_MOD));
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { student:{name}, pend, rid? }
+
+  const reloadFamilies = useCallback(async () => {
+    try { setFamilies(await studentService.getStuFamilies()); }
+    catch (e) { /* non-fatal */ }
+  }, [setFamilies]);
+
+  const loadFamPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
+        if (r.status === 'pending' && hay.includes('family') && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      const ghosts = reconcilePendingAdds(FAM_PENDING_MOD, reqs);
+      ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      setPendingAddRows(ghosts);
+      setPendingMap(m);
+    } catch (e) { /* non-fatal — badge just won't show */ }
+  }, []);
+
+  useEffect(() => { loadFamPending(); }, [loadFamPending]);
+
+  /* Approval kahin aur se hone ke baad jab user wapas aaye / tab focus kare,
+     families + pending refresh; aur jab tak kuch pending hai halki polling. */
+  useEffect(() => {
+    const refresh = () => { reloadFamilies(); loadFamPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [reloadFamilies, loadFamPending]);
+
+  const hasFamPending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
+  useEffect(() => {
+    if (!hasFamPending) return undefined;
+    const t = setInterval(() => { reloadFamilies(); loadFamPending(); }, 10000);
+    return () => clearInterval(t);
+  }, [hasFamPending, reloadFamilies, loadFamPending]);
+
   /* Resolve members from the live class data */
   const memberOf = (famId) => {
     const out = [];
@@ -5594,8 +5674,35 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   };
 
   /* Members come embedded in each family (get-...→ students[]); fall back to
-     resolving from class data for any family record that lacks them. */
-  const enriched = useMemo(() => families.map(f => ({ ...f, members: Array.isArray(f.members) ? f.members : memberOf(f.id) })), [families, classes]); // eslint-disable-line react-hooks/exhaustive-deps
+     resolving from class data for any family record that lacks them. Pending-add
+     ghosts are prepended so a just-created family awaiting approval still shows. */
+  const enriched = useMemo(() => {
+    const withMembers = (Array.isArray(families) ? families : []).map(f => ({
+      ...f,
+      members: Array.isArray(f.members) ? f.members : memberOf(f.id),
+    }));
+    return mergeFamGhosts(withMembers, pendingAddRows).map((f) => (
+      f._pendingAdd ? { ...f, members: Array.isArray(f.members) ? f.members : [] } : f
+    ));
+  }, [families, classes, pendingAddRows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requestWithdrawFamily = (id) => {
+    const pend = pendingMap[String(id)];
+    if (!pend) return;
+    const family = (enriched || []).find((x) => String(x.id) === String(id)) || null;
+    setWithdrawCfg({ student: { name: family?.name || 'this family' }, pend, rid: id });
+  };
+
+  const doWithdrawFamily = async () => {
+    if (!withdrawCfg) return;
+    try { await approvalsService.withdrawRequest(withdrawCfg.pend.approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    if (withdrawCfg.rid != null) setPendingAddRows(removePendingAdd(FAM_PENDING_MOD, withdrawCfg.rid));
+    setWithdrawCfg(null);
+    reloadFamilies();
+    loadFamPending();
+  };
 
   const filtered = useMemo(() => {
     if (!search.trim()) return enriched;
@@ -5603,12 +5710,12 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
     return enriched.filter(f => `${f.name} ${f.guardian || ''} ${f.contact || ''}`.toLowerCase().includes(q));
   }, [enriched, search]);
 
-  /* KPI strip */
+  /* KPI strip — ghosts count as families awaiting approval (same as Accounts). */
   const stats = useMemo(() => {
-    const linked   = enriched.reduce((a, f) => a + f.members.length, 0);
-    const sizes    = enriched.map(f => f.members.length);
+    const linked   = enriched.reduce((a, f) => a + (f.members || []).length, 0);
+    const sizes    = enriched.map(f => (f.members || []).length);
     const largest  = sizes.length === 0 ? 0 : Math.max(...sizes);
-    const largestF = enriched.find(f => f.members.length === largest);
+    const largestF = enriched.find(f => (f.members || []).length === largest);
     return { families: enriched.length, linked, largest, largestF: largestF?.name || '—' };
   }, [enriched]);
 
@@ -5631,6 +5738,31 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
       if (famPending) {
         toast(`Family ${isEdit ? 'update' : 'creation'} sent for approval (Request #${famPending.requestNo || famPending.approvalId})`, 'info');
         setEditCfg(null);
+        if (!isEdit) {
+          /* Add approval-pending: backend ne abhi asli family nahi banayi.
+             Form se ghost row — Pending badge + Withdraw (Accounts jaisa). */
+          const rid = `pending-${famPending.requestNo || famPending.approvalId || Date.now()}`;
+          const ghostRow = {
+            id: rid,
+            _pendingAdd: true,
+            name: payload.name.trim(),
+            guardian: payload.guardian || '',
+            contact: payload.contact || '',
+            email: payload.email || '',
+            details: payload.details || '',
+            members: [],
+          };
+          setPendingAddRows(addPendingAdd(FAM_PENDING_MOD, {
+            rid, requestNo: famPending.requestNo, approvalId: famPending.approvalId, row: ghostRow,
+          }));
+          setPendingMap((m) => ({ ...m, [rid]: famPending }));
+          loadFamPending();
+          return;
+        }
+        /* Edit approval-pending: badge on the existing family row. */
+        const key = editCfg.family?.id != null ? String(editCfg.family.id) : null;
+        if (key != null) setPendingMap((m) => ({ ...m, [key]: famPending }));
+        loadFamPending();
         return;
       }
       setFamilies(await studentService.getStuFamilies());
@@ -5648,6 +5780,8 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
       const famPending = hrService.hrPendingInfo(resp);
       if (famPending) {
         toast(`Family deletion sent for approval (Request #${famPending.requestNo || famPending.approvalId})`, 'info');
+        setPendingMap((m) => ({ ...m, [String(family.id)]: famPending }));
+        loadFamPending();
         setDelCfg(null);
         return;
       }
@@ -5660,13 +5794,15 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   };
 
   /* Unlink a member: delete its family-tree detail by id, then reload families. */
-  const handleUnlink = async (member) => {
+  const handleUnlink = async (member, family) => {
     try {
       const resp = await studentService.unlinkStuFromFamily({ id: member.detailID });
       const unlinkPending = hrService.hrPendingInfo(resp);
 
       if (unlinkPending) {
         toast(`Student unlink sent for approval (Request #${unlinkPending.requestNo || unlinkPending.approvalId})`, 'info');
+        if (family?.id != null) setPendingMap((m) => ({ ...m, [String(family.id)]: unlinkPending }));
+        loadFamPending();
         return;
       }
 
@@ -5678,7 +5814,7 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
   };
 
   const downloadPDF = () => {
-    stuOpenReportWindow(buildStuFamilyReportHTML(enriched, classes, school), toast);
+    stuOpenReportWindow(buildStuFamilyReportHTML(enriched.filter((f) => !f._pendingAdd), classes, school), toast);
     toast('Family tree report ready', 'success');
   };
 
@@ -5761,7 +5897,7 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
 
       {/* Table */}
       <div className="fee-section stu-section">
-        <div className="stu-table-head" style={{ gridTemplateColumns: '54px 1.4fr 1.2fr 1fr 110px 180px 70px' }}>
+        <div className="stu-table-head" style={{ gridTemplateColumns: '54px 1.4fr 1.2fr 1fr 110px minmax(180px,1.2fr) 70px' }}>
           <div className="th c">#</div>
           <div className="th">Family Name</div>
           <div className="th">Guardian</div>
@@ -5790,7 +5926,9 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
             onToggle={() => setOpenKey(openKey === f.id ? null : f.id)}
             onEdit={() => openEdit(f)}
             onDelete={() => setDelCfg(f)}
-            onUnlink={handleUnlink}
+            onUnlink={(m) => handleUnlink(m, f)}
+            pend={pendingMap[String(f.id)]}
+            onWithdraw={() => requestWithdrawFamily(f.id)}
             canFamEdit={canFamEdit} canFamDelete={canFamDelete}
           />
         ))}
@@ -5806,15 +5944,18 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
       )}
 
       <CrmConfirmStyleDeleteFam cfg={delCfg} onClose={() => setDelCfg(null)} onConfirm={handleDelete} />
+      <StuWithdrawDialog cfg={withdrawCfg} onClose={() => setWithdrawCfg(null)} onConfirm={doWithdrawFamily} />
     </>
   );
 }
 
 /* ─── Family row + expanded member list ─── */
-function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFamEdit = true, canFamDelete = true }) {
+function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, pend = null, onWithdraw, canFamEdit = true, canFamDelete = true }) {
+  const members = Array.isArray(f.members) ? f.members : [];
+  const isPending = !!pend || !!f._pendingAdd;
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
-      <div className="stu-cls-row" style={{ gridTemplateColumns: '54px 1.4fr 1.2fr 1fr 110px 180px 70px' }} onClick={onToggle}>
+      <div className="stu-cls-row" style={{ gridTemplateColumns: '54px 1.4fr 1.2fr 1fr 110px minmax(180px,1.2fr) 70px' }} onClick={onToggle}>
         <div className="td c"><div className="stu-cls-sn">{idx}</div></div>
         <div className="td">
           <div className="stu-cls-name-wrap">
@@ -5831,18 +5972,19 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFa
         <div className="td" style={{ fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 12 }}>{f.contact || '—'}</div>
         <div className="td c">
           <div className="stu-strength" style={{ background: 'rgba(124,58,237,.08)', color: '#7C3AED' }}>
-            <span className="num">{f.members.length}</span>
+            <span className="num">{members.length}</span>
           </div>
         </div>
-        <div className="td stu-cls-actions" onClick={(e) => e.stopPropagation()}>
-          {canFamEdit && (
+        <div className="td stu-cls-actions" onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <StuPendingActions pend={pend} onWithdraw={onWithdraw} />
+          {!isPending && canFamEdit && (
           <Tooltip text="Edit this family">
             <button className="stu-rowbtn" onClick={onEdit}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
           </Tooltip>
           )}
-          {canFamDelete && (
+          {!isPending && canFamDelete && (
           <Tooltip text="Delete this family (students stay)">
             <button className="stu-rowbtn fam-del" onClick={onDelete}>
               <i className="fa-solid fa-trash"></i> Delete
@@ -5877,10 +6019,12 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFa
             </div>
           </div>
 
-          {f.members.length === 0 ? (
+          {members.length === 0 ? (
             <div className="stu-list-empty">
               <i className="fa-solid fa-link"></i>
-              No students linked yet. Use <strong>Add Student to Family Tree</strong> from a student's three-dots menu in Active Students.
+              {f._pendingAdd
+                ? <>This family is awaiting approval. Link students after it is approved.</>
+                : <>No students linked yet. Use <strong>Add Student to Family Tree</strong> from a student's three-dots menu in Active Students.</>}
             </div>
           ) : (
             <>
@@ -5893,7 +6037,7 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFa
                 <div className="th">Relationship</div>
                 <div className="th c">Unlink</div>
               </div>
-              {f.members.map((m, i) => (
+              {members.map((m, i) => (
                 <div key={m._id ?? m.id ?? `idx-${i}`} className="stu-srow" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.4fr 1.1fr 1.2fr 60px' }}>
                   <div className="td c"><div className="stu-srow-sn">{i + 1}</div></div>
                   <div className="td c">
@@ -5910,7 +6054,7 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFa
                     <span className="fam-rel-pill">{m._famRel || 'Sibling'}</span>
                   </div>
                   <div className="td c">
-                    {canFamEdit && (
+                    {!isPending && canFamEdit && (
                     <Tooltip text="Unlink this student">
                       <button className="stu-rep-btn" style={{ borderColor: 'rgba(220,38,38,.32)', color: '#B91C1C' }} onClick={() => onUnlink(m)}>
                         <i className="fa-solid fa-link-slash"></i>

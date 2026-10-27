@@ -538,6 +538,9 @@ async function manageVehicle(payload) {
     body: JSON.stringify(payload),
   });
   const json = await res.json().catch(() => null);
+  /* Approval-gated: backend aksar success:false + "…sent for approval" deta hai —
+     isay error mat samjho; caller pending badge / ghost row dikhaye. */
+  if (isApprovalPending(json)) return json;
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Vehicle request failed');
   }

@@ -1169,15 +1169,33 @@ function VehicleManagement({ toast }) {
   const { data: vehicles = [], loading, error, refetch } = useAsync(feeService.getVehicles, []);
   const [editing, setEditing] = useState(null); // {} = new, {...vehicle} = edit
   const [confirm, setConfirm] = useState(null);
+  /* Vehicle id → pending approval. Add / Update / Delete jab approval ke intezar
+     me ho to us row par badge + Withdraw (Accounts / Family Tree jaisa). */
+  const [pendingMap, setPendingMap] = useState({});
   /* Pending-add ghost vehicles (new, awaiting approval, no real row yet). */
   const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(FEE_VEHICLE_MOD));
-  const [withdrawCfg, setWithdrawCfg] = useState(null); // { v }
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { v, pend }
   const displayVehicles = useMemo(() => mergeVehicleGhosts(vehicles, pendingAddRows), [vehicles, pendingAddRows]);
 
   const loadVehPending = useCallback(async () => {
     try {
       const reqs = await approvalsService.getMyRequests();
-      setPendingAddRows(reconcilePendingAdds(FEE_VEHICLE_MOD, reqs));
+      const m = {};
+      (reqs || []).forEach((r) => {
+        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''} ${r.id || ''}`.toLowerCase();
+        const isVehicle = hay.includes('vehicle')
+          || (/transport/i.test(hay) && /vehicle/i.test(hay))
+          || /^tv-/i.test(String(r.id || ''));
+        if (r.status === 'pending' && isVehicle && r.entityId != null) {
+          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        }
+      });
+      const ghosts = reconcilePendingAdds(FEE_VEHICLE_MOD, reqs);
+      ghosts.forEach((g) => {
+        m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo };
+      });
+      setPendingAddRows(ghosts);
+      setPendingMap(m);
     } catch (e) { /* non-fatal */ }
   }, []);
   useEffect(() => { loadVehPending(); }, [loadVehPending]);
@@ -1189,7 +1207,7 @@ function VehicleManagement({ toast }) {
     document.addEventListener('visibilitychange', onVis);
     return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVis); };
   }, [refetch, loadVehPending]);
-  const hasVehPending = pendingAddRows.length > 0;
+  const hasVehPending = pendingAddRows.length > 0 || Object.keys(pendingMap).length > 0;
   useEffect(() => {
     if (!hasVehPending) return undefined;
     const t = setInterval(() => { refetch(); loadVehPending(); }, 10000);
@@ -1207,16 +1225,25 @@ function VehicleManagement({ toast }) {
       const pend = pendingFromResp(resp, isNew ? 'Vehicle sent for approval' : 'Vehicle update sent for approval');
       if (pend) {
         if (isNew) {
+          /* Add approval-pending: backend ne abhi asli vehicle nahi banaya —
+             form se ghost row + Pending badge + Withdraw (Accounts jaisa). */
           const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
           const row = {
             id: rid, _pendingAdd: true,
             name: payload.name || '', regNo: payload.regNo || '', route: payload.route || '',
             _approvalId: pend.approvalId, _requestNo: pend.requestNo,
           };
-          setPendingAddRows(addPendingAdd(FEE_VEHICLE_MOD, { rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row }));
+          setPendingAddRows(addPendingAdd(FEE_VEHICLE_MOD, {
+            rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row,
+          }));
+          setPendingMap((prev) => ({ ...prev, [rid]: pend }));
+        } else {
+          /* Edit approval-pending: badge on the existing vehicle row. */
+          const key = String(editing.id);
+          setPendingMap((prev) => ({ ...prev, [key]: pend }));
         }
         closeEdit();
-        toast(pend.message || pend.approvalId || 'Request sent for approval', 'info');
+        toast(pend.message || 'Request sent for approval', 'info');
         loadVehPending();
         return;
       }
@@ -1228,17 +1255,32 @@ function VehicleManagement({ toast }) {
     }
   }, [editing, refetch, closeEdit, toast, loadVehPending]);
 
+  const requestWithdrawVehicle = (v) => {
+    const pend = pendingMap[String(v.id)] || (v._approvalId != null
+      ? { approvalId: v._approvalId, requestNo: v._requestNo }
+      : null);
+    if (!pend) return;
+    setWithdrawCfg({ v, pend });
+  };
+
   const doWithdrawVehicle = async () => {
     if (!withdrawCfg) return;
-    const v = withdrawCfg.v;
+    const { v, pend } = withdrawCfg;
     try {
-      await approvalsService.withdrawRequest(v._approvalId);
+      await approvalsService.withdrawRequest(pend.approvalId);
     } catch (e) {
       toast(e?.message || 'Could not withdraw request', 'error');
       return;
     }
     toast('Request withdrawn', 'success');
-    setPendingAddRows(removePendingAdd(FEE_VEHICLE_MOD, v.id));
+    if (v?._pendingAdd || String(v?.id || '').startsWith('pending-')) {
+      setPendingAddRows(removePendingAdd(FEE_VEHICLE_MOD, v.id));
+    }
+    setPendingMap((prev) => {
+      const next = { ...prev };
+      delete next[String(v.id)];
+      return next;
+    });
     setWithdrawCfg(null);
     refetch();
     loadVehPending();
@@ -1255,6 +1297,7 @@ function VehicleManagement({ toast }) {
           const pend = pendingFromResp(resp, 'Vehicle deletion sent for approval');
           if (pend) {
             toast(pend.message || 'Vehicle deletion sent for approval', 'info');
+            setPendingMap((prev) => ({ ...prev, [String(v.id)]: pend }));
             loadVehPending();
             return;
           }
@@ -1310,23 +1353,28 @@ function VehicleManagement({ toast }) {
               <tbody>
                 {displayVehicles.length === 0 ? (
                   <tr><td colSpan="5" className="fee-stbl-empty">No vehicles added yet. Click <strong>Add New Vehicle</strong> to get started.</td></tr>
-                ) : displayVehicles.map((v, i) => (
+                ) : displayVehicles.map((v, i) => {
+                  const pend = pendingMap[String(v.id)] || (v._pendingAdd
+                    ? { approvalId: v._approvalId, requestNo: v._requestNo }
+                    : null);
+                  const isPending = !!pend || !!v._pendingAdd;
+                  return (
                   <tr key={v.id}>
                     <td className="fee-num">{i + 1}</td>
                     <td><b>{v.name}</b></td>
                     <td>{v.regNo}</td>
                     <td>{v.route ? v.route : <span className="fee-muted-dash">—</span>}</td>
                     <td className="fee-center fee-st-actions">
-                      {v._pendingAdd ? (
+                      {isPending ? (
                         <span className="fee-pending-wrap" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <Tooltip text={`Request ${v._requestNo || ''} awaiting approval`.trim()}>
+                          <Tooltip text={`Request ${pend?.requestNo || ''} awaiting approval`.trim()}>
                             <span className="fee-pending-badge" role="status">
                               <i className="fa-solid fa-hourglass-half"></i><span>Pending Approval</span>
-                              {v._approvalId != null && <b className="fee-pending-id">#{v._approvalId}</b>}
+                              {pend?.approvalId != null && <b className="fee-pending-id">#{pend.approvalId}</b>}
                             </span>
                           </Tooltip>
                           <Tooltip text="Withdraw this request">
-                            <button className="fee-iconbtn fee-withdraw-btn" onClick={() => setWithdrawCfg({ v })} aria-label="Withdraw this request">
+                            <button className="fee-iconbtn fee-withdraw-btn" onClick={() => requestWithdrawVehicle(v)} aria-label="Withdraw this request">
                               <i className="fa-solid fa-rotate-left"></i>
                             </button>
                           </Tooltip>
@@ -1345,7 +1393,8 @@ function VehicleManagement({ toast }) {
                       </>)}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
