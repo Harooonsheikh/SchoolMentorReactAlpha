@@ -957,8 +957,8 @@ export const SA_CSS = `
 }
 
 /* ══════════ SCHOOLS PAYMENT (Payment Status) MODULE ══════════ */
-.sa-root .pay-tabs{display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border:1.5px solid var(--bl);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--s-sm);margin-bottom:20px}
-.sa-root .pay-tab{padding:13px 10px;border:none;background:transparent;font-family:var(--font);font-size:13px;font-weight:600;color:var(--tm);cursor:pointer;transition:var(--tr);display:flex;align-items:center;justify-content:center;gap:7px;border-right:1px solid var(--bl)}
+.sa-root .pay-tabs{display:grid;grid-template-columns:repeat(6,1fr);background:var(--card);border:1.5px solid var(--bl);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--s-sm);margin-bottom:20px}
+.sa-root .pay-tab{padding:13px 8px;border:none;background:transparent;font-family:var(--font);font-size:12px;font-weight:600;color:var(--tm);cursor:pointer;transition:var(--tr);display:flex;align-items:center;justify-content:center;gap:6px;border-right:1px solid var(--bl);white-space:nowrap}
 .sa-root .pay-tab:last-child{border-right:none}
 .sa-root .pay-tab:hover:not(.active){background:var(--muted);color:var(--t1)}
 .sa-root .pay-tab.active{background:linear-gradient(135deg,#1E3A8A,#1E40AF,#2563EB);color:#fff;font-weight:700}
@@ -1195,7 +1195,10 @@ export const SA_CSS = `
 .sa-root .rpt-pending{background:rgba(100,116,139,.1);color:#64748B;border:1px solid rgba(100,116,139,.2);border-radius:var(--r-f);padding:2px 9px;font-size:10.5px;font-weight:700;display:inline-block}
 .sa-root .rpt-totals-row td{background:linear-gradient(135deg,rgba(30,58,138,.07),rgba(30,64,175,.04));font-weight:800;color:var(--brand);border-top:2px solid var(--brand)}
 
-@media(max-width:1100px){.sa-root .rpt-stat-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:1100px){
+  .sa-root .rpt-stat-grid{grid-template-columns:repeat(3,1fr)}
+  .sa-root .pay-tabs{grid-template-columns:repeat(3,1fr)}
+}
 @media(max-width:700px){
   .sa-root .rpt-stat-grid{grid-template-columns:repeat(2,1fr)}
   .sa-root .rpt-stab{font-size:11px;padding:8px 8px;min-width:80px}

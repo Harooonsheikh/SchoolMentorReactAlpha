@@ -72,6 +72,28 @@ export const fmtDateShort = (iso) =>
 export const plusDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 export const todayISO = () => new Date().toISOString().slice(0, 10);
 
+export function isChallanOverdue(challan) {
+  if (!challan || !challan.dueDateRaw) return false;
+  return challan.dueDateRaw < todayISO();
+}
+
+export function totalPayableOf(challan) {
+  if (!challan) return 0;
+  const service = challan.serviceCharge || 0;
+  const surcharge = isChallanOverdue(challan) ? (challan.lateSurchargeRate || 0) : 0;
+  return (challan.total || 0) + service + surcharge;
+}
+
+export function deriveInvoiceStatus(challan, recv) {
+  if (!challan) return null;
+  const payable = totalPayableOf(challan);
+  const received = recv ? (recv.receivedAmount || 0) : 0;
+  if (received >= payable && payable > 0) return 'paid';
+  if (received > 0) return 'partial';
+  if (isChallanOverdue(challan)) return 'overdue';
+  return 'unpaid';
+}
+
 /* ── Free trial kab tak hai / kab khatam hua ──────────────────────────
    API par trial ki apni koi tareekh nahi — sirf `duration` (kitne din) hai.
    Is liye ginti setup banne ke din se hoti hai (summary ka `createdAt`):
