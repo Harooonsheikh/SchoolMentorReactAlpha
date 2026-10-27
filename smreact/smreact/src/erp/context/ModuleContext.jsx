@@ -3,6 +3,7 @@ import {
   EMPTY_MODULE_STATE,
   MODULE_REGISTRY,
   mapApiPermissionsToModuleState,
+  extractApprovalType,
 } from '../config/moduleConfig';
 import { buildSuperAdminUrl } from '../../utils/apiConfig';
 
@@ -14,19 +15,14 @@ import { buildSuperAdminUrl } from '../../utils/apiConfig';
    (sidebar, permission matrix, dashboard widgets) should consume
    this context via `useModules()`.
 
-   API surface:
-     moduleState        — full state map { moduleId: boolean }
-     toggleModule(id)   — flip a module on/off (no-op for coreLocked)
-     isActive(id)       — boolean check (default true if not in map)
-     activateAll()      — reset every module to true
-     getActiveModules() — array of MODULE_REGISTRY entries that are on
-     loadFromBackend(p) — replace local state with backend payload
-     allModules         — pass-through to MODULE_REGISTRY
+   Also exposes `approvalType` from the same module-permission API:
+     null | 'school' | 'disable' | 'chain'
    ═══════════════════════════════════════════════════════════════════ */
 
 const ModuleContext = createContext(null);
 
 const CACHE_KEY = 'moduleState';
+const APPROVAL_TYPE_KEY = 'sm_approval_type';
 
 /* Cache hamesha { branchID, state } shape me — taake dusre branch ki
    purani state galti se use na ho. */
@@ -48,6 +44,25 @@ function writeCache(state) {
   } catch { /* storage full / private mode — cache optional hai */ }
 }
 
+function readApprovalTypeCache() {
+  try {
+    const raw = sessionStorage.getItem(APPROVAL_TYPE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (String(parsed?.branchID) !== String(sessionStorage.getItem('branchID'))) return null;
+    return parsed?.approvalType ?? null;
+  } catch { return null; }
+}
+
+function writeApprovalTypeCache(approvalType) {
+  try {
+    sessionStorage.setItem(APPROVAL_TYPE_KEY, JSON.stringify({
+      branchID: sessionStorage.getItem('branchID'),
+      approvalType,
+    }));
+  } catch { /* ignore */ }
+}
+
 export function ModuleProvider({ children }) {
   /* Pehla paint EMPTY state par hota hai (sirf core modules), na ke "sab on"
      par — warna off kiya hua module response aane tak ek second ke liye
@@ -58,11 +73,19 @@ export function ModuleProvider({ children }) {
     return cached ? { ...EMPTY_MODULE_STATE, ...cached } : EMPTY_MODULE_STATE;
   });
 
+  /* null | 'school' | 'disable' | 'chain' — from module-permission.approvalType */
+  const [approvalType, setApprovalType] = useState(() => readApprovalTypeCache());
+
   /* false jab tak backend se module-permission na aa jaye (ya fail na ho jaye).
      Sidebar isay dekh kar tab tak nav render nahi karta. */
   const [ready, setReady] = useState(() => !!readCache());
   /* true jab is mount ki module-permission call khatam ho (cache se pehle nahi). */
   const [synced, setSynced] = useState(false);
+
+  const applyApprovalType = useCallback((type) => {
+    setApprovalType(type);
+    writeApprovalTypeCache(type);
+  }, []);
 
   /* ── Backend se per-branch module activation load karo ──────────────
      GET /api/SchoolPermissions/module-permission/{branchID}
@@ -85,6 +108,7 @@ export function ModuleProvider({ children }) {
       allOn.one_link_integration = true;
       setModuleState(allOn);
       writeCache(allOn);
+      applyApprovalType(null);
       setReady(true);
       setSynced(true);
       return;
@@ -100,10 +124,14 @@ export function ModuleProvider({ children }) {
         if (!res.ok) throw new Error(`module-permission ${res.status}`);
         const data = await res.json();
         const mapped = mapApiPermissionsToModuleState(data);
-        if (cancelled || !mapped) return;
-        const next = { ...EMPTY_MODULE_STATE, ...mapped };
-        setModuleState(next);
-        writeCache(next);
+        const type = extractApprovalType(data);
+        if (cancelled) return;
+        if (mapped) {
+          const next = { ...EMPTY_MODULE_STATE, ...mapped };
+          setModuleState(next);
+          writeCache(next);
+        }
+        applyApprovalType(type);
       } catch (err) {
         console.error('Module permissions load failed:', err);
       } finally {
@@ -112,15 +140,13 @@ export function ModuleProvider({ children }) {
     })();
 
     return () => { cancelled = true; };
-  }, []);
+  }, [applyApprovalType]);
 
   const toggleModule = useCallback((moduleId) => {
     const mod = MODULE_REGISTRY.find(m => m.id === moduleId);
     if (!mod || mod.coreLocked) return;       /* never toggle core modules */
     setModuleState(prev => {
       const next = { ...prev, [moduleId]: !prev[moduleId] };
-      /* Future: persist to backend / localStorage here.
-         localStorage.setItem('erp_module_state', JSON.stringify(next)); */
       return next;
     });
   }, []);
@@ -148,12 +174,14 @@ export function ModuleProvider({ children }) {
     const next = { ...EMPTY_MODULE_STATE, ...mapped };
     setModuleState(next);
     writeCache(next);
+    applyApprovalType(extractApprovalType(backendConfig));
     setReady(true);
     setSynced(true);
-  }, []);
+  }, [applyApprovalType]);
 
   const value = useMemo(() => ({
     moduleState,
+    approvalType,
     ready,
     synced,
     toggleModule,
@@ -162,7 +190,7 @@ export function ModuleProvider({ children }) {
     getActiveModules,
     loadFromBackend,
     allModules: MODULE_REGISTRY,
-  }), [moduleState, ready, synced, toggleModule, isActive, activateAll, getActiveModules, loadFromBackend]);
+  }), [moduleState, approvalType, ready, synced, toggleModule, isActive, activateAll, getActiveModules, loadFromBackend]);
 
   return (
     <ModuleContext.Provider value={value}>

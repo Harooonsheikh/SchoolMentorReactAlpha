@@ -7,7 +7,10 @@ import * as hrService from '../services/hrService';
 import * as accountsService from '../services/accountsService';
 import * as attendanceService from '../services/attendanceService';
 import * as approvalsService from '../services/approvalsService';
-import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
+import {
+  getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds,
+  upsertPendingLink, removePendingLink, reconcilePendingLinks,
+} from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
 import { qrSVG } from '../utils/qrcode';
@@ -287,6 +290,22 @@ export default function HumanResource({ toast = () => { } }) {
      • Per-designation Edit / Delete
      • Confirm-dialog delete flow (mounted as DOM portal)
    ═══════════════════════════════════════════════════════════════════ */
+const HR_DEPT_MOD = 'hrDept';
+const HR_DESIG_MOD = 'hrDesig';
+
+function mergeBasicsGhosts(rows, ghosts, nameKey = 'name') {
+  const base = Array.isArray(rows) ? rows : [];
+  if (!ghosts || !ghosts.length) return base;
+  const realNames = new Set(base.filter((r) => !r._pendingAdd).map((r) => String(r[nameKey] || '').trim().toLowerCase()).filter(Boolean));
+  const add = ghosts.map((g) => g && g.row).filter((r) => {
+    if (!r) return false;
+    const nm = String(r[nameKey] || '').trim().toLowerCase();
+    if (nm && realNames.has(nm)) return false;
+    return true;
+  });
+  return [...add, ...base];
+}
+
 function HrBasics({
   depts, setDepts, desigs, setDesigs, emps,
   nextDeptId, nextDesigId, setNextDeptId, setNextDesigId, reload, toast, loading = false,
@@ -296,6 +315,16 @@ function HrBasics({
   const [deptModal, setDeptModal] = useState(null);   // null | { mode:'add'|'edit', dept? }
   const [desigModal, setDesigModal] = useState(null);   // null | { mode:'add'|'edit', desig?, defaultDId? }
   const [confirmCfg, setConfirmCfg] = useState(null);   // null | { title, msg, hint, label, danger, icon, onConfirm }
+
+  /* Pending badges — department / designation add·edit·delete (Accounts jaisa). */
+  const [deptPendingMap, setDeptPendingMap] = useState({});
+  const [desigPendingMap, setDesigPendingMap] = useState({});
+  const [deptGhosts, setDeptGhosts] = useState(() => getPendingAdds(HR_DEPT_MOD));
+  const [desigGhosts, setDesigGhosts] = useState(() => getPendingAdds(HR_DESIG_MOD));
+  const [withdrawCfg, setWithdrawCfg] = useState(null); // { kind:'dept'|'desig', row, pend }
+
+  const displayDepts = useMemo(() => mergeBasicsGhosts(depts, deptGhosts), [depts, deptGhosts]);
+  const displayDesigs = useMemo(() => mergeBasicsGhosts(desigs, desigGhosts), [desigs, desigGhosts]);
 
   const empCountByDept = useMemo(() => {
     const m = {};
@@ -307,6 +336,72 @@ function HrBasics({
     emps.forEach(e => { m[e.desId] = (m[e.desId] || 0) + 1; });
     return m;
   }, [emps]);
+
+  const isBasicsRelevant = (r) => {
+    const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
+    return hay.includes('department') || hay.includes('designation') || hay.includes('dept');
+  };
+
+  const loadBasicsPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const deptM = {};
+      const desigM = {};
+      (reqs || []).forEach((r) => {
+        if (String(r.status || '').toLowerCase() !== 'pending' || !isBasicsRelevant(r)) return;
+        if (r.entityId == null) return;
+        const pend = { approvalId: r.apiId, requestNo: r.id };
+        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
+        if (hay.includes('designation')) desigM[String(r.entityId)] = pend;
+        else deptM[String(r.entityId)] = pend;
+      });
+      const dGhosts = reconcilePendingAdds(HR_DEPT_MOD, reqs);
+      const gGhosts = reconcilePendingAdds(HR_DESIG_MOD, reqs);
+      dGhosts.forEach((g) => { deptM[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      gGhosts.forEach((g) => { desigM[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      reconcilePendingLinks(HR_DEPT_MOD, reqs).forEach((l) => {
+        deptM[String(l.key)] = { approvalId: l.approvalId, requestNo: l.requestNo };
+      });
+      reconcilePendingLinks(HR_DESIG_MOD, reqs).forEach((l) => {
+        desigM[String(l.key)] = { approvalId: l.approvalId, requestNo: l.requestNo };
+      });
+      setDeptGhosts(dGhosts);
+      setDesigGhosts(gGhosts);
+      setDeptPendingMap(deptM);
+      setDesigPendingMap(desigM);
+    } catch (e) { /* non-fatal */ }
+  }, []);
+
+  useEffect(() => { loadBasicsPending(); }, [loadBasicsPending]);
+
+  const markDeptPend = (id, pend) => {
+    if (id == null || !pend) return;
+    setDeptPendingMap((m) => ({ ...m, [String(id)]: pend }));
+    upsertPendingLink(HR_DEPT_MOD, { key: id, approvalId: pend.approvalId, requestNo: pend.requestNo });
+  };
+  const markDesigPend = (id, pend) => {
+    if (id == null || !pend) return;
+    setDesigPendingMap((m) => ({ ...m, [String(id)]: pend }));
+    upsertPendingLink(HR_DESIG_MOD, { key: id, approvalId: pend.approvalId, requestNo: pend.requestNo });
+  };
+
+  const doWithdrawBasics = async () => {
+    if (!withdrawCfg) return;
+    const { kind, row, pend } = withdrawCfg;
+    try { await approvalsService.withdrawRequest(pend.approvalId); }
+    catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
+    toast('Request withdrawn', 'success');
+    if (kind === 'dept') {
+      if (row?._pendingAdd) setDeptGhosts(removePendingAdd(HR_DEPT_MOD, row.id));
+      removePendingLink(HR_DEPT_MOD, row?.id);
+    } else {
+      if (row?._pendingAdd) setDesigGhosts(removePendingAdd(HR_DESIG_MOD, row.id));
+      removePendingLink(HR_DESIG_MOD, row?.id);
+    }
+    setWithdrawCfg(null);
+    reload();
+    loadBasicsPending();
+  };
 
   /* ── Department mutators (real API: LaunchSetup/save-department) ── */
   const saveDept = async (payload) => {
@@ -351,7 +446,18 @@ function HrBasics({
       const resp = await hrService.saveHrDept(apiPayload);
       const deptPending = hrService.hrPendingInfo(resp);
       if (deptPending) {
-        toast(`Department ${isEdit ? 'update' : 'save'} sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+        toast(deptPending.message || `Department ${isEdit ? 'update' : 'save'} sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+        if (!isEdit) {
+          const rid = `pending-${deptPending.requestNo || deptPending.approvalId || Date.now()}`;
+          const row = { id: rid, name, desc: '', _pendingAdd: true };
+          setDeptGhosts(addPendingAdd(HR_DEPT_MOD, {
+            rid, requestNo: deptPending.requestNo, approvalId: deptPending.approvalId, row,
+          }));
+          markDeptPend(rid, deptPending);
+        } else {
+          markDeptPend(deptModal.dept.id, deptPending);
+        }
+        loadBasicsPending();
         return true;
       }
       await reload();
@@ -377,7 +483,9 @@ function HrBasics({
           const resp = await hrService.deleteHrDept({ id: dept.id });
           const deptPending = hrService.hrPendingInfo(resp);
           if (deptPending) {
-            toast(`Department deletion sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+            toast(deptPending.message || `Department deletion sent for approval (Request #${deptPending.requestNo || deptPending.approvalId})`, 'info');
+            markDeptPend(dept.id, deptPending);
+            loadBasicsPending();
             return;
           }
           await reload();
@@ -419,7 +527,22 @@ function HrBasics({
       const resp = await hrService.saveHrDesig(apiPayload);
       const desigPending = hrService.hrPendingInfo(resp);
       if (desigPending) {
-        toast(`Designation ${isEdit ? 'update' : 'save'} sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+        toast(desigPending.message || `Designation ${isEdit ? 'update' : 'save'} sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+        if (!isEdit) {
+          const rid = `pending-${desigPending.requestNo || desigPending.approvalId || Date.now()}`;
+          const row = {
+            id: rid, dId, name, qual: (payload.qualName || '').trim(), desc,
+            qualificationID: qualId, _pendingAdd: true,
+          };
+          setDesigGhosts(addPendingAdd(HR_DESIG_MOD, {
+            rid, requestNo: desigPending.requestNo, approvalId: desigPending.approvalId, row,
+          }));
+          markDesigPend(rid, desigPending);
+        } else {
+          markDesigPend(desigModal.desig.id, desigPending);
+        }
+        if (dId) setOpenDeptId(dId);
+        loadBasicsPending();
         return true;
       }
       await reload();
@@ -446,7 +569,9 @@ function HrBasics({
           const resp = await hrService.deleteHrDesig({ id: desig.id });
           const desigPending = hrService.hrPendingInfo(resp);
           if (desigPending) {
-            toast(`Designation deletion sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+            toast(desigPending.message || `Designation deletion sent for approval (Request #${desigPending.requestNo || desigPending.approvalId})`, 'info');
+            markDesigPend(desig.id, desigPending);
+            loadBasicsPending();
             return;
           }
           await reload();
@@ -461,7 +586,7 @@ function HrBasics({
   /* Auto-refresh HR Basics when approvals are accepted elsewhere (Approvals screen)
      or when user switches back to this tab. */
   useEffect(() => {
-    const refresh = () => { reload(); };
+    const refresh = () => { reload(); loadBasicsPending(); };
     const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', onVis);
@@ -471,6 +596,15 @@ function HrBasics({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const hasBasicsPending = deptGhosts.length > 0 || desigGhosts.length > 0
+    || Object.keys(deptPendingMap).length > 0 || Object.keys(desigPendingMap).length > 0;
+  useEffect(() => {
+    if (!hasBasicsPending) return undefined;
+    const t = setInterval(() => { reload(); loadBasicsPending(); }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasBasicsPending]);
 
   return (
     <div className="hrb-root">
@@ -511,7 +645,7 @@ function HrBasics({
 
             {loading ? (
           <HrLoader title="Loading departments…" />
-        ) : depts.length === 0 ? (
+        ) : displayDepts.length === 0 ? (
           <EmptyState
             icon="fa-building"
             title="No Departments"
@@ -519,10 +653,12 @@ function HrBasics({
           />
         ) : (
           <div>
-            {depts.map((d, i) => {
-              const ds = desigs.filter(x => x.dId === d.id);
+            {displayDepts.map((d, i) => {
+              const ds = displayDesigs.filter(x => String(x.dId) === String(d.id));
               const ec = empCountByDept[d.id] || 0;
               const open = openDeptId === d.id;
+              const deptPend = deptPendingMap[String(d.id)];
+              const deptIsPending = !!deptPend || !!d._pendingAdd;
               return (
                 <div className="row-wrap" key={d.id}>
                   <div className={`d-row dept-d-row${open ? ' open' : ''}`}>
@@ -537,7 +673,24 @@ function HrBasics({
                     <div className="td">
                       <span className="badge b-green">{ds.length} designation{ds.length === 1 ? '' : 's'}</span>
                     </div>
-                    <div className="td dept-row-actions">
+                    <div className="td dept-row-actions" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {deptIsPending ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <Tooltip text={`Request ${deptPend?.requestNo || ''} awaiting approval`.trim()}>
+                            <span className="hr-pending-badge" role="status">
+                              <i className="fa-solid fa-hourglass-half"></i>
+                              <span>Pending Approval</span>
+                              {deptPend?.approvalId != null && <b className="hr-pending-id">#{deptPend.approvalId}</b>}
+                            </span>
+                          </Tooltip>
+                          <Tooltip text="Withdraw this request">
+                            <button type="button" className="hr-withdraw-btn" onClick={() => setWithdrawCfg({ kind: 'dept', row: d, pend: deptPend })}>
+                              <i className="fa-solid fa-rotate-left"></i>
+                            </button>
+                          </Tooltip>
+                        </span>
+                      ) : (
+                        <>
                       {canCreate && (
                         <Tooltip text="Add Designation">
                           <button
@@ -572,6 +725,8 @@ function HrBasics({
                             <i className="fa-solid fa-trash" aria-hidden="true"></i>
                           </button>
                         </Tooltip>
+                      )}
+                        </>
                       )}
                     </div>
                     <div className="td" style={{ justifyContent: 'center' }}>
@@ -609,6 +764,8 @@ function HrBasics({
                           </div>
                           {ds.map((des, j) => {
                             const dec = empCountByDesig[des.id] || 0;
+                            const desigPend = desigPendingMap[String(des.id)];
+                            const desigIsPending = !!desigPend || !!des._pendingAdd;
                             return (
                               <div className="desig-row" key={des.id}>
                                 <div className="td td-num" style={{ fontSize: 11.5 }}>{j + 1}</div>
@@ -617,7 +774,24 @@ function HrBasics({
                                   {des.qual && <span className="desig-row-qual">{des.qual}</span>}
                                 </div>
                                 <div className="td"><span className="badge b-green">{dec} emp.</span></div>
-                                <div className="td desig-row-actions">
+                                <div className="td desig-row-actions" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                  {desigIsPending ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                      <Tooltip text={`Request ${desigPend?.requestNo || ''} awaiting approval`.trim()}>
+                                        <span className="hr-pending-badge" role="status">
+                                          <i className="fa-solid fa-hourglass-half"></i>
+                                          <span>Pending Approval</span>
+                                          {desigPend?.approvalId != null && <b className="hr-pending-id">#{desigPend.approvalId}</b>}
+                                        </span>
+                                      </Tooltip>
+                                      <Tooltip text="Withdraw this request">
+                                        <button type="button" className="hr-withdraw-btn" onClick={() => setWithdrawCfg({ kind: 'desig', row: des, pend: desigPend })}>
+                                          <i className="fa-solid fa-rotate-left"></i>
+                                        </button>
+                                      </Tooltip>
+                                    </span>
+                                  ) : (
+                                    <>
                                   {canEdit && (
                                     <Tooltip text="Edit">
                                       <button
@@ -641,6 +815,8 @@ function HrBasics({
                                         <i className="fa-solid fa-trash" aria-hidden="true"></i>
                                       </button>
                                     </Tooltip>
+                                  )}
+                                    </>
                                   )}
                                 </div>
                               </div>
@@ -685,6 +861,21 @@ function HrBasics({
         <ConfirmDialog
           cfg={confirmCfg}
           onClose={() => setConfirmCfg(null)}
+        />
+      )}
+      {withdrawCfg && (
+        <ConfirmDialog
+          cfg={{
+            title: 'Withdraw this request?',
+            message: `The pending approval request for "${withdrawCfg.row?.name || 'this record'}" will be withdrawn.`,
+            confirmLabel: 'Yes, Withdraw',
+            confirmStyle: 'primary',
+            icon: 'fa-rotate-left',
+            iconBg: 'rgba(30,58,138,.1)',
+            iconColor: '#1E40AF',
+            onConfirm: doWithdrawBasics,
+          }}
+          onClose={() => setWithdrawCfg(null)}
         />
       )}
     </div>

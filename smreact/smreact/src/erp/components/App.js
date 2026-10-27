@@ -7,7 +7,7 @@ import ComingSoon from '../shared/ComingSoon';
 import { SettingsProvider, TopbarSessionPill } from '../pages/Settings/settingsStore';
 import { useModules } from '../context/ModuleContext';
 import { usePermissions } from '../context/PermissionsContext';
-import { NAV_TO_MODULE_MAP, MODULE_REGISTRY } from '../config/moduleConfig';
+import { NAV_TO_MODULE_MAP, MODULE_REGISTRY, APPROVAL_TYPE_MSGS } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
 import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl } from '../../utils/apiConfig';
 import * as profileService from '../services/profileService';
@@ -19,6 +19,7 @@ import {
 } from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import { loadAcademicsContentPermissions } from '../services/academicsContentPermissions';
+import { preloadFeeData } from '../services/feeService';
 import { loadExaminationContentPermissions } from '../services/examinationContentPermissions';
 import { startChatLoginWindow, pingChat, nudgeChatOnFocus, chatActive } from '../services/chatActivity';
 import SupportWidget from '../../components/SupportWidget';
@@ -45,7 +46,9 @@ const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'audit', 'appraisal', 'trai
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
    Branch par khulne ke baad bhi module wahi user permission maanta hai jo
    branch 1 par — sirf branch ki rukawat hatti hai, permission ki nahi. */
-const EXTRA_NAV_BRANCHES = {};
+const EXTRA_NAV_BRANCHES = {
+  approvals: ['15'], /* Approvals also live on branch 15 (branch 1 already via BRANCH1_ONLY_NAV) */
+};
 
 /* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
    Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
@@ -216,6 +219,9 @@ const NAV_SECTIONS = [
 ];
 
 export default function App() {
+  /* Page reload par login dobara nahi hota — isi liye yahan bhi Fee ka shared data
+     preload hota hai (cache me pehle se ho to kuch nahi karta, dobara fetch nahi hota). */
+  useEffect(() => { preloadFeeData().catch(() => {}); }, []);
   const [theme, setTheme] = useState('light');
   /* Active ERP module localStorage me yaad rakho — refresh par usi module par wapas
      aao. Fresh login par koi saved module nahi hota → default 'dashboard'
@@ -426,7 +432,7 @@ const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).joi
      gated. Core-locked modules (Settings / Launch Setup / Audit
      Logs / User Permissions) always render regardless of state
      because ModuleContext.toggleModule() refuses to flip them off. */
-  const { isActive: isModuleActive, ready: modulesReady } = useModules();
+  const { isActive: isModuleActive, ready: modulesReady, approvalType } = useModules();
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
   const { canModule, fullAccess, ready: permsReady, readOnly } = usePermissions();
@@ -517,17 +523,22 @@ if (navId === 'mentorai') {
        activation — warna hum aise module par redirect kar dete hain jo
        response aane ke baad khud hidden ho jata hai. */
     if (!permsReady || !modulesReady) return;
+    /* Head office disabled Approvals — leave the screen if somehow opened. */
+    if (active === 'approvals' && approvalType === 'disable') {
+      /* fall through to first visible nav */
+    } else {
     /* Chat / eTube ka faisla Mobile App permission (useMobileAppPermission) se
        hota hai — wo aane se pehle navItemVisible('chat') false deta hai. Pehle
        isi waqt redirect ho jata tha: Chat par refresh → Dashboard. Jawab aane
        tak ruko; phir bhi hidden ho to hi redirect. */
     if (!mobilePerms.ready && (active === 'chat' || active === 'etube')) return;
     if (navItemVisible(active)) return;
+    }
     for (const section of NAV_SECTIONS) {
       const found = section.items.find((it) => navItemVisible(it.id));
       if (found) { setActive(found.id); return; }
     }
-  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, active]);
+  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, active, approvalType]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'
@@ -681,13 +692,21 @@ if (navId === 'mentorai') {
                   /* Show "Active" under whichever module is currently open;
                      fall back to any static sub-label the item defines. */
                   const isActive = active === item.id;
-                  const subLabel = isActive ? 'Active' : item.sub;
+                  const approvalsDisabled = item.id === 'approvals' && approvalType === 'disable';
+                  const subLabel = approvalsDisabled
+                    ? 'Disabled'
+                    : (isActive ? 'Active' : item.sub);
                   return (
                   <button
                     key={item.id}
-                    className={`nav-item${isActive ? ' active' : ''}${item.glow && !isActive ? ' nav-item--mentorai' : ''}`}
-                    data-tooltip={item.name}
+                    className={`nav-item${isActive ? ' active' : ''}${item.glow && !isActive ? ' nav-item--mentorai' : ''}${approvalsDisabled ? ' nav-item--locked' : ''}`}
+                    data-tooltip={approvalsDisabled ? APPROVAL_TYPE_MSGS.disable : item.name}
+                    aria-disabled={approvalsDisabled || undefined}
                     onClick={() => {
+                      if (approvalsDisabled) {
+                        pushToast(APPROVAL_TYPE_MSGS.disable, 'warning');
+                        return;
+                      }
                       // "Launch Setup" lives in the separate setup app (port 3000)
                       if (item.id === 'launch') {
                         try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
@@ -697,7 +716,7 @@ if (navId === 'mentorai') {
                       setActive(item.id); setMobileOpen(false);
                     }}
                   >
-                    <div className="nav-iw"><i className={`fa-solid ${item.icon}`}></i></div>
+                    <div className="nav-iw"><i className={`fa-solid ${approvalsDisabled ? 'fa-lock' : item.icon}`}></i></div>
                     {subLabel ? (
                       <div>
                         <div className="nav-nm">{item.name}</div>
@@ -1381,6 +1400,8 @@ body.dark .play-dot::after  { border-color:rgba(59,130,246,.15); }
 }
 .nav-item:hover .nav-iw { background:#DBEAFE;color:#1E40AF; }
 .nav-item:hover .nav-nm { color:#1E40AF; }
+.nav-item--locked { opacity:.55; cursor:not-allowed; }
+.nav-item--locked .nav-st { color:#B91C1C; }
 .nav-item.active { background:linear-gradient(135deg,#EEF4FF,#DBEAFE); }
 .nav-item.active::before { content:'';position:absolute;left:0;top:18%;bottom:18%;width:3px;background:linear-gradient(180deg,#1E40AF,#1E3A8A);border-radius:0 3px 3px 0; }
 .nav-item.active .nav-iw { background:linear-gradient(135deg,#DBEAFE,#BFDBFE);color:#1E40AF; }

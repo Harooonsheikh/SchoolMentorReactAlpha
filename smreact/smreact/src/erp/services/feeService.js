@@ -3,6 +3,154 @@ import { buildUrl, buildSuperAdminUrl, apiMessage, resolveMediaUrl } from '../..
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
+/* ── Short-lived read cache ─────────────────────────────────────────
+   Fee tabs mount together and each one asks for the same settings, header,
+   grades and roster. cachedRead() runs the loader once per key: later calls
+   inside `ttl` ms get the same result, and a call made while the request is
+   still in flight shares that request. Every read returns a clone so callers
+   can mutate it. Writes call invalidateFeeCache() for what they changed. */
+const readCache = new Map(); // key -> { at, pending, promise }
+function cachedRead(key, ttl, loader) {
+  const hit = readCache.get(key);
+  if (hit && (hit.pending || Date.now() - hit.at < ttl)) return hit.promise.then(clone);
+  const entry = { at: Date.now(), pending: true, promise: null };
+  entry.promise = loader().then(
+    value => { entry.pending = false; return value; },
+    err => { if (readCache.get(key) === entry) readCache.delete(key); throw err; },
+  );
+  readCache.set(key, entry);
+  return entry.promise.then(clone);
+}
+/* invalidateFeeCache(key, …) clears those keys; with no keys it clears everything. */
+export function invalidateFeeCache(...keys) {
+  if (!keys.length) { readCache.clear(); return; }
+  keys.forEach(k => readCache.delete(k));
+}
+const approvalsPrefix = 'json:/api/Approvals';
+/* Approval state changes after any fee write, so every such write clears it. */
+export function invalidateApprovalsCache() {
+  for (const k of [...readCache.keys()]) {
+    if (k.startsWith(approvalsPrefix)) readCache.delete(k);
+  }
+}
+const FEE_HEADER_TTL = 10 * 60 * 1000;   // branch header rarely changes
+const FEE_DATA_TTL = 10 * 60 * 1000;     // settings, grades, roster, transport: kept fresh by saves + login preload
+const FEE_APPROVALS_TTL = 10 * 60 * 1000; // approvals: cleared by every fee write (invalidateApprovalsCache)
+
+/* Raw API responses, keyed by path. Every shared read goes through this layer,
+   so the login preload can fill the same entries the tabs read from. */
+const feePath = {
+  header:    b => `/report-header/${b}`,
+  settings:  b => `/api/FeeChallanSettings/get-all?branchId=${b}`,
+  grades:    b => `/api/LaunchSetup/get-grades-by-branch/${b}`,
+  roster:    b => `/api/LaunchSetup/get-class-section-studentlist-by-branch/${b}`,
+  transport: b => `/api/TransportFeeSetup/get-all?branchId=${b}`,
+};
+const jsonKey = path => `json:${path}`;
+
+async function getJsonCached(path, ttl) {
+  const result = await cachedRead(jsonKey(path), ttl, async () => {
+    const res = await fetch(buildUrl(path), { headers: { Accept: '*/*' } });
+    const json = await res.json().catch(() => null);
+    return { ok: res.ok, json };
+  });
+  if (!result.ok) invalidateFeeCache(jsonKey(path)); // never keep a failed response
+  return result;
+}
+
+function seedJson(path, json) {
+  readCache.set(jsonKey(path), { at: Date.now(), pending: false, promise: Promise.resolve({ ok: true, json }) });
+}
+
+/* Login (and ERP reload) par Fee ka shared data pehle se cache me bharta hai, taake
+   Fee tabs khulte hi tayyar hon. Pehle ek bootstrap request try hoti hai:
+     GET /api/FeeModule/bootstrap?branchId=  →  { success, data: { header, settings,
+       grades, roster, transport } }   (har key wahi raw data jo us endpoint ka hai)
+   Endpoint na ho (404) to har read apni request khud karti hai — kuch toot-ta nahi. */
+let feeBootstrapMissing = false;
+let lastPreloadAt = 0;
+export async function preloadFeeData({ force = false } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  if (!branchID || !sessionStorage.getItem('token')) return;
+  /* Login ke fauran baad App bhi mount hota hai — dono ek hi preload par chalen. */
+  if (!force && Date.now() - lastPreloadAt < 30 * 1000) return;
+  lastPreloadAt = Date.now();
+  if (force) invalidateAllFeeData();
+
+  if (!feeBootstrapMissing) {
+    try {
+      const res = await fetch(buildUrl(`/api/FeeModule/bootstrap?branchId=${branchID}`), {
+        headers: { Accept: '*/*' },
+      });
+      if (res.status === 404) {
+        feeBootstrapMissing = true;
+      } else if (res.ok) {
+        const d = (await res.json().catch(() => null))?.data || {};
+        if (d.header)    seedJson(feePath.header(branchID), { success: true, data: d.header });
+        if (d.settings)  seedJson(feePath.settings(branchID), { success: true, data: d.settings });
+        if (d.grades)    seedJson(feePath.grades(branchID), { success: true, data: d.grades });
+        if (d.roster)    seedJson(feePath.roster(branchID), { success: true, data: d.roster });
+        if (d.transport) seedJson(feePath.transport(branchID), { success: true, data: d.transport });
+      }
+    } catch { /* network hiccup — fall back to individual reads below */ }
+  }
+
+  /* Screens ki default period wahi hai jo server par active hai (settings ke baad), warna aaj ka mahina. */
+  const settings = await getFeeSettings().catch(() => ({}));
+  const { m, y } = feePeriodFor(settings);
+  const prev = previousRangeFor(m, y);
+  await Promise.allSettled([
+    getReportHeader(),
+    getFeeGrades(),
+    fetchFeeClassStudents(),
+    getTransportFeeSetups(),
+    getUserApprovalRequests(),
+    getVehicles(),
+    getFamilies(),
+    getPendingChallans({}),
+    getMonthChallans(m + 1, y),
+    getLedgerRange(prev.fromM, prev.fromY, prev.toM, prev.toY),
+  ]);
+  scheduleFeeRefresh();
+}
+
+/* Same period rule the Fee screens use: server nextMonth when month-closing is ON,
+   otherwise today. Returns a 0-based month. */
+function feePeriodFor(settings) {
+  if (settings?.enableMonthClosing === true) {
+    const code = Number(settings.nextMonth) || 0;
+    const m = code % 100, y = Math.floor(code / 100);
+    if (m >= 1 && m <= 12 && y > 0) return { m: m - 1, y };
+  }
+  const d = new Date();
+  return { m: d.getMonth(), y: d.getFullYear() };
+}
+
+/* The 12-month window the challan screens use for previous dues (ends at the month before). */
+function previousRangeFor(m0, y) {
+  let toM = m0, toY = y;
+  if (toM === 0) { toM = 12; toY = y - 1; }
+  let fromM = toM - 11, fromY = toY;
+  while (fromM <= 0) { fromM += 12; fromY -= 1; }
+  return { fromM, fromY, toM, toY };
+}
+
+/* Background refresh every 10 minutes while logged in — screens never fetch on open,
+   so the cache is what keeps the data reasonably current. */
+let feeRefreshTimer = null;
+function invalidateAllFeeData() {
+  invalidateFeeCache();
+  invalidateFeeClasses();
+  invalidateMonthChallans();
+}
+function scheduleFeeRefresh() {
+  if (feeRefreshTimer) return;
+  feeRefreshTimer = setInterval(() => {
+    if (!sessionStorage.getItem('token')) return;
+    preloadFeeData({ force: true }).catch(() => {});
+  }, 10 * 60 * 1000);
+}
+
 /* Logged-in UserID — login par casing badalti rehti hai, is liye common keys try karo.
    Challan delete (single + bulk) ke employeeId param me yahi jaati hai (approvals_by_user
    ?userId= isi UserID par match hota hai). */
@@ -53,11 +201,8 @@ export function formatPsid(psid) {
 
 export async function getReportHeader() {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
-  const res = await fetch(buildUrl(`/report-header/${branchID}`), {
-    headers: { Accept: '*/*' },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
+  const { ok, json } = await getJsonCached(feePath.header(branchID), FEE_HEADER_TTL);
+  if (!ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not load report header');
   }
   const data = json?.data || null;
@@ -77,25 +222,17 @@ export async function getReportHeader() {
    through the same per-head endpoints used by the Launch Setup Classes
    tab. branchID / UserID come from sessionStorage (set at login).
    ═══════════════════════════════════════════════════════════════════ */
+/* Grades response already carries each grade's sections (names + ids), which is
+   all this table reads. The full student roster is NOT needed here — skipping it
+   avoids the ~100 KB whole-branch download on every Student Fee Setup open. */
 export async function getFeeGrades() {
   const branchID = sessionStorage.getItem('branchID') || 0;
-  const [gradesRes, sectionsRes] = await Promise.all([
-    fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), {
-      headers: { Accept: '*/*' },
-    }),
-    fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
-      headers: { Accept: '*/*' },
-    }),
-  ]);
-  const gradesJson = await gradesRes.json().catch(() => null);
-  const sectionsJson = await sectionsRes.json().catch(() => null);
-  if (!gradesRes.ok) throw new Error(apiMessage(gradesJson) || 'Could not load classes');
-  if (!sectionsRes.ok) throw new Error(apiMessage(sectionsJson) || 'Could not load class sections');
+  const { ok, json: gradesJson } = await getJsonCached(feePath.grades(branchID), FEE_DATA_TTL);
+  if (!ok) throw new Error(apiMessage(gradesJson) || 'Could not load classes');
 
   const gradesData = Array.isArray(gradesJson?.data) ? gradesJson.data : [];
-  const sectionsData = Array.isArray(sectionsJson?.data) ? sectionsJson.data : [];
   const sectionsByGrade = new Map();
-  sectionsData.forEach(g => {
+  gradesData.forEach(g => {
     const gradeId = pick(g, 'id', 'gradeID', 'gradeId', 'classID');
     sectionsByGrade.set(String(gradeId), Array.isArray(g.sections) ? g.sections : []);
   });
@@ -169,6 +306,15 @@ async function getFeeGradesByGradeOnly() {
 let classStudentsCache = null; // { branchID, promise }
 export function invalidateFeeClasses() {
   classStudentsCache = null;
+  invalidateFeeCache(jsonKey(feePath.roster(sessionStorage.getItem('branchID') || 0)));
+}
+
+/* Raw class/section/student roster — shared by getFeeGrades-free screens and the
+   roster cache below, so a tab switch does not hit the same endpoint again. */
+async function fetchRosterJson(branchID) {
+  const { ok, json } = await getJsonCached(feePath.roster(branchID), FEE_DATA_TTL);
+  if (!ok) throw new Error(apiMessage(json) || 'Could not load class sections');
+  return json;
 }
 
 /* Transport setup uses the same LaunchSetup class/section/student roster. */
@@ -186,11 +332,7 @@ function fetchFeeClassStudents() {
 }
 
 async function fetchFeeClassStudentsUncached(branchID) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
-    headers: { Accept: '*/*' },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load class students');
+  const json = await fetchRosterJson(branchID);
 
   const grades = Array.isArray(json?.data) ? json.data : [];
   const classes = [];
@@ -299,6 +441,8 @@ export async function saveFeeHead({ feeStructureID = 0, gradeId, name, amt }) {
     if (isApprovalPending(json)) return json; // approval-gated → caller pending badge dikhaye
     throw new Error(apiMessage(json) || 'Could not save fee head');
   }
+  invalidateFeeCache(jsonKey(feePath.grades(branchID)));
+  invalidateApprovalsCache();
   return json;
 }
 
@@ -312,6 +456,8 @@ export async function deleteFeeHead(feeStructureID) {
     if (isApprovalPending(json)) return json;
     throw new Error(apiMessage(json) || 'Could not delete fee head');
   }
+  invalidateFeeCache(jsonKey(feePath.grades(sessionStorage.getItem('branchID') || 0)));
+  invalidateApprovalsCache();
   return json;
 }
 
@@ -349,6 +495,7 @@ export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, head
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not save fee discount');
   }
+  invalidateApprovalsCache();
   return json;
 }
 
@@ -358,17 +505,12 @@ export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, head
    list khulte waqt isi se student ke against pending FeeDiscount badge resolve hota hai. */
 export async function getUserApprovalRequests() {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
-  let userID = 0;
-  for (const k of ['UserID', 'userID', 'userId', 'user_id']) {
-    const v = Number(sessionStorage.getItem(k));
-    if (v) { userID = v; break; }
-  }
-  const res = await fetch(
-    buildUrl(`/api/Approvals/approvals_by_user?branchId=${branchID}&userId=${userID}`),
-    { headers: { Accept: '*/*' } },
+  const userID = currentUserId();
+  const { ok, json } = await getJsonCached(
+    `/api/Approvals/approvals_by_user?branchId=${branchID}&userId=${userID}`,
+    FEE_APPROVALS_TTL,
   );
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
+  if (!ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not load approval requests');
   }
   return Array.isArray(json?.data) ? json.data : [];
@@ -389,6 +531,7 @@ export async function withdrawFeeDiscount(approvalId) {
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not withdraw discount request');
   }
+  invalidateApprovalsCache();
   return json;
 }
 
@@ -462,11 +605,8 @@ function mapTransportSetupToApi(payload = {}) {
 
 export async function getTransportFeeSetups() {
   const branchID = transportFeeBranchID();
-  const res = await fetch(buildUrl(`/api/TransportFeeSetup/get-all?branchId=${branchID}`), {
-    headers: { Accept: '*/*' },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
+  const { ok, json } = await getJsonCached(feePath.transport(branchID), FEE_DATA_TTL);
+  if (!ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not load transport fee setup');
   }
   return (Array.isArray(json?.data) ? json.data : []).map(mapTransportSetupFromApi);
@@ -485,8 +625,7 @@ export async function getTransportFeeSetup(id) {
 }
 
 export async function getTransportFee() {
-  const data = await fetchFeeClassStudents();
-  const setups = await getTransportFeeSetups();
+  const [data, setups] = await Promise.all([fetchFeeClassStudents(), getTransportFeeSetups()]);
   const byApplicantClass = new Map();
   const byApplicant = new Map();
 
@@ -540,6 +679,10 @@ async function manageVehicle(payload) {
   const json = await res.json().catch(() => null);
   /* Approval-gated: backend aksar success:false + "…sent for approval" deta hai —
      isay error mat samjho; caller pending badge / ghost row dikhaye. */
+  if (payload.action !== 'get') {
+    invalidateFeeCache(vehiclesKey());
+    invalidateApprovalsCache();
+  }
   if (isApprovalPending(json)) return json;
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Vehicle request failed');
@@ -547,7 +690,12 @@ async function manageVehicle(payload) {
   return json;
 }
 
-export async function getVehicles() {
+const vehiclesKey = () => `vehicles:${transportFeeBranchID()}`;
+export function getVehicles() {
+  return cachedRead(vehiclesKey(), FEE_DATA_TTL, fetchVehicles);
+}
+
+async function fetchVehicles() {
   const json = await manageVehicle({
     action: 'get', id: 0, branchID: transportFeeBranchID(),
     vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: 0,
@@ -874,11 +1022,8 @@ function apiRowHasFeatureToggle(row, uiKey) {
 
 export async function getFeeSettings() {
   const branchID = feeSettingsBranchID();
-  const res = await fetch(buildUrl(`/api/FeeChallanSettings/get-all?branchId=${branchID}`), {
-    headers: { Accept: '*/*' },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
+  const { ok, json } = await getJsonCached(feePath.settings(branchID), FEE_DATA_TTL);
+  if (!ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not load fee challan settings');
   }
 
@@ -976,7 +1121,12 @@ function mapFamilyFromApi(fam) {
   };
 }
 
-export async function getFamilies() {
+const familiesKey = () => `families:${Number(sessionStorage.getItem('branchID')) || 0}`;
+export function getFamilies() {
+  return cachedRead(familiesKey(), FEE_DATA_TTL, fetchFamilies);
+}
+
+async function fetchFamilies() {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const res = await fetch(buildUrl('/api/FamilyTree/familytreecrud'), {
     method: 'POST',
@@ -1009,23 +1159,12 @@ export async function getGeneratedFamilyChallans() {
 /* Class-wise fee heads for the branch — used to populate the Family Tree
    Challans "Select Fee Heads" dropdown. Returns { [classId]: [headName, …] }. */
 export async function getClassFeeHeadsMap() {
-  const branchID = sessionStorage.getItem('branchID');
-  const empID    = sessionStorage.getItem('employee_ID');
-  const token    = sessionStorage.getItem('token');
-  const res = await fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`), {
-    method: 'GET',
-    headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    throw new Error(apiMessage(json) || 'Could not load class fee heads');
-  }
-  const data = Array.isArray(json?.data) ? json.data : [];
+  /* Same fee heads as getFeeGrades (cached) — no separate heavy class/student request. */
+  const grades = await getFeeGrades();
   const map = {};
-  data.forEach(cls => {
-    map[cls.id] = (Array.isArray(cls.feeHeads) ? cls.feeHeads : [])
-      .map(h => h.headName)
-      .filter(Boolean);
+  grades.forEach(g => {
+    if (map[g._gradeId]) return;
+    map[g._gradeId] = (g.heads || []).map(h => h.name).filter(Boolean);
   });
   return map;
 }
@@ -1035,25 +1174,12 @@ export async function getClassFeeHeadsMap() {
    (discount.headID ↔ feeStructureID) and to render the Discount Manager rows.
    Returns { [classId/gradeId]: [{ feeStructureID, name, amt }] }. */
 export async function getClassFeeStructureMap() {
-  const branchID = sessionStorage.getItem('branchID');
-  const empID    = sessionStorage.getItem('employee_ID');
-  const token    = sessionStorage.getItem('token');
-  const res = await fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`), {
-    method: 'GET',
-    headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    throw new Error(apiMessage(json) || 'Could not load class fee heads');
-  }
-  const data = Array.isArray(json?.data) ? json.data : [];
+  /* Same fee-structure heads as getFeeGrades (cached) — no separate heavy class/student request. */
+  const grades = await getFeeGrades();
   const map = {};
-  data.forEach(cls => {
-    map[cls.id] = (Array.isArray(cls.feeHeads) ? cls.feeHeads : []).map(h => ({
-      feeStructureID: h.feeStructureID ?? h.id ?? 0,
-      name:           h.headName ?? h.name ?? '',
-      amt:            Number(h.amount ?? h.amt) || 0,
-    }));
+  grades.forEach(g => {
+    if (map[g._gradeId]) return;
+    map[g._gradeId] = (g.heads || []).map(h => ({ ...h }));
   });
   return map;
 }
@@ -1083,6 +1209,8 @@ export async function saveStudentTransport(classKey, reg, payload) {
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not save transport fee setup');
   }
+  invalidateFeeCache(jsonKey(feePath.transport(transportFeeBranchID())));
+  invalidateApprovalsCache();
 
   let returnedId = Number(json?.data?.id ?? json?.id ?? body.id) || 0;
   if (!returnedId) {
@@ -1125,6 +1253,7 @@ export async function saveFeeSettings(payload) {
     throw new Error(apiMessage(json) || 'Could not save fee challan settings');
   }
 
+  invalidateFeeCache(jsonKey(feePath.settings(feeSettingsBranchID())));
   return getFeeSettings();
 }
 /* "YYYY-MM-DD" (date picker) → API datetime string.
@@ -1631,6 +1760,7 @@ export function invalidateMonthChallans(month, year) {
   // initializing, so the reference is always live.
   // Pending list (/pending) bhi har write ke baad badal sakti hai — saath saaf.
   pendingCache.clear();
+  invalidateApprovalsCache();
   if (month == null || year == null) {
     monthChallansCache.clear();
   } else {
@@ -2947,6 +3077,7 @@ export async function deleteFamilyTreeDetail({ id, treeID = 0, applicantsID = 0,
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not remove child from family');
   }
+  invalidateFeeCache(familiesKey());
   return json;
 }
 

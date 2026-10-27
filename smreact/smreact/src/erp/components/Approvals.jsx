@@ -4,6 +4,8 @@ import Tooltip from './Tooltip';
 import * as approvalsService from '../services/approvalsService';
 import { APPROVAL_ACTION_META } from '../mock/approvals';
 import { usePermissions } from '../context/PermissionsContext';
+import { useModules } from '../context/ModuleContext';
+import { APPROVAL_TYPE_MSGS } from '../config/moduleConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    APPROVALS — central review screen for sensitive changes raised
@@ -135,6 +137,10 @@ function GroupCard({ label, value, tone }) {
 
 export default function Approvals({ toast = () => {} }) {
   const { can, failOpen } = usePermissions();
+  const { approvalType } = useModules();
+  /* Chain mode: Pending Approvals & History are controlled by head office.
+     School / null → normal. Disable is handled in the sidebar / Settings. */
+  const chainLocked = approvalType === 'chain';
   /* Layer 1 — tabs gated by View on their governing screen; Layer 2 —
      row actions gated by their own action. Approve/Reject = Approve on
      Pending Approvals & History.
@@ -149,14 +155,14 @@ export default function Approvals({ toast = () => {} }) {
      leta (dekhein PermissionsContext ka failOpen). My Requests is se mustasna
      hai — apni request to har user dekh/utha sakta hai. */
   const canReview = (menu, sub, action) => can(menu, sub, action) && !failOpen;
-  const canDecide = canReview('Approvals', 'Pending Approvals & History', 'Approve');
+  const canDecide = !chainLocked && canReview('Approvals', 'Pending Approvals & History', 'Approve');
   const visibleTabs = TABS.filter(t => (
     t.screen === 'Pending Approvals & History'
       ? canReview('Approvals', t.screen, 'View')
       : can('Approvals', t.screen, 'View')
   ));
 
-  const [tab, setTab] = useState('pending');
+  const [tab, setTab] = useState(() => (chainLocked ? 'my' : 'pending'));
   const [currentUser, setCurrentUser] = useState('');
   const [approver, setApprover] = useState(null);
 
@@ -219,12 +225,18 @@ export default function Approvals({ toast = () => {} }) {
   }, [canDecide]);
 
   /* Snap to the first permitted tab if the current one isn't visible
-     (e.g. default 'pending' when the user only has My Requests View). */
+     (e.g. default 'pending' when the user only has My Requests View).
+     Chain mode: never stay on Pending / History. */
   useEffect(() => {
+    if (chainLocked && (tab === 'pending' || tab === 'history')) {
+      const my = visibleTabs.find(t => t.id === 'my') || visibleTabs[0];
+      if (my) setTab(my.id);
+      return;
+    }
     if (visibleTabs.length && !visibleTabs.some(t => t.id === tab)) {
       setTab(visibleTabs[0].id);
     }
-  }, [visibleTabs, tab]);
+  }, [visibleTabs, tab, chainLocked]);
 
   const tabVisible = visibleTabs.some(t => t.id === tab);
   const rows = !tabVisible ? [] : tab === 'my' ? myRequests : tab === 'pending' ? pending : history;
@@ -308,17 +320,28 @@ export default function Approvals({ toast = () => {} }) {
       </div>
 
       <div className="ap-tabs">
-        {visibleTabs.map(t => (
+        {visibleTabs.map(t => {
+          const locked = chainLocked && (t.id === 'pending' || t.id === 'history');
+          return (
           <button
             key={t.id}
             type="button"
-            className={`ap-tab${tab === t.id ? ' on' : ''}`}
-            onClick={() => setTab(t.id)}
+            className={`ap-tab${tab === t.id ? ' on' : ''}${locked ? ' is-locked' : ''}`}
+            aria-disabled={locked || undefined}
+            title={locked ? APPROVAL_TYPE_MSGS.chain : undefined}
+            onClick={() => {
+              if (locked) {
+                toast(APPROVAL_TYPE_MSGS.chain, 'warning');
+                return;
+              }
+              setTab(t.id);
+            }}
           >
-            <i className={`fa-solid ${t.icon}`} aria-hidden="true"></i> {t.label}
-            {t.id === 'pending' && stats.pending > 0 && <span className="ap-tab-count">{stats.pending}</span>}
+            <i className={`fa-solid ${locked ? 'fa-lock' : t.icon}`} aria-hidden="true"></i> {t.label}
+            {t.id === 'pending' && !locked && stats.pending > 0 && <span className="ap-tab-count">{stats.pending}</span>}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       <div className="al-table-card">
@@ -735,6 +758,8 @@ const AP_CSS = `
 }
 .ap-tab:hover { color: #1E40AF; border-color: #BFDBFE; }
 .ap-tab.on { background: linear-gradient(135deg, #1E3A8A, #1E40AF, #2563EB); color: #fff; border-color: transparent; box-shadow: 0 4px 12px rgba(30, 58, 138, .28); }
+.ap-tab.is-locked { opacity: .55; cursor: not-allowed; }
+.ap-tab.is-locked:hover { color: #475569; border-color: var(--border-light, #E2E8F0); }
 .ap-tab-count {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px;

@@ -5,6 +5,7 @@ import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 import { clearMentorAiSession } from '../../erp/pages/Dashboard/_forked/services/mentorAiAgentService';
 import { clearAcademicsContentPerms, loadAcademicsContentPermissions } from '../../erp/services/academicsContentPermissions';
+import { preloadFeeData } from '../../erp/services/feeService';
 
 /* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
    ka portal khulta hai.
@@ -306,6 +307,8 @@ export default function LoginScreen({ onLogin, onSignup }) {
     /* Chain associate school: Head Office ki academics content permissions
        (Activity / Lesson / Notebook × view/add/edit/delete) GETBYBRANCH se. */
     loadAcademicsContentPermissions().catch(() => {});
+    /* Fee ka shared data login ke saath hi background me load — Fee tab khulte hi tayyar. */
+    preloadFeeData().catch(() => {});
     onLogin(data);
 
   } catch (err) {

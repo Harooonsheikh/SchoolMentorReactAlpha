@@ -1,15 +1,58 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { downloadDeptReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
 import { useSetupTabPerms } from '../utils/setupPermissions';
 import SetupLoader from '../components/SetupLoader';
+import * as hrService from '../erp/services/hrService';
+import * as approvalsService from '../erp/services/approvalsService';
+import {
+  getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds,
+  upsertPendingLink, removePendingLink, reconcilePendingLinks,
+} from '../erp/services/pendingAddsStore';
 
-function AddDeptModal({ open, onClose, onAdd, getDeparmentdata, editDept = null }) {
+/* Same store keys as HR ▸ Basics so pending badges stay in sync across both screens. */
+const LS_DEPT_MOD = 'hrDept';
+const LS_DESIG_MOD = 'hrDesig';
+
+function DeptPendingActions({ pend, onWithdraw }) {
+  if (!pend) return null;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+      <Tooltip text={`Request ${pend.requestNo || ''} awaiting approval`.trim()}>
+        <span className="ls-pending-badge" role="status">
+          <i className="fa-solid fa-hourglass-half"></i>
+          <span>Pending Approval</span>
+          {pend.approvalId != null && <b className="ls-pending-id">#{pend.approvalId}</b>}
+        </span>
+      </Tooltip>
+      <Tooltip text="Withdraw this request">
+        <button type="button" className="ls-withdraw-btn" onClick={() => onWithdraw && onWithdraw()} aria-label="Withdraw this request">
+          <i className="fa-solid fa-rotate-left"></i>
+        </button>
+      </Tooltip>
+    </span>
+  );
+}
+
+function mergeDeptGhosts(rows, ghosts) {
+  const base = Array.isArray(rows) ? rows : [];
+  if (!ghosts || !ghosts.length) return base;
+  const realNames = new Set(
+    base.filter((r) => !r._pendingAdd).map((r) => String(r.departmentName || r.name || '').trim().toLowerCase()).filter(Boolean),
+  );
+  const add = ghosts.map((g) => g && g.row).filter((r) => {
+    if (!r) return false;
+    const nm = String(r.departmentName || r.name || '').trim().toLowerCase();
+    if (nm && realNames.has(nm)) return false;
+    return true;
+  });
+  return [...add, ...base];
+}
+
+function AddDeptModal({ open, onClose, onAdd, getDeparmentdata, editDept = null, onPending, showToast }) {
   const [name, setName] = useState('');
   const [err, setErr] = useState('');
-  const UserID = sessionStorage.getItem('UserID');
-  const branchID = sessionStorage.getItem('branchID');
   const isEdit = !!editDept;
 
   useEffect(() => {
@@ -20,72 +63,66 @@ function AddDeptModal({ open, onClose, onAdd, getDeparmentdata, editDept = null 
 
   const handleAdd = async() => {
     if (!name.trim()) { setErr('Department name is required'); return; }
- try {
+    try {
       const branchID = sessionStorage.getItem('branchID');
-    const userID = sessionStorage.getItem('UserID') || 0;
+      const userID = Number(sessionStorage.getItem('UserID') || 0);
 
-    /* Edit reuses the add endpoint with the department id and preserves its
-       existing designations so a rename doesn't wipe them. */
-    const designations = isEdit && (editDept.designations || []).length
-      ? editDept.designations.map(d => ({
-          designationID: d.designationID ?? 0,
-          branchID: Number(branchID) || 0,
-          branchDepartmentID: editDept.id,
-          designationName: d.designationName ?? d.name ?? '',
-          description: d.description ?? '',
-          qualificationID: d.qualificationID ?? 0,
-          qualificationName: d.qualificationName ?? d.qual ?? '',
-          createdBy: Number(userID) || 0,
-          modifiedBy: Number(userID) || 0,
-        }))
-      : [
-          {
-            designationID: 0,
-            branchID: 0,
-            branchDepartmentID: 0,
-            designationName: "",
-            description: "",
-            qualificationID: 0,
-            qualificationName: "",
-            createdBy: 0,
-            modifiedBy: 0,
-          },
-        ];
+      /* Edit reuses the add endpoint with the department id and preserves its
+         existing designations so a rename doesn't wipe them. */
+      const designations = isEdit && (editDept.designations || []).length
+        ? editDept.designations.map(d => ({
+            designationID: d.designationID ?? 0,
+            branchID: Number(branchID) || 0,
+            branchDepartmentID: editDept.id,
+            designationName: d.designationName ?? d.name ?? '',
+            description: d.description ?? '',
+            qualificationID: d.qualificationID ?? 0,
+            qualificationName: d.qualificationName ?? d.qual ?? '',
+            createdBy: userID,
+            modifiedBy: userID,
+          }))
+        : [
+            {
+              designationID: 0,
+              branchID: 0,
+              branchDepartmentID: 0,
+              designationName: "",
+              description: "",
+              qualificationID: 0,
+              qualificationName: "",
+              createdBy: 0,
+              modifiedBy: 0,
+            },
+          ];
 
-    const payload = {
-      id: isEdit ? editDept.id : 0,
-      branchID: branchID,
-      departmentName: name,
-      totalDesignationCount: isEdit ? (editDept.designations || []).length : 0,
-      createdBy: Number(userID),
-      modifiedBy: userID,
-      designations,
-    };
-    console.log(payload)
-    const res = await fetch(buildUrl('/api/LaunchSetup/save-department'), {
-      method: 'POST',
-      headers: {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      setErr(data?.message || 'Data failed');
-      return;
+      const payload = {
+        id: isEdit ? editDept.id : 0,
+        branchID,
+        departmentName: name.trim(),
+        totalDesignationCount: isEdit ? (editDept.designations || []).length : 0,
+        createdBy: userID,
+        modifiedBy: userID,
+        designations,
+      };
+      const data = await hrService.saveHrDept(payload);
+      const pend = hrService.hrPendingInfo(data);
+      if (pend) {
+        onPending?.(pend, { isEdit, name: name.trim(), editDept });
+        showToast?.(pend.message || `Department ${isEdit ? 'update' : 'save'} sent for approval (Request #${pend.requestNo || pend.approvalId})`, 'info');
+        setName('');
+        setErr('');
+        onClose();
+        return;
+      }
+      setName('');
+      setErr('');
+      getDeparmentdata();
+      onClose();
+      showToast?.(isEdit ? 'Department updated' : 'Department added', 'success');
+    } catch (err) {
+      console.error(err);
+      setErr(err?.message || 'Network error. Please try again.');
     }
-setName('');
-    setErr('');
-    getDeparmentdata();
-    onClose();
-
-  } catch (err) {
-    console.error(err);
-    setErr('Network error. Please try again.');
-  }
   };
 
   if (!open) return null;
@@ -119,7 +156,7 @@ setName('');
   );
 }
 
-function AddDesigModal({ open, dept, onClose, onAdd,  getDeparmentdata, showToast}) {
+function AddDesigModal({ open, dept, onClose, onAdd, getDeparmentdata, showToast, onPending }) {
   const [name, setName] = useState('');
   const [qual, setQual] = useState({});
   const [job, setJob] = useState('');
@@ -129,67 +166,62 @@ function AddDesigModal({ open, dept, onClose, onAdd,  getDeparmentdata, showToas
 
   useEffect(() => {
     if (open) getQualification();
-  }, [open])
+  }, [open]);
 
+  async function getQualification() {
+    try {
+      const res = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
+      const json = await res.json();
+      setQualification(json.data ?? []);
+    } catch { showToast('Could not load qualifications', 'error'); }
+  }
 
-   async function getQualification() {
-      try {
-        const res  = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
-        const json = await res.json();
-        setQualification(json.data ?? []);
-        console.log(Qualification)
-      } catch { showToast('Could not load cities', 'error'); }
-    }
-
-  const handleAdd = async() => {
+  const handleAdd = async () => {
     if (!name.trim()) { setErr('Designation name is required'); return; }
-        if (!qual.id) { setErr2('Qualification is required'); return; }
+    if (!qual.id) { setErr2('Qualification is required'); return; }
 
     try {
       const branchID = sessionStorage.getItem('branchID');
-    const userID = sessionStorage.getItem('UserID') || 0;
+      const userID = Number(sessionStorage.getItem('UserID') || 0);
 
-    const payload = {
-      designationID: 0,
-      branchID: branchID,
-      branchDepartmentID: dept.id,
-      designationName: name,
-      description: job,
-      qualificationID: qual.id,
-      qualificationName: qual.qualificationName,
-      createdBy: Number(userID),
-      modifiedBy: userID,
-    };
-    console.log(payload)
-    const res = await fetch(buildUrl('/api/LaunchSetup/save-department-designation'), {
-      method: 'POST',
-      headers: {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      setErr(data?.message || 'Data failed');
-      return;
+      const payload = {
+        designationID: 0,
+        branchID,
+        branchDepartmentID: dept.id,
+        designationName: name.trim(),
+        description: job,
+        qualificationID: qual.id,
+        qualificationName: qual.qualificationName,
+        createdBy: userID,
+        modifiedBy: userID,
+      };
+      const data = await hrService.saveHrDesig(payload);
+      const pend = hrService.hrPendingInfo(data);
+      if (pend) {
+        onPending?.(pend, {
+          deptId: dept.id,
+          name: name.trim(),
+          qual: qual.qualificationName || '',
+          job: job.trim(),
+          qualificationID: qual.id,
+        });
+        showToast?.(pend.message || `Designation save sent for approval (Request #${pend.requestNo || pend.approvalId})`, 'info');
+        setName(''); setQual({}); setJob(''); setErr(''); setErr2('');
+        onClose();
+        return;
+      }
+      setName('');
+      setQual({});
+      setJob('');
+      setErr('');
+      setErr2('');
+      getDeparmentdata();
+      onClose();
+      showToast?.('Designation added', 'success');
+    } catch (err) {
+      console.error(err);
+      setErr(err?.message || 'Network error. Please try again.');
     }
-setName('');
-setQual({});
-setJob('');
-    setErr('');
-    setErr2('');
-    getDeparmentdata();
-    onClose();
-
-  } catch (err) {
-    console.error(err);
-    setErr('Network error. Please try again.');
-  }
-    onAdd(dept.id, { name: name.trim(), qual: qual.qualificationName.trim(), job: job.trim() });
-    setName(''); setQual(''); setJob(''); setErr(''); onClose();
   };
 
   if (!open || !dept) return null;
@@ -303,173 +335,282 @@ export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, sh
   const [editDesigForm, setEditDesigForm] = useState({});
   const [Qualification, setQualification] = useState({});
 
+  const [deptPendingMap, setDeptPendingMap] = useState({});
+  const [desigPendingMap, setDesigPendingMap] = useState({});
+  const [deptGhosts, setDeptGhosts] = useState(() => getPendingAdds(LS_DEPT_MOD));
+  const [desigGhosts, setDesigGhosts] = useState(() => getPendingAdds(LS_DESIG_MOD));
+  const [withdrawCfg, setWithdrawCfg] = useState(null);
 
+  async function getQualification() {
+    try {
+      const res = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
+      const json = await res.json();
+      setQualification(json.data ?? []);
+    } catch { showToast('Could not load qualifications', 'error'); }
+  }
 
-   async function getQualification() {
-      try {
-        const res  = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
-        const json = await res.json();
-        setQualification(json.data ?? []);
-        console.log(Qualification)
-      } catch { showToast('Could not load cities', 'error'); }
-    }
+  const getDeparmentdata = useCallback(async () => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const res = await fetch(buildUrl(`/api/LaunchSetup/get-departments-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+      const json = await res.json();
+      const d = json.data ?? [];
+      setDeptsData(Array.isArray(d) ? d : []);
+    } catch { showToast('Could not load branch data', 'error'); }
+    finally { setLoading(false); }
+  }, [setDeptsData, showToast]);
 
   useEffect(() => {
     getDeparmentdata();
+  }, [getDeparmentdata]);
+
+  const isBasicsRelevant = (r) => {
+    const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
+    return hay.includes('department') || hay.includes('designation') || hay.includes('dept');
+  };
+
+  const loadBasicsPending = useCallback(async () => {
+    try {
+      const reqs = await approvalsService.getMyRequests();
+      const deptM = {};
+      const desigM = {};
+      (reqs || []).forEach((r) => {
+        if (String(r.status || '').toLowerCase() !== 'pending' || !isBasicsRelevant(r)) return;
+        if (r.entityId == null) return;
+        const pend = { approvalId: r.apiId, requestNo: r.id };
+        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
+        if (hay.includes('designation')) desigM[String(r.entityId)] = pend;
+        else deptM[String(r.entityId)] = pend;
+      });
+      const dGhosts = reconcilePendingAdds(LS_DEPT_MOD, reqs);
+      const gGhosts = reconcilePendingAdds(LS_DESIG_MOD, reqs);
+      dGhosts.forEach((g) => { deptM[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      gGhosts.forEach((g) => { desigM[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
+      reconcilePendingLinks(LS_DEPT_MOD, reqs).forEach((l) => {
+        deptM[String(l.key)] = { approvalId: l.approvalId, requestNo: l.requestNo };
+      });
+      reconcilePendingLinks(LS_DESIG_MOD, reqs).forEach((l) => {
+        desigM[String(l.key)] = { approvalId: l.approvalId, requestNo: l.requestNo };
+      });
+      setDeptGhosts(dGhosts);
+      setDesigGhosts(gGhosts);
+      setDeptPendingMap(deptM);
+      setDesigPendingMap(desigM);
+    } catch (e) { /* non-fatal */ }
   }, []);
-  
-  const getDeparmentdata = useCallback(async () => {
-      try {
-        const branchID = sessionStorage.getItem('branchID');
-        const res      = await fetch(buildUrl(`/api/LaunchSetup/get-departments-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
-        const json     = await res.json();
-        const d        = json.data ?? {};
-        setDeptsData(d);
-        console.log(deptsData) 
-      } catch { showToast('Could not load branch data', 'error'); }
-      finally { setLoading(false); }
-  }, [setDeptsData, showToast]);
+
+  useEffect(() => { loadBasicsPending(); }, [loadBasicsPending]);
+
+  const markDeptPend = (id, pend) => {
+    if (id == null || !pend) return;
+    setDeptPendingMap((m) => ({ ...m, [String(id)]: pend }));
+    upsertPendingLink(LS_DEPT_MOD, { key: id, approvalId: pend.approvalId, requestNo: pend.requestNo });
+  };
+  const markDesigPend = (id, pend) => {
+    if (id == null || !pend) return;
+    setDesigPendingMap((m) => ({ ...m, [String(id)]: pend }));
+    upsertPendingLink(LS_DESIG_MOD, { key: id, approvalId: pend.approvalId, requestNo: pend.requestNo });
+  };
+
+  const onDeptPending = (pend, meta) => {
+    if (!pend) return;
+    if (!meta?.isEdit) {
+      const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+      const row = {
+        id: rid,
+        departmentName: meta.name,
+        name: meta.name,
+        designations: [],
+        _pendingAdd: true,
+      };
+      setDeptGhosts(addPendingAdd(LS_DEPT_MOD, {
+        rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row,
+      }));
+      markDeptPend(rid, pend);
+    } else {
+      markDeptPend(meta.editDept?.id, pend);
+    }
+    loadBasicsPending();
+  };
+
+  const onDesigPending = (pend, meta) => {
+    if (!pend) return;
+    const rid = `pending-${pend.requestNo || pend.approvalId || Date.now()}`;
+    const row = {
+      designationID: rid,
+      branchDepartmentID: meta.deptId,
+      designationName: meta.name,
+      qualificationName: meta.qual || '',
+      description: meta.job || '',
+      qualificationID: meta.qualificationID,
+      _pendingAdd: true,
+      _deptId: meta.deptId,
+    };
+    setDesigGhosts(addPendingAdd(LS_DESIG_MOD, {
+      rid, requestNo: pend.requestNo, approvalId: pend.approvalId, row,
+    }));
+    markDesigPend(rid, pend);
+    if (meta.deptId) setExpandedId(meta.deptId);
+    loadBasicsPending();
+  };
+
+  const doWithdraw = async () => {
+    if (!withdrawCfg) return;
+    const { kind, row, pend } = withdrawCfg;
+    try { await approvalsService.withdrawRequest(pend.approvalId); }
+    catch (e) { showToast(e?.message || 'Could not withdraw request', 'error'); return; }
+    showToast('Request withdrawn', 'success');
+    if (kind === 'dept') {
+      if (row?._pendingAdd) setDeptGhosts(removePendingAdd(LS_DEPT_MOD, row.id));
+      removePendingLink(LS_DEPT_MOD, row?.id);
+    } else {
+      const key = row?.designationID ?? row?.id;
+      if (row?._pendingAdd) setDesigGhosts(removePendingAdd(LS_DESIG_MOD, key));
+      removePendingLink(LS_DESIG_MOD, key);
+    }
+    setWithdrawCfg(null);
+    getDeparmentdata();
+    loadBasicsPending();
+  };
+
+  useEffect(() => {
+    const refresh = () => { getDeparmentdata(); loadBasicsPending(); };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [getDeparmentdata, loadBasicsPending]);
+
+  const hasPending = deptGhosts.length > 0 || desigGhosts.length > 0
+    || Object.keys(deptPendingMap).length > 0 || Object.keys(desigPendingMap).length > 0;
+  useEffect(() => {
+    if (!hasPending) return undefined;
+    const t = setInterval(() => { getDeparmentdata(); loadBasicsPending(); }, 10000);
+    return () => clearInterval(t);
+  }, [hasPending, getDeparmentdata, loadBasicsPending]);
+
+  const displayDepts = useMemo(() => {
+    const merged = mergeDeptGhosts(deptsData, deptGhosts);
+    /* Attach pending designation ghosts under their department. */
+    return merged.map((dept) => {
+      const ghostsForDept = (desigGhosts || [])
+        .map((g) => g && g.row)
+        .filter((r) => r && String(r.branchDepartmentID || r._deptId) === String(dept.id));
+      if (!ghostsForDept.length) return dept;
+      const existingIds = new Set((dept.designations || []).map((d) => String(d.designationID)));
+      const existingNames = new Set((dept.designations || []).map((d) => String(d.designationName || '').trim().toLowerCase()).filter(Boolean));
+      const add = ghostsForDept.filter((r) => {
+        if (existingIds.has(String(r.designationID))) return false;
+        const nm = String(r.designationName || '').trim().toLowerCase();
+        if (nm && existingNames.has(nm)) return false;
+        return true;
+      });
+      if (!add.length) return dept;
+      return { ...dept, designations: [...add, ...(dept.designations || [])] };
+    });
+  }, [deptsData, deptGhosts, desigGhosts]);
 
   const handleEditDesig = (deptId, idx) => {
-    const dept = deptsData.find(d => d.id === deptId);
+    const dept = displayDepts.find(d => d.id === deptId);
     const d = dept?.designations[idx];
-    if (!d) return;
+    if (!d || d._pendingAdd) return;
     getQualification();
-    setEditDesigTarget({ deptId, idx });
+    setEditDesigTarget({ deptId, idx, departmentName: dept.departmentName || dept.name });
     setEditDesigForm(d);
-    console.log(editDesigForm)
   };
 
-  const saveDesigEdit = async() => {
-    if (!editDesigForm.designationName.trim()) return;
-    console.log(editDesigForm)
+  const saveDesigEdit = async () => {
+    if (!editDesigForm.designationName?.trim()) return;
     try {
       const branchID = sessionStorage.getItem('branchID');
-    const userID = sessionStorage.getItem('UserID') || 0;
+      const userID = Number(sessionStorage.getItem('UserID') || 0);
 
-    const payload = {
-      designationID: editDesigForm.designationID,
-      branchID: branchID,
-      branchDepartmentID: editDesigForm.branchDepartmentID,
-      designationName: editDesigForm.designationName,
-      description: editDesigForm.description,
-      qualificationID: editDesigForm.qualificationID,
-      qualificationName: editDesigForm.qualificationName,
-      createdBy: Number(userID),
-      modifiedBy: userID,
-    };
-    console.log(payload)
-    const res = await fetch(buildUrl('/api/LaunchSetup/save-department-designation'), {
-      method: 'POST',
-      headers: {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      showToast(data?.message || 'Data failed', 'error');
-      return;
+      const payload = {
+        designationID: editDesigForm.designationID,
+        branchID,
+        branchDepartmentID: editDesigForm.branchDepartmentID,
+        designationName: editDesigForm.designationName,
+        description: editDesigForm.description,
+        qualificationID: editDesigForm.qualificationID,
+        qualificationName: editDesigForm.qualificationName,
+        createdBy: userID,
+        modifiedBy: userID,
+      };
+      const data = await hrService.saveHrDesig(payload);
+      const pend = hrService.hrPendingInfo(data);
+      if (pend) {
+        showToast(pend.message || `Designation update sent for approval (Request #${pend.requestNo || pend.approvalId})`, 'info');
+        markDesigPend(editDesigForm.designationID, pend);
+        setEditDesigForm({});
+        setEditDesigTarget(null);
+        loadBasicsPending();
+        return;
+      }
+      setEditDesigForm({});
+      getDeparmentdata();
+      setEditDesigTarget(null);
+      showToast('Designation updated', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast(err?.message || 'Network error. Please try again.', 'error');
     }
-setEditDesigForm({});
-    getDeparmentdata();
-    setEditDesigTarget(null);
-
-  } catch (err) {
-    console.error(err);
-    showToast('Network error. Please try again.', 'error');
-  }
-  };
-  const filtered = search ? deptsData.filter(d => d.name.toLowerCase().includes(search.toLowerCase())) : deptsData;
-  
-const totalPosts = (deptsData || []).reduce(
-  (sum, dept) => sum + (dept.designations?.length || 0),
-  0
-);
-  const handleAddDept = (name) => {
-    setDeptsData(prev => [...prev, { id: Date.now(), name, designations: [] }]);
-    showToast(`Department "${name}" added`, 'success');
   };
 
-  const handleAddDesig = (deptId, desig) => {
-    setDeptsData(prev => prev.map(d => d.id === deptId ? { ...d, designations: [...d.designations, desig] } : d));
-    showToast('Designation added', 'success');
-  };
+  const filtered = search
+    ? displayDepts.filter(d => String(d.departmentName || d.name || '').toLowerCase().includes(search.toLowerCase()))
+    : displayDepts;
 
-  const handleDeleteDesig = async(deptId, idx) => {
-const dept = deptsData.find(d => d.id === deptId);
+  const totalPosts = (displayDepts || []).reduce(
+    (sum, dept) => sum + (dept.designations?.length || 0),
+    0
+  );
+
+  const handleAddDept = () => {};
+  const handleAddDesig = () => {};
+
+  const handleDeleteDesig = async (deptId, idx) => {
+    const dept = displayDepts.find(d => d.id === deptId);
     const d = dept?.designations[idx];
-  console.log(d)
-     try {
-          const res = await fetch(
-          buildUrl(`/api/LaunchSetup/delete-designation/${d.designationID}`),
-          {
-            method: 'DELETE',
-            headers: {
-              Accept: '*/*'
-            }
-          }
-        );
-          const json     = await res.json();
-    
-        if (!res.ok) {
-          showToast(json?.message || 'Delete failed', 'error');
-          return;
-        }
-          getDeparmentdata()
-          showToast('Designation removed', 'info');
-
-    
-      } catch (err) {
-        console.error(err);
-        showToast('Could not delete Designation', 'error');
+    if (!d || d._pendingAdd) return;
+    try {
+      const json = await hrService.deleteHrDesig({ id: d.designationID });
+      const pend = hrService.hrPendingInfo(json);
+      if (pend) {
+        showToast(pend.message || `Designation deletion sent for approval (Request #${pend.requestNo || pend.approvalId})`, 'info');
+        markDesigPend(d.designationID, pend);
+        loadBasicsPending();
+        return;
       }
+      getDeparmentdata();
+      showToast('Designation removed', 'info');
+    } catch (err) {
+      console.error(err);
+      showToast(err?.message || 'Could not delete Designation', 'error');
+    }
   };
 
-  const handleDeleteDept = async(id) => {
-    console.log(id)
-     try {
-          const res = await fetch(
-          buildUrl(`/api/LaunchSetup/delete-department/${id}`),
-          {
-            method: 'DELETE',
-            headers: {
-              Accept: '*/*'
-            }
-          }
-        );
-          const json     = await res.json();
-    
-        if (!res.ok) {
-      if (
-        json?.message?.includes('REFERENCE constraint') ||
-        json?.message?.includes('FK_AHM_Department_Designations_Department')
-      ) {
-        showToast(
-          'Cannot delete department because it contains designations or related data.',
-          'error'
-        );
-                  setDeleteTarget(null);
-
-      } else {
-        showToast(json?.message || 'Delete failed', 'error');
-                  setDeleteTarget(null);
-
+  const handleDeleteDept = async (id) => {
+    try {
+      const json = await hrService.deleteHrDept({ id });
+      const pend = hrService.hrPendingInfo(json);
+      if (pend) {
+        showToast(pend.message || `Department deletion sent for approval (Request #${pend.requestNo || pend.approvalId})`, 'info');
+        markDeptPend(id, pend);
+        setDeleteTarget(null);
+        loadBasicsPending();
+        return;
       }
-
-      return;
+      getDeparmentdata();
+      showToast(`"${deleteTarget?.departmentName || deleteTarget?.name}" deleted`, 'info');
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error(err);
+      setDeleteTarget(null);
+      showToast(err?.message || 'Could not delete department', 'error');
     }
-          getDeparmentdata()
-                  showToast(`"${deleteTarget?.departmentName}" deleted`, 'info');
-          setDeleteTarget(null);
-      } catch (err) {
-        console.error(err);
-                  setDeleteTarget(null);
-        showToast('Could not delete department', 'error');
-      }
   };
 
   if (loading) return <div className="tab-panel active"><SetupLoader label="Loading departments…" /></div>;
@@ -519,32 +660,19 @@ const dept = deptsData.find(d => d.id === deptId);
             </div>
           ) : filtered.map((dept, i) => {
             const exp = expandedId === dept.id;
+            const deptPend = deptPendingMap[String(dept.id)];
+            const deptIsPending = !!deptPend || !!dept._pendingAdd;
+            const desigCount = (dept.designations || []).length;
             return (
               <div key={dept.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
                 <div className={`dept-row${exp ? ' expanded-row' : ''}`} onClick={() => setExpandedId(exp ? null : dept.id)}>
                   <div className="td" style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11.5 }}>{String(i + 1).padStart(2, '0')}</div>
                   <div className="td">
-                    <span className="dept-pill"><i className="fas fa-building" style={{ fontSize: 11 }}></i>{dept.departmentName}</span>
+                    <span className="dept-pill"><i className="fas fa-building" style={{ fontSize: 11 }}></i>{dept.departmentName || dept.name}</span>
                   </div>
-                  {/* <div className="td">
-                    <span style={{ fontSize: 12, fontWeight: 700, color: dept.designations.length ? 'var(--brand-primary)' : 'var(--text-muted)' }}>
-                      {dept.designations.length} post{dept.designations.length !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <div className="td" style={{ gap: 5 }}>
-                    <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); setDesigTarget(dept); }}>
-                      <i className="fas fa-plus"></i> Add Post
-                    </button>
-                    <button className="btn btn-icon btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteTarget(dept); }}>
-                      <i className="fas fa-trash"></i>
-                    </button>
-                    <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setExpandedId(exp ? null : dept.id); }}>
-                      <i className="fas fa-chevron-down"></i>
-                    </button>
-                  </div> */}
                   {/* Designations column */}
 <div className="td">
-  {canCreate && <Tooltip text="Add a designation to this department">
+  {!deptIsPending && canCreate && <Tooltip text="Add a designation to this department">
   <button
     className="btn btn-sm"
     onClick={e => { e.stopPropagation(); setDesigTarget(dept); }}
@@ -567,15 +695,22 @@ const dept = deptsData.find(d => d.id === deptId);
     <i className="fas fa-plus"></i> Designation
   </button>
   </Tooltip>}
-  {dept.designations.length > 0 && (
+  {desigCount > 0 && (
     <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 12, whiteSpace: 'nowrap' }}>
-      {dept.designations.length} post{dept.designations.length !== 1 ? 's' : ''}
+      {desigCount} post{desigCount !== 1 ? 's' : ''}
     </span>
   )}
 </div>
 
 {/* Details column */}
 <div className="td" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  {deptIsPending ? (
+    <DeptPendingActions
+      pend={deptPend || { approvalId: null, requestNo: null }}
+      onWithdraw={() => setWithdrawCfg({ kind: 'dept', row: dept, pend: deptPend })}
+    />
+  ) : (
+    <>
   {canEdit && <Tooltip text="Edit department name">
   <button
     onClick={e => { e.stopPropagation(); setEditDept(dept); }}
@@ -616,6 +751,8 @@ const dept = deptsData.find(d => d.id === deptId);
     <i className="fas fa-trash"></i>
   </button>
   </Tooltip>}
+    </>
+  )}
   <Tooltip text={exp ? 'Hide details' : 'Show details'}>
   <button
     className={`expand-btn${exp ? ' open' : ''}`}
@@ -645,9 +782,9 @@ const dept = deptsData.find(d => d.id === deptId);
                   <div style={{ background: 'var(--bg-base)', borderTop: '1px solid var(--border-light)' }}>
                     <div style={{ padding: '12px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)' }}>
-                        <i className="fas fa-id-badge" style={{ marginRight: 6 }}></i>{dept.name} — Designations
+                        <i className="fas fa-id-badge" style={{ marginRight: 6 }}></i>{dept.departmentName || dept.name} — Designations
                       </span>
-                      {canCreate && (
+                      {!deptIsPending && canCreate && (
                         <Tooltip text="Add a designation to this department">
                           <button className="btn btn-ghost btn-sm" onClick={() => setDesigTarget(dept)}>
                             <i className="fas fa-plus"></i> Add
@@ -656,12 +793,14 @@ const dept = deptsData.find(d => d.id === deptId);
                       )}
                     </div>
                     <div className="desig-list">
-                     <div className="desig-list">
- <div className="desig-list">
-  {!dept.designations.length ? (
+  {!desigCount ? (
     <div className="empty-mini"><i className="fas fa-id-badge"></i>No designations yet</div>
-  ) : dept.designations.map((d, di) => (
-    <div key={di} className="desig-item">
+  ) : (dept.designations || []).map((d, di) => {
+    const desigKey = String(d.designationID ?? d.id ?? di);
+    const desigPend = desigPendingMap[desigKey];
+    const desigIsPending = !!desigPend || !!d._pendingAdd;
+    return (
+    <div key={desigKey} className="desig-item">
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginTop: 1 }}>{di + 1}.</span>
         <div>
@@ -675,6 +814,13 @@ const dept = deptsData.find(d => d.id === deptId);
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {desigIsPending ? (
+          <DeptPendingActions
+            pend={desigPend || { approvalId: null, requestNo: null }}
+            onWithdraw={() => setWithdrawCfg({ kind: 'desig', row: d, pend: desigPend })}
+          />
+        ) : (
+          <>
         {canEdit && <Tooltip text="Edit designation">
         <button
           onClick={() => handleEditDesig(dept.id, di)}
@@ -715,11 +861,11 @@ const dept = deptsData.find(d => d.id === deptId);
           <i className="fas fa-trash"></i>
         </button>
         </Tooltip>}
+          </>
+        )}
       </div>
     </div>
-  ))}
-</div>
-</div>
+  );})}
                     </div>
                   </div>
                 )}
@@ -728,13 +874,35 @@ const dept = deptsData.find(d => d.id === deptId);
           })}
         </div>
         <div className="pagination">
-          <div className="pagination-info">Showing <strong>{filtered.length}</strong> of <strong>{deptsData.length}</strong> departments</div>
+          <div className="pagination-info">Showing <strong>{filtered.length}</strong> of <strong>{displayDepts.length}</strong> departments</div>
         </div>
       </div>
 
-      <AddDeptModal open={showAddDept} onClose={() => setShowAddDept(false)} onAdd={handleAddDept}  getDeparmentdata={getDeparmentdata}/>
-      <AddDeptModal open={!!editDept} editDept={editDept} onClose={() => setEditDept(null)} getDeparmentdata={getDeparmentdata} />
-      <AddDesigModal open={!!desigTarget} dept={desigTarget} onClose={() => setDesigTarget(null)} onAdd={handleAddDesig} getDeparmentdata={getDeparmentdata} showToast={showToast}/>
+      <AddDeptModal
+        open={showAddDept}
+        onClose={() => setShowAddDept(false)}
+        onAdd={handleAddDept}
+        getDeparmentdata={getDeparmentdata}
+        onPending={onDeptPending}
+        showToast={showToast}
+      />
+      <AddDeptModal
+        open={!!editDept}
+        editDept={editDept}
+        onClose={() => setEditDept(null)}
+        getDeparmentdata={getDeparmentdata}
+        onPending={onDeptPending}
+        showToast={showToast}
+      />
+      <AddDesigModal
+        open={!!desigTarget}
+        dept={desigTarget}
+        onClose={() => setDesigTarget(null)}
+        onAdd={handleAddDesig}
+        getDeparmentdata={getDeparmentdata}
+        showToast={showToast}
+        onPending={onDesigPending}
+      />
 
       {/* Edit Designation Modal */}
       {editDesigTarget && (
@@ -889,11 +1057,31 @@ const dept = deptsData.find(d => d.id === deptId);
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 20 }}>
-                Are you sure you want to delete <strong>"{deleteTarget.departmentName}"</strong>?
+                Are you sure you want to delete <strong>"{deleteTarget.departmentName || deleteTarget.name}"</strong>?
               </p>
               <div className="modal-footer">
                 <button className="btn btn-secondary btn-md" onClick={() => setDeleteTarget(null)}>Cancel</button>
                 <button className="btn btn-danger btn-md" onClick={() => handleDeleteDept(deleteTarget.id)}><i className="fas fa-trash"></i> Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {withdrawCfg && (
+        <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && setWithdrawCfg(null)}>
+          <div className="modal modal-sm">
+            <div className="modal-header">
+              <div className="modal-title"><i className="fas fa-rotate-left" style={{ marginRight: 7, color: '#1E40AF' }}></i>Withdraw this request?</div>
+              <button className="modal-close" onClick={() => setWithdrawCfg(null)}><i className="fas fa-times"></i></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 20 }}>
+                The pending approval request for <strong>"{withdrawCfg.row?.departmentName || withdrawCfg.row?.designationName || withdrawCfg.row?.name || 'this record'}"</strong> will be withdrawn.
+              </p>
+              <div className="modal-footer">
+                <button className="btn btn-secondary btn-md" onClick={() => setWithdrawCfg(null)}>Cancel</button>
+                <button className="btn btn-primary btn-md" onClick={doWithdraw}><i className="fas fa-rotate-left"></i> Yes, Withdraw</button>
               </div>
             </div>
           </div>
@@ -916,6 +1104,27 @@ const dept = deptsData.find(d => d.id === deptId);
           </Tooltip>
         </div>
       </div>
+
+      <style>{`
+.ls-pending-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  color: #B91C1C; background: rgba(220,38,38,.08); border: 1px solid rgba(220,38,38,.25);
+  white-space: nowrap;
+}
+.ls-pending-badge i { font-size: 10px; animation: ls-pending-pulse 1.8s ease-in-out infinite; }
+.ls-pending-badge .ls-pending-id {
+  display: inline-block; margin-left: 2px; padding: 1px 6px; border-radius: 999px;
+  background: #DC2626; color: #fff; font-size: 10px; font-weight: 800;
+}
+.ls-withdraw-btn {
+  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid rgba(30,64,175,.25); background: rgba(30,64,175,.06);
+  color: #1E40AF; cursor: pointer; font-size: 12px;
+}
+.ls-withdraw-btn:hover { background: #1E40AF; color: #fff; border-color: #1E40AF; }
+@keyframes ls-pending-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+`}</style>
     </div>
   );
 }

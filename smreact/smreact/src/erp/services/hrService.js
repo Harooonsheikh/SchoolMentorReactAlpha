@@ -9,13 +9,21 @@ export function hrPendingInfo(json) {
   if (!json || typeof json !== 'object') return null;
   const inner = Array.isArray(json.data) ? json.data[0] : (json.data && typeof json.data === 'object' ? json.data : null);
   const isFlag = (v) => v === true || v === 'true' || v === 1;
-  const src = [json, inner].find(o => o && (approvalPending(o) || isFlag(o.pendingApproval ?? o.PendingApproval)));
+  const msg = String(json.message || json.Message || (inner && (inner.Message || inner.message)) || '');
+  const msgSaysPending = /sent for approval/i.test(msg);
+  const src = [json, inner].find(o => o && (approvalPending(o) || isFlag(o.pendingApproval ?? o.PendingApproval)))
+    || (msgSaysPending ? json : null);
   if (!src) return null;
   const ap = src.approval || src.Approval || src;
+  let requestNo = ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null;
+  if (!requestNo && msg) {
+    const m = msg.match(/Request\s+([A-Za-z]{2,5}-\d{6,}-\d+)/i) || msg.match(/\b([A-Za-z]{2,5}-\d{6,}-\d+)\b/);
+    if (m) requestNo = m[1];
+  }
   return {
     approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
-    requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
-    message: apiMessage(json) || apiMessage(inner) || null,
+    requestNo,
+    message: apiMessage(json) || apiMessage(inner) || msg || null,
   };
 }
 
@@ -115,17 +123,19 @@ export async function getHrDesigs() {
 
 /* ─── HR Module — Write APIs ─── */
 /* Department add + edit share one endpoint; the caller builds the full
-   save-department payload (id 0 = add, id > 0 = update). */
+   save-department payload (id 0 = add, id > 0 = update). Always send
+   modifiedBy (logged-in UserID) — approvals engine uses it. */
 export async function saveHrDept(payload) {
   const userID = Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || 0);
   const res  = await fetch(buildUrl('/api/LaunchSetup/save-department'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, modifiedBy: userID }),
+    body: JSON.stringify({ ...payload, createdBy: Number(payload.createdBy) || userID, modifiedBy: userID }),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not save department');
+  /* Approval-gated: success:false + pending — return, don't throw. */
   if (hrPendingInfo(json)) return json;
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save department');
   return json;
 }
 export async function deleteHrDept({ id }) {
@@ -135,14 +145,14 @@ export async function deleteHrDept({ id }) {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) {
+  if (hrPendingInfo(json)) return json;
+  if (!res.ok || json?.success === false) {
     const msg = apiMessage(json) || '';
     if (msg.includes('REFERENCE constraint') || msg.includes('FK_AHM_Department_Designations_Department')) {
       throw new Error('Cannot delete department because it contains designations or related data.');
     }
     throw new Error(msg || 'Could not delete department');
   }
-  if (hrPendingInfo(json)) return json;
   return json;
 }
 /* ─── Subject Assignment lookups (real grades/sections/subjects) ───
@@ -207,17 +217,18 @@ export async function getHrQualifications() {
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not load qualifications');
   return Array.isArray(json?.data) ? json.data : [];
 }
-/* Designation add + edit share one endpoint (designationID 0 = add). */
+/* Designation add + edit share one endpoint (designationID 0 = add).
+   Always send modifiedBy (logged-in UserID). */
 export async function saveHrDesig(payload) {
   const userID = Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || 0);
   const res  = await fetch(buildUrl('/api/LaunchSetup/save-department-designation'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, modifiedBy: userID }),
+    body: JSON.stringify({ ...payload, createdBy: Number(payload.createdBy) || userID, modifiedBy: userID }),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not save designation');
   if (hrPendingInfo(json)) return json;
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save designation');
   return json;
 }
 export async function deleteHrDesig({ id }) {
@@ -227,8 +238,8 @@ export async function deleteHrDesig({ id }) {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete designation');
   if (hrPendingInfo(json)) return json;
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not delete designation');
   return json;
 }
 

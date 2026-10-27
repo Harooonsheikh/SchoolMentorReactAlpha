@@ -49,6 +49,8 @@ export const APPROVAL_ACTION_TYPES = {
   STUDENTS_DISCOUNT: 'students_discount',
   STUDENTS_DUES_DISCOUNT: 'students_dues_discount',
   STUDENTS_PREENROLL_ADMISSION: 'students_preenroll_admission',
+  FAMILY_TREE: 'family_tree',
+  DEPARTMENT_DESIGNATION: 'department_designation',
 };
 
 /* Display metadata per action type — drives the Approvals page's
@@ -83,22 +85,14 @@ export const APPROVAL_ACTION_META = {
   students_dues_discount: { label: 'Dues Settlement Discount', module: 'Students', icon: 'fa-hand-holding-dollar' },
   students_add_edit: { label: 'Add / Edit Student', module: 'Students', icon: 'fa-user-pen' },
   students_delete: { label: 'Delete Student', module: 'Students', icon: 'fa-user-xmark' },
+  family_tree: { label: 'Family Tree', module: 'Fee', icon: 'fa-people-roof' },
   fee_transport_setup: { label: 'Transport Fee Setup', module: 'Fee', icon: 'fa-bus' },
-  inventory_product: { label: 'Inventory Product Save', module: 'Inventory', icon: 'fa-boxes-stacked' },
-  hr_loan_repayment: { label: 'Loan Repayment', module: 'Human Resource', icon: 'fa-money-bill-transfer' },
-  hr_payroll_payment: { label: 'Payroll Payment', module: 'Human Resource', icon: 'fa-money-check' },
-  hr_delete_payroll: { label: 'Delete Payroll', module: 'Human Resource', icon: 'fa-file-circle-minus' },
   // Pre-Enrollment
   students_preenroll_admission: { label: 'Admission (Pre-Enrollment)', icon: 'fa-user-graduate', module: 'Pre-Enrollment' },
   preenroll_create_challan: { label: 'Create Challan (Pre-Enrollment)', icon: 'fa-file-invoice', module: 'Pre-Enrollment' },
   preenroll_receive_challan: { label: 'Receive Challan (Pre-Enrollment)', icon: 'fa-hand-holding-dollar', module: 'Pre-Enrollment' },
   preenroll_delete_challan: { label: 'Delete Challan (Pre-Enrollment)', icon: 'fa-trash', module: 'Pre-Enrollment' },
   preenroll_clear_receiving: { label: 'Clear Receiving (Pre-Enrollment)', icon: 'fa-rotate-left', module: 'Pre-Enrollment' },
-  // Students
-  students_add_edit: { label: 'Add / Edit Student', icon: 'fa-user-pen', module: 'Students' },
-  students_delete: { label: 'Delete Student', icon: 'fa-user-xmark', module: 'Students' },
-  // Fee
-  fee_transport_setup: { label: 'Transport Fee Setup', icon: 'fa-bus', module: 'Fee' },
   // Inventory
   inventory_add_edit_product: { label: 'Add / Edit Product', icon: 'fa-box-open', module: 'Inventory' },
   // Human Resource
@@ -108,6 +102,7 @@ export const APPROVAL_ACTION_META = {
   hr_add_edit_employee: { label: 'Add / Edit Employee', icon: 'fa-user-pen', module: 'Human Resource' },
   hr_deactivate_employee: { label: 'Deactivate Employee', icon: 'fa-user-slash', module: 'Human Resource' },
   hr_delete_employee: { label: 'Delete Employee', icon: 'fa-user-xmark', module: 'Human Resource' },
+  department_designation: { label: 'Department / Designation', icon: 'fa-building-user', module: 'Human Resource' },
 };
 
 /* Configurable Approvals behaviour — edited from Settings → Approval
@@ -152,13 +147,22 @@ export const mockApprovalSettings = {
     students_discount: true,
     students_dues_discount: true,
     students_preenroll_admission: true,
+    preenroll_create_challan: true,
+    preenroll_receive_challan: true,
+    preenroll_delete_challan: true,
+    preenroll_clear_receiving: true,
     students_add_edit: true,
     students_delete: true,
+    family_tree: true,
     fee_transport_setup: true,
-    inventory_product: true,
+    inventory_add_edit_product: true,
     hr_loan_repayment: true,
     hr_payroll_payment: true,
     hr_delete_payroll: true,
+    hr_add_edit_employee: true,
+    hr_deactivate_employee: true,
+    hr_delete_employee: true,
+    department_designation: true,
   },
 };
 

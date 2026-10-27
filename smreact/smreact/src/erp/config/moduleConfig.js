@@ -100,6 +100,42 @@ export const API_FIELD_TO_MODULE_MAP = {
   '1LinkIntegration': 'one_link_integration',
 };
 
+/* Flatten module-permission body (DTO or { data }) for field lookup. */
+function modulePermissionSrc(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (!Array.isArray(payload) && payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+    return { ...payload, ...payload.data };
+  }
+  return Array.isArray(payload) ? (payload[0] || {}) : payload;
+}
+
+/**
+ * `approvalType` from GET module-permission/{branchID}:
+ *   null / missing / ""  → null   (no change — Approvals work as usual)
+ *   "School"             → school (normal school Approvals)
+ *   "disable"            → disable (sidebar + Settings Approvals locked)
+ *   "Chain"              → chain   (Pending / History locked — head office)
+ */
+export function extractApprovalType(payload) {
+  const src = modulePermissionSrc(payload);
+  if (!src) return null;
+  let raw;
+  for (const [k, v] of Object.entries(src)) {
+    if (String(k).toLowerCase() === 'approvaltype') { raw = v; break; }
+  }
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim().toLowerCase();
+  if (s === 'disable' || s === 'disabled') return 'disable';
+  if (s === 'school') return 'school';
+  if (s === 'chain') return 'chain';
+  return null;
+}
+
+export const APPROVAL_TYPE_MSGS = {
+  disable: 'Approvals are disabled by head office.',
+  chain: 'This action is controlled by head office.',
+};
+
 /**
  * Backend ka flat permission object → { moduleId: boolean } state map.
  * Field names case-insensitive match hote hain (backend kabhi PascalCase
@@ -108,11 +144,8 @@ export const API_FIELD_TO_MODULE_MAP = {
  * off nahi hote — chahe API false hi kyun na de.
  */
 export function mapApiPermissionsToModuleState(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-  /* Kabhi body seedha DTO hoti hai, kabhi { data: { ... } }. Dono se 1Link padho. */
-  const src = (!Array.isArray(payload) && payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data))
-    ? { ...payload, ...payload.data }
-    : (Array.isArray(payload) ? (payload[0] || {}) : payload);
+  const src = modulePermissionSrc(payload);
+  if (!src) return null;
 
   /* Response ki keys lowercase index kar lo taake casing mismatch na tootay. */
   const lowered = {};

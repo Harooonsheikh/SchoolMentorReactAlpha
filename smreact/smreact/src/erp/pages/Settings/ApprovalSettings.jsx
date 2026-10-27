@@ -3,6 +3,8 @@ import Tooltip from '../../components/Tooltip';
 import * as approvalsService from '../../services/approvalsService';
 import { APPROVAL_ACTION_META } from '../../mock/approvals';
 import { usePermissions } from '../../context/PermissionsContext';
+import { useModules } from '../../context/ModuleContext';
+import { APPROVAL_TYPE_MSGS } from '../../config/moduleConfig';
 
 /* Per-action explanations shown via the info icon next to each toggle
    below — kept local to this screen (UI copy, not shared metadata) so
@@ -51,6 +53,8 @@ const ACTION_DESCRIPTIONS = {
   hr_add_edit_employee: 'Adding a new employee or editing an existing employee’s details needs approval before the change is saved.',
   hr_deactivate_employee: 'Deactivating an employee needs approval before they’re removed from active staff.',
   hr_delete_employee: 'Deleting an employee record needs approval before it’s permanently removed.',
+  family_tree: 'Creating or changing a family tree (linking siblings for combined challans) needs approval before it is saved.',
+  department_designation: 'Adding, editing or deleting a department or designation needs approval before it takes effect.',
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -69,7 +73,11 @@ const ACTION_DESCRIPTIONS = {
    ═══════════════════════════════════════════════════════════════════ */
 export default function ApprovalSettings({ toast = () => {} }) {
   const { can } = usePermissions();
-  const canEdit = can('Settings', 'Approvals', 'Edit');
+  const { approvalType } = useModules();
+  /* Head office module-permission.approvalType=disable → whole screen locked
+     (same as sidebar Approvals). School can still view the checklist. */
+  const headOfficeDisabled = approvalType === 'disable';
+  const canEdit = can('Settings', 'Approvals', 'Edit') && !headOfficeDisabled;
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
   const [enabled, setEnabled]   = useState(true);
@@ -156,28 +164,39 @@ export default function ApprovalSettings({ toast = () => {} }) {
         </div>
       </div>
 
+      {headOfficeDisabled && (
+        <div className="settings-alert as-alert as-alert--locked">
+          <i className="fa-solid fa-lock" aria-hidden="true"></i>
+          {APPROVAL_TYPE_MSGS.disable} Approvals Active and all action toggles are locked until head office re-enables Approvals.
+        </div>
+      )}
+
       {/* ── Master toggle ── */}
-      <div className="as-card">
+      <div className={`as-card${headOfficeDisabled ? ' is-locked' : ''}`}>
         <div className="as-card-row">
           <div className="as-card-text">
             <div className="as-card-title">
               Approvals Active
-              <Tooltip text="Master switch for the whole Approvals mechanism. Turn this off to pause approval requirements everywhere at once, without changing the per-action choices below.">
-                <i className="fa-solid fa-circle-info as-info" aria-hidden="true"></i>
+              <Tooltip text={headOfficeDisabled
+                ? APPROVAL_TYPE_MSGS.disable
+                : 'Master switch for the whole Approvals mechanism. Turn this off to pause approval requirements everywhere at once, without changing the per-action choices below.'}>
+                <i className={`fa-solid ${headOfficeDisabled ? 'fa-lock' : 'fa-circle-info'} as-info`} aria-hidden="true"></i>
               </Tooltip>
             </div>
             <div className="as-card-sub">
-              {enabled
-                ? 'Sensitive changes across Fee, Accounts, Human Resource, Inventory and Students are queued for Super Admin review before they apply.'
-                : 'When off, every module applies these changes immediately again, exactly as if Approvals didn’t exist — nothing is deleted, this only pauses the review requirement.'}
+              {headOfficeDisabled
+                ? APPROVAL_TYPE_MSGS.disable
+                : enabled
+                  ? 'Sensitive changes across Fee, Accounts, Human Resource, Inventory and Students are queued for Super Admin review before they apply.'
+                  : 'When off, every module applies these changes immediately again, exactly as if Approvals didn’t exist — nothing is deleted, this only pauses the review requirement.'}
             </div>
           </div>
-          <label className="as-toggle">
+          <label className={`as-toggle${headOfficeDisabled ? ' is-locked' : ''}`}>
             <input
               type="checkbox"
-              checked={enabled}
-              disabled={!canEdit}
-              onChange={(e) => { if (canEdit) setEnabled(e.target.checked); }}
+              checked={headOfficeDisabled ? false : enabled}
+              disabled={!canEdit || headOfficeDisabled}
+              onChange={(e) => { if (canEdit && !headOfficeDisabled) setEnabled(e.target.checked); }}
               aria-label="Approvals Active"
             />
             <span className="as-toggle-track"><span className="as-toggle-thumb"></span></span>
@@ -185,7 +204,7 @@ export default function ApprovalSettings({ toast = () => {} }) {
         </div>
       </div>
 
-      {!enabled && (
+      {!enabled && !headOfficeDisabled && (
         <div className="settings-alert as-alert">
           <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
           Approvals are currently off overall. You can still pre-configure the checklist below, but none of these
@@ -194,7 +213,7 @@ export default function ApprovalSettings({ toast = () => {} }) {
       )}
 
       {/* ── Per-action checklist, grouped by module ── */}
-      <div className={`as-groups${!enabled ? ' is-disabled' : ''}`}>
+      <div className={`as-groups${!enabled || headOfficeDisabled ? ' is-disabled' : ''}`}>
         {Object.keys(groups).map(moduleName => (
           <div className="as-group" key={moduleName}>
             <div className="as-group-h">{moduleName}</div>
@@ -204,14 +223,13 @@ export default function ApprovalSettings({ toast = () => {} }) {
                   <input
                     type="checkbox"
                     checked={!!actionTypeEnabled[item.key]}
-                    disabled={!enabled || !canEdit}
-                    onChange={() => { if (canEdit) toggleAction(item.key); }}
+                    disabled={!enabled || !canEdit || headOfficeDisabled}
+                    onChange={() => { if (canEdit && !headOfficeDisabled) toggleAction(item.key); }}
                   />
                   <i className={`fa-solid ${item.icon}`} aria-hidden="true"></i> {item.label}
                   {ACTION_DESCRIPTIONS[item.key] && (
                     <Tooltip text={ACTION_DESCRIPTIONS[item.key]}>
-                      <i className="fa-
-                      solid fa-circle-info as-info" aria-hidden="true" onClick={(e) => e.preventDefault()}></i>
+                      <i className="fa-solid fa-circle-info as-info" aria-hidden="true" onClick={(e) => e.preventDefault()}></i>
                     </Tooltip>
                   )}
                 </label>
@@ -225,7 +243,7 @@ export default function ApprovalSettings({ toast = () => {} }) {
         <button
           type="button"
           className="settings-btn settings-btn-primary"
-          disabled={!dirty || saving || !canEdit}
+          disabled={!dirty || saving || !canEdit || headOfficeDisabled}
           onClick={handleSave}
         >
           {saving
@@ -307,11 +325,19 @@ const AS_CSS = `
 .as-toggle input:checked + .as-toggle-track { background: linear-gradient(135deg, #1E3A8A, #2563EB); }
 .as-toggle input:checked + .as-toggle-track .as-toggle-thumb { transform: translateX(20px); }
 .as-toggle input:focus-visible + .as-toggle-track { box-shadow: 0 0 0 3px rgba(30, 64, 175, .28); }
+.as-toggle input:disabled + .as-toggle-track,
+.as-toggle.is-locked { cursor: not-allowed; opacity: .55; }
+.as-card.is-locked { opacity: .85; border-color: rgba(185, 28, 28, .28); background: rgba(254, 226, 226, .35); }
 
 .as-alert { margin-bottom: 14px; }
+.as-alert--locked {
+  color: #991B1B;
+  background: rgba(254, 226, 226, .65);
+  border: 1px solid rgba(185, 28, 28, .28);
+}
 
 .as-groups { display: flex; flex-direction: column; gap: 14px; transition: opacity .15s ease; }
-.as-groups.is-disabled { opacity: .55; }
+.as-groups.is-disabled { opacity: .55; pointer-events: none; }
 .as-group-h {
   font-family: var(--st-font);
   font-size: 11px;

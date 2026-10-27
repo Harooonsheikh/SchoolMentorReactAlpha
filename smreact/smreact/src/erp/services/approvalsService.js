@@ -256,22 +256,23 @@ const ACTION_TO_API = {
   hr_add_edit_employee:         'addEditEmployee',
   hr_deactivate_employee:       'deactivateEmployee',
   hr_delete_employee:           'deleteEmployee',
+  family_tree:                  'familyTree',
+  department_designation:       'departmentDesignation',
 };
 
 /* Every approval switch the backend stores (swagger
    Mdl_AHM_Settings_Approvals). SAVE OVERWRITES the whole row, so any
-   switch left out of the body is persisted as false. Several of these
-   (createFeeChallan, receiveFeeChallan, clearFeeReceiving, gradeFeeHead,
-   wallet*) aren't surfaced as toggles in this UI yet — we still round-trip
-   whatever GET returned for them (see lastLoadedFlags) so a SAVE from the
-   Approvals settings screen never silently turns them off. */
+   switch left out of the body is persisted as false. lastLoadedFlags
+   round-trips any extra boolean the API returns that this UI doesn't map. */
 const ALL_API_FLAGS = [
   'feeDiscount', 'deleteFeeChallan', 'feeHeadUpdate', 'editAccoutEntry', 'deleteAccountEntry',
   'payRollDeductionWaiver', 'payRollBonusAward', 'salaryDetailsUpdate', 'leavePolicyUpdate', 'employeeLoanApproval',
   'inventoryPriceEdit', 'deleteInventoryProduct', 'markStudentInactive', 'reactivateStudent', 'studentFeeDiscount', 'duesSettelmentDiscount',
   'createFeeChallan', 'receiveFeeChallan', 'clearFeeReceiving', 'gradeFeeHead', 'walletTransaction', 'walletAccount',
-  'walletTransfer', 'accountHead', 'addAccountEntry', 'accountBook', 'bookPayment', 'preEnrollCreateChallan', 'preEnrollReceiveChallan', 'preEnrollDeleteChallan', 'preEnrollClearReceiving',
-  'addEditStudent', 'deleteStudent', 'transportFeeSetup', 'inventoryProduct', 'loanRepayment', 'payrollPayment', 'deletePayroll', 'addEditEmployee', 'deactivateEmployee', 'deleteEmployee',
+  'walletTransfer', 'accountHead', 'addAccountEntry', 'accountBook', 'bookPayment',
+  'preEnrollStudent', 'preEnrollCreateChallan', 'preEnrollReceiveChallan', 'preEnrollDeleteChallan', 'preEnrollClearReceiving',
+  'addEditStudent', 'deleteStudent', 'transportFeeSetup', 'inventoryProduct', 'loanRepayment', 'payrollPayment', 'deletePayroll',
+  'addEditEmployee', 'deactivateEmployee', 'deleteEmployee', 'familyTree', 'departmentDesignation',
 ];
 
 /* Full flag set from the last GET, so SAVE can preserve switches this UI

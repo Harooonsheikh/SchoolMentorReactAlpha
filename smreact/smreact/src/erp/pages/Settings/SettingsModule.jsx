@@ -9,6 +9,8 @@ import MobileAppSettings from './MobileAppSettings';
 // TODO: Re-enable once the Approvals API is ready.
 import ApprovalSettings from './ApprovalSettings';
 import { usePermissions } from '../../context/PermissionsContext';
+import { useModules } from '../../context/ModuleContext';
+import { APPROVAL_TYPE_MSGS } from '../../config/moduleConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS MODULE — top-level page
@@ -37,26 +39,32 @@ const SETTINGS_SUBTABS = [
     desc: 'Join school networks and manage your memberships & requests.' },
   { id: 'mobileapp',  label: 'Parents App Settings', icon: 'fa-mobile-screen-button',
     desc: 'Control which features the Parents mobile app shows for this school.' },
-  /* Approvals settings — enabled for the master branch (branchID 1) only;
-     stays hidden on every other branch until the Approvals API is ready.
+  /* Approvals settings — live on branchID 1 and 15; hidden elsewhere.
      Still respects the user's Settings → Approvals View permission below. */
   { id: 'approvals',  label: 'Approvals',            icon: 'fa-square-check',
-    desc: 'Require Super Admin sign-off before certain sensitive changes take effect.', branch1Only: true },
+    desc: 'Require Super Admin sign-off before certain sensitive changes take effect.', approvalBranches: ['1', '15'] },
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
   const { can } = usePermissions();
+  const { approvalType } = useModules();
   const [sub, setSub] = useState('sessions');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const approvalsDisabled = approvalType === 'disable';
 
   /* Layer 1 — only show sub-tabs the user can View. Tab labels map 1:1
      to the `can()` submenu strings (Academic Sessions, Signature Management,
      Networks, Parents App Settings, Approvals). */
-  /* Branch-1-only tabs (e.g. Approvals) stay hidden on other branches. */
-  const isBranch1 = String(sessionStorage.getItem('branchID') || '') === '1';
-  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => (!t.branch1Only || isBranch1) && can('Settings', t.label, 'View'));
+  /* Approvals tab only on allow-listed branches (1 + 15). */
+  const branchId = String(sessionStorage.getItem('branchID') || '');
+  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => {
+    if (t.approvalBranches && !t.approvalBranches.includes(branchId)) return false;
+    return can('Settings', t.label, 'View');
+  });
 
-  /* Snap to first visible tab if the active one is now hidden. */
+  /* Snap to first visible tab if the active one is now hidden.
+     When head office sets approvalType=disable, Approvals tab stays openable
+     but ApprovalSettings locks Approvals Active + all toggles. */
   useEffect(() => {
     if (visibleSubtabs.length && !visibleSubtabs.some(t => t.id === sub)) {
       setSub(visibleSubtabs[0].id);
@@ -92,20 +100,26 @@ export default function SettingsModule({ toast = () => {} }) {
 
       {/* Horizontal tab bar — same shape as hr-tabs / apr-subtabs */}
       <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-        {visibleSubtabs.map(t => (
-          <Tooltip key={t.id} text={t.desc} placement="bottom">
+        {visibleSubtabs.map(t => {
+          const locked = t.id === 'approvals' && approvalsDisabled;
+          return (
+          <Tooltip key={t.id} text={locked ? APPROVAL_TYPE_MSGS.disable : t.desc} placement="bottom">
             <button
               type="button"
-              className={`settings-tab${sub === t.id ? ' on' : ''}`}
+              className={`settings-tab${sub === t.id ? ' on' : ''}${locked ? ' is-locked' : ''}`}
               role="tab"
               aria-selected={sub === t.id}
               tabIndex={sub === t.id ? 0 : -1}
-              onClick={() => setSub(t.id)}
+              onClick={() => {
+                setSub(t.id);
+                if (locked) toast(APPROVAL_TYPE_MSGS.disable, 'warning');
+              }}
             >
-              <i className={`fa-solid ${t.icon}`} aria-hidden="true"></i> {t.label}
+              <i className={`fa-solid ${locked ? 'fa-lock' : t.icon}`} aria-hidden="true"></i> {t.label}
             </button>
           </Tooltip>
-        ))}
+          );
+        })}
       </div>
 
       {/* Tab content — full width below */}
@@ -154,6 +168,7 @@ const SETTINGS_CSS = `
   border-radius: var(--radius-lg, 16px);
   box-shadow: var(--shadow-sm, 0 1px 2px rgba(15, 23, 42, .04));
 }
+.settings-tab.is-locked { opacity: .55; cursor: not-allowed; }
 .settings-tab {
   flex: 1; min-width: 160px;
   display: inline-flex;
