@@ -610,7 +610,9 @@ export const MODULE_PERMISSIONS = {
   'att.staff':          ['view', 'create', 'edit', 'download'],
 
   /* L1 → Reports
-     Attendance.jsx:2427 (ReportsTab)
+     Attendance.jsx (ReportsTab) — Student/Staff/Class/Holiday groups,
+     including Student Late Arrivals, Staff Late Arrivals and Staff
+     Short Leavers.
      Real buttons: Generate General Report (class-wide + staff-wide),
                    Generate Individual Report (per student / staff).
      Reports are downloaded as PDFs — no Print, no Create/Edit/Delete. */

@@ -10,6 +10,7 @@
 import { rankedMatches } from "../utils/studentSearch";
 import {
   DEFAULT_ATTENDANCE_SETUP, validateAttendanceSetup, isGeofenceConfigured, describeAttendanceRules,
+  calculateAttendanceResult, timeToMinutes,
 } from "../utils/attendanceRules";
 import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
 import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName, StandardReportPicker, reportAcademicYear } from '../reports/reportKit';
@@ -80,6 +81,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         { key:"studentMonthly",   label:"Monthly Attendance", icon:"fa-calendar-days", filters:[{ k:"Select Month", field:"month", type:"month" }] },
         { key:"studentClasswise", label:"Class-wise Report",  icon:"fa-layer-group",   filters:[{ k:"Class",     field:"class", type:"class" }, { k:"From Date", field:"from", type:"date" }, { k:"To Date", field:"to", type:"date" }] },
         { key:"studentSummary",   label:"Summary Report",     icon:"fa-chart-pie",     filters:[{ k:"From Date", field:"from", type:"date" }, { k:"To Date", field:"to", type:"date" }] },
+        { key:"studentLateArrivals", label:"Late Arrivals",   icon:"fa-user-clock",    filters:[{ k:"Select Month", field:"month", type:"month" }] },
       ],
     },
     {
@@ -93,6 +95,8 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         { key:"staffMonthly", label:"Monthly Attendance",     icon:"fa-calendar-days", filters:[{ k:"Select Month", field:"month", type:"month" }] },
         { key:"staffSummary", label:"Attendance Summary",     icon:"fa-chart-pie",     filters:[{ k:"Select Month", field:"month", type:"month" }] },
         { key:"staffSheet",   label:"Staff Attendance Sheet", icon:"fa-table-cells",   filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffLateArrivals", label:"Late Arrivals",    icon:"fa-user-clock",    filters:[{ k:"Select Date", field:"date", type:"date" }] },
+        { key:"staffShortLeavers", label:"Short Leavers",    icon:"fa-person-walking-arrow-right", filters:[{ k:"Select Date", field:"date", type:"date" }] },
       ],
     },
     {
@@ -2126,6 +2130,131 @@ const markOf = (staffIdx, day) => {
     </table></div>`;
 
     return rptPageWrap({ rptLabel: "Low Attendance Alert Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Late Arrivals Report — Students ───────────────────────────────────
+     Built from the real `late` count each class was marked with — not derived
+     from a time engine, since there's no per-student check-in timestamp
+     in this app. A late student is still counted within Present, same
+     convention as the rest of the module. */
+  function buildStudentLateArrivalsHTML({ rows, month, isColor, branchSchool }) {
+    const { bdr, th, td, badge } = rptTableHelpers(isColor);
+    const PURPLE = isColor ? "#7C3AED" : "#374151";
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+
+    const list = (rows || []).filter((r) => (r.late || 0) > 0).sort((a, b) => b.late - a.late);
+    const totalLate = list.reduce((s, r) => s + (r.late || 0), 0);
+
+    const tableRows = list.length === 0
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No late arrivals recorded.</td></tr>`
+      : list.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${r.cls}</strong> · ${r.sec}`)}
+          ${td(r.teacher || "—", "font-size:11px")}
+          ${td(r.present, "text-align:center;font-weight:700")}
+          ${td(badge(`${r.late} Late`, PURPLE), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Month", monthLabel],
+      ["Classes With Late Arrivals", String(list.length)],
+      ["Total Late Arrivals", String(totalLate)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Class / Section"), th("Teacher"), th("Present", "center"), th("Late Arrivals", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Student Late Arrivals Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Late Arrivals Report — Staff ───────────────────────────────────────
+     Derived from the real rule engine (attendanceRules.js) against each
+     staff member's Time In for the selected date. */
+  function buildStaffLateArrivalsHTML({ staffData, date, attendanceSetup, isColor, branchSchool }) {
+    const { bdr, th, td, badge } = rptTableHelpers(isColor);
+    const PURPLE = isColor ? "#7C3AED" : "#374151";
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+      : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+    const lateAfterMin = timeToMinutes(attendanceSetup?.lateAfter);
+    const list = (staffData || []).filter((s) => s.marked && s.status === "present" && s.inTime).map((s) => {
+      const result = calculateAttendanceResult({ timeIn: s.inTime, timeOut: s.outTime, calendarStatus: null, isOnApprovedLeave: false, setup: attendanceSetup });
+      const inMin = timeToMinutes(s.inTime);
+      const minutesLate = lateAfterMin != null && inMin != null ? Math.max(0, inMin - lateAfterMin) : null;
+      return { ...s, result, minutesLate };
+    }).filter((s) => s.result.timeInStatus === "late");
+
+    const tableRows = !attendanceSetup?.isEnabled
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">Working Hours &amp; Attendance Rules (Staff) is off — turn it on in Attendance Setup to detect late arrivals.</td></tr>`
+      : list.length === 0
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No late arrivals for this date.</td></tr>`
+      : list.map((s, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${s.name}</strong><div style="font-size:10.5px;color:#64748B">${s.empId}</div>`)}
+          ${td(s.dept)}
+          ${td(fmtTime(s.inTime), "text-align:center;font-weight:600")}
+          ${td(badge(s.minutesLate != null ? `${s.minutesLate} min late` : "Late", PURPLE), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Date", dateLabel],
+      ["Late After", attendanceSetup?.lateAfter ? fmtTime(attendanceSetup.lateAfter) : "—"],
+      ["Staff Late", String(list.length)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Staff Name"), th("Department"), th("In Time", "center"), th("Late By", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Staff Late Arrivals Report", period: dateLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Short Leavers Report — Staff ───────────────────────────────────────
+     Same rule engine, filtered to Short Leave ("checked out before Short
+     Leave Before"). Needs Time Out — Time In Only schools get an explanation. */
+  function buildStaffShortLeaversHTML({ staffData, date, attendanceSetup, isColor, branchSchool }) {
+    const { bdr, th, td, badge } = rptTableHelpers(isColor);
+    const AMB = isColor ? "#D97706" : "#374151";
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+      : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+    const trackOut = attendanceSetup?.staffTrackingMode !== "in_only";
+    const list = (staffData || []).filter((s) => s.marked && s.status === "present" && s.outTime).map((s) => {
+      const result = calculateAttendanceResult({ timeIn: s.inTime, timeOut: s.outTime, calendarStatus: null, isOnApprovedLeave: false, setup: { ...attendanceSetup, trackTimeOut: trackOut } });
+      return { ...s, result };
+    }).filter((s) => s.result.timeOutStatus === "short_leave");
+
+    const tableRows = !trackOut
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">This school only tracks Time In for staff — Short Leave needs a Time Out to detect.</td></tr>`
+      : !attendanceSetup?.isEnabled
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">Working Hours &amp; Attendance Rules (Staff) is off — turn it on in Attendance Setup to detect short leavers.</td></tr>`
+      : list.length === 0
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No short leavers for this date.</td></tr>`
+      : list.map((s, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${s.name}</strong><div style="font-size:10.5px;color:#64748B">${s.empId}</div>`)}
+          ${td(s.dept)}
+          ${td(fmtTime(s.outTime), "text-align:center;font-weight:600")}
+          ${td(badge("Short Leave", AMB), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Date", dateLabel],
+      ["Short Leave Before", attendanceSetup?.shortLeaveFrom ? fmtTime(attendanceSetup.shortLeaveFrom) : "—"],
+      ["Staff on Short Leave", String(list.length)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Staff Name"), th("Department"), th("Out Time", "center"), th("Status", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Staff Short Leavers Report", period: dateLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Monthly Holiday Report ───────────────────────────────────────────── */
@@ -4635,6 +4764,22 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         const rows = await fetchMonthlyReportRows(year, monthIdx0);
         html  = buildLowAttendanceHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Low Attendance Alert Report";
+      } else if (effective === "studentLateArrivals") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildStudentLateArrivalsHTML({ rows, month: monthLabel, isColor, branchSchool });
+        title = "Student Late Arrivals Report";
+      } else if (effective === "staffLateArrivals") {
+        const date = filters.date || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyStaffReportRows(date);
+        html  = buildStaffLateArrivalsHTML({ staffData: rows, date, attendanceSetup, isColor, branchSchool });
+        title = "Staff Late Arrivals Report";
+      } else if (effective === "staffShortLeavers") {
+        const date = filters.date || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyStaffReportRows(date);
+        html  = buildStaffShortLeaversHTML({ staffData: rows, date, attendanceSetup, isColor, branchSchool });
+        title = "Staff Short Leavers Report";
       } else if (effective === "holidayMonthly") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { monthIdx0 } = parseMonthLabel(monthLabel);
@@ -4654,7 +4799,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       deliverAttReport(title, html, format);
       // ensureClasses/ensureSessionID are defined later; referenced via closure at call time.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool, activeSessionName, deliverAttReport]);
+    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool, activeSessionName, deliverAttReport, attendanceSetup]);
 
     /* General Reports tab → trigger generateReport with the style/format chosen
       in the shared StandardReportPicker modal (see ReportRow). */
@@ -5072,7 +5217,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
 
       // Har date par ek call → us date ke saare records → studentID/class se
       // har record ko uski class ke counter me daalte hain.
-      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0 }));
+      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0, late: 0 }));
       await Promise.all(dates.map(async (dateStr) => {
         let recs = [];
         try {
@@ -5093,17 +5238,18 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           if (st === "present") agg[idx].present++;
           else if (st === "absent") agg[idx].absent++;
           else if (st === "leave") agg[idx].leave++;
+          else if (st === "late") { agg[idx].late++; agg[idx].present++; } // late counts within Present
         });
       }));
 
       return classes.map((r, idx) => {
-        const { present, absent, leave } = agg[idx];
+        const { present, absent, leave, late } = agg[idx];
         const marks = present + absent + leave;
         return {
           cls: r.cls, sec: r.sec, strength: r.total,
           teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
           workingDays: holidayInfo.workingDays,
-          present, absent, leave,
+          present, absent, leave, late,
           pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
         };
       });
