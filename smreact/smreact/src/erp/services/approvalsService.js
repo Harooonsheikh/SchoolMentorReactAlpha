@@ -117,6 +117,25 @@ function resolveRequesterName(r) {
   return r.requestedBy != null ? `User #${r.requestedBy}` : '—';
 }
 
+/* Pull a student / applicant id out of detailsXml when recordID is a
+   challan/ledger id (common for Pre-Enrollment receive / clear receiving). */
+function extractStudentIdFromXml(xml) {
+  const s = String(xml || '');
+  const patterns = [
+    /<ApplicantsID>\s*(\d+)\s*<\/ApplicantsID>/i,
+    /<StudentID>\s*(\d+)\s*<\/StudentID>/i,
+    /<PreStudentID>\s*(\d+)\s*<\/PreStudentID>/i,
+    /<PreEnrollmentStudentID>\s*(\d+)\s*<\/PreEnrollmentStudentID>/i,
+    /<PreEnrollStudentID>\s*(\d+)\s*<\/PreEnrollStudentID>/i,
+    /<studentId>\s*(\d+)\s*<\/studentId>/i,
+  ];
+  for (const p of patterns) {
+    const m = s.match(p);
+    if (m) return Number(m[1]) || null;
+  }
+  return null;
+}
+
 function mapApiRequest(r) {
   const action = String(r.requestAction || '').toUpperCase();
   const acctMap = ACCOUNT_MODULE_ACTIONS[r.module];
@@ -126,6 +145,7 @@ function mapApiRequest(r) {
   const meta = APPROVAL_ACTION_META[actionType] || {};
   const status = String(r.status || 'pending').toLowerCase();
   const reviewed = status !== 'pending';
+  const xmlStudentId = extractStudentIdFromXml(r.detailsXml);
 
   let payload;
   let before;
@@ -174,6 +194,12 @@ function mapApiRequest(r) {
        ki id sirf detailsXml ke <ID> me hoti hai. Wahan se fallback (0 = naya
        record, us ki koi row nahi, is liye ignore). */
     entityId: r.recordID ?? (Number((String(r.detailsXml || '').match(/<ID>(\d+)<\/ID>/) || [])[1]) || null),
+    /* Prefer ApplicantsID / StudentID from XML when present — Pre-Enrollment
+       challan actions often put ledger id in recordID. */
+    studentId: xmlStudentId
+      ?? (r.studentID != null ? Number(r.studentID) : null)
+      ?? (r.applicantsID != null ? Number(r.applicantsID) : null)
+      ?? null,
     entitySummary: r.summary || '',
     requestedBy: resolveRequesterName(r),
     requestedAt: r.requestedAt,

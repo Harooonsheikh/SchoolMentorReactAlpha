@@ -76,3 +76,70 @@ export function reconcilePendingAdds(mod, reqs, graceMs = 8000) {
   });
   return write(mod, kept);
 }
+
+/* ─── Pending BADGE links (existing rows) ───────────────────────────
+   Ghost adds cover NEW records. Yeh store EXISTING row keys (student id,
+   family id, …) ko approvalId/requestNo se jodta hai taake refresh ke baad
+   bhi Pending badge wahi row par dikhe — jab entityId challan/ledger id ho
+   aur UI student._id se lookup karta ho (Pre-Enrollment reset receiving). */
+
+function linkStorageKey(mod) {
+  let b = '0';
+  let u = '0';
+  try {
+    b = sessionStorage.getItem('branchID') || '0';
+    u = sessionStorage.getItem('UserID')
+      || sessionStorage.getItem('userID')
+      || sessionStorage.getItem('userId')
+      || sessionStorage.getItem('user_id')
+      || '0';
+  } catch (e) { /* no session */ }
+  return `erpPendingLinks:${mod}:${b}:${u}`;
+}
+
+export function getPendingLinks(mod) {
+  try {
+    const raw = sessionStorage.getItem(linkStorageKey(mod));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+
+function writeLinks(mod, arr) {
+  const next = Array.isArray(arr) ? arr : [];
+  try { sessionStorage.setItem(linkStorageKey(mod), JSON.stringify(next)); }
+  catch (e) { /* ignore */ }
+  return next;
+}
+
+/* link = { key, approvalId, requestNo, ts } — `key` is the row id the UI uses. */
+export function upsertPendingLink(mod, link) {
+  if (link == null || link.key == null) return getPendingLinks(mod);
+  const g = { ts: Date.now(), ...link, key: String(link.key) };
+  const arr = getPendingLinks(mod).filter((x) => String(x.key) !== g.key);
+  arr.unshift(g);
+  return writeLinks(mod, arr);
+}
+
+export function removePendingLink(mod, key) {
+  if (key == null) return getPendingLinks(mod);
+  return writeLinks(mod, getPendingLinks(mod).filter((x) => String(x.key) !== String(key)));
+}
+
+export function reconcilePendingLinks(mod, reqs, graceMs = 15000) {
+  const byReq = new Map();
+  const byApproval = new Map();
+  (reqs || []).forEach((r) => {
+    if (!r || String(r.status || '').toLowerCase() !== 'pending') return;
+    if (r.id != null) byReq.set(String(r.id), r);
+    if (r.apiId != null) byApproval.set(String(r.apiId), r);
+  });
+  const now = Date.now();
+  const kept = getPendingLinks(mod).filter((g) => {
+    const r = (g.requestNo != null && byReq.get(String(g.requestNo)))
+      || (g.approvalId != null && byApproval.get(String(g.approvalId)));
+    if (r) return true;
+    return (now - (g.ts || 0)) < graceMs;
+  });
+  return writeLinks(mod, kept);
+}

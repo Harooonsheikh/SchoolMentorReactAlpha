@@ -6,7 +6,10 @@ import * as studentService from '../services/studentService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
 import * as approvalsService from '../services/approvalsService';
 import * as hrService from '../services/hrService';
-import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
+import {
+  getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds,
+  upsertPendingLink, removePendingLink, reconcilePendingLinks,
+} from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
@@ -36,14 +39,25 @@ const stuFullName = (s) => s.name || `${s.first || ''} ${s.last || ''}`.trim();
 /* Student save/delete/restore APIs approval info TOP-LEVEL par deti hain
    ({ pendingApproval, approvalID, requestNo, data:{id} }) — Accounts ki tarah
    nested `approval:{}` ke andar NAHI. Dono shapes handle karte hain. */
-const stuPending = (resp) => approvalPending(resp)
-  || resp?.pendingApproval === true || resp?.PendingApproval === true
-  || resp?.pendingApproval === 'true' || resp?.pendingApproval === 1;
+const stuPending = (resp) => {
+  if (!resp || typeof resp !== 'object') return false;
+  if (approvalPending(resp)
+    || resp.pendingApproval === true || resp.PendingApproval === true
+    || resp.pendingApproval === 'true' || resp.pendingApproval === 1) return true;
+  /* Receiving/reset kabhi sirf message me "sent for approval" likhte hain. */
+  return /sent for approval/i.test(String(resp.message || resp.Message || ''));
+};
 const pendFromResp = (resp) => {
   const ap = (resp && (resp.approval || resp.Approval)) || resp || {};
+  let requestNo = ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null;
+  if (!requestNo) {
+    const msg = String(resp?.message || resp?.Message || '');
+    const m = msg.match(/Request\s+([A-Za-z]{2,5}-\d{6,}-\d+)/i) || msg.match(/\b([A-Za-z]{2,5}-\d{6,}-\d+)\b/);
+    if (m) requestNo = m[1];
+  }
   return {
     approvalId: ap.approvalID ?? ap.ApprovalID ?? ap.approvalId ?? null,
-    requestNo: ap.requestNo ?? ap.RequestNo ?? ap.requestNumber ?? null,
+    requestNo,
   };
 };
 const stuMoney = (n) => 'Rs. ' + Number(n || 0).toLocaleString('en-PK');
@@ -6243,6 +6257,10 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   const [pendingAddRows, setPendingAddRows] = useState(() => getPendingAdds(PRE_PENDING_MOD));
   const list = useMemo(() => mergePreGhosts(students, pendingAddRows), [students, pendingAddRows]);
 
+  const studentsRef = useRef(students);
+  studentsRef.current = students;
+  const loadPrePendingRef = useRef(null);
+
   const hydrateChallans = useCallback(async (rows) => {
     if (!rows?.length) return;
     const now = new Date();
@@ -6258,6 +6276,9 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
       if (!ch) return { ...s, challan: null, payments: [] };
       return { ...s, challan: ch, payments: ch.payments || [] };
     }));
+    /* Challan ids ab mil gaye — pending badges (entityId = challan) ko
+       student._id par remap karne ke liye pending dubara load. */
+    loadPrePendingRef.current && loadPrePendingRef.current();
   }, []);
 
   /* LOADER — list load hone tak spinner */
@@ -6319,20 +6340,39 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
       const reqs = await approvalsService.getMyRequests();
       const m = {};
       (reqs || []).forEach((r) => {
-        const hay = `${r.module || ''} ${r.actionType || ''}`.toLowerCase();
+        if (String(r.status || '').toLowerCase() !== 'pending') return;
+        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
         const relevant = hay.includes('student') || hay.includes('challan')
-          || hay.includes('enroll') || hay.includes('admission');
-        if (r.status === 'pending' && relevant && r.entityId != null) {
-          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
-        }
+          || hay.includes('enroll') || hay.includes('admission')
+          || hay.includes('preenroll') || hay.includes('pre-enroll')
+          || hay.includes('receiv') || hay.includes('clear');
+        if (!relevant) return;
+        const pend = { approvalId: r.apiId, requestNo: r.id };
+        /* Prefer studentId from XML / row — refresh ke baad bhi student row match. */
+        if (r.studentId != null) m[String(r.studentId)] = pend;
+        if (r.entityId != null) m[String(r.entityId)] = pend;
       });
       /* Drop ghost add-rows whose request left "pending"; badge the rest. */
       const ghosts = reconcilePendingAdds(PRE_PENDING_MOD, reqs);
       ghosts.forEach((g) => { m[String(g.rid)] = { approvalId: g.approvalId, requestNo: g.requestNo }; });
       setPendingAddRows(ghosts);
+      /* Session links: student._id → approval (reset receiving entityId = challan).
+         Refresh ke baad bhi badge student row par dikhe. */
+      const links = reconcilePendingLinks(PRE_PENDING_MOD, reqs);
+      links.forEach((l) => {
+        m[String(l.key)] = { approvalId: l.approvalId, requestNo: l.requestNo };
+      });
+      /* Challan id → student._id remap (jab hydrate ho chuka ho). */
+      (studentsRef.current || []).forEach((s) => {
+        const cid = s?.challan?.id;
+        if (cid != null && m[String(cid)] && s._id != null && !m[String(s._id)]) {
+          m[String(s._id)] = m[String(cid)];
+        }
+      });
       setPendingMap(m);
     } catch (e) { /* non-fatal */ }
   }, []);
+  loadPrePendingRef.current = loadPrePending;
   useEffect(() => { loadPrePending(); }, [loadPrePending]);
 
   /* Approval kahin aur se hone ke baad jab user wapas aaye / tab focus kare, to
@@ -6360,7 +6400,13 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   const setPrePend = (student, resp) => {
     const id = student?._id;
     if (id == null) return;
-    setPendingMap((m) => ({ ...m, [String(id)]: pendFromResp(resp) }));
+    const pend = pendFromResp(resp);
+    setPendingMap((m) => ({ ...m, [String(id)]: pend }));
+    /* Persist student-keyed link so refresh ke baad bhi badge dikhe
+       (server entityId aksar challan id hota hai). */
+    upsertPendingLink(PRE_PENDING_MOD, {
+      key: id, approvalId: pend.approvalId, requestNo: pend.requestNo,
+    });
   };
 
   const requestWithdrawPre = (id) => {
@@ -6375,7 +6421,10 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
     catch (e) { toast(e?.message || 'Could not withdraw request', 'error'); return; }
     toast('Request withdrawn', 'success');
     const rid = withdrawCfg.student?._id;
-    if (rid != null) setPendingAddRows(removePendingAdd(PRE_PENDING_MOD, rid));
+    if (rid != null) {
+      setPendingAddRows(removePendingAdd(PRE_PENDING_MOD, rid));
+      removePendingLink(PRE_PENDING_MOD, rid);
+    }
     setWithdrawCfg(null);
     reloadList();
     loadPrePending();
@@ -6532,7 +6581,15 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
       return;
     }
     try {
-      await preEnrollmentService.deletePreEnrollChallan(student.challan.id);
+      const resp = await preEnrollmentService.deletePreEnrollChallan(student.challan.id);
+      /* Approval on: challan abhi delete nahi — student row par badge + Withdraw. */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Challan delete sent for approval', 'info');
+        setPrePend(student, resp);
+        loadPrePending();
+        setActCfg(null);
+        return;
+      }
       preLocalPatch(student.preId, { challan: null, payments: [] });
       setStudents(prev => prev.map(s => s.preId === student.preId ? { ...s, challan: null, payments: [] } : s));
       toast('Challan deleted', 'info');
@@ -6551,7 +6608,16 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   const handleResetReceiving = async (student) => {
     if (!student.challan?.id) { toast('No saved challan found', 'error'); return; }
     try {
-      await preEnrollmentService.resetPreEnrollReceiving(student.challan.id);
+      const resp = await preEnrollmentService.resetPreEnrollReceiving(student.challan.id);
+      /* Approval on: receiving abhi clear nahi — payments waise rehte hain,
+         student row par Pending Approval badge + Withdraw (Receive jaisa). */
+      if (stuPending(resp)) {
+        toast(apiMessage(resp) || 'Receiving reset sent for approval', 'info');
+        setPrePend(student, resp);
+        loadPrePending();
+        setActCfg(null);
+        return;
+      }
       preLocalPatch(student.preId, { payments: [] });
       const fresh = await preEnrollmentService.getPreEnrollChallan({ studentId: student._id }).catch(() => null);
       setStudents(prev => prev.map(s => s.preId === student.preId

@@ -230,6 +230,20 @@ const peUserId = () => {
   catch { return 0; }
 };
 
+/* Approval-gated response? Backend kabhi { pendingApproval:true } deta hai aur
+   kabhi { success:false, message:"…sent for approval" }. Dono ko pending maano
+   taake caller (reset receiving / delete challan) error na samjhe aur badge dikha sake. */
+function peIsApprovalPending(data) {
+  if (!data || typeof data !== 'object') return false;
+  const flag = (o) => o && (o.pendingApproval === true || o.PendingApproval === true
+    || o.pendingApproval === 'true' || o.pendingApproval === 1);
+  if (flag(data)) return true;
+  const ap = data.approval || data.Approval;
+  if (flag(ap)) return true;
+  const msg = String(data.message || data.Message || '');
+  return /sent for approval/i.test(msg);
+}
+
 async function peRequest(path, { method = 'GET', body } = {}) {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
   const res = await fetch(buildUrl(`${PE_BASE}${path}`), {
@@ -244,6 +258,7 @@ async function peRequest(path, { method = 'GET', body } = {}) {
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (peIsApprovalPending(data)) return data;
   if (!res.ok || data?.isSuccess === false || data?.success === false) {
     throw new Error(data?.message || data?.title || `Request failed (${res.status})`);
   }
