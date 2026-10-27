@@ -8,7 +8,6 @@ import {
   loadAdvancedPerms, saveAdvancedPerms,
   APPROVAL_MODES, loadApprovalSettings, saveApprovalSettings,
 } from './data'
-import { loadHr, fullName } from '../HumanResource/data'
 import { useView } from '../../config/viewContext'
 import {
   fetchModulePermissions, fetchModulePermissionsEach, saveModulePermissions,
@@ -915,15 +914,13 @@ function MobileAppPermsModal({ chatMode, mentorAi, etube, loading, saving, setCh
    the Approvals module itself, not per school. */
 function ApprovalModeModal({ school, mode, approvers, onClose, onSave }) {
   const [selected, setSelected] = useState(mode)
-  const [picked, setPicked] = useState(new Set(approvers))
-  const staff = useMemo(() => loadHr().emps.filter((e) => e.status === 'Active'), [])
+  const [picked] = useState(() => new Set(approvers))
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [])
 
-  const toggleApprover = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
   return createPortal(
     <div className="perm-ov apv-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -958,20 +955,6 @@ function ApprovalModeModal({ school, mode, approvers, onClose, onSave }) {
               )
             })}
           </div>
-
-          {selected === 'school' && (
-            <div className="apv-approver-block">
-              <div className="apv-approver-h"><i className="fa-solid fa-user-shield" /> School Approvers <span className="apv-approver-count">{picked.size} selected</span></div>
-              <div className="apv-approver-sub">Pick which staff members at this school can approve or reject requests.</div>
-              <div className="um-col-grid">
-                {staff.length === 0 ? (
-                  <div style={{ color: 'var(--tm)', fontSize: 12.5, padding: '8px 0' }}>No active staff found in Human Resource yet.</div>
-                ) : staff.map((e) => (
-                  <label className="um-col-item" key={e.id}><input type="checkbox" checked={picked.has(e.id)} onChange={() => toggleApprover(e.id)} /> {fullName(e)}</label>
-                ))}
-              </div>
-            </div>
-          )}
 
           {selected === 'chain' && (
             <div className="apv-chain-note">
