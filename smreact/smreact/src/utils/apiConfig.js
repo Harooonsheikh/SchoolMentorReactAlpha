@@ -60,12 +60,16 @@ export function buildUrl(path = '') {
   return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-
 // ── Mentor AI (agentic) API ─────────────────────────────────────
-// local → AI server seedha; prod → apna origin (IIS /ai/* ko AI server par forward kare)
-const MENTOR_AI_LOCAL = 'http://50.190.164.42:8000';
+// AI ka apna alag server hai, ERP ke getBaseUrl()/PROD_URL se iska koi talluq nahi.
+//   dev  (npm start)     → AI server seedha IP par
+//   prod (npm run build) → AI ka https domain
+// Kisi aur host par bhejna ho to REACT_APP_MENTOR_AI_URL set kar do (.env / .env.production).
+const MENTOR_AI_DEV_URL  = 'http://50.190.164.42:8000';
+const MENTOR_AI_PROD_URL = 'https://ai.schoolmentor.ai';
+
 export const MENTOR_AI_BASE = stripSlash(process.env.REACT_APP_MENTOR_AI_URL)
-  || (process.env.NODE_ENV === 'production' ? PROD_URL : MENTOR_AI_LOCAL);
+  || (process.env.NODE_ENV === 'production' ? MENTOR_AI_PROD_URL : MENTOR_AI_DEV_URL);
 
 export function buildMentorAiUrl(path = '') {
   return `${MENTOR_AI_BASE}${path.startsWith('/') ? path : `/${path}`}`;
@@ -74,7 +78,9 @@ export function buildMentorAiUrl(path = '') {
 /* AI URLs ERP guard (session-expired / view-only / slow-offline monitor) se bahar hain —
    warna AI token ka 401 user ko ERP se logout kar deta. */
 export function isMentorAiUrl(url) {
-  return /(^|\/)ai\/api\/|\/api\/ask\//i.test(String(url || ''));
+  const u = String(url || '');
+  return (!!MENTOR_AI_BASE && u.startsWith(MENTOR_AI_BASE))
+    || /(^|\/)ai\/api\/|\/api\/ask\//i.test(u);
 }
 
 
