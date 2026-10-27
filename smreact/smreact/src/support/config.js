@@ -27,7 +27,7 @@
    The base URL / token are resolved lazily on every call because getBaseUrl()
    reads localStorage and the session token only appears after login.
    ════════════════════════════════════════════════════════════════════ */
-import { getBaseUrl, MEDIA_BASE } from '../utils/apiConfig';
+import { getBaseUrl, getMediaBase } from '../utils/apiConfig';
 
 /* CRA (webpack 5) sirf poore `process.env` expression ko ek object literal se
    badalta hai — bare `process` browser bundle me maujood NAHI hota. Is liye
@@ -56,16 +56,10 @@ const cfg = {
   },
 };
 
-/* Customer Support API ka host — swagger: https://alphaapi.schoolmentor.ai/swagger/index.html */
-const SUPPORT_DEV_API = 'https://alphaapi.schoolmentor.ai';
-
-/** Host origin the Support API is served from. */
+/** Host origin the Support API is served from — always the same sandbox/live base. */
 export function supportApiBase() {
   if (cfg.apiBaseUrl) return stripTrailingSlash(cfg.apiBaseUrl);
-  /* prod me apna hi origin (IIS proxy), dev me seedha alphaapi. */
-  return env.NODE_ENV === 'production'
-    ? stripTrailingSlash(getBaseUrl())
-    : SUPPORT_DEV_API;
+  return stripTrailingSlash(getBaseUrl());
 }
 
 /** Every Support REST route sits under this prefix. */
@@ -201,8 +195,9 @@ export const fileUrl = (relativeOrAbsolute) => {
      http://50.190.164.42:4100/SupportAttachments/... — plain http, which an
      https page blocks as mixed content, and localhost:4100 behind the IIS
      proxy. Keep the stored path, serve it from the media host. */
+  const media = getMediaBase();
   const m = u.match(/\/SupportAttachments\/.*/i);
-  if (m) return `${MEDIA_BASE}${m[0]}`;
+  if (m) return `${media}${m[0]}`;
   if (/^https?:\/\//i.test(u)) return u;
-  return `${MEDIA_BASE}${u.startsWith('/') ? u : `/${u}`}`;
+  return `${media}${u.startsWith('/') ? u : `/${u}`}`;
 };

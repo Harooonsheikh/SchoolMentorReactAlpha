@@ -115,17 +115,9 @@ function UsernameField({ value, onChange, onEnter }) {
   );
 }
 
-/* Sandbox par kuch APIs abhi deploy nahi (404). Pehle app ka apna base URL,
-   agar wahan 404 aaye to alphaapi (live) wala URL. */
-const FALLBACK_API_BASE = 'https://alphaapi.schoolmentor.ai';
+/* Always call the configured sandbox/live base — never fall back to live alphaapi. */
 async function apiFetch(path, opts) {
-  let res = await fetch(buildUrl(path), opts).catch(() => null);
-  if (!res || res.status === 404) {
-    /* Sandbox ka token live server par nahi chalta (401) — is liye fallback par token nahi bhejte. */
-    const { Authorization, ...headers } = opts?.headers || {};
-    res = await fetch(FALLBACK_API_BASE + path, { ...opts, headers });
-  }
-  return res;
+  return fetch(buildUrl(path), opts);
 }
 
 function Message({ msg }) {
@@ -395,8 +387,6 @@ function ResetOwn() {
 }
 
 /* ───────────── Branches table ───────────── */
-const BRANCHES_API_URL = 'https://alphaapi.schoolmentor.ai/api/Auth/branch-school-heads';
-
 function BranchesTable() {
   const [query, setQuery]       = useState('');
   const [visible, setVisible]   = useState({}); // { [id]: true } → us row ka password dikhao
@@ -418,11 +408,7 @@ function BranchesTable() {
           method: 'GET',
           headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         };
-        /* Pehle app ka apna base URL; agar wahan 404 aaye to seedha alphaapi wala URL. */
-        let res = await fetch(buildUrl('/api/Auth/branch-school-heads'), opts).catch(() => null);
-        if (!res || res.status === 404) {
-          res = await fetch(BRANCHES_API_URL, opts);
-        }
+        const res = await fetch(buildUrl('/api/Auth/branch-school-heads'), opts);
         const raw = await res.text();
         let data = null;
         try { data = raw ? JSON.parse(raw) : null; } catch { /* plain text */ }

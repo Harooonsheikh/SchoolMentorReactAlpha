@@ -1,15 +1,16 @@
 import axios from "axios";
-
-const API_BASE =
-  process.env.REACT_APP_API_URL ||
-  "https://alphaapi.schoolmentor.ai";
+import { getBaseUrl } from "../../utils/apiConfig";
 
 const api = axios.create({
-  baseURL: API_BASE,
   headers: {
     "Content-Type": "application/json",
   },
   withCredentials: false,
+});
+
+api.interceptors.request.use((config) => {
+  config.baseURL = getBaseUrl();
+  return config;
 });
 
 // Get logged-in user notifications

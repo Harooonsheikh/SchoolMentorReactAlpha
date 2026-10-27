@@ -12,7 +12,7 @@ import { useView } from '../../config/viewContext'
 import {
   fetchModulePermissions, fetchModulePermissionsEach, saveModulePermissions,
   fetchLaunchSetup, fetchLaunchSetupEach, setLaunchSetup,
-  cachedPermissions, cachePermissions,
+  cachedPermissions, cachePermissions, cachedApprovalType,
   listMobileAppPermission, saveMobileAppPermission, emptyMobileAppPerms,
 } from '../../api/schoolPermissionsApi'
 import {
@@ -134,14 +134,16 @@ export default function SchoolPermissions() {
     return { total, active, inactive: known.length - active }
   }, [allSchools, erpStore])
 
-  /* modules → save-modulePermission
+  /* modules + approvalType → save-modulePermission
      ERP access → toggle-launch-setup
      mobile → POST /manage-mobileapp-permission (chatType + toggles) */
   const savePerms = async (school, perms) => {
     if (saving) return
     setSaving(true)
     try {
-      await saveModulePermissions(school.id, perms.modules)
+      await saveModulePermissions(school.id, perms.modules, {
+        approvalMode: perms.approvalMode,
+      })
       setStore((prev) => ({ ...prev, [school.id]: { ...perms.modules } }))
       cachePermissions(school.id, { modules: { ...perms.modules } })
 
@@ -358,7 +360,15 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
      likhti hain — Academics settings modal in ki local copy stage karta hai. */
   const [modulePermissions, setModulePermissions] = useState(() => loadAdvancedPerms(school.id))
   const [settingsModuleKey, setSettingsModuleKey] = useState(null)
-  const [approvalInit] = useState(() => loadApprovalSettings(school.id))
+  /* Prefer approvalType from GET module-permission; fall back to local store. */
+  const [approvalInit] = useState(() => {
+    const local = loadApprovalSettings(school.id)
+    const fromApi = cachedApprovalType(school.id)
+    return {
+      approvalMode: fromApi || local.approvalMode,
+      schoolApprovers: local.schoolApprovers,
+    }
+  })
   const [approvalMode, setApprovalMode] = useState(approvalInit.approvalMode)
   const [schoolApprovers, setSchoolApprovers] = useState(approvalInit.schoolApprovers)
   const [approvalModalOpen, setApprovalModalOpen] = useState(false)
@@ -431,11 +441,14 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
 
   const saveDraft = () => {
     /* Frontend-only: advanced content permissions localStorage me isi waqt
-       persist hoti hain — modules/ERP/mobile ke sath aik hi action me. */
+       persist hoti hain — modules/ERP/mobile ke sath aik hi action me.
+       approvalMode → save-modulePermission.approvalType (Disable|School|Chain). */
     saveAdvancedPerms(school.id, modulePermissions)
+    saveApprovalSettings(school.id, { approvalMode, schoolApprovers })
     onSave(school, {
       erpAccess,
       modules,
+      approvalMode,
       chatMode,
       mentorAi,
       etube,

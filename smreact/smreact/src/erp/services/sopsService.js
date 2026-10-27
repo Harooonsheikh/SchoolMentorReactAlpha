@@ -1,4 +1,4 @@
-import { buildSuperAdminUrl, MEDIA_BASE } from '../../utils/apiConfig';
+import { buildSuperAdminUrl, getMediaBase } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — read-only wiring to the Super Admin SOP APIs.
@@ -118,7 +118,7 @@ export function sopFileUrl(path) {
 export function manualPdfUrl(path) {
   const name = fileNameFrom(path);
   if (!/\.[a-z0-9]{2,6}$/i.test(name)) return '';   // "string" jaisi bekar value
-  return `${MEDIA_BASE}/assests/Manuals/PDFs/${encodeURIComponent(name)}`;
+  return `${getMediaBase()}/assests/Manuals/PDFs/${encodeURIComponent(name)}`;
 }
 
 /* YouTube ka koi bhi link → embed URL.

@@ -114,7 +114,9 @@ async function fetchModulePermissionsNow(branchID) {
   if (!res.ok) return emptyModules()
   const text = await res.text()
   try {
-    return toModules(JSON.parse(text))
+    const row = JSON.parse(text)
+    rememberApprovalType(branchID, row?.approvalType ?? row?.ApprovalType)
+    return toModules(row)
   } catch {
     return emptyModules()
   }
@@ -206,9 +208,46 @@ export async function setLaunchSetup(branchID, on) {
   return json
 }
 
+/* Approval Settings UI key → save-modulePermission.approvalType
+   disabled → Disable | school → School | chain → Chain */
+export function toApprovalTypeApi(mode) {
+  const m = String(mode || '').trim().toLowerCase()
+  if (m === 'school') return 'School'
+  if (m === 'chain') return 'Chain'
+  return 'Disable'
+}
+
+export function fromApprovalTypeApi(value) {
+  const s = String(value == null ? '' : value).trim().toLowerCase()
+  if (s === 'school') return 'school'
+  if (s === 'chain') return 'chain'
+  if (s === 'disable' || s === 'disabled') return 'disabled'
+  return null
+}
+
+/** Last-fetched approvalType per branch (GET module-permission). */
+const approvalTypeByBranch = new Map()
+
+export function cachedApprovalType(branchID) {
+  const id = Number(branchID)
+  return approvalTypeByBranch.has(id) ? approvalTypeByBranch.get(id) : null
+}
+
+function rememberApprovalType(branchID, raw) {
+  const mode = fromApprovalTypeApi(raw)
+  if (mode == null) return
+  approvalTypeByBranch.set(Number(branchID), mode)
+}
+
 /** Save — poora set bhejta hai (API insert/update dono isi se karta hai). */
-export async function saveModulePermissions(branchID, modules) {
-  const body = { branchID: Number(branchID), type: 'chain', createdBy: 0, modifiedBy: 0 }
+export async function saveModulePermissions(branchID, modules, { approvalType, approvalMode } = {}) {
+  const body = {
+    branchID: Number(branchID),
+    type: 'chain',
+    createdBy: 0,
+    modifiedBy: 0,
+    approvalType: approvalType || toApprovalTypeApi(approvalMode),
+  }
   UI_KEYS.forEach((k) => { body[MODULE_FIELDS[k]] = !!modules[k] })
 
   const res = await fetch(`${BASE}/save-modulePermission`, {
@@ -220,6 +259,7 @@ export async function saveModulePermissions(branchID, modules) {
   if (!res.ok || json?.success === false) {
     throw new Error(json?.message || json?.title || 'Could not save module permissions')
   }
+  rememberApprovalType(branchID, body.approvalType)
   return json
 }
 

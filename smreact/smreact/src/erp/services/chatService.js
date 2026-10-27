@@ -1,4 +1,4 @@
-import { buildUrl, resolveMediaUrl, MEDIA_BASE } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, getMediaBase } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    CHAT — wiring to the API's "Chats" endpoints (swagger tag: Chats).
@@ -769,7 +769,7 @@ function chatAssetUrl(row) {
     const noQuery = c.split(/[?#]/)[0];
     const at = noQuery.toLowerCase().indexOf(CHAT_ASSET_DIR.toLowerCase());
     const name = at >= 0 ? noQuery.slice(at + CHAT_ASSET_DIR.length) : noQuery.split('/').pop();
-    if (name && FILE_NAME_RE.test(name)) return `${MEDIA_BASE}${CHAT_ASSET_DIR}${encodePath(name)}`;
+    if (name && FILE_NAME_RE.test(name)) return `${getMediaBase()}${CHAT_ASSET_DIR}${encodePath(name)}`;
   }
   return '';
 }

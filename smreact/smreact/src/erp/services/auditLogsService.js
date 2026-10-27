@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════
    AUDIT LOGS API  —  src/erp/services/auditLogsService.js
 
-   Endpoints (base: https://alphaapi.schoolmentor.ai)
+   Endpoints (base from getBaseUrl / buildUrl — sandbox or live):
      1. GET /get-audit-log-filters/{branchId}
           → { modules: string[], actions: string[],
               users: [{ userID, userName, role }] }
@@ -9,8 +9,7 @@
           ?pageNumber&pageSize&fromDate&toDate&module&userId&action&search
           → { stats, totalRecords, pageNumber, pageSize, data: [...] }
    ═══════════════════════════════════════════════════════════════════ */
-
-const API_BASE = 'https://alphaapi.schoolmentor.ai';
+import { buildUrl } from '../../utils/apiConfig';
 
 /* Branch id — same source as the rest of the ERP (sessionStorage.branchID). */
 export function getBranchId() {
@@ -37,7 +36,7 @@ async function getJson(path, { signal } = {}) {
   let token = null;
   try { token = sessionStorage.getItem('token'); } catch { /* ignore */ }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(buildUrl(path), {
     method: 'GET',
     headers: {
       accept: '*/*',

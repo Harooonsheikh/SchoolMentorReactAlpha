@@ -34,7 +34,13 @@ export function getBaseUrl() {
   const insecure = typeof window !== 'undefined'
     && window.location.protocol === 'https:'
     && saved.startsWith('http://');
-  return (saved && !insecure) ? saved : DEFAULT_URL;
+  /* Ignore any saved override that is not this build's default host
+     (e.g. an old live URL left in localStorage). */
+  const wrongHost = saved && DEFAULT_URL && saved.toLowerCase() !== DEFAULT_URL.toLowerCase();
+  if (wrongHost) {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  }
+  return (saved && !insecure && !wrongHost) ? saved : DEFAULT_URL;
 }
 
 /** Persist a new base URL */
@@ -125,10 +131,15 @@ const CHAIN_API_PREFIX = '/SchoolmentorChainManagementAPI';
    gayab ho jati thi. */
 const CHAIN_API_ENV = process.env.REACT_APP_CHAIN_API_BASE;
 
+/** Chain host — same sandbox/live base as the rest of the ERP unless overridden. */
+export function getChainApiHost() {
+  if (CHAIN_API_ENV != null && CHAIN_API_ENV !== '') return stripSlash(CHAIN_API_ENV);
+  return getBaseUrl();
+}
+
+/* Kept for older imports; always resolves through getChainApiHost(). */
 export const CHAIN_API_HOST = stripSlash(
-  CHAIN_API_ENV != null && CHAIN_API_ENV !== ''
-    ? CHAIN_API_ENV
-    : (process.env.NODE_ENV === 'production' ? '' : 'https://alphaapi.schoolmentor.ai'),
+  CHAIN_API_ENV != null && CHAIN_API_ENV !== '' ? CHAIN_API_ENV : DEFAULT_URL,
 );
 
 /**
@@ -137,7 +148,7 @@ export const CHAIN_API_HOST = stripSlash(
  */
 export function buildChainApiUrl(path = '') {
   const suffix = path.startsWith('/') ? path : `/${path}`;
-  return `${CHAIN_API_HOST}${CHAIN_API_PREFIX}${suffix}`;
+  return `${getChainApiHost()}${CHAIN_API_PREFIX}${suffix}`;
 }
 
 // ── Uploaded media (branch logos, staff photos, documents) ──────
@@ -153,8 +164,13 @@ export function buildChainApiUrl(path = '') {
 // API stamped. EVERY file path from the API must go through it.
 // Override the host with REACT_APP_MEDIA_BASE if it ever moves.
 export const MEDIA_BASE = stripSlash(
-  process.env.REACT_APP_MEDIA_BASE || 'https://alphaapi.schoolmentor.ai',
+  process.env.REACT_APP_MEDIA_BASE || DEFAULT_URL,
 );
+
+/** Media host — follows getBaseUrl so sandbox builds never hit live alphaapi. */
+export function getMediaBase() {
+  return stripSlash(process.env.REACT_APP_MEDIA_BASE || getBaseUrl());
+}
 
 /* Every folder the API serves uploads from. /UploadedImages holds branch logos
    and staff/student photos; /UploadedDocuments holds employee documents and
@@ -167,10 +183,11 @@ export function resolveMediaUrl(raw) {
   const u = String(raw).trim();
   if (!u || u.toUpperCase() === 'N/A') return '';      // API's "no file" placeholder
   if (u.startsWith('data:')) return u;                 // inline data URI — leave it
+  const media = getMediaBase();
   const m = u.match(UPLOAD_FOLDERS);                   // pull the stored path
-  if (m) return `${MEDIA_BASE}${m[0]}`;                // serve it from the media host
+  if (m) return `${media}${m[0]}`;                     // serve it from the media host
   if (/^https?:\/\//i.test(u)) return u;               // some other absolute URL
-  return `${MEDIA_BASE}${u.startsWith('/') ? u : `/${u}`}`;
+  return `${media}${u.startsWith('/') ? u : `/${u}`}`;
 }
 
 // ── Session guard ───────────────────────────────────────────────
