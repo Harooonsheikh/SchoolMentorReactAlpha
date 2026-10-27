@@ -1129,133 +1129,208 @@ export async function deleteHrSalaryHead(id) {
   return json;
 }
 
-/* Add / update an employee — mirrors the Launch Setup staff flow:
-   1) POST save-employee (multipart, personal + all base fields) → employee id
-   2) PUT update-employee-employment (official details)
-   3) PUT update-employee-salary   (basic + the 3 fixed allowances)
-   4) custom salary heads via the /api/HR/*-salary-head endpoints.
-   payload.removedHeadIds carries custom heads the user removed while editing. */
+/* LaunchSetup-style section keys — HR Save sirf US section ki API hit karta hai
+   jo dirty ho (Personal → save-employee, Official → update-employee-employment,
+   Salary → update-employee-salary). Pehle har edit pe pehli API chal jati thi,
+   is liye salary change par bhi save-employee ka approval fire ho jata tha. */
+const HR_PERSONAL_KEYS = [
+  'firstName', 'lastName', 'fn', 'cnic', 'dob', 'gender', 'marital',
+  'phone', 'email', 'blood', 'emergency', 'address',
+  'countryID', 'provinceID', 'cityID', 'country', 'province', 'city', 'nationality',
+];
+const HR_EMPLOYMENT_KEYS = [
+  'dId', 'desId', 'qualificationID', 'join', 'exp', 'type',
+  'manager', 'shift', 'role', 'isPrinciple', 'isParent', 'qual',
+];
+const HR_SALARY_KEYS = ['basicSalary', 'payMethod', 'bankName', 'bankAcc'];
+
+function hrValEq(a, b) {
+  const na = a == null || a === '' ? '' : String(a).trim();
+  const nb = b == null || b === '' ? '' : String(b).trim();
+  if (na === nb) return true;
+  const numa = Number(na); const numb = Number(nb);
+  if (na !== '' && nb !== '' && !Number.isNaN(numa) && !Number.isNaN(numb) && numa === numb) return true;
+  if ((a === true || a === false || a === 0 || a === 1) || (b === true || b === false || b === 0 || b === 1)) {
+    return !!a === !!b;
+  }
+  return false;
+}
+
+function hrKeysDirty(curr, orig, keys) {
+  if (!orig) return true;
+  return keys.some((k) => !hrValEq(curr?.[k], orig?.[k]));
+}
+
+function hrSalaryHeadsDirty(currHeads = [], origHeads = []) {
+  const norm = (list) => (list || []).map((h) => ({
+    id: Number(h.id) || 0,
+    name: String(h.name || '').trim().toLowerCase(),
+    amount: Number(h.amount) || 0,
+    type: h.type === 'deduct' ? 'deduct' : 'allow',
+    fixed: !!h.fixed,
+  })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return JSON.stringify(norm(currHeads)) !== JSON.stringify(norm(origHeads));
+}
+
+/* Which of the 3 LaunchSetup employee APIs to call — same split as StaffTab
+   (personal / official / salary modals). New employee → sab teen. */
+function detectHrEmployeeSections(payload = {}) {
+  const isNew = !(Number(payload.id) > 0);
+  if (isNew) return { personal: true, employment: true, salary: true };
+  const orig = payload.original || null;
+  if (!orig) return { personal: true, employment: true, salary: true };
+  const personal = hrKeysDirty(payload, orig, HR_PERSONAL_KEYS) || !!payload.photoFile;
+  const employment = hrKeysDirty(payload, orig, HR_EMPLOYMENT_KEYS);
+  const salary = hrKeysDirty(payload, orig, HR_SALARY_KEYS)
+    || hrSalaryHeadsDirty(payload.salaryHeads, orig.salaryHeads)
+    || (Array.isArray(payload.removedHeadIds) && payload.removedHeadIds.length > 0);
+  return { personal, employment, salary };
+}
+
+/* Add / update an employee — mirrors Launch Setup staff flow, SECTION-WISE:
+   1) POST save-employee            — Personal tab dirty (ya naya employee)
+   2) PUT  update-employee-employment — Official tab dirty
+   3) PUT  update-employee-salary     — Salary tab dirty
+   Phir custom salary heads / leaves / docs / assignments.
+   Har step apni approval fire karta hai; pehli pending milte hi aage rok do. */
 export async function saveHrEmployee(payload = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const userID   = Number(sessionStorage.getItem('UserID')) || 0;
   const now      = new Date().toISOString();
+  const sections = detectHrEmployeeSections(payload);
+  const isNew = !(Number(payload.id) > 0);
+  let employeeId = Number(payload.id) || 0;
 
-  /* ── 1. Personal / base record (save-employee, multipart) ── */
-  const fd  = new FormData();
-  const set = (k, v) => fd.append(k, v == null ? '' : v);
-  set('ID',                 payload.id ?? 0);
-  set('CNIC',               payload.cnic);
-  set('FirstName',          payload.firstName);
-  set('LastName',           payload.lastName);
-  set('FatherName',         payload.fn);
-  set('Gender',             payload.gender);
-  set('MaritalStatus',      payload.marital || 'N/A');
-  set('CountryID',          idOr(payload.countryID ?? payload.country, 4));
-  set('ProvinceID',         idOr(payload.provinceID ?? payload.province, 13));
-  set('CityID',             idOr(payload.cityID ?? payload.city, 20));
-  set('Address',            payload.address);
-  set('Phone',              payload.phone);
-  set('EmergencyContact',   payload.emergency);
-  set('BranchID',           branchID);
-  set('DateOfBirth',        payload.dob || now);
-  set('DateOfJoining',      payload.join || '');
-  set('experience',         toInt(payload.exp));
-  set('Email',              payload.email || 'N/A');
-  set('EmpImage',           typeof payload.photo === 'string' && /^https?:/i.test(payload.photo) ? payload.photo : 'N/A');
-  set('BloodGroup',         payload.blood || 'N/A');
-  set('DepartmentID',       Number(payload.dId) || 0);
-  set('DesignationID',      Number(payload.desId) || 0);
-  set('QualificationID',    idOr(payload.qualificationID, 0) || 0);
-  set('BasicSalary',        Number(payload.basicSalary) || 0);
-  set('MedicalAllowanace',  fixedHeadAmount(payload, 'Medical Allowance'));
-  set('RentAllowance',      fixedHeadAmount(payload, 'Rent Allowance'));
-  set('TransportAllowance', fixedHeadAmount(payload, 'Transport Allowance'));
-  set('PaymentMethod',      payload.payMethod);
-  set('BankName',           payload.bankName);
-  set('AccountNumber',      payload.bankAcc);
-  set('EmploymentType',       payload.type);
-  set('ReportingManagerName', payload.manager);
-  set('ShiftDutyTime',        payload.shift);
-  set('Responsibilities',     payload.role);
-  set('IsPrinciple',        !!payload.isPrinciple);
-  set('IsTeacher',          payload.isPrinciple ? false : true);
-  set('IsParent',           !!payload.isParent);
-  set('CreatedAt',          now);
-  set('CreatedBy',          userID);
-  set('ModifiedAt',         now);
-  set('ModifiedBy',         userID);
-  set('IsActive',           true);
-  set('DepartmentName',     'test');
-  set('DesignationName',    'test');
-  set('QualificationName',  'test');
-  if (payload.photoFile) fd.append('EmpImageFile', payload.photoFile);
+  /* ── 1. Personal / base record (save-employee, multipart) ──
+     Naya employee: hamesha. Edit: sirf jab Personal tab change hui ho. */
+  if (sections.personal) {
+    const fd  = new FormData();
+    const set = (k, v) => fd.append(k, v == null ? '' : v);
+    set('ID',                 payload.id ?? 0);
+    set('CNIC',               payload.cnic);
+    set('FirstName',          payload.firstName);
+    set('LastName',           payload.lastName);
+    set('FatherName',         payload.fn);
+    set('Gender',             payload.gender);
+    set('MaritalStatus',      payload.marital || 'N/A');
+    set('CountryID',          idOr(payload.countryID ?? payload.country, 4));
+    set('ProvinceID',         idOr(payload.provinceID ?? payload.province, 13));
+    set('CityID',             idOr(payload.cityID ?? payload.city, 20));
+    set('Address',            payload.address);
+    set('Phone',              payload.phone);
+    set('EmergencyContact',   payload.emergency);
+    set('BranchID',           branchID);
+    set('DateOfBirth',        payload.dob || now);
+    set('DateOfJoining',      payload.join || '');
+    set('experience',         toInt(payload.exp));
+    set('Email',              payload.email || 'N/A');
+    set('EmpImage',           typeof payload.photo === 'string' && /^https?:/i.test(payload.photo) ? payload.photo : 'N/A');
+    set('BloodGroup',         payload.blood || 'N/A');
+    set('DepartmentID',       Number(payload.dId) || 0);
+    set('DesignationID',      Number(payload.desId) || 0);
+    set('QualificationID',    idOr(payload.qualificationID, 0) || 0);
+    set('BasicSalary',        Number(payload.basicSalary) || 0);
+    set('MedicalAllowanace',  fixedHeadAmount(payload, 'Medical Allowance'));
+    set('RentAllowance',      fixedHeadAmount(payload, 'Rent Allowance'));
+    set('TransportAllowance', fixedHeadAmount(payload, 'Transport Allowance'));
+    set('PaymentMethod',      payload.payMethod);
+    set('BankName',           payload.bankName);
+    set('AccountNumber',      payload.bankAcc);
+    set('EmploymentType',       payload.type);
+    set('ReportingManagerName', payload.manager);
+    set('ShiftDutyTime',        payload.shift);
+    set('Responsibilities',     payload.role);
+    set('IsPrinciple',        !!payload.isPrinciple);
+    set('IsTeacher',          payload.isPrinciple ? false : true);
+    set('IsParent',           !!payload.isParent);
+    set('CreatedAt',          now);
+    set('CreatedBy',          userID);
+    set('ModifiedAt',         now);
+    set('ModifiedBy',         userID);
+    set('IsActive',           true);
+    set('DepartmentName',     'test');
+    set('DesignationName',    'test');
+    set('QualificationName',  'test');
+    if (payload.photoFile) fd.append('EmpImageFile', payload.photoFile);
 
-  const res1  = await fetch(buildUrl('/api/LaunchSetup/save-employee'), {
-    method: 'POST', headers: { Accept: '*/*' }, body: fd,
-  });
-  const json1 = await res1.json().catch(() => null);
-  if (!res1.ok) throw new Error(apiMessage(json1) || 'Could not save employee');
+    const res1  = await fetch(buildUrl('/api/LaunchSetup/save-employee'), {
+      method: 'POST', headers: { Accept: '*/*' }, body: fd,
+    });
+    const json1 = await res1.json().catch(() => null);
+    if (!res1.ok) throw new Error(apiMessage(json1) || 'Could not save employee');
 
-  /* Approval on → employee add/edit queue ho gaya, abhi apply NAHI hua. Baqi
-     steps (employment/salary/leaves/docs/assignments) yahin rok do warna wo
-     approval ke baghair apply ho jate. Caller badge + withdraw dikhata hai. */
-  const pending1 = hrPendingInfo(json1);
-  if (pending1) {
-    const d0 = json1?.data;
-    const pid = (Array.isArray(d0) ? (d0[0]?.id ?? d0[0]?.ID) : (d0?.id ?? d0?.ID)) ?? payload.id ?? 0;
-    return { id: pid, pending: pending1 };
+    /* Approval on save-employee → personal change queued. Baqi steps mat chalao
+       (warna employment/salary approval ke baghair apply ho jate). */
+    const pending1 = hrPendingInfo(json1);
+    if (pending1) {
+      const d0 = json1?.data;
+      const pid = (Array.isArray(d0) ? (d0[0]?.id ?? d0[0]?.ID) : (d0?.id ?? d0?.ID)) ?? payload.id ?? 0;
+      return { id: pid, pending: pending1, pendingSection: 'personal' };
+    }
+
+    /* Duplicate (phone/CNIC) par backend HTTP 200 + data[0] = { Success:0,
+       Message:"Number already exist" } deta hai. */
+    const inner1 = Array.isArray(json1?.data) ? json1.data[0] : null;
+    if (inner1 && (inner1.Success === 0 || inner1.Success === false)) {
+      const e = new Error(inner1.Message || apiMessage(json1) || 'Number already exist');
+      e.isDuplicatePhone = /exist|number|already/i.test(e.message);
+      throw e;
+    }
+
+    const d = json1?.data;
+    employeeId =
+      (Array.isArray(d) ? (d[0]?.id ?? d[0]?.ID) : (d?.id ?? d?.ID)) ??
+      payload.id ?? 0;
   }
 
-  /* Duplicate (phone/CNIC) par backend HTTP 200 + data[0] = { Success:0,
-     Message:"Number already exist" } deta hai. Isy fail samjho — aur agar number-
-     duplicate hai to error par flag lagao taake caller email-popup dikha sake. */
-  const inner1 = Array.isArray(json1?.data) ? json1.data[0] : null;
-  if (inner1 && (inner1.Success === 0 || inner1.Success === false)) {
-    const e = new Error(inner1.Message || apiMessage(json1) || 'Number already exist');
-    e.isDuplicatePhone = /exist|number|already/i.test(e.message);
-    throw e;
+  if (!employeeId && isNew) {
+    throw new Error('Could not resolve employee id after save');
   }
 
-  const d = json1?.data;
-  const employeeId =
-    (Array.isArray(d) ? (d[0]?.id ?? d[0]?.ID) : (d?.id ?? d?.ID)) ??
-    payload.id ?? 0;
-
-  /* ── 2 + 3. Official details, then salary (same body shape) ── */
+  /* ── 2 + 3. Official / Salary — sirf dirty sections (LaunchSetup jaisa) ── */
   const body = buildEmploymentBody(payload, { branchID, userID, employeeId });
-  const putJson = async (path) => {
+  const putSection = async (path, section) => {
     const res = await fetch(buildUrl(path), {
       method: 'PUT',
       headers: { Accept: '*/*', 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    // These endpoints sometimes return a non-JSON body on success; only treat a
-    // real HTTP error as fatal so the flow can continue to the next step.
+    const j = await res.json().catch(() => null);
+    const pend = hrPendingInfo(j);
+    if (pend) return { pending: pend, pendingSection: section };
     if (!res.ok) {
-      const j = await res.json().catch(() => null);
       throw new Error(apiMessage(j) || 'Could not update employee details');
     }
+    return null;
   };
-  await putJson('/api/LaunchSetup/update-employee-employment');
-  await putJson('/api/LaunchSetup/update-employee-salary');
 
-  /* ── 4. Custom salary heads (non-fixed) via the HR endpoints ── */
-  for (const id of (payload.removedHeadIds || [])) {
-    if (id) { try { await deleteHrSalaryHead(id); } catch (e) { /* surfaced by caller reload */ } }
-  }
-  for (const h of (payload.salaryHeads || [])) {
-    if (h.fixed) continue;
-    if (!h.name || !h.name.trim()) continue;
-    await saveHrSalaryHead({
-      id: h.id || 0,
-      employeeID: employeeId,
-      headName: h.name.trim(),
-      amount: Number(h.amount) || 0,
-      isAllowance: h.type !== 'deduct',
-    });
+  if (sections.employment) {
+    const pendEmp = await putSection('/api/LaunchSetup/update-employee-employment', 'employment');
+    if (pendEmp) return { id: employeeId, ...pendEmp };
   }
 
-  /* ── 5. Leave settings (own endpoint; id from the fetched record for updates) ── */
+  if (sections.salary) {
+    const pendSal = await putSection('/api/LaunchSetup/update-employee-salary', 'salary');
+    if (pendSal) return { id: employeeId, ...pendSal };
+
+    /* Custom salary heads — salary section ke saath (fixed heads API 3 par). */
+    for (const id of (payload.removedHeadIds || [])) {
+      if (id) { try { await deleteHrSalaryHead(id); } catch (e) { /* surfaced by caller reload */ } }
+    }
+    for (const h of (payload.salaryHeads || [])) {
+      if (h.fixed) continue;
+      if (!h.name || !h.name.trim()) continue;
+      await saveHrSalaryHead({
+        id: h.id || 0,
+        employeeID: employeeId,
+        headName: h.name.trim(),
+        amount: Number(h.amount) || 0,
+        isAllowance: h.type !== 'deduct',
+      });
+    }
+  }
+
+  /* ── Leave / docs / assignments — alag endpoints (apni approvals) ── */
   if (payload.leaves) {
     await saveHrLeaveSettings({
       id: payload.leaves._leaveId || 0,
@@ -1264,7 +1339,6 @@ export async function saveHrEmployee(payload = {}) {
     });
   }
 
-  /* ── 6. Documents — delete removed, then upload/replace picked files ── */
   for (const id of (payload.removedDocIds || [])) {
     if (id) { try { await deleteHrEmployeeDocument(id); } catch (e) { /* surfaced by reload */ } }
   }
@@ -1275,10 +1349,7 @@ export async function saveHrEmployee(payload = {}) {
     }
   }
 
-  /* ── 7. Subject assignments — toggle only what changed since open ── */
   await syncSubjectAssignments(employeeId, payload.subjects || {}, payload.subjectsOriginal || {}, branchID);
-
-  /* ── 8. Class-attendance assignments — toggle only what changed ── */
   await syncAttendanceAssignments(employeeId, payload.attendance || [], payload.attendanceOriginal || []);
 
   return { id: employeeId };

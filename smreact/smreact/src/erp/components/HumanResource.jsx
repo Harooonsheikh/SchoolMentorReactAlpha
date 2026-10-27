@@ -3977,7 +3977,12 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
       const resp = await hrService.saveHrEmployee(payload);
       if (resp?.pending) {
         setEditFor(null);
-        markPending(payload.id, resp.pending, `Changes to ${getFullName(payload)} sent for approval`);
+        const sectionLbl = ({
+          personal: 'Personal details',
+          employment: 'Official details',
+          salary: 'Salary details',
+        })[resp.pendingSection] || 'Changes';
+        markPending(payload.id, resp.pending, `${sectionLbl} for ${getFullName(payload)} sent for approval`);
         return;
       }
       await reloadEmps();
@@ -5074,6 +5079,29 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   const subjectsOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.subjects || {})));
   const attendanceOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.attendance || [])));
 
+  /* Full form snapshot at open — edit save compares against this so HR only hits
+     the LaunchSetup API for the section that actually changed (Personal →
+     save-employee, Official → update-employee-employment, Salary →
+     update-employee-salary), same as LaunchSetup's separate modals. */
+  const originalEmpRef = useRef((() => {
+    if (!isEdit || !emp) return null;
+    return {
+      firstName: emp.firstName || '', lastName: emp.lastName || '', fn: emp.fn || '',
+      cnic: emp.cnic || '', dob: emp.dob || '', gender: emp.gender || '', marital: emp.marital || '',
+      phone: emp.phone || '', email: emp.email || '', blood: emp.blood || '', emergency: emp.emergency || '',
+      address: emp.address || '', nationality: emp.nationality || '',
+      countryID: emp.countryID ?? '', provinceID: emp.provinceID ?? '', cityID: emp.cityID ?? '',
+      country: emp.country || '', province: emp.province || '', city: emp.city || '',
+      dId: emp.dId ?? '', desId: emp.desId ?? '', qualificationID: emp.qualificationID ?? '',
+      join: emp.join || '', exp: emp.exp ?? '', type: emp.type || '',
+      manager: emp.manager || '', shift: emp.shift || '', role: emp.role || '', qual: emp.qual || '',
+      isPrinciple: !!emp.isPrinciple, isParent: !!emp.isParent,
+      basicSalary: emp.basicSalary ?? '', payMethod: emp.payMethod || '',
+      bankName: emp.bankName || '', bankAcc: emp.bankAcc || '',
+      salaryHeads: Array.isArray(emp.salaryHeads) ? emp.salaryHeads.map((h) => ({ ...h })) : [],
+    };
+  })());
+
   /* Esc dismisses, body lock */
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -5268,6 +5296,9 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       removedHeadIds,
       subjectsOriginal: subjectsOriginalRef.current,
       attendanceOriginal: attendanceOriginalRef.current,
+      /* Edit: original snapshot so saveHrEmployee sirf dirty section ki API
+         call kare (salary change → update-employee-salary, personal → save-employee). */
+      original: isEdit ? originalEmpRef.current : null,
       docUploads,
       removedDocIds,
       leaves: {
