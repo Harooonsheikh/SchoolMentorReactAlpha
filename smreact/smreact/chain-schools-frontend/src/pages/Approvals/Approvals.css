@@ -1,0 +1,161 @@
+/* ═══════════════════════════════════════════════════════════════════
+   APPROVALS — centralized review inbox.
+
+   Layout/behavior mirrors School-Mentor-Front-end's own
+   src/components/Approvals.jsx (stat strip, tab bar, al-table, detail
+   modal), re-themed onto this app's own CSS tokens. Kept fully
+   self-contained (its own apm-* modal classes, its own copies of
+   badge tones) rather than reaching into UserPermissions.css's
+   up-modal-* rules, which are tuned for that page's much larger
+   full-screen matrix panel — same defensive "no cross-file CSS
+   coupling" approach School-Mentor's own Approvals.jsx takes.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ap-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+
+/* "Reviewing As" viewer selector — same pattern as Dashboard's
+   dash-impersonate, previewing a staff member's Approval permissions
+   (Approve/Reject/Manage Approver) from the User Permissions matrix. */
+.ap-viewer { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px 0 6px; border: 1.5px solid var(--bl); border-radius: var(--r-f); background: var(--card); box-shadow: var(--s-sm); }
+.ap-viewer-av { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg,var(--brand),var(--brand-mid)); color: #fff; font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ap-viewer-sel { border: none; background: transparent; font-family: var(--font); font-size: 12.5px; font-weight: 700; color: var(--t1); outline: none; cursor: pointer; appearance: none; max-width: 220px; }
+.ap-viewer > i.fa-chevron-down { font-size: 9px; color: var(--tm); }
+.ap-viewer-lbl { font-size: 10.5px; font-weight: 700; color: var(--tm); padding-left: 4px; border-left: 1px solid var(--bl); margin-left: 2px; }
+
+.ap-btn { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 15px; border-radius: var(--r-md); border: 1.5px solid transparent; font-family: var(--font); font-size: 12.5px; font-weight: 700; cursor: pointer; transition: var(--tr); }
+.ap-btn-ghost { background: var(--card); color: var(--t1); border-color: var(--bl); }
+.ap-btn-ghost:hover { background: var(--muted); border-color: var(--bm); color: var(--brand); }
+.ap-btn-approve { background: linear-gradient(135deg,#15803d,#16a34a); color: #fff; box-shadow: 0 4px 12px rgba(21,128,61,.28); }
+.ap-btn-approve:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(21,128,61,.38); }
+.ap-btn-reject { background: linear-gradient(135deg,#b91c1c,#dc2626); color: #fff; box-shadow: 0 4px 12px rgba(220,38,38,.28); }
+.ap-btn-reject:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(220,38,38,.38); }
+
+/* ─── Stat strip ─── */
+.al-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 18px; }
+.al-stat { position: relative; padding: 16px 18px; background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-lg); transition: var(--tr); }
+.al-stat:hover { border-color: var(--bm); transform: translateY(-1px); box-shadow: var(--s-sm); }
+.al-stat-ic { width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; margin-bottom: 10px; }
+.al-stat--blue  .al-stat-ic { background: var(--brand-light); color: var(--brand); }
+.al-stat--green .al-stat-ic { background: rgba(21,128,61,.12); color: var(--success); }
+.al-stat--red   .al-stat-ic { background: rgba(220,38,38,.12); color: var(--err); }
+.al-stat--amber .al-stat-ic { background: rgba(217,119,6,.12); color: #92400e; }
+.al-stat-lbl { font-size: 11px; font-weight: 700; color: var(--tm); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.al-stat-val { font-size: 26px; font-weight: 800; color: var(--t1); }
+
+/* ─── Tabs ─── */
+.ap-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.ap-tab { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px; border: 1.5px solid var(--bl); border-radius: var(--r-md); background: var(--card); color: var(--t2); font-family: var(--font); font-size: 12.5px; font-weight: 700; cursor: pointer; transition: var(--tr); }
+.ap-tab:hover { color: var(--brand); border-color: var(--bm); }
+.ap-tab.on { background: linear-gradient(135deg,var(--brand),var(--brand-mid),#2563eb); color: #fff; border-color: transparent; box-shadow: 0 4px 12px rgba(30,58,138,.28); }
+.ap-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; background: rgba(255,255,255,.28); border-radius: var(--r-f); font-size: 10.5px; font-weight: 800; }
+.ap-tab:not(.on) .ap-tab-count { background: rgba(217,119,6,.16); color: #92400e; }
+
+/* ─── Table ─── */
+.al-table-card { background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-lg); overflow: hidden; margin-bottom: 18px; }
+.al-table-h { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--bl); }
+.al-table-title { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; color: var(--t1); }
+.al-table-title i { color: var(--brand); font-size: 13px; }
+.al-count-badge { display: inline-flex; align-items: center; padding: 3px 9px; margin-left: 4px; background: var(--brand-light); color: var(--brand); border-radius: var(--r-f); font-size: 10.5px; font-weight: 700; }
+.al-table-scroll { overflow-x: auto; }
+.al-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.al-table thead th { padding: 10px 12px; text-align: left; background: var(--muted); font-size: 10.5px; font-weight: 700; color: var(--t2); text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid var(--bl); white-space: nowrap; }
+.al-table tbody tr { border-bottom: 1px solid var(--bl); transition: var(--tr); }
+.al-table tbody tr:last-child { border-bottom: none; }
+.al-table tbody tr:hover { background: var(--muted); }
+.al-table tbody td { padding: 12px; color: var(--t2); vertical-align: middle; }
+.al-td-date { white-space: nowrap; font-weight: 700; color: var(--t1); }
+.al-td-school { font-weight: 600; color: var(--t1); white-space: nowrap; }
+.al-td-time { white-space: nowrap; color: var(--tm); font-variant-numeric: tabular-nums; }
+.al-td-details { color: var(--tm); max-width: 320px; }
+
+.al-module-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; background: var(--brand-light); color: var(--brand); border-radius: var(--r-f); font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+.al-icon-btn { width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--brand-light); color: var(--brand); border: 1px solid var(--bl); cursor: pointer; transition: var(--tr); }
+.al-icon-btn:hover { background: var(--brand); color: #fff; border-color: var(--brand); transform: translateY(-1px); }
+.ap-row-actions { display: inline-flex; gap: 6px; justify-content: flex-end; }
+.ap-icon-btn--green { background: rgba(21,128,61,.1); color: var(--success); border-color: rgba(21,128,61,.28); }
+.ap-icon-btn--green:hover { background: var(--success); color: #fff; border-color: var(--success); }
+.ap-icon-btn--red { background: rgba(220,38,38,.1); color: var(--err); border-color: rgba(220,38,38,.28); }
+.ap-icon-btn--red:hover { background: var(--err); color: #fff; border-color: var(--err); }
+
+/* ─── Empty state ─── */
+.up-empty { text-align: center; padding: 56px 24px; }
+.up-empty-ic { width: 60px; height: 60px; border-radius: var(--r-lg); display: inline-flex; align-items: center; justify-content: center; background: var(--brand-light); color: var(--brand); font-size: 26px; margin-bottom: 14px; }
+.up-empty-t { font-size: 15px; font-weight: 700; color: var(--t1); margin-bottom: 4px; }
+.up-empty-s { font-size: 12.5px; color: var(--tm); max-width: 420px; margin: 0 auto; line-height: 1.5; }
+
+/* ─── Missing badge tones (blue/red already defined on the shared
+   .up-badge in UserPermissions.css) ─── */
+.up-badge--green { background: rgba(21,128,61,.12); color: var(--success); }
+.up-badge--amber { background: rgba(217,119,6,.12); color: #92400e; }
+
+/* ─── Detail / Manage Approvers modals — self-contained, mirrors
+   School-Mentor's up-modal-* shape under apm-* names so it never
+   depends on how UserPermissions.css tunes its own (much larger)
+   permission-matrix modal. ─── */
+.apm-back { position: fixed; inset: 0; background: rgba(8,13,26,.55); backdrop-filter: blur(3px); z-index: 9000; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.apm-modal { width: min(620px,100%); max-height: 90vh; background: var(--card); border-radius: var(--r-xl); box-shadow: var(--s-xl); display: flex; flex-direction: column; overflow: hidden; }
+.apm-modal.apm-modal--lg { width: min(820px,100%); }
+.apm-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 20px; background: linear-gradient(135deg,var(--brand),var(--brand-mid),#2563eb); color: #fff; flex-shrink: 0; }
+.apm-head-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.apm-icn { width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,.18); font-size: 16px; }
+.apm-title { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.apm-sub { font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,.85); margin-top: 4px; }
+.apm-x { width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,.16); border: none; color: #fff; cursor: pointer; transition: var(--tr); flex-shrink: 0; }
+.apm-x:hover { background: rgba(255,255,255,.28); }
+.apm-body { padding: 18px 20px; overflow-y: auto; flex: 1; min-height: 0; }
+.apm-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--bl); background: var(--muted); flex-shrink: 0; }
+
+.apm-input { width: 100%; padding: 10px 12px; font-family: var(--font); font-size: 12.5px; font-weight: 500; color: var(--t1); background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-md); resize: vertical; transition: var(--tr); }
+.apm-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(30,58,138,.12); }
+
+.al-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; margin-bottom: 16px; }
+.al-detail-cell { display: flex; flex-direction: column; gap: 4px; }
+.al-detail-lbl { font-size: 10px; font-weight: 700; color: var(--tm); text-transform: uppercase; letter-spacing: .5px; }
+.al-detail-val { font-size: 12.5px; font-weight: 600; color: var(--t1); word-break: break-word; }
+.al-detail-block { padding: 12px; background: var(--muted); border: 1px solid var(--bl); border-radius: var(--r-md); }
+.al-detail-block .al-detail-lbl { margin-bottom: 6px; }
+
+.al-field { display: flex; flex-direction: column; gap: 6px; }
+.al-field > span { font-size: 10.5px; font-weight: 700; color: var(--tm); text-transform: uppercase; letter-spacing: .4px; }
+
+/* ─── Before/after change row — ported from School-Mentor's
+   al-detail-row/al-detail-block.before/.after ─── */
+.al-detail-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.al-detail-block.before .al-detail-lbl { color: var(--err); }
+.al-detail-block.after  .al-detail-lbl { color: var(--success); }
+.ap-kv { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--t1); padding: 3px 0; }
+.ap-kv span { color: var(--tm); text-transform: capitalize; }
+.ap-kv b { font-weight: 700; text-align: right; word-break: break-word; }
+
+/* ─── Grouped payload sections (structured objects / tables inside a
+   request's payload, e.g. Pre-Enrollment's fee breakdown) — ported
+   from School-Mentor's al-group-* / ap-mini-table. ─── */
+.al-detail-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.al-group-card { border: 1px solid var(--bl); border-radius: var(--r-md); overflow: hidden; background: var(--card); }
+.al-group-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; background: var(--muted); border-bottom: 1px solid var(--bl); }
+.al-group-ic { width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg,var(--brand),var(--brand-mid)); color: #fff; font-size: 10.5px; }
+.al-group-title { font-size: 11.5px; font-weight: 700; color: var(--t1); }
+.al-group-body { padding: 10px 12px; }
+.al-group-body > .ap-kv:not(:last-child) { border-bottom: 1px dashed var(--bl); }
+.al-subgroup { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--bl); }
+.al-subgroup:first-child { margin-top: 0; }
+.al-subgroup-lbl { font-size: 10px; font-weight: 700; color: var(--tm); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+.al-group-card--before .al-group-head { background: rgba(220,38,38,.06); }
+.al-group-card--before .al-group-ic { background: linear-gradient(135deg,#b91c1c,#dc2626); }
+.al-group-card--after .al-group-head { background: rgba(21,128,61,.06); }
+.al-group-card--after .al-group-ic { background: linear-gradient(135deg,#15803d,#16a34a); }
+
+.ap-table-scroll { overflow-x: auto; margin: -10px -12px; padding: 10px 12px; }
+.ap-mini-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ap-mini-table th { text-align: left; padding: 6px 10px; background: var(--muted); color: var(--t2); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; border-bottom: 1px solid var(--bl); white-space: nowrap; }
+.ap-mini-table td { padding: 7px 10px; border-bottom: 1px solid var(--bl); color: var(--t1); white-space: nowrap; }
+.ap-mini-table tr:last-child td { border-bottom: none; }
+
+@media (max-width: 900px) { .al-stats { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) {
+  .al-stats { grid-template-columns: 1fr; }
+  .al-detail-grid, .al-detail-row { grid-template-columns: 1fr; }
+  .apm-back { padding: 12px; }
+  .apm-modal, .apm-modal.apm-modal--lg { width: 96vw; max-height: 92vh; }
+}

@@ -13,6 +13,7 @@ import SOPs from '../pages/SOPs/SOPs'
 import TeacherTrainings from '../pages/TeacherTrainings/TeacherTrainings'
 import Notifications from '../pages/Notifications/Notifications'
 import UserPermissions from '../pages/UserPermissions/UserPermissions'
+import Approvals from '../pages/Approvals/Approvals'
 import Accounts from '../pages/Accounts/Accounts'
 import Inventory from '../pages/Inventory/Inventory'
 import HumanResource from '../pages/HumanResource/HumanResource'
@@ -71,6 +72,7 @@ export default function AppRoutes() {
         <Route path="/sops" element={<SOPs />} />
         <Route path="/trainings" element={<TeacherTrainings />} />
         <Route path="/notifications" element={<Notifications />} />
+        <Route path="/approvals" element={<Approvals />} />
         <Route path="/user-permissions" element={<UserPermissions />} />
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/inventory" element={<Inventory />} />

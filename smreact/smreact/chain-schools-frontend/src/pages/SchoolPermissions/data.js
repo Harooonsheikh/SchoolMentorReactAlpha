@@ -186,3 +186,80 @@ export function getSchoolPerms(moduleStore, school, erpAccess) {
     modules: moduleStore[school.id] || emptyModules(),
   }
 }
+
+/* ── Approval-mode store (used by the Approvals screen) ──
+   Same key as the chain's own school-permissions store, kept separate from
+   the advanced-permission store above. */
+const STORE_KEY = 'csp_school_permissions'
+export function loadPermStore() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {} } catch { return {} }
+}
+export function savePermStore(store) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(store))
+}
+
+/* ── Approval Settings — per-school workflow mode ────────────────────
+   Replaces the old flat "Approvals" module toggle. Rich metadata (not
+   bare radio labels) so the Approval Settings panel can explain each
+   mode's workflow and impact before a Chain Admin picks one. */
+export const APPROVAL_MODES = [
+  {
+    key: 'disabled',
+    title: 'Approval Disabled',
+    icon: 'fa-ban',
+    tone: '#64748b',
+    description: 'Approval workflow will not be used for this school.',
+    explanation: [
+      'No approval requests will be generated.',
+      'Users will directly perform allowed actions.',
+      'No approver authority will be required.',
+      'Approval menus and approval actions will be hidden for this school.',
+    ],
+    workflow: 'User performs action → Applied directly (no review step)',
+    impact: 'Select this option if this school does not want to use any approval workflow.',
+  },
+  {
+    key: 'school',
+    title: 'School Managed Approval',
+    icon: 'fa-school',
+    tone: '#0369a1',
+    description: "School will manage its own approval authority.",
+    explanation: [
+      'The approval system will be active.',
+      'School Admin / Super Admin can configure approvers.',
+      'The school controls approver selection, approval authority and approval management.',
+    ],
+    workflow: 'User creates request → Request goes to the school\'s assigned approver → School approver reviews → Approve / Reject',
+    impact: 'Use this option when the school wants to independently manage approvals within its own campus.',
+  },
+  {
+    key: 'chain',
+    title: 'Chain Managed Approval',
+    icon: 'fa-building-shield',
+    tone: '#1e3a8a',
+    description: 'School can create requests but Chain School controls final approval authority.',
+    explanation: [
+      'Approval workflow will be active.',
+      'School users can submit requests.',
+      'Approval authority belongs to Chain School — the school cannot manage final approval authority.',
+    ],
+    workflow: 'School User → Approval Request → Chain School Approval Authority → Approve / Reject',
+    impact: 'Use this option when head office / chain management wants control over approvals from all associated schools.',
+  },
+]
+export const DEFAULT_APPROVAL_MODE = 'disabled'
+
+/* Per-school approval settings. Stored in the same school-permission store as
+   the Approvals screen reads (see loadPermStore/savePermStore above). */
+export function loadApprovalSettings(schoolId) {
+  const entry = loadPermStore()[schoolId] || {}
+  return {
+    approvalMode: entry.approvalMode || DEFAULT_APPROVAL_MODE,
+    schoolApprovers: entry.schoolApprovers || [],
+  }
+}
+export function saveApprovalSettings(schoolId, { approvalMode, schoolApprovers }) {
+  const store = loadPermStore()
+  store[schoolId] = { ...(store[schoolId] || {}), approvalMode, schoolApprovers }
+  savePermStore(store)
+}

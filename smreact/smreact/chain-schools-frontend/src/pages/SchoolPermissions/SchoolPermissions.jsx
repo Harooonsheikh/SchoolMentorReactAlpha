@@ -6,7 +6,9 @@ import {
   CORE_PERMS, CHAT_MODES, normalizeChatMode, MODULE_SECTIONS, MODULE_KEYS,
   MODULE_ADVANCED_PERMISSIONS, PERMISSION_ACTIONS, getDefaultSubPermissions,
   loadAdvancedPerms, saveAdvancedPerms,
+  APPROVAL_MODES, loadApprovalSettings, saveApprovalSettings,
 } from './data'
+import { loadHr, fullName } from '../HumanResource/data'
 import { useView } from '../../config/viewContext'
 import {
   fetchModulePermissions, fetchModulePermissionsEach, saveModulePermissions,
@@ -357,6 +359,10 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
      likhti hain — Academics settings modal in ki local copy stage karta hai. */
   const [modulePermissions, setModulePermissions] = useState(() => loadAdvancedPerms(school.id))
   const [settingsModuleKey, setSettingsModuleKey] = useState(null)
+  const [approvalInit] = useState(() => loadApprovalSettings(school.id))
+  const [approvalMode, setApprovalMode] = useState(approvalInit.approvalMode)
+  const [schoolApprovers, setSchoolApprovers] = useState(approvalInit.schoolApprovers)
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false)
   const [chatMode, setChatMode] = useState(emptyMob.chatMode)
   const [mentorAi, setMentorAiState] = useState({ ...emptyMob.mentorAi })
   const [etube, setEtubeState] = useState({ ...emptyMob.etube })
@@ -477,6 +483,24 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
                   </div>
                 )
               })}
+              {/* Approval Settings — parallel to ERP Access, but opens a
+                  3-mode configuration panel instead of a plain toggle. */}
+              {(() => {
+                const mode = APPROVAL_MODES.find((m) => m.key === approvalMode) || APPROVAL_MODES[0]
+                return (
+                  <div className={`pm-top-card${mode.key !== 'disabled' ? ' enabled' : ''}`}>
+                    <div className="pm-top-card-top">
+                      <div className="pm-top-card-icon" style={{ background: `${mode.tone}1a`, color: mode.tone }}><i className={`fa-solid ${mode.icon}`} /></div>
+                      <span className="pm-approval-badge" style={{ color: mode.tone, borderColor: `${mode.tone}55`, background: `${mode.tone}14` }}>{mode.title}</span>
+                    </div>
+                    <div className="pm-top-card-name">Approval Settings</div>
+                    <div className="pm-top-card-desc">{mode.description}</div>
+                    <button type="button" className="pm-approval-cfg-btn" onClick={() => setApprovalModalOpen(true)}>
+                      <i className="fa-solid fa-sliders" /> Configure
+                    </button>
+                  </div>
+                )
+              })()}
             </div>
           </div>
 
@@ -577,6 +601,22 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
           onSave={(next) => {
             setModulePermissions((mp) => ({ ...mp, [settingsModuleKey]: next }))
             setSettingsModuleKey(null)
+          }}
+        />
+      )}
+
+      {approvalModalOpen && (
+        <ApprovalModeModal
+          school={school}
+          mode={approvalMode}
+          approvers={schoolApprovers}
+          onClose={() => setApprovalModalOpen(false)}
+          onSave={(nextMode, nextApprovers) => {
+            saveApprovalSettings(school.id, { approvalMode: nextMode, schoolApprovers: nextApprovers })
+            setApprovalMode(nextMode)
+            setSchoolApprovers(nextApprovers)
+            setApprovalModalOpen(false)
+            onToast?.('Approval settings saved')
           }}
         />
       )}
@@ -864,3 +904,90 @@ function MobileAppPermsModal({ chatMode, mentorAi, etube, loading, saving, setCh
     document.body,
   )
 }
+
+/* ── Approval Settings — 3-mode configuration panel ──────────────────
+   Each mode is presented as a full information card (title, short
+   description, detailed explanation, workflow text, impact) rather
+   than a bare radio button, so an admin can understand the difference
+   without external training. Picking "School Managed" reveals a
+   per-school approver picker (HR staff); "Chain Managed" explains that
+   final authority sits with the chain-level approver list managed from
+   the Approvals module itself, not per school. */
+function ApprovalModeModal({ school, mode, approvers, onClose, onSave }) {
+  const [selected, setSelected] = useState(mode)
+  const [picked, setPicked] = useState(new Set(approvers))
+  const staff = useMemo(() => loadHr().emps.filter((e) => e.status === 'Active'), [])
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  const toggleApprover = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+
+  return createPortal(
+    <div className="perm-ov apv-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="perm-modal apv-modal">
+        <div className="pm-hdr">
+          <div className="pm-av apm-av"><i className="fa-solid fa-square-check" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pm-school-name">Approval Settings</div>
+            <div className="apm-subtitle">{school?.name ? `Choose how approvals work for ${school.name}` : 'Choose how approvals work for this school'}</div>
+          </div>
+          <button className="pm-close" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+        </div>
+
+        <div className="pm-body">
+          <div className="apv-grid">
+            {APPROVAL_MODES.map((m) => {
+              const on = selected === m.key
+              return (
+                <button type="button" key={m.key} className={`apv-card${on ? ' on' : ''}`} style={{ '--tone': m.tone }} onClick={() => setSelected(m.key)}>
+                  <div className="apv-card-top">
+                    <div className="apv-card-icon"><i className={`fa-solid ${m.icon}`} /></div>
+                    <div className="apv-card-radio"><i className="fa-solid fa-check" /></div>
+                  </div>
+                  <div className="apv-card-title">{m.title}</div>
+                  <div className="apv-card-desc">{m.description}</div>
+                  <ul className="apv-card-list">
+                    {m.explanation.map((line, i) => <li key={i}>{line}</li>)}
+                  </ul>
+                  <div className="apv-card-flow"><i className="fa-solid fa-arrow-right-arrow-left" /> {m.workflow}</div>
+                  <div className="apv-card-impact"><i className="fa-solid fa-circle-info" /> {m.impact}</div>
+                </button>
+              )
+            })}
+          </div>
+
+          {selected === 'school' && (
+            <div className="apv-approver-block">
+              <div className="apv-approver-h"><i className="fa-solid fa-user-shield" /> School Approvers <span className="apv-approver-count">{picked.size} selected</span></div>
+              <div className="apv-approver-sub">Pick which staff members at this school can approve or reject requests.</div>
+              <div className="um-col-grid">
+                {staff.length === 0 ? (
+                  <div style={{ color: 'var(--tm)', fontSize: 12.5, padding: '8px 0' }}>No active staff found in Human Resource yet.</div>
+                ) : staff.map((e) => (
+                  <label className="um-col-item" key={e.id}><input type="checkbox" checked={picked.has(e.id)} onChange={() => toggleApprover(e.id)} /> {fullName(e)}</label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {selected === 'chain' && (
+            <div className="apv-chain-note">
+              <i className="fa-solid fa-circle-info" />
+              <div>Final approval authority for this school will sit with the <strong>chain-level approvers</strong> configured from the Approvals module — no per-school approver setup is needed here.</div>
+            </div>
+          )}
+        </div>
+
+        <div className="pm-foot">
+          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" onClick={() => onSave(selected, [...picked])}><i className="fa-solid fa-floppy-disk" /> Save Approval Settings</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+

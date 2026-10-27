@@ -42,6 +42,7 @@ export const NAV_SECTIONS = [
     items: [
       { key: 'trainings', path: '/trainings', label: 'Trainings', icon: 'fa-chalkboard-user' },
       { key: 'notifications', path: '/notifications', label: 'Notifications', icon: 'fa-bell' },
+      { key: 'approvals', path: '/approvals', label: 'Approvals', icon: 'fa-square-check' },
       { key: 'userpermissions', path: '/user-permissions', label: 'User Permissions', icon: 'fa-shield-halved' },
       { key: 'settings', path: '/settings', label: 'Settings', icon: 'fa-sliders' },
     ],
