@@ -1882,7 +1882,8 @@ function SetupSummaryStrip({ school, summary, loading }) {
 }
 
 function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast }) {
-  const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '', oneLink: defaultOneLink(), lateSurcharge: 0 };
+  const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '', oneLinkUserName: '', oneLinkPassword: '', oneLink: defaultOneLink(), lateSurcharge: 0 };
+  const [showOlPass, setShowOlPass] = useState(false);
   const [f, setF] = useState({ ...init, oneLink: { ...defaultOneLink(), ...(init.oneLink || {}) }, lateSurcharge: init.lateSurcharge ?? 0 });
   const [summary, setSummary] = useState(existing || null);
   const [loadingSummary, setLoadingSummary] = useState(true);
@@ -1923,7 +1924,7 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
     if (f.formula === 'perstudent' && !f.perStudentRate) { toast?.('Please enter the per student rate', 'warn'); return; }
     if (f.freeTrial && !f.trialDays) { toast?.('Please enter trial duration in days', 'warn'); return; }
     /* id saath jata hai — mojood ho to UPDATE, warna ADD (branchID+type unique). */
-    onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim() });
+    onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(),oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
   };
   return (
     <Ov cls="pay-ov" onClose={onClose} wrap="pay-modal">
@@ -1967,8 +1968,25 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
             {(preview > 0) && <div style={{ marginTop: 14, background: 'var(--muted)', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ fontSize: 12, color: 'var(--tm)', fontWeight: 600 }}>Estimated Monthly Bill</div><div style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand)' }}>PKR {preview.toLocaleString()}</div></div>}
           </div>
         )}
-        <div className="pay-field" style={{ marginTop: 16 }}><label><i className="fa-regular fa-note-sticky" style={{ color: 'var(--brand)', marginRight: 4 }} /> Notes (optional)</label><textarea className="pay-input" rows={2} style={{ height: 'auto', padding: '10px 14px', resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Add any billing notes or special instructions…" /></div>
+          <div className="pay-field" style={{ marginTop: 16 }}><label><i className="fa-regular fa-note-sticky" style={{ color: 'var(--brand)', marginRight: 4 }} /> Notes (optional)</label><textarea className="pay-input" rows={2} style={{ height: 'auto', padding: '10px 14px', resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Add any billing notes or special instructions…" /></div>
 
+           <div className="pay-input-row" style={{ marginTop: 14 }}>
+          <div className="pay-field" style={{ marginBottom: 0 }}>
+            <label><i className="fa-solid fa-user" style={{ color: 'var(--brand)', marginRight: 4 }} /> OneLink User Name</label>
+            <input className="pay-input" value={f.oneLinkUserName || ''} onChange={(e) => set('oneLinkUserName', e.target.value)} placeholder="Enter OneLink user name" autoComplete="off" />
+          </div>
+          <div className="pay-field" style={{ marginBottom: 0 }}>
+            <label><i className="fa-solid fa-key" style={{ color: 'var(--brand)', marginRight: 4 }} /> OneLink Password</label>
+            <div style={{ position: 'relative' }}>
+              <input className="pay-input" type={showOlPass ? 'text' : 'password'} value={f.oneLinkPassword || ''} onChange={(e) => set('oneLinkPassword', e.target.value)} placeholder="Enter OneLink password" autoComplete="new-password" style={{ paddingRight: 40 }} />
+              <button type="button" onClick={() => setShowOlPass((v) => !v)} aria-label={showOlPass ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', color: 'var(--tm)', cursor: 'pointer' }}>
+                <i className={`fa-solid ${showOlPass ? 'fa-eye-slash' : 'fa-eye'}`} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* OneLink Billing — abhi disabled
         <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1.5px solid var(--bl)' }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: '#7C3AED', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-link" /> OneLink Billing</div>
           <div className="pay-toggle-row">
@@ -1982,12 +2000,16 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
             </>
           )}
         </div>
+        */}
+        
 
+               {/* Late Payment Surcharge — abhi disabled
         <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1.5px solid var(--bl)' }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--warn)', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-triangle-exclamation" /> Late Payment Surcharge</div>
           <div className="pay-field" style={{ marginBottom: 6 }}><label><i className="fa-solid fa-money-bill-wave" style={{ color: 'var(--warn)', marginRight: 4 }} /> Surcharge Amount (PKR, fixed)</label><input className="pay-input" type="number" value={f.lateSurcharge} onChange={(e) => set('lateSurcharge', e.target.value)} placeholder="0" /></div>
           <div className="pay-info-box"><i className="fa-solid fa-circle-info" /><p>A fixed lump-sum amount — not a percentage — added to this school's invoice automatically once its due date has passed and it's still unpaid. Shown on the Challans tab and the printed challan slip.</p></div>
         </div>
+        */}
       </div>
       <div className="pay-modal-foot">
         <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
