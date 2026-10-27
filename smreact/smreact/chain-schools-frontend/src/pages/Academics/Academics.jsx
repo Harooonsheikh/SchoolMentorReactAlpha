@@ -1415,11 +1415,17 @@ function ReleaseDetailsModal({ release, relContent, apiContent, schools, onClose
      items are no longer available", halanke server par rows maujood thin.
      Ab wo soorat sirf tab aati hai jab server ka content mila hi na ho. */
   const fromApi = !!apiContent
-  const content = useMemo(() => (
-    apiContent
-      ? { ...apiContent, classes: relContent.classes || [], subjects: relContent.subjects || [] }
-      : filterReleaseContent(relContent, idSetsOf(release))
-  ), [apiContent, relContent, release])
+  /* Term Breakup ka apna detail release GET ke content me nahi aata (releaseApi
+     wahan khali rakhta hai). Is liye jo term-breakup ids is release ke child2 me
+     gayi thin (adoptApiRelease → termBreakupIds) unhein poore network index
+     (relContent.termBreakups) me se chhaant kar bhar lete hain — yun baqi
+     sections ki tarah View me term breakups bhi nazar aa jate hain. */
+  const content = useMemo(() => {
+    if (!apiContent) return filterReleaseContent(relContent, idSetsOf(release))
+    const tbIds = idSetsOf(release).termBreakups
+    const termBreakups = (relContent.termBreakups || []).filter((tb) => tbIds.has(Number(tb.id)))
+    return { ...apiContent, classes: relContent.classes || [], subjects: relContent.subjects || [], termBreakups }
+  }, [apiContent, relContent, release])
   const summary = useMemo(() => summarizeReleaseContent(content), [content])
   const t = summary.totals
 
@@ -1433,6 +1439,7 @@ function ReleaseDetailsModal({ release, relContent, apiContent, schools, onClose
 
   const nameOf = (id) => schools.find((s) => s.id === id)?.name || `Branch #${id}`
   const sentTo = (release.selectedSchoolIds || []).map(nameOf)
+  const className = (id) => content.classes.find((c) => Number(c.id) === Number(id))?.name || `Class #${id}`
 
   const subjRows = (map) => Object.entries(map).filter(([, n]) => n > 0)
     .map(([sid, n]) => <div className="rel-row" key={sid}><span>{summary.subjectName(sid)}</span><span className="rel-row-n">{n}</span></div>)
@@ -1475,6 +1482,7 @@ function ReleaseDetailsModal({ release, relContent, apiContent, schools, onClose
             {card('fa-list-ul', t.lessons, 'Lesson Plans', 'r-teal')}
             {card('fa-book-open', t.notebooks, 'Notebook Plans', 'r-purple')}
             {card('fa-folder-open', t.resourceFiles, 'Resource Files', 'r-amber')}
+            {card('fa-table-list', t.termBreakups || 0, 'Term Breakups', 'r-teal')}
             {card('fa-chalkboard', t.classes, 'Classes', 'r-blue')}
             {card('fa-school', release.schoolCount, 'Schools', 'r-green')}
           </div>
@@ -1538,6 +1546,20 @@ function ReleaseDetailsModal({ release, relContent, apiContent, schools, onClose
                 <div className="rel-row" key={x.id}>
                   <span>{x.title || 'Untitled resource'}</span>
                   <span className="rel-row-n">{RES_CATEGORIES.find((c) => c.key === x.category)?.label || x.category || 'Other'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="rel-sec-h"><i className="fa-solid fa-table-list" /> Term Breakups</div>
+          {(content.termBreakups || []).length === 0 ? <div className="rel-empty-note">No term breakups in this release.</div> : (
+            /* rel-cls-body-tree = single column, warna 2-column grid dono rows ko
+               aik hi line par rakh deta hai (jumbled lagta hai). */
+            <div className="rel-cls-body rel-cls-body-tree">
+              {content.termBreakups.map((tb) => (
+                <div className="rel-row" key={tb.id}>
+                  <span>{className(tb.classID)} · {summary.subjectName(tb.subjectID)}</span>
+                  <span className="rel-row-n">{tb.termID ? `Term #${tb.termID}` : '—'}</span>
                 </div>
               ))}
             </div>
@@ -2018,6 +2040,24 @@ function ActivityCalendar({ a, commit, fire, live = true, canCreate = true, canE
   const [busy, setBusy] = useState(false)
   const [tick, setTick] = useState(0)             // save/delete ke baad month call dobara
 
+  /* Side wali Activities list calendar jitni lambi — us se zyada ho to usi
+     dabbe me scroll kare, poora safha na khinche. Calendar ki height dynamic
+     hai (5 vs 6 hafte), is liye JS se naapte hain. Sirf wide (2-column) view
+     me cap lagta hai; mobile (single column) par panelH null rehti hai. */
+  const calCardRef = useRef(null)
+  const [panelH, setPanelH] = useState(null)
+  useEffect(() => {
+    const el = calCardRef.current
+    if (!el) return undefined
+    const wide = () => window.matchMedia('(min-width: 821px)').matches
+    const update = () => setPanelH(wide() ? el.offsetHeight : null)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    window.addEventListener('resize', update)
+    return () => { ro.disconnect(); window.removeEventListener('resize', update) }
+  }, [loading])
+
   const acts = live ? rows : (a.activityCalendar || [])
 
   const reload = useCallback(async () => {
@@ -2166,7 +2206,7 @@ function ActivityCalendar({ a, commit, fire, live = true, canCreate = true, canE
       </div>
 
       <div className="ac-act-layout">
-        <div className="section-card">
+        <div className="section-card" ref={calCardRef}>
           <div style={{ padding: 16 }}>
             <div className="ac-cal-head">
               <div className="ac-cal-nav">
@@ -2198,7 +2238,7 @@ function ActivityCalendar({ a, commit, fire, live = true, canCreate = true, canE
           </div>
         </div>
 
-        <div className="section-card">
+        <div className="section-card act-panel" style={panelH ? { maxHeight: panelH } : undefined}>
           <div className="card-header">
             <div>
               <div className="card-title"><i className="fa-solid fa-list" /> Activities</div>

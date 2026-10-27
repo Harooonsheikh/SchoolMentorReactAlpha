@@ -272,6 +272,11 @@ export async function fetchReleases(networkId = currentNetworkId()) {
       lessons: lessonsOf(id).map(relMaster).filter((x) => x.id),
       notebooks: notebooksOf(id).map(relMaster).filter((x) => x.id),
       resources: resourcesOf(id).map(mapResource).filter((x) => x.id),
+      /* Term Breakup child2 ke saath aata hai magar iski apni detail collection
+         release GET me nahi hoti — phir bhi field maujood honi chahiye warna
+         summarizeReleaseContent ki `content.termBreakups.length` crash kar deti
+         hai (View modal "Cannot read properties of undefined"). */
+      termBreakups: [],
     }
     return {
       id,
