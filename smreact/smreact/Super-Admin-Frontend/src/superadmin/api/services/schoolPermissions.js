@@ -193,6 +193,7 @@ export function branchToSchoolPerm(entry) {
   const perms = {
     erpAccess,
     activeBranch,
+     agenticAI: wrapped ? bool(pick(entry.modulePermission, ['agenticAI']), false) : false,
     /* wrapper payload → the saved row decides (null = everything off);
        bare branch row → nothing to honour, fall back to the defaults. */
     modules: wrapped
@@ -313,12 +314,13 @@ async function sendJson(url, method, body, label) {
 }
 
 /** The ModulePermission body for one branch, built from the modal's toggles. */
-export function toModulePermissionBody(branchId, modules) {
+export function toModulePermissionBody(branchId, modules, agenticAI = false) {
   const userId = Number(getSuperAdminIdentity().userId) || 0;
   const body = { branchID: Number(branchId) || 0, createdBy: userId, modifiedBy: userId };
   Object.entries(MODULE_API_FIELD).forEach(([uiKey, apiKey]) => {
     body[apiKey] = Boolean(modules?.[uiKey]);
   });
+  body.agenticAI = Boolean(agenticAI);
   return body;
 }
 
@@ -327,11 +329,11 @@ export function toModulePermissionBody(branchId, modules) {
  *   POST /api/SchoolPermissions/save-modulePermission
  *   body: { branchID, academics, examination, paperGenerator, …, createdBy, modifiedBy }
  */
-export function saveModulePermission(branchId, modules) {
+export function saveModulePermission(branchId, modules, agenticAI = false) {
   return sendJson(
     `${SA_ADMIN_API_BASE}${EP.schoolPermissions.saveModulePermission()}`,
     'POST',
-    toModulePermissionBody(branchId, modules),
+    toModulePermissionBody(branchId, modules, agenticAI),
     'save module permissions',
   );
 }
@@ -378,7 +380,7 @@ export function setBranchStatus(branchId, active) {
  *                  chatMode, mentorAi, etube, mobileAppId }
  */
 export async function savePermissions(branchId, perms) {
-  await saveModulePermission(branchId, perms.modules);
+  await saveModulePermission(branchId, perms.modules, perms.agenticAI);
   await setLaunchSetup(branchId, perms.erpAccess);
   await setBranchStatus(branchId, perms.activeBranch);
   await saveMobileAppPermission(branchId, perms);

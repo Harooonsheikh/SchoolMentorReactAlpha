@@ -15,6 +15,7 @@
 export const CORE_PERMS = [
   { key: 'activeBranch', name: 'Active Branch', icon: 'fa-circle-check',  desc: 'Keep this branch active. Switching it off suspends the school.' },
   { key: 'erpAccess',    name: 'ERP Access',    icon: 'fa-server',        desc: 'Allow this school to log in and use the main ERP system.' },
+  { key: 'agenticAI', name: 'Agentic AI', icon: 'fa-wand-magic-sparkles', desc: 'Allow this school to use Agentic AI features.' },
 ];
 
 /* Chat permission — per school ek single-select: poora band ya poora khula.

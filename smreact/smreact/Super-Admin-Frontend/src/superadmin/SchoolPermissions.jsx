@@ -238,6 +238,7 @@ function PermModal({ school, initial, saving, toast, onClose, onSave }) {
   const [draft, setDraft] = useState(() => ({
     erpAccess: initial.erpAccess,
     activeBranch: initial.activeBranch,
+    agenticAI: !!initial.agenticAI,
     chatMode: normalizeChatMode(initial.chatMode),
     mentorAi: { ...(initial.mentorAi || { enabled: false, parentsAccess: false }) },
     etube: { ...(initial.etube || { enabled: false, viewing: false, uploading: false }) },
