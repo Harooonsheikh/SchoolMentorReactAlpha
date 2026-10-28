@@ -20,18 +20,21 @@ api.interceptors.request.use((config) => {
 })
 
 /* Centralised response handling:
-   - 401 → session expired/invalid: clear it and bounce to /login.
+   - 401 on real app APIs → clear session and bounce to ERP login.
+   - /auth/me is NOT live on Chain API yet (ERP hash handoff is the session).
+     A 401/404 there must NOT wipe the handoff or bounce back to ERP.
    - Everything else → reject with a consistent { status, message, data }
      shape (also reads .NET ProblemDetails `title`/`detail`). */
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error.response?.status
-    if (status === 401) {
+    const url = String(error.config?.url || error.config?.baseURL || '')
+    const isAuthMe = /\/auth\/me\b/i.test(url)
+    if (status === 401 && !isAuthMe) {
       clearToken()
       /* Is portal ka apna /login use nahi hota — session ERP ke Network Head
-         Office login se aata hai. Session expire ho to wahin wapas bhejo,
-         warna user ek bemani login form par atak jata tha. */
+         Office login se aata hai. Session expire ho to wahin wapas bhejo. */
       window.location.replace(ERP_LOGIN_URL)
     }
     const body = error.response?.data

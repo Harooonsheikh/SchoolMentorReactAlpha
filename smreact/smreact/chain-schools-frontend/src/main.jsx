@@ -49,7 +49,8 @@ import './styles/responsive.css' // loaded last so the mobile layer refines ever
   try {
     let token, user
     if (tok) {
-      token = tok[1]
+      /* decodeURIComponent — kuch proxies / browsers token ko encode kar dete hain. */
+      token = decodeURIComponent(tok[1])
       user = usr ? JSON.parse(decodeURIComponent(usr[1])) : null
     } else {
       const p = JSON.parse(decodeURIComponent(legacy[1]))
@@ -62,9 +63,15 @@ import './styles/responsive.css' // loaded last so the mobile layer refines ever
          padhti hai, is liye handoff bhi wahin likhta hai. */
       sessionStorage.setItem('csp_token', token)
       sessionStorage.setItem('csp_user', JSON.stringify(user))
+      const sess = /[#&]s=([^&]+)/.exec(hash)
+      if (sess) {
+        try {
+          sessionStorage.setItem('csp_session', decodeURIComponent(sess[1]))
+        } catch { /* optional profile blob */ }
+      }
     }
   } catch {
-    /* malformed handoff — chain app apna login screen dikha dega */
+    /* malformed handoff — chain app ProtectedRoute ERP login par bhej dega */
   } finally {
     /* URL har soorat me saaf — chahe handoff parse hua ya toota hua tha.
        `finally` me is liye ke koi throw ho jaye to bhi token address bar me

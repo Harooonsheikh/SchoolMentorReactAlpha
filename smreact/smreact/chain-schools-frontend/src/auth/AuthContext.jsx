@@ -29,37 +29,38 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null))
   const [booting, setBooting] = useState(true)
 
-  /* On first load: if a token exists, confirm who we are with the API.
-     A failure clears the (stale) session. */
+  /* On first load: restore the ERP Network Head Office hash handoff.
+     Session ERP ke network-login se aati hai (main.jsx → sessionStorage).
+     /auth/me Chain API par live nahi — call fail/401 → axios interceptor
+     session saaf karke ERP login par wapas bhej deta tha (bounce). Is liye
+     handoff user ko trust karte hain jab tak real /me wire na ho. */
   useEffect(() => {
     let active = true
     ;(async () => {
-      if (!getToken()) {
-        clearToken()          // adhoora csp_user bhi saaf, warna wo agli baar confuse karega
-        setUser(null)
-        setBooting(false)
+      const token = getToken()
+      const stored = getStoredUser()
+      if (!token || !stored) {
+        clearToken()
+        if (active) {
+          setUser(null)
+          setBooting(false)
+        }
         return
       }
-      /* Mock mode me /auth/me abhi live nahi — wo hamesha MOCK_USER deta hai aur
-         ERP se aaya asli head-office user overwrite kar deta. Jab tak real API
-         nahi lagti, stored user ko hi sach maanein. */
-      if (USE_MOCK && getStoredUser()) {
+      if (active) {
+        setUser(stored)
         setBooting(false)
-        return
       }
+      /* Optional soft refresh — failure must NOT clear the handoff session. */
+      if (USE_MOCK) return
       try {
         const me = await authApi.fetchMe()
-        if (active) {
+        if (active && me) {
           setUser(me)
           setStoredUser(me)
         }
       } catch {
-        if (active) {
-          clearToken()
-          setUser(null)
-        }
-      } finally {
-        if (active) setBooting(false)
+        /* keep handoff user */
       }
     })()
     return () => {

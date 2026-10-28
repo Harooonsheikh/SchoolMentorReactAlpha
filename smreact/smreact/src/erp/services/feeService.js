@@ -115,8 +115,8 @@ export async function preloadFeeData({ force = false } = {}) {
 }
 
 /* Same period rule the Fee screens use: server nextMonth when month-closing is ON,
-   otherwise today. Returns a 0-based month. */
-function feePeriodFor(settings) {
+   otherwise today. Returns a 0-based month. Dashboard Fee Analytics uses this too. */
+export function feePeriodFor(settings) {
   if (settings?.enableMonthClosing === true) {
     const code = Number(settings.nextMonth) || 0;
     const m = code % 100, y = Math.floor(code / 100);

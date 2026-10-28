@@ -231,9 +231,19 @@ export default function LoginScreen({ onLogin, onSignup }) {
          hai (sirf A-Z a-z 0-9 - _ .), is liye encodeURIComponent uspar kuch nahi
          badalta — magar poore JSON ko encode karne se har `"` `{` `:` %XX ban kar
          URL bewajah lamba ho jata tha. Sirf user object ko encode karte hain. */
-      const handoff = `t=${data.token}`
-        + `&u=${encodeURIComponent(JSON.stringify(cspUser))}`
-        + `&s=${encodeURIComponent(JSON.stringify(profile))}`;
+      /* Hash handoff — cross-origin (sandbox-erp → sandbox-chain) me localStorage
+         share nahi hota. URL chhota rakho: full profile (`s=`) kabhi-kabhi URL
+         limit se kat jata tha aur chain session ke baghair ERP par wapas bounce
+         ho jata tha. Token + compact user kaafi hain; profile alag optional. */
+      let handoff = `t=${encodeURIComponent(data.token)}`
+        + `&u=${encodeURIComponent(JSON.stringify(cspUser))}`;
+      try {
+        const profileBlob = encodeURIComponent(JSON.stringify(profile));
+        /* ~1800 chars safe for most browsers with hash; skip profile if huge. */
+        if ((handoff.length + profileBlob.length) < 1800) {
+          handoff += `&s=${profileBlob}`;
+        }
+      } catch { /* profile optional */ }
       /* assign() nahi, replace(): assign history me entry chhorta hai, is liye
          chain portal par Back dabane par token wala URL dobara aa jata tha.
          replace() se login page history se hat jata hai aur token kahin nahi bachta. */

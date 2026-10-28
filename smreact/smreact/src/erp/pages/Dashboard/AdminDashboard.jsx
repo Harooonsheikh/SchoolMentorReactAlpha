@@ -666,8 +666,23 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
      ledger (mockAdvanceLedger) behind the Advance Fee Adjustment Report —
      it's in the main calc flow (feeds Pending Fee), while card 8
      "Advance Payments Received" (after Pending Fee) deliberately isn't. */
-  const [feeMonthIdx, setFeeMonthIdx] = useState(() => new Date().getMonth()); // default: current month (live)
-  const feeYear = new Date().getFullYear();
+  /* Default calendar month/year; once Fee settings load, switch to Active Fee Period
+     (same rule as Fee Challans: nextMonth when Month Closing is ON). That drives
+     /financial-summary feeMonth+feeYear → FeeAnalytics + ledger windows below. */
+  const [feeMonthIdx, setFeeMonthIdx] = useState(() => new Date().getMonth());
+  const [feeYear, setFeeYear] = useState(() => new Date().getFullYear());
+  useEffect(() => {
+    let alive = true;
+    feeService.getFeeSettings()
+      .then((settings) => {
+        if (!alive) return;
+        const p = feeService.feePeriodFor(settings);
+        setFeeMonthIdx(p.m);
+        setFeeYear(p.y);
+      })
+      .catch(() => { /* keep calendar default */ });
+    return () => { alive = false; };
+  }, []);
   /* Daily Receiving drill-down popups — forked MOCK hata diya (koi fake data
      nahi). Live getReceipts stub [] deta hai, is liye ye popups ab empty state
      dikhate hain jab tak inka proper live-ledger wiring nahi hota. */
@@ -1415,7 +1430,7 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
                 onChange={(e) => setFeeMonthIdx(Number(e.target.value))}
                 aria-label="Select month for Fee Analytics"
               >
-                {FIN_MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m} 2026</option>)}
+                {FIN_MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m} {feeYear}</option>)}
               </select>
               <button type="button" className="dash-sec-link" onClick={() => openModule('fee')}>
                 Open Fee <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
