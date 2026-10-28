@@ -46,9 +46,10 @@ const env = process.env || {};
 const stripTrailingSlash = (u) => (typeof u === 'string' ? u.replace(/\/+$/, '') : u);
 
 /* Host the Support API is served from. '' → this app's own origin.
-   Dev me seedha alphaapi — Customer Support ka swagger wahin hai:
-   https://alphaapi.schoolmentor.ai/swagger/index.html */
-const DEV_API_BASE = 'https://alphaapi.schoolmentor.ai';
+   Dev → SA_API_HOST (default sandbox). Override with REACT_APP_SUPPORT_API. */
+const DEV_API_BASE = stripTrailingSlash(
+  env.REACT_APP_SA_API_HOST || env.REACT_APP_SUPPORT_API || 'https://sandbox-alphaapi.schoolmentor.ai',
+);
 const PROD_API_BASE = '';
 
 /* Kya hum dev machine par chal rahe hain?
@@ -222,7 +223,7 @@ export const VOICE_NOTE_CAPTION = 'Voice note';
    proxy (nothing there in the user's browser). Keep the stored path, serve it
    from the media host. Same reasoning as the school-side copy. */
 export const MEDIA_BASE = stripTrailingSlash(
-  env.REACT_APP_MEDIA_BASE || 'https://alphaapi.schoolmentor.ai',
+  env.REACT_APP_MEDIA_BASE || env.REACT_APP_SA_API_HOST || 'https://sandbox-alphaapi.schoolmentor.ai',
 );
 
 export const fileUrl = (relativeOrAbsolute) => {

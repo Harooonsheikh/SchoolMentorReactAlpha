@@ -57,9 +57,17 @@ export const APPROVAL_MODULES = [
   { key: 'notifications', label: 'Notifications', icon: 'fa-bell' },
   { key: 'settings',      label: 'Settings', icon: 'fa-sliders' },
 ]
-const moduleMeta = (key) => APPROVAL_MODULES.find((m) => m.key === key) || { label: key, icon: 'fa-square-check' }
-export const moduleIcon = (key) => moduleMeta(key).icon
-export const moduleLabel = (key) => moduleMeta(key).label
+const moduleMeta = (key) => APPROVAL_MODULES.find((m) => m.key === key) || null
+export const moduleIcon = (key) => moduleMeta(key)?.icon || 'fa-square-check'
+export const moduleLabel = (key) => {
+  const hit = moduleMeta(key)
+  if (hit) return hit.label
+  /* API kabhi naya module bhej de to camelCase → Title Case. */
+  return String(key || 'Request')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
 
 /* ── Example requests — as if raised from inside each school's own
    ERP, one showcase per module, varied statuses. `schoolId` ties each

@@ -14,7 +14,11 @@
    ════════════════════════════════════════════════════════════════════ */
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
-const ERP_TARGET = process.env.REACT_APP_SA_ERP_API || 'http://50.190.164.42:4100';
+/* Default = sandbox (same host as ERP apiConfig). Override with
+   REACT_APP_SA_ERP_API / REACT_APP_SA_API_HOST for live. */
+const ERP_TARGET = process.env.REACT_APP_SA_ERP_API
+  || process.env.REACT_APP_SA_API_HOST
+  || 'https://sandbox-alphaapi.schoolmentor.ai';
 const AI_TARGET = process.env.REACT_APP_SA_AI_API || 'http://50.190.164.42:8000';
 
 module.exports = function (app) {
@@ -49,33 +53,29 @@ module.exports = function (app) {
     }),
   );
 
-  /* ERP screen-time — swagger: https://alphaapi.schoolmentor.ai/manage-usertimespend
-     Local 3001 se seedha alphaapi CORS/403 deta hai, is liye same-origin
-     proxy. Target swagger wala host hai, :4100 IP nahi (wo 403 de raha tha). */
+  /* ERP screen-time / mobile-app permission — same ERP_TARGET (sandbox/live). */
   app.use(
     '/manage-usertimespend',
     createProxyMiddleware({
-      target: 'https://alphaapi.schoolmentor.ai',
+      target: ERP_TARGET,
       changeOrigin: true,
       secure: false,
     }),
   );
 
-  /* Monthly Progress — swagger: POST /usertimespend-report */
   app.use(
     '/usertimespend-report',
     createProxyMiddleware({
-      target: 'https://alphaapi.schoolmentor.ai',
+      target: ERP_TARGET,
       changeOrigin: true,
       secure: false,
     }),
   );
 
-  /* School Permissions — swagger: POST /manage-mobileapp-permission */
   app.use(
     '/manage-mobileapp-permission',
     createProxyMiddleware({
-      target: 'https://alphaapi.schoolmentor.ai',
+      target: ERP_TARGET,
       changeOrigin: true,
       secure: false,
     }),

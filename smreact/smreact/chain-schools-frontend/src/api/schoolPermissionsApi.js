@@ -235,8 +235,35 @@ export function cachedApprovalType(branchID) {
 
 function rememberApprovalType(branchID, raw) {
   const mode = fromApprovalTypeApi(raw)
-  if (mode == null) return
-  approvalTypeByBranch.set(Number(branchID), mode)
+  /* null / missing → treat as disabled for inbox filtering (only Chain shows). */
+  const next = mode == null ? 'disabled' : mode
+  approvalTypeByBranch.set(Number(branchID), next)
+  return next
+}
+
+/**
+ * Aik branch ka Approval Settings mode — module-permission?type=chain se.
+ * @returns {Promise<'chain'|'school'|'disabled'>}
+ */
+export async function fetchApprovalType(branchID) {
+  const id = Number(branchID)
+  if (!id) return 'disabled'
+  if (approvalTypeByBranch.has(id)) return approvalTypeByBranch.get(id)
+  try {
+    await fetchModulePermissions(id)
+  } catch { /* emptyModules path already remembered disabled */ }
+  return approvalTypeByBranch.has(id) ? approvalTypeByBranch.get(id) : 'disabled'
+}
+
+/**
+ * Kai branches ke approvalType — Approvals inbox filter ke liye.
+ * @returns {Promise<Record<number, 'chain'|'school'|'disabled'>>}
+ */
+export async function fetchApprovalTypesMap(branchIDs) {
+  const ids = [...new Set((branchIDs || []).map(Number).filter(Boolean))]
+  const out = {}
+  await mapLimit(ids, 12, (id) => fetchApprovalType(id), (id, mode) => { out[id] = mode })
+  return out
 }
 
 /** Save — poora set bhejta hai (API insert/update dono isi se karta hai). */

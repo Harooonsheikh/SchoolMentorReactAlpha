@@ -33,6 +33,30 @@ const env = process.env || {};
 
 const stripTrailingSlash = (u) => (typeof u === 'string' ? u.replace(/\/+$/, '') : u || '');
 
+/* ── Single API host switch (same idea as ERP apiConfig.js) ─────────
+   Sandbox → https://sandbox-alphaapi.schoolmentor.ai
+   Live    → https://alphaapi.schoolmentor.ai
+   Set REACT_APP_SA_API_HOST in .env / .env.production, then rebuild.
+   Default = SANDBOX (currently active). */
+export const SA_SANDBOX_API_URL = 'https://sandbox-alphaapi.schoolmentor.ai';
+export const SA_LIVE_API_URL    = 'https://alphaapi.schoolmentor.ai';
+export const SA_API_HOST = stripTrailingSlash(
+  env.REACT_APP_SA_API_HOST || SA_SANDBOX_API_URL,
+);
+
+/** Absolute ERP/public paths (manage-usertimespend, mobile-app permission…).
+    Localhost → direct SA_API_HOST (proxy/CORS). Deployed → same-origin (IIS). */
+export function erpPublicUrl(path = '') {
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  try {
+    if (typeof window !== 'undefined' && /localhost|127\.0\.0\.1/i.test(window.location.hostname)) {
+      return `${SA_API_HOST}${suffix}`;
+    }
+  } catch { /* ignore */ }
+  const base = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || '');
+  return `${base}${suffix}`;
+}
+
 /* 'true' → force mock, 'false' → force live, anything else → auto-detect. */
 const parseFlag = (v) => (v === 'true' ? true : v === 'false' ? false : undefined);
 

@@ -58,4 +58,7 @@ export const ERP_LOGIN_URL = `${ERP_URL}?acct=network`
    ERP_API_BASE yahan kaam nahi aata: wo khali reh kar apne origin par
    girta hai, aur apna origin /Uploads… serve nahi karta (SPA ka index.html
    wapas aa jata hai). */
-export const MEDIA_BASE = trimEnd(import.meta.env.VITE_MEDIA_BASE) || 'https://alphaapi.schoolmentor.ai'
+/* Media host — follows VITE_MEDIA_BASE, else VITE_ERP_API_BASE / sandbox. */
+export const MEDIA_BASE = trimEnd(import.meta.env.VITE_MEDIA_BASE)
+  || trimEnd(import.meta.env.VITE_ERP_API_BASE)
+  || 'https://sandbox-alphaapi.schoolmentor.ai'

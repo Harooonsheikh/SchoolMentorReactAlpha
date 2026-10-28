@@ -9,19 +9,36 @@ const STORAGE_KEY = 'sm_api_base_url';
 
 const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
 
+/* ── Known API hosts ───────────────────────────────────────────────
+   ONE switch controls everything: main ERP `/api`, SuperAdmin
+   (`/SchoolMentorSuperAdminAPI`), Chain (`/SchoolmentorChainManagementAPI`),
+   and media. Flip sandbox ↔ live here (or via REACT_APP_API_BASE_URL /
+   localStorage sm_api_base_url) and all three APIs follow.
+   Swagger (sandbox):
+     https://sandbox-alphaapi.schoolmentor.ai/SchoolMentorSuperAdminAPI/swagger
+     https://sandbox-alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/swagger
+*/
+const SANDBOX_API_URL = 'https://sandbox-alphaapi.schoolmentor.ai';
+const SANDBOX_ERP_URL = 'https://sandbox-erp.schoolmentor.ai';
+const LIVE_API_URL    = 'https://alphaapi.schoolmentor.ai';
+/* Live / sandbox ERP site origins — IIS reverse-proxies /api + SuperAdmin +
+   Chain to the API box (see public/web.config). */
+const LIVE_ERP_URL    = 'https://erp.schoolmentor.ai';
+
+const KNOWN_API_HOSTS = new Set(
+  [SANDBOX_API_URL, SANDBOX_ERP_URL, LIVE_API_URL, LIVE_ERP_URL].map((u) => u.toLowerCase()),
+);
+
 // Where the API lives, per build:
-//   dev  (npm start)      → the API box directly over http; nothing in front of it.
-//   prod (npm run build)  → the app's OWN origin (https://erp.schoolmentor.ai, set
-//     via REACT_APP_API_BASE_URL in .env.production). The browser blocks calling
-//     http://IP:4100 from an https page (mixed content), and alphaapi sends no CORS
-//     for this origin — so the app calls /api/…, /SchoolMentorSuperAdminAPI/…, /get-…
-//     on its own origin and IIS reverse-proxies those to https://alphaapi.schoolmentor.ai
-//     (see the rewrite rules in public/web.config). No mixed content, no CORS.
+//   dev  (npm start)      → sandbox API host directly.
+//   prod (npm run build)  → REACT_APP_API_BASE_URL, else live ERP origin
+//     (IIS proxies /api / SchoolMentorSuperAdminAPI / SchoolmentorChainManagementAPI).
 // const DEV_URL = 'http://210.56.9.60:1123';
 // const DEV_URL  =  'http://50.190.164.42:4100';
-const DEV_URL  =  'https://sandbox-alphaapi.schoolmentor.ai';
-const PROD_URL  =  'https://sandbox-alphaapi.schoolmentor.ai';
-// const PROD_URL = 'https://erp.schoolmentor.ai';
+const DEV_URL  = SANDBOX_API_URL;
+const PROD_URL = LIVE_ERP_URL;
+// Sandbox deploy: REACT_APP_API_BASE_URL=https://sandbox-erp.schoolmentor.ai
+// (IIS proxies) or https://sandbox-alphaapi.schoolmentor.ai (direct).
 
 const DEFAULT_URL = stripSlash(process.env.REACT_APP_API_BASE_URL)
   || (process.env.NODE_ENV === 'production' ? PROD_URL : DEV_URL);
@@ -34,13 +51,12 @@ export function getBaseUrl() {
   const insecure = typeof window !== 'undefined'
     && window.location.protocol === 'https:'
     && saved.startsWith('http://');
-  /* Ignore any saved override that is not this build's default host
-     (e.g. an old live URL left in localStorage). */
-  const wrongHost = saved && DEFAULT_URL && saved.toLowerCase() !== DEFAULT_URL.toLowerCase();
-  if (wrongHost) {
+  /* Allow sandbox ↔ live switches; drop anything else (typo / stale host). */
+  const unknownHost = saved && !KNOWN_API_HOSTS.has(saved.toLowerCase());
+  if (unknownHost) {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
   }
-  return (saved && !insecure && !wrongHost) ? saved : DEFAULT_URL;
+  return (saved && !insecure && !unknownHost) ? saved : DEFAULT_URL;
 }
 
 /** Persist a new base URL */
@@ -94,7 +110,8 @@ export function isMentorAiUrl(url) {
 // School/branch-level configuration (module activation waghera) alag
 // Super-Admin service par rehti hai, jiska apna base path hai:
 //   {host}/SchoolMentorSuperAdminAPI/api/...
-// Isi liye buildUrl() se ye call nahi ban sakti — wo sirf host lagata hai.
+// Host is ALWAYS getBaseUrl() — sandbox setup → sandbox SuperAdmin,
+// production setup → production SuperAdmin. No separate env switch.
 
 const SUPER_ADMIN_PREFIX = '/SchoolMentorSuperAdminAPI';
 
@@ -112,35 +129,22 @@ export function buildSuperAdminUrl(path = '') {
 // School-network ka login/signup/OTP ERP ki API ke base path par nahi, apne
 // alag base path par hai:
 //   {host}/SchoolmentorChainManagementAPI/api/...
-// Is liye buildUrl() se ye call nahi ban sakti — wo sirf host lagata hai.
+// Host is ALWAYS getBaseUrl() — same sandbox/live switch as /api and SuperAdmin.
+// (Old REACT_APP_CHAIN_API_BASE override intentionally ignored so the three
+// APIs can never drift apart.)
 //
-// HOST kaun sa:
-//   dev  → seedha alphaapi.
-//   prod → apna hi origin (khali string), bilkul baqi APIs ki tarah. Yahan
-//     alphaapi ko SEEDHA call karna kaam NAHI karta: wo host is origin ke liye
-//     koi CORS header nahi bhejta (preflight 204 aata hai magar bina
-//     Access-Control-Allow-Origin ke), is liye browser network-login ki request
-//     block kar deta hai. IIS /SchoolmentorChainManagementAPI/* ko usi API par
-//     forward karta hai — dekho public/web.config. Same origin, koi CORS nahi.
-// Kisi khaas host par bhejna ho to REACT_APP_CHAIN_API_BASE set kar do.
+// Live ERP origin: IIS /SchoolmentorChainManagementAPI/* → API box
+// (public/web.config). Sandbox: call sandbox-alphaapi host directly.
 
 const CHAIN_API_PREFIX = '/SchoolmentorChainManagementAPI';
 
-/* Bare `process` browser bundle me nahi hota — sirf `process.env` ko webpack
-   inline karta hai. `typeof process` par shart lagane se prod build me value
-   gayab ho jati thi. */
-const CHAIN_API_ENV = process.env.REACT_APP_CHAIN_API_BASE;
-
-/** Chain host — same sandbox/live base as the rest of the ERP unless overridden. */
+/** Chain host — always the same sandbox/live base as the rest of the ERP. */
 export function getChainApiHost() {
-  if (CHAIN_API_ENV != null && CHAIN_API_ENV !== '') return stripSlash(CHAIN_API_ENV);
   return getBaseUrl();
 }
 
-/* Kept for older imports; always resolves through getChainApiHost(). */
-export const CHAIN_API_HOST = stripSlash(
-  CHAIN_API_ENV != null && CHAIN_API_ENV !== '' ? CHAIN_API_ENV : DEFAULT_URL,
-);
+/* Kept for older imports; resolves at call time via getChainApiHost getter. */
+export const CHAIN_API_HOST = DEFAULT_URL;
 
 /**
  * Build a Chain-Management API endpoint URL.
@@ -162,14 +166,11 @@ export function buildChainApiUrl(path = '') {
 // resolveMediaUrl() throws the stamped host away and keeps only the storage
 // path, serving it from the https media host — so the file loads whatever the
 // API stamped. EVERY file path from the API must go through it.
-// Override the host with REACT_APP_MEDIA_BASE if it ever moves.
-export const MEDIA_BASE = stripSlash(
-  process.env.REACT_APP_MEDIA_BASE || DEFAULT_URL,
-);
+export const MEDIA_BASE = DEFAULT_URL;
 
-/** Media host — follows getBaseUrl so sandbox builds never hit live alphaapi. */
+/** Media host — always follows getBaseUrl (sandbox ↔ production together). */
 export function getMediaBase() {
-  return stripSlash(process.env.REACT_APP_MEDIA_BASE || getBaseUrl());
+  return getBaseUrl();
 }
 
 /* Every folder the API serves uploads from. /UploadedImages holds branch logos
@@ -421,7 +422,7 @@ function isApiUrl(url) {
   if (isMentorAiUrl(u)) return false;
   const base = getBaseUrl();
   if (base && u.startsWith(base)) return true;
-  return /(^|\/)(api|SchoolMentorSuperAdminAPI)\//i.test(u)
+  return /(^|\/)(api|SchoolMentorSuperAdminAPI|SchoolmentorChainManagementAPI)\//i.test(u)
     || /(^|\/)((get|save|saveupdate|delete|assign)-|report-header)/i.test(u);
 }
 
