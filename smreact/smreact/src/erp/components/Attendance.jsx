@@ -279,11 +279,16 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     useEffect(() => { setDraft(setup); }, [setup]);
 
     const trackTimeOut = draft.staffTrackingMode !== "in_only";
-    const errors  = useMemo(() => validateAttendanceSetup(draft), [draft]);
+    /* Geofence is a separate card — don't let its fields colour the staff
+       time-rule error state. */
+    const errors  = useMemo(() => validateAttendanceSetup({ ...draft, geofenceEnabled: false }), [draft]);
     const summary = useMemo(() => describeAttendanceRules({ ...draft, trackTimeOut }), [draft, trackTimeOut]);
 
     const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
-    const save = () => onSave(draft);
+    /* Staff rules are always on now (the enable/disable toggle is hidden) —
+       isEnabled is forced true on save so automatic status calculation always
+       applies. */
+    const save = () => onSave({ ...draft, isEnabled: true });
 
     const chipClass = (label) => (
       label === "Present" ? "present" :
@@ -318,20 +323,6 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <div className="att-toggle-row">
-              <span className="att-toggle-label">{draft.isEnabled ? "Enabled" : "Disabled"}</span>
-              <Tooltip text={draft.isEnabled ? "Turn off automatic status calculation" : "Turn on automatic status calculation"}>
-                <button
-                  type="button"
-                  className={`att-toggle${draft.isEnabled ? " on" : ""}`}
-                  onClick={() => set("isEnabled", !draft.isEnabled)}
-                  aria-pressed={draft.isEnabled}
-                  aria-label="Enable automatic attendance rules"
-                >
-                  <span className="att-toggle-knob" />
-                </button>
-              </Tooltip>
-            </div>
             <Tooltip text="Save working hours and attendance rules">
               <button className="att-btn-save-small" disabled={saving} onClick={save}>
                 <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
@@ -340,12 +331,6 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
           </div>
         </div>
         <div className="att-section-body">
-          {!draft.isEnabled && (
-            <div className="att-setup-disabled-note">
-              <i className="fa-solid fa-circle-info"></i>
-              <span>Automatic status calculation is off. Staff attendance keeps using manual status selection until you enable this.</span>
-            </div>
-          )}
           <div className="att-info">
             <i className="fa-solid fa-circle-info"></i>
             <span>These rules are evaluated after holidays, weekly off days and approved leave — a non-working day is never reclassified as Present or Late.</span>
@@ -463,9 +448,11 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     const summary = useMemo(() => describeAttendanceRules(slice), [slice]);
 
     const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    /* Student rules are always on now (enable/disable toggle hidden) —
+       studentRulesEnabled is forced true on save. */
     const save = () => {
       if (Object.keys(errors).length) { toast("Fix the highlighted fields before saving.", "error"); return; }
-      onSave(draft);
+      onSave({ ...draft, studentRulesEnabled: true });
     };
 
     const chipClass = (label) => (
@@ -501,20 +488,6 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <div className="att-toggle-row">
-              <span className="att-toggle-label">{draft.studentRulesEnabled ? "Enabled" : "Disabled"}</span>
-              <Tooltip text={draft.studentRulesEnabled ? "Turn off the student attendance policy" : "Turn on the student attendance policy"}>
-                <button
-                  type="button"
-                  className={`att-toggle${draft.studentRulesEnabled ? " on" : ""}`}
-                  onClick={() => set("studentRulesEnabled", !draft.studentRulesEnabled)}
-                  aria-pressed={draft.studentRulesEnabled}
-                  aria-label="Enable student attendance rules"
-                >
-                  <span className="att-toggle-knob" />
-                </button>
-              </Tooltip>
-            </div>
             <Tooltip text="Save student working hours and attendance rules">
               <button className="att-btn-save-small" disabled={saving} onClick={save}>
                 <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
@@ -523,12 +496,6 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
           </div>
         </div>
         <div className="att-section-body">
-          {!draft.studentRulesEnabled && (
-            <div className="att-setup-disabled-note">
-              <i className="fa-solid fa-circle-info"></i>
-              <span>This policy is off. It's shown here for reference only — marking a student Late in Student Attendance is always the teacher's own call, on or off.</span>
-            </div>
-          )}
           <div className="att-info">
             <i className="fa-solid fa-circle-info"></i>
             <span>Student Attendance is marked directly by the teacher (Present / Late / Absent / Leave) — these timings don't auto-mark anyone. They're the school's official policy: a clear reference for staff, and what a future automatic source (the mobile app, a biometric gate) would apply.</span>
@@ -626,11 +593,14 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     const { data: profile } = useAsync(profileService.getProfile, []);
     const schoolDisplayName = profile?.campus || profile?.name || "";
 
-    const errors = useMemo(() => validateAttendanceSetup(draft), [draft]);
+    /* Geo-fence is always on now (enable/disable toggle hidden) — validate and
+       save as enabled, so the school's location/radius is always required and
+       stored. */
+    const errors = useMemo(() => validateAttendanceSetup({ ...draft, geofenceEnabled: true }), [draft]);
     const configured = isGeofenceConfigured(draft);
 
     const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
-    const save = () => onSave({ ...draft, schoolLocationName: schoolDisplayName });
+    const save = () => onSave({ ...draft, geofenceEnabled: true, schoolLocationName: schoolDisplayName });
 
     const useMyLocation = () => {
       if (!navigator.geolocation) { toast("This browser/device does not support location.", "error"); return; }
@@ -661,20 +631,6 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <div className="att-toggle-row">
-              <span className="att-toggle-label">{draft.geofenceEnabled ? "Enabled" : "Disabled"}</span>
-              <Tooltip text={draft.geofenceEnabled ? "Turn off self-attendance from the mobile app" : "Turn on self-attendance from the mobile app"}>
-                <button
-                  type="button"
-                  className={`att-toggle${draft.geofenceEnabled ? " on" : ""}`}
-                  onClick={() => set("geofenceEnabled", !draft.geofenceEnabled)}
-                  aria-pressed={draft.geofenceEnabled}
-                  aria-label="Enable geo-fenced attendance"
-                >
-                  <span className="att-toggle-knob" />
-                </button>
-              </Tooltip>
-            </div>
             <Tooltip text="Save the school location and geofence settings">
               <button className="att-btn-save-small" disabled={saving} onClick={save}>
                 <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
@@ -684,16 +640,10 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         </div>
 
         <div className="att-section-body">
-          {!draft.geofenceEnabled && (
-            <div className="att-setup-disabled-note">
-              <i className="fa-solid fa-circle-info"></i>
-              <span>Geo-fenced attendance is off. Admin and Teacher staff cannot mark their own attendance from the mobile app until you enable this and set the school's location below.</span>
-            </div>
-          )}
-          {draft.geofenceEnabled && !configured && (
+          {!configured && (
             <div className="att-setup-disabled-note">
               <i className="fa-solid fa-triangle-exclamation"></i>
-              <span>This is turned on, but the school's location isn't set yet. Enter it below, or use "Use This Device's Location" while standing at the school, then save.</span>
+              <span>The school's location isn't set yet. Enter it below, or use "Use This Device's Location" while standing at the school, then save.</span>
             </div>
           )}
           <div className="att-info">
@@ -728,7 +678,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             </div>
             <div className="att-field-row">
               <div>
-                <label className="att-label">Latitude {draft.geofenceEnabled && "*"}</label>
+                <label className="att-label">Latitude *</label>
                 <input
                   type="number" step="0.000001"
                   className={`att-input${errors.latitude ? " error" : ""}`}
@@ -739,7 +689,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
                 {errors.latitude && <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.latitude}</div>}
               </div>
               <div>
-                <label className="att-label">Longitude {draft.geofenceEnabled && "*"}</label>
+                <label className="att-label">Longitude *</label>
                 <input
                   type="number" step="0.000001"
                   className={`att-input${errors.longitude ? " error" : ""}`}
@@ -756,7 +706,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             <div className="att-subsection-title"><i className="fa-solid fa-draw-polygon"></i> Geofence Boundary</div>
             <div className="att-field-row">
               <div>
-                <label className="att-label">Geofence Radius (metres) {draft.geofenceEnabled && "*"}</label>
+                <label className="att-label">Geofence Radius (metres) *</label>
                 <input
                   type="number" min="10" max="5000" step="10"
                   className={`att-input${errors.geofenceRadiusMeters ? " error" : ""}`}
@@ -795,7 +745,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   /* ─── Tab 1: Attendance Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onSaveAttendanceSetup, savingSetup = false }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onSaveStaffRules, onSaveStudentRules, onSaveGeofence, savingSetup = false }) {
     const { can } = usePermissions();
     const canHolCreate   = can("Attendance", "Attendance Setup", "Create");
     const canHolEdit     = can("Attendance", "Attendance Setup", "Edit");
@@ -1036,12 +986,13 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             </div>
           </div>
         </div>
-        {/* Working Hours & Attendance Rules — centralized via src/utils/attendanceRules.js */}
-        <WorkingHoursSection setup={attendanceSetup} onSave={onSaveAttendanceSetup} saving={savingSetup} />
-        <StudentWorkingHoursSection setup={attendanceSetup} onSave={onSaveAttendanceSetup} saving={savingSetup} toast={toast} />
+        {/* Working Hours & Attendance Rules — centralized via src/utils/attendanceRules.js.
+            Each card saves only its OWN endpoint (staff / student / geofence). */}
+        <WorkingHoursSection setup={attendanceSetup} onSave={onSaveStaffRules} saving={savingSetup} />
+        <StudentWorkingHoursSection setup={attendanceSetup} onSave={onSaveStudentRules} saving={savingSetup} toast={toast} />
 
         {/* Geo-Fenced Attendance — school location + radius for mobile self-attendance */}
-        <GeofenceSection setup={attendanceSetup} onSave={onSaveAttendanceSetup} saving={savingSetup} toast={toast} />
+        <GeofenceSection setup={attendanceSetup} onSave={onSaveGeofence} saving={savingSetup} toast={toast} />
       </>
     );
   }
@@ -1838,6 +1789,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       if (s.status === "present") return badge("Present", GREEN);
       if (s.status === "absent")  return badge("Absent",  RED);
       if (s.status === "leave")   return badge("Leave",   AMB);
+      if (s.status === "late")        return badge("Late",        isColor ? "#7C3AED" : "#374151");
+      if (s.status === "short_leave") return badge("Short Leave", AMB);
+      if (s.status === "holiday")     return badge("Holiday",     isColor ? "#2563EB" : "#374151");
       return badge("Pending", "#94A3B8");
     };
 
@@ -1963,6 +1917,7 @@ const markOf = (staffIdx, day) => {
   if (status === "present") return "P";
   if (status === "absent")  return "A";
   if (status === "leave")   return "L";
+  if (status === "holiday") return "H";
   return "."; // us din mark hi nahi hui
 };
 
@@ -2180,7 +2135,7 @@ const markOf = (staffIdx, day) => {
       : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
     const lateAfterMin = timeToMinutes(attendanceSetup?.lateAfter);
-    const list = (staffData || []).filter((s) => s.marked && s.status === "present" && s.inTime).map((s) => {
+    const list = (staffData || []).filter((s) => s.marked && (s.status === "present" || s.status === "late" || s.status === "short_leave") && s.inTime).map((s) => {
       const result = calculateAttendanceResult({ timeIn: s.inTime, timeOut: s.outTime, calendarStatus: null, isOnApprovedLeave: false, setup: attendanceSetup });
       const inMin = timeToMinutes(s.inTime);
       const minutesLate = lateAfterMin != null && inMin != null ? Math.max(0, inMin - lateAfterMin) : null;
@@ -2224,7 +2179,7 @@ const markOf = (staffIdx, day) => {
       : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
     const trackOut = attendanceSetup?.staffTrackingMode !== "in_only";
-    const list = (staffData || []).filter((s) => s.marked && s.status === "present" && s.outTime).map((s) => {
+    const list = (staffData || []).filter((s) => s.marked && (s.status === "present" || s.status === "late" || s.status === "short_leave") && s.outTime).map((s) => {
       const result = calculateAttendanceResult({ timeIn: s.inTime, timeOut: s.outTime, calendarStatus: null, isOnApprovedLeave: false, setup: { ...attendanceSetup, trackTimeOut: trackOut } });
       return { ...s, result };
     }).filter((s) => s.result.timeOutStatus === "short_leave");
@@ -2492,9 +2447,11 @@ const markOf = (staffIdx, day) => {
     ["Hira Butt", "Butt Hira"],
   ];
 
-  /* Attendance status ↔ API numeric code: P=1, A=2, L=3, Late=4 */
-  const ST_STATUS_TO_CODE = { present: 1, absent: 2, leave: 3, late: 4 };
-  const ST_CODE_TO_STATUS = { "1": "present", "2": "absent", "3": "leave", "4": "late" };
+  /* Attendance status ↔ API numeric code: P=1, A=2, L=3, Late=4, Holiday=5,
+     Short Leave=6. (Staff saves the status string directly; students send the
+     code.) short_leave = came in but left before "Short Leave Before". */
+  const ST_STATUS_TO_CODE = { present: 1, absent: 2, leave: 3, late: 4, holiday: 5, short_leave: 6 };
+  const ST_CODE_TO_STATUS = { "1": "present", "2": "absent", "3": "leave", "4": "late", "5": "holiday", "6": "short_leave" };
 
   function rosterForClass(row) {
     // Real roster from the API (get-class-section-studentlist-by-branch).
@@ -2953,8 +2910,31 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Mark Student Attendance modal ─────────────────────────────────────── */
-  function MarkStudentModal({ classIdx, markDate, studentData, onClose, onSaveMarks, onLoadMarks }) {
+  function MarkStudentModal({ classIdx, markDate, studentData, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onClose, onSaveMarks, onLoadMarks }) {
     const row = studentData[classIdx];
+    /* Rule-engine setup for STUDENTS — the student* fields reshaped into the
+       canonical names calculateAttendanceResult reads, so entering a Time In
+       auto-decides Present vs Late from the school's configured student rules. */
+    const stuSetup = {
+      isEnabled: attendanceSetup.studentRulesEnabled,
+      schoolStartTime: attendanceSetup.studentSchoolStartTime,
+      schoolEndTime: attendanceSetup.studentSchoolEndTime,
+      attendanceStartTime: attendanceSetup.studentAttendanceStartTime,
+      normalTimeInUntil: attendanceSetup.studentNormalTimeInUntil,
+      lateAfter: attendanceSetup.studentLateAfter,
+      shortLeaveFrom: attendanceSetup.studentShortLeaveFrom,
+      fullDayTimeOut: attendanceSetup.studentFullDayTimeOut,
+      trackTimeOut: attendanceSetup.studentTrackingMode !== "in_only",
+    };
+    /* Times → status per the rules: Time In decides Present vs Late, and a
+       Time Out before "Short Leave Before" turns it into Short Leave. Null
+       (rules off, or a time before Attendance Start) keeps the previous
+       attended status, defaulting to Present. */
+    const autoStatus = (inTime, outTime, prev) => {
+      const r = calculateAttendanceResult({ timeIn: inTime, timeOut: outTime, calendarStatus: null, isOnApprovedLeave: false, setup: stuSetup });
+      // finalStatus: present | late | short_leave (out before "Short Leave Before") | null.
+      return r.finalStatus || (["present", "late", "short_leave"].includes(prev) ? prev : "present");
+    };
     // Header date: selected past date if marking a previous day, else today.
     const today = (markDate ? new Date(`${markDate}T00:00:00`) : new Date())
       .toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
@@ -2996,8 +2976,9 @@ const markOf = (staffIdx, day) => {
     const isUpdate = hasSaved;
 
     const setField = (j, patch) => setRows((prev) => prev.map((r, i) => i === j ? { ...r, ...patch } : r));
-    // Present → in/out time editable; Absent/Leave → clear times (staff jaisa).
-    const setStatus = (j, st) => setField(j, st === "present" ? { status: st } : { status: st, inTime: "", outTime: "" });
+    // Attended statuses (present/late/short leave) → in/out time editable; Absent/Leave → clear times.
+    const attended = (st) => st === "present" || st === "late" || st === "short_leave";
+    const setStatus = (j, st) => setField(j, attended(st) ? { status: st } : { status: st, inTime: "", outTime: "" });
 
     const save = async () => {
       if (saving) return;
@@ -3069,7 +3050,12 @@ const markOf = (staffIdx, day) => {
                           <Tooltip text="Mark on Leave (clears in/out times)">
                             <button className={`att-radio-btn l${s.status === "leave"   ? " active" : ""}`} onClick={() => setStatus(j, "leave")}>L</button>
                           </Tooltip>
-
+                          <Tooltip text="Mark Late (keeps Time In)">
+                            <button className={`att-radio-btn late${s.status === "late" ? " active" : ""}`} onClick={() => setStatus(j, "late")}>Late</button>
+                          </Tooltip>
+                          <Tooltip text="Mark Short Leave (left before Short Leave Before)">
+                            <button className={`att-radio-btn sl${s.status === "short_leave" ? " active" : ""}`} onClick={() => setStatus(j, "short_leave")}>SL</button>
+                          </Tooltip>
                         </div>
                       </td>
                       <td>
@@ -3077,11 +3063,12 @@ const markOf = (staffIdx, day) => {
                           className="att-input"
                           type="time"
                           value={s.inTime || ""}
-                          disabled={s.status !== "present"}
+                          disabled={!attended(s.status)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            // In Time badla → agar Out Time ab chhoti reh gayi to clear.
-                            setField(j, { inTime: v, ...(s.outTime && v && s.outTime < v ? { outTime: "" } : {}) });
+                            // Time In → auto Present/Late/Short-Leave per student rules; keep Out Time in sync.
+                            const out = (s.outTime && v && s.outTime < v) ? "" : s.outTime;
+                            setField(j, { inTime: v, outTime: out, status: autoStatus(v, out, s.status) });
                           }}
                           style={{ width: 108, height: 34, fontSize: 12.5 }}
                         />
@@ -3092,8 +3079,12 @@ const markOf = (staffIdx, day) => {
                           type="time"
                           value={s.outTime || ""}
                           min={s.inTime || undefined}
-                          disabled={s.status !== "present"}
-                          onChange={(e) => setField(j, { outTime: e.target.value })}
+                          disabled={!attended(s.status)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            // Time Out before "Short Leave Before" → Short Leave.
+                            setField(j, { outTime: v, status: autoStatus(s.inTime, v, s.status) });
+                          }}
                           style={{ width: 108, height: 34, fontSize: 12.5 }}
                         />
                       </td>
@@ -3258,8 +3249,8 @@ const markOf = (staffIdx, day) => {
           )}
           {!staffLoading && displayStaff.map((s, i) => {
             const isOpen = openIdx === i;
-            const stClass  = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : "off") : "pending";
-            const stLabel  = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "On Leave" : "Pending") : "Not Marked";
+            const stClass  = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : s.status === "late" ? "late" : s.status === "short_leave" ? "sl" : s.status === "holiday" ? "holiday" : "off") : "pending";
+            const stLabel  = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "On Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending") : "Not Marked";
             return (
               <div key={s.empId} className="att-row-wrap">
                 <div className="att-row att-sf-row">
@@ -3361,7 +3352,8 @@ const markOf = (staffIdx, day) => {
     const rows    = ready ? staffDateAttendance.rows : [];
     const markedRows = rows.filter((s) => s.marked);
     const hasMark = markedRows.length > 0;
-    const present = rows.filter((s) => s.marked && s.status === "present").length;
+    // Late counts within Present (a late person still attended).
+    const present = rows.filter((s) => s.marked && (s.status === "present" || s.status === "late" || s.status === "short_leave")).length;
     const absent  = rows.filter((s) => s.marked && s.status === "absent").length;
     const leave   = rows.filter((s) => s.marked && s.status === "leave").length;
 
@@ -3433,8 +3425,8 @@ const markOf = (staffIdx, day) => {
         ) : rows.length ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 10 }}>
             {rows.map((s) => {
-              const stClass = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : "off") : "pending";
-              const stLabel = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "Leave" : "Pending") : "Not Marked";
+              const stClass = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : s.status === "late" ? "late" : s.status === "short_leave" ? "sl" : s.status === "holiday" ? "holiday" : "off") : "pending";
+              const stLabel = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending") : "Not Marked";
               return (
                 <div key={s.empId} style={{ background: T.bgCard, border: `1.5px solid ${T.borderLight}`, borderRadius: T.radiusMd, padding: "12px 14px" }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 9 }}>
@@ -3473,10 +3465,20 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Mark Staff Attendance modal — all staff at once ───────────────────── */
-  function MarkStaffModal({ staffData, markDate, isUpdate, onClose, onSave }) {
+  function MarkStaffModal({ staffData, markDate, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, isUpdate, onClose, onSave }) {
     // Header date: selected past date if marking a previous day, else today.
     const today = (markDate ? new Date(`${markDate}T00:00:00`) : new Date())
       .toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    /* Staff rule-engine setup — the staff fields are already in the canonical
+       shape, so entering a Time In auto-decides Present vs Late. */
+    const sfSetup = { ...attendanceSetup, trackTimeOut: attendanceSetup.staffTrackingMode !== "in_only" };
+    const attended = (st) => st === "present" || st === "late" || st === "short_leave";
+    /* Time In decides Present vs Late; a Time Out before "Short Leave Before"
+       turns it into Short Leave. */
+    const autoStatus = (inTime, outTime, prev) => {
+      const r = calculateAttendanceResult({ timeIn: inTime, timeOut: outTime, calendarStatus: null, isOnApprovedLeave: false, setup: sfSetup });
+      return r.finalStatus || (attended(prev) ? prev : "present");
+    };
 // MarkStaffModal component mein (already working)
 const [rows, setRows] = useState(() => staffData.map((s) => ({
   empId:   s.empId,
@@ -3550,6 +3552,15 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             <Tooltip text="Mark on Leave (clears in/out times)">
                               <button className={`att-radio-btn l${r.status === "leave"   ? " active" : ""}`} onClick={() => setField(j, { status: "leave",   inTime: "", outTime: "" })}>L</button>
                             </Tooltip>
+                            <Tooltip text="Mark Late (keeps Time In)">
+                              <button className={`att-radio-btn late${r.status === "late" ? " active" : ""}`} onClick={() => setField(j, { status: "late" })}>Late</button>
+                            </Tooltip>
+                            <Tooltip text="Mark Short Leave (left before Short Leave Before)">
+                              <button className={`att-radio-btn sl${r.status === "short_leave" ? " active" : ""}`} onClick={() => setField(j, { status: "short_leave" })}>SL</button>
+                            </Tooltip>
+                            <Tooltip text="Mark Holiday (clears in/out times)">
+                              <button className={`att-radio-btn h${r.status === "holiday" ? " active" : ""}`} onClick={() => setField(j, { status: "holiday", inTime: "", outTime: "" })}>H</button>
+                            </Tooltip>
                           </div>
                         </td>
                         <td>
@@ -3557,11 +3568,12 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             className="att-input"
                             type="time"
                             value={r.inTime}
-                            disabled={r.status !== "present"}
+                            disabled={!attended(r.status)}
                             onChange={(e) => {
                               const v = e.target.value;
-                              // In Time badla → agar Out Time ab chhoti reh gayi to clear.
-                              setField(j, { inTime: v, ...(r.outTime && v && r.outTime < v ? { outTime: "" } : {}) });
+                              // Time In → auto Present/Late/Short-Leave per staff rules; keep Out Time in sync.
+                              const out = (r.outTime && v && r.outTime < v) ? "" : r.outTime;
+                              setField(j, { inTime: v, outTime: out, status: autoStatus(v, out, r.status) });
                             }}
                             style={{ width: 108, height: 34, fontSize: 12.5 }}
                           />
@@ -3572,8 +3584,12 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             type="time"
                             value={r.outTime}
                             min={r.inTime || undefined}
-                            disabled={r.status !== "present"}
-                            onChange={(e) => setField(j, { outTime: e.target.value })}
+                            disabled={!attended(r.status)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // Time Out before "Short Leave Before" → Short Leave.
+                              setField(j, { outTime: v, status: autoStatus(r.inTime, v, r.status) });
+                            }}
                             style={{ width: 108, height: 34, fontSize: 12.5 }}
                           />
                         </td>
@@ -3963,9 +3979,9 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 <div className="att-th att-rpt-sf-action">Action</div>
               </div>
               {staffData.map((s, i) => {
-                const stClass = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : "off") : "pending";
+                const stClass = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : s.status === "late" ? "late" : s.status === "short_leave" ? "sl" : s.status === "holiday" ? "holiday" : "off") : "pending";
                 const stLabel = s.marked
-                  ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "Leave" : "Pending")
+                  ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending")
                   : "Not Marked";
                 return (
                   <div key={s.empId} id={`rpt-staff-${s.empId}`} className={`att-row-wrap${highlightStaff === s.empId ? " att-row-highlight" : ""}`}>
@@ -4569,7 +4585,7 @@ useEffect(() => {
 const saveMarkSf = useCallback(async (rows, dateOverride) => {
   if (blockIfReadOnly()) return;
   // Validation: Out Time, In Time se pehle na ho (Present staff ke liye).
-  const badTime = rows.find((r) => r.status === "present" && r.inTime && r.outTime && r.outTime < r.inTime);
+  const badTime = rows.find((r) => (r.status === "present" || r.status === "late" || r.status === "short_leave") && r.inTime && r.outTime && r.outTime < r.inTime);
   if (badTime) {
     toast("Out Time Must Be Greater Than In Time", "error");
     return;
@@ -4901,7 +4917,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         const teacher = assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—";
         return {
           ...r, students, marked: anyMarked, teacher,
-          present: students.filter((s) => s.status === "present").length,
+          present: students.filter((s) => s.status === "present" || s.status === "late" || s.status === "short_leave").length,
           absent:  students.filter((s) => s.status === "absent").length,
           leave:   students.filter((s) => s.status === "leave").length,
         };
@@ -4913,7 +4929,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
     const saveStudentMarks = useCallback(async (idx, studentRows, dateOverride) => {
       if (blockIfReadOnly()) throw new Error("read-only");
       // Validation: Out Time, In Time se pehle na ho (Present students ke liye).
-      const badTime = studentRows.find((s) => s.status === "present" && s.inTime && s.outTime && s.outTime < s.inTime);
+      const badTime = studentRows.find((s) => (s.status === "present" || s.status === "late" || s.status === "short_leave") && s.inTime && s.outTime && s.outTime < s.inTime);
       if (badTime) {
         toast("Out Time must be greater than In Time.", "error");
         throw new Error("bad-time"); // modal khula rahe taake user theek kar sake
@@ -4941,9 +4957,9 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           id: 0, branchID, studentID: s.id, sessionID,
           classID: row.classID, sectionID: row.sectionID,
           attendanceDate, status: String(ST_STATUS_TO_CODE[s.status]), platform: "ERP",
-          // In/Out time sirf Present ke liye bhejo (staff jaisa); warna khali.
-          checkInTime:  s.status === "present" ? (s.inTime  || "") : "",
-          checkOutTime: s.status === "present" ? (s.outTime || "") : "",
+          // In/Out time Present ya Late ke liye bhejo; Absent/Leave par khali.
+          checkInTime:  (s.status === "present" || s.status === "late" || s.status === "short_leave") ? (s.inTime  || "") : "",
+          checkOutTime: (s.status === "present" || s.status === "late" || s.status === "short_leave") ? (s.outTime || "") : "",
           isNotificationGen: false, action: "insert",
           createdBy: employeeID, modifiedBy: employeeID,
         })));
@@ -4961,7 +4977,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         toast("Attendance saved successfully", "success");
         return;
       }
-      const present = studentRows.filter((s) => s.status === "present").length;
+      const present = studentRows.filter((s) => s.status === "present" || s.status === "late" || s.status === "short_leave").length;
       const absent  = studentRows.filter((s) => s.status === "absent").length;
       const leave   = studentRows.filter((s) => s.status === "leave").length;
       const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
@@ -4971,7 +4987,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         teacher: assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—",
         students: (r.students || []).map((st) => {
           const m = studentRows.find((x) => x.id === st.id);
-          return m ? { ...st, status: m.status, platform: "ERP", inTime: m.status === "present" ? (m.inTime || "") : "", outTime: m.status === "present" ? (m.outTime || "") : "" } : st;        }),
+          return m ? { ...st, status: m.status, platform: "ERP", inTime: (m.status === "present" || m.status === "late" || m.status === "short_leave") ? (m.inTime || "") : "", outTime: (m.status === "present" || m.status === "late" || m.status === "short_leave") ? (m.outTime || "") : "" } : st;        }),
         markedFrom: "ERP",
         markedTime: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
       } : r));
@@ -5239,6 +5255,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           else if (st === "absent") agg[idx].absent++;
           else if (st === "leave") agg[idx].leave++;
           else if (st === "late") { agg[idx].late++; agg[idx].present++; } // late counts within Present
+          else if (st === "short_leave") { agg[idx].present++; } // attended, left early
         });
       }));
 
@@ -5549,6 +5566,9 @@ return (staffData || []).map((s) => {
     if (st === "present") { present++; dayMarks[dayNum] = "present"; }
     else if (st === "absent") { absent++; dayMarks[dayNum] = "absent"; }
     else if (st === "leave") { leave++; dayMarks[dayNum] = "leave"; }
+    else if (st === "late") { present++; dayMarks[dayNum] = "present"; } // late counts within Present
+    else if (st === "short_leave") { present++; dayMarks[dayNum] = "present"; } // attended, left early
+    else if (st === "holiday") { dayMarks[dayNum] = "holiday"; }         // non-working mark (shown as H)
   });
   const marks = present + absent + leave;
   return {
@@ -5623,23 +5643,62 @@ useEffect(() => {
     }, [blockIfReadOnly]);
     // YEH CODE Attendance component ke ANDAR add karo (around line 2530)
 // Attendance component mein onSaveWeeklyOff ko update karo
-/* Working Hours & Attendance Rules — validates, then round-trips through
-   attendanceService before confirming success, same loading/error handling
-   every other Save & Update in this module follows. */
-const saveAttendanceSetupDraft = useCallback(async (draft) => {
+/* Attendance Setup — each card has its own Save & Update button and persists
+   ONLY its own backend endpoint (staff rules / student rules / geofence), so
+   saving one never rewrites the other two. Each handler validates just its own
+   fields, then merges the saved draft back into the shared setup so the screen
+   and the reports stay in sync. All three are always-on (their enable/disable
+   toggles were removed); the section forces the enabled flag in the draft. */
+const onSaveStaffRules = useCallback(async (draft) => {
   if (blockIfReadOnly()) return {};
-  const errors = validateAttendanceSetup(draft);
-  if (Object.keys(errors).length) {
-    toast("Fix the highlighted fields before saving.", "error");
-    return errors;
-  }
+  /* Only the staff time-rule fields gate this — geofence is a separate card. */
+  const errors = validateAttendanceSetup({ ...draft, geofenceEnabled: false });
+  if (Object.keys(errors).length) { toast("Fix the highlighted fields before saving.", "error"); return errors; }
   setSavingSetup(true);
   try {
-    const saved = await attendanceService.saveAttendanceSetup(draft);
-    setAttendanceSetup(saved);
-    toast("Attendance rules saved", "success");
+    await attendanceService.saveStaffAttendanceRules(draft);
+    setAttendanceSetup((prev) => ({ ...prev, ...draft }));
+    toast("Staff attendance rules saved", "success");
   } catch {
-    toast("Could not save attendance rules. Please try again.", "error");
+    toast("Could not save staff attendance rules. Please try again.", "error");
+  } finally {
+    setSavingSetup(false);
+  }
+  return {};
+}, [blockIfReadOnly, toast, setAttendanceSetup]);
+
+const onSaveStudentRules = useCallback(async (draft) => {
+  if (blockIfReadOnly()) return {};
+  /* The Students card validates its own (student*-prefixed) slice before
+     calling this, so there is nothing extra to re-check here. */
+  setSavingSetup(true);
+  try {
+    await attendanceService.saveStudentAttendanceRules(draft);
+    setAttendanceSetup((prev) => ({ ...prev, ...draft }));
+    toast("Student attendance rules saved", "success");
+  } catch {
+    toast("Could not save student attendance rules. Please try again.", "error");
+  } finally {
+    setSavingSetup(false);
+  }
+  return {};
+}, [blockIfReadOnly, toast, setAttendanceSetup]);
+
+const onSaveGeofence = useCallback(async (draft) => {
+  if (blockIfReadOnly()) return {};
+  /* Geo-fence is always on now — a usable location + radius is required. Only
+     the geofence fields block this save, not the staff/student time rules. */
+  const errors = validateAttendanceSetup({ ...draft, geofenceEnabled: true });
+  const GEO_KEYS = ["latitude", "longitude", "geofenceRadiusMeters", "maxAccuracyMeters"];
+  const geoErrors = Object.fromEntries(Object.entries(errors).filter(([k]) => GEO_KEYS.includes(k)));
+  if (Object.keys(geoErrors).length) { toast("Fix the highlighted fields before saving.", "error"); return geoErrors; }
+  setSavingSetup(true);
+  try {
+    await attendanceService.saveGeofenceAttendance(draft);
+    setAttendanceSetup((prev) => ({ ...prev, ...draft }));
+    toast("Geo-fence settings saved", "success");
+  } catch {
+    toast("Could not save geo-fence settings. Please try again.", "error");
   } finally {
     setSavingSetup(false);
   }
@@ -5871,7 +5930,9 @@ const saveHoliday = useCallback(async (payload) => {
             prevDaysAttendance={prevDaysAttendance}
             onTogglePrevDays={togglePrevDaysAttendance}
             attendanceSetup={attendanceSetup}
-            onSaveAttendanceSetup={saveAttendanceSetupDraft}
+            onSaveStaffRules={onSaveStaffRules}
+            onSaveStudentRules={onSaveStudentRules}
+            onSaveGeofence={onSaveGeofence}
             savingSetup={savingSetup}
           />
         )}
@@ -5969,6 +6030,7 @@ const saveHoliday = useCallback(async (payload) => {
             classIdx={markStIdx}
             markDate={markStDate}
             studentData={studentData}
+            attendanceSetup={attendanceSetup}
             onClose={() => { setMarkStIdx(null); setMarkStDate(null); }}
             onSaveMarks={(i, rows) => saveStudentMarks(i, rows, markStDate)}
             onLoadMarks={(i) => loadStudentMarks(i, markStDate)}
@@ -5980,6 +6042,7 @@ const saveHoliday = useCallback(async (payload) => {
           <MarkStaffModal
             staffData={staffData}
             markDate={markSfDate}
+            attendanceSetup={attendanceSetup}
             isUpdate={markSfDate ? staffData.some((s) => s.marked) : staffTodayMarked}
             onClose={() => {
               setMarkSfOpen(false);
@@ -6119,7 +6182,7 @@ const saveHoliday = useCallback(async (payload) => {
   .att-overlay { position:fixed; inset:0; background:rgba(10,22,40,.55); backdrop-filter:blur(5px); z-index:1000; display:none; align-items:center; justify-content:center; padding:16px; }
   .att-overlay.open { display:flex; }
   .att-modal { background:#fff; border-radius:16px; width:100%; max-width:640px; max-height:90vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,.22),0 8px 24px rgba(0,0,0,.1); border:1px solid #BFDBFE; animation:attModalIn .28s cubic-bezier(.34,1.26,.64,1) both; }
-  .att-modal-lg { max-width:820px; }
+  .att-modal-lg { max-width:1160px; }
   @keyframes attModalIn { from { opacity:0; transform:scale(.92) translateY(20px); } to { opacity:1; transform:none; } }
   .att-modal-header { display:flex; align-items:flex-start; justify-content:space-between; padding:20px 24px 16px; border-bottom:1px solid #BFDBFE; background:linear-gradient(135deg,rgba(30,58,138,.04),transparent); }
   .att-modal-header-left { display:flex; align-items:center; gap:12px; }
@@ -6149,6 +6212,9 @@ const saveHoliday = useCallback(async (payload) => {
   .att-radio-btn.p.active { border-color:#16A34A; background:rgba(22,163,74,.1); color:#16A34A; }
   .att-radio-btn.a.active { border-color:#DC2626; background:rgba(220,38,38,.1); color:#DC2626; }
   .att-radio-btn.l.active { border-color:#D97706; background:rgba(217,119,6,.1); color:#D97706; }
+  .att-radio-btn.late.active { border-color:#7C3AED; background:rgba(124,58,237,.1); color:#7C3AED; }
+  .att-radio-btn.sl.active { border-color:#EA580C; background:rgba(234,88,12,.1); color:#EA580C; }
+  .att-radio-btn.h.active { border-color:#2563EB; background:rgba(37,99,235,.1); color:#2563EB; }
 
   .att-confirm { background:#fff; border-radius:16px; width:100%; max-width:420px; box-shadow:0 30px 80px rgba(0,0,0,.22),0 8px 24px rgba(0,0,0,.1); border:1px solid #BFDBFE; padding:28px; animation:attModalIn .25s cubic-bezier(.34,1.26,.64,1) both; text-align:center; }
   .att-confirm-icon { width:52px; height:52px; border-radius:50%; font-size:22px; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; }
@@ -6174,6 +6240,9 @@ const saveHoliday = useCallback(async (payload) => {
   .att-status-badge.marked  { background:rgba(22,163,74,.1);  color:#16A34A; border:1px solid rgba(22,163,74,.25); }
   .att-status-badge.pending { background:rgba(220,38,38,.08); color:#DC2626; border:1px solid rgba(220,38,38,.2); }
   .att-status-badge.off     { background:rgba(100,116,139,.1);color:#64748B; border:1px solid rgba(100,116,139,.2); }
+  .att-status-badge.late    { background:rgba(124,58,237,.1); color:#7C3AED; border:1px solid rgba(124,58,237,.25); }
+  .att-status-badge.sl      { background:rgba(234,88,12,.1);  color:#EA580C; border:1px solid rgba(234,88,12,.25); }
+  .att-status-badge.holiday { background:rgba(37,99,235,.1);  color:#2563EB; border:1px solid rgba(37,99,235,.25); }
 
   .att-mark-btn-primary { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:9999px; border:none; background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 50%,#2563EB 100%); color:#fff; font-family:inherit; font-size:11.5px; font-weight:700; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); white-space:nowrap; box-shadow:0 2px 10px rgba(37,99,235,.3); position:relative; overflow:hidden; }
   .att-mark-btn-primary::after { content:""; position:absolute; top:-50%; left:-60%; width:40%; height:200%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent); transform:skewX(-20deg); transition:left .5s ease; }
@@ -6567,6 +6636,9 @@ const saveHoliday = useCallback(async (payload) => {
   [data-theme="dark"] .att-status-badge.marked { background:rgba(34,197,94,.15); color:#86EFAC; border-color:rgba(34,197,94,.3); }
   [data-theme="dark"] .att-status-badge.pending { background:rgba(217,119,6,.15); color:#FCD34D; border-color:rgba(217,119,6,.3); }
   [data-theme="dark"] .att-status-badge.off { background:rgba(124,58,237,.15); color:#C4B5FD; border-color:rgba(124,58,237,.3); }
+  [data-theme="dark"] .att-status-badge.late { background:rgba(124,58,237,.18); color:#C4B5FD; border-color:rgba(124,58,237,.35); }
+  [data-theme="dark"] .att-status-badge.sl { background:rgba(234,88,12,.18); color:#FDBA74; border-color:rgba(234,88,12,.35); }
+  [data-theme="dark"] .att-status-badge.holiday { background:rgba(37,99,235,.18); color:#93C5FD; border-color:rgba(37,99,235,.35); }
   [data-theme="dark"] .att-present-badge { background:rgba(22,163,74,.15); color:#86EFAC; }
   [data-theme="dark"] .att-absent-badge  { background:rgba(220,38,38,.15); color:#FCA5A5; }
   [data-theme="dark"] .att-leave-badge   { background:rgba(217,119,6,.15); color:#FCD34D; }
@@ -6622,6 +6694,9 @@ const saveHoliday = useCallback(async (payload) => {
   [data-theme="dark"] .att-radio-btn.p.active { background:var(--success); border-color:var(--success); color:#fff; }
   [data-theme="dark"] .att-radio-btn.a.active { background:var(--error); border-color:var(--error); color:#fff; }
   [data-theme="dark"] .att-radio-btn.l.active { background:var(--warning); border-color:var(--warning); color:#fff; }
+  [data-theme="dark"] .att-radio-btn.late.active { background:#7C3AED; border-color:#7C3AED; color:#fff; }
+  [data-theme="dark"] .att-radio-btn.sl.active { background:#EA580C; border-color:#EA580C; color:#fff; }
+  [data-theme="dark"] .att-radio-btn.h.active { background:#2563EB; border-color:#2563EB; color:#fff; }
   [data-theme="dark"] .att-radio-group { background:transparent; }
 
   /* Report picker / preview */

@@ -1470,7 +1470,7 @@ const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
       return s <= end && e >= start;
     };
     const dOnly = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const monthName = new Date(calYear, calMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const monthName = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
     if (view === 'Year') {
       const start = new Date(calYear, 0, 1, 0, 0, 0);
