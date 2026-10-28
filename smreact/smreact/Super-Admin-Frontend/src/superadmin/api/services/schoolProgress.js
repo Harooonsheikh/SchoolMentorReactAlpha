@@ -880,7 +880,7 @@ export function txnRateToUi(d) {
 
 /** GET — abhi mojood rate config (record na ho to sab 0/khali). */
 export async function getTransactionRateConfig() {
-  const url = `${SA_ADMIN_API_BASE}${EP.schoolProgress.txnRateGet()}`;
+  const url = `${SA_ADMIN_API_BASE}/SchoolmentorChainManagementAPI/api/Network_Setup/GetCharges`;
   const json = await getJson(url, 'transaction rate config');
   const data = json?.data ?? json?.Data ?? null;
   return txnRateToUi(data || {});
@@ -899,22 +899,14 @@ export async function saveTransactionRateConfig(ui = {}) {
   const providerCost   = Number(ui.providerCost) || 0;
   const nowIso = new Date().toISOString();
   const body = {
-    id,
     customerTransactionCharge: customerCharge,
     costPerTransaction:        providerCost,
-    effectiveFrom:             toIsoDate(ui.effectiveFrom),
-    schoolMentorMargin:        customerCharge - providerCost,
-    /* naye record par createdBy = abhi wala user; update par purana rakho. */
-    createdBy:  id > 0 ? (Number(ui.createdBy) || me) : me,
-    createAt:   nowIso,
-    updatedBy:  id > 0 ? me : 0,
-    updatedAt:  nowIso,
-    isActive:   true,
+    updatedBy:                 me,
   };
   let res;
   try {
-    res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.txnRateSave()}`, {
-      method: 'POST',
+    res = await fetch(`${SA_ADMIN_API_BASE}/SchoolmentorChainManagementAPI/api/Network_Setup/UpdateCharges`, {
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         accept: '*/*',

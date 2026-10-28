@@ -15,6 +15,25 @@ import {
 import BillingAutomationTab from './BillingAutomation';
 import NotificationsRemindersTab from './BillingNotificationsTab';
 import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
+import { SA_API_HOST } from './api/config';
+const NETWORK_SETUP_BASE = `${SA_API_HOST}/SchoolmentorChainManagementAPI/api/Network_Setup`;
+
+const branchCredentialApi = {
+  save: async ({ branchId, username, password, createdBy = 0 }) => {
+    const res = await fetch(`${NETWORK_SETUP_BASE}/AddBranchCredential`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branchId, username, password, createdBy }),
+    });
+    if (!res.ok) throw new Error('Could not save branch credential');
+    return res.json().catch(() => ({}));
+  },
+  getByBranch: async (branchId) => {
+    const res = await fetch(`${NETWORK_SETUP_BASE}/GetByBranchId?branchId=${branchId}`);
+    if (!res.ok) throw new Error('Could not load branch credential');
+    return res.json().catch(() => null);
+  },
+};
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOLS PAYMENT (Payment Status) — Super Admin module
@@ -1885,8 +1904,9 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
   const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '', oneLinkUserName: '', oneLinkPassword: '', oneLink: defaultOneLink(), lateSurcharge: 0 };
   const [showOlPass, setShowOlPass] = useState(false);
   const [f, setF] = useState({ ...init, oneLink: { ...defaultOneLink(), ...(init.oneLink || {}) }, lateSurcharge: init.lateSurcharge ?? 0 });
-  const [summary, setSummary] = useState(existing || null);
+   const [summary, setSummary] = useState(existing || null);
   const [loadingSummary, setLoadingSummary] = useState(true);
+  const [credLoading, setCredLoading] = useState(true);
   /* Form sirf tab tak API se bharta hai jab tak user ne khud kuch na chhua ho —
      slow response beech me typing na kha jaye. */
   const dirty = useRef(false);
@@ -1900,7 +1920,7 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
     });
   };
 
-  /* Modal khulte hi usi branch ka TAAZA summary: GET /summary?branchId=&type=.
+   /* Modal khulte hi usi branch ka TAAZA summary: GET /summary?branchId=&type=.
      payStore purana ho sakta hai (kisi aur ne backend par badla ho), aur upar
      ki strip isi record se banti hai. */
   useEffect(() => {
@@ -1914,9 +1934,24 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
       })
       .catch(() => { /* strip optional — form phir bhi bhara ja sakta hai */ })
       .finally(() => { if (alive) setLoadingSummary(false); });
+
+    setCredLoading(true);
+    branchCredentialApi.getByBranch(s.id)
+      .then((cred) => {
+        if (!alive || !cred) return;
+        if (!dirty.current) {
+          setF((prev) => ({
+            ...prev,
+            oneLinkUserName: cred.username || prev.oneLinkUserName || '',
+            oneLinkPassword: cred.password || prev.oneLinkPassword || '',
+          }));
+        }
+      })
+      .catch(() => { /* credential optional */ })
+      .finally(() => { if (alive) setCredLoading(false); });
+
     return () => { alive = false; };
   }, [s.id]);
-
   const preview = (parseFloat(f.perStudentRate) || 0) * (parseInt(f.studentCount, 10) || 0);
   const save = () => {
     if (saving) return;
@@ -1924,7 +1959,15 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
     if (f.formula === 'perstudent' && !f.perStudentRate) { toast?.('Please enter the per student rate', 'warn'); return; }
     if (f.freeTrial && !f.trialDays) { toast?.('Please enter trial duration in days', 'warn'); return; }
     /* id saath jata hai — mojood ho to UPDATE, warna ADD (branchID+type unique). */
-    onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(),oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
+    if ((f.oneLinkUserName || '').trim() || (f.oneLinkPassword || '').trim()) {
+      branchCredentialApi.save({
+        branchId: s.id,
+        username: (f.oneLinkUserName || '').trim(),
+        password: (f.oneLinkPassword || '').trim(),
+        createdBy: 0,
+      }).catch(() => { /* non-blocking — main setup still saves */ });
+    }
+    onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(), oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
   };
   return (
     <Ov cls="pay-ov" onClose={onClose} wrap="pay-modal">

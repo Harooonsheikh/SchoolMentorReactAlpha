@@ -52,8 +52,18 @@ export default function OneLinkOverviewSection({ toast }) {
      Rates modal isi ko padhta/likhta hai. Report ki per-txn rates isi se
      match karti hain, magar effectiveFrom sirf yahin se aati hai. ── */
   const [rateConfig, setRateConfig] = useState(TXN_RATE_CONFIG_INITIAL);
-  useEffect(() => { transactionsApi.getRateConfig().then(setRateConfig).catch(() => {}); }, []);
-
+useEffect(() => {
+  fetch('https://sandbox-alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/api/Network_Setup/GetCharges', {
+    headers: { accept: '*/*' }
+  })
+    .then((r) => r.json())
+    .then((data) => setRateConfig({
+      customerCharge: data.customerTransactionCharge ?? 0,
+      providerCost: data.costPerTransaction ?? 0,
+      effectiveFrom: data.effectiveFrom || '',
+    }))
+    .catch(() => {});
+}, []);
   /* ── 1LINK report: server khud totals + per-school breakdown deta hai.
      Current + previous period dono EK saath (previous sirf "vs" badges ke
      liye). Period badalte hi dobara load hota hai. ── */
@@ -237,8 +247,22 @@ export default function OneLinkOverviewSection({ toast }) {
           onClose={() => setShowRateConfig(false)}
           onSave={async (payload) => {
             try {
-              const saved = await transactionsApi.updateRateConfig(payload);
-              setRateConfig(saved);
+           const res = await fetch('https://sandbox-alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/api/Network_Setup/UpdateCharges', {
+  method: 'PUT',
+  headers: { accept: '*/*', 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    customerTransactionCharge: payload.customerTransactionCharge,
+    costPerTransaction: payload.costPerTransaction,
+    updatedBy: 0,
+  }),
+});
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const saved = {
+  customerCharge: payload.customerTransactionCharge,
+  providerCost: payload.costPerTransaction,
+  effectiveFrom: payload.effectiveFrom || '',
+};
+setRateConfig(saved);
               setShowRateConfig(false);
               toast?.('Transaction rate configuration updated', 'success');
             } catch (err) {
@@ -464,8 +488,14 @@ function RateConfigModal({ rateConfig, onClose, onSave }) {
     if (saving) return;
     setSaving(true);
     try {
-      await onSave({ ...f, customerCharge: parseFloat(f.customerCharge) || 0, providerCost: parseFloat(f.providerCost) || 0 });
-    } catch {
+await onSave({ 
+  ...f, 
+  customerCharge: parseFloat(f.customerCharge) || 0, 
+  providerCost: parseFloat(f.providerCost) || 0,
+  customerTransactionCharge: parseFloat(f.customerCharge) || 0,
+  costPerTransaction: parseFloat(f.providerCost) || 0,
+  updatedBy: 0
+});    } catch {
       setSaving(false);
     }
   };
