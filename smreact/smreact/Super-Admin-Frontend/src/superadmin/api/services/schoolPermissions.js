@@ -33,7 +33,7 @@
    defaults, since it carries no permission data to honour.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError, buildQuery } from '../client';
-import { SA_ADMIN_API_BASE, ERP_API_BASE, getSuperAdminToken, getSuperAdminIdentity } from '../config';
+import { SA_ADMIN_API_BASE, getSuperAdminToken, getSuperAdminIdentity, erpPublicUrl } from '../config';
 import EP from '../endpoints';
 import { ALL_MODULE_KEYS, defaultPerms, normalizeChatMode } from '../../permissionsData';
 
@@ -392,12 +392,7 @@ export async function savePermissions(branchId, perms) {
    JWT mat bhejo — ERP API us par 403 deti hai. */
 
 function mobileAppPermissionUrl() {
-  try {
-    if (typeof window !== 'undefined' && /localhost|127\.0\.0\.1/i.test(window.location.hostname)) {
-      return 'https://alphaapi.schoolmentor.ai/manage-mobileapp-permission';
-    }
-  } catch { /* ignore */ }
-  return `${ERP_API_BASE}/manage-mobileapp-permission`;
+  return erpPublicUrl('/manage-mobileapp-permission');
 }
 
 function boolFlag(v, fallback = false) {

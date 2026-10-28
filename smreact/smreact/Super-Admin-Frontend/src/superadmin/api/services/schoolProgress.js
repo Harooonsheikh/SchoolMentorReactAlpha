@@ -24,7 +24,7 @@
    demo rows deti thin, taake table/modals jaise hain waise chalte rahein.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError, buildQuery } from '../client';
-import { SA_ADMIN_API_BASE, ERP_API_BASE, getSuperAdminToken } from '../config';
+import { SA_ADMIN_API_BASE, getSuperAdminToken, erpPublicUrl } from '../config';
 import EP from '../endpoints';
 import { emptyUsageMods, emptyMobileMods } from '../../statusData';
 /* Card / training rows par "kis ne banaya" — logged-in Super Admin ki wahi id
@@ -741,21 +741,8 @@ export function reportToMobileUsage(report = {}) {
   return { mods, logins, time: formatHms(totalSec) };
 }
 
-/* Swagger (ERP API, Super-Admin nahi):
-     POST https://alphaapi.schoolmentor.ai/manage-usertimespend
-     POST https://alphaapi.schoolmentor.ai/usertimespend-report
-   Local :3001 par relative path Express 404 deta hai.
-   Support module ki tarah localhost se seedha alphaapi — CORS me :3001 hai.
-   Deployed host par same-origin relative path (IIS rewrite). */
-function erpPublicUrl(path) {
-  try {
-    if (typeof window !== 'undefined' && /localhost|127\.0\.0\.1/i.test(window.location.hostname)) {
-      return `https://alphaapi.schoolmentor.ai${path}`;
-    }
-  } catch { /* ignore */ }
-  return `${ERP_API_BASE}${path}`;
-}
-
+/* Swagger (ERP API, Super-Admin nahi): manage-usertimespend / usertimespend-report.
+   Host follows SA_API_HOST (sandbox ↔ live) via erpPublicUrl(). */
 function userTimeSpendUrl() {
   return erpPublicUrl('/manage-usertimespend');
 }

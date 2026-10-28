@@ -206,14 +206,10 @@ export const EP = {
        "Invalid @Action value. Use GET, UPSERT, or DELETE."). UPSERT hi
        pehli baar insert aur baad me update, dono karta hai. */
     assignedUser: () => `${SA_ROOT}/api/AHM_School_Progress/manage_assignedUser`,
-    /* POST https://alphaapi.schoolmentor.ai/manage-usertimespend
-         body: { action: "get", branchID, userID:0, date, type: "erp", … }
-       Super-Admin API nahi — ERP swagger root path. */
-    userTimeSpend: () => 'https://alphaapi.schoolmentor.ai/manage-usertimespend',
-    /* POST https://alphaapi.schoolmentor.ai/usertimespend-report
-         body: { branchID, month: "YYYY-MM", type: "erp" }
-       Monthly Progress — per ScreenName TotalTime + totalEntries. */
-    userTimeSpendReport: () => 'https://alphaapi.schoolmentor.ai/usertimespend-report',
+    /* POST /manage-usertimespend — ERP root path; host = SA_API_HOST (sandbox/live). */
+    userTimeSpend: () => '/manage-usertimespend',
+    /* POST /usertimespend-report — Monthly Progress. */
+    userTimeSpendReport: () => '/usertimespend-report',
   },
   /* ── E-Tube — LIVE SchoolMentorSuperAdminAPI
      (swagger: .../Schoolmentorsuperadminapi/swagger/index.html).

@@ -25,41 +25,37 @@ export default defineConfig({
          seedha alphaapi call karne par CORS block karta hai (uska allowlist
          sirf localhost:3000 rakhta hai, ye app 3002 par chalti hai).
          ▶ Local .NET backend par kaam karna ho to yahan target badal lein. */
+      /* Default proxy target = sandbox. Override via VITE_DEV_API_PROXY if needed. */
       '/api': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
-      /* Chain-Management API (networks, network-schools). Seedha alphaapi call
-         nahi kar sakte: uska CORS allowlist sirf localhost:3000 (ERP) rakhta
-         hai, ye app 3002 par chalti hai — browser block kar deta. Proxy se
-         request same-origin ho jaati hai, koi CORS nahi.
-         Deploy par bhi yahi rewrite chahiye (ERP ke public/web.config jaisa). */
+      /* Chain-Management API (networks, network-schools). */
       '/SchoolmentorChainManagementAPI': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
-      /* Super-Admin API (school module permissions) — wahi CORS wajah. */
+      /* Super-Admin API (school module permissions). */
       '/SchoolMentorSuperAdminAPI': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
-      /* ERP screen-time — School Progress View Details.
-         Path API root par hai (/manage-usertimespend), /api ke neeche nahi. */
+      /* ERP screen-time — School Progress View Details. */
       '/manage-usertimespend': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
       '/usertimespend-report': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
       '/manage-mobileapp-permission': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
@@ -72,17 +68,17 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/manage-usertimespend': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
       '/usertimespend-report': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },
       '/manage-mobileapp-permission': {
-        target: 'https://alphaapi.schoolmentor.ai',
+        target: process.env.VITE_DEV_API_PROXY || 'https://sandbox-alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },

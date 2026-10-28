@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import TutorialButton from '../../components/TutorialButton'
 import {
   moduleIcon, moduleLabel,
-  loadRequests, saveRequests, loadChainApprovers, saveChainApprovers,
-  getChainVisible, getPending, getHistory, decideRequest,
+  loadChainApprovers, saveChainApprovers,
+  getPending, getHistory,
 } from './data'
+import {
+  fetchAllNetworkApprovals, processNetworkApproval,
+  approvalGateMessage, fetchApprovalType,
+} from '../../api/approvalsApi'
 import { loadHr, fullName, initials } from '../HumanResource/data'
 import { hasPerm } from '../UserPermissions/permissionsData'
 import './Approvals.css'
@@ -114,6 +118,9 @@ function GroupCard({ label, value, tone }) {
    the User Permissions integration requires. ═══════════════════════════════════════════════════════════════════ */
 export default function Approvals() {
   const [requests, setRequests] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [deciding, setDeciding] = useState(false)
   const [tab, setTab] = useState('pending')
   const [selected, setSelected] = useState(null)
   const [reviewMode, setReviewMode] = useState(null)
@@ -125,32 +132,78 @@ export default function Approvals() {
   const staff = useMemo(() => loadHr().emps, [])
   const viewer = staff.find((e) => e.id === viewerId)
 
-  useEffect(() => { setRequests(loadRequests()); setChainApprovers(loadChainApprovers()) }, [])
+  const reload = useCallback(async () => {
+    setLoading(true)
+    setLoadError('')
+    try {
+      const { rows } = await fetchAllNetworkApprovals()
+      setRequests(rows)
+    } catch (err) {
+      setRequests([])
+      setLoadError(err?.message || 'Could not load approvals')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { reload(); setChainApprovers(loadChainApprovers()) }, [reload])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
   const fire = (text, type = 'success') => setToast({ text, type })
 
-  const commit = (next) => { setRequests(next); saveRequests(next) }
   const can = (action) => !viewerId || hasPerm(viewerId, `approvals.${action === 'manage_settings' ? 'approvers' : 'review'}`, action)
 
-  const visible = useMemo(() => getChainVisible(requests), [requests])
-  const pending = useMemo(() => getPending(visible), [visible])
-  const history = useMemo(() => getHistory(visible), [visible])
+  /* List already filtered to approvalType=Chain per branch (module-permission).
+     School / Disable branches never appear here. */
+  const pending = useMemo(() => getPending(requests), [requests])
+  const history = useMemo(() => getHistory(requests), [requests])
   const rows = tab === 'pending' ? pending : history
 
   const stats = {
     pending: pending.length,
-    approved: visible.filter((r) => r.status === 'approved').length,
-    rejected: visible.filter((r) => r.status === 'rejected').length,
-    total: visible.length,
+    approved: requests.filter((r) => r.status === 'approved').length,
+    rejected: requests.filter((r) => r.status === 'rejected').length,
+    total: requests.length,
   }
 
-  const openDetail = (r, mode) => { setSelected(r); setReviewMode(mode) }
+  const assertChainManaged = async (row) => {
+    const mode = await fetchApprovalType(row.schoolId)
+    const msg = approvalGateMessage(mode, row.school)
+    if (msg) {
+      fire(msg, 'error')
+      return false
+    }
+    return true
+  }
+
+  const openDetail = async (r, mode) => {
+    /* View is always allowed for chain-listed rows. Approve/Reject re-check
+       School Permissions in case the school flipped to School/Disable. */
+    if (mode === 'approve' || mode === 'reject') {
+      const ok = await assertChainManaged(r)
+      if (!ok) return
+    }
+    setSelected(r)
+    setReviewMode(mode)
+  }
   const closeDetail = () => { setSelected(null); setReviewMode(null) }
 
-  const decide = (id, decision, comment) => {
-    commit(decideRequest(requests, id, decision, { reviewedBy: viewer ? fullName(viewer) : 'Chain Admin', comment }))
-    fire(decision === 'approve' ? 'Request approved' : 'Request rejected')
-    closeDetail()
+  const decide = async (id, decision) => {
+    const row = requests.find((r) => r.id === id)
+    if (!row?.apiId) { fire('This request has no approval id', 'error'); return }
+    if (deciding) return
+    setDeciding(true)
+    try {
+      const ok = await assertChainManaged(row)
+      if (!ok) return
+      await processNetworkApproval(row.apiId, decision)
+      fire(decision === 'approve' ? 'Request approved' : 'Request rejected')
+      closeDetail()
+      await reload()
+    } catch (err) {
+      fire(err?.message || 'Could not update request', 'error')
+    } finally {
+      setDeciding(false)
+    }
   }
 
   const saveApprovers = (ids) => { setChainApprovers(ids); saveChainApprovers(ids); fire('Chain approvers updated'); setApproversOpen(false) }
@@ -203,13 +256,29 @@ export default function Approvals() {
       <div className="al-table-card">
         <div className="al-table-h">
           <div className="al-table-title"><i className="fa-solid fa-list-check" /> {TABS.find((t) => t.id === tab)?.label}<span className="al-count-badge">{rows.length} {rows.length === 1 ? 'request' : 'requests'}</span></div>
+          <button type="button" className="ap-btn ap-btn-ghost" onClick={reload} disabled={loading} title="Refresh">
+            <i className={`fa-solid fa-rotate${loading ? ' fa-spin' : ''}`} /> Refresh
+          </button>
         </div>
 
-        {rows.length === 0 ? (
+        {loading ? (
+          <div className="up-empty">
+            <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" /></div>
+            <div className="up-empty-t">Loading approvals…</div>
+            <div className="up-empty-s">Fetching requests from schools in your network.</div>
+          </div>
+        ) : loadError ? (
+          <div className="up-empty">
+            <div className="up-empty-ic"><i className="fa-solid fa-triangle-exclamation" /></div>
+            <div className="up-empty-t">Could not load approvals</div>
+            <div className="up-empty-s">{loadError}</div>
+            <button type="button" className="ap-btn ap-btn-ghost" style={{ marginTop: 12 }} onClick={reload}><i className="fa-solid fa-rotate" /> Try again</button>
+          </div>
+        ) : rows.length === 0 ? (
           <div className="up-empty">
             <div className="up-empty-ic"><i className="fa-solid fa-inbox" /></div>
             <div className="up-empty-t">{tab === 'pending' ? 'Nothing waiting on a decision' : 'No reviewed requests yet'}</div>
-            <div className="up-empty-s">{tab === 'pending' ? 'New Chain Managed requests from your schools will appear here for review.' : 'Approved and rejected requests will be listed here for reference.'}</div>
+            <div className="up-empty-s">{tab === 'pending' ? 'Only schools set to Chain Managed Approval in School Permissions appear here. School-managed or disabled branches are hidden.' : 'Approved and rejected Chain Managed requests will be listed here for reference.'}</div>
           </div>
         ) : (
           <div className="al-table-scroll">
@@ -232,7 +301,7 @@ export default function Approvals() {
                     <td className="al-td-details">{r.entitySummary}</td>
                     <td>{r.requestedBy}</td>
                     <td className="al-td-time">{fmtDateTime(r.requestedAt)}</td>
-                    <td><span className={`up-badge up-badge--${statusTone(r.status)}`}>{r.status}</span></td>
+                    <td><span className={`up-badge up-badge--${statusTone(r.status)}`}>{r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1) : '—'}</span></td>
                     {tab !== 'pending' && <td>{r.reviewedBy || '—'}</td>}
                     <td style={{ textAlign: 'right' }}>
                       <div className="ap-row-actions">
@@ -249,7 +318,7 @@ export default function Approvals() {
         )}
       </div>
 
-      {selected && <ApprovalDetailModal request={selected} mode={reviewMode} onClose={closeDetail} onDecide={decide} />}
+      {selected && <ApprovalDetailModal request={selected} mode={reviewMode} deciding={deciding} onClose={closeDetail} onDecide={decide} />}
       {approversOpen && <ApproversModal staff={staff} selected={chainApprovers} onClose={() => setApproversOpen(false)} onSave={saveApprovers} />}
 
       {toast && createPortal(
@@ -260,7 +329,7 @@ export default function Approvals() {
   )
 }
 
-function ApprovalDetailModal({ request: r, mode, onClose, onDecide }) {
+function ApprovalDetailModal({ request: r, mode, deciding, onClose, onDecide }) {
   const [comment, setComment] = useState('')
   const isReview = mode === 'approve' || mode === 'reject'
 
@@ -296,7 +365,7 @@ function ApprovalDetailModal({ request: r, mode, onClose, onDecide }) {
             <div className="al-detail-cell"><span className="al-detail-lbl">Module</span><span className="al-detail-val">{moduleLabel(r.module)}</span></div>
             <div className="al-detail-cell"><span className="al-detail-lbl">Requested By</span><span className="al-detail-val">{r.requestedBy}</span></div>
             <div className="al-detail-cell"><span className="al-detail-lbl">Requested At</span><span className="al-detail-val">{fmtDateTime(r.requestedAt)}</span></div>
-            <div className="al-detail-cell"><span className="al-detail-lbl">Status</span><span className="al-detail-val"><span className={`up-badge up-badge--${statusTone(r.status)}`}>{r.status}</span></span></div>
+            <div className="al-detail-cell"><span className="al-detail-lbl">Status</span><span className="al-detail-val"><span className={`up-badge up-badge--${statusTone(r.status)}`}>{r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1) : '—'}</span></span></div>
             {r.reviewedBy && (
               <>
                 <div className="al-detail-cell"><span className="al-detail-lbl">Reviewed By</span><span className="al-detail-val">{r.reviewedBy}</span></div>
@@ -357,9 +426,17 @@ function ApprovalDetailModal({ request: r, mode, onClose, onDecide }) {
         </div>
 
         <div className="apm-foot">
-          <button type="button" className="ap-btn ap-btn-ghost" onClick={onClose}>{isReview ? 'Cancel' : 'Close'}</button>
-          {mode === 'approve' && <button type="button" className="ap-btn ap-btn-approve" onClick={() => onDecide(r.id, 'approve', comment)}><i className="fa-solid fa-check" /> Approve Request</button>}
-          {mode === 'reject' && <button type="button" className="ap-btn ap-btn-reject" onClick={() => onDecide(r.id, 'reject', comment)}><i className="fa-solid fa-xmark" /> Reject Request</button>}
+          <button type="button" className="ap-btn ap-btn-ghost" onClick={onClose} disabled={deciding}>{isReview ? 'Cancel' : 'Close'}</button>
+          {mode === 'approve' && (
+            <button type="button" className="ap-btn ap-btn-approve" disabled={deciding} onClick={() => onDecide(r.id, 'approve', comment)}>
+              {deciding ? <><i className="fa-solid fa-spinner fa-spin" /> Approving…</> : <><i className="fa-solid fa-check" /> Approve Request</>}
+            </button>
+          )}
+          {mode === 'reject' && (
+            <button type="button" className="ap-btn ap-btn-reject" disabled={deciding} onClick={() => onDecide(r.id, 'reject', comment)}>
+              {deciding ? <><i className="fa-solid fa-spinner fa-spin" /> Rejecting…</> : <><i className="fa-solid fa-xmark" /> Reject Request</>}
+            </button>
+          )}
         </div>
       </div>
     </div>,
