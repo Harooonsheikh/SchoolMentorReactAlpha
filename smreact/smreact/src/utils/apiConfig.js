@@ -156,39 +156,62 @@ export function buildChainApiUrl(path = '') {
 }
 
 // ── Uploaded media (branch logos, staff photos, documents) ──────
-// The API stamps every file URL from the REQUEST host, so what comes back is
-// only ever right by accident:
-//   • called directly at the IP  → http://IP:4100/UploadedImages/...
-//                                  (blocked as mixed content on our https site)
-//   • called through the IIS proxy → http://localhost:4100/UploadedImages/...
-//                                  (in a browser "localhost" is the user's OWN
-//                                   machine — nothing is there, so it 404s)
-// resolveMediaUrl() throws the stamped host away and keeps only the storage
-// path, serving it from the https media host — so the file loads whatever the
-// API stamped. EVERY file path from the API must go through it.
-export const MEDIA_BASE = DEFAULT_URL;
+// The API returns the real file location (host + /UploadedImages|Documents/…).
+// That path is the image — local and production must both show it. We do NOT
+// throw the API host away and restamp it onto the ERP SPA origin: the build
+// used to do that, so logos/photos pointed at erp.schoolmentor.ai (no files
+// there) instead of the API box that actually stores them.
+//
+// The only URLs we rewrite are ones a browser cannot load:
+//   • localhost / 127.0.0.1  (the API's own machine, not the user's)
+//   • a relative storage path (needs a host; use REACT_APP_MEDIA_BASE)
+export const MEDIA_BASE = stripSlash(process.env.REACT_APP_MEDIA_BASE) || DEFAULT_URL;
 
-/** Media host — always follows getBaseUrl (sandbox ↔ production together). */
+/** Host for relative upload paths. Prefer REACT_APP_MEDIA_BASE so images stay
+    on the API box even when getBaseUrl() is the ERP site origin. */
 export function getMediaBase() {
-  return getBaseUrl();
+  return stripSlash(process.env.REACT_APP_MEDIA_BASE) || getBaseUrl();
 }
 
-/* Every folder the API serves uploads from. /UploadedImages holds branch logos
-   and staff/student photos; /UploadedDocuments holds employee documents and
-   issue letters. Matching on the folder (not just the host) is what makes this
-   work no matter which host the API stamped — IP, localhost, or our own origin. */
+/* Storage folders the API serves files from. Used only for relative paths
+   (and for loopback URLs we have to rebuild). */
 const UPLOAD_FOLDERS = /\/(UploadedImages|UploadedDocuments|Uploads)\/.*/i;
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$/i;
 
 export function resolveMediaUrl(raw) {
   if (!raw) return '';
   const u = String(raw).trim();
-  if (!u || u.toUpperCase() === 'N/A') return '';      // API's "no file" placeholder
-  if (u.startsWith('data:')) return u;                 // inline data URI — leave it
+  if (!u || u.toUpperCase() === 'N/A') return '';
+  if (u.startsWith('data:') || /^blob:/i.test(u)) return u;
+
   const media = getMediaBase();
-  const m = u.match(UPLOAD_FOLDERS);                   // pull the stored path
-  if (m) return `${media}${m[0]}`;                     // serve it from the media host
-  if (/^https?:\/\//i.test(u)) return u;               // some other absolute URL
-  return `${media}${u.startsWith('/') ? u : `/${u}`}`;
+  const withMediaHost = (pathAndQuery) => {
+    const p = pathAndQuery.startsWith('/') ? pathAndQuery : `/${pathAndQuery}`;
+    return `${media}${p}`;
+  };
+
+  if (/^https?:\/\//i.test(u)) {
+    try {
+      const parsed = new URL(u);
+      if (LOOPBACK_HOST.test(parsed.hostname)) {
+        return withMediaHost(`${parsed.pathname}${parsed.search}`);
+      }
+      /* Keep the API's real host + path. On an https page, upgrade http→https
+         so the browser does not block the image as mixed content — same file. */
+      if (typeof window !== 'undefined'
+          && window.location.protocol === 'https:'
+          && parsed.protocol === 'http:') {
+        parsed.protocol = 'https:';
+      }
+      return parsed.toString();
+    } catch {
+      return u;
+    }
+  }
+
+  const stored = u.match(UPLOAD_FOLDERS);
+  if (stored) return withMediaHost(stored[0]);
+  return withMediaHost(u);
 }
 
 // ── Session guard ───────────────────────────────────────────────
