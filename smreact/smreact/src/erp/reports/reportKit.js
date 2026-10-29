@@ -41,9 +41,14 @@ import { downloadHtmlAsXlsx } from '../../utils/excelExport';
    Advance, Daily Receiving …) har branch par wahi chhapti thin. Ab
    /report-header/{branchID} se aata hai aur branchID ke saath cache hota hai. */
 const RK_SS_KEY = 'reportBranchHeader';
-const RK_EMPTY = { branchID: null, name: '', logo: '', address: '', phone: '', email: '', session: '' };
+const RK_EMPTY = { branchID: null, name: '', logoRaw: '', address: '', phone: '', email: '', session: '' };
 let _branchCache = (() => {
-  try { const v = JSON.parse(sessionStorage.getItem(RK_SS_KEY) || 'null'); return v && v.branchID ? v : { ...RK_EMPTY }; }
+  try {
+    const v = JSON.parse(sessionStorage.getItem(RK_SS_KEY) || 'null');
+    if (!v || !v.branchID) return { ...RK_EMPTY };
+    if (v.logo !== undefined && v.logoRaw === undefined) { v.logoRaw = v.logo; delete v.logo; }
+    return v;
+  }
   catch { return { ...RK_EMPTY }; }
 })();
 let _branchLoading = null;
@@ -61,7 +66,7 @@ export function loadReportBranch() {
       _branchCache = {
         branchID,
         name:    d.branchName || d.name || '',
-        logo:    d.branchLogo ? resolveMediaUrl(d.branchLogo) : '',
+   logoRaw:  d.branchLogo || '',
         address: d.address || d.branchAddress || '',
         phone:   d.phone || d.phoneNo || d.contactNo || d.mobile || '',
         email:   d.email || d.branchEmail || '',
@@ -88,10 +93,24 @@ if (typeof window !== 'undefined') {
   }, 1500);
 }
 
+/* Saari reports ke liye ek helper — branch load hone ka wait karo,
+   phir HTML banao, phir window mein likho. Yeh function use karne se
+   kisi bhi calling file mein loadReportBranch await karne ki zaroorat nahi. */
+export async function openReportWindowAsync(buildHtml, opts = {}) {
+  const w = window.open('', '_blank');
+  if (!w) { if (opts.toast) opts.toast('Please allow pop-ups to print', 'error'); return; }
+  w.document.write('<p style="font-family:Segoe UI,Arial,sans-serif;padding:40px;color:#475569">Loading report…</p>');
+  await loadReportBranch();
+  const html = typeof buildHtml === 'function' ? buildHtml() : buildHtml;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
 export function currentBranch() {
   const branchID = sessionStorage.getItem('branchID');
-  if (_branchCache.branchID !== branchID) { loadReportBranch(); return { ...RK_EMPTY, name: sessionStorage.getItem('branchName') || '' }; }
-  return _branchCache;
+
+    if (_branchCache.branchID !== branchID) { loadReportBranch(); return { ...RK_EMPTY, name: sessionStorage.getItem('branchName') || '' }; }
+  return { ..._branchCache, logo: resolveMediaUrl(_branchCache.logoRaw) };
 }
 
 /* Dashboard reports: window foran kholo (pop-up blocker se bachao) → current
@@ -373,8 +392,7 @@ export function escReportText(v) {
     .replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitleLine, schoolName, logoInitials }) {
-  const p = reportPalette(isColor);
+export function buildReportHeaderFooter({ isColor, reportTitle, format, subtitleLine, schoolName, logoInitials }) {  const p = reportPalette(isColor);
   schoolName = escReportText(schoolName || reportSchoolName());
   reportTitle = escReportText(reportTitle);
   const initials = logoInitials || (schoolName.replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'SM');

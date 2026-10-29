@@ -10,6 +10,7 @@ import { usePermissions } from '../context/PermissionsContext';
 import { NAV_TO_MODULE_MAP, MODULE_REGISTRY, APPROVAL_TYPE_MSGS } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
 import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl } from '../../utils/apiConfig';
+import { loadReportBranch } from '../reports/reportKit';
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
 import useMobileAppPermission from '../hooks/useMobileAppPermission';
@@ -393,7 +394,7 @@ export default function App() {
       try {
         const res = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
         const json = await res.json();
-        if (!cancelled && json?.success) setBranchInfo(json.data || null);
+               if (!cancelled && json?.success) { setBranchInfo(json.data || null); loadReportBranch(); }
       } catch (e) { console.error('Error loading branch header:', e); }
     })();
     return () => { cancelled = true; };
