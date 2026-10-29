@@ -63,8 +63,8 @@ export const MAPPING_STATUS = {
    academicsStore.js CLASSES ids exactly) — loc-class-3 and
    loc-class-5 are deliberately left unmapped so "Mapping Required"
    has a real example to show. */
-export const mockBranchClassMappings = [
-  { id: 'bcm-1', sessionId: 2, localClassId: 'loc-nursery', centralClassId: 1, updatedAt: '2026-05-10T09:00:00', updatedBy: 'Dr. Islahudin' },
-  { id: 'bcm-2', sessionId: 2, localClassId: 'loc-prep',    centralClassId: 2, updatedAt: '2026-05-10T09:00:00', updatedBy: 'Dr. Islahudin' },
-  { id: 'bcm-3', sessionId: 2, localClassId: 'loc-class-1', centralClassId: 3, updatedAt: '2026-05-10T09:00:00', updatedBy: 'Dr. Islahudin' },
-];
+/* Mappings now use the school's REAL local class ids and the network's REAL
+   class ids (both fetched live in branchClassMappingService), so the old
+   fake-id seed is cleared — the in-memory store starts empty until the user
+   maps classes. */
+export const mockBranchClassMappings = [];

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import { useSettings } from './settingsStore';
-import { useChainPermissions } from '../../hooks/useChainPermissions';
 import * as branchClassMappingService from '../../services/branchClassMappingService';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -37,17 +36,30 @@ import * as branchClassMappingService from '../../services/branchClassMappingSer
    ═══════════════════════════════════════════════════════════════════ */
 export default function BranchClassMapping({ toast = () => {} }) {
   const { sessions, currentSession } = useSettings();
-  const { payload, centralClasses } = useChainPermissions();
 
   const [sessionId, setSessionId] = useState(currentSession?.id || sessions[0]?.id || null);
+  const [centralClasses, setCentralClasses] = useState([]);   // the network's classes
+  const [networkId, setNetworkId] = useState(null);           // null = resolving, 0 = not in a network
+  const [netLoading, setNetLoading] = useState(true);
   const [localClasses, setLocalClasses] = useState([]);
   const [mappings, setMappings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [mapModal, setMapModal] = useState(null);   // { localClass, existing? }
-  const [removeCfg, setRemoveCfg] = useState(null);  // { mapping, localClass }
 
-  const ready = !!payload && centralClasses.length > 0;
+  const ready = centralClasses.length > 0;
+
+  /* Network's central classes (get-grades-by-network) — the list every local
+     class is mapped against. No Head Office payload needed. */
+  useEffect(() => {
+    let alive = true;
+    setNetLoading(true);
+    branchClassMappingService.getNetworkClasses()
+      .then(({ networkId: nid, classes }) => { if (alive) { setNetworkId(nid); setCentralClasses(classes); } })
+      .catch(() => { if (alive) { setNetworkId(0); setCentralClasses([]); } })
+      .finally(() => { if (alive) setNetLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   const load = async (sid) => {
     if (!ready || !sid) { setLoading(false); return; }
@@ -79,29 +91,20 @@ export default function BranchClassMapping({ toast = () => {} }) {
   const requiredCount = rows.length - mappedCount;
 
   const openMap = (row) => setMapModal({ localClass: row.local, existing: row.mapping });
-  const openRemove = (row) => setRemoveCfg({ mapping: row.mapping, localClass: row.local });
 
   const saveMapping = async (centralClassId) => {
     try {
       await branchClassMappingService.saveMapping({
-        sessionId, localClassId: mapModal.localClass.id, centralClassId, updatedBy: 'Admin',
+        localClassId: mapModal.localClass.id,
+        centralClassId,
+        branchClassName: mapModal.localClass.name,
+        id: mapModal.existing?.id || 0,
       });
       toast(`"${mapModal.localClass.name}" mapped successfully.`, 'success');
       setMapModal(null);
       load(sessionId);
     } catch (e) {
       toast(e.message || 'Could not save this mapping.', 'error');
-    }
-  };
-
-  const confirmRemove = async () => {
-    try {
-      await branchClassMappingService.deleteMapping(removeCfg.mapping.id);
-      toast(`"${removeCfg.localClass.name}" is Mapping Required again.`, 'success');
-      setRemoveCfg(null);
-      load(sessionId);
-    } catch (e) {
-      toast(e.message || 'Could not remove this mapping.', 'error');
     }
   };
 
@@ -117,35 +120,45 @@ export default function BranchClassMapping({ toast = () => {} }) {
     </div>
   );
 
-  /* ── No Head Office payload applied yet ── */
-  if (!payload) {
+  /* ── Still resolving the network / its classes ── */
+  if (netLoading) {
     return (
       <div className="cs-card" style={{ marginBottom: 18 }}>
-        <CardHead sub="Links this school's own class names to the standard classes the Chain School Portal uses." />
+        <CardHead sub="Links this school's own class names to the standard classes the network (Head Office) uses." />
+        <div className="settings-empty">
+          <div className="settings-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="settings-empty-title">Loading network classes…</div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── This school isn't part of a network ── */
+  if (!networkId) {
+    return (
+      <div className="cs-card" style={{ marginBottom: 18 }}>
+        <CardHead sub="Links this school's own class names to the standard classes the network (Head Office) uses." />
         <div className="settings-empty">
           <div className="settings-empty-ic"><i className="fa-solid fa-link-slash" aria-hidden="true"></i></div>
-          <div className="settings-empty-title">No Head Office payload applied yet</div>
+          <div className="settings-empty-title">This school isn't part of a network yet</div>
           <div className="settings-empty-sub">
-            In the Chain School Portal, go to School Permissions for this school and use "Copy ERP Payload", then
-            paste it in the "Head Office Module Permissions" card above — once applied, the central academic
-            classes it includes will be ready to map here.
+            Once this school joins a chain / network, that network's central classes will appear here to map against.
           </div>
         </div>
       </div>
     );
   }
 
-  /* ── Payload applied, but it predates centralClasses ── */
+  /* ── In a network, but the network has no classes yet ── */
   if (!centralClasses.length) {
     return (
       <div className="cs-card" style={{ marginBottom: 18 }}>
-        <CardHead sub={<>A Head Office permission payload{payload.schoolName ? <> for <b>{payload.schoolName}</b></> : ''} is applied, but it doesn't include a central class list yet.</>} />
+        <CardHead sub="Links this school's own class names to the standard classes the network (Head Office) uses." />
         <div className="settings-empty">
-          <div className="settings-empty-ic"><i className="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></div>
-          <div className="settings-empty-title">Central classes not available yet</div>
+          <div className="settings-empty-ic"><i className="fa-solid fa-chalkboard" aria-hidden="true"></i></div>
+          <div className="settings-empty-title">No network classes defined yet</div>
           <div className="settings-empty-sub">
-            Copy a fresh payload from the Chain Portal's School Permissions screen and paste it again above —
-            once it includes their class list, Branch Class Mapping will be ready here.
+            The network (Head Office) hasn't set up any central classes yet — once it does, they'll be ready to map here.
           </div>
         </div>
       </div>
@@ -198,7 +211,7 @@ export default function BranchClassMapping({ toast = () => {} }) {
       ) : (
         <div className="settings-table">
           <div className="settings-table-head" style={{ gridTemplateColumns: '1fr 1fr 160px 130px' }}>
-            <div className="th">Central Academic Class</div>
+            <div className="th">Network Class</div>
             <div className="th">Local School Class</div>
             <div className="th c">Mapping Status</div>
             <div className="th c">Actions</div>
@@ -216,20 +229,13 @@ export default function BranchClassMapping({ toast = () => {} }) {
               </div>
               <div className="td c settings-actions">
                 {row.status === 'mapped' ? (
-                  <>
-                    <Tooltip text={`Change the central class for ${row.local.name}`}>
-                      <button type="button" className="settings-act" onClick={() => openMap(row)} aria-label={`Edit mapping for ${row.local.name}`}>
-                        <i className="fa-solid fa-pen" aria-hidden="true"></i>
-                      </button>
-                    </Tooltip>
-                    <Tooltip text={`Remove this mapping — ${row.local.name} becomes Mapping Required`}>
-                      <button type="button" className="settings-act settings-act--danger" onClick={() => openRemove(row)} aria-label={`Remove mapping for ${row.local.name}`}>
-                        <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                      </button>
-                    </Tooltip>
-                  </>
+                  <Tooltip text={`Change the network class for ${row.local.name}`}>
+                    <button type="button" className="settings-act" onClick={() => openMap(row)} aria-label={`Edit mapping for ${row.local.name}`}>
+                      <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
                 ) : (
-                  <Tooltip text={`Map ${row.local.name} to a central class`}>
+                  <Tooltip text={`Map ${row.local.name} to a network class`}>
                     <button type="button" className="settings-btn settings-btn-primary" style={{ height: 32, padding: '0 12px', fontSize: 12 }} onClick={() => openMap(row)}>
                       <i className="fa-solid fa-link" aria-hidden="true"></i> Map Class
                     </button>
@@ -248,14 +254,6 @@ export default function BranchClassMapping({ toast = () => {} }) {
           centralClasses={centralClasses}
           onClose={() => setMapModal(null)}
           onSave={saveMapping}
-        />
-      )}
-
-      {removeCfg && (
-        <RemoveConfirm
-          localClass={removeCfg.localClass}
-          onCancel={() => setRemoveCfg(null)}
-          onConfirm={confirmRemove}
         />
       )}
     </div>
@@ -296,12 +294,12 @@ function MapClassModal({ localClass, existing, centralClasses, onClose, onSave }
             <span className="settings-field-helper">This is the class already set up in Students — it can't be changed here.</span>
           </div>
           <div className="settings-field" style={{ marginTop: 14 }}>
-            <label htmlFor="bcm-central">Central Academic Class <span className="settings-field-req">*</span></label>
+            <label htmlFor="bcm-central">Network Class <span className="settings-field-req">*</span></label>
             <select id="bcm-central" className="settings-input" value={centralClassId} onChange={(e) => setCentralClassId(Number(e.target.value) || '')}>
-              <option value="">Choose a central class…</option>
+              <option value="">Choose a network class…</option>
               {centralClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <span className="settings-field-helper">The standard class your Head Office uses — exams assigned to it will reach {localClass.name} here.</span>
+            <span className="settings-field-helper">The standard class the network (Head Office) uses — content assigned to it will reach {localClass.name} here.</span>
           </div>
         </div>
         <div className="settings-modal-foot">
@@ -311,36 +309,6 @@ function MapClassModal({ localClass, existing, centralClasses, onClose, onSave }
               <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Mapping
             </button>
           </Tooltip>
-        </div>
-      </div>
-    </div>
-  ), document.body);
-}
-
-/* ─── Remove-mapping confirmation ─── */
-function RemoveConfirm({ localClass, onCancel, onConfirm }) {
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
-  }, [onCancel]);
-
-  return createPortal((
-    <div className="settings-modal-back" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="settings-modal settings-modal--sm">
-        <div className="settings-confirm-body">
-          <div className="settings-confirm-ic settings-confirm-ic--red"><i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i></div>
-          <div className="settings-confirm-title">Remove Mapping?</div>
-          <div className="settings-confirm-text">
-            <b>{localClass.name}</b> will go back to <b>Mapping Required</b> until it's mapped again. Nothing about the class itself or its students changes.
-          </div>
-        </div>
-        <div className="settings-modal-foot settings-modal-foot--center">
-          <button type="button" className="settings-btn settings-btn-ghost" onClick={onCancel}>Cancel</button>
-          <button type="button" className="settings-btn settings-btn-danger" onClick={onConfirm}>
-            <i className="fa-solid fa-trash" aria-hidden="true"></i> Remove
-          </button>
         </div>
       </div>
     </div>
