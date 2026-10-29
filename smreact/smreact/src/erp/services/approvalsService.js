@@ -117,6 +117,22 @@ function resolveRequesterName(r) {
   return r.requestedBy != null ? `User #${r.requestedBy}` : '—';
 }
 
+/* Reviewer's display name for "Reviewed By". The row ships modifiedByName
+   (like requestedByName for the requester); same session-name fallback as
+   the requester when the decision was made by the signed-in user. */
+function resolveReviewerName(r) {
+  const name = r.modifiedByName || r.ModifiedByName || r.reviewedByName || r.approverName;
+  if (name) return name;
+  const myId = currentUserId();
+  if (myId && Number(r.modifiedBy) === myId) {
+    try {
+      const myName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName');
+      if (myName) return myName;
+    } catch (e) { /* no session */ }
+  }
+  return r.modifiedBy != null ? `User #${r.modifiedBy}` : '—';
+}
+
 /* Pull a student / applicant id out of detailsXml when recordID is a
    challan/ledger id (common for Pre-Enrollment receive / clear receiving). */
 function extractStudentIdFromXml(xml) {
@@ -204,10 +220,15 @@ function mapApiRequest(r) {
     requestedBy: resolveRequesterName(r),
     requestedAt: r.requestedAt,
     status,
-    requestComment: '',
-    reviewedBy: reviewed ? (r.reviewedByName || `User #${r.modifiedBy}`) : null,
+    /* Comments the API ships: requester's note on raise, approver's note on
+       decide. Accept the common casings so the view modal shows whatever the
+       backend names them. */
+    /* The row ships one `comment` field: the requester's note while pending,
+       the approver's note once decided. */
+    requestComment: r.requestComment ?? r.RequestComment ?? (reviewed ? '' : r.comment) ?? '',
+    reviewedBy: reviewed ? resolveReviewerName(r) : null,
     reviewedAt: reviewed ? r.modifiedAt : null,
-    reviewComment: '',
+    reviewComment: r.reviewComment ?? r.ReviewComment ?? (reviewed ? r.comment : '') ?? '',
     payload,
     before,
   };
@@ -607,7 +628,7 @@ export async function createApprovalRequest({ actionType, entityId, entitySummar
 /* ── Approve / Reject → POST /api/Approvals/process ── */
 const PROCESS_ENDPOINT = '/api/Approvals/process';
 
-async function processApproval(apiId, status) {
+async function processApproval(apiId, status, comment) {
   const res = await fetch(buildUrl(PROCESS_ENDPOINT), {
     method: 'POST',
     headers: settingsAuthHeaders(),
@@ -615,6 +636,7 @@ async function processApproval(apiId, status) {
       approvalId: Number(apiId),
       status,                       // 'Approved' | 'Rejected'
       modifiedBy: currentUserId(),  // jis user ne tick/cross kiya
+      comment: comment || '',       // approver ka note / rejection reason
     }),
   });
   const json = await res.json().catch(() => null);
@@ -624,8 +646,8 @@ async function processApproval(apiId, status) {
   return json;
 }
 
-export async function approveRequest(apiId) { return processApproval(apiId, 'Approved'); }
-export async function rejectRequest(apiId)  { return processApproval(apiId, 'Rejected'); }
+export async function approveRequest(apiId, comment) { return processApproval(apiId, 'Approved', comment); }
+export async function rejectRequest(apiId, comment)  { return processApproval(apiId, 'Rejected', comment); }
 
 /* ── Withdraw (requester apni PENDING request khud wapas le) ──
    POST /api/Approvals/withdraw { approvalId, userId }. apiId numeric ApprovalID

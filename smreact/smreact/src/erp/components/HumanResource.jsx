@@ -8705,7 +8705,7 @@ export const HR_CSS = `
 /* Employee table head + row (9-col grid) */
 .emp-t-head {
   display: grid;
-  grid-template-columns: 44px 50px 1.1fr 155px 150px 110px 200px auto 40px;
+  grid-template-columns: 44px 50px 1.1fr 155px 150px 110px 200px minmax(230px, auto) 40px;
   padding: 0 12px;
   gap: 6px;
   background: var(--muted);
@@ -8713,7 +8713,7 @@ export const HR_CSS = `
 }
 .emp-row {
   display: grid;
-  grid-template-columns: 44px 50px 1.1fr 155px 150px 110px 200px auto 40px;
+  grid-template-columns: 44px 50px 1.1fr 155px 150px 110px 200px minmax(230px, auto) 40px;
   align-items: center;
   min-height: 64px;
   padding: 0 12px;
@@ -8818,7 +8818,7 @@ export const HR_CSS = `
 .emp-chip.is-att    i { color: #D97706; }
 
 /* Actions cell — keep buttons right-aligned */
-.emp-actions-cell { justify-content: flex-end; gap: 5px; }
+.emp-actions-cell { justify-content: flex-end; gap: 5px; flex-wrap: wrap; min-width: 0; }
 
 /* ── Pending-approval badge + Withdraw icon — Fee module (.fee-pending-badge /
    .fee-withdraw-btn) ki exact copy, taake dono modules me ek jaisa dikhe. ── */
@@ -8932,7 +8932,7 @@ export const HR_CSS = `
 @media (max-width: 1100px) {
   .emp-t-head,
   .emp-row {
-    grid-template-columns: 40px 48px 1fr 105px 220px auto 40px !important;
+    grid-template-columns: 40px 48px 1fr 105px 220px minmax(230px, auto) 40px !important;
     gap: 5px;
   }
   .emp-t-head .th:nth-child(4),
@@ -8943,7 +8943,7 @@ export const HR_CSS = `
 @media (max-width: 900px) {
   .emp-t-head,
   .emp-row {
-    grid-template-columns: 36px 46px 1fr 220px auto 40px !important;
+    grid-template-columns: 36px 46px 1fr 220px minmax(230px, auto) 40px !important;
     gap: 5px;
   }
   .emp-t-head .th:nth-child(4),

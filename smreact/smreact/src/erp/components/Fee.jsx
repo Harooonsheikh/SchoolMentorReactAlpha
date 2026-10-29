@@ -1546,7 +1546,12 @@ const FEE_MONTHS = [
    reason a month is barred, or null when it's fine. */
 /* Sirf in branches ko previous-month challan CREATE karne ki ijazat hai.
    Receiving isPastView se band rehti hai. */
-const PREV_MONTH_CHALLAN_BRANCHES = new Set([210780]);
+const PREV_MONTH_CHALLAN_BRANCHES = new Set([210780, 220979]);
+/* Ye branch previous month ka challan + receiving kar sakti hai aur month/year picker dekhti hai. */
+const PREV_MONTH_FULL_BRANCHES = new Set([220979]);
+function isPrevMonthFullBranch() {
+  return PREV_MONTH_FULL_BRANCHES.has(Number(sessionStorage.getItem('branchID')) || 0);
+}
 
 function challanMonthLock(monthIdx, year, settings) {
   if (!settings || monthIdx < 0) return null;
@@ -1560,6 +1565,38 @@ function challanMonthLock(monthIdx, year, settings) {
   /* Next month lock HATA diya — "Next Month Challan Receiving" toggle comment-out hai; har
      mahine (aage ka bhi) receiving/generation allowed, shart sirf pending amount. */
   return null;
+}
+
+/* Month/year picker — sirf isPrevMonthFullBranch() branches ko dikhta hai; baaki ko "Active Fee Period" badge. */
+function FeePeriodPicker({ month, setMonth, year, setYear, onApply }) {
+  const thisYear = new Date().getFullYear();
+  return (
+    <>
+      <div className="fee-field">
+        <span className="fee-label">Month</span>
+        <div className="fee-select-wrap">
+          <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+            {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+          </select>
+          <i className="fa-solid fa-chevron-down"></i>
+        </div>
+      </div>
+      <div className="fee-field">
+        <span className="fee-label">Year</span>
+        <div className="fee-select-wrap">
+          <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+            {[thisYear - 1, thisYear, thisYear + 1].map(y => <option key={y} value={String(y)}>{y}</option>)}
+          </select>
+          <i className="fa-solid fa-chevron-down"></i>
+        </div>
+      </div>
+      <Tooltip text="Load challans and receipts for the selected month and year">
+        <button className="fee-btn fee-btn-primary" onClick={onApply}>
+          <i className="fa-solid fa-filter"></i> Apply
+        </button>
+      </Tooltip>
+    </>
+  );
 }
 
 function FeeChallansTab({ toast }) {
@@ -2375,7 +2412,7 @@ function FamilyTreeChallansList({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
              <div className="fee-filters">
-            {typeof settings.enableMonthClosing !== 'boolean' ? (
+            {isPrevMonthFullBranch() ? <FeePeriodPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} /> : typeof settings.enableMonthClosing !== 'boolean' ? (
               <div className="fee-field">
                 <span className="fee-label">Fee Period</span>
                 <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
@@ -4096,7 +4133,7 @@ function FeeChallansList({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
            <div className="fee-filters">
-            {typeof settings.enableMonthClosing !== 'boolean' ? (
+            {isPrevMonthFullBranch() ? <FeePeriodPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} /> : typeof settings.enableMonthClosing !== 'boolean' ? (
               <div className="fee-field">
                 <span className="fee-label">Fee Period</span>
                 <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
@@ -8664,7 +8701,7 @@ function FeeReceivingIndividual({ toast }) {
 
   /* Aaj ke mahine se PEHLE ka view = previous month → wahan Receive band (baqaya
      current view me Pending se wasool hota hai). */
-  const isPastView = (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
+  const isPastView = !isPrevMonthFullBranch() && (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
 
   /* Is mahine ka challan data load ho chuka? Na ho to list ki jagah LOADER (class/row ke
      0 / khali figures nahi). Save/delete ke baad refresh par list chhupti nahi. */
@@ -9420,7 +9457,7 @@ function FeeReceivingIndividual({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
                    <div className="fee-filters">
-            {typeof settings.enableMonthClosing !== 'boolean' ? (
+            {isPrevMonthFullBranch() ? <FeePeriodPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} /> : typeof settings.enableMonthClosing !== 'boolean' ? (
               <div className="fee-field">
                 <span className="fee-label">Fee Period</span>
                 <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
@@ -10251,7 +10288,7 @@ function FamilyTreeReceiving({ toast }) {
   }, []);
   useEffect(() => { loadPending(); }, [loadPending]);
   /* Aaj ke mahine se PEHLE ka view → Receive band. */
-  const isPastView = (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
+  const isPastView = !isPrevMonthFullBranch() && (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
 
   const openPendingReceive = async (f, ch, pc) => {
     const lock = challanMonthLock(monthIdx, appliedYear, settings);
@@ -10842,7 +10879,7 @@ function FamilyTreeReceiving({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
            <div className="fee-filters">
-            {typeof settings.enableMonthClosing !== 'boolean' ? (
+            {isPrevMonthFullBranch() ? <FeePeriodPicker month={month} setMonth={setMonth} year={year} setYear={setYear} onApply={apply} /> : typeof settings.enableMonthClosing !== 'boolean' ? (
               <div className="fee-field">
                 <span className="fee-label">Fee Period</span>
                 <div className="fee-active-month-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
@@ -12194,15 +12231,25 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
 
 const FEE_HIST_YEARS = ['2025', '2026', '2027'];
 
-/* Purana ERP August 2026 par khatam hota hai — us ke baad ka sab kuch naye
-   ledger me hai. Is liye Old ERP tab ke dropdown September 2026 se aage ka
-   month dikhate hi nahi; warna user aise mahine maangta rehta jinka wahan
-   record ho hi nahi sakta. */
-const OLD_ERP_LAST = { year: 2026, monthIdx: FEE_MONTHS.indexOf('August') };
-const oldErpMonths = (y) => (Number(y) >= OLD_ERP_LAST.year
-  ? FEE_MONTHS.slice(0, OLD_ERP_LAST.monthIdx + 1)
-  : FEE_MONTHS);
-const OLD_ERP_YEARS = FEE_HIST_YEARS.filter(y => Number(y) <= OLD_ERP_LAST.year);
+/* Purana ERP default August 2026 par khatam — us ke baad naye ledger me hai.
+   In listed branches ka Old ERP October 2026 tak chalta hai (dropdown +
+   previous-dues fetch dono isi cutoff ko follow karte hain). */
+const OLD_ERP_OCTOBER_BRANCHES = new Set([
+  210668, 220965, 200554, 200543, 220944, 220896, 220946, 221003,
+  210588, 210832, 220899, 210807, 210824, 210683, 220955, 200574,
+  220960, 220908, 210745, 221016, 140227,
+]);
+function oldErpLastForBranch(branchId = Number(sessionStorage.getItem('branchID')) || 0) {
+  const monthIdx = OLD_ERP_OCTOBER_BRANCHES.has(Number(branchId))
+    ? FEE_MONTHS.indexOf('October')
+    : FEE_MONTHS.indexOf('August');
+  return { year: 2026, monthIdx };
+}
+const oldErpMonths = (y, branchId) => {
+  const last = oldErpLastForBranch(branchId);
+  return Number(y) >= last.year ? FEE_MONTHS.slice(0, last.monthIdx + 1) : FEE_MONTHS;
+};
+const OLD_ERP_YEARS = FEE_HIST_YEARS.filter(y => Number(y) <= 2026);
 
 /* Old ERP summary row ka hisaab. Discount billed amount se pehle katta hai, is
    liye asal receivable challanAmount nahi balke (challan − discount) hai —
@@ -12858,9 +12905,10 @@ function FeeHistoryTab({ toast }) {
   const switchSeg = (next) => {
     if (next === seg) return;
     const one = next === 'olderp';
-    /* Old ERP par jaate hue month/year ko cutoff (July 2026) ke andar le aao —
-       September 2026 par khare user ko wahan khali dropdown na mile. */
-    const y = one && Number(year) > OLD_ERP_LAST.year ? String(OLD_ERP_LAST.year) : year;
+    /* Old ERP par jaate hue month/year ko branch cutoff ke andar le aao —
+       default August / listed branches October 2026. */
+    const last = oldErpLastForBranch();
+    const y = one && Number(year) > last.year ? String(last.year) : year;
     const allowed = oldErpMonths(y);
     const m = one && !allowed.includes(toMonth) ? allowed[allowed.length - 1] : toMonth;
     const from = one ? m : FEE_MONTHS[0];
@@ -15166,13 +15214,14 @@ function ReportPanelDefaulter({ toast }) {
 
   const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
 
-  /* Old ERP ka baqaya: applicantID -> amount */
+  /* Old ERP ka baqaya: applicantID -> amount (branch cutoff: Aug default / Oct allowlist). */
   const [oldErp, setOldErp] = useState(new Map());
   useEffect(() => {
     if (!classes.length) return undefined;
     let alive = true;
-    const m = OLD_ERP_LAST.monthIdx + 1;
-    const y = OLD_ERP_LAST.year;
+    const last = oldErpLastForBranch();
+    const m = last.monthIdx + 1;
+    const y = last.year;
     const pairs = classes.map(c => ({ gradeId: c._gradeId, sectionId: c._sectionId }));
     Promise.all([
       feeService.getOldErpLedgerForClasses(m, y, pairs).catch(() => ({ rows: [] })),
@@ -19204,9 +19253,9 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
     return `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeSlipHTML({ copyLabel: 'Parent Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
         ${feeSlipHTML({ copyLabel: 'Bank Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
         ${feeSlipHTML({ copyLabel: 'School Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
+        ${feeSlipHTML({ copyLabel: 'Parent Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch, installmentSlip })}
       </div>
     </div>`;
   }).join('');
@@ -19545,9 +19594,9 @@ function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4', sc
   const page = `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO, school })}
         ${feeFamilySlipHTML({ copyLabel: 'Bank Copy', family, settings, period, issueISO, dueISO, school })}
         ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO, school })}
+        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO, school })}
       </div>
     </div>`;
 

@@ -19,6 +19,8 @@ import { DEFAULT_FIELD_ORDER } from './idCardFields';
    so one school's saved design/branding never leaks into another's.
    ═══════════════════════════════════════════════════════════════════ */
 
+import { fetchReportHeader } from '../../utils/pdfReports';
+
 const readJSON = (key, fallback) => {
   try { const raw = localStorage.getItem(key); const v = raw ? JSON.parse(raw) : null; return v ?? fallback; }
   catch { return fallback; }
@@ -68,7 +70,10 @@ export async function getSchoolBranding() {
   await delay();
   const base = clone(await getStuSchool());
   const override = readJSON('idcard_school_branding', {});
-  return { ...base, email: '', website: '', campus: '', logo: null, ...override };
+  /* Default logo = the branch logo from /report-header, resolved the same way the
+     sidebar and reports resolve it. A logo the user saved or removed (override) wins. */
+  const branch = await fetchReportHeader();
+  return { ...base, email: '', website: '', campus: '', logo: branch?.branchLogo || null, ...override };
 }
 
 export async function saveSchoolBranding(patch) {

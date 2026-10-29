@@ -6,6 +6,7 @@ import { APPROVAL_ACTION_META } from '../mock/approvals';
 import { usePermissions } from '../context/PermissionsContext';
 import { useModules } from '../context/ModuleContext';
 import { APPROVAL_TYPE_MSGS } from '../config/moduleConfig';
+import { resolveMediaUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    APPROVALS — central review screen for sensitive changes raised
@@ -107,6 +108,28 @@ function ObjectTable({ rows }) {
    studentService.applyApprovedMarkInactive) stay untouched while still
    rendering any nested shape it happens to carry (like snapshot.dues,
    itself `{total, heads: [...], ...}`) legibly for the approver. */
+/* Image-looking payload values (inventory / student photo, logo, signature)
+   show as a picture. Accepts a data: URI, a bare base64 blob (binary column
+   sent as text), or a stored file path / URL. Placeholders like "-" stay text. */
+const IMAGE_KEY  = /image|photo|picture|logo|signature|avatar|thumb/i;
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i;
+function imageSrc(key, v) {
+  if (!IMAGE_KEY.test(String(key)) || typeof v !== 'string') return '';
+  const s = v.trim();
+  if (!s || s === '-' || s.toUpperCase() === 'N/A') return '';
+  if (/^data:image\//i.test(s)) return s;
+  if (/^[A-Za-z0-9+/=\r\n]{100,}$/.test(s)) return `data:image/png;base64,${s.replace(/\s+/g, '')}`;
+  if (IMAGE_FILE.test(s) || /^https?:\/\//i.test(s) || /^\/?uploaded/i.test(s)) return resolveMediaUrl(s);
+  return '';
+}
+
+function KvValue({ k, v }) {
+  const src = imageSrc(k, v);
+  return src
+    ? <img className="ap-kv-img" src={src} alt={k} />
+    : <b>{String(v)}</b>;
+}
+
 function GroupBody({ value }) {
   if (isObjectTable(value)) return <ObjectTable rows={value} />;
   return Object.entries(value).map(([k, v]) => (
@@ -116,9 +139,25 @@ function GroupBody({ value }) {
         <GroupBody value={v} />
       </div>
     ) : (
-      <div key={k} className="ap-kv"><span>{k}</span><b>{String(v)}</b></div>
+      <div key={k} className="ap-kv"><span>{k}</span><KvValue k={k} v={v} /></div>
     )
   ));
+}
+
+/* Stand-alone card for a free-text note (requester's note / approver's
+   comment) — same look as the change cards, with its own icon. */
+function CommentCard({ label, text, tone }) {
+  return (
+    <div className={`al-group-card al-comment-card${tone ? ` al-group-card--${tone}` : ''}`}>
+      <div className="al-group-head">
+        <div className="al-group-ic"><i className="fa-solid fa-comment-dots" aria-hidden="true"></i></div>
+        <div className="al-group-title">{label}</div>
+      </div>
+      <div className="al-group-body">
+        <div className="al-comment-text">{text}</div>
+      </div>
+    </div>
+  );
 }
 
 function GroupCard({ label, value, tone }) {
@@ -259,10 +298,10 @@ export default function Approvals({ toast = () => {} }) {
   const handleDecision = async (id, decision, comment) => {
     try {
       if (decision === 'approve') {
-        const r = await approvalsService.approveRequest(id);
+        const r = await approvalsService.approveRequest(id, comment);
         toast(r?.message || 'Request approved', 'success');
       } else if (decision === 'reject') {
-        const r = await approvalsService.rejectRequest(id);
+        const r = await approvalsService.rejectRequest(id, comment);
         toast(r?.message || 'Request rejected', 'success');
       } else if (decision === 'revoke') {
         /* Real withdraw API — POST /api/Approvals/withdraw { approvalId, userId }. */
@@ -549,9 +588,8 @@ function ApprovalDetailModal({ request, mode, canDecide, onSetMode, onClose, onD
           </div>
 
           {request.requestComment && (
-            <div className="al-detail-block" style={{ marginBottom: 14 }}>
-              <div className="al-detail-lbl">Requester's Note</div>
-              <div className="al-detail-val" style={{ marginTop: 4 }}>{request.requestComment}</div>
+            <div style={{ marginBottom: 14 }}>
+              <CommentCard label="Requester's Note" text={request.requestComment} />
             </div>
           )}
 
@@ -561,14 +599,14 @@ function ApprovalDetailModal({ request, mode, canDecide, onSetMode, onClose, onD
                 <div className="al-detail-block before">
                   <div className="al-detail-lbl">Current State</div>
                   {beforeScalarEntries.map(([k, v]) => (
-                    <div key={k} className="ap-kv"><span>{k}</span><b>{String(v)}</b></div>
+                    <div key={k} className="ap-kv"><span>{k}</span><KvValue k={k} v={v} /></div>
                   ))}
                 </div>
               )}
               <div className="al-detail-block after">
                 <div className="al-detail-lbl">{beforeEntries.length ? 'Requested Change' : 'Change Details'}</div>
                 {scalarEntries.map(([k, v]) => (
-                  <div key={k} className="ap-kv"><span>{k}</span><b>{String(v)}</b></div>
+                  <div key={k} className="ap-kv"><span>{k}</span><KvValue k={k} v={v} /></div>
                 ))}
               </div>
             </div>
@@ -582,9 +620,8 @@ function ApprovalDetailModal({ request, mode, canDecide, onSetMode, onClose, onD
           )}
 
           {request.status !== 'pending' && request.reviewComment && (
-            <div className="al-detail-block" style={{ marginTop: 4 }}>
-              <div className="al-detail-lbl">Approver's Comment</div>
-              <div className="al-detail-val" style={{ marginTop: 4 }}>{request.reviewComment}</div>
+            <div style={{ marginTop: 4 }}>
+              <CommentCard label="Approver's Comment" text={request.reviewComment} tone={request.status === 'rejected' ? 'before' : 'after'} />
             </div>
           )}
 
@@ -849,6 +886,8 @@ const AP_CSS = `
 .ap-kv { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font: 500 12px/1.6 var(--ap-font); color: var(--text-primary); }
 .ap-kv span { color: var(--text-muted, #64748B); text-transform: capitalize; }
 .ap-kv b { font-weight: 700; text-align: right; word-break: break-word; }
+.al-comment-text { font: 500 12.5px/1.5 var(--ap-font); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
+.ap-kv-img { max-width: 140px; max-height: 140px; object-fit: contain; border-radius: 8px; border: 1px solid var(--border-light, #E2E8F0); background: #fff; }
 
 .al-field { display: flex; flex-direction: column; gap: 6px; }
 .al-field > span { font: 700 10.5px/1 var(--ap-font); color: var(--text-muted, #64748B); text-transform: uppercase; letter-spacing: .4px; }
