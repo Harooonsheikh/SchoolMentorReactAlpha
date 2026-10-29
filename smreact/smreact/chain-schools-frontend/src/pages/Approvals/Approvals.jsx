@@ -187,7 +187,7 @@ export default function Approvals() {
   }
   const closeDetail = () => { setSelected(null); setReviewMode(null) }
 
-  const decide = async (id, decision) => {
+  const decide = async (id, decision, comment = '') => {
     const row = requests.find((r) => r.id === id)
     if (!row?.apiId) { fire('This request has no approval id', 'error'); return }
     if (deciding) return
@@ -195,7 +195,7 @@ export default function Approvals() {
     try {
       const ok = await assertChainManaged(row)
       if (!ok) return
-      await processNetworkApproval(row.apiId, decision)
+      await processNetworkApproval(row.apiId, decision, comment)
       fire(decision === 'approve' ? 'Request approved' : 'Request rejected')
       closeDetail()
       await reload()

@@ -188,10 +188,12 @@ export function mapNetworkApproval(r) {
     requestedBy: r.requestedByName || (r.requestedBy != null ? `User #${r.requestedBy}` : '—'),
     requestedAt: r.requestedAt,
     status,
-    requestComment: r.comment || '',
+    /* One `comment` field: the requester's note while pending, the
+       approver's note once decided. */
+    requestComment: reviewed ? '' : (r.comment || ''),
     reviewedBy: reviewed ? (r.modifiedByName || (r.modifiedBy != null ? `User #${r.modifiedBy}` : null)) : null,
     reviewedAt: reviewed ? r.modifiedAt : null,
-    reviewComment: '',
+    reviewComment: reviewed ? (r.comment || '') : '',
     payload,
     before,
   }
@@ -264,7 +266,7 @@ export function approvalGateMessage(mode, schoolName) {
 }
 
 /** Approve / Reject — ERP process endpoint. */
-export async function processNetworkApproval(apiId, decision) {
+export async function processNetworkApproval(apiId, decision, comment = '') {
   const status = decision === 'approve' ? 'Approved' : 'Rejected'
   const res = await fetch(PROCESS_URL, {
     method: 'POST',
@@ -273,6 +275,7 @@ export async function processNetworkApproval(apiId, decision) {
       approvalId: Number(apiId),
       status,
       modifiedBy: currentUserId(),
+      comment: comment || '',
     }),
   })
   const json = await res.json().catch(() => null)

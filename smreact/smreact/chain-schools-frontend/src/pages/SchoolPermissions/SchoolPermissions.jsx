@@ -628,7 +628,7 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
             setApprovalMode(nextMode)
             setSchoolApprovers(nextApprovers)
             setApprovalModalOpen(false)
-            onToast?.('Approval settings saved')
+            onToast?.({ type: 'success', text: 'Approval settings saved' })
           }}
         />
       )}

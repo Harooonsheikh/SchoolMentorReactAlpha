@@ -1967,6 +1967,17 @@ function PointOfSale({ toast }) {
 /* ─── New Sale subtab ─── */
 function PosSellView({ products, school, onFinalizeSale, toast }) {
   const [search, setSearch]     = useState('');
+  /* Products added but still awaiting approval (no real row yet). They show
+     in the search dropdown with a Pending tag so the seller can see them,
+     but can't be put in the cart until the approval goes through. */
+  const [pendingProducts, setPendingProducts] = useState(() => getPendingAdds(INV_PRODUCT_PENDING_MOD).map((g) => g.row).filter(Boolean));
+  useEffect(() => {
+    let alive = true;
+    approvalsService.getMyRequests()
+      .then((reqs) => { if (alive) setPendingProducts(reconcilePendingAdds(INV_PRODUCT_PENDING_MOD, reqs).map((g) => g.row).filter(Boolean)); })
+      .catch(() => { /* keep the locally saved list */ });
+    return () => { alive = false; };
+  }, []);
   const [cart, setCart]         = useState([]);
   const [buyer, setBuyer]       = useState('');
   const [discInput, setDiscInput] = useState(0);
@@ -1989,10 +2000,13 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
   const searchResults = useMemo(() => {
     const q = search.toLowerCase().trim();
     if (!q) return [];
-    return products
+    const real = products
+      .filter(p => `${p.name} ${p.barcode} ${p.cat}`.toLowerCase().includes(q));
+    const pending = pendingProducts
       .filter(p => `${p.name} ${p.barcode} ${p.cat}`.toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [products, search]);
+      .map(p => ({ ...p, id: `pending-${p.barcode || p.name}`, _pendingAdd: true }));
+    return [...real, ...pending].slice(0, 8);
+  }, [products, pendingProducts, search]);
 
   /* Cart actions */
   const addToCart = (pid) => {
@@ -2081,16 +2095,19 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
                       <div
                         key={p.id}
                         className="inv-pos-sr-item"
-                        onClick={() => { addToCart(p.id); setSearch(''); setSearchOpen(false); }}
+                        style={p._pendingAdd ? { opacity: .7, cursor: 'default' } : undefined}
+                        onClick={() => { if (p._pendingAdd) return; addToCart(p.id); setSearch(''); setSearchOpen(false); }}
                       >
                         <div className="inv-pos-sr-ic"><i className={`fa-solid ${prodIcon(p.cat)}`}></i></div>
                         <div style={{ flex: 1 }}>
                           <div className="inv-pos-sr-name">{p.name}</div>
                           <div className="inv-pos-sr-sub">Stock: {fmtMoney(p.stock)} · Rs {fmtMoney(p.price)}</div>
                         </div>
-                        {p.stock <= 0
-                          ? <span className="inv-pill inv-pill-red">Out</span>
-                          : <i className="fa-solid fa-plus inv-pos-sr-add"></i>}
+                        {p._pendingAdd
+                          ? <span className="inv-pill inv-pill-amber">Pending approval</span>
+                          : p.stock <= 0
+                            ? <span className="inv-pill inv-pill-red">Out</span>
+                            : <i className="fa-solid fa-plus inv-pos-sr-add"></i>}
                       </div>
                     ))}
                   </div>
@@ -2573,6 +2590,7 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
   const [cost, setCost]       = useState(base?.cost  != null ? String(base.cost)  : '0');
   const [price, setPrice]     = useState(base?.price != null ? String(base.price) : '0');
   const [img, setImg]         = useState(base?.img   || null);
+  const [saving, setSaving]   = useState(false);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2614,7 +2632,10 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
       });
       bc = `${cat.toUpperCase().slice(0, 2)}-${pre}-${String(max + 1).padStart(3, '0')}`;
     }
-    onSave({
+    /* Button stays disabled until the save API call settles, so a double
+       click can't send the same product twice. */
+    setSaving(true);
+    Promise.resolve(onSave({
       name: name.trim(), cat,
       barcode: bc,
       stock: parseInt(stock, 10) || 0,
@@ -2622,7 +2643,7 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
       cost:  parseFloat(cost)    || 0,
       price: priceN,
       img,
-    });
+    })).finally(() => setSaving(false));
   };
 
   return createPortal(
@@ -2718,8 +2739,10 @@ function PosProductModal({ cfg, existingProducts, onClose, onSave, toast }) {
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
           <Tooltip text={isEdit ? 'Update product' : 'Save new product'}>
-            <button className="fee-btn fee-btn-primary inv-confirm-sale" onClick={handleSubmit}>
-              <i className="fa-solid fa-floppy-disk"></i> Save Product
+            <button className="fee-btn fee-btn-primary inv-confirm-sale" onClick={handleSubmit} disabled={saving}>
+              {saving
+                ? <><i className="fa-solid fa-spinner fa-spin"></i> {isEdit ? 'Updating…' : 'Saving…'}</>
+                : <><i className="fa-solid fa-floppy-disk"></i> Save Product</>}
             </button>
           </Tooltip>
         </div>
