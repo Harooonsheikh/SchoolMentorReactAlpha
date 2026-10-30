@@ -19,6 +19,7 @@ import * as feeService from '../../services/feeService';
 import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser } from '../UserPermissions/permissionsData';
 import * as dashboardService from '../../services/dashboardService';
+import { getBillingAnnouncements } from '../../services/billingAnnouncementsService';
 import { buildStandardReportHtml } from '../../reports/reportKit';
 import {
   STUDENT_STATS,
@@ -993,12 +994,23 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
       target: 'fee' },
   ].filter(Boolean);
 
+  /* Super Admin billing notifications & reminders (delivery history of this
+     branch) — get-dashboard Announcements ke saath isi card me. */
+  const [billingAnnouncements, setBillingAnnouncements] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    getBillingAnnouncements()
+      .then((list) => { if (alive) setBillingAnnouncements(list); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   /* Newest announcement surfaces in the top card; sender + count of
      remaining new ones are computed for the pill + footer line. */
   /* LIVE announcements (get-dashboard Announcements — PascalCase Title/Body/
      AnnounceDate). Card lowercase fields padhta hai → normalize; bina title/body
      wali junk entries filter. */
-  const liveAnnouncements = (Array.isArray(D.Announcements) ? D.Announcements : [])
+  const liveAnnouncements = [...(Array.isArray(D.Announcements) ? D.Announcements : [])
     .map((a, idx) => {
       const created = a.AnnounceDate || a.announceDate || a.Date || a.date || a.CreatedDate || '';
 const dt = created ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(created)) ? `${created}T00:00:00` : created) : null;
@@ -1018,7 +1030,7 @@ time: '',
         _ts: validDt ? dt.getTime() : 0,
       };
     })
-.filter((a) => a.title || a.preview).sort((p, q) => q._ts - p._ts);
+.filter((a) => a.title || a.preview), ...billingAnnouncements].sort((p, q) => q._ts - p._ts);
   const latestAnnouncement = liveAnnouncements[0] || null;
 const newAnnouncementCount = liveAnnouncements.filter((a) => a.status === 'new').length;
 

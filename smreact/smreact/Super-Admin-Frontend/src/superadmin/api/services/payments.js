@@ -29,7 +29,7 @@
        mile to 404 { success:false } — is liye getSetup() null return karti hai.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError, buildQuery } from '../client';
-import { SA_ADMIN_API_BASE, getSuperAdminToken } from '../config';
+import { SA_ADMIN_API_BASE, erpPublicUrl, getSuperAdminToken, getAuthErrorHandler } from '../config';
 import EP from '../endpoints';
 import { currentUserId } from './auth';
 import { monthlyCharge, fmtDateLong, fmtDateShort, todayISO } from '../../paymentData';
@@ -42,6 +42,34 @@ import { monthlyCharge, fmtDateLong, fmtDateShort, todayISO } from '../../paymen
    'admin' bheja jata hai. Backend agar koi aur lafz use kare to sirf yeh line badlein —
    save aur read dono isi constant se chalte hain. */
 export const PAYMENT_TYPE = 'admin';
+
+/* ── Per-branch calls ki rok-thaam ──
+   Summary / receiving ka koi bulk route nahi — har branch ki alag call. 306
+   branches par sab ek saath chalane se browser unhe line me laga deta hai
+   (HTTP/1.1 par ~6 ek waqt) aur ek bhi atki call poore Promise.all ko — yani
+   tab ki loading ko — hamesha ke liye rok deti thi. Ab ek waqt me POOL_SIZE
+   calls, aur har call CALL_TIMEOUT_MS me jawab na de to null maan li jati hai. */
+const POOL_SIZE = 8;
+const CALL_TIMEOUT_MS = 30000;
+
+const withTimeout = (promise, ms = CALL_TIMEOUT_MS) => new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new ApiError('Request timed out', 0)), ms);
+  promise.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+});
+
+/** items par fn chalao, ek waqt me `limit` — nateeja usi tarteeb me; fail/timeout → null. */
+async function mapPool(items, fn, limit = POOL_SIZE) {
+  const out = new Array(items.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await withTimeout(fn(items[i], i)).catch(() => null);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 
 /* API sirf yeh chaar actions manti hai. */
 export const PAYMENT_ACTIONS = { insert: 'INSERT', add: 'ADD', update: 'UPDATE', delete: 'DELETE' };
@@ -198,6 +226,112 @@ async function manageAction(body, label) {
   return json;
 }
 
+/* ── Billing Automation setup (School Payment → Billing Automation) ──
+   GET/POST .../api/BillingAutoSetup. Body = BillingAutoSetupModel (built by
+   billingAutomationData.automationToApi). Save Changes POSTs it.
+
+   Uses erpPublicUrl (absolute API host on localhost, same-origin on deploy)
+   instead of SA_ADMIN_API_BASE's relative-+-dev-proxy path, so in dev the call
+   hits the sandbox host DIRECTLY — the SchoolMentorSuperAdminAPI returns
+   Access-Control-Allow-Origin:* on sandbox, so no proxy/CORS issue. */
+export async function getBillingAutoSetup() {
+  return getJson(erpPublicUrl(EP.billingAuto.setup()), 'billing automation setup');
+}
+
+/* Billing automation / reminders ke liye ek hi request helper (wahi auth +
+   erpPublicUrl routing). Server ka message hi dikhate hain — chup-chaap retry
+   nahi (guide §4). 404 = route abhi server par deploy hi nahi hua. */
+async function billingRequest(method, path, body, label) {
+  const token = getSuperAdminToken();
+  let res;
+  try {
+    res = await fetch(erpPublicUrl(path), {
+      method,
+      headers: {
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  /* 401 = token missing/expired → login par bhejo (guide §7). */
+  if (res.status === 401) {
+    const handler = getAuthErrorHandler();
+    if (handler) try { handler(); } catch { /* ignore */ }
+    throw new ApiError('Your session has expired. Please sign in again.', 401);
+  }
+  const json = await res.json().catch(() => null);
+  if (res.status === 404 && !(json && (json.message || json.Message))) {
+    throw new ApiError(`Could not ${label} — this feature is not available on the server yet (404).`, 404);
+  }
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError(friendlyError(json && (json.message || json.title || json.Message), label), res.status);
+  }
+  return json;
+}
+
+export async function saveBillingAutoSetup(body) {
+  return billingRequest('POST', EP.billingAuto.setup(), body, 'save billing automation');
+}
+
+/* Screen A — "Generate Now".
+   → { success, message, summary:{ generated, skipped, failed, challanIDs[] }, errors|null } */
+export async function triggerAutoChallanGeneration() {
+  const json = await billingRequest('POST', EP.billingAuto.triggerGeneration(), undefined, 'generate challans');
+  const d = (json && (json.summary || json.data)) || json || {};
+  const errs = (json && json.errors) || d.errors;
+  return {
+    generated: num(d.generated), skipped: num(d.skipped), failed: num(d.failed),
+    errors: Array.isArray(errs) ? errs.map((e) => (typeof e === 'string' ? e : (e?.message || JSON.stringify(e)))) : [],
+    challanIDs: Array.isArray(d.challanIDs) ? d.challanIDs : [],
+  };
+}
+
+/* Active schedule (naya read API). 404 = "not configured yet" → null. */
+export async function getActiveBillingAutoSetup() {
+  try {
+    const json = await billingRequest('GET', EP.billingAuto.getActive(), undefined, 'load billing automation');
+    return (json && json.data) || null;
+  } catch (e) {
+    if (e?.status === 404) return null;
+    throw e;
+  }
+}
+
+/* Screen B — reminder settings (API shape; UI mapping billingNotificationsData me). */
+export async function getBillingReminderSettings() {
+  const json = await billingRequest('GET', EP.billingReminders.getSettings(), undefined, 'load reminder settings');
+  return (json && json.data) || json;
+}
+
+export async function saveBillingReminderSettings(body) {
+  return billingRequest('PUT', EP.billingReminders.saveSettings(), body, 'save reminder settings');
+}
+
+/* Screen C — "Send reminders now".
+   → { success, message, summary:{ sent, failed, challansChecked }, errors|null } */
+export async function sendDueRemindersNow() {
+  const json = await billingRequest('POST', EP.billingReminders.sendNow(), undefined, 'send reminders');
+  const d = (json && (json.summary || json.data)) || json || {};
+  return { sent: num(d.sent), failed: num(d.failed), challansChecked: num(d.challansChecked), message: json?.message || '' };
+}
+
+/* Screen D — delivery history (paged). → { items, totalCount } */
+export async function getBillingReminderHistory({ pageNumber = 1, pageSize = 20, reminderType = '', branchId = 0 } = {}) {
+  const qs = buildQuery({
+    pageNumber, pageSize,
+    ...(reminderType ? { reminderType } : {}),
+    ...(num(branchId) ? { branchId: num(branchId) } : {}),
+  });
+  const json = await billingRequest('GET', `${EP.billingReminders.history()}${qs}`, undefined, 'load delivery history');
+  const d = (json && json.data && !Array.isArray(json.data) ? json.data : json) || {};
+  const items = Array.isArray(d.items) ? d.items : (Array.isArray(json?.data) ? json.data : []);
+  return { items, totalCount: num(d.totalCount) || items.length };
+}
+
 /**
  * Ek branch ka saved Payment Setup.
  * @returns {Promise<Object|null>} mapped setup, ya null jab koi record na ho.
@@ -218,7 +352,7 @@ export async function getPaymentSummary(branchId, type = PAYMENT_TYPE) {
  */
 export async function listPaymentSummaries(branchIds = [], type = PAYMENT_TYPE) {
   const ids = [...new Set(branchIds.map(Number).filter(Boolean))];
-  const rows = await Promise.all(ids.map((id) => getPaymentSummary(id, type).catch(() => null)));
+  const rows = await mapPool(ids, (id) => getPaymentSummary(id, type));
   const out = {};
   ids.forEach((id, i) => { if (rows[i]) out[id] = rows[i]; });
   return out;
@@ -473,13 +607,49 @@ export async function getChallan(branchId, school, setup, period) {
  * @returns {Promise<Object>} { [branchId]: challan }
  */
 export async function listChallans(schools = [], setups = {}, period) {
-  const rows = await Promise.all(
-    schools.map((s) => getChallan(s.id, s, setups[s.id], period).catch(() => null)),
-  );
   const out = {};
-  schools.forEach((s, i) => { if (rows[i]) out[s.id] = rows[i]; });
-  return out;
+  try {
+    /* Ek call me saari branches ke rows — har branch ki alag POST ki jagah. */
+    const byBranch = {};
+    (await listAllLedgerRows()).forEach((r) => {
+      const bid = num(r?.branchID);
+      if (bid && num(r?.id)) (byBranch[bid] = byBranch[bid] || []).push(r);
+    });
+    schools.forEach((s) => {
+      const hit = (byBranch[num(s.id)] || [])
+        .map((r) => ledgerRowToChallan(r, s, setups[s.id]))
+        .find((c) => samePeriod(period, { month: c.month, year: c.year }));
+      if (hit) out[s.id] = hit;
+    });
+    return out;
+  } catch (e) {
+    /* Bulk route na chale to purana tareeqa — branch-wise, magar pool me. */
+    const rows = await mapPool(schools, (s) => getChallan(s.id, s, setups[s.id], period));
+    schools.forEach((s, i) => { if (rows[i]) out[s.id] = rows[i]; });
+    return out;
+  }
 }
+
+/* GET get_payment_ledger bina branchId → saari branches ka ledger. Challans
+   aur "pichhle mahine ke dues" dono isi jawab se bante hain, is liye thodi der
+   ke liye ek hi promise baanta jata hai; challan save/delete par saaf. */
+let _ledgerCache = null;   // { at, job }
+const LEDGER_CACHE_MS = 15000;
+
+async function listAllLedgerRows() {
+  if (_ledgerCache && Date.now() - _ledgerCache.at < LEDGER_CACHE_MS) return _ledgerCache.job;
+  const url = `${SA_ADMIN_API_BASE}${EP.payments.ledgerList()}`
+    + buildQuery({ challanType: CHALLAN_TYPE, networkId: 0 });
+  const job = withTimeout(getJson(url, 'challans')).then((body) => {
+    const rows = Array.isArray(body) ? body : (Array.isArray(body?.data) ? body.data : []);
+    return rows.filter((r) => !r?.type || r.type === PAYMENT_TYPE);
+  });
+  _ledgerCache = { at: Date.now(), job };
+  job.catch(() => { if (_ledgerCache?.job === job) _ledgerCache = null; });
+  return job;
+}
+
+export function invalidateLedgerCache() { _ledgerCache = null; }
 
 /**
  * Generate Challan — pehli baar ADD, dobara UPDATE (branchID+type unique hai).
@@ -487,6 +657,7 @@ export async function listChallans(schools = [], setups = {}, period) {
  */
 export async function saveChallan({ branchId, school, setup, dueDate, total, issueDate, id = 0 } = {}) {
   const rowId = num(id);
+  invalidateLedgerCache();
   await ledgerPost(
     challanToBody({
       action: rowId > 0 ? LEDGER_ACTIONS.update : LEDGER_ACTIONS.add,
@@ -494,6 +665,7 @@ export async function saveChallan({ branchId, school, setup, dueDate, total, iss
     }),
     rowId > 0 ? 'update this challan' : 'generate this challan',
   );
+  invalidateLedgerCache();
   /* Save ke baad usi mahine ka taaza record — warna kisi aur mahine ki row
      uthai ja sakti hai. Mahina issue date se (wahi jo body me gaya). */
   const fresh = await getChallan(branchId, school, setup, periodOf(issueDate)).catch(() => null);
@@ -537,11 +709,9 @@ export async function getPreviousDues(branchId, school, setup, period) {
  */
 export async function listPreviousDues(schools = [], setups = {}, period) {
   const prev = previousPeriod(period);
-  const ids = schools.map((s) => s.id).filter(Boolean);
-  const [challans, receivings] = await Promise.all([
-    listChallans(schools, setups, prev).catch(() => ({})),
-    listReceivings(ids, prev).catch(() => ({})),
-  ]);
+  const challans = await listChallans(schools, setups, prev).catch(() => ({}));
+  /* Receiving sirf challan wali branch ki hoti hai — baaqi par call bekaar. */
+  const receivings = await listReceivings(Object.keys(challans), prev).catch(() => ({}));
   const out = {};
   for (const s of schools) {
     const challan = challans[s.id];
@@ -556,6 +726,7 @@ export async function listPreviousDues(schools = [], setups = {}, period) {
 
 /** Challan hatao. */
 export function deleteChallan({ branchId, id }) {
+  invalidateLedgerCache();
   return ledgerPost(
     {
       action: LEDGER_ACTIONS.delete,
@@ -564,7 +735,7 @@ export function deleteChallan({ branchId, id }) {
       createdBy: currentUserId(), modifiedBy: currentUserId(),
     },
     'delete this challan',
-  );
+  ).finally(invalidateLedgerCache);
 }
 
 /* ═══════════════════ RECEIVING (live) ═══════════════════
@@ -688,7 +859,7 @@ export async function getReceiving(branchId, period) {
  */
 export async function listReceivings(branchIds = [], period) {
   const ids = [...new Set(branchIds.map(Number).filter(Boolean))];
-  const rows = await Promise.all(ids.map((id) => getReceiving(id, period).catch(() => null)));
+  const rows = await mapPool(ids, (id) => getReceiving(id, period));
   const out = {};
   ids.forEach((id, i) => { if (rows[i]) out[id] = rows[i]; });
   return out;

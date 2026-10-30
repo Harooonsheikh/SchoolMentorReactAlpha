@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { buildUrl, isViewOnlyAccount } from '../../utils/apiConfig';
+import { buildUrl, isViewOnlyAccount, setBillingReadOnly } from '../../utils/apiConfig';
+import { fetchBillingRestriction } from '../services/billingRestriction';
 import { MODULE_REGISTRY } from '../config/moduleConfig';
 import { INITIAL_USERS, INITIAL_ROLES } from '../pages/UserPermissions/permissionsData';
 
@@ -65,7 +66,7 @@ const GATEABLE_MODULES = new Set([
 ]);
 
 const FULL_ACCESS_VALUE = {
-  ready: true, fullAccess: true, failOpen: false, isSchoolHead: false, readOnly: false,
+  ready: true, fullAccess: true, failOpen: false, isSchoolHead: false, readOnly: false, billingLock: null,
   can: () => true, canScreen: () => true, canModule: () => true,
 };
 
@@ -85,7 +86,28 @@ export function PermissionsProvider({ children }) {
      jata tha jab branch chain ka hissa hoti — is se chain-school ka apna School
      Head bhi read-only ho jata tha. Wo hata diya: ab school ke apne users poora
      edit access rakhte hain; sirf chain head view-only rehta hai. */
-  const readOnly = isViewOnlyAccount();
+  const chainReadOnly = isViewOnlyAccount();
+
+  /* Super Admin → Billing Automation restriction (GET /api/BillingAutoSetup):
+     'read_only' / 'full' par har user (School Head bhi) sirf View/Download/
+     Print kar sakta hai — `can()` ke zariye har gated module ke edit/delete
+     khud chhup jaate hain. Tab par wapas aane par aur har minute dobara check. */
+  const [billingLock, setBillingLock] = useState(null);   // null | 'read_only' | 'full'
+  useEffect(() => {
+    let alive = true;
+    const check = () => fetchBillingRestriction().then((mode) => { if (alive && mode !== undefined) setBillingLock(mode); });
+    check();
+    const timer = setInterval(check, 60000);
+    window.addEventListener('focus', check);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener('focus', check); };
+  }, []);
+  useEffect(() => {
+    setBillingReadOnly(!!billingLock);
+    return () => setBillingReadOnly(false);
+  }, [billingLock]);
+
+  /* readOnly = chain account YA billing restriction — dono me sirf dekhna. */
+  const readOnly = chainReadOnly || !!billingLock;
 
   const [state, setState] = useState(() => ({
     ready: isSchoolHead || isViewOnlyAccount(),        // School Head / chain → foran ready (no fetch)
@@ -105,7 +127,7 @@ export function PermissionsProvider({ children }) {
   useEffect(() => {
     /* School Head → sab allowed; chain → sab dikhega magar chalega kuch nahi.
        Dono soorton me per-user permissions mangane ki zaroorat nahi. */
-    if (isSchoolHead || readOnly) return undefined;
+    if (isSchoolHead || chainReadOnly) return undefined;
     let alive = true;
     const branchId = sessionStorage.getItem('branchID') || '1';
     const userId = sessionStorage.getItem('UserID') || '';
@@ -156,7 +178,7 @@ export function PermissionsProvider({ children }) {
         if (alive) setState((s) => ({ ...s, ready: true, fullAccess: true, failOpen: true })); // fail-open
       });
     return () => { alive = false; };
-  }, [isSchoolHead, readOnly]);
+  }, [isSchoolHead, chainReadOnly]);
 
   const value = useMemo(() => {
     const { fullAccess, failOpen, accessible, screens, modules, knownModules, ready } = state;
@@ -164,8 +186,11 @@ export function PermissionsProvider({ children }) {
       /* Chain account: sirf dekhna, chhapna aur download — koi tabdeeli nahi.
          Ye check fullAccess se PEHLE lagta hai, warna fullAccess ki wajah se
          view-only user ko bhi har action mil jata. */
-      if (readOnly) return VIEW_ACTIONS.has(norm(action));
-      if (fullAccess) return true;
+      if (readOnly) {
+        if (!VIEW_ACTIONS.has(norm(action))) return false;
+        /* Billing lock: view bhi tabhi jab user ko waise mili ho (chain ko sab). */
+        if (chainReadOnly || fullAccess) return true;
+      } else if (fullAccess) return true;
       const m = norm(menu);
       /* Registry (gateable) module → sirf wahi action allowed jo WAQAI granted
          hai — chahe response me is module ki koi row aayi ho ya na (governed-
@@ -180,7 +205,7 @@ export function PermissionsProvider({ children }) {
        hai. Is liye readOnly yahan fullAccess ki tarah kaam karta hai (chain ka
        pata permissions load hone ke BAAD chale to bhi menu chhupe nahi). */
     const canScreen = (menu, sub) => {
-      if (fullAccess || readOnly) return true;
+      if (fullAccess || chainReadOnly) return true;
       const m = norm(menu);
       /* canModule/can jaisa hi — registry module par sirf granted screen allowed. */
       if (GATEABLE_MODULES.has(m)) return screens.has(`${m}||${norm(sub)}`);
@@ -188,7 +213,7 @@ export function PermissionsProvider({ children }) {
       return screens.has(`${m}||${norm(sub)}`);
     };
     const canModule = (menu) => {
-      if (fullAccess || readOnly) return true;
+      if (fullAccess || chainReadOnly) return true;
       const m = norm(menu);
       /* Registry ka koi bhi module → sirf tab dikhao jab response me is
          module ki koi action accessible ho. Absent = NO access. */
@@ -196,8 +221,8 @@ export function PermissionsProvider({ children }) {
       if (!knownModules.has(m)) return true;          // truly uncovered → allow (legacy safety)
       return modules.has(m);
     };
-    return { ready, fullAccess, failOpen, isSchoolHead, readOnly, can, canScreen, canModule };
-  }, [state, isSchoolHead, readOnly]);
+    return { ready, fullAccess, failOpen, isSchoolHead, readOnly, billingLock, can, canScreen, canModule };
+  }, [state, isSchoolHead, readOnly, chainReadOnly, billingLock]);
 
   return (
     <PermissionsContext.Provider value={value}>

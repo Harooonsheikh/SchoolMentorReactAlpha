@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { PAY_SCHOOLS, fmtDateLong } from './paymentData';
 import {
   summarizeAutomation, previewTimeline, RESTRICTION_MODE_LABEL,
 } from './billingAutomationData';
+import { paymentsApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
    BILLING AUTOMATION — settings screen (brief §4). Clear sections,
@@ -33,8 +34,38 @@ function Field({ label, hint, children }) {
   );
 }
 
-export default function BillingAutomationTab({ settings, onSave, overrides, schools }) {
+export default function BillingAutomationTab({ settings, onSave, overrides, schools, toast, onGenerated }) {
   const [f, setF] = useState(settings);
+  /* "Generate Now" — server Hangfire wala kaam abhi chala deta hai. Is mahine
+     ka challan pehle se ho to school "skipped", is liye do dafa dabana safe. */
+  const [genBusy, setGenBusy] = useState(false);
+  const [genResult, setGenResult] = useState(null);
+  const generateNow = async () => {
+    if (genBusy) return;
+    setGenBusy(true);
+    try {
+      const r = await paymentsApi.triggerAutoChallanGeneration();
+      setGenResult(r);
+      toast?.(`Challans — ${r.generated} generated, ${r.skipped} skipped, ${r.failed} failed`, r.failed ? 'warn' : 'success');
+      if (r.generated) onGenerated?.();
+    } catch (e) {
+      toast?.(e?.message || 'Could not generate challans', 'error');
+    } finally {
+      setGenBusy(false);
+    }
+  };
+  /* GET /get-billing-auto-setup → 404 = abhi koi active schedule nahi (guide §7).
+     Save ke baad dobara check (settings badalti hain). */
+  const [notConfigured, setNotConfigured] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    paymentsApi.getActiveBillingAutoSetup()
+      .then((d) => { if (alive) setNotConfigured(!d); })
+      .catch(() => { /* doosri ghalti par banner nahi — form khud error dikhata hai */ });
+    return () => { alive = false; };
+  }, [settings]);
+  /* Re-sync when the parent loads the saved setup from the API after mount. */
+  useEffect(() => { setF(settings); }, [settings]);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const dirty = JSON.stringify(f) !== JSON.stringify(settings);
 
@@ -46,6 +77,9 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
 
   return (
     <div className="ss-panel">
+      {notConfigured && (
+        <div className="pay-info-box" style={{ marginBottom: 14 }}><i className="fa-solid fa-circle-exclamation" /><p>Billing automation is not configured yet. Save the settings below to activate it.</p></div>
+      )}
       <div className="section-card" style={{ padding: 18 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg,var(--brand),var(--brand-mid))', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="fa-solid fa-robot" /></div>
@@ -71,7 +105,7 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
           <Field label="Billing Day of Month" hint="The invoice is generated on this day each month.">
             <input className="pay-input" type="number" min={1} max={31} value={f.billingDay} onChange={(e) => set('billingDay', Math.min(31, Math.max(1, Number(e.target.value) || 1)))} />
           </Field>
-          <Field label="Fallback for Short Months" hint="Used when the billing day doesn't exist in a given month (e.g. day 31 in February).">
+          <Field label="Fallback for Short Months" hint="Saved only — the generation job currently uses the last day of the month when the billing day doesn't exist.">
             <select className="pay-input" value={f.fallbackPolicy} onChange={(e) => set('fallbackPolicy', e.target.value)}>
               <option value="last_day">Generate on the last calendar day</option>
               <option value="specific_date">Generate on a specific fallback date</option>
@@ -80,7 +114,7 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
           {f.fallbackPolicy === 'specific_date' && (
             <Field label="Fallback Date (day of month)"><input className="pay-input" type="number" min={1} max={28} value={f.fallbackDate} onChange={(e) => set('fallbackDate', e.target.value)} placeholder="e.g. 28" /></Field>
           )}
-          <Field label="Invoice Send Timing" hint="When the generated invoice becomes visible to the school.">
+          <Field label="Invoice Send Timing" hint="Saved only — not used by the generation job yet; the school is notified when the challan is created.">
             <select className="pay-input" value={f.generateSendSameDay ? 'same' : 'offset'} onChange={(e) => set('generateSendSameDay', e.target.value === 'same')}>
               <option value="same">Send on the same day it's generated</option>
               <option value="offset">Send on a separate, later date</option>
@@ -129,6 +163,33 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 24 }}>
         <button className="btn-secondary" disabled={!dirty} onClick={() => setF(settings)}>Discard Changes</button>
         <button className="btn-primary" disabled={!dirty} onClick={() => onSave(f)}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
+      </div>
+
+      {/* ── Manual trigger — server ka scheduled kaam abhi chalao ── */}
+      <div className="section-card">
+        <CardHeader title="Generate Challans Now" icon="fa-bolt" />
+        <div style={{ padding: '0 18px 18px' }}>
+          <div className="pay-toggle-row">
+            <div><div className="pay-toggle-label">Run monthly challan generation now</div><div className="pay-toggle-sub">Creates this month's challan for every active school instead of waiting for the billing day. A school that already has a challan this month is skipped, not duplicated — safe to click twice.</div></div>
+            <button className="btn-primary" disabled={genBusy} onClick={generateNow}>
+              <i className={`fa-solid ${genBusy ? 'fa-spinner fa-spin' : 'fa-bolt'}`} /> {genBusy ? 'Generating…' : 'Generate Now'}
+            </button>
+          </div>
+          {genResult && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <TimelineStep label="Generated" value={genResult.generated} />
+                <TimelineStep label="Skipped" value={genResult.skipped} />
+                <TimelineStep label="Failed" value={genResult.failed} tone={genResult.failed ? 'red' : undefined} />
+              </div>
+              {genResult.errors.length > 0 && (
+                <ul style={{ marginTop: 10, paddingLeft: 18, fontSize: 12, color: 'var(--err)', lineHeight: 1.6 }}>
+                  {genResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {overrides.length > 0 && (

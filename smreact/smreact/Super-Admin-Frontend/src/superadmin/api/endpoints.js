@@ -90,6 +90,9 @@ export const EP = {
     /* POST — challan (payment ledger): GET | INSERT | ADD | UPDATE | DELETE.
        GET branchID par filter karta hai aur rows ki list deta hai. */
     ledgerAction: () => `${SA_ROOT}/api/AHM_School_Payments/manage_payment_ledger`,
+    /* GET — branchId CHHOR do to SAARI branches ke ledger rows ek call me
+       (?challanType=Monthly&networkId=0). */
+    ledgerList: () => `${SA_ROOT}/api/AHM_School_Payments/get_payment_ledger`,
     /* POST — fee receiving: wahi paanch actions, GET currentBranchID par. */
     receivingAction: () => `${SA_ROOT}/api/AHM_School_Payments/manage_payment_receiving`,
 
@@ -110,6 +113,39 @@ export const EP = {
     oneTimeList: () => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_list`,
     oneTimeReceive: () => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_receive-payment`,
     oneTimeReset: (id) => `${SA_ROOT}/api/AHM_School_Payments/one_time_chalan_reset-payment/${id}`,
+  },
+
+  /* ── Billing Automation — global billing-auto setup (School Payment →
+       Billing Automation → Save Changes).
+         GET  /api/BillingAutoSetup            → current setup
+         POST /api/BillingAutoSetup            body: BillingAutoSetupModel
+           { id, billingAuto, billingDay, fallback, fallbackDate, invoiceSend,
+             sendOffset, dueDate, gracePeriod, restrictionCutOff,
+             restrictedAccess, restrictedMode, isActive } ── */
+  billingAuto: {
+    setup: () => `${SA_ROOT}/api/BillingAutoSetup`,
+    /* POST ?date= (optional) → { generated, skipped, failed, errors[], challanIDs[] }.
+       Is mahine ka challan pehle se ho to school "skipped" — do dafa dabana safe. */
+    triggerGeneration: () => `${SA_ROOT}/trigger-auto-challan-generation`,
+    /* GET active schedule (read-only; due field = dueDateAfterDays). 404 = not configured. */
+    getActive: () => `${SA_ROOT}/get-billing-auto-setup`,
+  },
+
+  /* ── Billing Reminders (Hangfire backend — frontend sirf configure + dikhata
+       hai, kuch schedule nahi karta). Routes API ROOT par hain (/api ke baghair),
+       wahi jo swagger par trigger-auto-challan-generation ke hain.
+         GET  /get-billing-reminder-settings   → { beforeDue, overdue, general }
+         PUT  /save-billing-reminder-settings  body: same + updatedBy
+         POST /send-due-reminders-now          → abhi bhejo (unpaid challans)
+         GET  /get-billing-reminder-delivery-history ?pageNumber&pageSize&reminderType&branchId
+                                               → { items[], totalCount }
+       schedule/cancel-challan-notifications ab server par nahi hain — server har
+       5 min unpaid challans khud check karta hai. ── */
+  billingReminders: {
+    getSettings: () => `${SA_ROOT}/get-billing-reminder-settings`,
+    saveSettings: () => `${SA_ROOT}/save-billing-reminder-settings`,
+    sendNow: () => `${SA_ROOT}/send-due-reminders-now`,
+    history: () => `${SA_ROOT}/get-billing-reminder-delivery-history`,
   },
 
   /* ── School Permissions — LIVE SchoolMentorSuperAdminAPI (see SA_ROOT).

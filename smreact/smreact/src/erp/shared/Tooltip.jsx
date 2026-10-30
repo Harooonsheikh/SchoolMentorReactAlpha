@@ -153,6 +153,9 @@ export default function Tooltip({ text, placement = 'top', delay = 220, disabled
     onBlur:       (e) => { hide(); child.props.onBlur       && child.props.onBlur(e); },
     ...(describedBy ? { 'aria-describedby': describedBy } : {}),
     title: undefined,
+    /* Icon-only buttons ka label sirf yahi tooltip hota hai — DOM par rakh do
+       taake ViewOnlyGuard unhe (✓ Save / ✕ Delete) pehchan sake. */
+    ...(typeof child.type === 'string' ? { 'data-tip': text } : {}),
   };
 
   const arrowStyle = (pos.side === 'top' || pos.side === 'bottom')

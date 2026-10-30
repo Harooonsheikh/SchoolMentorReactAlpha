@@ -98,9 +98,8 @@ export function summarizeAutomation(settings) {
   if (!settings.enabled) return 'Automatic billing is currently disabled. No invoices will be generated, sent, or restricted automatically.';
   const fallback = settings.fallbackPolicy === 'specific_date' && settings.fallbackDate
     ? `the ${settings.fallbackDate}${ordinal(Number(settings.fallbackDate))} instead` : 'the last calendar day of that month';
-  const sendPart = settings.generateSendSameDay
-    ? 'sent the same day they are generated'
-    : `sent ${settings.sendOffsetDays} day${settings.sendOffsetDays === 1 ? '' : 's'} after generation`;
+  /* Send offset abhi server job use nahi karta — school ko usi din notify. */
+  const sendPart = 'the school is notified the same day they are generated';
   const restrictPart = settings.restrictionEnabled
     ? `Eligible unpaid accounts are restricted (${RESTRICTION_MODE_LABEL[settings.restrictionMode] || settings.restrictionMode}) after the configured cutoff.`
     : 'Access restriction is currently disabled — overdue accounts are flagged but never automatically restricted.';
@@ -135,6 +134,71 @@ export const INITIAL_AUTOMATION_SETTINGS = {
   lastRunStatus: null,             // 'success' | 'partial' | 'failed'
   lastRunStats: { generated: 0, sent: 0, failed: 0, skipped: 0 },
 };
+
+/* ─── UI settings → BillingAutoSetupModel (POST /api/BillingAutoSetup) ───
+   The backend stores the policy choices as free strings/ints, so the two
+   dropdowns (fallback, invoice-send) go up as their human labels. */
+const FALLBACK_LABEL = {
+  last_day: 'Generate on the last calendar day',
+  specific_date: 'Generate on a specific fallback date',
+};
+
+export function automationToApi(f = {}, id = null) {
+  const int = (v, d = 0) => {
+    if (v === '' || v == null) return d;
+    const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : d;
+  };
+  const billingDay = int(f.billingDay, 1);
+  return {
+    id: id ?? (f.id ?? null),
+    billingAuto: !!f.enabled,
+    billingDay,
+    fallback: FALLBACK_LABEL[f.fallbackPolicy] || FALLBACK_LABEL.last_day,
+    /* fallbackDate is an int column; with "last day" policy there's no picked
+       date, so send the billing day (matches the backend's sample payload). */
+    fallbackDate: f.fallbackPolicy === 'specific_date' ? int(f.fallbackDate, billingDay) : billingDay,
+    invoiceSend: f.generateSendSameDay
+      ? "Send on the same day it's generated"
+      : 'Send on a separate, later date',
+    sendOffset: int(f.sendOffsetDays, 0),
+    dueDate: int(f.dueDays, 0),
+    gracePeriod: int(f.graceDays, 0),
+    restrictionCutOff: String(f.restrictionCutoffTime || ''),
+    restrictedAccess: !!f.restrictionEnabled,
+    restrictedMode: String(f.restrictionMode || ''),
+    isActive: true,
+  };
+}
+
+/* ─── BillingAutoSetupModel (GET /api/BillingAutoSetup) → UI settings ───
+   Reverse of automationToApi, so the screen loads whatever was saved. */
+export function apiToAutomation(row = {}, base = INITIAL_AUTOMATION_SETTINGS) {
+  if (!row || typeof row !== 'object') return { ...base };
+  const int = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : d; };
+  /* restrictionCutOff may come back as "11" (hour only) — the <input type=time>
+     needs "HH:MM". */
+  const cut = String(row.restrictionCutOff ?? '').trim();
+  const cutoff = /^\d{1,2}$/.test(cut) ? `${cut.padStart(2, '0')}:00` : (cut || base.restrictionCutoffTime);
+  const fallback = String(row.fallback ?? '').toLowerCase();
+  const send = String(row.invoiceSend ?? '').toLowerCase();
+  return {
+    ...base,
+    id: row.id ?? null,
+    enabled: !!row.billingAuto,
+    billingDay: int(row.billingDay, base.billingDay),
+    fallbackPolicy: fallback.includes('specific') ? 'specific_date' : 'last_day',
+    fallbackDate: fallback.includes('specific') && Number(row.fallbackDate) > 0
+      ? String(row.fallbackDate) : base.fallbackDate,
+    generateSendSameDay: send.includes('same day') ? true : (send ? false : base.generateSendSameDay),
+    sendOffsetDays: int(row.sendOffset, base.sendOffsetDays),
+    dueDays: int(row.dueDate, base.dueDays),
+    graceDays: int(row.gracePeriod, base.graceDays),
+    restrictionCutoffTime: cutoff,
+    restrictionEnabled: !!row.restrictedAccess,
+    /* Swagger-test rows carry restrictedMode "string" — only accept known modes. */
+    restrictionMode: RESTRICTION_MODE_LABEL[row.restrictedMode] ? row.restrictedMode : base.restrictionMode,
+  };
+}
 
 /* ─── Manual grace/restore overrides — cycle-specific, never carried
    forward automatically (brief §5's explicit rule). `cycleKey` is the
@@ -209,7 +273,9 @@ export function computeSchoolRestriction({
    date → due date → grace-period end → expected restriction date, for
    a representative "generated today" invoice. */
 export function previewTimeline(settings, issueDateISO = todayISO()) {
-  const sendDate = computeSendDate(issueDateISO, settings);
+  /* Server challan bante hi "invoice generated" bhej deta hai — Send Offset
+     abhi job use nahi karta (guide §4), is liye preview me Sent = Issued. */
+  const sendDate = issueDateISO;
   const dueDate = computeDueDate(issueDateISO, settings);
   const graceEnd = computeGraceEnd(dueDate, settings);
   const restrictionDate = computeRestrictionDate(dueDate, settings);

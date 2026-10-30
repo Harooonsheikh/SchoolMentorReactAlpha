@@ -3,14 +3,14 @@ import {
   PAY_SCHOOLS, INITIAL_PAY_SETUP, RECEIVING_METHODS,
   monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, todayISO, deriveRow, trialInfo,
   SCHOOL_MENTOR_BANK, INITIAL_OT_CHALLANS, INITIAL_OT_RECEIVING,
-  genPsid, defaultOneLink, isChallanOverdue, totalPayableOf, deriveInvoiceStatus,
+  genPsid, defaultOneLink,
 } from './paymentData';
 import {
-  INITIAL_AUTOMATION_SETTINGS, INITIAL_BILLING_OVERRIDES, computeGraceEnd,
+  INITIAL_AUTOMATION_SETTINGS, INITIAL_BILLING_OVERRIDES, automationToApi, apiToAutomation,
 } from './billingAutomationData';
 import {
-  INITIAL_NOTIFICATION_SETTINGS, INITIAL_ANNOUNCEMENTS, INITIAL_DELIVERY_LOG,
-  renderTemplate, alreadySentToday, nextDeliveryLogId,
+  INITIAL_NOTIFICATION_SETTINGS, INITIAL_ANNOUNCEMENTS,
+  notifSettingsFromApi, notifSettingsToApi,
 } from './billingNotificationsData';
 import BillingAutomationTab from './BillingAutomation';
 import NotificationsRemindersTab from './BillingNotificationsTab';
@@ -105,9 +105,9 @@ const TABS = [
   { id: 'setup', name: 'Payment Setup', icon: 'fa-gear' },
   { id: 'challans', name: 'Challans', icon: 'fa-file-invoice' },
   { id: 'receiving', name: 'Receiving', icon: 'fa-hand-holding-dollar' },
-  { id: 'report', name: 'Reports', icon: 'fa-chart-bar' },
   { id: 'automation', name: 'Billing Automation', icon: 'fa-robot' },
   { id: 'notifications', name: 'Notifications & Reminders', icon: 'fa-bell' },
+  { id: 'report', name: 'Reports', icon: 'fa-chart-bar' },
 ];
 
 /* Branch directory ki row → wohi school shape jo yeh screen padhti hai. */
@@ -150,9 +150,37 @@ export default function SchoolPayment({ toast }) {
      (same mock/settings model as Super-Admin-Frontend). */
   const [automationSettings, setAutomationSettings] = useState(INITIAL_AUTOMATION_SETTINGS);
   const [overrides] = useState(INITIAL_BILLING_OVERRIDES);
+
+  /* Load the saved billing-automation setup (GET /api/BillingAutoSetup) so the
+     form opens with whatever was last saved. Failure → keep defaults. */
+  useEffect(() => {
+    let alive = true;
+    paymentsApi.getBillingAutoSetup()
+      .then((json) => {
+        if (!alive || !json) return;
+        /* GET returns a bare array of all saved setups (no upsert server-side);
+           use the latest (highest id) as the current one. */
+        const raw = json.data ?? json;
+        const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
+        const row = list.slice().sort((a, b) => (Number(b?.id) || 0) - (Number(a?.id) || 0))[0];
+        if (row && typeof row === 'object') setAutomationSettings((p) => apiToAutomation(row, p));
+      })
+      .catch(() => { /* keep defaults */ });
+    return () => { alive = false; };
+  }, []);
   const [notifSettings, setNotifSettings] = useState(INITIAL_NOTIFICATION_SETTINGS);
+  const [notifLoadError, setNotifLoadError] = useState('');
   const [announcements, setAnnouncements] = useState(INITIAL_ANNOUNCEMENTS);
-  const [deliveryLog, setDeliveryLog] = useState(INITIAL_DELIVERY_LOG);
+
+  /* Reminder settings (GET /get-billing-reminder-settings). Kabhi save na hui
+     hon to server defaults deta hai; fail ho to local defaults + error note. */
+  useEffect(() => {
+    let alive = true;
+    paymentsApi.getBillingReminderSettings()
+      .then((api) => { if (alive) { setNotifSettings((p) => notifSettingsFromApi(api, p)); setNotifLoadError(''); } })
+      .catch((e) => { if (alive) setNotifLoadError(e?.message || ''); });
+    return () => { alive = false; };
+  }, []);
 
   /* toast prop har render par naya function ho sakta hai — loader ko dobara
      chalane se rokne ke liye ref me rakha hai (wahi tareeqa SchoolStatus ka). */
@@ -183,6 +211,9 @@ export default function SchoolPayment({ toast }) {
   const [tabBusy, setTabBusy] = useState({ setup: false, challans: false, receiving: false, banks: false });
 
   useEffect(() => { payRef.current = payStore; }, [payStore]);
+  /* chStore ka mirror — receiving sirf challan wali branches ki mangwani hai. */
+  const chRef = useRef({});
+  useEffect(() => { chRef.current = chStore; }, [chStore]);
 
   /* Ek key ka kaam sirf EK baar; chal raha ho to doosra caller usi promise par
      wait karta hai (React ke double-effect par bhi ek hi call jati hai).
@@ -243,6 +274,7 @@ export default function SchoolPayment({ toast }) {
     if (challanPeriodRef.current !== key) {
       challanPeriodRef.current = key;
       loadedRef.current.challans = false;
+      chRef.current = {};
       setChStore({});
     }
     if (loadedRef.current.challans) return;
@@ -252,6 +284,7 @@ export default function SchoolPayment({ toast }) {
       /* Jawab aane tak mahina badal gaya ho to yeh rows us naye mahine ki
          nahi hain — store me daalna sirf ghalat aadad dikhata hai. */
       if (challanPeriodRef.current !== key) return;
+      chRef.current = fresh;
       setChStore(fresh);
     }, 'Could not load challans', key);
   }, [ensureSetups, runOnce, period]);
@@ -278,7 +311,9 @@ export default function SchoolPayment({ toast }) {
     await runOnce('receiving', async () => {
       const setups = payRef.current || {};
       const [recvs, prevDues] = await Promise.all([
-        paymentsApi.listReceivings(rows.map((x) => x.id), period),
+        /* Receiving challan ke baghair nahi banti — sirf challan wali branches
+           (306 ki jagah jitne challan bane). */
+        paymentsApi.listReceivings(Object.keys(chRef.current || {}), period),
         /* "Total Dues" column ke liye — pichhle mahine ka bacha hua. */
         paymentsApi.listPreviousDues(rows, setups, period).catch(() => ({})),
       ]);
@@ -495,6 +530,8 @@ export default function SchoolPayment({ toast }) {
       setChStore((prev) => ({ ...prev, [id]: saved }));
       setModal(null);
       toast?.(`Challan generated for ${s.name}`, 'success');
+      /* Reminders server khud har 5 min unpaid challans par bhejta hai —
+         frontend kuch schedule nahi karta (guide §1). */
     } catch (err) {
       toast?.(err?.message || 'Could not generate challan', 'error');
     } finally {
@@ -745,56 +782,34 @@ export default function SchoolPayment({ toast }) {
     } finally { setSaving(false); }
   };
 
-  const sendRemindersNow = () => {
-    const today = todayISO();
-    const entries = [];
-    schools.forEach((s) => {
-      const challan = chStore[s.id]; if (!challan) return;
-      const recv = recvStore[s.id];
-      const status = deriveInvoiceStatus(challan, recv);
-      if (status === 'paid') return;
-      const payable = totalPayableOf(challan);
-      const graceEnd = challan.dueDateRaw
-        ? computeGraceEnd(challan.dueDateRaw, automationSettings)
-        : today;
-      const values = {
-        SchoolName: s.name,
-        InvoiceNumber: challan.invoiceNumber || '—',
-        Amount: pkr(payable),
-        DueDate: challan.dueDate || fmtDateLong(challan.dueDateRaw),
-        GracePeriodEnd: fmtDateLong(graceEnd),
-        RestrictionDate: fmtDateLong(graceEnd),
-        BillingURL: 'https://app.schoolmentor.ai/billing',
-      };
-      const daysToDue = challan.dueDateRaw
-        ? Math.round((new Date(challan.dueDateRaw) - new Date(today)) / 86400000)
-        : null;
-      let notifType = null;
-      if (notifSettings.beforeDue.enabled && daysToDue != null && daysToDue >= 0 && daysToDue <= notifSettings.beforeDue.daysBefore) {
-        notifType = 'before_due';
-      } else if (notifSettings.overdueWarning.enabled && isChallanOverdue(challan)) {
-        notifType = 'overdue_warning';
+  /* Reminders ab server (Hangfire) bhejta hai — frontend sirf settings save
+     karta hai aur "abhi bhejo" ka trigger deta hai. */
+  const saveNotifSettings = async (f) => {
+    try {
+      await paymentsApi.saveBillingReminderSettings(notifSettingsToApi(f));
+      /* Save ke baad server ki taaza copy (ids / updatedOn) — na mile to jo bheja wahi. */
+      const fresh = await paymentsApi.getBillingReminderSettings().catch(() => null);
+      setNotifSettings(fresh ? notifSettingsFromApi(fresh, f) : f);
+      setNotifLoadError('');
+      toast?.('Reminder settings saved', 'success');
+    } catch (e) {
+      toast?.(e?.message || 'Could not save reminder settings', 'error');
+    }
+  };
+
+  const sendRemindersNow = async () => {
+    try {
+      const { sent, failed, challansChecked } = await paymentsApi.sendDueRemindersNow();
+      /* sent:0 normal hai — abhi kuch due nahi ya pehle hi ja chuka (guide §5). */
+      if (failed > 0) {
+        toast?.(`${sent} sent, ${failed} failed — see Delivery History for the reason`, 'warn');
+      } else if (sent > 0) {
+        toast?.(`${sent} reminder${sent === 1 ? '' : 's'} sent (${challansChecked} challans checked)`, 'success');
+      } else {
+        toast?.(`Nothing due right now (${challansChecked} challans checked)`, 'info');
       }
-      if (!notifType) return;
-      if (alreadySentToday(deliveryLog, s.id, notifType, today)) return;
-      const tmpl = notifType === 'before_due' ? notifSettings.beforeDue : notifSettings.overdueWarning;
-      tmpl.channels.forEach((ch) => {
-        if (ch === 'email') return;
-        entries.push({
-          id: nextDeliveryLogId(), schoolId: s.id, schoolName: s.name,
-          invoiceNumber: challan.invoiceNumber,
-          notifType, scheduledAt: `${today}T${(tmpl.times[0] || '09:00')}:00`,
-          sentAt: new Date().toISOString(),
-          channel: ch, status: 'sent', attempt: 1,
-          message: renderTemplate(tmpl.template, values),
-        });
-      });
-    });
-    if (entries.length) {
-      setDeliveryLog((prev) => [...prev, ...entries]);
-      toast?.(`${entries.length} reminder${entries.length === 1 ? '' : 's'} sent`, 'success');
-    } else {
-      toast?.('No reminders due to be sent right now', 'info');
+    } catch (e) {
+      toast?.(e?.message || 'Could not send reminders', 'error');
     }
   };
 
@@ -852,18 +867,32 @@ export default function SchoolPayment({ toast }) {
       {tab === 'automation' && (
         <BillingAutomationTab
           settings={automationSettings}
-          onSave={(s) => { setAutomationSettings(s); toast?.('Billing automation settings saved', 'success'); }}
+          onSave={async (s) => {
+            setAutomationSettings(s);
+            try {
+              const saved = await paymentsApi.saveBillingAutoSetup(automationToApi(s, s.id ?? null));
+              /* Keep the returned record id so the next save is an update, not a duplicate. */
+              const newId = saved?.data?.id ?? saved?.id;
+              if (newId != null) setAutomationSettings((p) => ({ ...p, id: newId }));
+              toast?.('Billing automation settings saved', 'success');
+            } catch (e) {
+              toast?.(e?.message || 'Could not save billing automation settings', 'error');
+            }
+          }}
           overrides={overrides}
           schools={schools}
+          toast={toast}
+          /* Naye challans ban gaye — Challans/Receiving agli dafa taaza aayen. */
+          onGenerated={() => { paymentsApi.invalidateLedgerCache(); loadedRef.current.challans = false; loadedRef.current.receiving = false; }}
         />
       )}
       {tab === 'notifications' && (
         <NotificationsRemindersTab
           settings={notifSettings}
-          onSave={(s) => { setNotifSettings(s); toast?.('Notification settings saved', 'success'); }}
+          loadError={notifLoadError}
+          onSave={saveNotifSettings}
           announcements={announcements}
           onDeleteAnnouncement={(id) => setAnnouncements((prev) => prev.filter((a) => a.id !== id))}
-          deliveryLog={deliveryLog}
           toast={toast}
           onSendRemindersNow={sendRemindersNow}
         />

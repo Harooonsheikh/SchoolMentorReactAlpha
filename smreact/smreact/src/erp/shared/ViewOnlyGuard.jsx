@@ -29,11 +29,11 @@ export const VIEW_ONLY_TIP = 'View only — a chain account cannot make changes'
 /* Jo hamesha chalte rehne chahiye. Ye pehle check hote hain, is liye
    "Cancel" aur "Close" (modal band karna) kabhi band nahi hote — warna
    view-only user modal me phans jata. */
-const KEEP_ENABLED = /\b(cancel|close|back|next|prev|previous|print|download|export|view|search|filter|refresh|reload|sign out|logout|log out|show|hide|expand|collapse|details?|tutorial|help|support|add-?ons?)\b/i;
+const KEEP_ENABLED = /\b(cancel|close|back|next|prev|previous|print|download|export|view|preview|search|filter|refresh|reload|sign out|logout|log out|show|hide|expand|collapse|details?|tutorial|help|support|add-?ons?)\b/i;
 
 /* Likhne wale lafz — word boundary ke sath, warna "Add-ons" aur "Address"
    jaise alfaz bhi pakde jate. */
-const WRITE_TEXT = /\b(save|update|delete|remove|edit|add|new|create|submit|approve|reject|assign|unassign|upload|import|generate|issue|promote|transfer|send|pay|receive|activate|deactivate|restore|publish|revoke|grant|enroll|admit|allocate|mark|confirm|apply changes|change password|reset)\b/i;
+const WRITE_TEXT = /\b(save|update|delete|remove|edit|add|new|create|submit|approve|reject|assign|unassign|upload|import|generate|issue|promote|transfer|send|pay|receive|activate|deactivate|restore|publish|revoke|grant|enroll|admit|allocate|mark|confirm|apply|set (as )?default|change password|reset)\b/i;
 
 /* Icon-only buttons (trash / pencil / plus) ka koi label nahi hota — unhe
    icon se pehchante hain. `fa-check` aur `fa-xmark` jaan bujh kar bahar
@@ -74,7 +74,8 @@ function isWriteControl(el) {
   if (tag !== 'BUTTON' && !(tag === 'A' && el.getAttribute('role') === 'button')) return false;
   if (isNavControl(el)) return false;
 
-  const label = `${el.textContent || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''}`
+  /* data-tip = <Tooltip> ka text (icon-only ✓ / ✕ buttons ka asal label). */
+  const label = `${el.textContent || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('data-tip') || ''}`
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120);
@@ -105,7 +106,7 @@ export function useViewOnly() {
   return viewOnly;
 }
 
-export default function ViewOnlyGuard({ active, onBlocked }) {
+export default function ViewOnlyGuard({ active, onBlocked, tip = VIEW_ONLY_TIP }) {
   /* API parat — likhne wali call server tak jaati hi nahi. Ye alag se on
      karni parti hai kyunke session guard ERP ke bahar band rehta hai. */
   useEffect(() => {
@@ -131,7 +132,7 @@ export default function ViewOnlyGuard({ active, onBlocked }) {
         el.setAttribute(MARK, '1');
         el.classList.add(LOCKED_CLASS);
         el.setAttribute('aria-disabled', 'true');
-        if (!el.getAttribute('title')) el.setAttribute('title', VIEW_ONLY_TIP);
+        if (!el.getAttribute('title')) el.setAttribute('title', tip);
         if (el.tagName === 'BUTTON') el.disabled = true;
       });
     };
@@ -181,11 +182,11 @@ export default function ViewOnlyGuard({ active, onBlocked }) {
         el.removeAttribute(MARK);
         el.classList.remove(LOCKED_CLASS);
         el.removeAttribute('aria-disabled');
-        if (el.getAttribute('title') === VIEW_ONLY_TIP) el.removeAttribute('title');
+        if (el.getAttribute('title') === tip) el.removeAttribute('title');
         if (el.tagName === 'BUTTON') el.disabled = false;
       });
     };
-  }, [active, onBlocked]);
+  }, [active, onBlocked, tip]);
 
   return null;
 }

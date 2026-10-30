@@ -9,7 +9,7 @@ import { useModules } from '../context/ModuleContext';
 import { usePermissions } from '../context/PermissionsContext';
 import { NAV_TO_MODULE_MAP, MODULE_REGISTRY, APPROVAL_TYPE_MSGS } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
-import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl, BILLING_READ_ONLY_MSG } from '../../utils/apiConfig';
 import { loadReportBranch } from '../reports/reportKit';
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
@@ -436,7 +436,7 @@ const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).joi
   const { isActive: isModuleActive, ready: modulesReady, approvalType } = useModules();
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
-  const { canModule, fullAccess, ready: permsReady, readOnly } = usePermissions();
+  const { canModule, fullAccess, ready: permsReady, readOnly, billingLock } = usePermissions();
   /* Super Admin → Manage Mobile App Permissions. GET /manage-mobileapp-permission
      Chat / Mentor AI / eTube in flags se on/off hote hain. */
   const mobilePerms = useMobileAppPermission();
@@ -573,8 +573,13 @@ if (navId === 'mentorai') {
     const now = Date.now();
     if (now - lastViewOnlyToast.current < 1500) return;
     lastViewOnlyToast.current = now;
-    if (toastRef.current) toastRef.current(VIEW_ONLY_TIP, 'error');
+    if (toastRef.current) toastRef.current(billingLockRef.current ? BILLING_READ_ONLY_MSG : VIEW_ONLY_TIP, 'error');
   }, []);
+
+  /* Super Admin → Billing Automation restriction — PermissionsContext laata hai
+     (billingLock). "read_only" → readOnly; "full" → restricted popup. */
+  const billingLockRef = useRef(null);
+  billingLockRef.current = billingLock;
 
   /* Session guard: if the login session is cleared (token / branchID removed
      from sessionStorage), the next API action anywhere in the ERP shows a
@@ -770,7 +775,7 @@ if (navId === 'mentorai') {
               {/* Chain account — buttons kyun band hain, user ko yahin nazar aa jaye. */}
               {readOnly && (
                 <div style={{ marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px', borderRadius: 999, fontSize: 8.5, fontWeight: 800, letterSpacing: '.02em', color: '#B45309', background: 'rgba(217,119,6,.12)', border: '1px solid rgba(217,119,6,.28)' }}>
-                  <i className="fa-solid fa-eye" style={{ fontSize: 7.5 }}></i> VIEW ONLY
+                  <i className="fa-solid fa-eye" style={{ fontSize: 7.5 }}></i> {billingLock ? 'READ ONLY' : 'VIEW ONLY'}
                 </div>
               )}
             </div>
@@ -1034,7 +1039,51 @@ if (navId === 'mentorai') {
         <SystemDialogs toast={pushToast} />
 
         {/* Chain account — poore ERP ke action buttons band (sirf dekhna). */}
-        <ViewOnlyGuard active={readOnly} onBlocked={notifyViewOnly} />
+        <ViewOnlyGuard
+          active={readOnly}
+          onBlocked={notifyViewOnly}
+          tip={billingLock ? BILLING_READ_ONLY_MSG : VIEW_ONLY_TIP}
+        />
+
+        {/* Super Admin billing restriction "full" — ERP band; band nahi hota,
+            sirf Sign out. */}
+        {billingLock === 'full' && (
+          <div className="modal-overlay open" role="alertdialog" aria-modal="true" style={{ zIndex: 10000 }}>
+            <div className="modal modal-sm">
+              <div className="modal-header">
+                <div>
+                  <div className="modal-title" style={{ color: 'var(--error)' }}>
+                    <i className="fa-solid fa-lock" style={{ marginRight: 8 }}></i>
+                    Access Restricted
+                  </div>
+                  <div className="modal-sub">Restricted from Super Admin</div>
+                </div>
+              </div>
+              <div className="modal-body">
+                <div className="logout-card">
+                  <div className="logout-icon">
+                    <i className="fa-solid fa-triangle-exclamation"></i>
+                  </div>
+                  <div>
+                    <div className="logout-heading">Your ERP access has been restricted</div>
+                    <div className="logout-sub">
+                      Super Admin has restricted this school's access due to billing.
+                      Please clear your pending invoice or contact Super Admin to restore access.
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-danger" onClick={() => {
+                  try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
+                  logout();
+                }}>
+                  <i className="fa-solid fa-right-from-bracket"></i> Sign out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ═════════ PROFILE MODAL (lazy-loaded on first open) ═════════ */}
         {/* The lazy ProfileModal chunk is fetched only when the user

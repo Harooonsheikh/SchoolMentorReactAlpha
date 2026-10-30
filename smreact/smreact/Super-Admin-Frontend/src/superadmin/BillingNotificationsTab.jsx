@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { fmtDateLong, todayISO } from './paymentData';
 import {
   CHANNELS, PLACEHOLDERS, renderTemplate, FREQUENCY_OPTIONS,
+  validateNotifSettings, HISTORY_CHANNEL_LABEL, HISTORY_TYPE_LABEL,
 } from './billingNotificationsData';
+import { paymentsApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
    NOTIFICATIONS & REMINDERS — billing reminder templates, scheduling,
@@ -95,26 +97,144 @@ const ANN_TYPES = [
   { id: 'restriction', label: 'Payment Required / Restricted' },
   { id: 'success', label: 'Payment Confirmation' },
 ];
-export default function NotificationsRemindersTab({ settings, onSave, announcements, onDeleteAnnouncement, deliveryLog, toast, onSendRemindersNow }) {
+const HISTORY_PAGE_SIZE = 20;
+
+/* Screen D — delivery history (server se, paged). Ek challan ke kai Failed
+   rows phir ek Sent row aana normal hai (server 3 dafa retry karta hai). */
+function DeliveryHistory({ refreshKey }) {
+  const [page, setPage] = useState(1);
+  const [type, setType] = useState('');
+  const [state, setState] = useState({ items: [], totalCount: 0, loading: true, error: '' });
+  const [openId, setOpenId] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    setState((s) => ({ ...s, loading: true, error: '' }));
+    paymentsApi.getBillingReminderHistory({ pageNumber: page, pageSize: HISTORY_PAGE_SIZE, reminderType: type })
+      .then((r) => { if (alive) setState({ items: r.items, totalCount: r.totalCount, loading: false, error: '' }); })
+      .catch((e) => { if (alive) setState({ items: [], totalCount: 0, loading: false, error: e?.message || 'Could not load delivery history' }); });
+    return () => { alive = false; };
+  }, [page, type, refreshKey]);
+
+  const pages = Math.max(1, Math.ceil(state.totalCount / HISTORY_PAGE_SIZE));
+  const val = (o, k) => o[k] ?? o[k[0].toUpperCase() + k.slice(1)];
+
+  return (
+    <>
+      <div style={{ padding: '0 18px 10px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <select className="pay-input" style={{ width: 180 }} value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}>
+          <option value="">All reminder types</option>
+          <option value="Generated">Invoice generated</option>
+          <option value="BeforeDue">Before due</option>
+          <option value="Overdue">Overdue</option>
+        </select>
+        <span style={{ fontSize: 11, color: 'var(--tm)' }}>{state.totalCount} record{state.totalCount === 1 ? '' : 's'}</span>
+      </div>
+      <div className="tbl-wrap" style={{ margin: '0 18px 12px' }}>
+        <table className="ch-table">
+          <thead><tr><th>School</th><th style={{ width: 90 }}>Challan</th><th style={{ width: 110 }}>Type</th><th style={{ width: 120 }}>Channel</th><th style={{ width: 100, textAlign: 'right' }}>Amount</th><th style={{ width: 90, textAlign: 'center' }}>Status</th><th style={{ width: 150 }}>Sent On</th></tr></thead>
+          <tbody>
+            {state.loading ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 30, color: 'var(--tm)', fontSize: 12.5 }}><i className="fa-solid fa-spinner fa-spin" /> Loading delivery history…</td></tr>
+            ) : state.error ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 30, color: 'var(--err)', fontSize: 12.5 }}><i className="fa-solid fa-triangle-exclamation" /> {state.error}</td></tr>
+            ) : state.items.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 30, color: 'var(--tm)', fontSize: 12.5 }}>No reminders sent yet. Rows appear here after the next scheduled send.</td></tr>
+            ) : state.items.map((d, i) => {
+              const id = val(d, 'id') ?? i;
+              const status = String(val(d, 'status') || '');
+              const failed = status.toLowerCase() === 'failed';
+              const reason = val(d, 'failureReason');
+              const body = val(d, 'messageBody');
+              const sentOn = val(d, 'sentOn');
+              const channel = val(d, 'channel');
+              const rType = val(d, 'reminderType');
+              const open = openId === id;
+              return (
+                <React.Fragment key={id}>
+                  <tr style={{ cursor: (reason || body) ? 'pointer' : 'default' }} onClick={() => (reason || body) && setOpenId(open ? null : id)} title={failed && reason ? reason : undefined}>
+                    <td>{val(d, 'schoolName') || `Branch #${val(d, 'branchID') ?? '—'}`}</td>
+                    <td>{val(d, 'challanID') ?? '—'}</td>
+                    <td style={{ fontSize: 12 }}>{HISTORY_TYPE_LABEL[rType] || rType || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{HISTORY_CHANNEL_LABEL[channel] || channel || '—'}</td>
+                    <td style={{ textAlign: 'right', fontSize: 12 }}>{val(d, 'amount') != null ? Number(val(d, 'amount')).toLocaleString() : '—'}</td>
+                    <td style={{ textAlign: 'center' }}><span className={`badge ${failed ? 'b-red' : status.toLowerCase() === 'sent' ? 'b-green' : 'b-gray'}`} style={{ fontSize: 9 }}>{status || '—'}</span></td>
+                    <td style={{ fontSize: 11, color: 'var(--tm)' }}>{sentOn ? new Date(sentOn).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                  </tr>
+                  {open && (
+                    <tr><td colSpan={7} style={{ background: 'var(--muted)', fontSize: 12, lineHeight: 1.6 }}>
+                      {failed && reason && <div style={{ color: 'var(--err)', marginBottom: body ? 6 : 0 }}><strong>Failure reason:</strong> {reason}</div>}
+                      {body && <div><strong>Message:</strong> {body}</div>}
+                    </td></tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div style={{ padding: '0 18px 18px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+          <button className="btn-secondary" disabled={page <= 1 || state.loading} onClick={() => setPage((p) => p - 1)}><i className="fa-solid fa-chevron-left" /> Prev</button>
+          <span style={{ fontSize: 12, color: 'var(--tm)' }}>Page {page} of {pages}</span>
+          <button className="btn-secondary" disabled={page >= pages || state.loading} onClick={() => setPage((p) => p + 1)}>Next <i className="fa-solid fa-chevron-right" /></button>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function NotificationsRemindersTab({ settings, onSave, announcements, onDeleteAnnouncement, toast, onSendRemindersNow, loadError = '' }) {
   const [f, setF] = useState(settings);
+  /* Server se settings aayen (load / save ke baad) to form unhi par. */
+  useEffect(() => { setF(settings); }, [settings]);
   const dirty = JSON.stringify(f) !== JSON.stringify(settings);
+  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0);
+
+  const save = async () => {
+    const err = validateNotifSettings(f);
+    if (err) { toast?.(err, 'error'); return; }
+    setSaving(true);
+    try { await onSave(f); } finally { setSaving(false); }
+  };
+
+  /* Do dafa click na ho — request ke dauran button band. */
+  const sendNow = async () => {
+    if (sending) return;
+    setSending(true);
+    try { await onSendRemindersNow(); setHistoryKey((k) => k + 1); } finally { setSending(false); }
+  };
 
   return (
     <div className="ss-panel">
+      {loadError && (
+        <div className="pay-info-box" style={{ marginBottom: 16, borderColor: 'var(--err)' }}><i className="fa-solid fa-triangle-exclamation" style={{ color: 'var(--err)' }} /><p>Could not load saved reminder settings — showing defaults. {loadError}</p></div>
+      )}
       <TemplateEditor title="Before-Due Reminder" icon="fa-bell" value={f.beforeDue} onChange={(v) => setF((p) => ({ ...p, beforeDue: v }))} maxChars={f.maxChars} />
       <TemplateEditor title="Overdue / Grace-Period Warning" icon="fa-triangle-exclamation" value={f.overdueWarning} onChange={(v) => setF((p) => ({ ...p, overdueWarning: v }))} maxChars={f.maxChars} />
 
       <div className="section-card">
         <CardHeader title="General" icon="fa-sliders" />
         <div style={{ padding: '0 18px 18px', display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
-          <div className="pay-field"><label>Maximum Character Count (per message)</label><input className="pay-input" type="number" min={100} max={2000} value={f.maxChars} onChange={(e) => setF((p) => ({ ...p, maxChars: Number(e.target.value) || 500 }))} /></div>
-          <div className="pay-field"><label>Application Timezone</label><input className="pay-input" value={f.timezone} disabled /></div>
+          <div className="pay-field"><label>Maximum Character Count (per message)</label><input className="pay-input" type="number" min={1} max={2000} value={f.maxChars} onChange={(e) => setF((p) => ({ ...p, maxChars: Number(e.target.value) || 500 }))} /></div>
+          <div className="pay-field">
+            <label>Application Timezone</label>
+            <input className="pay-input" value={f.timezone} disabled />
+            <div style={{ fontSize: 10.5, color: 'var(--tm)', marginTop: 4 }}>Send times always run on Pakistan time (server timezone).</div>
+          </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 20 }}>
-        <button className="btn-secondary" disabled={!dirty} onClick={() => setF(settings)}>Discard Changes</button>
-        <button className="btn-primary" disabled={!dirty} onClick={() => onSave(f)}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 6 }}>
+        <button className="btn-secondary" disabled={!dirty || saving} onClick={() => setF(settings)}>Discard Changes</button>
+        <button className="btn-primary" disabled={!dirty || saving} onClick={save}>
+          <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--tm)', marginBottom: 20 }}>
+        <i className="fa-solid fa-circle-info" /> Saved settings apply to every unpaid challan, including ones created earlier. The server checks every 5 minutes, so reminders go out at the chosen time or within about 5 minutes after it.
       </div>
 
       {announcements.length > 0 && (
@@ -142,28 +262,14 @@ export default function NotificationsRemindersTab({ settings, onSave, announceme
       )}
 
       <div className="section-card">
-        <CardHeader title="Reminder Delivery History" icon="fa-truck-fast" sub="Every automated reminder/announcement send, with channel and status." />
+        <CardHeader title="Reminder Delivery History" icon="fa-truck-fast" sub="Every reminder the server sent or tried to send, with channel and status. Click a row for the message / failure reason." />
         <div style={{ padding: '0 18px 14px' }}>
-          <button className="btn-primary" onClick={onSendRemindersNow}><i className="fa-solid fa-paper-plane" /> Send Due Reminders Now</button>
-          <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--tm)' }}>Scans active schools against the templates above and logs deliveries below — idempotent, so running it again today won't duplicate anything already sent.</span>
+          <button className="btn-primary" disabled={sending} onClick={sendNow}>
+            <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} /> {sending ? 'Sending…' : 'Send Due Reminders Now'}
+          </button>
+          <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--tm)' }}>Scans unpaid challans and sends immediately — paid challans are skipped by the server.</span>
         </div>
-        <div className="tbl-wrap" style={{ margin: '0 18px 18px' }}>
-          <table className="ch-table">
-            <thead><tr><th>School</th><th>Invoice</th><th style={{ width: 140 }}>Type</th><th style={{ width: 110 }}>Channel</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 110 }}>Sent At</th></tr></thead>
-            <tbody>
-              {deliveryLog.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 30, color: 'var(--tm)', fontSize: 12.5 }}>No reminders sent yet. Templates above will populate this log once the billing cycle runs.</td></tr>
-              ) : deliveryLog.slice().reverse().map((d) => (
-                <tr key={d.id}>
-                  <td>{d.schoolName}</td><td>{d.invoiceNumber || '—'}</td>
-                  <td style={{ fontSize: 12 }}>{d.notifType}</td><td style={{ fontSize: 12 }}>{d.channel}</td>
-                  <td style={{ textAlign: 'center' }}><span className={`badge ${d.status === 'sent' ? 'b-green' : d.status === 'failed' ? 'b-red' : 'b-gray'}`} style={{ fontSize: 9 }}>{d.status}</span></td>
-                  <td style={{ fontSize: 11, color: 'var(--tm)' }}>{d.sentAt ? fmtDateLong(d.sentAt.slice(0, 10)) : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DeliveryHistory refreshKey={historyKey} />
       </div>
     </div>
   );

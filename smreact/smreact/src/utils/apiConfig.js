@@ -566,6 +566,17 @@ export function setViewOnlyActive(on) {
   if (on) ensureFetchWrapper();
 }
 
+/* Super Admin → Billing Automation ne restrictedMode "read_only" lagaya ho to
+   ERP me likhne wali har API call yahin ruk jaati hai (dekhein
+   services/billingRestriction.js). */
+export const BILLING_READ_ONLY_MSG = 'Read only — access restricted by Super Admin (billing).';
+
+export function setBillingReadOnly(on) {
+  if (typeof window === 'undefined') return;
+  window.__smBillingReadOnly = !!on;
+  if (on) ensureFetchWrapper();
+}
+
 /* Session khatam hone par kya karna hai — install ke waqt nahi, module par
    rakha jata hai. Wrapper ek hi dafa lagta hai (chahe pehle view-only ne
    lagaya ho), aur ERP baad me apna handler yahan de deta hai. */
@@ -596,6 +607,15 @@ function ensureFetchWrapper() {
         && !isReadRequest(url, init) && isViewOnlyAccount()) {
       try { if (_sessionToast) _sessionToast(READ_ONLY_MSG, 'error'); } catch (e) { /* ignore */ }
       const err = new Error(READ_ONLY_MSG);
+      err.isReadOnly = true;
+      throw err;
+    }
+    /* Super Admin billing restriction (read_only) — har account par, chahe chain
+       ka ho ya school ka. Background time-spend analytics chalta rehta hai. */
+    if (window.__smBillingReadOnly && isApiUrl(url) && !isAuthUrl(url)
+        && !isReadRequest(url, init) && !/\/manage-usertimespend(\/|\?|$)/i.test(String(url || ''))) {
+      try { if (_sessionToast) _sessionToast(BILLING_READ_ONLY_MSG, 'error'); } catch (e) { /* ignore */ }
+      const err = new Error(BILLING_READ_ONLY_MSG);
       err.isReadOnly = true;
       throw err;
     }
