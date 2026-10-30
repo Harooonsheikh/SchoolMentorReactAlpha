@@ -1128,13 +1128,22 @@ export default function Examination({ toast = () => { } }) {
           preschoolService.getAttendanceRemarks({ studentId: pCardCtx.student?.id, classId: pCardCtx.classID, sectionId: pCardCtx.sectionID, termId: pCardCtx.apiTermId, examId: pCardCtx.apiExamId }).catch(() => null),
         ]);
         if (!alive) return;
+         /* PSD ratings bhi isi marks table me save hoti hain — preSLOId agar kisi PSD
+           field ki id ho to wo PSD hai (psd me), warna learning-area SLO (achievements). */
+        const psdFieldIds = new Set((pPsdFields || []).map(f => String(f.id)));
         const achievements = {};
-        Object.keys(sloMap || {}).forEach(sub => { achievements[sub] = {}; Object.keys(sloMap[sub]).forEach(slo => { achievements[sub][slo] = sloMap[sub][slo].code; }); });
+        const psdCodes = {};
+        Object.keys(sloMap || {}).forEach(sub => {
+          Object.keys(sloMap[sub]).forEach(slo => {
+            const code = sloMap[sub][slo].code;
+            if (psdFieldIds.has(String(slo))) { psdCodes[slo] = code; return; }
+            (achievements[sub] = achievements[sub] || {})[slo] = code;
+          });
+        });
         const toClass = attR?.promotedClassId ? (Object.keys(pPromoteIdMap.current).find(nm => pPromoteIdMap.current[nm] === Number(attR.promotedClassId)) || '') : '';
         setPCardAd({
           studentId: pCardCtx.student?.id,
-          achievements, psd: {},
-          attendance: attR ? { workingDays: attR.workingDays, presentDays: attR.presentDays } : null,
+          achievements, psd: psdCodes,          attendance: attR ? { workingDays: attR.workingDays, presentDays: attR.presentDays } : null,
           teacherRemarks: attR?.teacherObservation || '',
           finalRemarks: attR?.finalRemarks || '',
           ptm: attR ? { enabled: attR.ptm, date: attR.meetingDate, parentAttendance: attR.parentAttendance, parentComments: attR.parentComment, teacherComments: attR.teacherComment } : null,
@@ -1142,9 +1151,9 @@ export default function Examination({ toast = () => { } }) {
         });
       } catch (e) { console.error('Could not load result card data:', e); if (alive) setPCardAd(null); }
     })();
-    return () => { alive = false; };
+       return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pCardCtx]);
+  }, [pCardCtx, pPsdFields]);
   const [pConfirmPublish, setPConfirmPublish] = useState(null);
   const [pLevelPickCtx, setPLevelPickCtx] = useState(null);
   const [pConfirmDeleteRecords, setPConfirmDeleteRecords] = useState(null);
@@ -10371,7 +10380,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   return (
     <div className="rc-card rc-card-classic" style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
       {/* Header */}
-      <div style={{ background: hdrBg, padding: '11px 18px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
+     <div style={{ background: hdrBg, padding: '8px 14px',display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {opt['Show School Logo'] && (
           <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, border: `1.5px solid ${hdrLogoBdr}`, background: school?.logo ? '#fff' : hdrLogoBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: hdrLogoCol, overflow: 'hidden' }}>
             {school?.logo
@@ -10400,7 +10409,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       <div style={{ padding: '7px 18px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px 14px', borderBottom: `1px solid ${accentBdr}`, background: accentBg }}>
         <div>
           <div style={{ fontSize: 8, fontWeight: 700, color: textMut, textTransform: 'uppercase', letterSpacing: '.4px' }}>Student Name</div>
-          <div style={{ fontSize: 12.5, fontWeight: 800, color: textPri, marginTop: 1 }}>{st.name}</div>
+    <div style={{ fontSize: 13.5, fontWeight: 800, color: textPri, marginTop: 1 }}>{st.name}</div>
         </div>
         <div>
           <div style={{ fontSize: 8, fontWeight: 700, color: textMut, textTransform: 'uppercase', letterSpacing: '.4px' }}>Father Name</div>
@@ -10598,12 +10607,16 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       )}
 
       {/* Final Remarks */}
-      {opt['Show Final Remarks'] && finalRem && (
-        <div style={{ padding: '8px 18px 6px' }}>
-          <div style={{ fontSize: 7.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 2 }}>FINAL REMARKS</div>
-          <div style={{ fontSize: 10.5, color: '#374151', lineHeight: 1.4 }}>{finalRem.slice(0, 200)}</div>
-        </div>
-      )}
+    {opt['Show Final Remarks'] && finalRem && (
+  <div style={{ padding: '8px 18px 6px' }}>
+    <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 4 }}>
+      FINAL REMARKS
+    </div>
+    <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5 }}>
+      {finalRem.slice(0, 200)}
+    </div>
+  </div>
+)}
 
       {/* Signatures — selected (max 2) + hamesha ek fixed PARENTS signing line. */}
       {(() => {
@@ -13446,7 +13459,7 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
     const rankStr = r.st.absent ? '—' : (rank ? `${rank}${rankSfx}` : '—');
     const bg = i % 2 === 0 ? '#fff' : rowEv;
     const grCol = gradeColor(r.grade);
-    const tdBase = `padding:7px 9px;border-bottom:1px solid ${aBdr};font-size:11px;color:#0F172A`;
+const tdBase = `padding:7px 9px;border-bottom:1px solid ${aBdr};font-size:12.5px;color:#0F172A`;
     const tdC = tdBase + ';text-align:center';
     return `
       <tr style="background:${bg}${r.st.absent ? ';opacity:.78' : ''}">
@@ -13456,11 +13469,11 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
         <td style="${tdBase};color:${tMuted}">${r.st.father || '—'}</td>
         <td style="${tdC};font-weight:600">${r.tot || '—'}</td>
         <td style="${tdC}">${r.st.absent
-        ? `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:${isColor ? 'rgba(217,119,6,.1)' : '#F5F5F5'};color:${warnCol};border:1px solid ${isColor ? 'rgba(217,119,6,.25)' : '#CCC'};font-size:10px;font-weight:700">AB</span>`
+        ? `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:${isColor ? 'rgba(217,119,6,.1)' : '#F5F5F5'};color:${warnCol};border:1px solid ${isColor ? 'rgba(217,119,6,.25)' : '#CCC'};font-size:11px;font-weight:700">AB</span>`
         : `<strong style="color:${aColor}">${r.obt}</strong>`}</td>
         <td style="${tdC};font-weight:700;color:${r.st.absent ? tMuted : (r.pct >= 80 ? successCol : r.pct >= 60 ? warnCol : (isColor ? '#DC2626' : '#000'))}">${r.st.absent ? '—' : `${r.pct}%`}</td>
         <td style="${tdC}">${r.grade
-        ? `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 7px;border-radius:6px;background:${grCol};color:#fff;font-size:10.5px;font-weight:800">${r.grade.grade}</span>`
+        ? `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 7px;border-radius:6px;background:${grCol};color:#fff;font-size:11.5px;font-weight:800">${r.grade.grade}</span>`
         : `<span style="color:${tMuted};font-size:10.5px">${r.st.absent ? 'Absent' : '—'}</span>`}</td>
         <td style="${tdC};font-weight:700;color:${aColor}">${rankStr}</td>
       </tr>`;
@@ -13501,24 +13514,24 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
 
       <!-- Main table -->
       <div style="padding:14px 16px 8px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:${tMuted};margin-bottom:8px;display:flex;align-items:center;gap:8px">
+<div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:${tMuted};margin-bottom:8px;display:flex;align-items:center;gap:8px">
           <div style="width:3px;height:13px;border-radius:2px;background:${aColor}"></div>STUDENT RESULTS
         </div>
-        <table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr};font-size:11px">
+<table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr};font-size:12.5px">
           <colgroup>
             <col style="width:32px"><col style="width:78px"><col><col><col style="width:50px"><col style="width:62px"><col style="width:52px"><col style="width:46px"><col style="width:46px">
           </colgroup>
           <thead>
             <tr style="background:${aBg}">
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">#</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Roll No</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Student Name</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Father Name</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Total</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Obtained</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">%</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Grade</th>
-              <th style="padding:8px 9px;font-size:9.5px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Pos.</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">#</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Roll No</th>
+    <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Student Name</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Father Name</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Total</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Obtained</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">%</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Grade</th>
+              <th style="padding:8px 9px;font-size:11px;font-weight:700;color:${aColor};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${aBdr}">Pos.</th>
             </tr>
           </thead>
           <tbody>${rowsHtml || `<tr><td colspan="9" style="padding:18px;text-align:center;color:${tMuted}">No students in this class</td></tr>`}</tbody>
@@ -14477,11 +14490,14 @@ const RC_PRINT_CSS = `
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 @page{size:A4 portrait;margin:0}
-.wrap,.bulk-card{width:210mm!important;max-width:210mm!important;padding:10mm!important;margin:0 auto!important;border-radius:0!important;box-shadow:none!important;overflow:visible!important;height:auto!important;background:#fff}
+.wrap,.bulk-card{width:210mm!important;max-width:210mm!important;padding:8mm!important;margin:0 auto!important;border-radius:0!important;box-shadow:none!important;overflow:visible!important;height:auto!important;background:#fff}
 .bulk-card + .bulk-card{break-before:page;page-break-before:always}
 .wrap > *,.bulk-card > *{max-width:none!important;width:100%!important;margin:0!important;box-shadow:none!important;border-radius:0!important;overflow:visible!important;height:auto!important}
 .wrap img,.bulk-card img{max-width:100%}
-.wrap td,.wrap th,.bulk-card td,.bulk-card th{overflow-wrap:anywhere}
+.wrap td,.wrap th,.bulk-card td,.bulk-card th{
+  overflow-wrap:anywhere;
+  font-size:15px !important;
+}
 .rc-seg + .rc-seg{break-before:page;page-break-before:always}
 .wrap > * > *:not(:has(table)),.bulk-card > * > *:not(:has(table)),.rc-seg > *:not(:has(table)){break-inside:avoid;page-break-inside:avoid}
 @media print{
@@ -21054,5 +21070,32 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   .exam-term-chips,.rs-modal-tabs,.syl-subj-tabs { padding:4px; gap:3px; border-radius:14px; }
   .exam-term-chip,.rs-modal-tab,.syl-subj-tab { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
   .exam-submit-btn,.exam-add-btn,.exam-cancel-btn { height:38px; padding:0 14px; font-size:12px; }
+  /* ── A4 PDF font/box overrides ── */
+.rc-card-classic table,
+.rc-card-classic td,
+.rc-card-classic th { font-size:12.5px !important; }
+.rc-card-classic .rc-card-classic { max-width:190mm; }
+
+/* Reduce header box size */
+.rc-card-classic > div:first-child { padding:8px 14px !important; }
+/* Reduce info grid box */
+.rc-card-classic > div:nth-child(3) { padding:6px 14px !important; }
+/* Subject table rows tighter */
+.rc-card-classic table td,
+.rc-card-classic table th { padding:4px 6px !important; }
+
+/* Summary strip smaller */
+.rc-card-classic > div[style*="borderTop"] { min-height:unset !important; }
+
+/* Insight card subject bars */
+[data-rc-row="1"] { padding:3px 0 !important; }
+
+/* A4 print enforcement */
+@media print {
+  html,body { width:210mm !important; }
+  .wrap { width:190mm !important; padding:10mm !important; }
+  .bulk-card { width:190mm !important; padding:10mm !important; }
+  * { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+}
 }
 `;
