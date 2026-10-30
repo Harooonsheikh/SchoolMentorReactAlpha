@@ -36,6 +36,8 @@ export async function getPaymentLedger({ challanType = 'Monthly' } = {}) {
   if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
   const json = await res.json().catch(() => null);
   const rows = Array.isArray(json?.data) ? json.data : [];
+  /* API jo challan de, sab dikhte hain (koi filter / merge nahi — user ki
+     hidayat 2026-10-30), chahe challanType "monthly-2026-10" ho ya amount kuch bhi. */
   return rows
     .map((r) => {
       const debit = Number(r.debit) || 0;
@@ -48,13 +50,17 @@ export async function getPaymentLedger({ challanType = 'Monthly' } = {}) {
         challanType: r.challanType || 'Monthly',
         issueDate: day(r.creationDate),
         dueDate: day(r.dueDate),
+        createdAt: String(r.createdAt || ''),
         debit, credit, total, status,
       };
     })
-    /* Sab se taaza challan (creationDate) pehle — wahi top card par aata hai. */
+    /* Sab se taaza challan pehle — wahi top card par aata hai. Pehle
+       creationDate; same din ho to jo challan baad me bana (createdAt). */
     .sort((a, b) => {
       const ka = a.issueDate || a.dueDate; const kb = b.issueDate || b.dueDate;
-      return ka < kb ? 1 : ka > kb ? -1 : (Number(b.id) || 0) - (Number(a.id) || 0);
+      if (ka !== kb) return ka < kb ? 1 : -1;
+      if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+      return (Number(b.id) || 0) - (Number(a.id) || 0);
     });
 }
 
@@ -112,6 +118,7 @@ export async function getBillingSetup() {
     const totalStudents = Number(d.totalStudents) || 0;
     const totalAmount = Number(d.totalAmount) || Number(d.amount) || 0;
     return {
+      id: Number(d.id) || 0,              // = ledger row paymentID
       isLumpSum: !!d.isLumpSum,
       amount: Number(d.amount) || 0,
       totalStudents,

@@ -21,17 +21,21 @@ const monthLabelFull = (iso) => {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 };
 
+/* Setup (summary) sirf usi challan ka formula hai jiska paymentID = setup.id
+   (setup id na aaye to purana rawaiya — setup lagao). */
+const isSetupOf = (setup, row) => !!setup && (!setup.id || Number(setup.id) === Number(row?.paymentID));
+
 /* Print-ready subscription invoice (opens in a new window → Save as PDF). */
 function buildInvoiceHtml(row, { setup, schoolName }) {
   const no = invNo(row);
   const paid = row.status === 'Paid';
   const statusColor = paid ? '#166534' : '#b91c1c';
   const statusBg = paid ? '#dcfce7' : '#fee2e2';
-  const isPerStudent = !!(setup && !setup.isLumpSum && setup.totalStudents > 0);
+  const isPerStudent = isSetupOf(setup, row) && !setup.isLumpSum && setup.totalStudents > 0;
   const basisRows = isPerStudent
     ? `<tr><td>Rate / Student</td><td style="text-align:right;font-weight:700">${fmtAmt(setup.perStudent)}</td></tr>
        <tr><td>Students</td><td style="text-align:right;font-weight:700">${setup.totalStudents}</td></tr>
-       <tr><td>Base Amount</td><td style="text-align:right;font-weight:700;color:#1e40af">${fmtAmt(setup.totalAmount)}</td></tr>`
+       <tr><td>Base Amount</td><td style="text-align:right;font-weight:700;color:#1e40af">${fmtAmt(row.debit)}</td></tr>`
     : `<tr><td>Billing Basis</td><td style="text-align:right;font-weight:700">Lump Sum</td></tr>
        <tr><td>Subscription Amount</td><td style="text-align:right;font-weight:700;color:#1e40af">${fmtAmt(row.debit)}</td></tr>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(no)}</title>
@@ -424,11 +428,12 @@ const Billing = ({ onToast }) => {
     return [...challans, ...recvs].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }, [ledger, receivings, rawLedger]);
 
-  /* Latest challan → Current Invoice card. Charges are static (not in API). */
+  /* Latest challan → Current Invoice card. Sab kuch ISI challan se; setup
+     ka formula sirf tab jab challan usi setup (paymentID) ka ho. */
   const current = useMemo(() => {
     const row = ledger[0];
     if (!row) return null;
-    const isPerStudent = !!(setup && !setup.isLumpSum && setup.totalStudents > 0);
+    const isPerStudent = isSetupOf(setup, row) && !setup.isLumpSum && setup.totalStudents > 0;
     return {
       month: monthLabel(row.dueDate),
       invoiceNo: invNo(row),
@@ -436,7 +441,7 @@ const Billing = ({ onToast }) => {
       formulaDetail: isPerStudent
         ? `Rs. ${(setup.perStudent || 0).toLocaleString()} × ${setup.totalStudents} students`
         : 'Lump-sum subscription',
-      baseAmount: setup ? setup.totalAmount : row.debit,
+      baseAmount: row.debit,
       issueDate: row.issueDate || '—',
       dueDate: row.dueDate || '—',
       totalPayable: row.total,
