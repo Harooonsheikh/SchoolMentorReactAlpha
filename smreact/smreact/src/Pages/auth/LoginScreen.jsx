@@ -1,6 +1,6 @@
 import AuthLayout from './AuthLayout';
 import ForgotPasswordScreen from './ForgotPasswordScreen';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 import { clearMentorAiSession } from '../../erp/pages/Dashboard/_forked/services/mentorAiAgentService';
@@ -54,6 +54,10 @@ export default function LoginScreen({ onLogin, onSignup }) {
   const [remember, setRemember] = useState(false);
   const [forgot,   setForgot]   = useState(false);
   const [forgotSoon, setForgotSoon] = useState(false);
+  /* Login request chal rahi ho to dobara click/Enter se doosri request na jaye.
+     ref sync hota hai (state se pehle), is liye double-click bhi rukta hai. */
+  const [loading, setLoading] = useState(false);
+  const busyRef = useRef(false);
 
   /* `?acct=network` apna kaam kar chuka (tab select ho gaya) — ab URL se hata
      do, warna user tab badal de to URL ghalat batata rahega, aur refresh par
@@ -90,6 +94,9 @@ export default function LoginScreen({ onLogin, onSignup }) {
       setError('Please enter your username and password.');
       return;
     }
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setLoading(true);
     setError('');
    try {
     /* Do bilkul alag login endpoints — aur do alag SERVICES:
@@ -326,6 +333,9 @@ export default function LoginScreen({ onLogin, onSignup }) {
        server ke bheje huay error ab upar handle hotay hain. */
     setError(err?.message ? `Network error: ${err.message}` : 'Network error. Please try again.');
     console.error(err);
+  } finally {
+    busyRef.current = false;
+    setLoading(false);
   }
     // onLogin({ username });
     
@@ -453,12 +463,12 @@ export default function LoginScreen({ onLogin, onSignup }) {
         </button>
       </div>
 
-      <button className="auth-btn-primary" onClick={handleLogin}>
+      <button className="auth-btn-primary" onClick={handleLogin} disabled={loading} aria-busy={loading}>
         {/* key → account type badalne par label bhi heading ke sath fade ho */}
-        <span className="auth-btn-label" key={acctType}>
-          {isNetwork ? 'Sign In to Network' : 'Sign In'}
+        <span className="auth-btn-label" key={loading ? 'loading' : acctType}>
+          {loading ? 'Signing In…' : isNetwork ? 'Sign In to Network' : 'Sign In'}
         </span>
-        <i className="fa-solid fa-arrow-right" />
+        <i className={`fa-solid ${loading ? 'fa-circle-notch fa-spin' : 'fa-arrow-right'}`} />
       </button>
 
       <div className="auth-divider">or</div>

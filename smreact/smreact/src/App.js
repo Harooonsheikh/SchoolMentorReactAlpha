@@ -24,6 +24,7 @@ import { PermissionsProvider } from './erp/context/PermissionsContext';
 import { useVisibleSetupTabs } from './utils/setupPermissions';
 import useUserTimeSpend from './erp/hooks/useUserTimeSpend';
 import { flushUserTimeSpend } from './erp/services/userTimeSpendService';
+import { abortInFlightApiCalls } from './utils/apiConfig';
 import SetupLoader from './components/SetupLoader';
 import './styles/globals.css';
 import './styles/tokens.css';
@@ -449,6 +450,9 @@ function AuthGate() {
      logout: seedha ERP login. */
   function doLogout() {
     try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
+    /* Logout se pehle jo API calls chal rahi hain (load / save / fetch) unhe rok do —
+       session saaf hone ke baad unka jawab kisi kaam ka nahi. */
+    try { abortInFlightApiCalls(); } catch (e) { /* ignore */ }
     let fromChain = false;
     try { fromChain = sessionStorage.getItem('sm_from_chain') === '1'; } catch (e) { /* ignore */ }
     try { sessionStorage.clear(); } catch (e) { /* ignore */ }
