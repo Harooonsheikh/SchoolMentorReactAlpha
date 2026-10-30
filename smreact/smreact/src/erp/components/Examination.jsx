@@ -14718,8 +14718,18 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
         const built = await rcMapPool(studentsRaw, 4, async (stu) => {
           if (cancelled) return null;
           const studentId = rcStuId(stu);
+          /* Single card ki tarah HAR student ke apne subjects (merge API) — class ki
+             main-exam list me kuch subjects nahi hote, to bulk me wo ghayab ho jaate the. */
+          let stuSubs = subs;
+          try {
+            const merged = await cbrApi.mergeSaSubjectsWithStudentMarks({
+              classID, sectionID, termID, examID: selectExam, studentID: studentId,
+            });
+            const own = rcNormalizeSubjects((merged || []).map(saNormSubject).filter(Boolean));
+            if (own.length) stuSubs = own;
+          } catch { /* class list fallback */ }
           const obtained = {}, manualRemarks = {}, totals = {}, absentSubjects = [];
-          await Promise.all(subs.map(async su => {
+          await Promise.all(stuSubs.map(async su => {
             try {
               const p = new URLSearchParams({
                 classID: String(classID), termID: String(termID ?? ''), ExamID: String(selectExam),
@@ -14760,7 +14770,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
               absentSubjects, attendance: '—',
               photo: rcPhotoFromRecord(stu, photoMap),
             },
-            rd: { released: false, totalMarks: totals, subjects: subs.map(s => s.subjectName) },
+            rd: { released: false, totalMarks: totals, subjects: stuSubs.map(s => s.subjectName) },
           };
         }, () => cancelled);
 
