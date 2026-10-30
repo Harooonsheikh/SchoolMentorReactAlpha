@@ -1335,7 +1335,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         filters={
           <>
             <div className="att-rpt-section-lbl">Filters</div>
-            <div className="att-rpt-filter-row">
+            {/* Student (Date/Month + Class + Section) — teeno ek hi line me, taake
+                modal ki height Staff wale (2 filters) jitni rahe. */}
+            <div className={`att-rpt-filter-row${(isStDaily || isStMonthly) && !lockedClass ? " att-rpt-filter-row--one" : ""}`}>
               {isHolYearly && (
                 <>
                   <FilterSelect label="Session" value={fYear}  onChange={setFYear}  opts={sessionOpts.length ? sessionOpts : [NO_SESSION_OPT]} />
@@ -1606,11 +1608,23 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     </div>`;
   }
 
+  /* Late / Short Leave / Holiday ke rang — B/W print me sab gehra slate. */
+  function rptExtraColors(isColor) {
+    return {
+      LATE: isColor ? "#7C3AED" : "#374151",
+      SL:   isColor ? "#0891B2" : "#374151",
+      HOL:  isColor ? "#2563EB" : "#4B5563",
+    };
+  }
+
   /* ─── Daily Student Attendance Report ─────────────────────────────────────
     `rows` = REAL per class+section aggregates for the SELECTED date, fetched
     from /api/student-attendance (action:"get"). Header = branch (branchSchool). */
-  function buildDailyStudentReportHTML({ rows, date, classFilter, sectionFilter, forClass, isColor, branchSchool }) {
+  /* trackOut = false ("Time In Only") → Out Time column aur SL ginti report me nahi. */
+  function buildDailyStudentReportHTML({ rows, date, classFilter, sectionFilter, forClass, isColor, branchSchool, trackOut = true }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const ST_COLOR = { present: GREEN, absent: RED, leave: AMB, late: LATE, short_leave: SL, holiday: HOL };
     const dateLabel = date
       ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
       : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
@@ -1630,23 +1644,25 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     const classBlocks = filtered.map((r) => {
       const students = r.students || [];
       const rowsHtml = students.map((s, i) => {
-        const st = s.status; // "present" | "absent" | "leave" | ""
+        const st = s.status; // present | absent | leave | late | short_leave | holiday | ""
         const stCell = st
-          ? badge(st[0].toUpperCase() + st.slice(1), st === "present" ? GREEN : st === "absent" ? RED : AMB)
+          ? badge(ST_LABEL[st] || st, ST_COLOR[st] || AMB)
           : badge("Not Marked", "#94A3B8");
+        /* In/Out jo bhi save hua ho — pehle sirf "present" par dikhta tha, is liye
+           Late / Short Leave wale students ka time report me nahi aata tha. */
         return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
           ${td(i + 1, "text-align:center;color:#94A3B8")}
           ${td(s.name ? `<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}` : "—")}
           ${td(stCell, "text-align:center")}
-          ${td(st === "present" && s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
-          ${td(st === "present" && s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px")}
+          ${td(s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
+          ${trackOut ? td(s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px") : ""}
           ${td(s.platform || (st ? "ERP" : "—"), "font-size:11px")}
         </tr>`;
       }).join("");
 
       const cTitle = `${r.cls}${r.sec ? ` (${r.sec})` : ""}`;
       const cSummary = r.marked
-        ? `Strength ${r.total} &nbsp;·&nbsp; <span style="color:${GREEN}">Present ${r.present}</span> &nbsp;·&nbsp; <span style="color:${RED}">Absent ${r.absent}</span> &nbsp;·&nbsp; <span style="color:${AMB}">Leave ${r.leave}</span>`
+        ? `Strength ${r.total} &nbsp;·&nbsp; <span style="color:${GREEN}">Present ${r.present}</span> &nbsp;·&nbsp; <span style="color:${RED}">Absent ${r.absent}</span> &nbsp;·&nbsp; <span style="color:${AMB}">Leave ${r.leave}</span> &nbsp;·&nbsp; <span style="color:${LATE}">Late ${r.late || 0}</span>${trackOut ? ` &nbsp;·&nbsp; <span style="color:${SL}">SL ${r.shortLeave || 0}</span>` : ""}`
         : `Strength ${r.total} &nbsp;·&nbsp; <span style="color:#94A3B8">Not marked</span>`;
 
       const heading = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:22px 0 9px;padding:10px 14px;border-radius:10px;border:1.5px solid ${bdr}${isColor ? ";background:#EFF6FF" : ""}">
@@ -1657,7 +1673,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       const table = students.length === 0
         ? `<div style="text-align:center;padding:16px;color:#94A3B8;font-size:12px"><i>No students in this class.</i></div>`
         : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-            <thead><tr>${[th("#", "center"), th("Student"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
+            <thead><tr>${[th("#", "center"), th("Student"), th("Status", "center"), th("In Time", "center"), ...(trackOut ? [th("Out Time", "center")] : []), th("Marked From")].join("")}</tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table></div>`;
 
@@ -1667,6 +1683,8 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     const pres = filtered.filter((r) => r.marked).reduce((s, r) => s + r.present, 0);
     const abs  = filtered.filter((r) => r.marked).reduce((s, r) => s + r.absent, 0);
     const lv   = filtered.filter((r) => r.marked).reduce((s, r) => s + r.leave, 0);
+    const lt   = filtered.filter((r) => r.marked).reduce((s, r) => s + (r.late || 0), 0);
+    const sl   = filtered.filter((r) => r.marked).reduce((s, r) => s + (r.shortLeave || 0), 0);
     const tot  = filtered.reduce((s, r) => s + r.total, 0);
 
     const content = rptInfoGrid([
@@ -1674,7 +1692,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       ["Classes", forClass ? `${forClass.cls} (${forClass.sec})` : String(filtered.length)],
       ["Total Students", String(tot)],
     ], bdr) +
-    rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB]], bdr, isColor) +
+    rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB], ["Late", lt, LATE], ...(trackOut ? [["Short Leave", sl, SL]] : [])], bdr, isColor) +
     (totalStudentCount === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance found for the selected date and filters.</i></div>`
       : classBlocks);
@@ -1733,8 +1751,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   /* ─── Monthly Student Attendance — REAL class-wise summary ────────────────
     Har class+section: Strength, Working Days (jitne din us month attendance mark
     hui), Present/Absent/Leave (month ka total), aur Present %. Header = branch. */
-  function buildStudentMonthlySummaryHTML({ rows, monthLabel, sessionName, branchSchool, isColor, classFilter, sectionFilter }) {
+  function buildStudentMonthlySummaryHTML({ rows, monthLabel, sessionName, branchSchool, isColor, classFilter, sectionFilter, trackOut = true }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL } = rptExtraColors(isColor);
     const filtered = (rows || []).filter((r) => {
       const cMatch = !classFilter || classFilter === "All Classes" || r.cls === classFilter;
       const sMatch = !sectionFilter || sectionFilter === "All Sections" || r.sec === sectionFilter;
@@ -1749,6 +1768,8 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       ${td(`<strong style="color:${GREEN}">${r.present}</strong>`, "text-align:center")}
       ${td(`<strong style="color:${RED}">${r.absent}</strong>`,    "text-align:center")}
       ${td(`<strong style="color:${AMB}">${r.leave}</strong>`,     "text-align:center")}
+      ${td(`<strong style="color:${LATE}">${r.late || 0}</strong>`, "text-align:center")}
+      ${trackOut ? td(`<strong style="color:${SL}">${r.shortLeave || 0}</strong>`, "text-align:center") : ""}
       ${td(badge(r.pct + "%", r.pct >= 90 ? GREEN : r.pct >= 75 ? AMB : RED), "text-align:center")}
     </tr>`).join("");
 
@@ -1761,7 +1782,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     ], bdr) + (filtered.length === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Strength", "center"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Present %", "center")].join("")}</tr></thead>
+          <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Strength", "center"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Late", "center"), ...(trackOut ? [th("SL", "center")] : []), th("Present %", "center")].join("")}</tr></thead>
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
@@ -1773,8 +1794,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   }
 
   /* ─── Daily Staff Attendance Report ─────────────────────────────────────── */
-  function buildDailyStaffReportHTML({ staffData, date, deptFilter, forStaff, isColor, branchSchool }) {
+  function buildDailyStaffReportHTML({ staffData, date, deptFilter, forStaff, isColor, branchSchool, trackOut = true }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
     const dateLabel = date
       ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
       : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
@@ -1789,9 +1811,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       if (s.status === "present") return badge("Present", GREEN);
       if (s.status === "absent")  return badge("Absent",  RED);
       if (s.status === "leave")   return badge("Leave",   AMB);
-      if (s.status === "late")        return badge("Late",        isColor ? "#7C3AED" : "#374151");
-      if (s.status === "short_leave") return badge("Short Leave", AMB);
-      if (s.status === "holiday")     return badge("Holiday",     isColor ? "#2563EB" : "#374151");
+      if (s.status === "late")        return badge("Late",        LATE);
+      if (s.status === "short_leave") return badge("Short Leave", SL);
+      if (s.status === "holiday")     return badge("Holiday",     HOL);
       return badge("Pending", "#94A3B8");
     };
 
@@ -1802,13 +1824,11 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       ${td(s.dept)}
       ${td(statusBadge(s), "text-align:center")}
       ${td(s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-weight:600")}
-      ${td(s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-weight:600")}
+      ${trackOut ? td(s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-weight:600") : ""}
       ${td(s.from || "—", "font-size:11px")}
     </tr>`).join("");
 
-    const present = list.filter((s) => s.marked && s.status === "present").length;
-    const absent  = list.filter((s) => s.marked && s.status === "absent").length;
-    const leave   = list.filter((s) => s.marked && s.status === "leave").length;
+    const { present, absent, leave, late, shortLeave, holiday } = countList(list, (s) => s.marked);
     const notMarked = list.filter((s) => !s.marked).length;
 
     const content = rptInfoGrid([
@@ -1817,11 +1837,11 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       ["Total Staff", String(list.length)],
       ["Generated",  new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
     ], bdr) +
-    rptStatsRow([["Total", list.length, "#374151"], ["Present", present, GREEN], ["Absent", absent, RED], ["Leave", leave, AMB], ["Not Marked", notMarked, "#94A3B8"]], bdr, isColor) +
+    rptStatsRow([["Total", list.length, "#374151"], ["Present", present, GREEN], ["Absent", absent, RED], ["Leave", leave, AMB], ["Late", late, LATE], ...(trackOut ? [["Short Leave", shortLeave, SL]] : []), ["Holiday", holiday, HOL], ["Not Marked", notMarked, "#94A3B8"]], bdr, isColor) +
     (list.length === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff match the selected filters.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr>${[th("#", "center"), th("Staff Name"), th("Designation"), th("Department"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
+          <thead><tr>${[th("#", "center"), th("Staff Name"), th("Designation"), th("Department"), th("Status", "center"), th("In Time", "center"), ...(trackOut ? [th("Out Time", "center")] : []), th("Marked From")].join("")}</tr></thead>
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
@@ -1832,8 +1852,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     `staffData` = REAL per-staff month aggregates (present/absent/leave, working
     days, present %) fetched from /api/staff-attendance across the month's dates.
     Header = branch (branchSchool). */
-  function buildMonthlyStaffReportHTML({ staffData, month, deptFilter, forStaff, isColor, branchSchool }) {
+  function buildMonthlyStaffReportHTML({ staffData, month, deptFilter, forStaff, isColor, branchSchool, trackOut = true }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
 
     const list = (staffData || []).filter((s) => {
@@ -1854,6 +1875,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         ${td(`<strong style="color:${GREEN}">${present}</strong>`, "text-align:center")}
         ${td(`<strong style="color:${RED}">${absent}</strong>`,    "text-align:center")}
         ${td(`<strong style="color:${AMB}">${leave}</strong>`,     "text-align:center")}
+        ${td(`<strong style="color:${LATE}">${s.late || 0}</strong>`, "text-align:center")}
+        ${trackOut ? td(`<strong style="color:${SL}">${s.shortLeave || 0}</strong>`, "text-align:center") : ""}
+        ${td(`<strong style="color:${HOL}">${s.holiday || 0}</strong>`, "text-align:center")}
         ${td(badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED), "text-align:center")}
       </tr>`;
     }).join("");
@@ -1866,7 +1890,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     ], bdr) + (list.length === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff match the selected filters.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr>${[th("#", "center"), th("Staff Name"), th("Designation"), th("Department"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Attend %", "center")].join("")}</tr></thead>
+          <thead><tr>${[th("#", "center"), th("Staff Name"), th("Designation"), th("Department"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Late", "center"), ...(trackOut ? [th("SL", "center")] : []), th("Holiday", "center"), th("Attend %", "center")].join("")}</tr></thead>
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
@@ -1880,8 +1904,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
      cell. Day statuses staff index + day number se deterministic derive hote
      hain (Math.random() nahi) taake dobara generate karne par sheet stable
      rahe. Port from School-Mentor-Front-end. */
-  function buildStaffAttendanceSheetHTML({ staffData, month, weeklyOff, holidays, isColor, branchSchool }) {
-    const { bdr, GREEN, RED, th, td } = rptTableHelpers(isColor);
+  function buildStaffAttendanceSheetHTML({ staffData, month, weeklyOff, holidays, isColor, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
     const [monName, yearStr] = monthLabel.split(" ");
     const monIdx = Math.max(0, MONTHS.indexOf(monName));
@@ -1914,12 +1939,15 @@ const markOf = (staffIdx, day) => {
   if ((weeklyOff || []).includes(dow) || holidaySet.has(day)) return "H";
   if (day > lastMarkedDay) return ".";
   const status = list[staffIdx]?.dayMarks?.[day];
-  if (status === "present") return "P";
-  if (status === "absent")  return "A";
-  if (status === "leave")   return "L";
-  if (status === "holiday") return "H";
+  if (status === "present")     return "P";
+  if (status === "absent")      return "A";
+  if (status === "leave")       return "L";
+  if (status === "late")        return "LT";
+  if (status === "short_leave") return "SL";
+  if (status === "holiday")     return "H";
   return "."; // us din mark hi nahi hui
 };
+    const MARK_COLOR = { P: GREEN, A: RED, L: AMB, LT: LATE, SL, H: HOL };
 
     const dayTh = (d) => {
       const thBg = isColor ? "background:#EFF6FF;color:#1E3A8A" : "background:#FFFFFF;color:#111111";
@@ -1929,16 +1957,17 @@ const markOf = (staffIdx, day) => {
     const markCell = (mark) => {
       if (mark === "na") return `<td style="padding:3px 1px;border:1px solid ${bdr};background:#F1F5F9"></td>`;
       if (mark === ".") return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:9px;color:#CBD5E1">·</td>`;
-      const color = mark === "P" ? GREEN : mark === "A" ? RED : (isColor ? "#2563EB" : "#4B5563");
-      return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:9px;font-weight:800;color:${color}">${mark}</td>`;
+      const color = MARK_COLOR[mark] || HOL;
+      return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:${mark.length > 1 ? 7.5 : 9}px;font-weight:800;color:${color}">${mark}</td>`;
     };
 
+    /* Aakhri columns: har mark ki ginti (H me weekly-off bhi). */
+    const TALLY = trackOut ? ["P", "A", "L", "LT", "SL", "H"] : ["P", "A", "L", "LT", "H"];
     const rows = list.map((s, i) => {
-      let presents = 0, absents = 0;
+      const tally = { P: 0, A: 0, L: 0, LT: 0, SL: 0, H: 0 };
       const cells = dayNums.map((day) => {
         const mark = markOf(i, day);
-        if (mark === "P") presents++;
-        if (mark === "A") absents++;
+        if (tally[mark] != null) tally[mark]++;
         return markCell(mark);
       }).join("");
       return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
@@ -1947,15 +1976,17 @@ const markOf = (staffIdx, day) => {
         ${td(`<strong style="font-size:10.5px">${s.name}</strong>`)}
         ${td(s.desig, "font-size:10px")}
         ${cells}
-        ${td(`<strong style="color:${GREEN}">${presents}</strong>`, "text-align:center;font-size:10.5px")}
-        ${td(`<strong style="color:${RED}">${absents}</strong>`,    "text-align:center;font-size:10.5px")}
+        ${TALLY.map((k) => td(`<strong style="color:${MARK_COLOR[k]}">${tally[k]}</strong>`, "text-align:center;font-size:10px")).join("")}
       </tr>`;
     }).join("");
 
     const legend = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:10.5px;color:#475569">
       <span><strong style="color:${GREEN}">P</strong> = Present</span>
       <span><strong style="color:${RED}">A</strong> = Absent</span>
-      <span><strong style="color:${isColor ? "#2563EB" : "#4B5563"}">H</strong> = Holiday / Weekly Off</span>
+      <span><strong style="color:${AMB}">L</strong> = Leave</span>
+      <span><strong style="color:${LATE}">LT</strong> = Late</span>
+      ${trackOut ? `<span><strong style="color:${SL}">SL</strong> = Short Leave</span>` : ""}
+      <span><strong style="color:${HOL}">H</strong> = Holiday / Weekly Off</span>
       <span><strong style="color:#94A3B8">·</strong> = Not Marked Yet</span>
     </div>`;
 
@@ -1968,14 +1999,14 @@ const markOf = (staffIdx, day) => {
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff to display.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;table-layout:fixed">
           <colgroup>
-            <col style="width:3%"><col style="width:7%"><col style="width:13%"><col style="width:10%">
-            ${dayNums.map(() => '<col style="width:1.9%">').join("")}
-            <col style="width:3.5%"><col style="width:3.5%">
+            <col style="width:2.5%"><col style="width:5%"><col style="width:11%"><col style="width:7%">
+            ${dayNums.map(() => '<col style="width:1.85%">').join("")}
+            ${TALLY.map(() => '<col style="width:2.6%">').join("")}
           </colgroup>
           <thead><tr>
             ${[th("#", "center"), th("ID"), th("Name"), th("Designation")].join("")}
             ${dayNums.map((d) => dayTh(d)).join("")}
-            ${[th("P", "center"), th("A", "center")].join("")}
+            ${TALLY.map((k) => th(k, "center")).join("")}
           </tr></thead>
           <tbody>${rows}</tbody>
         </table></div>`);
@@ -1985,8 +2016,9 @@ const markOf = (staffIdx, day) => {
 
   /* ─── Class Overview (Monthly) Report ─────────────────────────────────────
     `rows` = REAL per class+section month aggregates (fetchMonthlyReportRows). */
-  function buildClassOverviewHTML({ rows, month, isColor, branchSchool }) {
+  function buildClassOverviewHTML({ rows, month, isColor, branchSchool, trackOut = true }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL } = rptExtraColors(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
     const list = rows || [];
     const workingDays = list[0]?.workingDays ?? 0;
@@ -2001,6 +2033,8 @@ const markOf = (staffIdx, day) => {
         ${td(`<strong style="color:${GREEN}">${r.present}</strong>`, "text-align:center")}
         ${td(`<strong style="color:${RED}">${r.absent}</strong>`,    "text-align:center")}
         ${td(`<strong style="color:${AMB}">${r.leave}</strong>`,     "text-align:center")}
+        ${td(`<strong style="color:${LATE}">${r.late || 0}</strong>`, "text-align:center")}
+        ${trackOut ? td(`<strong style="color:${SL}">${r.shortLeave || 0}</strong>`, "text-align:center") : ""}
         ${td(badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED), "text-align:center")}
       </tr>`;
     }).join("");
@@ -2014,7 +2048,7 @@ const markOf = (staffIdx, day) => {
     (list.length === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-      <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Teacher"), th("Strength", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Attend %", "center")].join("")}</tr></thead>
+      <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Teacher"), th("Strength", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Late", "center"), ...(trackOut ? [th("SL", "center")] : []), th("Attend %", "center")].join("")}</tr></thead>
       <tbody>${tableRows}</tbody>
     </table></div>`);
 
@@ -2246,7 +2280,7 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Individual (Student/Staff) Date-Range Report ──────────────────────── */
-  function buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool }) {
+  function buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool, trackOut = true }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const titleType = target.type === "student" ? "Student" : "Staff";
     const dateLabel = `${fromDate} → ${toDate}`;
@@ -2260,10 +2294,12 @@ const markOf = (staffIdx, day) => {
       dates.push(new Date(d));
     }
 
-    const STLABEL = { present: "Present", absent: "Absent", leave: "Leave" };
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const ST_COLOR = { present: GREEN, absent: RED, leave: AMB, late: LATE, short_leave: SL, holiday: HOL };
     const WDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-    let present = 0, absent = 0, leave = 0, wDays = 0, wOff = 0, hols = 0;
+    const counts = emptyCounts();
+    let wDays = 0, wOff = 0, hols = 0;
     const tableRows = dates.map((d, i) => {
       const dow = (d.getDay() + 6) % 7;
       const isOff = weeklyOff.includes(dow);
@@ -2282,18 +2318,14 @@ const markOf = (staffIdx, day) => {
 
       // Real status: weekly-off/holiday → "—"; warna record se; record na ho → "Not Marked".
       const stKey = rec ? rec.status : "";
-      const st = (isOff || hol) ? "—" : (STLABEL[stKey] || (rec ? "Marked" : "Not Marked"));
+      const st = (isOff || hol) ? "—" : (ST_LABEL[stKey] || (rec ? "Marked" : "Not Marked"));
       const pl = (isOff || hol) ? "—" : (rec?.platform || "—");
       // In/Out time — ab student aur staff dono ke liye (present days par API se aata hai).
       const inT  = rec?.inTime  ? fmtTime(rec.inTime)  : "—";
       const outT = rec?.outTime ? fmtTime(rec.outTime) : "—";
 
-      if (!isOff && !hol && rec) {
-        if (stKey === "present") present++;
-        else if (stKey === "absent") absent++;
-        else if (stKey === "leave") leave++;
-      }
-      const sc = st === "Present" ? GREEN : st === "Absent" ? RED : st === "Leave" ? AMB : "#94A3B8";
+      if (!isOff && !hol && rec) countStatus(counts, stKey);
+      const sc = ST_COLOR[stKey] || "#94A3B8";
       const bg = isOff ? "#f8fafc" : i % 2 === 0 ? "#fff" : "#f9fafb";
 
       return `<tr style="background:${bg}">
@@ -2303,13 +2335,14 @@ const markOf = (staffIdx, day) => {
         ${td(`<span style="color:${dColor};font-weight:700">${dType}</span>${hol ? `<div style="font-size:10px;color:#64748B;margin-top:2px">${hol.title}</div>` : ""}`)}
         ${td(st === "—" ? "—" : badge(st, sc), "text-align:center")}
         ${td(inT, "text-align:center;font-size:11px")}
-        ${td(outT, "text-align:center;font-size:11px")}
+        ${trackOut ? td(outT, "text-align:center;font-size:11px") : ""}
         ${td(pl, "font-size:11px")}
       </tr>`;
     }).join("");
 
     const totalDays = dates.length;
-    const pc = wDays > 0 ? Math.round((present / wDays) * 100) : 0;
+    // Late / Short Leave bhi haazir ginay jate hain (aaye the).
+    const pc = wDays > 0 ? Math.round((attendedOf(counts) / wDays) * 100) : 0;
 
     const content = rptInfoGrid([
       [titleType + " Name", target.name],
@@ -2325,9 +2358,12 @@ const markOf = (staffIdx, day) => {
       ["Attend %",     pc + "%",  pc >= 90 ? GREEN : pc >= 75 ? AMB : RED],
     ], bdr, isColor) +
     rptStatsRow([
-      ["Present", present, GREEN],
-      ["Absent",  absent,  RED],
-      ["Leave",   leave,   AMB],
+      ["Present",     counts.present,    GREEN],
+      ["Absent",      counts.absent,     RED],
+      ["Leave",       counts.leave,      AMB],
+      ["Late",        counts.late,       LATE],
+      ...(trackOut ? [["Short Leave", counts.shortLeave, SL]] : []),
+      ...(titleType === "Staff" ? [["Holiday", counts.holiday, HOL]] : []),
     ], bdr, isColor) +
     `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
       <thead><tr>${[
@@ -2336,7 +2372,7 @@ const markOf = (staffIdx, day) => {
         th("Day"),
         th("Type"),
         th("Status", "center"),
-        th("In Time", "center"), th("Out Time", "center"),
+        th("In Time", "center"), ...(trackOut ? [th("Out Time", "center")] : []),
         th("Platform"),
       ].join("")}</tr></thead>
       <tbody>${tableRows}</tbody>
@@ -2453,6 +2489,34 @@ const markOf = (staffIdx, day) => {
   const ST_STATUS_TO_CODE = { present: 1, absent: 2, leave: 3, late: 4, holiday: 5, short_leave: 6 };
   const ST_CODE_TO_STATUS = { "1": "present", "2": "absent", "3": "leave", "4": "late", "5": "holiday", "6": "short_leave" };
 
+  /* Ek hi ginti har jagah (tables, date panels, reports): P = waqt par present,
+     Late aur SL (Short Leave) ALAG — P me nahi gine jate, taake
+     P + A + L + Late + SL (+ Holiday) = marked. "Attended" = P + Late + SL. */
+  const ST_LABEL = { present: "Present", absent: "Absent", leave: "Leave", late: "Late", short_leave: "Short Leave", holiday: "Holiday" };
+  const emptyCounts = () => ({ present: 0, absent: 0, leave: 0, late: 0, shortLeave: 0, holiday: 0 });
+  /** Status ko counter me jodo; pehchana na jaye to false. */
+  function countStatus(c, st) {
+    if (st === "present") c.present++;
+    else if (st === "absent") c.absent++;
+    else if (st === "leave") c.leave++;
+    else if (st === "late") c.late++;
+    else if (st === "short_leave") c.shortLeave++;
+    else if (st === "holiday") c.holiday++;
+    else return false;
+    return true;
+  }
+  /** Students/staff ki list → counts (status field se). */
+  const countList = (list, isMarked = () => true) => list.reduce((c, s) => {
+    if (isMarked(s)) countStatus(c, s.status);
+    return c;
+  }, emptyCounts());
+  const attendedOf = (c) => (c.present || 0) + (c.late || 0) + (c.shortLeave || 0);
+  /** Attendance % = attended / (attended + absent + leave) — holiday ginti me nahi. */
+  const attendPct = (c) => {
+    const marks = attendedOf(c) + (c.absent || 0) + (c.leave || 0);
+    return marks > 0 ? Math.round((attendedOf(c) / marks) * 100) : 0;
+  };
+
   function rosterForClass(row) {
     // Real roster from the API (get-class-section-studentlist-by-branch).
     if (Array.isArray(row?.students) && row.students.length) return row.students;
@@ -2499,7 +2563,7 @@ const markOf = (staffIdx, day) => {
   /* ─── Tab 2: Student Attendance ─────────────────────────────────────────────
     HTML-faithful: att-section, att-st-row table, expandable detail panels,
     per-class Mark/Update Attendance button, calendar with date detail. */
-  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false, prevDaysAttendance = false, studentLoading = false }) {
+  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false, prevDaysAttendance = false, studentLoading = false, trackOut = true }) {
     const { can } = usePermissions();
     const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
     const canStDownload = can("Attendance", "Student Attendance", "Download");
@@ -2536,8 +2600,8 @@ const markOf = (staffIdx, day) => {
       ? studentData.map((r) => {
           const d = dateRowFor(r);
           return d
-            ? { ...r, marked: !!d.marked, present: d.present || 0, absent: d.absent || 0, leave: d.leave || 0 }
-            : { ...r, marked: false, present: 0, absent: 0, leave: 0 }; // still loading / no record
+            ? { ...r, ...emptyCounts(), marked: !!d.marked, present: d.present || 0, absent: d.absent || 0, leave: d.leave || 0, late: d.late || 0, shortLeave: d.shortLeave || 0, holiday: d.holiday || 0 }
+            : { ...r, ...emptyCounts(), marked: false }; // still loading / no record
         })
       : studentData;
     // Roster for a class's detail table — selected date's per-student status when following it.
@@ -2612,6 +2676,7 @@ const markOf = (staffIdx, day) => {
                 openReportPicker={openReportPicker}
                 isOtherSession={isOtherSession}
                 prevDaysAttendance={prevDaysAttendance}
+                trackOut={trackOut}
               />
             )}
           </div>
@@ -2630,7 +2695,7 @@ const markOf = (staffIdx, day) => {
           </div>
 
           {/* Table header */}
-          <div className="att-table-head att-st-row">
+          <div className={`att-table-head att-st-row${trackOut ? "" : " att-st-row--noout"}`}>
             <div className="att-th att-td-num">#</div>
             <div className="att-th att-td-name">Class / Section</div>
             <div className="att-th att-td-teacher">Class Teacher</div>
@@ -2639,6 +2704,8 @@ const markOf = (staffIdx, day) => {
             <div className="att-th att-td-present">P</div>
             <div className="att-th att-td-absent">A</div>
             <div className="att-th att-td-leave">L</div>
+            <div className="att-th att-td-late">Late</div>
+            {trackOut && <div className="att-th att-td-sl">SL</div>}
             <div className="att-th att-td-action">Action</div>
             <div className="att-th att-td-chev"></div>
           </div>
@@ -2655,7 +2722,7 @@ const markOf = (staffIdx, day) => {
             const isMarked = r.marked;
             return (
               <div key={(r.classID ?? r.cls) + "-" + (r.sectionID ?? r.sec)} className="att-row-wrap">
-                <div className="att-row att-st-row">
+                <div className={`att-row att-st-row${trackOut ? "" : " att-st-row--noout"}`}>
                   <div className="att-td att-td-num">{i + 1}</div>
                   <div className="att-td att-td-name">
                     <div className="att-row-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
@@ -2684,6 +2751,8 @@ const markOf = (staffIdx, day) => {
                   <div className="att-td att-td-present"><span style={{ color: "#16A34A", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.present : "—"}</span></div>
                   <div className="att-td att-td-absent"><span style={{ color: "#DC2626", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.absent : "—"}</span></div>
                   <div className="att-td att-td-leave"><span style={{ color: "#D97706", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.leave : "—"}</span></div>
+                  <div className="att-td att-td-late"><span style={{ color: "#7C3AED", fontWeight: 800, fontSize: 14 }}>{isMarked ? (r.late || 0) : "—"}</span></div>
+                  {trackOut && <div className="att-td att-td-sl"><span style={{ color: "#0891B2", fontWeight: 800, fontSize: 14 }}>{isMarked ? (r.shortLeave || 0) : "—"}</span></div>}
                   <div className="att-td att-td-action">
                     {/* markDate = null in today mode (→ mark today, byte-identical),
                         or the selected past date when following it (toggle ON). A past
@@ -2719,7 +2788,7 @@ const markOf = (staffIdx, day) => {
                       <table className="att-student-table" style={{ minWidth: 620 }}>
                         <thead>
                           <tr>
-                            <th>#</th><th>Reg. No.</th><th>Student Name</th><th>Father Name</th><th>Status</th><th>In Time</th><th>Out Time</th><th>Marked From</th>
+                            <th>#</th><th>Reg. No.</th><th>Student Name</th><th>Father Name</th><th>Status</th><th>In Time</th>{trackOut && <th>Out Time</th>}<th>Marked From</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2733,11 +2802,11 @@ const markOf = (staffIdx, day) => {
                                 <td>{s.father}</td>
                                 <td>
                                   {st
-                                    ? <span className={`att-${st}-badge`}>{st[0].toUpperCase() + st.slice(1)}</span>
+                                    ? <span className={`att-${st}-badge`}>{ST_LABEL[st] || st}</span>
                                     : <span style={{ color: T.textMuted, fontSize: 11.5 }}>Not Marked</span>}
                                 </td>
                                 <td style={{ fontWeight: 600 }}>{s.inTime  ? fmtTime(s.inTime)  : "—"}</td>
-                                <td style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</td>
+                                {trackOut && <td style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</td>}
                                 <td style={{ fontSize: 11.5, color: T.textMuted }}>{st ? (s.platform || "ERP") : ""}</td>                              </tr>
                             );
                           })}
@@ -2784,7 +2853,7 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Selected-date panel under the Student calendar ────────────────────── */
-  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false, prevDaysAttendance = false }) {
+  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false, prevDaysAttendance = false, trackOut = true }) {
     const { can } = usePermissions();
     const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
     const canStDownload = can("Attendance", "Student Attendance", "Download");
@@ -2800,6 +2869,8 @@ const markOf = (staffIdx, day) => {
     const present  = rows.reduce((s, r) => s + (r.present || 0), 0);
     const absent   = rows.reduce((s, r) => s + (r.absent  || 0), 0);
     const leave    = rows.reduce((s, r) => s + (r.leave   || 0), 0);
+    const late     = rows.reduce((s, r) => s + (r.late    || 0), 0);
+    const shortLv  = rows.reduce((s, r) => s + (r.shortLeave || 0), 0);
     const allMarked = rows.length > 0 && rows.every((r) => r.marked);
 
     return (
@@ -2851,6 +2922,8 @@ const markOf = (staffIdx, day) => {
             ["Present",        loading ? "…" : (hasMark ? present : "—"), T.success],
             ["Absent",         loading ? "…" : (hasMark ? absent  : "—"), T.error],
             ["Leave",          loading ? "…" : (hasMark ? leave   : "—"), T.warning],
+            ["Late",           loading ? "…" : (hasMark ? late    : "—"), "#7C3AED"],
+            ...(trackOut ? [["Short Leave", loading ? "…" : (hasMark ? shortLv : "—"), "#0891B2"]] : []),
           ].map(([l, v, c]) => (
             <div key={l} className="att-stat-card">
               <div className="att-stat-num" style={{ color: c }}>{v}</div>
@@ -2878,10 +2951,12 @@ const markOf = (staffIdx, day) => {
                               : <><i className="fa-regular fa-clock" style={{ fontSize: 9, marginRight: 3 }}></i>Not Marked</>}
                   </span>
                 </div>
-                <div style={{ display: "flex", gap: 10, fontSize: 11.5, fontWeight: 700, marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700, marginBottom: 10 }}>
                   <span style={{ color: T.success }}>P: {r.marked ? (r.present || 0) : "—"}</span>
                   <span style={{ color: T.error   }}>A: {r.marked ? (r.absent  || 0) : "—"}</span>
                   <span style={{ color: T.warning }}>L: {r.marked ? (r.leave   || 0) : "—"}</span>
+                  <span style={{ color: "#7C3AED" }}>Late: {r.marked ? (r.late || 0) : "—"}</span>
+                  {trackOut && <span style={{ color: "#0891B2" }}>SL: {r.marked ? (r.shortLeave || 0) : "—"}</span>}
                 </div>
                 <div style={{ borderTop: `1px solid ${T.borderLight}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
                   <MetaRow label="Marked By"      value={r.markedBy || "—"} />
@@ -2926,6 +3001,8 @@ const markOf = (staffIdx, day) => {
       fullDayTimeOut: attendanceSetup.studentFullDayTimeOut,
       trackTimeOut: attendanceSetup.studentTrackingMode !== "in_only",
     };
+    /* "Time In Only" → Out Time column aur SL button nahi (SL Time Out se hi banta hai). */
+    const trackOut = stuSetup.trackTimeOut;
     /* Times → status per the rules: Time In decides Present vs Late, and a
        Time Out before "Short Leave Before" turns it into Short Leave. Null
        (rules off, or a time before Attendance Start) keeps the previous
@@ -2984,7 +3061,8 @@ const markOf = (staffIdx, day) => {
       if (saving) return;
       setSaving(true);
       try {
-        await onSaveMarks(classIdx, rows); // action:"insert" per student
+        // Time In Only → koi purana Out Time save na ho.
+        await onSaveMarks(classIdx, trackOut ? rows : rows.map((r) => ({ ...r, outTime: "" }))); // action:"insert" per student
         onClose();
       } catch {
         /* API failed — keep modal open so the user can retry */
@@ -3029,7 +3107,7 @@ const markOf = (staffIdx, day) => {
                     <th>Father Name</th>
                     <th>Status</th>
                     <th>In Time</th>
-                    <th>Out Time</th>
+                    {trackOut && <th>Out Time</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -3053,9 +3131,11 @@ const markOf = (staffIdx, day) => {
                           <Tooltip text="Mark Late (keeps Time In)">
                             <button className={`att-radio-btn late${s.status === "late" ? " active" : ""}`} onClick={() => setStatus(j, "late")}>Late</button>
                           </Tooltip>
+                          {trackOut && (
                           <Tooltip text="Mark Short Leave (left before Short Leave Before)">
                             <button className={`att-radio-btn sl${s.status === "short_leave" ? " active" : ""}`} onClick={() => setStatus(j, "short_leave")}>SL</button>
                           </Tooltip>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -3073,6 +3153,7 @@ const markOf = (staffIdx, day) => {
                           style={{ width: 108, height: 34, fontSize: 12.5 }}
                         />
                       </td>
+                      {trackOut && (
                       <td>
                         <input
                           className="att-input"
@@ -3088,6 +3169,7 @@ const markOf = (staffIdx, day) => {
                           style={{ width: 108, height: 34, fontSize: 12.5 }}
                         />
                       </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -3115,7 +3197,7 @@ const markOf = (staffIdx, day) => {
   /* ─── Tab 3: Staff Attendance ─────────────────────────────────────────────
     HTML-faithful: filter bar, calendar with date-detail (top mark CTA),
     staff list table with expandable per-staff detail rows. */
-  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false, prevDaysAttendance = false, staffLoading = false }) {
+  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false, prevDaysAttendance = false, staffLoading = false, trackOut = true }) {
     const { can } = usePermissions();
     const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
     const canSfDownload = can("Attendance", "Staff Attendance", "Download");
@@ -3205,6 +3287,7 @@ const markOf = (staffIdx, day) => {
                 openReportPicker={openReportPicker}
                 isOtherSession={isOtherSession}
                 prevDaysAttendance={prevDaysAttendance}
+                trackOut={trackOut}
               />
             )}
           </div>
@@ -3217,7 +3300,7 @@ const markOf = (staffIdx, day) => {
               <div className="att-section-icon"><i className="fa-solid fa-id-badge"></i></div>
               <div>
                 <div className="att-section-name">Staff Attendance</div>
-                <div className="att-section-sub">Track daily in/out times and attendance status for all staff</div>
+                <div className="att-section-sub">Track daily {trackOut ? "in/out times" : "time in"} and attendance status for all staff</div>
               </div>
             </div>
 
@@ -3230,14 +3313,14 @@ const markOf = (staffIdx, day) => {
           </div>
 
           {/* Table header */}
-          <div className="att-table-head att-sf-row">
+          <div className={`att-table-head att-sf-row${trackOut ? "" : " att-sf-row--noout"}`}>
             <div className="att-th att-sf-num">#</div>
             <div className="att-th att-sf-name">Staff Name</div>
             <div className="att-th att-sf-desig">Designation</div>
             <div className="att-th att-sf-dept">Department</div>
             <div className="att-th att-sf-status">Status</div>
             <div className="att-th att-sf-in">In Time</div>
-            <div className="att-th att-sf-out">Out Time</div>
+            {trackOut && <div className="att-th att-sf-out">Out Time</div>}
             <div className="att-th att-sf-chev"></div>
           </div>
 
@@ -3253,7 +3336,7 @@ const markOf = (staffIdx, day) => {
             const stLabel  = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "On Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending") : "Not Marked";
             return (
               <div key={s.empId} className="att-row-wrap">
-                <div className="att-row att-sf-row">
+                <div className={`att-row att-sf-row${trackOut ? "" : " att-sf-row--noout"}`}>
                   <div className="att-td att-sf-num">{i + 1}</div>
                   <div className="att-td att-sf-name">
                     <div className="att-row-icon"><i className="fa-solid fa-user-tie"></i></div>
@@ -3268,7 +3351,7 @@ const markOf = (staffIdx, day) => {
                     <span className={`att-status-badge ${stClass}`}>{stLabel}</span>
                   </div>
                   <div className="att-td att-sf-in" style={{ fontWeight: 600 }}>{s.inTime ? fmtTime(s.inTime) : "—"}</div>
-                  <div className="att-td att-sf-out" style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</div>
+                  {trackOut && <div className="att-td att-sf-out" style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</div>}
                   <div className="att-td att-sf-chev">
                     <Tooltip text={isOpen ? "Hide staff details" : "Show staff details"}>
                       <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenIdx(next); if (next !== null && !followDate) onExpandStaff?.(); }} aria-label="Toggle detail">
@@ -3288,7 +3371,7 @@ const markOf = (staffIdx, day) => {
                       {[
                         ["Status",      s.marked ? (stLabel) : "Not Marked"],
                         ["In Time",     s.inTime  ? fmtTime(s.inTime)  : "—"],
-                        ["Out Time",    s.outTime ? fmtTime(s.outTime) : "—"],
+                        ...(trackOut ? [["Out Time", s.outTime ? fmtTime(s.outTime) : "—"]] : []),
                         ["Department",  s.dept  || "—"],
                         ["Marked From", s.from   ? `${platIcon(s.from)} ${s.from}` : "—"],
                         ["Designation", s.desig || "—"],
@@ -3339,7 +3422,7 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Selected-date panel under the Staff calendar ──────────────────────── */
-  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false, prevDaysAttendance = false }) {
+  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false, prevDaysAttendance = false, trackOut = true }) {
     const { can } = usePermissions();
     const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
     const canSfDownload = can("Attendance", "Staff Attendance", "Download");
@@ -3352,10 +3435,8 @@ const markOf = (staffIdx, day) => {
     const rows    = ready ? staffDateAttendance.rows : [];
     const markedRows = rows.filter((s) => s.marked);
     const hasMark = markedRows.length > 0;
-    // Late counts within Present (a late person still attended).
-    const present = rows.filter((s) => s.marked && (s.status === "present" || s.status === "late" || s.status === "short_leave")).length;
-    const absent  = rows.filter((s) => s.marked && s.status === "absent").length;
-    const leave   = rows.filter((s) => s.marked && s.status === "leave").length;
+    // P / A / L / Late / SL / Holiday — har ek alag (countList).
+    const { present, absent, leave, late, shortLeave, holiday } = countList(rows, (s) => s.marked);
 
     return (
       <div style={{ marginTop: 16, border: `1.5px solid ${T.borderLight}`, borderRadius: T.radiusLg, padding: 16, background: "linear-gradient(135deg,rgba(30,58,138,.02),transparent)" }}>
@@ -3410,6 +3491,9 @@ const markOf = (staffIdx, day) => {
             ["Present",     loading ? "…" : (hasMark ? present : "—"), T.success],
             ["Absent",      loading ? "…" : (hasMark ? absent  : "—"), T.error],
             ["Leave",       loading ? "…" : (hasMark ? leave   : "—"), T.warning],
+            ["Late",        loading ? "…" : (hasMark ? late    : "—"), "#7C3AED"],
+            ...(trackOut ? [["Short Leave", loading ? "…" : (hasMark ? shortLeave : "—"), "#0891B2"]] : []),
+            ["Holiday",     loading ? "…" : (hasMark ? holiday : "—"), "#2563EB"],
           ].map(([l, v, c]) => (
             <div key={l} className="att-stat-card">
               <div className="att-stat-num" style={{ color: c }}>{v}</div>
@@ -3436,15 +3520,15 @@ const markOf = (staffIdx, day) => {
                     </div>
                     <span className={`att-status-badge ${stClass}`} style={{ fontSize: 9.5, padding: "2px 9px", flexShrink: 0 }}>{stLabel}</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 9 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: trackOut ? "1fr 1fr" : "1fr", gap: 6, marginBottom: 9 }}>
                     <div style={{ background: T.bgMuted, borderRadius: 7, padding: "6px 9px" }}>
                       <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 2 }}>Time In</div>
                       <div style={{ fontSize: 12, fontWeight: 800, color: s.inTime ? "#16A34A" : T.textMuted }}>{s.inTime ? fmtTime(s.inTime) : "—"}</div>
                     </div>
-                    <div style={{ background: T.bgMuted, borderRadius: 7, padding: "6px 9px" }}>
+                    {trackOut && <div style={{ background: T.bgMuted, borderRadius: 7, padding: "6px 9px" }}>
                       <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 2 }}>Time Out</div>
                       <div style={{ fontSize: 12, fontWeight: 800, color: s.outTime ? T.brandPrimary : T.textMuted }}>{s.outTime ? fmtTime(s.outTime) : "—"}</div>
-                    </div>
+                    </div>}
                   </div>
                   <div style={{ borderTop: `1px solid ${T.borderLight}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
                     <MetaRow label="Marked By"  value={s.markedBy || "—"} />
@@ -3472,6 +3556,8 @@ const markOf = (staffIdx, day) => {
     /* Staff rule-engine setup — the staff fields are already in the canonical
        shape, so entering a Time In auto-decides Present vs Late. */
     const sfSetup = { ...attendanceSetup, trackTimeOut: attendanceSetup.staffTrackingMode !== "in_only" };
+    /* "Time In Only" → Out Time column aur SL button nahi. */
+    const trackOut = sfSetup.trackTimeOut;
     const attended = (st) => st === "present" || st === "late" || st === "short_leave";
     /* Time In decides Present vs Late; a Time Out before "Short Leave Before"
        turns it into Short Leave. */
@@ -3495,7 +3581,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
     const setField = (j, patch) => setRows((prev) => prev.map((r, i) => i === j ? { ...r, ...patch } : r));
 
-    const save = () => onSave(rows);
+    // Time In Only → koi purana Out Time save na ho.
+    const save = () => onSave(trackOut ? rows : rows.map((r) => ({ ...r, outTime: "" })));
 
     return createPortal(
       <div className="att-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -3505,7 +3592,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
               <div className="att-modal-header-icon"><i className="fa-solid fa-user-tie"></i></div>
               <div>
                 <div className="att-modal-title">{isUpdate ? "Update" : "Mark"} Staff Attendance — {today}</div>
-                <div className="att-modal-sub">Mark present / absent / leave with in/out time for all staff</div>
+                <div className="att-modal-sub">Mark present / absent / leave with {trackOut ? "in/out time" : "time in"} for all staff</div>
               </div>
             </div>
             <Tooltip text="Close"><button className="att-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
@@ -3526,7 +3613,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                     <th>Department</th>
                     <th>Status</th>
                     <th>In Time</th>
-                    <th>Out Time</th>
+                    {trackOut && <th>Out Time</th>}
                     <th>Marked From</th>
                   </tr>
                 </thead>
@@ -3555,9 +3642,11 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             <Tooltip text="Mark Late (keeps Time In)">
                               <button className={`att-radio-btn late${r.status === "late" ? " active" : ""}`} onClick={() => setField(j, { status: "late" })}>Late</button>
                             </Tooltip>
+                            {trackOut && (
                             <Tooltip text="Mark Short Leave (left before Short Leave Before)">
                               <button className={`att-radio-btn sl${r.status === "short_leave" ? " active" : ""}`} onClick={() => setField(j, { status: "short_leave" })}>SL</button>
                             </Tooltip>
+                            )}
                             <Tooltip text="Mark Holiday (clears in/out times)">
                               <button className={`att-radio-btn h${r.status === "holiday" ? " active" : ""}`} onClick={() => setField(j, { status: "holiday", inTime: "", outTime: "" })}>H</button>
                             </Tooltip>
@@ -3578,6 +3667,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             style={{ width: 108, height: 34, fontSize: 12.5 }}
                           />
                         </td>
+                        {trackOut && (
                         <td>
                           <input
                             className="att-input"
@@ -3593,6 +3683,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             style={{ width: 108, height: 34, fontSize: 12.5 }}
                           />
                         </td>
+                        )}
                         <td>
                           <select
                             className="att-select"
@@ -3703,7 +3794,12 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     HTML-faithful: 2 sub-tabs (General / Individual). General = 4 grp-card
     accordions, each with embedded report rows + inline filters + Generate.
     Individual = expandable student class rows + flat staff list. */
-  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [], sessionName = "" }) {
+  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [], sessionName = "", staffTrackOut = true }) {
+    /* Staff "Time In Only" → Short Leavers report ka koi matlab nahi (SL Time Out se banta hai). */
+    const reportGroups = REPORT_GROUPS.map((g) => ({
+      ...g,
+      reports: g.reports.filter((r) => staffTrackOut || r.key !== "staffShortLeavers"),
+    }));
     const [subTab, setSubTab] = useState("general");
     const [openCardIdx, setOpenCardIdx] = useState(0);
     const [openClassIdx, setOpenClassIdx] = useState(null);
@@ -3752,7 +3848,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
         {subTab === "general" && (
           <div className="rpt-grp-grid">
-            {REPORT_GROUPS.map((g, gi) => {
+            {reportGroups.map((g, gi) => {
               const isOpen = openCardIdx === gi;
               return (
                 <div key={g.title} className="grp-card">
@@ -4558,10 +4654,13 @@ useEffect(() => {
       const target = indivTarget;
       // Modal ko generation ke baad band karo taake button par spinner dikhe.
       const records = await fetchIndividualAttendance(target, fromDate, toDate);
-      const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool });
+      const trackOut = target.type === "student"
+        ? attendanceSetup.studentTrackingMode !== "in_only"
+        : attendanceSetup.staffTrackingMode !== "in_only";
+      const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool, trackOut });
       setIndivTarget(null);
       deliverAttReport(`${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html, format);
-    }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool, deliverAttReport]);
+    }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool, deliverAttReport, attendanceSetup]);
 
     const openMarkSf = useCallback(async (dateStr) => {
       if (blockIfReadOnly()) return;
@@ -4652,6 +4751,9 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
 }, [staffData, toast, blockIfReadOnly]);
     const generateReport = useCallback(async ({ effective, style, format = "pdf", filters }) => {
       const isColor = style === "color";
+      // "Time In Only" → reports me Out Time aur SL nahi (student / staff alag setting).
+      const stuOut = attendanceSetup.studentTrackingMode !== "in_only";
+      const sfOut  = attendanceSetup.staffTrackingMode !== "in_only";
       let html, title;
       if (effective === "holidayYearly") {
         // Chosen session (name → ID) → fetch that session's holidays from the API.
@@ -4693,6 +4795,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           forClass: reportPicker?.forClass,
           isColor,
           branchSchool,
+          trackOut: stuOut,
         });
         title = reportPicker?.title || "Daily Student Attendance Report";
       } else if (effective === "studentMonthly" || effective === "studentMonthlyClass") {
@@ -4707,6 +4810,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           isColor,
           classFilter: filters.class,
           sectionFilter: filters.section,
+          trackOut: stuOut,
         });
         title = reportPicker?.title || "Monthly Student Attendance Report";
       } else if (effective === "staffDaily" || effective === "staffDailyOne") {
@@ -4719,6 +4823,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           forStaff: reportPicker?.forStaff,
           isColor,
           branchSchool,
+          trackOut: sfOut,
         });
         title = reportPicker?.title || "Daily Staff Attendance Report";
       } else if (effective === "staffMonthly" || effective === "staffMonthlyOne") {
@@ -4732,26 +4837,27 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           forStaff: reportPicker?.forStaff,
           isColor,
           branchSchool,
+          trackOut: sfOut,
         });
         title = reportPicker?.title || "Monthly Staff Attendance Report";
       } else if (effective === "staffSummary") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
         const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
-        html  = buildMonthlyStaffReportHTML({ staffData: rows, month: monthLabel, isColor, branchSchool });
+        html  = buildMonthlyStaffReportHTML({ staffData: rows, month: monthLabel, isColor, branchSchool, trackOut: sfOut });
         title = "Staff Attendance Summary";
       } else if (effective === "staffSheet") {
         const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
         const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
-        html  = buildStaffAttendanceSheetHTML({ staffData: rows, month: monthLabel, weeklyOff, holidays, isColor, branchSchool });
+        html  = buildStaffAttendanceSheetHTML({ staffData: rows, month: monthLabel, weeklyOff, holidays, isColor, branchSchool, trackOut: sfOut });
         title = "Staff Attendance Sheet";
       } else if (effective === "studentClasswise") {
         const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
         const rows = await fetchRangeReportRows(filters.from, filters.to);
         html  = buildStudentMonthlySummaryHTML({
           rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
-          branchSchool, isColor, classFilter: filters.class,
+          branchSchool, isColor, classFilter: filters.class, trackOut: stuOut,
         });
         title = "Class-wise Student Attendance Report";
       } else if (effective === "studentSummary") {
@@ -4759,14 +4865,14 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         const rows = await fetchRangeReportRows(filters.from, filters.to);
         html  = buildStudentMonthlySummaryHTML({
           rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
-          branchSchool, isColor,
+          branchSchool, isColor, trackOut: stuOut,
         });
         title = "Student Attendance Summary";
       } else if (effective === "classOverview") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
         const rows = await fetchMonthlyReportRows(year, monthIdx0);
-        html  = buildClassOverviewHTML({ rows, month: monthLabel, isColor, branchSchool });
+        html  = buildClassOverviewHTML({ rows, month: monthLabel, isColor, branchSchool, trackOut: stuOut });
         title = "Class Overview Report";
       } else if (effective === "classComparison") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
@@ -4917,9 +5023,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         const teacher = assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—";
         return {
           ...r, students, marked: anyMarked, teacher,
-          present: students.filter((s) => s.status === "present" || s.status === "late" || s.status === "short_leave").length,
-          absent:  students.filter((s) => s.status === "absent").length,
-          leave:   students.filter((s) => s.status === "leave").length,
+          ...countList(students),
         };
       }));
       return map;
@@ -4977,13 +5081,11 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         toast("Attendance saved successfully", "success");
         return;
       }
-      const present = studentRows.filter((s) => s.status === "present" || s.status === "late" || s.status === "short_leave").length;
-      const absent  = studentRows.filter((s) => s.status === "absent").length;
-      const leave   = studentRows.filter((s) => s.status === "leave").length;
+      const counts = countList(studentRows);
       const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
       const markerName = employeeNameById[String(employeeID)] || "";
       setStudentData((prev) => prev.map((r, i) => i === idx ? {
-        ...r, marked: true, present, absent, leave,
+        ...r, marked: true, ...counts,
         teacher: assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—",
         students: (r.students || []).map((st) => {
           const m = studentRows.find((x) => x.id === st.id);
@@ -5030,21 +5132,18 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         } catch (err) {
           console.error("Error loading date attendance:", err);
         }
-        let present = 0, absent = 0, leave = 0, late = 0, platform = "";
+        const counts = emptyCounts();
+        let platform = "";
         recs.forEach((rec) => {
           // Status numeric code ("1") ya word ("present") — dono handle karo.
           const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
-          const st = ST_CODE_TO_STATUS[raw] || raw;
-          if (st === "present") present++;
-          else if (st === "absent") absent++;
-          else if (st === "leave") leave++;
-          else if (st === "late") late++;
+          countStatus(counts, ST_CODE_TO_STATUS[raw] || raw);
           platform = rec.Platform ?? rec.platform ?? platform;
         });
         return {
           classID: r.classID, sectionID: r.sectionID,
           cls: r.cls, sec: r.sec, total: r.total,
-          present, absent, leave, late,
+          ...counts,
           marked: recs.length > 0,
           markedFrom: platform || (recs.length ? "ERP" : ""),
           markedBy: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
@@ -5175,7 +5274,8 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         // Per-student record map (studentID → status + in/out + platform) — daily
         // report mein har student ki row + In/Out Time dikhane ke liye.
         const byStudent = {};
-        let present = 0, absent = 0, leave = 0, marked = false, platform = "";
+        const counts = emptyCounts();
+        let marked = false, platform = "";
         recs.forEach((rec) => {
           const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
           const st = ST_CODE_TO_STATUS[raw] || raw;
@@ -5188,10 +5288,8 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
               platform: String(rec.Platform ?? rec.platform ?? ""),
             };
           }
-          if (st === "present") present++;
-          else if (st === "absent") absent++;
-          else if (st === "leave") leave++;
-          else return;
+          // Late / Short Leave / Holiday bhi gine jate hain (pehle chhoot jate the).
+          if (!countStatus(counts, st)) return;
           marked = true;
           // "Marked By" column me platform (ERP / Mobile App / Biometric …).
           platform = String(rec.Platform ?? rec.platform ?? "") || platform;
@@ -5199,7 +5297,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
 
         return {
           cls: r.cls, sec: r.sec, total: r.total,
-          present, absent, leave, marked,
+          ...counts, marked,
           markedBy: platform || "—",
           // Per-student detail (status + in/out) — report table per-student rows banata hai.
           students: (r.students || []).map((s) => {
@@ -5233,7 +5331,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
 
       // Har date par ek call → us date ke saare records → studentID/class se
       // har record ko uski class ke counter me daalte hain.
-      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0, late: 0 }));
+      const agg = classes.map(() => emptyCounts());
       await Promise.all(dates.map(async (dateStr) => {
         let recs = [];
         try {
@@ -5250,26 +5348,17 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           const idx = resolveIdx(rec);
           if (idx < 0) return;
           const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
-          const st = ST_CODE_TO_STATUS[raw] || raw;
-          if (st === "present") agg[idx].present++;
-          else if (st === "absent") agg[idx].absent++;
-          else if (st === "leave") agg[idx].leave++;
-          else if (st === "late") { agg[idx].late++; agg[idx].present++; } // late counts within Present
-          else if (st === "short_leave") { agg[idx].present++; } // attended, left early
+          countStatus(agg[idx], ST_CODE_TO_STATUS[raw] || raw);
         });
       }));
 
-      return classes.map((r, idx) => {
-        const { present, absent, leave, late } = agg[idx];
-        const marks = present + absent + leave;
-        return {
-          cls: r.cls, sec: r.sec, strength: r.total,
-          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
-          workingDays: holidayInfo.workingDays,
-          present, absent, leave, late,
-          pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
-        };
-      });
+      return classes.map((r, idx) => ({
+        cls: r.cls, sec: r.sec, strength: r.total,
+        teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
+        workingDays: holidayInfo.workingDays,
+        ...agg[idx],
+        pct: attendPct(agg[idx]),
+      }));
     }, [studentData, ensureSessionID, fetchMonthHolidayInfo, makeRecordClassResolver, teacherMap]);
 
     // Date-range report (Class-wise / Summary): From→To ke beech har date par ek call,
@@ -5288,7 +5377,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
       }
 
-      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0 }));
+      const agg = classes.map(() => emptyCounts());
       const markedDates = new Set();
       await Promise.all(dates.map(async (dateStr) => {
         let recs = [];
@@ -5307,23 +5396,17 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           const idx = resolveIdx(rec);
           if (idx < 0) return;
           const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
-          const st = ST_CODE_TO_STATUS[raw] || raw;
-          if (st === "present") agg[idx].present++;
-          else if (st === "absent") agg[idx].absent++;
-          else if (st === "leave") agg[idx].leave++;
+          countStatus(agg[idx], ST_CODE_TO_STATUS[raw] || raw);
         });
       }));
 
-      return classes.map((r, idx) => {
-        const { present, absent, leave } = agg[idx];
-        const marks = present + absent + leave;
-        return {
-          cls: r.cls, sec: r.sec, strength: r.total,
-          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
-          workingDays: markedDates.size, present, absent, leave,
-          pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
-        };
-      });
+      return classes.map((r, idx) => ({
+        cls: r.cls, sec: r.sec, strength: r.total,
+        teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
+        workingDays: markedDates.size,
+        ...agg[idx],
+        pct: attendPct(agg[idx]),
+      }));
     }, [studentData, ensureSessionID, makeRecordClassResolver, teacherMap]);
 
     // Branch class+section list — cached; used to turn ClassID/SectionID into names.
@@ -5555,26 +5638,19 @@ const fetchMonthlyStaffReportRows = useCallback(async (year, monthIdx0) => {
 
  // NAYA — dayMarks add karo
 return (staffData || []).map((s) => {
-  let present = 0, absent = 0, leave = 0;
-  const dayMarks = {}; // day number → "present" | "absent" | "leave"
+  const counts = emptyCounts();
+  const dayMarks = {}; // day number → present | absent | leave | late | short_leave | holiday
   perDate.forEach(({ dateStr, recs }) => {
     const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
     if (!found) return;
     const raw = String((found.Status ?? found.status) || "").toLowerCase();
     const st = ST_CODE_TO_STATUS[raw] || raw;
-    const dayNum = Number(dateStr.split("-")[2]);
-    if (st === "present") { present++; dayMarks[dayNum] = "present"; }
-    else if (st === "absent") { absent++; dayMarks[dayNum] = "absent"; }
-    else if (st === "leave") { leave++; dayMarks[dayNum] = "leave"; }
-    else if (st === "late") { present++; dayMarks[dayNum] = "present"; } // late counts within Present
-    else if (st === "short_leave") { present++; dayMarks[dayNum] = "present"; } // attended, left early
-    else if (st === "holiday") { dayMarks[dayNum] = "holiday"; }         // non-working mark (shown as H)
+    if (countStatus(counts, st)) dayMarks[Number(dateStr.split("-")[2])] = st;
   });
-  const marks = present + absent + leave;
   return {
     empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
-    workingDays, present, absent, leave, dayMarks,
-    pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
+    workingDays, ...counts, dayMarks,
+    pct: attendPct(counts),
   };
 });
 }, [staffData, fetchMonthHolidayInfo]);
@@ -5951,6 +6027,7 @@ const saveHoliday = useCallback(async (payload) => {
              studentLoading={studentLoading || sessionLoading}
             isOtherSession={isOtherSession}
             prevDaysAttendance={prevDaysAttendance}
+            trackOut={attendanceSetup.studentTrackingMode !== "in_only"}
           />
         )}
         {tab === "staff" && (
@@ -5968,6 +6045,7 @@ const saveHoliday = useCallback(async (payload) => {
             staffLoading={staffLoading}
             isOtherSession={isOtherSession}
             prevDaysAttendance={prevDaysAttendance}
+            trackOut={attendanceSetup.staffTrackingMode !== "in_only"}
           />
         )}
         {tab === "reports" && (
@@ -5980,6 +6058,7 @@ const saveHoliday = useCallback(async (payload) => {
             toast={toast}
             classOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
             sessionName={activeSessionName}
+            staffTrackOut={attendanceSetup.staffTrackingMode !== "in_only"}
           />
         )}
 
@@ -6226,8 +6305,12 @@ const saveHoliday = useCallback(async (payload) => {
   /* Student attendance — class table */
   .att-table-head { display:grid; background:#EFF6FF; border-bottom:1px solid #BFDBFE; padding:0 18px; }
   .att-th { padding:10px 8px; font-size:10.5px; font-weight:700; color:#64748B; letter-spacing:.6px; text-transform:uppercase; }
-  .att-st-row { grid-template-columns:48px 1fr 160px 110px 110px 60px 60px 60px 180px 46px; }
+  .att-st-row { grid-template-columns:48px 1fr 150px 100px 110px 52px 52px 52px 52px 52px 180px 46px; }
+  /* Student "Time In Only" — SL column nahi (11 cols). */
+  .att-st-row.att-st-row--noout { grid-template-columns:48px 1fr 150px 100px 110px 52px 52px 52px 52px 180px 46px; }
   .att-sf-row { grid-template-columns:48px 1fr 150px 130px 110px 110px 110px 46px; }
+  /* Staff "Time In Only" — Out Time column nahi (7 cols). */
+  .att-sf-row.att-sf-row--noout { grid-template-columns:48px 1fr 150px 130px 110px 110px 46px; }
   .att-row-wrap { border-bottom:1px solid #BFDBFE; }
   .att-row-wrap:last-child { border-bottom:none; }
   .att-row { display:grid; align-items:center; min-height:54px; padding:0 18px; transition:background .2s; }
@@ -6264,6 +6347,8 @@ const saveHoliday = useCallback(async (payload) => {
   .att-absent-badge  { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(220,38,38,.1); color:#DC2626; border:1px solid rgba(220,38,38,.25); }
   .att-leave-badge   { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(217,119,6,.1); color:#D97706; border:1px solid rgba(217,119,6,.25); }
   .att-late-badge    { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(124,58,237,.1); color:#7C3AED; border:1px solid rgba(124,58,237,.25); }
+  .att-short_leave-badge { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(8,145,178,.1); color:#0891B2; border:1px solid rgba(8,145,178,.25); }
+  .att-holiday-badge { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(37,99,235,.1); color:#2563EB; border:1px solid rgba(37,99,235,.25); }
 
   /* Mark Attendance modal table */
   .att-mark-table { width:100%; border-collapse:collapse; font-size:12.5px; }
@@ -6282,7 +6367,7 @@ const saveHoliday = useCallback(async (payload) => {
   .att-legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 
   /* Stat row inside selected-date panel */
-  .att-stat-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .att-stat-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:12px; }
   .att-stat-card { background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:14px 16px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,.06); }
   .att-stat-num { font-size:24px; font-weight:800; letter-spacing:-.02em; }
   .att-stat-lbl { font-size:10.5px; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:.5px; margin-top:4px; }
@@ -6408,6 +6493,8 @@ const saveHoliday = useCallback(async (payload) => {
   .att-rpt-fmt-desc { font-size:11px; color:#64748B; }
   .att-rpt-filter-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
   .att-rpt-filter-field { position:relative; flex:1; min-width:140px; }
+  .att-rpt-filter-row--one { flex-wrap:nowrap; }
+  .att-rpt-filter-row--one .att-rpt-filter-field { min-width:0; }
   .att-rpt-filter-lbl { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#64748B; margin-bottom:5px; }
   .att-rpt-filter-field .att-select-arrow { right:10px; top:auto; bottom:13px; transform:none; }
   .att-rpt-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px; }
@@ -6445,10 +6532,17 @@ const saveHoliday = useCallback(async (payload) => {
     .att-st-row > :nth-child(6),
     .att-st-row > :nth-child(7),
     .att-st-row > :nth-child(8),
-    .att-st-row > :nth-child(10) { display:none; }
+    .att-st-row > :nth-child(9),
+    .att-st-row > :nth-child(10),
+    .att-st-row > :nth-child(12) { display:none; }
+    /* Time In Only (SL column nahi) — 10 = Action, 11 = chevron. */
+    .att-st-row.att-st-row--noout > :nth-child(10) { display:flex; }
+    .att-st-row.att-st-row--noout > :nth-child(11) { display:none; }
     .att-sf-row > :nth-child(4),
     .att-sf-row > :nth-child(6),
     .att-sf-row > :nth-child(7) { display:none; }
+    /* Time In Only — 7 = chevron, wo dikhta rahe. */
+    .att-sf-row.att-sf-row--noout > :nth-child(7) { display:flex; }
   }
   @media (max-width:600px) {
     .att-days-grid { grid-template-columns:repeat(4,1fr); }
@@ -6643,6 +6737,8 @@ const saveHoliday = useCallback(async (payload) => {
   [data-theme="dark"] .att-absent-badge  { background:rgba(220,38,38,.15); color:#FCA5A5; }
   [data-theme="dark"] .att-leave-badge   { background:rgba(217,119,6,.15); color:#FCD34D; }
   [data-theme="dark"] .att-late-badge    { background:rgba(124,58,237,.15); color:#C4B5FD; }
+  [data-theme="dark"] .att-short_leave-badge { background:rgba(8,145,178,.15); color:#67E8F9; }
+  [data-theme="dark"] .att-holiday-badge { background:rgba(37,99,235,.15); color:#93C5FD; }
 
   /* Calendar */
   [data-theme="dark"] .att-cal-outer { background:var(--bg-card); border-color:var(--border-light); }
