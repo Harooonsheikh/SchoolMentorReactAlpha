@@ -378,7 +378,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             <div className="att-rule-group">
               <div className="att-rule-group-label">Time In</div>
               {summary.timeIn.map((row) => (
-                <div className="att-rule-row" key={`in-${row.label}`}>
+                <div className="att-rule-row" key={`in-${row.key || row.label}`}>
                   <span className="att-rule-range">{row.range}</span>
                   <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
                   <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
@@ -543,7 +543,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
             <div className="att-rule-group">
               <div className="att-rule-group-label">Time In</div>
               {summary.timeIn.map((row) => (
-                <div className="att-rule-row" key={`in-${row.label}`}>
+                <div className="att-rule-row" key={`in-${row.key || row.label}`}>
                   <span className="att-rule-range">{row.range}</span>
                   <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
                   <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
@@ -1506,13 +1506,25 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
      bespoke header. `includeToolbar:false` keeps ReportPreviewOverlay (above)
      as the single Print/Close control. School name stays live (branch header
      from the API); the period moves into the kit subtitle line. */
+ /* Wide tables (staff monthly has 12–13 columns) overflowed the A4 page and
+    the overflow-x wrapper clipped the right side. Compact cell padding/font,
+    let headers wrap, never clip, and let print use the printable width
+    (210mm page + 15mm @page margins would otherwise cut the edge). */
+ const RPT_FIT_CSS = `<style>
+  .page table{width:100%!important;font-size:10.5px!important}
+  .page th{padding:7px 5px!important;font-size:8.5px!important;letter-spacing:.2px!important;white-space:normal!important;word-break:normal!important}
+  .page td{padding:6px 5px!important;overflow-wrap:anywhere}
+  .page td span{white-space:nowrap;padding-left:6px!important;padding-right:6px!important}
+  .page div[style*="overflow-x"]{overflow:visible!important}
+  @media print{.page{width:auto!important}}
+</style>`;
  function rptPageWrap({ rptLabel, period, isColor, content, school }) {
   const yearLine = reportAcademicYear() || school?.session || "";
   return buildStandardReportHtml({
     title: rptLabel,
     format: "pdf",
     isColor,
-    bodyHtml: content,
+    bodyHtml: RPT_FIT_CSS + content,
     subtitleLine: `${yearLine ? yearLine + " · " : ""}${isColor ? "Colorful" : "Colorless"} Report${period ? " · " + period : ""}`,
     schoolName: school?.name || undefined,
     includeToolbar: false,

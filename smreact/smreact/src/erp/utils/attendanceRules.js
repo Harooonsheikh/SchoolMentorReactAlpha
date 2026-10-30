@@ -305,10 +305,14 @@ export function calculateAttendanceResult({ timeIn, timeOut, calendarStatus, isO
    ═══════════════════════════════════════════════════════════════════ */
 export function describeAttendanceRules(setup) {
   const t = (key) => formatTime12h(setup?.[key]) || '—';
+  /* Late is decided by Late After (the engine's real boundary); a gap
+     between Normal Time-In Until and Late After is grace — still Present. */
+  const grace = setup?.lateAfter && setup?.normalTimeInUntil && setup.lateAfter > setup.normalTimeInUntil;
   return {
     timeIn: [
       { range: `${t('attendanceStartTime')} – ${t('normalTimeInUntil')}`, label: 'Present' },
-      { range: `After ${t('normalTimeInUntil')}`, label: 'Late' },
+      ...(grace ? [{ range: `${t('normalTimeInUntil')} – ${t('lateAfter')} (grace)`, label: 'Present', key: 'grace' }] : []),
+      { range: `After ${t('lateAfter')}`, label: 'Late' },
     ],
     /* Nothing to summarize when this school only tracks Time In — Short
        Leave / Full Day are both time-out outcomes. */
