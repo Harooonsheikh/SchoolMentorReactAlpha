@@ -520,6 +520,19 @@ function isReadRequest(url, init) {
   return false;
 }
 
+// ── In-flight calls (logout par sab rok do) ───────────────────────
+// Wrapper ke zariye jaane wali har call ka AbortController yahan rehta hai,
+// jab tak wo khatam na ho. Logout par abortInFlightApiCalls() sab ko rok deta hai.
+const inFlightControllers = new Set();
+
+/** Chalti hui sab calls abort karo — logout par use hota hai. keepalive calls
+    (jaise time-spend flush) ko nahi chhedte, wo logout se pehle bheji jati hain. */
+export function abortInFlightApiCalls() {
+  const list = [...inFlightControllers];
+  inFlightControllers.clear();
+  list.forEach((c) => { try { c.abort(); } catch (e) { /* ignore */ } });
+}
+
 /** Turn the guard's enforcement on/off. The ERP switches it OFF when it
     unmounts so the login/signup screens (no session yet) aren't affected. */
 export function setSessionGuardActive(on) {
@@ -616,8 +629,22 @@ function ensureFetchWrapper() {
         } catch (e) { /* ignore */ }
       }, SM_SLOW_MS);
     }
+    /* Logout par ye call abort ho sake, is liye controller track karte hain.
+       Caller ka apna signal bhi forward hota hai. */
+    let ctrl = null;
+    let callInit = init;
+    if (!(init && init.keepalive) && typeof AbortController !== 'undefined') {
+      ctrl = new AbortController();
+      const outer = (init && init.signal) || (typeof Request !== 'undefined' && input instanceof Request ? input.signal : null);
+      if (outer) {
+        if (outer.aborted) ctrl.abort();
+        else outer.addEventListener('abort', () => ctrl.abort(), { once: true });
+      }
+      callInit = { ...(init || {}), signal: ctrl.signal };
+      inFlightControllers.add(ctrl);
+    }
     try {
-      const res = await origFetch(input, init);
+      const res = await origFetch(input, callInit);
       if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
       endSlow();
       try {
@@ -648,6 +675,8 @@ function ensureFetchWrapper() {
         }
       } catch (e) { /* ignore */ }
       throw err;
+    } finally {
+      if (ctrl) inFlightControllers.delete(ctrl);
     }
   };
 }
