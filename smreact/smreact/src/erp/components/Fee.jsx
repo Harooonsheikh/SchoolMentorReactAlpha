@@ -21350,14 +21350,16 @@ const FEE_CSS = `
 }
 .fee-head-grid {
   display: grid;
-  grid-template-columns: 1fr 160px 36px;
+  grid-template-columns: minmax(0, 1fr) 140px 72px;
   gap: 10px;
   align-items: center;
   margin-bottom: 8px;
 }
+.fee-head-grid > .fee-input { min-width: 0; }
+.fee-head-grid > span { justify-content: flex-end; }
 .fee-head-grid--head { margin-bottom: 4px; }
 .fee-heads-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.fee-head-x { width: 36px; height: 36px; }
+.fee-head-x { width: 26px; height: 26px; }
 .fee-add-head {
   width: 100%;
   border: 1.5px dashed var(--border-light);
@@ -24461,10 +24463,9 @@ const FEE_CSS = `
 
   /* Head editor grid inside modals */
   .fee-head-grid {
-    grid-template-columns: 1fr 100px 36px;
+    grid-template-columns: minmax(0, 1fr) 90px 72px;
     gap: 6px;
   }
-
   /* Settings grid */
   .fee-set-grid { grid-template-columns: 1fr !important; gap: 10px; }
 
