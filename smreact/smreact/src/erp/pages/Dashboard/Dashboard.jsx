@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { useModules } from '../../context/ModuleContext';
-import { usePermissionsStore } from '../../context/PermissionsContext';
+import { usePermissionsStore, usePermissions } from '../../context/PermissionsContext';
 import { findRole, initialsOf } from '../UserPermissions/permissionsData';
 import { CURRENT_SESSION } from './dashboardData';
 import { useSettings } from '../Settings/settingsStore';
 import { buildUrl } from '../../../utils/apiConfig';
 import AdminDashboard from './AdminDashboard';
 import SystemDialogs from '../../shared/SystemDialogs';
+// ... then inside component:
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD SHELL — picks Admin or Teacher based on the impersonated
@@ -20,19 +21,21 @@ export default function Dashboard({
   navigate = () => {},
   openActivityCalendar = () => {},
 }) {
+
   const { isActive } = useModules();
   const { users, roles } = usePermissionsStore();
+  const { can } = usePermissions();
   const [currentUserId] = useState('u1');
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
-  const currentUser = useMemo(
-    () => users.find(u => u.id === currentUserId) || users[0],
-    [users, currentUserId]
-  );
-  const currentRole = useMemo(
-    () => findRole(roles, currentUser.role),
-    [roles, currentUser]
-  );
+const currentUser = useMemo(
+  () => users.find(u => u.id === currentUserId) || users[0],
+  [users, currentUserId]
+);
+const currentRole = useMemo(
+  () => findRole(roles, currentUser.role),
+  [roles, currentUser]
+);
   /* Head aur staff dono ko ek hi Command Center (live dashboard jaisa); mock
      teacher/admin split hata diya. */
   const dashType = 'admin';
@@ -107,12 +110,13 @@ export default function Dashboard({
 
   const visibility = useMemo(() => ({
     moduleActive: (modId) => !modId || isActive(modId),
+    can,
     session,
     user:         dashUser,
     role:         currentRole,
     ownerName,
     schoolName:   branchInfo?.branchName || '',
-  }), [isActive, session, dashUser, currentRole, ownerName, branchInfo]);
+  }), [isActive, can, session, dashUser, currentRole, ownerName, branchInfo]);
 
   return (
     <>

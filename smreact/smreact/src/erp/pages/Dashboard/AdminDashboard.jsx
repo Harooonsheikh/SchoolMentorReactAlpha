@@ -17,7 +17,7 @@ import { buildDiscountMap } from './feeDashboardExtra';
 import { useLedgerReportData, ledgerInstallmentReceipts } from '../../components/Fee';
 import * as feeService from '../../services/feeService';
 import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
-import { effectivePermsForUser } from '../UserPermissions/permissionsData';
+import { effectivePermsForUser, MODULE_TREE } from '../UserPermissions/permissionsData';
 import * as dashboardService from '../../services/dashboardService';
 import { getBillingAnnouncements } from '../../services/billingAnnouncementsService';
 import { buildStandardReportHtml } from '../../reports/reportKit';
@@ -653,11 +653,22 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
      (fee_analytics_overview, fee_discountgiven, …), so !!dashPerms[...]
      would lock them out. Match the source demo (localhost:3001) where the
      user sees every card: show a card UNLESS it is explicitly denied. */
-  const canSeeCard = useCallback(
-    (cardId) => dashPerms[`dashboard.${cardId}.view`] !== false,
-    [dashPerms]
-  );
-
+const canSeeCard = useCallback(
+  (cardId) => {
+    // Real API permissions se check karo (jo ERP ke save se aati hain)
+    if (typeof visibility.can === 'function') {
+      /* Permission API card ko uske LABEL se save karti hai (MODULE_TREE), id se nahi —
+         isliye check bhi label se. */
+      const label =
+        MODULE_TREE.find((m) => m.id === 'dashboard')
+          ?.children.find((c) => c.id === `dashboard.${cardId}`)?.label || cardId;
+      return visibility.can('Dashboard', label, 'view');
+    }
+    // Fallback: mock store
+    return dashPerms[`dashboard.${cardId}.view`] !== false;
+  },
+  [dashPerms, visibility]
+);
   /* ─── Fee Analytics — live for the selected month (cards 1-8) ───
      Reads the same feeService data every other Fee report already reads;
      see feeDashboardExtra.js for why cards 5/8 can't reuse the existing

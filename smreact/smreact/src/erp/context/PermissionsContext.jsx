@@ -255,6 +255,7 @@ export function usePermissions() {
 const DASH_CARD_IDS = [
   'announcements', 'teacherapp', 'parentapp', 'snapshot',
   'fee_currentmonth', 'fee_previousdues', 'fee_netreceivable', 'fee_received', 'fee_pending',
+  'fee_discountgiven', 'fee_advance', 'fee_advanceadjustments', 'fee_analytics_overview', 'fee_inactivestudents',
   'onelink', 'finsummary', 'plchart', 'attendance', 'lessonplananalytics',
   'papergenerator', 'birthdays', 'activities',
 ];
