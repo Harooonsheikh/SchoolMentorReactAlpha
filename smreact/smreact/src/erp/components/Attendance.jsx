@@ -4386,7 +4386,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
         setActiveSessionID(sid);
         setActiveSessionName(name);
         setSessionLoading(false);
-        if (!sid) toast("Active session load nahi ho saka.", "error");
+        if (!sid) toast("Could not load active session.", "error");
       })();
       return () => { alive = false; };
     }, [loadActiveSession, toast]);
