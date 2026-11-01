@@ -3187,6 +3187,9 @@ function FeeChallansList({ toast }) {
            CARRY kar chuka — row me us ke figures mat dikhao (dues double: 16,000 + advance
            −4,000). Row pichhle baqaye (prevOut: 12,000) par chale. */
         const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
+        Object.keys(prevOut).forEach(id => {
+          prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settings);
+        });
         const cover2 = { ...cover };
         let coverDropped = false;
         Object.keys(cover2).forEach(k => {
@@ -3635,7 +3638,7 @@ function FeeChallansList({ toast }) {
        barabar rahe aur advance Net me sahi minus ho. */
     const students = r.students.map(s => {
       const p = prevOutMap[String(s.studentID)] || prevOutMap[String(s.applicantsID)] || null;
-      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null } : s;
+      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null, prevFine: p.fine || 0 } : s;
     });
     const inner = buildChallanInner({
       classMeta: r.classMeta, students, heads: r.heads,
@@ -3660,7 +3663,7 @@ function FeeChallansList({ toast }) {
     const dMap = await fetchStudentDiscounts(r.classMeta, r.students);
     const students = r.students.map(s => {
       const p = prevOutMap[String(s.studentID)] || prevOutMap[String(s.applicantsID)] || null;
-      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null } : s;
+      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null, prevFine: p.fine || 0 } : s;
     });
     const html = buildChallanHTML({
       classMeta: r.classMeta, students, heads: r.heads,
@@ -14707,6 +14710,20 @@ function carriedFineInto(rec, priorList, settings, depth = 0) {
   return Math.max(0, Math.round(own)) + carriedFineInto(P, priorList, settings, depth + 1);
 }
 
+/* Pichhle challan ka UNBILLED late fine (jo ledger me abhi save nahi hua) — challan par
+   alag "Previous Fine" row ke taur par chhapta hai. Agar fine row pehle se bill ho chuki
+   hai to wo prevOut ke dues me already shamil hai, is liye 0 (dobara na jorein). */
+function unpaidFineOf(latest, settings) {
+  if (!latest || !settings?.fineEnabled) return 0;
+  if ((latest.detailRows || []).some(feeService.isLateFineRow)) return 0;
+  const remain = (latest.detailRows || []).reduce((a, r) =>
+    a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0) - (+r.receivedAmount || 0), 0);
+  if (remain <= 0) return 0;
+  return Math.max(0, Math.round(feeService.computeFine({
+    dueDate: latest.dueDate, receivingDate: localTodayISO(), settings,
+  })));
+}
+
 /* Ledger-range rows → { [studentID]: [pichhle challans, naya-pehle] } (view mahine ko cover
    karne wale multi-month challans chhod kar). pickReceivableChallan isi list par chalta hai. */
 function priorChallansByStudent(prevRows, viewMonth, viewYear) {
@@ -18954,17 +18971,20 @@ function afterDueBoxHtml(payable, { fine, fineAmt, fineType, accruedFine, lateDa
   const add = late ? accruedFine : (fineType === 'daily' ? 0 : amt);
   const total = (Number(payable) || 0) + add;
   const money = total.toLocaleString('en-PK');
+  /* Fixed fine ek flat raqam hai — din ka hisaab/“× days” nahi dikhana. Sirf daily fine ke
+     liye din ka label. */
+  const isDaily = fineType === 'daily';
   if (thermal) {
-    const short = late
+    const short = late && isDaily
       ? `After Due (incl. ${lateDays}d fine)`
-      : (fineType === 'daily'
+      : (isDaily
         ? `After Due (+ Rs. ${amt.toLocaleString('en-PK')}/day)`
         : 'After Due (incl. fine)');
     return `<div class="th-net"><span>${short}</span><span>Rs. ${money}</span></div>`;
   }
-  const label = late
+  const label = late && isDaily
     ? `Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)`
-    : (fineType === 'daily'
+    : (isDaily
       ? `Payable After Due Date (+ Rs. ${amt.toLocaleString('en-PK')}/day)`
       : 'Payable After Due Date (incl. fine)');
   return `<div class="net-box"><div class="nb-lbl">${label}</div><div class="nb-val">Rs. ${money}</div></div>`;
@@ -19057,6 +19077,12 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   /* Prev (Previous Pending) column — head-wise pichhla baqaya, API se. >0 par raqam,
      warna "—". Values API wiring par aayengi; abhi "—". */
   const prevCol = (r) => (typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—';
+  /* Pichhle challan ka unbilled late fine — alag "Previous Fine" row. Is challan par Late
+     Fine row pehle se bill ho chuki ho to dobara nahi jorte. */
+  const prevFineAmt = whole(student?.prevFine);
+  if (prevFineAmt > 0 && !(detailRows || []).some(feeService.isLateFineRow)) {
+    rows.push({ name: 'Previous Fine', std: prevFineAmt, disc: 0, net: prevFineAmt, prev: null });
+  }
   const tNet = rows.reduce((a, r) => a + r.net, 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
@@ -19122,7 +19148,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     </div>
     <div class="net-box"><div class="nb-lbl">Net Payable Before Due Date</div><div class="nb-val">Rs. ${payable.toLocaleString('en-PK')}</div></div>
     ${afterDueBoxHtml(payable, { fine, fineAmt, fineType, accruedFine, lateDays, settled, billedFine })}
-    ${fine && !settled ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
+    ${fine && !settled ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + ${fineType === 'daily' ? `(no. of days × ${fineAmt})` : `fixed fine Rs. ${(+fineAmt || 0).toLocaleString('en-PK')}`}</div>` : ''}
     ${showPsd && psidPlain ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
