@@ -143,21 +143,25 @@ export default function Accounts({ toast }) {
   const loginSessionId  = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
   const changeSessionId = sessionStorage.getItem('changeSessionId') || '';
   /* Accounts flag from the active-session API is OFF → view-only. */
-  const isOtherSession = accModuleReadOnly || !accountsModuleOn || (() => {
+  /* Reason string jab module view-only ho (null = editing allowed). Toast me dikhaya jata hai. */
+  const otherSessionReason = accModuleReadOnly ? 'Accounts is view-only for your account.'
+    : !accountsModuleOn ? 'Accounts is turned off for this session. Enable it in Session settings.'
+    : (() => {
     /* 1️⃣ Viewing a different session than the one set at login. */
-    if (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) return true;
+    if (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) return 'You are viewing a session other than your login session.';
     /* 2️⃣ Session is not the Current one. */
     const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
-    if (sessionStatus !== 'Current') return true;
+    if (sessionStatus !== 'Current') return 'This session is not the current session, so changes are not allowed.';
     /* 3️⃣ Today (UTC) must fall within the session's start/end date range.
        getTime() is epoch-based (UTC), so this comparison is timezone-safe. */
     const now   = new Date();
     const start = new Date(sessionStorage.getItem('sessionStartDate'));
     const end   = new Date(sessionStorage.getItem('sessionEndDate'));
-    if (isNaN(start) || isNaN(end)) return true;
-    if (now < start || now > end) return true;
-    return false; // ✅ all checks pass → editing enabled
+    if (isNaN(start) || isNaN(end)) return 'The session start and end dates are not set.';
+    if (now < start || now > end) return 'Today is outside this session\'s start and end dates, so changes are not allowed.';
+    return null; // ✅ all checks pass → editing enabled
   })();
+  const isOtherSession = !!otherSessionReason;
 
   /* No active session set for this branch → block the module and ask the user
      to configure it in Settings first (same pattern as Examination). */
@@ -236,7 +240,7 @@ export default function Accounts({ toast }) {
       ) : tab === 'txn' ? (
         <Transactions toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'accounts' ? (
-        <AccountsManagementTab toast={toast} isOtherSession={isOtherSession} />
+        <AccountsManagementTab toast={toast} isOtherSession={isOtherSession} otherSessionReason={otherSessionReason} />
       ) : tab === 'books' ? (
         <AccountBooks toast={toast} isOtherSession={isOtherSession} />
       ) : tab === 'reports' ? (
@@ -3160,7 +3164,7 @@ const ACC_FIN_TYPES = [
 const finTypeMeta = (key) => ACC_FIN_TYPES.find(t => t.key === key) || ACC_FIN_TYPES[3];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-function AccountsManagementTab({ toast, isOtherSession = false }) {
+function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReason = null }) {
   // const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const { data: serverTxns = ACC_EMPTY_TXNS } = useAsync(accountsService.getAccTxns, ACC_EMPTY_TXNS);
   const school = useBranchSchool();
@@ -3458,13 +3462,13 @@ function AccountsManagementTab({ toast, isOtherSession = false }) {
             </div>
             {canTransfer && (
             <Tooltip text="Move money between two of your own accounts">
-              <button className="fee-btn fee-btn-ghost" onClick={() => setTransferOpen(true)} disabled={isOtherSession || activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}>
+              <button className="fee-btn fee-btn-ghost" onClick={() => (isOtherSession ? toast(otherSessionReason, 'warning') : setTransferOpen(true))} disabled={activeAccounts.length < 2} style={{ borderColor: 'rgba(8,145,178,.4)', color: '#0E7490' }}>
                 <i className="fa-solid fa-right-left"></i> Transfer Money
               </button>
             </Tooltip>
             )}
             <Tooltip text="Add a new cash, bank, owner or other account">
-              <button className="fee-btn fee-btn-primary" onClick={() => setEditAccount({ mode: 'add' })} disabled={isOtherSession}>
+              <button className="fee-btn fee-btn-primary" onClick={() => (isOtherSession ? toast(otherSessionReason, 'warning') : setEditAccount({ mode: 'add' }))}>
                 <i className="fa-solid fa-plus"></i> Create Account
               </button>
             </Tooltip>
