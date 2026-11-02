@@ -2069,6 +2069,32 @@ export async function getPendingChallans({ studentId, gradeId, sectionId, includ
 }
 export function invalidatePendingChallans() { pendingCache.clear(); }
 
+/* ── Fee Defaulters (server computed, dashboard-identical) ──────────────────
+   GET /api/BranchLedger/fee-defaulters?branchId=&scope=all|month&month=&year=
+   scope 'all'   -> all-time defaulters (month ignore)
+   scope 'month' -> us mahine challan bana + receiving 0 wale students
+   Response: { summary:{...}, students:[{..., unpaidHeads:[...]}] }  */
+export async function getFeeDefaulters(scope = 'all', month = null, year = null) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const qs = new URLSearchParams({ branchId: String(branchID), scope });
+  if (month) qs.set('month', String(month));
+  if (year)  qs.set('year', String(year));
+
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/fee-defaulters?${qs.toString()}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load fee defaulters');
+  }
+  const data = json?.data || {};
+  return {
+    summary:  data.summary  || { totalDefaulters: 0, totalOutstanding: 0, totalFine: 0, fullyCleared: 0, totalBilled: 0 },
+    students: Array.isArray(data.students) ? data.students : [],
+  };
+}
+
 /* Every challan in a month range, whole branch, one call.
    GET /api/BranchLedger/get-by-month-range — months are 1-based. */
 export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {

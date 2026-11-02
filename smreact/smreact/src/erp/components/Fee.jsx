@@ -15347,202 +15347,78 @@ function ReportPanelVehicle({ toast }) {
   );
 }
 
+/* ════════════ 1. DEFAULTER LIST (API-driven, dashboard-identical) ════════════
+   Saara pending server (usp_AHM_Branch_Fee_Defaulters) se aata hai — dashboard se
+   bilkul barabar. Render/print pehle jaisa.
+   ──────────────────────────────────────────────────────────────────────────── */
 function ReportPanelDefaulter({ toast }) {
   const school = useContext(FeeReportBranchContext);
-  const [seg, setSeg] = useState('all');
+  const [seg, setSeg] = useState('all');                 // 'all' | 'month'
   const [openKey, setOpenKey] = useState(null);
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
   const [year, setYear] = useState(String(new Date().getFullYear()));
 
-  const periods = useMemo(() => {
-    const now = new Date();
-    const y = Number(year) || now.getFullYear();
-    const endM = seg === 'month'
-      ? FEE_MONTHS.indexOf(month) + 1
-      : (y === now.getFullYear() ? now.getMonth() + 1 : 12);
-    const back = new Date(y, endM - 13, 1);   // 12 mahine peeche se, taake carry-forward aaye
-    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), endM, y);
-  }, [seg, month, year]);
+  /* Class/section naam (grouping headers) -- roster cache se, pehle jaisa. */
+  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
 
-  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+  /* Server-computed defaulters (dashboard-identical). */
+  const [resp, setResp] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  /* Old ERP ka baqaya: applicantID -> amount (branch cutoff: Aug default / Oct allowlist). */
-  const [oldErp, setOldErp] = useState(new Map());
-  useEffect(() => {
-    if (!classes.length) return undefined;
-    let alive = true;
-    const last = oldErpLastForBranch();
-    const m = last.monthIdx + 1;
-    const y = last.year;
-    const pairs = classes.map(c => ({ gradeId: c._gradeId, sectionId: c._sectionId }));
-    Promise.all([
-      feeService.getOldErpLedgerForClasses(m, y, pairs).catch(() => ({ rows: [] })),
-      feeService.getOldErpLedger(m, y).catch(() => ({ summary: [] })),
-    ]).then(([byClass, wide]) => {
-      if (!alive) return;
-      const map = new Map();
-      const seen = new Set();
-      [...(byClass.rows || []), ...(wide.summary || [])].forEach(r => {
-        const id = String(r?.applicantID ?? r?.applicantsID ?? r?.applicantId ?? '').trim();
-        if (!id || seen.has(id)) return;
-        seen.add(id);
-        const net = oldErpRowTotals(r).net;
-        if (net > 0) map.set(id, net);
-      });
-      setOldErp(map);
-    });
-    return () => { alive = false; };
-  }, [classes]);
-
-  /* Late fine ki settings — challan par bill na hui fine (due guzarne ke baad) bhi Pending me. */
-  const { data: fineSettings = {} } = useAsync(feeService.getFeeSettings, []);
-
-  /* Report-mahine se PEHLE ke 12 mahine ka running-ledger (head-wise baqaya) — receiving popup
-     jaisa. Backend sirf naye challan ke heads ka previous carry karta hai; jo head is mahine
-     challan me chuna hi nahi (BOARD ENROLLMENT 3,000) ya jis ki row par previous 0 aaya, us
-     ka pichhla baqaya ledger se aata hai. */
-  const [ledgerPrev, setLedgerPrev] = useState({});
   useEffect(() => {
     let alive = true;
-    const nowD = new Date();
-    const yy = Number(year) || nowD.getFullYear();
-    const endM = seg === 'month'
-      ? FEE_MONTHS.indexOf(month) + 1
-      : (yy === nowD.getFullYear() ? nowD.getMonth() + 1 : 12);
-    let toM = endM - 1, toY = yy;
-    if (toM === 0) { toM = 12; toY -= 1; }
-    let fromM = toM - 11, fromY = toY;
-    while (fromM <= 0) { fromM += 12; fromY -= 1; }
-    feeService.getLedgerRange(fromM, fromY, toM, toY)
-      .then(rows => { if (alive) setLedgerPrev(prevOutFromLedgerRows(rows, endM, yy) || {}); })
-      .catch(() => { if (alive) setLedgerPrev({}); });
+    setLoading(true);
+    setError(null);
+    const scope = seg === 'month' ? 'month' : 'all';
+    const mi = FEE_MONTHS.indexOf(month) + 1;
+    feeService.getFeeDefaulters(scope, mi, Number(year) || new Date().getFullYear())
+      .then(d => { if (alive) { setResp(d); setLoading(false); } })
+      .catch(e => { if (alive) { setError(e.message || 'Could not load defaulters'); setLoading(false); } });
     return () => { alive = false; };
   }, [seg, month, year]);
 
-  /* ── Defaulter hisaab — CHALLAN jo kehta hai wahi (previous dues samet) ──
-     Monthly Fee Defaulters: chune hue mahine ka challan bana AUR us par kuch receive NAHI
-       hua → poora challan payable (previous + is mahina). Partial hote hi Monthly se bahar.
-     All Fee Defaulters: har student jis ke latest challan par baqaya > 0 (unpaid + partial).
-     Due date ki koi shart nahi — challan bante hi defaulter.
-     Har head: challan − discount + us head ka previous − received. Saare heads (Pending Due /
-     Previous Due / Old Dues Till Date samet); sirf aggregate "Previous Pending" row tab skip
-     jab previous pehle hi heads par ho (double na ho). Total Pending = heads ka jod (+ fine). */
-  const { groups, totals } = useMemo(() => {
-    const nowD = new Date();
-    const yy = Number(year) || nowD.getFullYear();
-    const endM = seg === 'month'
-      ? FEE_MONTHS.indexOf(month) + 1
-      : (yy === nowD.getFullYear() ? nowD.getMonth() + 1 : 12);
-    const monthKey = yy * 12 + endM;
-    const startOf = (r) => Number(r.startYear || r.year) * 12 + Number(r.startMonth || r.month);
-    const endOf = (r) => Number(r.endYear || r.startYear || r.year) * 12 + Number(r.endMonth || r.startMonth || r.month);
-    const hpOf = (r) => Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
-    const fmtAmt = (n) => Math.round(n).toLocaleString('en-PK');
+  const summary = resp?.summary || { totalDefaulters: 0, totalOutstanding: 0, totalFine: 0, fullyCleared: 0, totalBilled: 0 };
+  const students = resp?.students || [];
 
-    /* Monthly: us mahine ka apna challan (warna us mahine ko cover karne wala multi-month).
-       All: as-of mahine tak ka sab se naya challan. recs pehle se mahine-wise (purana → naya). */
-    const pickRec = (recs) => {
-      const list = (recs || []).filter(r => startOf(r) <= monthKey);
-      if (!list.length) return null;
-      if (seg === 'month') {
-        return list.find(r => Number(r.year) * 12 + Number(r.month) === monthKey)
-          || list.find(r => startOf(r) <= monthKey && monthKey <= endOf(r))
-          || null;
-      }
-      return list[list.length - 1];
-    };
-
-    /* Ek challan ke heads ka baqaya. ledgerByHead (sirf report-mahine ke challan par): jo head
-       ka previous backend ne carry NAHI kiya (row par previous 0, ya head is challan me hai hi
-       nahi) us ka pichhla baqaya ledger se — receiving popup jaisa. Jin heads par backend ne
-       previous likha hai wo jaisa hai waisa (override nahi). Aggregate "Previous Pending" row
-       ho to ledger nahi jodte (previous wahan pehle se hai — double na ho). */
-    const challanDues = (rec, ledgerByHead = null) => {
-      const rows = rec.detailRows || [];
-      const headWise = rows.some(r => !isAggregateCarryRow(r) && !feeService.isLateFineRow(r) && hpOf(r) !== 0);
-      const hasAggCarry = rows.some(r => isAggregateCarryRow(r) && (+r.challanAmount || 0) !== 0);
-      const useLedger = !!(ledgerByHead && !hasAggCarry && Object.keys(ledgerByHead).length);
-      const normName = (v) => String(v || '').toLowerCase().trim();
-      const ledgerOf = (name) => {
-        if (!useLedger) return 0;
-        const k = Object.keys(ledgerByHead).find(x => normName(x) === normName(name));
-        return k != null ? Math.max(0, Math.round(+ledgerByHead[k] || 0)) : 0;
-      };
-      const seen = new Set();
-      const heads = [];
-      let total = 0, finePend = 0, oldD = 0, anyRecv = false;
-      rows.forEach(r => {
-        if ((+r.receivedAmount || 0) !== 0 || (+r.recvDiscount || 0) > 0) anyRecv = true;
-        if (isAggregateCarryRow(r) && headWise) return;                       // previous heads par hai
-        if (isAggregateCarryRow(r) && (+r.challanAmount || 0) < 0) return;    // advance-consumption row
-        if (!isAggregateCarryRow(r) && !feeService.isLateFineRow(r)) seen.add(normName(r.subHead || r.head));
-        let hp = isAggregateCarryRow(r) ? 0 : hpOf(r);
-        if (hp === 0 && !isAggregateCarryRow(r) && !feeService.isLateFineRow(r)) hp = ledgerOf(r.subHead || r.head);
-        const pend = (+r.challanAmount || 0) - (+r.discount || 0) + hp - (+r.receivedAmount || 0);
-        if (feeService.isLateFineRow(r)) { finePend += Math.max(0, pend); return; }
-        total += pend;
-        if (Math.round(pend) !== 0) heads.push({ name: r.subHead || r.head || '—', amt: pend });
-        if (pend > 0 && isOldDuesName(r)) oldD += pend;
+  /* Students ko class+section pe group karo (render/print wahi {c, list} shape). */
+  const groups = useMemo(() => {
+    const fmtAmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-PK');
+    const byKey = new Map();
+    students.forEach(st => {
+      const gid = Number(st.gradeID);
+      const sid = Number(st.sectionID || 0);
+      const c = classes.find(x => Number(x._gradeId) === gid && Number(x._sectionId || 0) === sid)
+             || classes.find(x => Number(x._gradeId) === gid)
+             || { key: `g${gid}-s${sid}`, cls: `Grade ${st.gradeID || '—'}`, sec: sid ? `Section ${sid}` : '-' };
+      if (!byKey.has(c.key)) byKey.set(c.key, { c, list: [] });
+      byKey.get(c.key).list.push({
+        s: {
+          name:   st.studentName || '—',
+          father: st.fatherName,
+          reg:    st.reg,
+          phone:  st.contact, mobile: st.contact, contact: st.contact,
+        },
+        rem:      Number(st.totalPending) || 0,
+        finePend: Number(st.fine) || 0,
+        due:      st.dueDate ? String(st.dueDate).slice(0, 10) : '',
+        heads:    (st.unpaidHeads || []).map(h => `${headLabel(h.subHead || h.head)} (${fmtAmt(h.amount)})`),
       });
-      /* Ledger ke unpaid heads jo is challan me chune hi nahi gaye (BOARD ENROLLMENT 3,000). */
-      if (useLedger) {
-        Object.keys(ledgerByHead).forEach(k => {
-          if (seen.has(normName(k))) return;
-          const v = Math.round(+ledgerByHead[k] || 0);
-          if (v <= 0 || feeService.isLateFineRow({ subHead: k })) return;
-          total += v;
-          heads.push({ name: k, amt: v });
-          if (isOldDuesName({ subHead: k })) oldD += v;
-        });
-      }
-      /* Fine abhi challan par bill nahi hui magar due date guzar chuki → aaj tak ki fine. */
-      if (billedFineOf(rec) <= 0) finePend += Math.max(0, challanAccruedFine(rec, fineSettings) || 0);
-      return { heads, total: total + finePend, finePend, oldD, anyRecv };
-    };
-
-    const t = { def: 0, pend: 0, fine: 0, finePend: 0, oldDues: 0, n: 0, paid: 0 };
-    const out = classes.map(c => {
-      const list = [];
-      (studentsMap[c.key] || []).forEach(s => {
-        const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
-        const rec = m ? pickRec(m.recs) : null;
-
-        /* Challan hi nahi (window me) — All me sirf Old ERP ka baqaya, pehle jaisa. */
-        if (!rec) {
-          if (seg !== 'all') return;
-          const o = oldErp.get(String(s.applicantsID ?? s.studentID)) || 0;
-          if (o <= 0) return;
-          t.n += 1;
-          list.push({ s, rem: o, oldD: o, due: '', heads: [`Old Dues Till Date (${fmtAmt(o)})`], finePend: 0 });
-          t.def += 1; t.pend += o; t.oldDues += o;
-          return;
-        }
-
-        /* Report-mahine ka single-month challan → un-carried heads ka ledger baqaya bhi. */
-        const po = ledgerPrev[String(s.studentID)] || ledgerPrev[String(s.applicantsID)] || null;
-        const isViewMonth = Number(rec.year) * 12 + Number(rec.month) === monthKey && !isMultiMonthChallan(rec);
-        const d = challanDues(rec, (po && isViewMonth) ? (po.byHead || null) : null);
-        const rem = Math.round(d.total);
-        t.n += 1;
-        if (rem <= 0) { t.paid += 1; return; }
-        /* Monthly: us challan par kuch bhi receive ho chuka → Monthly se bahar (All me rahega). */
-        if (seg === 'month' && d.anyRecv) return;
-
-        const heads = d.heads
-          .filter(h => h.amt > 0)
-          .map(h => `${headLabel(h.name)} (${fmtAmt(h.amt)})`);
-        /* Kisi head par advance (minus) ho to bhi dikhao — taake heads ka jod = Total Pending. */
-        const adv = d.heads.filter(h => h.amt < 0).reduce((a, h) => a + h.amt, 0);
-        if (Math.round(adv) < 0) heads.push(`Advance (${fmtAmt(adv)})`);
-
-        list.push({ s, rem, oldD: Math.round(d.oldD), due: challanDueISO(rec), heads, finePend: Math.round(d.finePend) });
-        t.def += 1; t.pend += rem; t.oldDues += Math.round(d.oldD);
-        t.fine += Math.round(d.finePend); t.finePend += Math.round(d.finePend);
-      });
-      return { c, list };
     });
-    return { groups: out, totals: t };
-  }, [classes, studentsMap, allStudents, oldErp, seg, month, year, fineSettings, ledgerPrev]);
+    /* classes ke order me groups; baqi (jo classes me na mile) aakhir me. */
+    const ordered = [];
+    classes.forEach(c => { if (byKey.has(c.key)) { ordered.push(byKey.get(c.key)); byKey.delete(c.key); } });
+    byKey.forEach(v => ordered.push(v));
+    return ordered;
+  }, [students, classes]);
+
+  const totals = {
+    def:      summary.totalDefaulters || 0,
+    pend:     Number(summary.totalOutstanding) || 0,
+    fine:     Number(summary.totalFine) || 0,
+    finePend: Number(summary.totalFine) || 0,
+    paid:     summary.fullyCleared || 0,
+  };
 
   const reportTitle = `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`;
   const downloadReport = (style, format) => {
@@ -15565,7 +15441,7 @@ function ReportPanelDefaulter({ toast }) {
         <i className="fa-solid fa-circle-info"></i>
         <span>
           <b>Monthly Fee Defaulters</b>: students whose challan for the selected month is generated and <b>nothing has been received</b> yet (full challan payable, previous dues included).{' '}
-          <b>All Fee Defaulters</b>: every student with an outstanding balance on their latest challan — unpaid or partially paid. All heads are listed under <b>Unpaid Heads</b>.
+          <b>All Fee Defaulters</b>: every student with an outstanding balance — all heads are listed under <b>Unpaid Heads</b>.
         </span>
       </div>
 
@@ -15595,7 +15471,7 @@ function ReportPanelDefaulter({ toast }) {
             <div className="fee-field">
               <span className="fee-label">Year</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)} disabled={seg === 'all'}>
                   <option>2025</option><option>2026</option><option>2027</option>
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
@@ -15647,7 +15523,7 @@ function ReportPanelDefaulter({ toast }) {
                           </thead>
                           <tbody>
                             {list.map((x, j) => (
-                              <tr key={x.s.reg}>
+                              <tr key={x.s.reg || j}>
                                 <td className="fee-num">{j + 1}</td>
                                 <td><b>{x.s.name}</b></td>
                                 <td>{x.s.father || '—'}</td>
