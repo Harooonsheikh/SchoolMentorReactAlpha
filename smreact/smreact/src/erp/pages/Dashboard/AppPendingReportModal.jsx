@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import { DASH_MODAL_CSS } from './dashModalCss';
 import { getBranchFcmTokens, getBranchStaff } from '../../services/dashboardService';
-import { loadReportBranch } from '../../reports/reportKit';
+import { loadReportBranch, currentBranch as _currentBranch } from '../../reports/reportKit';
 import { activeSessionName } from '../../../utils/apiConfig';
 import { buildUrl } from '../../../utils/apiConfig';
 
@@ -129,7 +129,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
     ]).then(([hdr, list, staff]) => {
       if (!alive) return;
       if (hdr.status === 'fulfilled' && hdr.value) {
-        const h = hdr.value;
+        const h = _currentBranch();
         setBrand({ name: h.name || '', campus: '', address: h.address || '', phone: h.phone || '', email: h.email || '', logo: h.logo || '', session: h.session || '' });
       }
       if (!isTeacher) {
@@ -285,10 +285,46 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
     hour: '2-digit', minute: '2-digit', hour12: true,
   });
 
-  const handlePrint = () => {
+const handlePrint = () => {
+    const stage = document.querySelector('.rpt-stage');
+    if (!stage) { toast('Report not ready yet', 'error'); return; }
+    const win = window.open('', '_blank');
+    if (!win) { toast('Pop-ups blocked — allow pop-ups for this site and try again', 'error'); return; }
     toast('Opening browser print dialog — choose "Save as PDF"', 'info');
-    /* Tiny delay so the toast can paint before the dialog blocks. */
-    setTimeout(() => window.print(), 80);
+    win.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Report</title>
+<base href="${window.location.origin}/"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#fff;font-family:'Plus Jakarta Sans',sans-serif}
+.rpt-stage{display:flex;flex-direction:column;align-items:stretch;gap:0;background:#fff}
+${PRT_CSS}
+.rpt-a4{min-height:auto!important;height:auto!important;width:100%!important;box-shadow:none!important;border-radius:0!important;margin:0!important;page-break-after:always;break-after:page}
+.rpt-a4:last-child{page-break-after:auto!important;break-after:auto!important}
+@media print{
+  .rpt-stage{padding:0!important;gap:0!important;align-items:stretch!important;overflow:visible!important;background:#fff!important}
+  .rpt-a4{min-height:auto!important;height:auto!important;width:100%!important;page-break-after:always;break-after:page}
+  .rpt-a4:last-child{page-break-after:auto!important;break-after:auto!important}
+  @page{size:A4;margin:12mm}
+}
+</style>
+</head>
+<body>
+<div class="rpt-stage">${stage.innerHTML}</div>
+<script>
+window.addEventListener('load',function(){
+  setTimeout(function(){window.print();},600);
+  window.addEventListener('afterprint',function(){window.close();});
+});
+<\/script>
+</body>
+</html>`);
+    win.document.close();
   };
 
   return createPortal((
@@ -691,20 +727,52 @@ const PRT_CSS = `
 [data-theme="dark"] .rpt-table thead th { background: #1E3A8A !important; color: #fff !important; }
 [data-theme="dark"] .rpt-table tbody td { color: #0F172A !important; }
 [data-theme="dark"] .rpt-table tbody tr:nth-child(even) td { background: #F8FAFF !important; }
-[data-theme="dark"] .rpt-group-row td { background: #EFF6FF !important; color: #1E40AF !important; }
-[data-theme="dark"] .rpt-foot { color: #64748B !important; border-top-color: #E2E8F0 !important; }
+[data-theme/* ─── Pre-print layout (applied by JS before window.print()) ─── */
+body.rpt-printing > *:not(.up-modal-back) { display: none !important; }
+body.rpt-printing .up-modal-back {
+  position: static !important;
+  display: block !important;
+  overflow: visible !important;
+  background: transparent !important;
+  padding: 0 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: none !important;
+}
+body.rpt-printing .rpt-print {
+  position: static !important;
+  display: flex !important;
+  width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  animation: none !important;
+}
+body.rpt-printing .rpt-stage { overflow: visible !important; }
 
 /* ─── Print isolation ─── */
 @media print {
-  body * { visibility: hidden !important; }
-  .rpt-print, .rpt-print * { visibility: visible !important; }
-  .rpt-print {
-    position: absolute !important; inset: 0 !important;
+  body.rpt-printing > *:not(.up-modal-back) { display: none !important; }
+  body.rpt-printing .up-modal-back {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    background: transparent !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation: none !important;
+  }
+  body.rpt-printing .rpt-print {
+    position: static !important;
+    display: flex !important;
     width: 100% !important; height: auto !important;
     max-height: none !important;
     background: #fff !important;
     border-radius: 0 !important;
     box-shadow: none !important;
+    overflow: visible !important;
+    animation: none !important;
   }
   .rpt-no-print { display: none !important; }
   .rpt-stage {
@@ -725,6 +793,10 @@ const PRT_CSS = `
   .rpt-a4:last-child { page-break-after: auto; }
   @page { size: A4; margin: 12mm; }
 }
+  ="dark"] .rpt-group-row td { background: #EFF6FF !important; color: #1E40AF !important; }
+[data-theme="dark"] .rpt-foot { color: #64748B !important; border-top-color: #E2E8F0 !important; }
+
+
 `;
 
 /* Dashboard cards ke liye — report jaisi hi ginti (same APIs + same matching). */
