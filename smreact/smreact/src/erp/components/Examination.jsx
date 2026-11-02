@@ -2269,29 +2269,44 @@ export default function Examination({ toast = () => { } }) {
   const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
   /* Examination module checkbox OFF in the current session → view-only. */
   const examModuleReadOnly = useModuleReadOnly('exam');
-  const isOtherSession = examModuleReadOnly || (() => {
+   /* Reason string jab module view-only ho (null = editing allowed). Toast me dikhaya jata hai. */
+  const otherSessionReason = examModuleReadOnly
+    ? 'Examination is view-only for your account.'
+    : (() => {
     // 1️⃣ Session ID mismatch check
     if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
-      return true; // ❌ Disable - different session
+      return 'You are viewing a session other than your login session.';
     }
 
     // 2️⃣ Session Status check
     const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
     if (sessionStatus !== 'Current') {
-      return true; // ❌ Disable - session not active
+      return 'This session is not the current session, so changes are not allowed.';
     }
 
     // 3️⃣ Date Range check
     const now = new Date();
-    const start = new Date(sessionStorage.getItem('sessionStartDate'));
-    const end = new Date(sessionStorage.getItem('sessionEndDate'));
+    const sStart = new Date(sessionStorage.getItem('sessionStartDate'));
+    const sEnd = new Date(sessionStorage.getItem('sessionEndDate'));
 
-    if (now < start || now > end) {
-      return true; // ❌ Disable - outside date range
+    if (now < sStart || now > sEnd) {
+      return 'Today is outside this session\'s start and end dates, so changes are not allowed.';
     }
 
-    return false; // ✅ Enable - sab check pass
+    return null; // ✅ Enable - sab check pass
   })();
+  const isOtherSession = !!otherSessionReason;
+  /* Buttons disabled hain to click par toast nahi aa sakta — is liye module
+     khulte hi (ya session badalte hi) wajah ek dafa toast kar do. */
+  const otherSessionToastRef = useRef('');
+  useEffect(() => {
+    if (!otherSessionReason) { otherSessionToastRef.current = ''; return; }
+    if (otherSessionToastRef.current === otherSessionReason) return;
+    otherSessionToastRef.current = otherSessionReason;
+    toast(otherSessionReason, 'warning');
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [otherSessionReason]);
+
   async function getTerms() {
     try {
       const token = sessionStorage.getItem('token');
@@ -2436,7 +2451,7 @@ export default function Examination({ toast = () => { } }) {
 
   const handleConfirmPublish = async () => {
     if (!resConfirmPublish) return;
-    if (isOtherSession) { toast('Method not allowed', 'error'); setResConfirmPublish(null); return; }
+    if (isOtherSession) { toast(otherSessionReason || 'Method not allowed', 'error'); setResConfirmPublish(null); return; }
     const { key, released, cls } = resConfirmPublish;
     const selectedExam = filtered.find(e => e.id === resExamId);
     const branchID = sessionStorage.getItem('branchID');
@@ -4598,6 +4613,18 @@ export default function Examination({ toast = () => { } }) {
         </Tooltip>
       </div>
 
+           {otherSessionReason && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 14px',
+          padding: '11px 16px', borderRadius: 10,
+          background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E',
+          fontSize: 12.5, fontWeight: 600, lineHeight: 1.5,
+        }}>
+          <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: 15, flexShrink: 0 }}></i>
+          <span>{otherSessionReason}</span>
+        </div>
+      )}
+
       {/* ── Module tabs ── */}
       <div className="exam-tabs-row">
         {showSetupTab && (
@@ -6096,11 +6123,15 @@ export default function Examination({ toast = () => { } }) {
                                           toast('No students found for this class', 'error');
                                           return;
                                         }
-                                        setResClassReportReq({
+                                                                           setResClassReportReq({
                                           examId: resExamId,
                                           key,
                                           className,
                                           ex: resCurrentExam,
+                                          classID: cls.classID,
+                                          sectionID: cls.sectionID,
+                                          termID: resCurrentExam?.termID ?? selectedTermId,
+                                          selectExam: resCurrentExam?.selectExam || 0,
                                           cd: liveClassReportCd(pack, { released: isRel, grades: rsGrades }),
                                         });
                                       }}
@@ -8036,10 +8067,14 @@ export default function Examination({ toast = () => { } }) {
           <ClassReportPicker
             cd={cd}
             ex={ex}
-            className={resClassReportReq.className}
+                    className={resClassReportReq.className}
             term={resTerm}
             absentMode={rsAbsentMode}
             branchSchool={branchSchool}
+            classID={resClassReportReq.classID}
+            sectionID={resClassReportReq.sectionID}
+            termID={resClassReportReq.termID}
+            selectExam={resClassReportReq.selectExam}
             onClose={() => setResClassReportReq(null)}
             toast={toast}
           />
@@ -10344,8 +10379,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
   const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
-  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
-
+const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—' : (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—'))) : '—';
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
 
   const absBg = isColor ? 'rgba(217,119,6,.09)' : '#F3F4F6';
@@ -11003,8 +11037,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     const mc = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40); return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
-  const position = opt['Show Position in Class']
-    ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—'))
+   const position = opt['Show Position in Class']
+    ? (ovGrade?.grade === 'F' ? '—' : (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')))
     : '—';
   const gCol = g => {
     if (!g) return '#94A3B8';
@@ -13338,23 +13372,170 @@ function ResultTotalMarksModal({ cd, className, onSave, onClose, subjects = [], 
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — CLASS RESULT REPORT PICKER + BUILDER
    ═══════════════════════════════════════════════════════════════════ */
-function ClassReportPicker({ cd, ex, className, term, absentMode, branchSchool, onClose }) {
+/* Poori class ke per-subject marks — pehle ek-call-per-subject try karo
+   (StudentID ke baghair poori class aa jati hai), warna per-student fallback. */
+async function crpFetchClassMarks({ classID, sectionID, termID, examID, subjects, students, onProgress }) {
+  const token = sessionStorage.getItem('token');
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const ids = (students || []).map(s => String(s.id)).filter(Boolean);
+  const idSet = new Set(ids);
+  const out = {};
+  ids.forEach(id => { out[id] = {}; });
+  const pick = rec => rec?.obtainedMarks ?? rec?.obtainMarks ?? rec?.marks ?? rec?.ObtainedMarks;
+  let done = 0;
+  for (const su of subjects) {
+    let rows = null;
+    try {
+      const p = new URLSearchParams({
+        classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
+        SubjectID: String(su.subjectID), sectionID: String(sectionID), pageNo: '1', pageCount: '500',
+      });
+      // eslint-disable-next-line no-await-in-loop
+      const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+      // eslint-disable-next-line no-await-in-loop
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d?.data || d?.Data || []);
+      if (Array.isArray(arr) && arr.length > 1) rows = arr;
+    } catch { /* fallback below */ }
+    if (rows) {
+      rows.forEach(rec => {
+        const sid = String(rec.studentID ?? rec.StudentID ?? rec.studentId ?? '');
+        if (!idSet.has(sid)) return;
+        const v = pick(rec);
+        if (v != null && String(v).trim() !== '') out[sid][su.subjectID] = Number(v) || 0;
+      });
+    } else {
+      const BATCH = 8;
+      for (let i = 0; i < ids.length; i += BATCH) {
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.all(ids.slice(i, i + BATCH).map(async sid => {
+          const p = new URLSearchParams({
+            classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
+            SubjectID: String(su.subjectID), StudentID: sid, sectionID: String(sectionID), pageNo: '1',
+          });
+          try {
+            const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+            const d = await r.json();
+            const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
+            const v = pick(rec);
+            if (v != null && String(v).trim() !== '') out[sid][su.subjectID] = Number(v) || 0;
+          } catch { /* blank */ }
+        }));
+      }
+    }
+    done += 1;
+    onProgress?.(done, subjects.length);
+  }
+  return out;
+}
+
+function ClassReportPicker({ cd, ex, className, term, absentMode, branchSchool, classID, sectionID, termID, selectExam, onClose, toast }) {
+  const [xlStyle, setXlStyle] = useState(null);   // null = picker band, warna 'color' | 'bw'
+  const [xlBusy, setXlBusy] = useState(false);
+  const [xlMsg, setXlMsg] = useState('');
+
+  const xlStandard = () => {
+    generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, xlStyle === 'color', 'excel');
+    onClose();
+  };
+
+  const xlNewFormat = async () => {
+    setXlBusy(true);
+    setXlMsg('Loading subjects…');
+    try {
+      const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
+      const subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
+      if (!subs.length) { toast?.('No subjects found for this exam.', 'error'); setXlBusy(false); return; }
+      const subjectCols = bmuSubjectCols(subs);
+      const stuList = cd?.students || [];
+      const marks = await crpFetchClassMarks({
+        classID, sectionID, termID, examID: selectExam,
+        subjects: subjectCols, students: stuList,
+        onProgress: (d, t) => setXlMsg(`Loading marks… ${d}/${t} subjects`),
+      });
+      setXlMsg('Building sheet…');
+      const sts = stuList.map(st => ({
+        id: st.id,
+        rollNo: st.rollNo || String(st.id),
+        name: st.name || '—',
+        father: st.father || '',
+        obtained: marks[String(st.id)] || {},
+        manualRemarks: {}, markIds: {}, finalRemarks: '', remarkId: 0,
+      }));
+      const wb = await bmuBuildWorkbook({
+        examName: ex?.name || '', className, students: sts, subjects: subjectCols, commentsMode: null,
+      });
+      const safe = s => String(s || '').replace(/[^A-Za-z0-9]+/g, '_');
+      await bmuDownloadWorkbook(wb, `Result_${safe(className)}_${safe(ex?.name || '')}.xlsx`);
+      toast?.('New format result sheet downloaded.', 'success');
+      onClose();
+    } catch (e) {
+      console.error(e);
+      toast?.(e?.message || 'Could not build the sheet. Please try again.', 'error');
+    } finally {
+      setXlBusy(false);
+      setXlMsg('');
+    }
+  };
+
   return createPortal(
-    <StandardReportPicker
-      open
-      title="Download Class Result"
-      subtitle={`${className} — Choose style and format`}
-      formats={['pdf', 'word', 'excel']}
-      onClose={onClose}
-      onGenerate={(style, format) => {
-        generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, style === 'color', format);
-        onClose();
-      }}
-    />,
+    <>
+      <StandardReportPicker
+        open
+        title="Download Class Result"
+        subtitle={`${className} — Choose style and format`}
+        formats={['pdf', 'word', 'excel']}
+        onClose={onClose}
+        onGenerate={(style, format) => {
+          if (format === 'excel') { setXlStyle(style); return; }   // Excel → pehle format poochho
+          generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, style === 'color', format);
+          onClose();
+        }}
+      />
+      {xlStyle && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { if (!xlBusy) setXlStyle(null); }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '28px 32px', minWidth: 340, boxShadow: '0 8px 32px rgba(0,0,0,.2)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#1E3A8A', marginBottom: 6 }}>
+              <i className="fa-solid fa-file-excel" style={{ marginRight: 8 }}></i>Excel Format
+            </div>
+            <div style={{ fontSize: 12.5, color: '#64748B', marginBottom: 20 }}>
+              {xlBusy ? xlMsg : 'Choose the Excel sheet format to download'}
+            </div>
+            {xlBusy ? (
+              <div style={{ textAlign: 'center', padding: '18px 0', color: '#1E3A8A' }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24 }}></i>
+              </div>
+            ) : (
+              <>
+                <button type="button" onClick={xlStandard}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: '#F1F5F9', border: '1.5px solid #CBD5E1', borderRadius: 8, padding: '10px 14px', marginBottom: 10, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+                  <i className="fa-solid fa-table" style={{ color: '#475569', fontSize: 18 }}></i>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: '#1E293B' }}>Standard Format</div>
+                    <div style={{ fontSize: 11.5, color: '#64748B' }}>Jaise pehle download hoti thi</div>
+                  </div>
+                </button>
+                <button type="button" onClick={xlNewFormat}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: '#EFF6FF', border: '1.5px solid #BFDBFE', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+                  <i className="fa-solid fa-file-excel" style={{ color: '#1D4ED8', fontSize: 18 }}></i>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: '#1E3A8A' }}>Tabulation Sheet</div>
+                    <div style={{ fontSize: 11.5, color: '#64748B' }}>Landscape design — har subject ke marks ke saath</div>
+                  </div>
+                </button>
+                <button type="button" onClick={() => setXlStyle(null)}
+                  style={{ marginTop: 14, width: '100%', background: 'none', border: 'none', color: '#64748B', fontSize: 12.5, cursor: 'pointer', padding: '4px 0', fontFamily: 'inherit' }}>Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>,
     document.body
   );
 }
-
 /* Class row numbers from the live single-assessment APIs (same scope as the table). */
 function liveClassReportCd(pack, { released, grades }) {
   const apiStudents = pack?.students || [];
@@ -14671,6 +14852,9 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
   const [attnMap, setAttnMap] = useState({});   // { [studentId]: pct } — REAL attendance
   const [isColor, setIsColor] = useState(true);
   const cardRef = useRef(null);
+  const [dlSubs, setDlSubs] = useState([]);
+  const [dlBusy, setDlBusy] = useState(false);
+  const [dlPicker, setDlPicker] = useState(false);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -14713,6 +14897,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
           } catch { /* keep empty */ }
         }
 
+        if (!cancelled) setDlSubs(subs);
         if (!cancelled) setProgress({ done: 0, total: studentsRaw.length });
         let done = 0;
         const built = await rcMapPool(studentsRaw, 4, async (stu) => {
@@ -14798,6 +14983,58 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
   }, []);
 
   const cardEx = { name: examName || 'Result', classes: [className || ''] };
+
+  const dlStandard = async () => {
+    setDlPicker(false);
+    setDlBusy(true);
+    try {
+      await bmuApiDownloadTemplate(ctx, null);
+      toast?.('Standard marks sheet downloaded.', 'success');
+    } catch (e) {
+      console.error(e);
+      toast?.(e?.message || 'Could not download the sheet. Please try again.', 'error');
+    } finally { setDlBusy(false); }
+  };
+
+  const dlNewFormat = async () => {
+    setDlPicker(false);
+    setDlBusy(true);
+    try {
+      // Subject totals — cards se real totals uthao, warna subject list se
+      const totalsByName = {};
+      cards.forEach(c => Object.entries(c.rd?.totalMarks || {}).forEach(([n, v]) => {
+        const num = Number(v) || 0;
+        if (num > (totalsByName[n] || 0)) totalsByName[n] = num;
+      }));
+      const subjectCols = bmuSubjectCols((dlSubs || []).map(s => ({
+        ...s, totalMarks: totalsByName[s.subjectName] || Number(s.totalMarks || 0) || 0,
+      })));
+      const idByName = {};
+      (dlSubs || []).forEach(s => { if (s.subjectName) idByName[s.subjectName] = Number(s.subjectID); });
+      // Students + unke marks (subjectID ke against)
+      const sts = cards.map(c => {
+        const st = c.student || {};
+        const abs = st.absentSubjects || [];
+        const obtained = {};
+        Object.entries(st.obtained || {}).forEach(([nm, val]) => {
+          const sid = idByName[nm];
+          if (!sid) return;
+          obtained[sid] = abs.includes(nm) ? 'AB' : (Number(val) || 0);
+        });
+        return {
+          id: st.id, rollNo: st.rollNo, name: st.name, father: st.father || '',
+          obtained, manualRemarks: {}, markIds: {}, finalRemarks: '', remarkId: 0,
+        };
+      });
+      const wb = await bmuBuildWorkbook({ examName, className, students: sts, subjects: subjectCols, commentsMode: null });
+      const safe = s => String(s || '').replace(/[^A-Za-z0-9]+/g, '_');
+      await bmuDownloadWorkbook(wb, `Result_${safe(className)}_${safe(examName)}.xlsx`);
+      toast?.('New format result sheet downloaded.', 'success');
+    } catch (e) {
+      console.error(e);
+      toast?.(e?.message || 'Could not download the sheet. Please try again.', 'error');
+    } finally { setDlBusy(false); }
+  };
   const Card = template === 'insight' ? InsightResultCard : template === 'portfolio' ? PortfolioResultCard : ClassicResultCard;
 
   const printAll = () => {
@@ -14843,11 +15080,46 @@ ${RC_PRINT_FIT_SCRIPT}
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Bulk Result Cards — {className}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-              {examName} · {loading ? `Loading ${progress.done}/${progress.total}…` : `${cards.length} student${cards.length !== 1 ? 's' : ''}`}
+                           {examName} · {loading ? `Loading ${progress.done}/${progress.total}…` : `${cards.length} student${cards.length !== 1 ? 's' : ''}`}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {dlPicker && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                onClick={() => setDlPicker(false)}>
+                <div style={{ background: '#fff', borderRadius: 12, padding: '28px 32px', minWidth: 330, boxShadow: '0 8px 32px rgba(0,0,0,.18)' }}
+                  onClick={e => e.stopPropagation()}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: '#1E3A8A', marginBottom: 6 }}>
+                    <i className="fa-solid fa-file-excel" style={{ marginRight: 8 }}></i>Download Format
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#64748B', marginBottom: 20 }}>Choose the Excel sheet format to download</div>
+                  <button type="button" onClick={dlStandard}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: '#F1F5F9', border: '1.5px solid #CBD5E1', borderRadius: 8, padding: '10px 14px', marginBottom: 10, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+                    <i className="fa-solid fa-table" style={{ color: '#475569', fontSize: 18 }}></i>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: '#1E293B' }}>Standard Format</div>
+                      <div style={{ fontSize: 11.5, color: '#64748B' }}>Simple sheet — jaise pehle download hoti thi</div>
+                    </div>
+                  </button>
+                  <button type="button" onClick={dlNewFormat}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: '#EFF6FF', border: '1.5px solid #BFDBFE', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+                    <i className="fa-solid fa-file-excel" style={{ color: '#1D4ED8', fontSize: 18 }}></i>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: '#1E3A8A' }}>Tabulation Sheet</div>
+                      <div style={{ fontSize: 11.5, color: '#64748B' }}>Landscape design — marks ke saath bhari hui</div>
+                    </div>
+                  </button>
+                  <button type="button" onClick={() => setDlPicker(false)}
+                    style={{ marginTop: 14, width: '100%', background: 'none', border: 'none', color: '#64748B', fontSize: 12.5, cursor: 'pointer', padding: '4px 0', fontFamily: 'inherit' }}>Cancel</button>
+                </div>
+              </div>
+            )}
             <RcColorToggle isColor={isColor} setIsColor={setIsColor} />
+            <button type="button" onClick={() => setDlPicker(true)} disabled={loading || dlBusy || !cards.length}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, background: (!loading && cards.length && !dlBusy) ? '#16A34A' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: (!loading && cards.length && !dlBusy) ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
+              title="Download Excel sheet">
+              <i className={`fa-solid ${dlBusy ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i> {dlBusy ? 'Preparing…' : 'Excel'}
+            </button>
             <button type="button" onClick={printAll} disabled={loading || !cards.length}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: (!loading && cards.length) ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#94A3B8', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: (!loading && cards.length) ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
               <i className="fa-solid fa-file-pdf"></i> {loading ? `Loading ${progress.done}/${progress.total}` : `Print All (${cards.length})`}
