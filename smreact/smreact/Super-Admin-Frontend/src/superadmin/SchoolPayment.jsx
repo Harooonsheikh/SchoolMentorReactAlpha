@@ -1632,17 +1632,30 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onP
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
 
-  const rows = useMemo(() => schools.map((s) => {
-    const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
-    const d = deriveRow(s, setup, challan, recv);
-    return { s, setup, challan, recv, ...d, lastPayDate: recv ? recv.date : null };
-  }), [schools, payStore, chStore, recvStore]);
+  /* Monthly report sirf un schools ki jin ka CHUNE HUE MAHINE ka monthly
+     challan (ledger row ka month/year) mojood hai — poori directory nahi.
+     Receiving bhi challan ke baghair nahi banti, is liye challan hi bunyaad
+     hai. Har school ek hi baar (unique id). */
+  const rows = useMemo(() => {
+    const seen = new Set();
+    return schools.filter((s) => {
+      const c = chStore[s.id];
+      if (!c || seen.has(s.id)) return false;
+      if (Number(c.month) !== Number(period.month) || Number(c.year) !== Number(period.year)) return false;
+      seen.add(s.id);
+      return true;
+    }).map((s) => {
+      const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
+      const d = deriveRow(s, setup, challan, recv);
+      return { s, setup, challan, recv, ...d, lastPayDate: recv ? recv.date : null };
+    });
+  }, [schools, payStore, chStore, recvStore, period]);
 
   const overview = useMemo(() => {
     let payable = 0, received = 0, outstanding = 0, paid = 0, unpaid = 0;
     rows.forEach((r) => { payable += r.payable; received += r.received; outstanding += r.outstanding; if (r.received >= r.payable && r.payable > 0) paid++; else if (r.payable > 0) unpaid++; });
-    return { total: schools.length, payable, received, outstanding, paid, unpaid };
-  }, [rows, schools]);
+    return { total: rows.length, payable, received, outstanding, paid, unpaid };
+  }, [rows]);
 
   const filtered = rows.filter(({ s, status: st }) => {
     const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());

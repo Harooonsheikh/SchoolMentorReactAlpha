@@ -1,9 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmt } from './dashboardData';
+import { pkr2 } from './transactionData';
 import { DASHBOARD_GATES } from './userMgmtData';
 import { fetchDashboard, schoolPermissionsApi, paymentsApi, schoolProgressApi } from './api';
 import SchoolListReport from './SchoolListReport';
-import OneLinkOverviewSection, { Modal } from './OneLinkSection';import BugsReport from './BugsReport';
+import OneLinkOverviewSection, { Modal } from './OneLinkSection';
+import { BugFormModal, BugReportsSection, BUG_SCOPE } from './BugManager';
+import { ImprovementFormModal, ImprovementReportsSection, IMP_SCOPE } from './ImprovementManager';
+import { BUG_STATUS, IMP_STATUS } from './api/services/dashboard';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD — platform overview (permission-aware)
@@ -128,54 +132,75 @@ function overlayPayChallans(dash, challansById, schools, recvsById = {}) {
   return { ...dash, feeRows, feeTotals: sumFeeRows(feeRows) };
 }
 
-/* ── Improvements Summary ke teen card ────────────────────────────────
-   Faisla (Super Admin ka): ye bhi abhi 0 par park hain.
-
-   admin_dashboard me improvements ka apna koi aankra hai hi nahi —
-   BugSummary sirf TotalBugs / ResolvedBugs / PendingBugs deti hai, aur
-   `Bugs` list me "[Improvement]" tag wali entries bugs ke saath hi
-   milti hain. Un se khud gin kar aankra banaya ja sakta hai, magar wo
-   API ka apna record nahi — is liye card 0 dikhate hain.
-
-   "View Report" phir bhi asal entries kholta hai (wo API me mojood
-   hain), aur jis din API apna improvements block de, sirf yahan wo
-   values laga deni hongi. */
-const IMPROVEMENT_CARD_VALUE = 0;
 
 /* Local YYYY-MM-DD — toISOString() UTC me badal deta hai, jis se Pakistan
    ke waqt raat ke waqt "Today" ek din peeche chala jata. */
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-function inBiPeriod(date, periodId) {
-  if (periodId === 'all') return true;
-  if (!date) return false;
-  const now = new Date();
-  if (periodId === 'today') return date === isoOf(now);
-  if (periodId === 'yesterday') {
-    const y = new Date(now); y.setDate(y.getDate() - 1);
-    return date === isoOf(y);
-  }
-  if (periodId === 'thisMonth') return date.slice(0, 7) === isoOf(now).slice(0, 7);
-  if (periodId === 'lastMonth') {
-    const l = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    return date.slice(0, 7) === isoOf(l).slice(0, 7);
-  }
-  return false;
+function countSchoolsCreatedThisMonth(rows = []) {
+  const currentMonth = isoOf(new Date()).slice(0, 7);
+
+  return rows.filter((school) => {
+    const signupDate = String(school.signupDate || '').trim();
+
+    return (
+      /^\d{4}-\d{2}-\d{2}/.test(signupDate) &&
+      signupDate.slice(0, 7) === currentMonth
+    );
+  }).length;
 }
 
 /* API ki Bugs list → { total, resolved, pending } for one kind + period.
    `kind` mapping api/services/dashboard.js me hoti hai: jis entry ka
    BugDetail "[Improvement] …" se shuru ho wo improvement hai, baqi bug. */
 function countBi(list, kind, periodId) {
-  const rows = (list || []).filter((b) => b.kind === kind && inBiPeriod(b.date, periodId));
+  const isInPeriod = (date) => {
+    if (periodId === 'all') return true;
+    if (!date) return false;
+
+    const now = new Date();
+    const dateStr = String(date).slice(0, 10);
+
+    if (periodId === 'today') {
+      return dateStr === isoOf(now);
+    }
+
+    if (periodId === 'yesterday') {
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return dateStr === isoOf(yesterday);
+    }
+
+    if (periodId === 'thisMonth') {
+      return dateStr.slice(0, 7) === isoOf(now).slice(0, 7);
+    }
+
+    if (periodId === 'lastMonth') {
+      const lastMonth = new Date(
+        now.getFullYear(),
+        now.getMonth() - 1,
+        1
+      );
+      return dateStr.slice(0, 7) === isoOf(lastMonth).slice(0, 7);
+    }
+
+    return false;
+  };
+
+  const rows = (list || []).filter(
+    (b) => b.kind === kind && isInPeriod(b.date)
+  );
+
   const resolved = rows.filter((b) => b.solved).length;
-  return { total: rows.length, resolved, pending: rows.length - resolved, rows };
+
+  return {
+    total: rows.length,
+    resolved,
+    pending: rows.length - resolved,
+    rows
+  };
 }
 
-/* Card ka "View Report" kis daayre ki report kholta hai. */
-const reportRows = (rows, status) => (status === 'resolved' ? rows.filter((r) => r.solved)
-  : status === 'pending' ? rows.filter((r) => !r.solved)
-    : rows);
 
 export default function Dashboard({ toast, users = [], perms = {} }) {
   const [d, setD] = useState(null);
@@ -185,8 +210,6 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const [page, setPage] = useState(1);
   const [viewAs, setViewAs] = useState('');   // '' = Super Admin; else a user id
   const [feePeriod, setFeePeriod] = useState('thisMonth');
-  /* Khuli hui report: { kind, status } — null matlab koi nahi. */
-  const [report, setReport] = useState(null);
   const [schoolReport, setSchoolReport] = useState(null);
   const [progress, setProgress] = useState(null);
   const [progressErr, setProgressErr] = useState(null);
@@ -211,15 +234,20 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       let next = dash;
       try {
         const { schools } = await schoolPermissionsApi.listPermissionBranches();
+        /* Wahi directory reports ke "School" column aur Add Bug ke School
+           dropdown ko bhi — alag call nahi. */
+        if (on) setBranchNames((cur) => cur || Object.fromEntries((schools || []).map((s) => [s.id, s.name])));
         const paySchools = (schools || []).map((s) => ({ id: s.id, name: s.name, students: 0 }));
         const period = thisPayPeriod();
         const [challans, recvs] = await Promise.all([
           paymentsApi.listChallans(paySchools, {}, period),
-          paymentsApi.listReceivings(paySchools.map((s) => s.id), period).catch(() => ({})),
+          paymentsApi.listReceivings(paySchools.map((s) => s.id), period),
         ]);
         next = overlayPayChallans(dash, challans, paySchools, recvs);
-      } catch {
-        next = overlayPayChallans(dash, {}, []);
+      } catch (e) {
+        /* Challan / receiving na aaye to aankre 0 NAHI — wo jhoot hota
+           ("is mahine koi challan nahi"). Fee Analytics error dikhati hai. */
+        next = { ...overlayPayChallans(dash, {}, []), feeErr: e?.message || 'Could not load School Payments challans / receivings' };
       }
       if (on) setD(next);
     })().catch((e) => { if (on) setLoadErr(e); });
@@ -247,8 +275,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   /* Report kholte hi (pehli baar) branch directory — wahi live list jo
      School Permissions screen dikhati hai. Na mile to report BranchID par
      gir jati hai, khulti phir bhi hai. */
-  const openReport = useCallback((kind, status) => {
-    setReport({ kind, status });
+  const ensureBranchNames = useCallback(() => {
     setBranchNames((cur) => {
       if (cur) return cur;
       schoolPermissionsApi.listPermissionBranches()
@@ -261,6 +288,47 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       return cur;
     });
   }, []);
+
+  /* ── Bug Manager ── Add/Edit modal ka bug (null = band, {} = naya). Har
+     save / status / delete ke baad SIRF admin_dashboard dobara — cards aur
+     Bug Reports table dono usi `Bugs` list se bante hain. */
+  const [bugForm, setBugForm] = useState(null);
+  /* Bug Reports table ka status daayra — Bugs Summary cards ke "View Report"
+     isi ko set karte hain (alag report dataset nahi, wahi table). */
+  const [bugScope, setBugScope] = useState(BUG_SCOPE.all);
+  const bugTableRef = useRef(null);
+  const showBugReport = useCallback((scope) => {
+    setBugScope(scope);
+    bugTableRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, []);
+  /* Improvement Manager — bilkul usi tarah, apni alag entity ("[Improvement]"). */
+  const [impForm, setImpForm] = useState(null);
+  const [impScope, setImpScope] = useState(IMP_SCOPE.all);
+  const impTableRef = useRef(null);
+  const openImpForm = useCallback((item) => { setImpForm(item || {}); ensureBranchNames(); }, [ensureBranchNames]);
+  const showImpReport = useCallback((scope) => {
+    setImpScope(scope);
+    impTableRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, []);
+  const [bugsBusy, setBugsBusy] = useState(false);
+  const [bugsErr, setBugsErr] = useState(null);
+  const openBugForm = useCallback((bug) => { setBugForm(bug || {}); ensureBranchNames(); }, [ensureBranchNames]);
+  const reloadBugs = useCallback(async () => {
+    setBugsBusy(true);
+    setBugsErr(null);
+    try {
+      const dash = await fetchDashboard();
+      setD((prev) => (prev ? { ...prev, bugs: dash.bugs, bugList: dash.bugList } : prev));
+    } catch (e) {
+      setBugsErr(e?.message || 'Could not refresh bugs');
+    } finally {
+      setBugsBusy(false);
+    }
+  }, []);
+  const bugSchools = useMemo(() => Object.entries(branchNames || {})
+    .map(([id, name]) => ({ id: Number(id), name: name || `Branch ${id}` }))
+    .filter((s) => s.id > 0)
+    .sort((a, b) => a.name.localeCompare(b.name)), [branchNames]);
 
   /* Har school ke IS MAHINE ke logins — ERP + Mobile dono ka totalEntries. */
   const loadMonthLogins = useCallback((prog) => {
@@ -290,14 +358,16 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
 
   const schoolLists = useMemo(() => {
     if (!progress) return null;
-    const toRow = (r) => ({ id: r.id, name: r.name, date: r.signupDate || '',
-      note: `Students: ${r.students} · Staff: ${r.staff}` });
+    const toRow = (r) => ({
+      id: r.id, name: r.name, date: r.signupDate || '',
+      note: `Students: ${r.students} · Staff: ${r.staff}`
+    });
     const all = [...progress.launch, ...progress.erp, ...progress.inactive];
     return {
-      active:      [...progress.launch, ...progress.erp].map(toRow),
-      erp:         progress.erp.map(toRow),
-      launch:      progress.launch.map(toRow),
-      inactive:    progress.inactive.map(toRow),
+      active: [...progress.launch, ...progress.erp].map(toRow),
+      erp: progress.erp.map(toRow),
+      launch: progress.launch.map(toRow),
+      inactive: progress.inactive.map(toRow),
       /* Login wali dono lists sirf IS MAHINE ke logins par (monthLogins).
          Jab tak load na ho, undefined → report "Loading" dikhati hai. */
       zeroLogin: monthLogins
@@ -305,17 +375,40 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         : undefined,
       activeLogin: monthLogins
         ? all.filter((r) => monthLogins[r.id] > 0)
-            .sort((a, b) => monthLogins[b.id] - monthLogins[a.id])
-            .map((r) => ({ ...toRow(r), logins: monthLogins[r.id] }))
+          .sort((a, b) => monthLogins[b.id] - monthLogins[a.id])
+          .map((r) => ({ ...toRow(r), logins: monthLogins[r.id] }))
         : undefined,
-      students:    all.filter((r) => r.students > 0).map((r) => ({ ...toRow(r), note: `Students: ${r.students}` })),
-      staff:       all.filter((r) => r.staff > 0).map((r) => ({ ...toRow(r), note: `Staff: ${r.staff}` })),
+      students: all.filter((r) => r.students > 0).map((r) => ({ ...toRow(r), note: `Students: ${r.students}` })),
+      staff: all.filter((r) => r.staff > 0).map((r) => ({ ...toRow(r), note: `Staff: ${r.staff}` })),
     };
-   }, [progress, monthLogins]);
+  }, [progress, monthLogins]);
+  const newErpThisMonth = progress
+    ? countSchoolsCreatedThisMonth(progress.erp)
+    : (d?.schools?.newErp ?? 0);
+
+  const newLaunchThisMonth = progress
+    ? countSchoolsCreatedThisMonth(progress.launch)
+    : (d?.schools?.newLaunch ?? 0);
 
   /* Card ka number = report list ka length. List load na ho to API wala fallback. */
   const listCount = (key, fallback) =>
     (schoolLists && Array.isArray(schoolLists[key])) ? schoolLists[key].length : fallback;
+
+  /* Inactive / Active Login cards ka ERP + Launch Setup batwara — bilkul wahi
+     qaida jo zeroLogin / activeLogin lists ka hai (IS MAHINE ke logins), aur
+     group branch-report ke launchSetup se (row.setupType). Logins abhi na
+     aaye hon to null → card "—" dikhata hai. */
+  const loginSplit = useMemo(() => {
+    if (!progress || !monthLogins) return null;
+    const out = { zero: { erp: 0, launch: 0 }, active: { erp: 0, launch: 0 } };
+    [...progress.launch, ...progress.erp, ...progress.inactive].forEach((r) => {
+      const type = r.setupType === 'erp' ? 'erp' : r.setupType === 'launch' ? 'launch' : null;
+      if (!type) return;
+      if (monthLogins[r.id] > 0) out.active[type] += 1;
+      else if (!monthLogins[r.id]) out.zero[type] += 1;
+    });
+    return out;
+  }, [progress, monthLogins]);
 
   /* Current Month Details ki rows— pehle period, phir search.
 
@@ -422,6 +515,9 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const feeTotals = feePeriod === 'thisMonth'
     ? (d.feeTotals || { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 })
     : { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 };
+  /* Payments ki call fail hui ho to "this month" ke aankre maloom hi nahi — '—'. */
+  const feeErr = d.feeErr || '';
+  const feeVal = (v) => (feeErr && feePeriod === 'thisMonth' ? '—' : pkr2(v));
   const totalStudents = d.students.total, totalStaff = d.staff.total;
 
   /* Bugs Summary ke cards:
@@ -434,7 +530,10 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
          chhaan kar nikale jate hain.
      Dono ke beech ka farq waja rakhta hai: BugSummary improvements ko
      bhi bug ginti hai, chhani hui list nahi. */
-  const bugCards = bugPeriod === 'all' ? d.bugs : bugStats;
+  /* Har period par (All Time bhi) saved bug records se — wahi rows jo Bug
+     Reports table dikhati hai. API ki BugSummary improvements ko bhi bug
+     ginti thi, is liye wo table se mel nahi khati thi. */
+  const bugCards = bugStats;
 
   /* ── Account inactive → nothing is shown ── */
   if (accountInactive) {
@@ -498,24 +597,30 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             </div>
           </div>
           <div className="fee-grid">
-            <FeeCard tone="red"    icon="fa-circle-exclamation" label="Previous Dues"           val={`${fmt(feeTotals.prevDues)} PKR`} />
-            <FeeCard tone="teal"   icon="fa-file-invoice"       label="Fee Challan This Month"  val={`${fmt(feeTotals.challan)} PKR`} />
-            <FeeCard tone="orange" icon="fa-percent"            label="Fee Discount This Month" val={`${fmt(feeTotals.discount)} PKR`} />
+            <FeeCard tone="red" icon="fa-circle-exclamation" label="Previous Dues" val={feeVal(feeTotals.prevDues)} />
+            <FeeCard tone="teal" icon="fa-file-invoice" label="Fee Challan This Month" val={feeVal(feeTotals.challan)} />
+            <FeeCard tone="orange" icon="fa-percent" label="Fee Discount This Month" val={feeVal(feeTotals.discount)} />
           </div>
           <div className="fee-grid-2">
-            <FeeCard tone="slate" icon="fa-percent"           label="Fee Challan After Discount" val={`${fmt(feeTotals.receivable)} PKR`} />
-            <FeeCard tone="green" icon="fa-money-bill-wave"    label="Fee Received"               val={`${fmt(feeTotals.received)} PKR`} />
-            <FeeCard tone="red2"  icon="fa-circle-exclamation" label="Total Pending"              val={`${fmt(feeTotals.pending)} PKR`} />
+            <FeeCard tone="slate" icon="fa-percent" label="Fee Challan After Discount" val={feeVal(feeTotals.receivable)} />
+            <FeeCard tone="green" icon="fa-money-bill-wave" label="Fee Received" val={feeVal(feeTotals.received)} />
+            <FeeCard tone="red2" icon="fa-circle-exclamation" label="Total Pending" val={feeVal(feeTotals.pending)} />
           </div>
+          {feeErr && (
+            <div className="db-locked" style={{ marginTop: -8, marginBottom: 14, borderColor: 'rgba(220,38,38,.35)', color: '#B91C1C' }}>
+              <i className="fa-solid fa-triangle-exclamation" />
+              <span>Fee figures unavailable — {feeErr}. Reload the dashboard to try again.</span>
+            </div>
+          )}
           {/* Aankre admin_dashboard ke CurrentMonthDetails se (is chalte mahine
               ke) — wahi rows jo neeche table me aati hain. Doosre arse ka fee
               data API deti hi nahi, is liye un par cards 0 rehte hain. */}
-          {feePeriod === 'thisMonth' ? (
+          {feePeriod === 'thisMonth' ? (!feeErr && (
             <div className="db-locked db-locked-ok" style={{ marginTop: -8 }}>
               <i className="fa-solid fa-circle-check" />
               <span>This month: challan from <b>School Payments → Challans</b> (generated only). After discount = previous dues + challan − discount. Pending = that − received.</span>
             </div>
-          ) : (
+          )) : (
             <div className="db-locked" style={{ marginTop: -8 }}>
               <i className="fa-solid fa-circle-info" />
               <span><code>admin_dashboard</code> only returns the <b>current month</b> — switch to <b>This Month</b> to see fee figures. Other periods aren't tracked by the API.</span>
@@ -524,7 +629,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         </>
       )}
 
-        {/* ─── SCHOOL OVERVIEW ─── */}
+      {/* ─── SCHOOL OVERVIEW ─── */}
       {canProgress && (
         <>
           <div className="section-hdr">
@@ -532,25 +637,25 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             <div className="section-hdr-title">School Overview</div>
           </div>
           <div className="overview-grid" style={{ marginBottom: 14 }}>
-               <OvCard label="Active Schools"         val={listCount('active', d.schools.active)}sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue"   icon="fa-circle-check"
+            <OvCard label="Active Schools" val={listCount('active', d.schools.active)} sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue" icon="fa-circle-check"
               onClick={() => openSchoolReport('active', 'Active Schools', 'ERP + Launch Set-Up schools', d.schools.active)} />
-<OvCard label="ERP Schools"            val={listCount('erp', d.schools.erp)}  sub={<><b>↑ {d.schools.newErp}</b> &nbsp;New this month</>}    badge="teal"   icon="fa-database"
+            <OvCard label="ERP Schools" val={listCount('erp', d.schools.erp)} sub={<><b>↑ {newErpThisMonth}</b> &nbsp;New this month</>} badge="teal" icon="fa-database"
               onClick={() => openSchoolReport('erp', 'ERP Schools', 'Active schools running on ERP', d.schools.erp)} />
-       <OvCard label="Launch Set-Up Schools"  val={listCount('launch', d.schools.launch)} sub={<><b>↑ {d.schools.newLaunch}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
+            <OvCard label="Launch Set-Up Schools" val={listCount('launch', d.schools.launch)} sub={<><b>↑ {newLaunchThisMonth}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
               onClick={() => openSchoolReport('launch', 'Launch Set-Up Schools', 'Active schools in launch set-up', d.schools.launch)} />
           </div>
           <div className="overview-grid" style={{ marginBottom: 28 }}>
-              <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
+            <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
               onClick={() => openSchoolReport('zeroLogin', 'Inactive Schools', 'Registered schools with 0 logins', d.schools.inactive)}>
               <div className="ov-lbl red">Inactive Schools</div>
-        <div className="ov-val red">{listCount('zeroLogin', d.schools.inactive)}</div>
+              <OvSplit tone="red" erp={loginSplit?.zero.erp} launch={loginSplit?.zero.launch} />
               <div className="ov-sub">Registered but <b className="red">0 logins</b> from 1st of this month to today</div>
               <div className="ov-badge ov-badge-red"><i className="fa-solid fa-user-slash" /></div>
             </div>
             <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
               onClick={() => openSchoolReport('activeLogin', 'Active Login Schools', 'Schools that logged in at least once', d.schools.activeLogin)}>
               <div className="ov-lbl green">Active Login Schools</div>
-<div className="ov-val" style={{ color: '#16A34A' }}>{listCount('activeLogin', d.schools.activeLogin)}</div>
+              <OvSplit tone="green" erp={loginSplit?.active.erp} launch={loginSplit?.active.launch} />
               <div className="ov-sub">Logged in <b style={{ color: '#16A34A' }}>at least once</b> from 1st of this month to today</div>
               <div className="ov-badge ov-badge-green"><i className="fa-solid fa-user-check" /></div>
             </div>
@@ -587,14 +692,14 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           {/* Total Students + Total Staff */}
           <div className="detail-2col" style={{ marginBottom: 28 }}>
             <UserCard label="Total Students" iconTone="teal" icon="fa-user-graduate"
-      overall={totalStudents} newSignup={d.students.newSignup} signupColor="#DC2626"
+              overall={totalStudents} newSignup={d.students.newSignup} signupColor="#DC2626"
               onClick={() => openSchoolReport('students', 'Total Students — school wise', 'Students per school', totalStudents)} />
             <UserCard label="Total Staff" iconTone="blue" icon="fa-user-tie"
- overall={totalStaff} newSignup={d.staff.newSignup} signupColor="#D97706"
+              overall={totalStaff} newSignup={d.staff.newSignup} signupColor="#D97706"
               onClick={() => openSchoolReport('staff', 'Total Staff — school wise', 'Staff per school', totalStaff)} />
           </div>
 
-               </>
+        </>
       )}
 
       {/* ─── 1LINK / 1BILL TRANSACTION MONITORING & REVENUE ─── */}
@@ -608,18 +713,39 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div className="section-hdr-icon" style={{ background: 'linear-gradient(135deg,#B91C1C,#DC2626)' }}><i className="fa-solid fa-bug" /></div>
               <div className="section-hdr-title">Bugs Summary</div>
             </div>
-            <div className="bi-period-bar">
-              <span className="bi-period-lbl">PERIOD:</span>
-              <select className="bi-period-sel" value={bugPeriod} onChange={(e) => setBugPeriod(e.target.value)}>
-                {BI_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {/* Likhne ka haq sirf Super Admin ko — "Viewing as" preview me nahi. */}
+              {isSuper && (
+                <button className="btn-primary bm-add-btn" onClick={() => openBugForm(null)}>
+                  <i className="fa-solid fa-plus" /> Add New Bug
+                </button>
+              )}
+              <div className="bi-period-bar">
+                <span className="bi-period-lbl">PERIOD:</span>
+                <select className="bi-period-sel" value={bugPeriod} onChange={(e) => setBugPeriod(e.target.value)}>
+                  {BI_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </div>
             </div>
           </div>
           <div className="bi-grid" style={{ marginBottom: 28 }}>
-            <BiCard tone="red"    icon="fa-bug"          label="Total Bug(s)"          val={bugCards.total}    date={today} hi="red"    hiText="reported"           pre="Total bugs " post={` — ${biLabel(bugPeriod)}`} onReport={() => openReport('bug', 'all')} />
-            <BiCard tone="green"  icon="fa-circle-check" label="Total Resolved Bug(s)" val={bugCards.resolved} date={today} hi="green"  hiText="resolved & closed"  pre="Bugs successfully " post={` — ${biLabel(bugPeriod)}`} onReport={() => openReport('bug', 'resolved')} />
-            <BiCard tone="orange" icon="fa-clock"        label="Total Pending Bug(s)"  val={bugCards.pending}  date={today} hi="orange" hiText="awaiting resolution" pre="Bugs currently " post={` — ${biLabel(bugPeriod)}`} onReport={() => openReport('bug', 'pending')} />
+            <BiCard tone="red" icon="fa-bug" label="Total Bug(s)" val={bugCards.total} date={today} hi="red" hiText="reported" pre="Total bugs " post={` — ${biLabel(bugPeriod)}`} onReport={() => showBugReport(BUG_SCOPE.all)} />
+            <BiCard tone="green" icon="fa-circle-check" label="Total Resolved Bug(s)" val={bugCards.resolved} date={today} hi="green" hiText="resolved & closed" pre="Bugs successfully " post={` — ${biLabel(bugPeriod)}`} onReport={() => showBugReport(BUG_STATUS.resolved)} />
+            <BiCard tone="orange" icon="fa-clock" label="Total Pending Bug(s)" val={bugCards.pending} date={today} hi="orange" hiText="awaiting resolution" pre="Bugs currently " post={` — ${biLabel(bugPeriod)}`} onReport={() => showBugReport(BUG_SCOPE.open)} />
           </div>
+
+          {/* ─── BUG REPORTS (all entries) ─── */}
+          <div ref={bugTableRef} style={{ scrollMarginTop: 16 }}>
+          <BugReportsSection rows={bugStats.rows} periodLabel={biLabel(bugPeriod)}
+            scope={bugScope} onScope={setBugScope}
+            schoolName={(id) => (branchNames && branchNames[id]) || ''}
+            canEdit={isSuper} loading={bugsBusy} error={bugsErr} onRetry={reloadBugs}
+            onEdit={openBugForm} onChanged={reloadBugs} toast={toast} />
+          </div>
+          {bugForm && (
+            <BugFormModal bug={bugForm} schools={bugSchools} toast={toast}
+              onSaved={reloadBugs} onClose={() => setBugForm(null)} />
+          )}
 
           {/* ─── IMPROVEMENTS SUMMARY ─── */}
           <div className="section-hdr" style={{ justifyContent: 'space-between' }}>
@@ -627,24 +753,38 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div className="section-hdr-icon" style={{ background: 'linear-gradient(135deg,#B45309,#D97706)' }}><i className="fa-solid fa-lightbulb" /></div>
               <div className="section-hdr-title">Improvements Summary</div>
             </div>
-            <div className="bi-period-bar">
-              <span className="bi-period-lbl">PERIOD:</span>
-              <select className="bi-period-sel" value={impPeriod} onChange={(e) => setImpPeriod(e.target.value)}>
-                {BI_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {isSuper && (
+                <button className="btn-primary bm-add-btn" onClick={() => openImpForm(null)}>
+                  <i className="fa-solid fa-plus" /> Add Improvement
+                </button>
+              )}
+              <div className="bi-period-bar">
+                <span className="bi-period-lbl">PERIOD:</span>
+                <select className="bi-period-sel" value={impPeriod} onChange={(e) => setImpPeriod(e.target.value)}>
+                  {BI_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </div>
             </div>
           </div>
-          {/* Cards 0 kyun hain — screen par bhi likha ho. "View Report"
-              phir bhi API ki asal improvement entries kholta hai. */}
-          <div className="db-locked" style={{ marginBottom: 10 }}>
-            <i className="fa-solid fa-circle-info" />
-            <span>Improvement figures are parked at <b>0</b>: <code>admin_dashboard</code> has no improvements block — only <code>BugSummary</code>. Open <b>View Report</b> to see the improvement entries the <code>Bugs</code> list does carry.</span>
-          </div>
           <div className="bi-grid" style={{ marginBottom: 28 }}>
-            <BiCard tone="blue"   icon="fa-arrow-up"       label="Total New Improvements"       val={IMPROVEMENT_CARD_VALUE}    date={today} hi="blue"   hiText="submitted"              pre="New improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => openReport('improvement', 'all')} />
-            <BiCard tone="green"  icon="fa-circle-check"   label="Total Completed Improvements" val={IMPROVEMENT_CARD_VALUE} date={today} hi="green"  hiText="completed & deployed"   pre="Improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => openReport('improvement', 'resolved')} />
-            <BiCard tone="orange" icon="fa-hourglass-half" label="Total Pending Improvements"   val={IMPROVEMENT_CARD_VALUE}  date={today} hi="orange" hiText="pending implementation" pre="Improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => openReport('improvement', 'pending')} />
+            <BiCard tone="blue" icon="fa-arrow-up" label="Total New Improvements" val={impStats.total} date={today} hi="blue" hiText="submitted" pre="New improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => showImpReport(IMP_SCOPE.all)} />
+            <BiCard tone="green" icon="fa-circle-check" label="Total Completed Improvements" val={impStats.resolved} date={today} hi="green" hiText="completed & deployed" pre="Improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => showImpReport(IMP_STATUS.completed)} />
+            <BiCard tone="orange" icon="fa-hourglass-half" label="Total Pending Improvements" val={impStats.pending} date={today} hi="orange" hiText="pending implementation" pre="Improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => showImpReport(IMP_SCOPE.open)} />
           </div>
+
+          {/* ─── IMPROVEMENT REPORTS (all entries) ─── */}
+          <div ref={impTableRef} style={{ scrollMarginTop: 16 }}>
+          <ImprovementReportsSection rows={impStats.rows} periodLabel={biLabel(impPeriod)}
+            scope={impScope} onScope={setImpScope}
+            schoolName={(id) => (branchNames && branchNames[id]) || ''}
+            canEdit={isSuper} loading={bugsBusy} error={bugsErr} onRetry={reloadBugs}
+            onEdit={openImpForm} onChanged={reloadBugs} toast={toast} />
+          </div>
+          {impForm && (
+            <ImprovementFormModal item={impForm} schools={bugSchools} toast={toast}
+              onSaved={reloadBugs} onClose={() => setImpForm(null)} />
+          )}
         </>
       )}
 
@@ -682,7 +822,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 </tr>
               </thead>
               <tbody>
-                {pageRows.length === 0 ? (
+                {feeErr && feePeriod === 'thisMonth' ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--err)', padding: '24px' }}>
+                    <i className="fa-solid fa-triangle-exclamation" /> Fee details unavailable — {feeErr}.
+                  </td></tr>
+                ) : pageRows.length === 0 ? (
                   <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--tm)', padding: '24px' }}>
                     {feePeriod !== 'thisMonth'
                       ? `The dashboard API only returns the current month — no fee records for ${biLabel(feePeriod)}.`
@@ -737,11 +881,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div className="db-detail-card-icon"><i className="fa-solid fa-school" /></div>
               <div className="db-detail-card-title">School Details</div>
             </div>
-                 <DetailRow label="Total Schools:"        val={progress ? progress.launch.length + progress.erp.length + progress.inactive.length : d.schools.total} />
-            <DetailRow label="In Active Schools:"    val={listCount('zeroLogin', d.schools.inactive)} tone="red" />
-            <DetailRow label="Active Schools:"       val={listCount('active', d.schools.active)} tone="green" />
+            <DetailRow label="Total Schools:" val={progress ? progress.launch.length + progress.erp.length + progress.inactive.length : d.schools.total} />
+            <DetailRow label="In Active Schools:" val={listCount('zeroLogin', d.schools.inactive)} tone="red" />
+            <DetailRow label="Active Schools:" val={listCount('active', d.schools.active)} tone="green" />
             <DetailRow label="Launch Set-up Schools:" val={listCount('launch', d.schools.launch)} />
-            <DetailRow label="ERP Schools:"          val={listCount('erp', d.schools.erp)} />
+            <DetailRow label="ERP Schools:" val={listCount('erp', d.schools.erp)} />
           </div>
           {/* User Details */}
           <div className="db-detail-card">
@@ -750,8 +894,8 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div className="db-detail-card-title">User Details</div>
             </div>
             <DetailRow label="Total Active Users:" val={totalStudents + totalStaff} />
-            <DetailRow label="Total Staff:"        val={totalStaff} />
-            <DetailRow label="Total Students:"     val={totalStudents} />
+            <DetailRow label="Total Staff:" val={totalStaff} />
+            <DetailRow label="Total Students:" val={totalStudents} />
           </div>
         </div>
       )}
@@ -784,18 +928,14 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 <div className="db-detail-card-title">This Month Progress</div>
               </div>
               <MonthRow label="New Schools in Launch Set-Up Tab:" val={d.schools.newLaunch} tone="blue" />
-              <MonthRow label="New Schools in ERP Tab:"           val={d.schools.newErp}    tone="blue" />
-              <MonthRow label="Total New Staff Sign Up:"          val={d.staff.newSignup}   tone="orange" />
-              <MonthRow label="Total New Student Sign Up:"        val={d.students.newSignup} tone="red" />
+              <MonthRow label="New Schools in ERP Tab:" val={d.schools.newErp} tone="blue" />
+              <MonthRow label="Total New Staff Sign Up:" val={d.staff.newSignup} tone="orange" />
+              <MonthRow label="Total New Student Sign Up:" val={d.students.newSignup} tone="red" />
             </div>
           )}
         </div>
       )}
 
-      {/* ─── BUGS / IMPROVEMENTS REPORT ───
-          Chhe "View Report" buttons isi ek modal ko kholte hain; kis card se
-          khula, wo `report` me hai. Rows wahi hain jo card ne ginin — koi
-          alag call nahi jati. */}
       {schoolReport && (
         <Modal title={schoolReport.title} sub={schoolReport.description} icon="fa-school" large
           bodyStyle={{ padding: 0, background: '#F0F4FF' }} onClose={() => setSchoolReport(null)}
@@ -811,7 +951,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 <div className="db-block-sub">{progressErr.message}</div>
                 <button className="db-retry" onClick={() => { setProgressErr(null); schoolProgressApi.listSchoolProgress().then(setProgress).catch(setProgressErr); }}>Retry</button>
               </div>
-                 ) : (!schoolLists || schoolLists[schoolReport.key] === undefined) ? (
+            ) : (!schoolLists || schoolLists[schoolReport.key] === undefined) ? (
               <div style={{ textAlign: 'center', padding: 30, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</div>
             ) : (
               <SchoolListReport title={schoolReport.title} description={schoolReport.description}
@@ -822,37 +962,6 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         </Modal>
       )}
 
-      {report && (() => {
-        const isBug = report.kind === 'bug';
-        const stats = isBug ? bugStats : impStats;
-        const periodId = isBug ? bugPeriod : impPeriod;
-        const rows = reportRows(stats.rows, report.status);
-        return (
-          <Modal
-            title={`${isBug ? 'Bugs' : 'Improvements'} Report`}
-            sub={`${biLabel(periodId)} · ${rows.length} record${rows.length === 1 ? '' : 's'}`}
-            icon={isBug ? 'fa-bug' : 'fa-lightbulb'}
-            large
-            bodyStyle={{ padding: 0, background: '#F0F4FF' }}
-            onClose={() => setReport(null)}
-            footer={<>
-              <button className="btn-secondary" onClick={() => setReport(null)}>Close</button>
-              <button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button>
-            </>}
-          >
-            <div style={{ padding: 20 }}>
-              <BugsReport
-                kind={report.kind}
-                status={report.status}
-                period={{ label: biLabel(periodId) }}
-                rows={rows}
-                allOfKind={stats.rows}
-                schoolName={(id) => (branchNames ? branchNames[id] : '') || ''}
-              />
-            </div>
-          </Modal>
-        );
-      })()}
     </div>
   );
 }
@@ -875,6 +984,18 @@ function OvCard({ label, val, sub, badge, icon, onClick }) {
       <div className="ov-val">{fmt(val)}</div>
       <div className="ov-sub">{sub}</div>
       <div className={`ov-badge ov-badge-${badge}`}><i className={`fa-solid ${icon}`} /></div>
+    </div>
+  );
+}
+
+/* Card ke andar ERP | Launch Setup — wahi jagah jo pehle ek bara number leta
+   tha (ov-val ki unchaai), taake card ka size na badle. */
+function OvSplit({ tone, erp, launch }) {
+  const v = (n) => (n == null ? '—' : fmt(n));
+  return (
+    <div className={`ov-split ov-split-${tone}`}>
+      <div className="ov-split-col"><div className="ov-split-lbl">ERP</div><div className="ov-split-val">{v(erp)}</div></div>
+      <div className="ov-split-col"><div className="ov-split-lbl">Launch Setup</div><div className="ov-split-val">{v(launch)}</div></div>
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import React from 'react';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import SuperAdminShell from './SuperAdminShell';
-import { adminDashboardToUi } from './api/services/dashboard';
+import { adminDashboardToUi, dashboardBugToUi, composeImprovementDetail, IMP_STATUS } from './api/services/dashboard';
 import { INITIAL_TRANSACTIONS, calculateSchoolWiseSummary } from './transactionData';
 import { isMockMode } from './api';
+import { onelinkReportToUi } from './api/services/schoolProgress';
 
 /* Dashboard ab hamesha LIVE chalti hai:
    GET .../api/AHM_School_Progress/admin_dashboard. jsdom me koi backend nahi,
@@ -33,15 +34,40 @@ Priority: Medium`, Date: '2026-08-12', IsSolved: false },
   },
 };
 
+/* get_onelink_Report — bilkul sandbox ke asal jawab ki shakal (naam, types,
+   "Paid" status, 0-transaction branches samet). */
+const ONELINK_PAYLOAD = {
+  success: true,
+  data: {
+    totals: {
+      totalCollection: 40.0, totalTransactions: 3, schoolsReceivingPayments: 2, totalEnabledSchools: 46,
+      avgTransactionValue: 13.33, customerCharges: 1500.0, providerPayable: 440.0, schoolMentorRevenue: 1060.0,
+      customerChargePerTxn: 500.0, providerCostPerTxn: 200.0, marginPerTxn: 300.0,
+      fromDate: '2026-11-01T00:00:00', toDate: '2026-11-30T00:00:00',
+    },
+    branches: [
+      { schoolID: 221117, schoolName: 'Airborne Educational System', totalTransactions: 0, totalCollection: 0.0, providerPayable: 0.0, customerCharges: 0.0, schoolMentorRevenue: 0.0 },
+      { schoolID: 210813, schoolName: 'Islamia Public School', totalTransactions: 1, totalCollection: 10.0, providerPayable: 40.0, customerCharges: 500.0, schoolMentorRevenue: 460.0 },
+      { schoolID: 21, schoolName: 'The Learning School  ( Sir Syed Campus )', totalTransactions: 2, totalCollection: 30.0, providerPayable: 400.0, customerCharges: 1000.0, schoolMentorRevenue: 600.0 },
+    ],
+    transactions: [
+      { schoolID: 210813, schoolName: 'Islamia Public School', txnID: 1, oneLinkRef: '10234020002610141280438', txnDate: '2026-10-14T00:00:00', txnTime: '08:03:50', studentName: 'Testing', admissionNo: null, feeType: 'Online Fee', amount: 10.0, status: 'Paid' },
+      { schoolID: 21, schoolName: 'The Learning School  ( Sir Syed Campus )', txnID: 2, oneLinkRef: '10234020022610261289303', txnDate: '2026-10-26T00:00:00', txnTime: '19:47:52', studentName: '', admissionNo: null, feeType: 'Online Fee', amount: 20.0, status: 'Paid' },
+      { schoolID: 21, schoolName: 'The Learning School  ( Sir Syed Campus )', txnID: 3, oneLinkRef: '10234020022610261289304', txnDate: '2026-10-27T00:00:00', txnTime: '10:00:00', studentName: 'Ali', admissionNo: '77', feeType: 'Online Fee', amount: 10.0, status: 'Failed' },
+    ],
+  },
+};
+
 let realFetch;
 
 /* jsdom doesn't ship matchMedia or ResizeObserver; recharts + the theme
    boot read them. Polyfill so the QA smoke test isn't a flaky shim chase. */
 beforeAll(() => {
   realFetch = global.fetch;
-  global.fetch = (url, opts) => (String(url).includes('admin_dashboard')
-    ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(DASHBOARD_PAYLOAD) })
-    : (realFetch ? realFetch(url, opts) : Promise.reject(new Error('no network in jsdom'))));
+  const okJson = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  global.fetch = (url, opts) => (String(url).includes('admin_dashboard') ? okJson(DASHBOARD_PAYLOAD)
+    : String(url).includes('get_onelink_Report') ? okJson(ONELINK_PAYLOAD)
+      : (realFetch ? realFetch(url, opts) : Promise.reject(new Error('no network in jsdom'))));
 
   if (typeof window.matchMedia !== 'function') {
     window.matchMedia = (query) => ({
@@ -94,6 +120,24 @@ describe('Super Admin — data layer', () => {
     expect(out).toHaveLength(2);                       // dono schools, ek hi ki txn ke bawajood
     expect(out.find((r) => r.schoolId === 1)).toMatchObject({ transactions: 1, collection: 500 });
     expect(out.find((r) => r.schoolId === 15)).toMatchObject({ transactions: 0, collection: 0, smRevenue: 0 });
+  });
+
+  /* Improvement ke zaid khane bugDetail ki lineon me — wapas wahi nikalne chahiye. */
+  test('improvement detail round-trips through bugDetail', () => {
+    const detail = composeImprovementDetail({
+      title: 'Faster reports', description: 'Line one\nLine two', category: 'Performance', type: 'Optimization',
+      targetDate: '2026-12-01', implementation: 'Step 1\nStep 2 \\ done', outcome: 'Half the load time',
+      completionDate: '', completedBy: '', evidence: '', reportedBy: 'Sara', status: IMP_STATUS.progress, priority: 'High',
+    });
+    const r = dashboardBugToUi({ ID: 3, BranchID: 4, Module: 'Dashboard', Developer: 'Team A', BugDetail: detail, Date: '2026-11-02', IsSolved: false }, 0);
+    expect(r).toMatchObject({
+      kind: 'improvement', title: 'Faster reports', descriptionText: 'Line one\nLine two', category: 'Performance',
+      type: 'Optimization', targetDate: '2026-12-01', implementation: 'Step 1\nStep 2 \\ done', outcome: 'Half the load time',
+      reportedBy: 'Sara', priority: 'High', status: IMP_STATUS.progress,
+    });
+    expect(dashboardBugToUi({ ID: 3, BugDetail: detail, IsSolved: true }, 0).status).toBe(IMP_STATUS.completed);
+    // Bug par improvement wale khane nahi padhe jaate.
+    expect(dashboardBugToUi({ ID: 4, BugDetail: 'Broken grid\nType: something' }, 0).description).toBe('Type: something');
   });
 
   /* Jo screen par asal me chalta hai: admin_dashboard ka jawab → wohi shape
@@ -168,31 +212,126 @@ describe('Super Admin — Bugs / Improvements reports', () => {
     fireEvent.click(within(card).getByText(/View Report/i));
   };
 
-  /* Chhe "View Report" buttons pehle sirf ek toast dikhate thay. Ab har
-     button asal report kholta hai, usi `Bugs` list se jo card ne ginin. */
-  test('the bugs card opens a real report, not a toast', async () => {
+  /* Bugs Summary ke teeno "View Report" ab Bug Reports table hi ko us card
+     ke status par chhaan dete hain — alag report dataset nahi. Payload me
+     ek hi bug hai (Resolved); improvement entry table me kabhi nahi aati. */
+  const bugTable = () => within(document.querySelector('.bm-table'));
+  test('bug cards filter the Bug Reports table by status', async () => {
     render(<SuperAdminShell />);
     await screen.findByText('Bugs Summary');
 
-    clickReport('Total Bug(s)');
+    clickReport('Total Resolved Bug(s)');
+    expect(await screen.findByText('Resolved Bugs Report')).toBeInTheDocument();
+    expect(bugTable().getByText('Check pleaase leasson plan moudle')).toBeInTheDocument();
 
-    // Report ka dhaancha + API se aayi asal row.
-    expect(await screen.findByText('Module-wise breakdown')).toBeInTheDocument();
-    expect(screen.getByText('Check pleaase leasson plan moudle')).toBeInTheDocument();
-    // Module-wise breakdown me bhi, details table me bhi — dono jagah.
-    expect(screen.getAllByText('Acdemics Module').length).toBeGreaterThan(1);
-    // Improvement wali entry bugs report me nahi aani chahiye.
-    expect(screen.queryByText('improvemment')).not.toBeInTheDocument();
+    clickReport('Total Pending Bug(s)');
+    expect(await screen.findByText('Pending Bugs Report')).toBeInTheDocument();
+    expect(bugTable().queryByText('Check pleaase leasson plan moudle')).not.toBeInTheDocument();
+    expect(bugTable().getByText('No bugs match these filters.')).toBeInTheDocument();
+
+    clickReport('Total Bug(s)');
+    expect(await screen.findByText('Bug Reports — All Bugs')).toBeInTheDocument();
+    expect(bugTable().getByText('Check pleaase leasson plan moudle')).toBeInTheDocument();
+    expect(bugTable().queryByText('improvemment')).not.toBeInTheDocument();
+
+    // Clear Filter / Show All daayra wapas sab par.
+    clickReport('Total Pending Bug(s)');
+    const bugCard = (await screen.findByText('Pending Bugs Report')).closest('.section-card');
+    fireEvent.click(within(bugCard).getByText(/Clear Filter \/ Show All/));
+    expect(await screen.findByText('Bug Reports — All Bugs')).toBeInTheDocument();
   });
 
-  test('the improvements card reports improvements only', async () => {
+  /* Reopen → wahi record (same ID) update, isSolved false, aur phir
+     admin_dashboard dobara (cards + table usi se). */
+  test('reopening a bug updates the same record and refreshes the dashboard', async () => {
+    const calls = [];
+    const prev = global.fetch;
+    global.fetch = (url, opts) => {
+      calls.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
+      if (String(url).includes('school-enquiries-bugs-action')) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ success: true }) });
+      }
+      return prev(url, opts);
+    };
+    try {
+      render(<SuperAdminShell />);
+      await screen.findByText('Bugs Summary');
+      // getByRole is bahut bare DOM par seconds leta hai — seedha aria-label.
+      const reopen = await waitFor(() => {
+        const el = document.querySelector('.bm-table [aria-label="Reopen bug"]');
+        if (!el) throw new Error('no reopen action yet');
+        return el;
+      });
+      fireEvent.click(reopen);
+      const modal = (await screen.findByText(/Its status will go back to/)).closest('.modal');
+      const dashCallsBefore = calls.filter((c) => c.url.includes('admin_dashboard')).length;
+      fireEvent.click(modal.querySelector('.modal-foot .btn-primary'));
+
+      await waitFor(() => expect(calls.some((c) => c.url.includes('school-enquiries-bugs-action'))).toBe(true));
+      const save = calls.find((c) => c.url.includes('school-enquiries-bugs-action')).body;
+      expect(save).toMatchObject({ action: 'update', id: 7, branchID: 15, isSolved: false, module: 'Acdemics Module', developer: 'Qasim' });
+      expect(save.bugDetail).toBe('Check pleaase leasson plan moudle');
+      await waitFor(() => expect(calls.filter((c) => c.url.includes('admin_dashboard')).length).toBeGreaterThan(dashCallsBefore));
+    } finally {
+      global.fetch = prev;
+    }
+  });
+
+  /* Improvement cards ab Improvement Reports table ko chhaante hain. Payload
+     me ek improvement hai (Pending, Support wali purani entry) aur ek bug. */
+  const impTable = () => within(document.querySelector('.im-table'));
+  test('improvement cards are live and filter the Improvement Reports table', async () => {
     render(<SuperAdminShell />);
     await screen.findByText('Improvements Summary');
+    const cardVal = (label) => screen.getByText(label).closest('.bi-card').querySelector('.bi-val').textContent;
+    expect([cardVal('Total New Improvements'), cardVal('Total Completed Improvements'), cardVal('Total Pending Improvements')]).toEqual(['1', '0', '1']);
 
     clickReport('Total New Improvements');
+    expect(await screen.findByText('Improvement Reports — All Improvements')).toBeInTheDocument();
+    expect(impTable().getByText('improvemment')).toBeInTheDocument();
+    expect(impTable().queryByText('Check pleaase leasson plan moudle')).not.toBeInTheDocument();
 
-    expect(await screen.findByText('improvemment')).toBeInTheDocument();
-    expect(screen.queryByText('Check pleaase leasson plan moudle')).not.toBeInTheDocument();
+    clickReport('Total Completed Improvements');
+    expect(await screen.findByText('Completed Improvements Report')).toBeInTheDocument();
+    expect(impTable().getByText('No improvements match these filters.')).toBeInTheDocument();
+
+    clickReport('Total Pending Improvements');
+    expect(await screen.findByText('Pending Improvements Report')).toBeInTheDocument();
+    expect(impTable().getByText('improvemment')).toBeInTheDocument();
+  });
+
+  test('marking an improvement completed updates the same record', async () => {
+    const calls = [];
+    const prev = global.fetch;
+    global.fetch = (url, opts) => {
+      calls.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
+      if (String(url).includes('school-enquiries-bugs-action')) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ success: true }) });
+      }
+      return prev(url, opts);
+    };
+    try {
+      render(<SuperAdminShell />);
+      await screen.findByText('Improvements Summary');
+      const btn = await waitFor(() => {
+        const el = document.querySelector('.im-table [aria-label="Mark as completed"]');
+        if (!el) throw new Error('no complete action yet');
+        return el;
+      });
+      fireEvent.click(btn);
+      const modal = (await screen.findByText(/Completion date and Completed By are filled in/)).closest('.modal');
+      fireEvent.click(modal.querySelector('.modal-foot .btn-primary'));
+
+      await waitFor(() => expect(calls.some((c) => c.url.includes('school-enquiries-bugs-action'))).toBe(true));
+      const save = calls.find((c) => c.url.includes('school-enquiries-bugs-action')).body;
+      expect(save).toMatchObject({ action: 'update', id: 11, branchID: 1, isSolved: true, module: 'mmm' });
+      expect(save.bugDetail.startsWith('[Improvement] improvemment\ndescriyion\n')).toBe(true);
+      expect(save.bugDetail).toMatch(/\nCompletion Date: \d{4}-\d{2}-\d{2}\n/);
+      expect(save.bugDetail.endsWith('\nPriority: Medium')).toBe(true);
+      expect(save.bugDetail).not.toMatch(/Status:/);
+    } finally {
+      global.fetch = prev;
+    }
   });
 });
 
@@ -217,5 +356,50 @@ describe('Super Admin — Dashboard permission gating', () => {
     viewAs(7); // Pakiza Sajid — Dashboard menu inactive
     expect(await screen.findByText(/has no Dashboard access/i)).toBeInTheDocument();
     expect(screen.queryByText('Fee Analytics')).not.toBeInTheDocument();
+  });
+});
+
+describe('Super Admin — 1LINK Overall Performance', () => {
+  /* Live jawab ke naam (txnID / txnDate / txnTime / "Paid") sahi map hon. */
+  test('1LINK report maps the live response shape', () => {
+    const r = onelinkReportToUi(ONELINK_PAYLOAD.data);
+    expect(r.totals).toMatchObject({ totalTransactions: 3, totalCollection: 40, providerPayable: 440, schoolMentorRevenue: 1060, marginPerTxn: 300 });
+    expect(r.schoolWise).toHaveLength(3);
+    expect(r.transactions[0]).toMatchObject({ txnId: '1', date: '2026-10-14', time: '08:03:50', status: 'Paid', successful: true, admissionNo: '' });
+    expect(r.transactions[2]).toMatchObject({ status: 'Failed', successful: false });
+  });
+
+  /* Pehle EP.schoolProgress.onelinkReport tha hi nahi — call TypeError par
+     girti aur table "No schools loaded yet." dikhati thi. */
+  test('school-wise table shows only schools with transactions, server totals, and drills down', async () => {
+    render(<SuperAdminShell />);
+    const card = (await screen.findByText('School-Wise Performance')).closest('.section-card');
+    const t = within(card);
+    expect(await t.findByText('Islamia Public School')).toBeInTheDocument();
+    expect(t.getByText(/The Learning School/)).toBeInTheDocument();
+    expect(t.queryByText('Airborne Educational System')).not.toBeInTheDocument();
+    expect(t.queryByText('No schools loaded yet.')).not.toBeInTheDocument();
+    // Server ka per-school provider payable (40, flat 200 nahi).
+    const islamia = within(t.getByText('Islamia Public School').closest('tr'));
+    expect(islamia.getByText('PKR 40.00')).toBeInTheDocument();
+    expect(islamia.getByText('PKR 460.00')).toBeInTheDocument();
+    expect(t.getByText(/TOTALS \(2 schools\)/)).toBeInTheDocument();
+
+    // Successful = sirf "Paid" (Failed wali nahi): 2 of 3.
+    const succ = screen.getByText('Successful Transactions').closest('.rpt-stat');
+    expect(within(succ).getByText('2')).toBeInTheDocument();
+    const total = screen.getByText('Total Transactions').closest('.rpt-stat');
+    expect(within(total).getByText('3')).toBeInTheDocument();
+
+    // Search by ID.
+    fireEvent.change(t.getByPlaceholderText(/Search by school name, ID or branch/), { target: { value: '210813' } });
+    expect(t.queryByText(/The Learning School/)).not.toBeInTheDocument();
+
+    // Row click → transaction detail with real date / time / Txn ID.
+    fireEvent.click(t.getByText('Islamia Public School'));
+    const modal = within((await screen.findByText('10234020002610141280438')).closest('.modal'));
+    expect(modal.getByText('2026-10-14')).toBeInTheDocument();
+    expect(modal.getByText('08:03:50')).toBeInTheDocument();
+    expect(modal.getByText('Paid')).toBeInTheDocument();
   });
 });

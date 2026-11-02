@@ -47,6 +47,29 @@ const text = (v) => String(v ?? '').trim();
    "[Improvement]" ka tag batata hai ke yeh bug nahi behtari ki tajweez hai.
    Jo entry in me se kuch na rakhe (sirf saada jumla) wo bhi theek chalti hai:
    poora jumla hi unwan ban jata hai. */
+/* Table me severity / status (In Progress) / reported-by ke khane nahi —
+   is liye Dashboard ka Bug Manager inhe bhi bugDetail ki aakhri lineon me
+   likhta hai, "Priority:" hi ki tarah (severity ka lafz Priority hi rakha,
+   taake Support aur purani entries ek hi qaide par chalen):
+       title\ndescription…\nReported By: X\nStatus: In Progress\nPriority: High
+   Aakhir se jitni aisi lineen hon, sab utar li jati hain (kisi bhi tarteeb). */
+const META_LINE = /^(Priority|Severity|Status|Reported By):\s*(.*)$/i;
+
+/* Improvement Manager ke zaid khane — sirf "[Improvement]" entries par
+   padhe jaate hain, taake kisi bug ki aakhri line ("Type: …") ghalti se
+   utar na jaye. Kai-line wale khane (Implementation / Expected Outcome /
+   Evidence) ek line me "\n" (do harf) ban kar jaate hain. */
+const IMP_META_LINE = /^(Priority|Severity|Status|Reported By|Category|Type|Target Date|Implementation|Expected Outcome|Completion Date|Completed By|Evidence):\s*(.*)$/i;
+const IMP_META_KEYS = {
+  category: 'Category', type: 'Type', targetDate: 'Target Date', implementation: 'Implementation',
+  outcome: 'Expected Outcome', completionDate: 'Completion Date', completedBy: 'Completed By', evidence: 'Evidence',
+};
+const escLine = (v) => text(v).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n');
+const unescLine = (v) => String(v || '').replace(/\\(\\|n)/g, (_, c) => (c === 'n' ? '\n' : '\\'));
+
+export const BUG_STATUS = { pending: 'Pending', progress: 'In Progress', resolved: 'Resolved' };
+export const IMP_STATUS = { new: 'New', pending: 'Pending', progress: 'In Progress', completed: 'Completed' };
+
 function parseBugDetail(raw) {
   let body = text(raw);
   let kind = 'bug';
@@ -55,29 +78,79 @@ function parseBugDetail(raw) {
     if (/improve/i.test(tag[1])) kind = 'improvement';
     body = body.slice(tag[0].length);
   }
-  let priority = '';
-  body = body.replace(/(^|\n)\s*Priority:\s*([^\n]*)\s*$/i, (_, __, p) => { priority = text(p); return ''; });
-
+  const lineRe = kind === 'improvement' ? IMP_META_LINE : META_LINE;
   const lines = body.split('\n').map(text).filter(Boolean);
-  return {
+  const meta = {};
+  while (lines.length > 1) {
+    const m = lines[lines.length - 1].match(lineRe);
+    if (!m) break;
+    const key = m[1].toLowerCase() === 'severity' ? 'priority' : m[1].toLowerCase();
+    if (meta[key] == null) meta[key] = text(m[2]);
+    lines.pop();
+  }
+  const descLines = lines.slice(1);
+  const out = {
     kind,
-    priority,
+    priority: meta.priority || '',
+    reportedBy: meta['reported by'] || '',
+    statusTag: meta.status || '',
     title: lines[0] || '',
-    description: lines.slice(1).join(' '),
+    description: descLines.join(' '),
+    /* Edit form ke liye asal lineon wali tafseel. */
+    descriptionText: descLines.join('\n'),
   };
+  if (kind === 'improvement') {
+    Object.entries(IMP_META_KEYS).forEach(([k, label]) => { out[k] = unescLine(meta[label.toLowerCase()]); });
+  }
+  return out;
+}
+
+/** Improvement Manager ka form → API ka bugDetail ("[Improvement]" tag ke saath). */
+export function composeImprovementDetail(v) {
+  return [
+    `[Improvement] ${text(v.title)}`,
+    text(v.description),
+    ...Object.entries(IMP_META_KEYS).map(([k, label]) => escLine(v[k]) && `${label}: ${escLine(v[k])}`),
+    text(v.reportedBy) && `Reported By: ${text(v.reportedBy)}`,
+    /* Completed isSolved se — baqi teeno status line me. */
+    v.status && v.status !== IMP_STATUS.completed && `Status: ${v.status}`,
+    text(v.priority) && `Priority: ${text(v.priority)}`,
+  ].filter(Boolean).join('\n');
+}
+
+/** parseBugDetail ka ulta — Bug Manager ka form → API ka bugDetail. */
+export function composeBugDetail({ title, description, reportedBy, status, severity }) {
+  return [
+    text(title),
+    text(description),
+    text(reportedBy) && `Reported By: ${text(reportedBy)}`,
+    /* Pending default hai aur Resolved isSolved se — sirf In Progress likhna padta hai. */
+    status === BUG_STATUS.progress && `Status: ${BUG_STATUS.progress}`,
+    text(severity) && `Priority: ${text(severity)}`,
+  ].filter(Boolean).join('\n');
 }
 
 /** Ek API row → Dashboard ki bug list ka row. */
 export function dashboardBugToUi(b, i) {
   const parsed = parseBugDetail(b?.BugDetail);
+  const solved = b?.IsSolved === true || b?.IsSolved === 1;
   return {
     id: num(b?.ID) || `bug-${i}`,
+    /* Asal record id — sirf isi par edit / delete chal sakta hai. */
+    recordId: num(b?.ID),
     branchId: num(b?.BranchID),
     module: text(b?.Module) || '—',
     developer: text(b?.Developer) || '—',
     date: text(b?.Date).slice(0, 10),
-    solved: b?.IsSolved === true || b?.IsSolved === 1,
+    solved,
     ...parsed,
+    status: parsed.kind === 'improvement'
+      /* Purani (Support wali) improvements par status line nahi — Pending. */
+      ? (solved ? IMP_STATUS.completed
+        : /progress/i.test(parsed.statusTag) ? IMP_STATUS.progress
+          : /^new$/i.test(parsed.statusTag) ? IMP_STATUS.new : IMP_STATUS.pending)
+      : (solved ? BUG_STATUS.resolved
+        : /progress/i.test(parsed.statusTag) ? BUG_STATUS.progress : BUG_STATUS.pending),
   };
 }
 

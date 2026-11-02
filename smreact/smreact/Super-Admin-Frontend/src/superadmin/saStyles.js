@@ -1604,6 +1604,15 @@ export const SA_CSS = `
 .sa-root .ov-val{font-size:30px;font-weight:800;color:var(--t1);letter-spacing:-.03em;line-height:1;margin-bottom:6px}
 .sa-root .ov-val.red{color:#DC2626}
 .sa-root .ov-sub{font-size:11.5px;color:var(--tm)}
+/* ERP | Launch Setup split (Inactive / Active Login cards) — ov-val jitni hi
+   unchaai (30px + 6px), aur daayen badge ke liye jagah chhor kar. */
+.sa-root .ov-split{display:flex;height:36px;padding-right:58px;position:relative;z-index:1}
+.sa-root .ov-split-col{flex:1;min-width:0}
+.sa-root .ov-split-col + .ov-split-col{border-left:1px solid var(--bl);padding-left:12px}
+.sa-root .ov-split-lbl{font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--tm);line-height:1;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sa-root .ov-split-val{font-size:22px;font-weight:800;letter-spacing:-.03em;line-height:1}
+.sa-root .ov-split-red .ov-split-val{color:#DC2626}
+.sa-root .ov-split-green .ov-split-val{color:#16A34A}
 .sa-root .ov-sub b{color:var(--brand)}
 .sa-root .ov-sub b.red{color:#DC2626}
 .sa-root .ov-badge{position:absolute;right:16px;top:50%;transform:translateY(-50%);width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px}
@@ -1664,6 +1673,45 @@ export const SA_CSS = `
 .sa-root .bi-btn-orange{background:linear-gradient(135deg,#B45309,#D97706);color:#fff;box-shadow:0 2px 8px rgba(217,119,6,.22)}
 .sa-root .bi-btn-blue{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;box-shadow:0 2px 8px rgba(30,58,138,.22)}
 .sa-root .bi-period-bar{display:flex;align-items:center;gap:10px}
+
+/* Bug Manager — Add New Bug, Bug Reports table, modals */
+.sa-root .bm-add-btn{height:34px;padding:0 14px;font-size:12.5px}
+.sa-root .bm-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--bl)}
+.sa-root .bm-date{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--tm);font-weight:600}
+.sa-root .bm-table td{font-size:12.5px}
+.sa-root .bm-title{font-weight:700;color:var(--t1);max-width:220px}
+.sa-root .bm-desc{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tm)}
+.sa-root .bm-empty{text-align:center;color:var(--tm);padding:24px !important}
+.sa-root .bm-pill{display:inline-block;padding:2px 9px;border-radius:var(--r-f);border:1px solid;font-size:10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap}
+.sa-root .bm-acts{display:flex;align-items:center;justify-content:center;gap:5px}
+.sa-root .bm-act{width:28px;height:28px;border-radius:8px;border:1.5px solid var(--bl);background:var(--card);color:var(--t2);font-size:11.5px;display:inline-flex;align-items:center;justify-content:center;transition:var(--tr)}
+.sa-root .bm-act:hover{border-color:var(--brand);color:var(--brand)}
+.sa-root .bm-act-del:hover{border-color:#DC2626;color:#DC2626}
+.sa-root .bm-req{color:#DC2626}
+.sa-root .bm-err{font-size:11px;color:#DC2626;font-weight:600;margin-top:4px}
+.sa-root .f-input.bm-invalid{border-color:#DC2626}
+.sa-root .bm-textarea{height:96px;padding:9px 12px;resize:vertical;line-height:1.45}
+.sa-root .bm-detail-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--bl);font-size:13px}
+.sa-root .bm-detail-row span{color:var(--tm);font-weight:600}
+.sa-root .bm-detail-row b{color:var(--t1);text-align:right}
+.sa-root .bm-detail-desc{white-space:pre-wrap;font-size:13px;color:var(--t2);background:var(--muted);border:1px solid var(--bl);border-radius:var(--r-md);padding:10px 12px}
+.sa-root .bm-act-resolve{color:#16A34A}
+.sa-root .bm-act-resolve:hover{border-color:#16A34A;color:#16A34A;background:rgba(22,163,74,.08)}
+.sa-root .bm-act-reopen{color:#D97706}
+.sa-root .bm-act-reopen:hover{border-color:#D97706;color:#D97706;background:rgba(217,119,6,.08)}
+.sa-root .btn-primary.bm-btn-green{background:linear-gradient(135deg,#15803D,#16A34A);box-shadow:0 4px 12px rgba(22,163,74,.28)}
+.sa-root .btn-primary.bm-btn-orange{background:linear-gradient(135deg,#B45309,#D97706);box-shadow:0 4px 12px rgba(217,119,6,.28)}
+.sa-root .bm-count{color:var(--t1)}
+/* Improvement Manager — form sections + wider table */
+.sa-root .im-sec-ttl{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--brand);margin:4px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--bl)}
+.sa-root .modal-grid + .im-sec-ttl{margin-top:22px}
+.sa-root .bm-textarea.im-short{height:70px}
+.sa-root .im-note{margin-top:16px;font-size:11.5px;color:var(--tm);display:flex;align-items:center;gap:7px}
+.sa-root .im-table{min-width:1350px}
+@media(max-width:640px){
+  .sa-root .bm-form{grid-template-columns:1fr}
+  .sa-root .bm-form .span2{grid-column:auto}
+}
 .sa-root .bi-period-lbl{font-size:12px;font-weight:700;color:var(--tm)}
 .sa-root .bi-period-sel{height:32px;border:1.5px solid var(--bl);border-radius:var(--r-md);padding:0 10px;font-family:var(--font);font-size:12px;color:var(--t2);background:var(--inp);outline:none;cursor:pointer}
 

@@ -159,6 +159,13 @@ export async function listSchoolProgress() {
     listBranchReport({ isActive: false, launchSetup: 0 }),
     listBranchReport({ isActive: false, launchSetup: 1 }),
   ]);
+  /* Har row par uska group (launchSetup 0 → 'launch', 1 → 'erp') — inactive
+     jama hone ke baad bhi ERP / Launch Setup ka farq qaim rehta hai
+     (Dashboard ke Inactive / Active Login cards isi par bant'te hain). */
+  launch.forEach((r) => { r.setupType = 'launch'; });
+  inactiveNew.forEach((r) => { r.setupType = 'launch'; });
+  erp.forEach((r) => { r.setupType = 'erp'; });
+  inactiveErp.forEach((r) => { r.setupType = 'erp'; });
   /* Inactive dono taraf se aa sakti hain; id par de-dupe. */
   const seen = new Set();
   const inactive = [...inactiveNew, ...inactiveErp].filter((r) => {
@@ -952,26 +959,35 @@ export function onelinkBranchToRow(b) {
   };
 }
 
-/* Ek transaction row → drill-down modal / detailed report ka shape. API abhi
-   khaali list deti hai; populate hone par ye best-effort mapping chalti hai
-   (field naam jo mil jaye wahi, warna mehfooz fallback). */
+/* Kaunsa status "kamyab" hai — API "Paid" bhejti hai; baqi naam bhi qubool. */
+export const isSuccessfulTxnStatus = (s) => /^(paid|success|successful|completed)$/i.test(String(s || '').trim());
+
+/* Ek transaction row → drill-down modal / detailed report ka shape.
+   Live jawab (sandbox par dekha gaya) ke naam: txnID, txnDate
+   ("2026-10-14T00:00:00"), txnTime ("08:03:50"), status "Paid",
+   admissionNo null ho sakta hai. Pehle yahan txnId / date / time padhe jate
+   thay — is liye har row ki tareekh, waqt aur Txn ID khali aati thi. */
 export function onelinkTxnToRow(t, i = 0) {
+  const txnId = t?.txnID ?? t?.txnId ?? t?.transactionId ?? t?.id;
+  const status = String(t?.status ?? '').trim();
+  const amount = Number(t?.amount ?? t?.collection ?? 0);
   return {
-    id:          t?.id ?? t?.transactionId ?? t?.txnId ?? `txn-${i}`,
+    id:          txnId != null ? `txn-${txnId}` : `txn-${i}`,
     schoolId:    Number(t?.schoolID ?? t?.schoolId) || 0,
-    schoolName:  String(t?.schoolName ?? ''),
-    date:        String(t?.date ?? t?.transactionDate ?? '').slice(0, 10),
-    time:        String(t?.time ?? ''),
-    txnId:       String(t?.txnId ?? t?.transactionId ?? t?.id ?? ''),
+    schoolName:  String(t?.schoolName ?? '').trim(),
+    date:        String(t?.txnDate ?? t?.date ?? t?.transactionDate ?? '').slice(0, 10),
+    time:        String(t?.txnTime ?? t?.time ?? '').slice(0, 8),
+    txnId:       txnId != null ? String(txnId) : '',
     oneLinkRef:  String(t?.oneLinkRef ?? t?.reference ?? t?.ref ?? ''),
-    studentName: String(t?.studentName ?? ''),
+    studentName: String(t?.studentName ?? '').trim(),
     admissionNo: String(t?.admissionNo ?? ''),
     className:   String(t?.className ?? t?.class ?? ''),
     feeType:     String(t?.feeType ?? ''),
     invoiceNo:   String(t?.invoiceNo ?? ''),
-    amount:      Number(t?.amount ?? t?.collection ?? 0) || 0,
+    amount:      Number.isFinite(amount) ? amount : 0,
     channel:     String(t?.channel ?? '1LINK'),
-    status:      String(t?.status ?? 'Successful'),
+    status:      status || '—',
+    successful:  isSuccessfulTxnStatus(status),
     raw: t,
   };
 }

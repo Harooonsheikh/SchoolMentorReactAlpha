@@ -221,6 +221,19 @@ export const EP = {
                                    FeeDiscount, Receivable, ReceivedAmount,
                                    TotalPending } ] } */
     adminDashboard: () => `${SA_ROOT}/api/AHM_School_Progress/admin_dashboard`,
+    /* GET ?fromDate=&toDate=&period= — 1LINK Overview ka poora report:
+         { totals { totalTransactions, totalCollection, schoolsReceivingPayments,
+                    totalEnabledSchools, avgTransactionValue, customerCharges,
+                    providerPayable, schoolMentorRevenue, customerChargePerTxn,
+                    providerCostPerTxn, marginPerTxn, fromDate, toDate },
+           branches [ { schoolID, schoolName, totalTransactions, totalCollection,
+                        providerPayable, customerCharges, schoolMentorRevenue } ],
+           transactions [ { schoolID, schoolName, txnID, oneLinkRef, txnDate,
+                            txnTime, studentName, admissionNo, feeType, amount,
+                            status } ] }
+       (schoolProgress.getOnelinkReport isi ko bulata tha, magar yeh route yahan
+       likha hi nahi tha — call TypeError par gir kar poora section 0 dikhata tha.) */
+    onelinkReport: () => `${SA_ROOT}/api/AHM_School_Progress/get_onelink_Report`,
     /* POST — Follow-up Card (Notes/Calls/Messages) aur Onboarding Card, dono
        ek hi route par; `headType` batata hai kaunsa card hai aur
        `subHeadType` uska sub-tab / module. */

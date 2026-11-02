@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  TXN_RATE_CONFIG_INITIAL, marginOf, pkr, pkr2,
+  TXN_RATE_CONFIG_INITIAL, marginOf, pkr2,
   periodFromQuick, periodFromCustom, previousPeriodOf, percentChange,
   periodToRange, todayISO,
 } from './transactionData';
@@ -67,36 +67,55 @@ useEffect(() => {
   /* ── 1LINK report: server khud totals + per-school breakdown deta hai.
      Current + previous period dono EK saath (previous sirf "vs" badges ke
      liye). Period badalte hi dobara load hota hai. ── */
+  /* Har jawab apne period ki `key` ke saath — useApi naye period ke load
+     ke dauran purana data rakhe rakhta hai, aur pehle wahi "This Month" ke
+     label ke neeche "Last Month" ke aankre dikha deta tha. */
+  const rangeKey = useMemo(() => { const r = periodToRange(period); return `${r.fromDate}|${r.toDate}`; }, [period]);
   const loadReport = useCallback(() => {
     const cur = periodToRange(period);
     const prev = periodToRange(previousPeriodOf(period));
     return Promise.all([
       schoolProgressApi.getOnelinkReport(cur),
+      /* Pichhla period sirf "vs" badge ke liye — wo na aaye to badge chhupa. */
       schoolProgressApi.getOnelinkReport(prev).catch(() => null),
-    ]).then(([current, previous]) => ({ current, previous }));
+    ]).then(([current, previous]) => ({ key: `${cur.fromDate}|${cur.toDate}`, current, previous }));
   }, [period]);
-  const { data: reportData, loading } = useApi(loadReport);
+  const { data: reportData, loading, error: reportError, reload: reloadReport } = useApi(loadReport);
 
-  const current = reportData?.current || null;
+  /* ready = isi period ka jawab aa chuka. Error par 0 nahi — saaf error. */
+  const ready = !reportError && reportData?.key === rangeKey;
+  const status = reportError ? 'error' : (ready ? 'ready' : 'loading');
+  const current = ready ? reportData.current : null;
   const totals = current?.totals || {};
-  const prevTotals = reportData?.previous?.totals || {};
+  const prevTotals = ready ? reportData.previous?.totals : null;
 
   const totalTxns = totals.totalTransactions || 0;
   const totalCollection = totals.totalCollection || 0;
   const activeSchools = totals.schoolsReceivingPayments || 0;
   const totalEnabled = totals.totalEnabledSchools || 0;
   const avgTxn = totals.avgTransactionValue || 0;
-  const txnChange = percentChange(totalTxns, prevTotals.totalTransactions || 0);
-  const collectionChange = percentChange(totalCollection, prevTotals.totalCollection || 0);
+  const txnChange = prevTotals ? percentChange(totalTxns, prevTotals.totalTransactions || 0) : null;
+  const collectionChange = prevTotals ? percentChange(totalCollection, prevTotals.totalCollection || 0) : null;
 
+  /* Charges / payable / revenue / margin server ke apne hisaab se (per-school
+     rate wahi lagata hai — yahan dobara nahi ginte). */
   const customerCharges = totals.customerCharges || 0;
   const providerPayable = totals.providerPayable || 0;
   const smRevenue = totals.schoolMentorRevenue || 0;
   /* Margin / txn: report deta hai to wahi, warna saved rate se nikaal lo. */
   const margin = totals.marginPerTxn || marginOf(rateConfig);
 
-  const schoolWise = useMemo(() => current?.schoolWise || [], [current]);
+  /* School-Wise sirf wo schools jin ki is period me transactions hain (API
+     poore network ki rows 0 samet bhejti hai); id par ek hi row. */
+  const schoolWise = useMemo(() => {
+    const seen = new Set();
+    return (current?.schoolWise || []).filter((r) => r.transactions > 0 && !seen.has(r.schoolId) && seen.add(r.schoolId));
+  }, [current]);
   const transactions = useMemo(() => current?.transactions || [], [current]);
+  /* Kamyab = jin ka status Paid/Successful ho. Detail list na aaye (sirf
+     totals) to server ka total hi. */
+  const successfulTxns = transactions.length ? transactions.filter((t) => t.successful).length : totalTxns;
+  const show = (v) => (status === 'ready' ? v : '—');
 
   /* ── Modals / drill-down state ── */
   const [showBreakdown, setShowBreakdown] = useState(false);
@@ -155,6 +174,13 @@ useEffect(() => {
         </div>
       </div>
 
+      {status === 'error' && (
+        <div className="db-locked" style={{ marginBottom: 14, borderColor: 'rgba(220,38,38,.35)', color: '#B91C1C' }}>
+          <i className="fa-solid fa-triangle-exclamation" />
+          <span>Couldn't load the 1LINK report for <b>{period.label}</b>: {reportError?.message || 'request failed'}. Figures are hidden rather than shown as 0.</span>
+          <button className="pag-btn" style={{ marginLeft: 'auto' }} onClick={reloadReport}>Retry</button>
+        </div>
+      )}
       <div className="detail-2col" style={{ alignItems: 'start', marginBottom: 14 }}>
         {/* ═══ CARD 1 — 1LINK COLLECTIONS ═══ */}
         <div className="section-card">
@@ -168,22 +194,24 @@ useEffect(() => {
           </div>
           <div style={{ padding: '18px 20px' }}>
             <div className="rpt-stat-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)', marginBottom: 12 }}>
-              <ClickableStat label="Total Transactions" val={totalTxns.toLocaleString()} onClick={() => setShowBreakdown(true)}
-                sub={<Comparison val={txnChange} />} />
+              <ClickableStat label="Total Transactions" val={show(totalTxns.toLocaleString())} onClick={() => setShowBreakdown(true)}
+                sub={status === 'ready' && txnChange != null && <Comparison val={txnChange} />} />
               <div className="rpt-stat s-green">
-                <div className="rpt-stat-val">{pkr(totalCollection)}</div>
+                <div className="rpt-stat-val">{show(pkr2(totalCollection))}</div>
                 <div className="rpt-stat-lbl">Total Collection</div>
-                <Comparison val={collectionChange} />
+                {status === 'ready' && collectionChange != null && <Comparison val={collectionChange} />}
               </div>
-              <ClickableStat label="Schools Receiving Payments" val={`${activeSchools} / ${totalEnabled}`} onClick={() => setShowBreakdown(true)} tone="s-info" />
+              <ClickableStat label="Schools Receiving Payments" val={show(`${activeSchools} / ${totalEnabled}`)} onClick={() => setShowBreakdown(true)} tone="s-info" />
               <div className="rpt-stat s-warn">
-                <div className="rpt-stat-val">{pkr2(avgTxn)}</div>
+                <div className="rpt-stat-val">{show(pkr2(avgTxn))}</div>
                 <div className="rpt-stat-lbl">Avg. Transaction Value</div>
               </div>
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>
               <i className="fa-solid fa-school" style={{ marginRight: 5, color: 'var(--brand)' }} />
-              {activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {totalEnabled} schools in the network.
+              {status === 'ready'
+                ? <>{activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {totalEnabled} schools in the network.</>
+                : status === 'error' ? 'Figures unavailable — the 1LINK report could not be loaded.' : 'Loading 1LINK figures…'}
             </div>
           </div>
         </div>
@@ -203,18 +231,18 @@ useEffect(() => {
           </div>
           <div style={{ padding: '18px 20px' }}>
             <div className="rpt-stat-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 12 }}>
-              <div className="rpt-stat s-info"><div className="rpt-stat-val">{totalTxns.toLocaleString()}</div><div className="rpt-stat-lbl">Successful Transactions</div></div>
-              <div className="rpt-stat s-warn"><div className="rpt-stat-val" style={{ fontSize: 15 }}>{pkr(customerCharges)}</div><div className="rpt-stat-lbl">Customer Charges</div></div>
-              <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 15 }}>{pkr(providerPayable)}</div><div className="rpt-stat-lbl">Provider Payable</div></div>
+              <div className="rpt-stat s-info"><div className="rpt-stat-val">{show(successfulTxns.toLocaleString())}</div><div className="rpt-stat-lbl">Successful Transactions</div></div>
+              <div className="rpt-stat s-warn"><div className="rpt-stat-val" style={{ fontSize: 15 }}>{show(pkr2(customerCharges))}</div><div className="rpt-stat-lbl">Customer Charges</div></div>
+              <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 15 }}>{show(pkr2(providerPayable))}</div><div className="rpt-stat-lbl">Provider Payable</div></div>
             </div>
             <div className="rpt-stat s-green prominent" style={{ textAlign: 'left', padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                 <div>
                   <div className="rpt-stat-lbl" style={{ marginTop: 0 }}>School Mentor Revenue</div>
-                  <div className="rpt-stat-val" style={{ fontSize: 28, color: '#16A34A' }}>{pkr(smRevenue)}</div>
+                  <div className="rpt-stat-val" style={{ fontSize: 28, color: '#16A34A' }}>{show(pkr2(smRevenue))}</div>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--tm)', fontWeight: 600, textAlign: 'right' }}>
-                  Margin / txn<br /><span style={{ fontSize: 15, fontWeight: 800, color: '#16A34A' }}>{pkr2(margin)}</span>
+                  Margin / txn<br /><span style={{ fontSize: 15, fontWeight: 800, color: '#16A34A' }}>{show(pkr2(margin))}</span>
                 </div>
               </div>
             </div>
@@ -223,18 +251,18 @@ useEffect(() => {
       </div>
 
       {/* ═══ SCHOOL-WISE PERFORMANCE ═══ */}
-      <SchoolWiseTable schoolWise={schoolWise} onSelectSchool={setDrillSchool} />
+      <SchoolWiseTable schoolWise={schoolWise} onSelectSchool={setDrillSchool} status={status} periodLabel={period.label} onRetry={reloadReport} />
 
       {/* ═══ MODALS ═══ */}
       {showBreakdown && (
         <Modal title="Schools Receiving 1LINK Payments" sub={period.label} icon="fa-school" large onClose={() => setShowBreakdown(false)}
           footer={<button className="btn-secondary" onClick={() => setShowBreakdown(false)}>Close</button>}>
-          <SchoolWiseTable schoolWise={schoolWise} onSelectSchool={(s) => { setShowBreakdown(false); setDrillSchool(s); }} embedded />
+          <SchoolWiseTable schoolWise={schoolWise} onSelectSchool={(s) => { setShowBreakdown(false); setDrillSchool(s); }} embedded status={status} periodLabel={period.label} onRetry={reloadReport} />
         </Modal>
       )}
 
       {drillSchool && (
-        <Modal title={drillSchool.schoolName} sub={`${drillSchool.branch} · School ID ${drillSchool.schoolCode} · ${period.label}`} icon="fa-receipt" large
+        <Modal title={drillSchool.schoolName} sub={[drillSchool.branch, `School ID ${drillSchool.schoolCode}`, period.label].filter(Boolean).join(' · ')} icon="fa-receipt" large
           onClose={() => setDrillSchool(null)}
           footer={<><button className="btn-secondary" onClick={() => setDrillSchool(null)}>Close</button><button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print</button></>}>
           <SchoolTransactionsTable rows={drillRows} />
@@ -289,7 +317,7 @@ setRateConfig(saved);
         </Modal>
       )}
 
-      {loading && totalTxns === 0 && (
+      {loading && status === 'loading' && (
         <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: -6, marginBottom: 14 }}><i className="fa-solid fa-circle-notch fa-spin" style={{ marginRight: 6 }} />Loading 1LINK transactions…</div>
       )}
     </>
@@ -323,7 +351,7 @@ function Comparison({ val }) {
   );
 }
 
-function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
+function SchoolWiseTable({ schoolWise, onSelectSchool, embedded, status = 'ready', periodLabel = '', onRetry }) {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState('transactions');
   const [pageSize, setPageSize] = useState(10);
@@ -384,28 +412,34 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: 'var(--tm)' }}><i className="fa-solid fa-school" style={{ fontSize: 24, opacity: 0.25, display: 'block', margin: '0 auto 10px' }} />{q.trim() ? 'No school matches your search.' : 'No schools loaded yet.'}</td></tr>
+            {status !== 'ready' ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: status === 'error' ? 'var(--err)' : 'var(--tm)' }}>
+                {status === 'error'
+                  ? <><i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />Couldn't load school-wise performance. {onRetry && <button className="pag-btn" onClick={onRetry}>Retry</button>}</>
+                  : <><i className="fa-solid fa-circle-notch fa-spin" style={{ marginRight: 6 }} />Loading school-wise performance…</>}
+              </td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: 'var(--tm)' }}><i className="fa-solid fa-school" style={{ fontSize: 24, opacity: 0.25, display: 'block', margin: '0 auto 10px' }} />{q.trim() ? 'No school matches your search.' : `No 1LINK transactions in ${periodLabel || 'this period'}.`}</td></tr>
                   ) : pageRows.map((r, i) => (
               <tr key={r.schoolId} style={{ cursor: 'pointer' }} onClick={() => onSelectSchool(r)}>
                 <td>{start + i + 1}</td>
                 <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{r.schoolName}</div><div style={{ fontSize: 10.5, color: 'var(--tm)' }}>{r.branch}</div></td>
                 <td>{r.schoolCode}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{r.transactions.toLocaleString()}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr(r.collection)}</td>
-                <td style={{ textAlign: 'right', color: 'var(--err)' }}>{pkr(r.providerPayable)}</td>
-                <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)' }}>{pkr(r.smRevenue)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr2(r.collection)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--err)' }}>{pkr2(r.providerPayable)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)' }}>{pkr2(r.smRevenue)}</td>
               </tr>
             ))}
           </tbody>
-          {rows.length > 0 && (
+          {status === 'ready' && rows.length > 0 && (
             <tfoot>
               <tr className="rpt-totals-row">
                 <td colSpan={3} style={{ padding: '10px 13px' }}>TOTALS ({rows.length} schools)</td>
                 <td style={{ textAlign: 'right', padding: '10px 13px' }}>{rows.reduce((a, r) => a + r.transactions, 0).toLocaleString()}</td>
-                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(rows.reduce((a, r) => a + r.collection, 0))}</td>
-                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(rows.reduce((a, r) => a + r.providerPayable, 0))}</td>
-                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(rows.reduce((a, r) => a + r.smRevenue, 0))}</td>
+                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr2(rows.reduce((a, r) => a + r.collection, 0))}</td>
+                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr2(rows.reduce((a, r) => a + r.providerPayable, 0))}</td>
+                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr2(rows.reduce((a, r) => a + r.smRevenue, 0))}</td>
               </tr>
             </tfoot>
             )}
@@ -431,7 +465,7 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
     <div className="section-card">
       <div className="card-header">
         <div className="card-title"><i className="fa-solid fa-ranking-star" /> School-Wise Performance</div>
-        <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>Poora network · click a row for transaction-level detail</div>
+        <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>Schools with 1LINK transactions · {periodLabel} · click a row for transaction-level detail</div>
       </div>
       {body}
     </div>
@@ -456,17 +490,17 @@ function SchoolTransactionsTable({ rows }) {
           ) : sorted.map((t, i) => (
             <tr key={t.id}>
               <td>{i + 1}</td>
-              <td>{t.date}<div style={{ fontSize: 10, color: 'var(--tm)' }}>{t.time}</div></td>
+              <td>{t.date || '—'}<div style={{ fontSize: 10, color: 'var(--tm)' }}>{t.time}</div></td>
               <td style={{ fontWeight: 700, color: 'var(--brand)' }}>{t.txnId}</td>
               <td style={{ color: 'var(--tm)' }}>{t.oneLinkRef}</td>
               <td style={{ fontWeight: 700 }}>{t.studentName}</td>
-              <td>{t.admissionNo}</td>
+              <td>{t.admissionNo || '—'}</td>
               <td>{t.className}</td>
               <td>{t.feeType}</td>
               <td>{t.invoiceNo}</td>
-              <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)' }}>{pkr(t.amount)}</td>
+              <td style={{ textAlign: 'right', fontWeight: 800, color: t.amount < 0 ? 'var(--err)' : 'var(--success)' }}>{pkr2(t.amount)}</td>
               <td><span className="badge b-blue" style={{ fontSize: 9.5 }}>{t.channel}</span></td>
-              <td style={{ textAlign: 'center' }}><span className="rpt-paid">{t.status}</span></td>
+              <td style={{ textAlign: 'center' }}><span className={t.successful ? 'rpt-paid' : 'rpt-unpaid'}>{t.status}</span></td>
             </tr>
           ))}
         </tbody>

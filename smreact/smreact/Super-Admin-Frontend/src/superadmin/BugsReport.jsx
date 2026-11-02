@@ -33,7 +33,7 @@ const TITLES = {
   },
 };
 
-const PRIORITY_TONE = { high: '#DC2626', medium: '#D97706', low: '#0284C7' };
+const PRIORITY_TONE = { critical: '#991B1B', high: '#DC2626', medium: '#D97706', low: '#0284C7' };
 const toneOf = (p) => PRIORITY_TONE[String(p || '').toLowerCase()] || '#64748B';
 
 function Pill({ text, color, solid }) {
