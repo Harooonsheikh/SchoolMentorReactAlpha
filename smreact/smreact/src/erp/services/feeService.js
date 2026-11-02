@@ -2442,14 +2442,26 @@ export function buildReceiveInstallmentRequest({
   /* Fine par Give Discount — giveDisc me fine ke naam ("Late Fine" / "Fine") se aati hai. */
   const fineGiveKey = Object.keys(giveDisc || {}).find(k => isLateFineRow({ subHead: k }));
   const fineGive = (isReceiving && fineGiveKey) ? Math.max(0, Math.round(Number(giveDisc[fineGiveKey]) || 0)) : 0;
-  if (fineAmt > 0 || fineGive > 0) {
-    const fineRow = (detailRows || []).find(isLateFineRow);
-    if (fineRow && Number(fineRow.id)) {
+  const fineRow = (detailRows || []).find(isLateFineRow);
+  const fineRowExists = !!(fineRow && Number(fineRow.id));
+  /* Late receiving par fine BILL hui magar cashier ne abhi li nahi (Pay Now 0) — phir bhi
+     nayi row (bill = fineBilled, received 0) bhejo, taake baqaya fine ledger me darj rahe aur
+     agle mahine ke challan me "Late Fine" head ban kar aaye. Pehle ye row sirf wasooli /
+     discount par jaati thi, is liye na li gayi fine save hi nahi hoti thi. Maaf karni ho to
+     fine par Give Discount. Row pehle se ho to dobara bill na ho.
+     Purani row (e.g. receiving delete ke baad bachi, normalize ne bill 0 maana) ka bill is
+     receiving ki fine se KAM ho to bill bhi update karo — warna popup 60 dikhata aur save ke
+     baad server ki purani 20 hi rehti. Bill kabhi neeche nahi jaata. */
+  const fineBilledAmt = Math.max(0, Math.round(Number(fineBilled) || 0));
+  const fineBillUp = fineRowExists && fineBilledAmt > Math.round(Number(fineRow.challanAmount) || 0);
+  if (fineAmt > 0 || fineGive > 0 || (!fineRowExists && fineBilledAmt > 0) || fineBillUp) {
+    if (fineRowExists) {
       rows.push({
         id: Number(fineRow.id),
         installmentId: 0,
         receivedAmount: fineAmt,
         discount: fineGive,
+        ...(fineBillUp ? { challanAmount: fineBilledAmt } : {}),
       });
     } else {
       rows.push({

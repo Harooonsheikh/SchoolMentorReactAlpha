@@ -2614,9 +2614,8 @@ function FamilyTreeChallansList({ toast }) {
                           const generated = isGen(f.key, ch.reg);
                           /* Total Payable = asal challan fee. PROJECTED late fine yahan
                              NAHI jodte — wo challan print/receiving par lagti hai. Sirf
-                             bill ho chuki fine (jo `fig.fee` me pehle se hai) note me. */
+                             bill ho chuki fine `fig.fee` me pehle se hai (alag note nahi dikhate). */
                           const chRec = recMap[keyOf(f.key, ch.reg)];
-                          const billedFine = billedFineOf(chRec) > 0 ? challanAccruedFine(chRec, settings) : 0;
                           return (
                             <tr key={ch.reg}>
                               <td className="fee-num">{j + 1}</td>
@@ -2632,7 +2631,6 @@ function FamilyTreeChallansList({ toast }) {
                               <td className="fee-right">{money(fig.fee)}</td>
                               <td className={`fee-right${pay < 0 ? ' fee-neg' : ''}`}>
                                 <b>{money(pay)}</b>
-                                {billedFine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(billedFine)}</span>}
                               </td>
                               <td className="fee-center fee-st-actions">
                                 {generated && settings.installmentChallan === true && (
@@ -3121,6 +3119,8 @@ function FeeChallansList({ toast }) {
   /* Pichle mahino ka baqaya (dues) / advance — { [studentID]: { dues, advance } }.
      Isse current month me challan banane se PEHLE hi total dues dikh jaate hain. */
   const [prevOutMap, setPrevOutMap] = useState({});
+  /* Pichhle challans { [studentID]: [naya-pehle] } — carried late fine (Receiving popup jaisa). */
+  const [priorByStudent, setPriorByStudent] = useState({});
   /* Covering multi-month challans (Sep–Nov ka Oct view) — generated nahi, sirf display. */
   const [coverMap, setCoverMap] = useState({});
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
@@ -3175,6 +3175,7 @@ function FeeChallansList({ toast }) {
          remainder > 0 → Total Dues | remainder < 0 → Advance.
          Isse current month ka challan banane se PEHLE hi dues/advance dikh jaate hain. */
       let prevOut = {};
+      let priorMap = {};
       try {
         let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
         if (toM === 0) { toM = 12; toY = appliedYear - 1; }
@@ -3187,6 +3188,7 @@ function FeeChallansList({ toast }) {
            CARRY kar chuka — row me us ke figures mat dikhao (dues double: 16,000 + advance
            −4,000). Row pichhle baqaye (prevOut: 12,000) par chale. */
         const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
+        priorMap = prior;
         Object.keys(prevOut).forEach(id => {
           prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settings);
         });
@@ -3203,12 +3205,14 @@ function FeeChallansList({ toast }) {
         if (coverDropped) setCoverMap(cover2);
       } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
+      setPriorByStudent(priorMap);
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
       setChallanMap({});
        setCoverMap({});
       setPrevOutMap({});
+      setPriorByStudent({});
     } finally {
       setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
@@ -4457,11 +4461,19 @@ function FeeChallansList({ toast }) {
                             fig.current = 0;
                             fig.payable = fig.current + fig.dues - (Number(fig.advance) || 0);
                           }
+                          /* Pichhle challan ka carried fine (Receiving popup ki Fine line jaisa) —
+                             pichhla baqaya hai, is liye Total Dues + Total Payable me. Bill ho
+                             chuki ho to listCarriedFine 0 deta hai (double nahi). */
+                          const carriedFine = generated
+                            ? listCarriedFine(rec, priorByStudent[String(s.studentID)] || [], settings)
+                            : 0;
+                          if (carriedFine > 0) {
+                            fig.dues = (Number(fig.dues) || 0) + carriedFine;
+                            fig.payable = (Number(fig.payable) || 0) + carriedFine;
+                          }
                           /* Total Payable = asal challan fee. PROJECTED late fine yahan
-                             NAHI jodte — wo challan print/receiving par lagti hai. Sirf
-                             bill ho chuki fine (jo `current` me baqaya ke taur par pehle se
-                             hai) "incl. fine" note me dikhate hain. */
-                          const billedFine = billedFineOf(rec) > 0 ? challanAccruedFine(rec, settings) : 0;
+                             NAHI jodte — wo challan print/receiving par lagti hai. Bill ho
+                             chuki fine `current` me pehle se hai (alag note nahi dikhate). */
                           return (
                             <tr
                               key={s.reg}
@@ -4484,9 +4496,6 @@ function FeeChallansList({ toast }) {
                               <td className="fee-right">{money(fig.current)}</td>
                               <td className={`fee-right${fig.payable < 0 ? ' fee-neg' : ''}`}>
                                 {money(fig.payable)}
-                                {billedFine > 0 && (
-                                  <span className="fee-sub-eq fee-fine">incl. fine {money(billedFine)}</span>
-                                )}
                               </td>
                               <td className="fee-center fee-st-actions">
                                 {generated && settings.installmentChallan === true && (
@@ -9178,6 +9187,8 @@ function FeeReceivingIndividual({ toast }) {
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now = new Date().toISOString();
+      /* Pichhle mahine ki baqaya "Late Fine" par wasooli → purani fine row par (alag call). */
+      const finePlan = carriedFinePayPlan(payload, rec, priorByStudent[String(rec.studentID)] || []);
       const baseRows = (rec.detailRows || []).map(r => {
         /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
         if (feeService.isLateFineRow(r)) return r;
@@ -9226,7 +9237,7 @@ function FeeReceivingIndividual({ toast }) {
       });
       /* Fallback heads (jaise Transport) jo challan me nahi the magar receive hue —
          unki nayi detailRow bana kar wasooli persist karo. */
-      detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
+      detailRows = feeService.withNewHeadRows(detailRows, finePlan ? finePlan.newHeads : payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       const detailRowsForUi = detailRows.map(r => {
@@ -9265,16 +9276,17 @@ function FeeReceivingIndividual({ toast }) {
            wasooli ki Give Discount (na ho to 0), challan discount salamat rehta hai. */
         isReceiving: true,
         detailRows: rec.detailRows || [],
-        perHead: payload.perHead || {},
-        pendByHead: payload.pendByHead || {},
+        perHead: (finePlan ? finePlan.perHead : payload.perHead) || {},
+        pendByHead: (finePlan ? finePlan.pendByHead : payload.pendByHead) || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
         fine: payload.fine || 0,
         /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
         fineBilled: payload.fineBilled || 0,
         walletId: payload.walletId || 0,
-        newHeads: payload.newHeads || [],
+        newHeads: (finePlan ? finePlan.newHeads : payload.newHeads) || [],
       });
-      if (!recvBody.detailRows.length) {
+      const finePayOpts = { paymentMethod: payMethodForApi, receivedDate: payload.date || '', modifiedBy: userID, walletId: payload.walletId || 0 };
+      if (!recvBody.detailRows.length && !finePlan) {
         toast('Enter at least one head amount to receive', 'warning');
         return;
       }
@@ -9282,7 +9294,7 @@ function FeeReceivingIndividual({ toast }) {
          slip/receipt na bane. Pending → optimistic receipt revert + badge. */
       let recvRes = null;
       try {
-        recvRes = await feeService.receiveInstallment(recvBody);
+        recvRes = recvBody.detailRows.length ? await feeService.receiveInstallment(recvBody) : null;
       } catch (e) {
         toast(e.message || 'Could not record payment', 'error');
         setReceipts(prev => (prev || []).map(r => (
@@ -9292,6 +9304,16 @@ function FeeReceivingIndividual({ toast }) {
         setReceiveCtx(null);
         await loadChallans(); loadPending(true);
         return;
+      }
+      /* Main receiving approval par na gayi ho to pichhli baqaya fine purani row par. Sirf
+         fine hi li ho (main me koi row nahi) aur wo approval par jaye to wahi pending maano. */
+      if (finePlan && !pendingFromResp(recvRes, '')) {
+        try {
+          const fp = await payCarriedFine(finePlan, finePayOpts);
+          if (fp && !recvRes) recvRes = { success: false, pendingApproval: true, message: fp.message, approvalID: fp.approvalId, requestNo: fp.requestNo };
+        } catch (e) {
+          toast(`Previous fine could not be recorded: ${e.message || 'error'}`, 'error');
+        }
       }
       receivePending = pendingFromResp(recvRes, 'Receiving sent for approval');
       if (payload.zeroSettle && rec?.id && !receivePending) feeService.markZeroReceive(rec.id);
@@ -9639,6 +9661,8 @@ function FeeReceivingIndividual({ toast }) {
                           const rec = m.generated ? (challanMap[keyOf(c.key, s.reg)] || null) : null;
                           /* Column me sirf wasool shuda fine — na li gayi ho to 0. */
                           const shownFine = receivedFineOf(rec);
+                          /* Pichhle challan ka carried fine — Remaining me (popup ke Total jaisa). */
+                          const carriedFine = listCarriedFine(rec, priorByStudent[String(s.studentID)] || [], settings);
                           /* Is mahine challan nahi magar /pending me purana baqaya → wahi receive ho. */
                           const pendList = !m.generated ? (pendingByStudent[String(s.studentID)] || []) : [];
                           /* Is mahine challan nahi → receivable pichhla challan (pickReceivableChallan):
@@ -9742,7 +9766,7 @@ function FeeReceivingIndividual({ toast }) {
                                   receive na ho, sirf asal fee/baqaya dikhe. Fine sirf
                                   receive karte waqt calculate hoti hai (modal me), aur bill
                                   hone ke baad wo m.remaining me khud shamil ho jaati hai. */}
-                              <td className="fee-right">{money(pv ? pv.remaining : m.remaining)}</td>
+                              <td className="fee-right">{money(pv ? pv.remaining : m.remaining + carriedFine)}</td>
                               <td className="fee-center">
                                 <div className="fee-recv-cell" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
                                 {(() => {
@@ -10158,10 +10182,17 @@ function FamilyTreeReceiving({ toast }) {
      0 / khali figures nahi). Save/delete ke baad refresh par list chhupti nahi. */
   const [loadedKey, setLoadedKey] = useState('');
   const viewKey = `${appliedMonth}|${appliedYear}`;
+  /* Har load ka number — purana (e.g. aaj ka Nov) request der se lautay to naye (Month
+     Closing ka Jan) ka data / loadedKey na mitaye. Warna loadedKey Nov par atak kar list
+     hamesha "Loading challans…" dikhati thi. */
+  const familyLoadSeqRef = useRef(0);
   const loadFamilyChallans = useCallback(async () => {
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    const seq = ++familyLoadSeqRef.current;
+    const stale = () => seq !== familyLoadSeqRef.current;
     try {
       const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
+      if (stale()) return;
       const map = {};
       rows.forEach(ch => {
         /* Sep–Nov challan ke saath Oct ka apna challan bhi ho to Oct wala hi rahe. */
@@ -10180,6 +10211,7 @@ function FamilyTreeReceiving({ toast }) {
         let fromM = toM - 11, fromY = toY;
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        if (stale()) return;
         prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
         /* Pichhle challans (naya-pehle) — is mahine challan na ho to receivable challan chunne ke liye. */
         const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
@@ -10199,9 +10231,12 @@ function FamilyTreeReceiving({ toast }) {
         });
         if (dropped) setChallanByStudent(map2);
       } catch (e) { /* optional */ }
+      if (stale()) return;
       setPrevOutMap(prevOut);
-    } catch { setChallanByStudent({}); setPrevOutMap({}); setPriorByStudent({}); } finally {
-      setLoadedKey(`${appliedMonth}|${appliedYear}`);
+    } catch {
+      if (!stale()) { setChallanByStudent({}); setPrevOutMap({}); setPriorByStudent({}); }
+    } finally {
+      if (!stale()) setLoadedKey(`${appliedMonth}|${appliedYear}`);
     }
   }, [appliedMonth, appliedYear]);
   useEffect(() => { loadFamilyChallans(); }, [loadFamilyChallans]);
@@ -10546,6 +10581,8 @@ function FamilyTreeReceiving({ toast }) {
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now = new Date().toISOString();
+      /* Pichhle mahine ki baqaya "Late Fine" par wasooli → purani fine row par (alag call). */
+      const finePlan = carriedFinePayPlan(payload, rec, priorByStudent[String(rec.studentID)] || []);
       const baseRows = (rec.detailRows || []).map(r => {
         /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
         if (feeService.isLateFineRow(r)) return r;
@@ -10593,7 +10630,7 @@ function FamilyTreeReceiving({ toast }) {
       });
       /* Fallback heads (jaise Transport) jo challan me nahi the magar receive hue —
          unki nayi detailRow bana kar wasooli persist karo. */
-      detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
+      detailRows = feeService.withNewHeadRows(detailRows, finePlan ? finePlan.newHeads : payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       const detailRowsForUi = detailRows.map(r => {
@@ -10632,22 +10669,28 @@ function FamilyTreeReceiving({ toast }) {
            wasooli ki Give Discount (na ho to 0), challan discount salamat rehta hai. */
         isReceiving: true,
         detailRows: rec.detailRows || [],
-        perHead: payload.perHead || {},
-        pendByHead: payload.pendByHead || {},
+        perHead: (finePlan ? finePlan.perHead : payload.perHead) || {},
+        pendByHead: (finePlan ? finePlan.pendByHead : payload.pendByHead) || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
         fine: payload.fine || 0,
         /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
         fineBilled: payload.fineBilled || 0,
         walletId: payload.walletId || 0,
-        newHeads: payload.newHeads || [],
+        newHeads: (finePlan ? finePlan.newHeads : payload.newHeads) || [],
       });
-      if (!recvBody.detailRows.length) {
+      const finePayOpts = { paymentMethod: payMethodForApi, receivedDate: payload.date || '', modifiedBy: userID, walletId: payload.walletId || 0 };
+      if (!recvBody.detailRows.length && !finePlan) {
         toast('Enter at least one head amount to receive', 'warning');
         return;
       }
-      feeService.receiveInstallment(recvBody)
-        .then((recvRes) => {
-          if (payload.zeroSettle && rec?.id && !pendingFromResp(recvRes, '')) feeService.markZeroReceive(rec.id);
+      (recvBody.detailRows.length ? feeService.receiveInstallment(recvBody) : Promise.resolve(null))
+        .then(async (recvRes) => {
+          const pend = pendingFromResp(recvRes, '');
+          if (payload.zeroSettle && rec?.id && !pend) feeService.markZeroReceive(rec.id);
+          /* Pichhle mahine ki baqaya "Late Fine" par wasooli → purani fine row par. */
+          if (finePlan && !pend) {
+            try { await payCarriedFine(finePlan, finePayOpts); } catch (e) { toast(`Previous fine could not be recorded: ${e.message || 'error'}`, 'error'); }
+          }
           loadFamilyChallans(); loadPending(true);
         })
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
@@ -10827,6 +10870,8 @@ function FamilyTreeReceiving({ toast }) {
           advance: fig.advance,
           _ledgerId: rec.id,
           _challan: rec,
+          /* Pichhle challans ka baqaya fine — individual popup jaisa (same Fine line). */
+          _prevFine: carriedFineInto(rec, priorByStudent[String(ch.applicantsID)] || [], settings),
         };
       } catch (e) {
         return ch;
@@ -11081,6 +11126,8 @@ function FamilyTreeReceiving({ toast }) {
                           const shownFine = receivedFineOf(rec);
                           /* Is mahine challan nahi magar /pending me purana baqaya → Receive Pending. */
                           const sidKey = String(ch.applicantsID ?? ch.studentID);
+                          /* Pichhle challan ka carried fine — Remaining me (popup ke Total jaisa). */
+                          const carriedFine = listCarriedFine(rec, priorByStudent[sidKey] || [], settings);
                           const pendList = !rec ? (pendingByStudent[sidKey] || []) : [];
                           /* Receivable pichhla challan — Individual jaisa (pickReceivableChallan): latest
                              carry kare to wahi (Sep–Nov ke baad Oct), warna /pending ka naya. Baqaya us
@@ -11123,8 +11170,8 @@ function FamilyTreeReceiving({ toast }) {
                               <td className={`fee-right${shownFine > 0 ? ' fee-fine' : ''}`}>{shownFine > 0 ? money(shownFine) : '0'}</td>
                               <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
                               {/* Remaining me projected fine NAHI — receive hone par bill hui
-                                  fine m.remaining me khud aa jaati hai. */}
-                              <td className="fee-right">{money(m.remaining)}</td>
+                                  fine m.remaining me khud aa jaati hai. Pichhla carried fine jodo. */}
+                              <td className="fee-right">{money(m.remaining + carriedFine)}</td>
                               <td className="fee-center">
                                 {pc ? (
                                   <span className="fee-recv-notice">
@@ -11402,15 +11449,19 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     /* Over-receiving allowed — owed se zyada lene par Pending MINUS (advance) ho jaata hai.
        `paid` challan ke receivedAmount se bhi liya jata hai (refresh par bhi sahi rahe). */
     const locked = m.onelink || m.status === 'full';
+    /* Individual modal jaisa: head-wise previous ho to wo us head ke owed me shamil
+       (warna "Late Fine" jaisa sirf-previous head Pending 0 dikhata aur SP ko galat jata). */
+    const useHeadPrev = !!m.headWisePrev;
     return m.heads.map(h => {
       const paid = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
+      const owed = (+h.net || 0) + (useHeadPrev ? (+h.prev || 0) : 0);
       /* Input KUL wasooli hai (already + new) — naya paisa = input − paid. */
       const totalRecv = locked ? paid : Math.max(0, +perHeadInput[h.name] || 0);
       /* Delta MINUS bhi ho sakta hai — cashier already-received theek kar raha hai.
          Clamp yahan NAHI, warna correction save par kuch na karti. */
       const recvNow = locked ? 0 : (totalRecv - paid);
-      const pending = h.net - paid - recvNow;   // negative = advance
-      return { ...h, paid, totalRecv, recvNow, pending };
+      const pending = owed - paid - recvNow;   // negative = advance
+      return { ...h, owed, paid, totalRecv, recvNow, pending };
     });
   };
 
@@ -11433,7 +11484,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   /* Previous Pending — individual modal ki tarah ek alag row (apne input ke saath). */
   const prevKey = selModel?.prevName || 'Previous Pending';
-  const prevTotal = Math.max(0, +(selModel?.prev) || 0);
+  /* Head-wise previous ho to wo heads ki rows me hai (Prev Amount) — individual modal ki
+     tarah alag aggregate row NAHI, warna wahi baqaya do dafa (Late Fine 20 + Previous 20). */
+  const prevTotal = selModel?.headWisePrev ? 0 : Math.max(0, +(selModel?.prev) || 0);
   const prevPaid = Math.max(0, +(selModel?.prevPaid) || 0);
   /* Heads ki tarah ye input bhi KUL wasooli rakhta hai. */
   const prevLocked = !selModel || selModel.onelink || selModel.status === 'full';
@@ -11467,9 +11520,13 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
      matlab paid nahi (partial ya bilkul na li gayi fine bhi bill hoti hai). */
   const finePaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   /* Individual modal jaisa hi: ledger me likhi ja chuki fine hi authority hai. */
-  const fineDue = fineBilled > 0 ? fineBilled : feeService.computeFine({
+  const fineCalc = feeService.computeFine({
     dueDate: selChallan?.dueDate, receivingDate: date, settings,
   });
+  /* Pichhle mahino ka baqaya fine (carry) — same "Fine" line me. Bill ho chuki ho to
+     wo pehle hi us me shamil hai. */
+  const prevFine = fineBilled > 0 ? 0 : Math.max(0, Math.round(+selChild?._prevFine || 0));
+  const fineDue = fineBilled > 0 ? fineBilled : fineCalc + prevFine;
   const fineDays = feeService.daysLate(selChallan?.dueDate, date);
   /* Child ki row edit ho sakti hai ya nahi — fine ka input isi par chalta hai,
      is liye ye yahin (fine ke hisaab se pehle) banta hai. */
@@ -11747,8 +11804,13 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td>
                                   <b>Fine</b>
                                   <span className="fee-sub-eq">
-                                    {fineDays} day{fineDays === 1 ? '' : 's'} late
-                                    {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                                    {fineCalc > 0 || prevFine === 0 ? (
+                                      <>
+                                        {fineDays} day{fineDays === 1 ? '' : 's'} late
+                                        {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                                      </>
+                                    ) : null}
+                                    {prevFine > 0 && <>{fineCalc > 0 ? <br /> : null}+ previous fine {money(prevFine)}</>}
                                   </span>
                                 </td>
                                 <td className="fee-right">{money(fineDue)}</td>
@@ -14686,10 +14748,12 @@ function pickReceivableChallan(priorList, pendList) {
 
 /* PICHHLE challans ka baqaya FINE jo is challan me carry hua (Option 2). Jab ye challan
    pichhla baqaya carry karta hai (challanCarriesPrev), to us se pehle wale challan P ka fine:
-     - P par "Late Fine" row ho → us ka baqaya (bill − discount − received) — us me P ka apna
-       carried fine pehle hi shamil hai.
-     - Na ho → P ki Due Date se IS challan ke banne ki tareekh tak ka fine (wahan freeze) +
-       P me carry hua purana fine (recursive).
+     - P par "Late Fine" row ho → 0. Saved fine ka baqaya ledger (byHead) ke raste is challan
+       me pehle hi "Late Fine" head ban kar aata hai — yahan dobara ginne se fine DOHRI hoti
+       thi (popup 5,290 jabke sahi 5,270; lists me Total Dues +20 zyada).
+     - Na ho → sirf tab jab P par waqai BAQAYA tha (advance / poora paid par nahi — warna
+       advance wale student par jhooti "previous fine"): P ki Due Date se IS challan ke banne
+       ki tareekh tak ka fine (wahan freeze) + P me carry hua purana fine (recursive).
    Same "Fine" line me receiving popup isay is challan ke apne late fine ke saath jodta hai. */
 function carriedFineInto(rec, priorList, settings, depth = 0) {
   if (!rec || !settings?.fineEnabled || depth > 24) return 0;
@@ -14700,14 +14764,85 @@ function carriedFineInto(rec, priorList, settings, depth = 0) {
     .filter(p => p && Number(p.id) !== Number(rec.id) && startOf(p) < recStart)
     .sort((a, b) => (startOf(b) - startOf(a)) || (Number(b.id) - Number(a.id)))[0];
   if (!P) return 0;
-  const pFineRows = (P.detailRows || []).filter(feeService.isLateFineRow);
-  if (pFineRows.length) {
-    return Math.max(0, Math.round(pFineRows.reduce((a, r) =>
-      a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0) - (+r.receivedAmount || 0), 0)));
-  }
+  const pRows = P.detailRows || [];
+  if (pRows.some(feeService.isLateFineRow)) return 0;
+  /* challanFigures jaisa: head-wise previous ho to aggregate "Previous Pending" row skip (dohra). */
+  const headPrevOf = (r) => Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+  const hasHeadPrev = pRows.some(r => !isAggregateCarryRow(r) && headPrevOf(r) !== 0);
+  const pOwed = pRows.reduce((a, r) => {
+    if (hasHeadPrev && isAggregateCarryRow(r)) return a;
+    return a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0) + headPrevOf(r) - (+r.receivedAmount || 0);
+  }, 0);
+  if (pOwed <= 0) return 0;
   const issue = String(rec.dateofCreattion || rec.createdAt || '').slice(0, 10) || localTodayISO();
   const own = feeService.computeFine({ dueDate: P.dueDate, receivingDate: issue, settings });
   return Math.max(0, Math.round(own)) + carriedFineInto(P, priorList, settings, depth + 1);
+}
+
+/* Receiving lists (individual + family) ke Remaining ke liye pichhla carried fine —
+   receiving popup jaisa hi. Is challan par fine bill ho chuki ho to wo (carry samet)
+   m.remaining me pehle se hai — 0 lautao, double na ho. */
+function listCarriedFine(rec, priorList, settings) {
+  if (!rec || billedFineOf(rec) > 0) return 0;
+  return carriedFineInto(rec, priorList, settings);
+}
+
+/* Agle mahine "Late Fine" head (ledger se aaya pichhla baqaya fine) par li gayi raqam ka plan.
+   Ye raqam PICHHLE challan ki asal Late Fine row par lagni chahiye — is challan me nayi
+   "Late Fine" row banane se purani row baqaya hi rehti thi aur Remaining kabhi 0 nahi hota
+   tha. Returns { parts:[{ledgerId,rowId,amount}], perHead, pendByHead, newHeads } (jo raqam
+   purani rows par na lag saki wo is challan ke liye perHead/newHeads me reh jaati hai) ya null. */
+function carriedFinePayPlan(payload, rec, priorList) {
+  if (!rec || (rec.detailRows || []).some(feeService.isLateFineRow)) return null;
+  const key = Object.keys(payload?.perHead || {}).find(k => feeService.isLateFineRow({ subHead: k }));
+  let left = key ? Math.round(+payload.perHead[key] || 0) : 0;
+  if (left <= 0) return null;
+  /* priorList naya-pehle hai — purani fine pehle clear karo. */
+  const targets = (priorList || [])
+    .filter(p => p && Number(p.id) !== Number(rec.id))
+    .slice().reverse()
+    .flatMap(p => (p.detailRows || []).filter(feeService.isLateFineRow).map(r => ({
+      ledgerId: Number(p.id),
+      rowId: Number(r.id),
+      pend: Math.round((+r.challanAmount || 0) - Math.max(0, +r.discount || 0) - (+r.receivedAmount || 0)),
+    })))
+    .filter(x => x.rowId && x.pend > 0);
+  const parts = [];
+  targets.forEach(tg => {
+    if (left <= 0) return;
+    const amount = Math.min(left, tg.pend);
+    parts.push({ ledgerId: tg.ledgerId, rowId: tg.rowId, amount });
+    left -= amount;
+  });
+  if (!parts.length) return null;
+  const perHead = { ...payload.perHead };
+  const pendByHead = { ...(payload.pendByHead || {}) };
+  if (left > 0) perHead[key] = left; else { delete perHead[key]; delete pendByHead[key]; }
+  const newHeads = (payload.newHeads || [])
+    .map(h => (feeService.isLateFineRow({ subHead: h.name }) ? (left > 0 ? { ...h, recv: left, amount: left } : null) : h))
+    .filter(Boolean);
+  return { parts, perHead, pendByHead, newHeads };
+}
+
+/* carriedFinePayPlan ke parts — har purane challan ki fine row par alag receive-installment.
+   Approval-gated response aaye to wahi lautao (caller badge / toast dikhaye). */
+async function payCarriedFine(plan, { paymentMethod, receivedDate, modifiedBy, walletId }) {
+  let pending = null;
+  for (const p of plan.parts) {
+    const body = feeService.buildReceiveInstallmentRequest({
+      ledgerId: p.ledgerId,
+      paymentMethod,
+      receivedDate,
+      modifiedBy,
+      isReceiving: true,
+      walletId,
+      detailRows: [{ id: p.rowId, subHead: feeService.LATE_FINE_HEAD }],
+      fine: p.amount,
+    });
+    const res = await feeService.receiveInstallment(body);
+    pending = pending || pendingFromResp(res, '');
+  }
+  return pending;
 }
 
 /* Pichhle challan ka UNBILLED late fine (jo ledger me abhi save nahi hua) — challan par
