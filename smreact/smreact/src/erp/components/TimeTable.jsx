@@ -722,7 +722,7 @@ export default function TimeTable({ toast = () => {} }) {
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Auto-generate the full weekly timetable for all classes'}>
             <button className="tt-btn tt-btn-purple" disabled={isOtherSession}
               style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-              onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setAutoGenOpen(true); }}>
+              onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } setAutoGenOpen(true); }}>
               <i className="fa-solid fa-wand-magic-sparkles"></i> Auto Generate
             </button>
           </Tooltip>
@@ -731,7 +731,7 @@ export default function TimeTable({ toast = () => {} }) {
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Clear the entire ${DAYS[day]} timetable for all classes`}>
             <button className="tt-btn tt-btn-red" disabled={isOtherSession}
               style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-              onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDeletePayload({ type: 'day' }); }}>
+              onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } setDeletePayload({ type: 'day' }); }}>
               <i className="fa-solid fa-trash-can"></i> Delete Day
             </button>
           </Tooltip>
@@ -804,7 +804,7 @@ export default function TimeTable({ toast = () => {} }) {
                       className="btn-tt-update"
                       disabled={isOtherSession}
                       style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                      onClick={(e) => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
+                      onClick={(e) => { e.stopPropagation(); if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
                     >
                       <i className="fa-solid fa-pen"></i> Update
                     </button>
@@ -826,7 +826,7 @@ export default function TimeTable({ toast = () => {} }) {
                       className="btn-tt-del"
                       disabled={isOtherSession}
                       style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                      onClick={(e) => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDeletePayload({ type: 'class', key, cls: cls.name, section: cls.section }); }}
+                      onClick={(e) => { e.stopPropagation(); if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } setDeletePayload({ type: 'class', key, cls: cls.name, section: cls.section }); }}
                     >
                       <i className="fa-solid fa-trash"></i>
                     </button>
@@ -858,7 +858,7 @@ export default function TimeTable({ toast = () => {} }) {
                         className="btn-tt-update"
                         disabled={isOtherSession}
                         style={{ marginTop: 10, ...(isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
-                        onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
+                        onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
                       >
                         <i className="fa-solid fa-plus"></i> Add Periods
                       </button>

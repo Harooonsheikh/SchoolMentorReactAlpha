@@ -4263,7 +4263,7 @@ const handleSectionChange = async (e) => {
                 disabled={isOtherSession || !canClpCreate || !hoAdd}
                 style={(isOtherSession || !canClpCreate || !hoAdd) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                 onClick={() => {
-                  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                  if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
                   if (acp.denyWrite(clpMenu, 'add', toast)) return;
                   onManageUnits(clpSubtab);
                 }}>
@@ -4356,7 +4356,7 @@ function EmptyUnits({ label, onAdd, disabled }) {
 function UnitRow({ unit, index, onReport, onEditLesson, isOtherSession, toast, guard }) {
   const hoEdit = !(guard && guard('lesson', 'edit'));
   const stopWrite = (action, fn) => () => {
-    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+    if (isOtherSession) { toast?.("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
     if (guard?.('lesson', action, toast)) return;
     fn();
   };
@@ -4819,7 +4819,7 @@ function NbUnitRow({ unit, index, onReport, onAddType, onEditType, reloadKey, is
   const hoAdd = !(guard && guard('notebook', 'add'));
   const hoEdit = !(guard && guard('notebook', 'edit'));
   const stopWrite = (action, fn) => () => {
-    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+    if (isOtherSession) { toast?.("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
     if (guard?.('notebook', action, toast)) return;
     fn();
   };

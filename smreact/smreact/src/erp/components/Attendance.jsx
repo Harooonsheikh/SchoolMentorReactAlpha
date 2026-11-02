@@ -4413,7 +4413,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     })();
     // Mutating action se pehle guard: read-only session mein block + toast.
     const blockIfReadOnly = useCallback(() => {
-      if (isOtherSession) { toast("Method not allowed", "error"); return true; }
+      if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return true; }
       return false;
     }, [isOtherSession, toast]);
 

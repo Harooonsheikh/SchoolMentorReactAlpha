@@ -321,7 +321,7 @@ const [hasActiveSession, setHasActiveSession] = useState(null);
 // Update the cascadeFmt function
 const cascadeFmt = async f => {
   if (isOtherSession) {
-    toast('Method not allowed', 'error');
+    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
     return;
   }
   setGlobalFmt(f);
@@ -340,7 +340,7 @@ const cascadeFmt = async f => {
 // Update the cascadeLine function
 const cascadeLine = async l => {
   if (isOtherSession) {
-    toast('Method not allowed', 'error');
+    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
     return;
   }
   setGlobalLine(l);
@@ -359,7 +359,7 @@ const cascadeLine = async l => {
 // Update the setClassFmt function
 const setClassFmt = async (ci, f) => {
   if (isOtherSession) {
-    toast('Method not allowed', 'error');
+    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
     return;
   }
   const cls = examClasses[ci];
@@ -375,7 +375,7 @@ const setClassFmt = async (ci, f) => {
 // Update the setClassLine function
 const setClassLine = async (ci, l) => {
   if (isOtherSession) {
-    toast('Method not allowed', 'error');
+    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
     return;
   }
   const cls = examClasses[ci];
@@ -391,7 +391,7 @@ const setClassLine = async (ci, l) => {
 // Update the setSubjFmt function
 const setSubjFmt = (ci, si, f) => {
   if (isOtherSession) {
-    toast('Method not allowed', 'error');
+    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
     return;
   }
   const cls = examClasses[ci];
@@ -405,7 +405,7 @@ const setSubjFmt = (ci, si, f) => {
 // Update the setSubjLine function
 const setSubjLine = (ci, si, l) => {
   if (isOtherSession) {
-    toast('Method not allowed', 'error');
+    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
     return;
   }
   const cls = examClasses[ci];
@@ -1287,7 +1287,7 @@ const setSubjLine = (ci, si, l) => {
     className="pg-action-icon edit"
     onClick={() => {
       if (isOtherSession) {
-        toast('Method not allowed', 'error');
+        toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
         return;
       }
       onEdit && onEdit(p);
@@ -1311,7 +1311,7 @@ const setSubjLine = (ci, si, l) => {
                   <Tooltip text="Delete this paper">
                     <button className="pg-action-icon delete"  onClick={() => {
         if (isOtherSession) {
-          toast('Method not allowed', 'error');
+          toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error', 'error');
           return;
         }
         onDelete && onDelete(p, pi);
@@ -2002,7 +2002,7 @@ const setSubjLine = (ci, si, l) => {
       });
     };
   const addTab = (section, typeKey) => {
-    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
     /* Block adding another question block once the section already holds its
        full marks — the save-time check only stops an over-limit save, so
        without this the user could keep piling on empty blocks. */
@@ -2071,7 +2071,7 @@ const setSubjLine = (ci, si, l) => {
 
     // Saved question block ko backend se delete (/api/deleteqpsubmission/{id}) + local se remove.
     const deleteTab = async (section, typeKey, entryId) => {
-      if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+      if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
       const block = blocksState[section]?.[typeKey];
       const tab = block?.tabs.find(t => t.entryId === entryId);
       if (!tab) return;
@@ -2098,7 +2098,7 @@ const setSubjLine = (ci, si, l) => {
     };
 
   const saveTab = async (section, typeKey, entryId) => {
-    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
     /* Ignore repeat clicks while this block's save is already in flight. */
     if (savingRef.current.has(entryId)) return;
     const block = blocksState[section]?.[typeKey];
@@ -2361,7 +2361,7 @@ const setSubjLine = (ci, si, l) => {
     // Double-click guard: pehli fetch complete hone se pehle dobara insert na ho.
     if (fetchingRef.current) return;
     if (isOtherSession) {
-            toast('Method not allowed', 'error');
+            toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
             return;
         }
     if (!canFetch) {
@@ -2390,7 +2390,7 @@ const setSubjLine = (ci, si, l) => {
 
     const onGenerate = () => {
               if (isOtherSession) {
-            toast('Method not allowed', 'error');
+            toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
             return;
         }
       if (!baseOk) {
@@ -4918,7 +4918,7 @@ const setSubjLine = (ci, si, l) => {
                             className="pg-del-btn-confirm"
                             onClick={() => {
                                 if (isOtherSession) {
-                                    toast('Method not allowed', 'error');
+                                    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
                                     return;
                                 }
                                 onConfirm();

@@ -716,7 +716,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                   <Tooltip text={!canCoaCreate ? 'You do not have permission to add account heads' : `Add a new head under ${t.name}`}>
                     <button
                       className="acc-addheads"
-                      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openAdd(t.key); }}
+                      onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } openAdd(t.key); }}
                       disabled={isOtherSession || !canCoaCreate}
                       title={!canCoaCreate ? 'You do not have permission to add account heads' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
                       style={(isOtherSession || !canCoaCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -776,7 +776,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                       <Tooltip text="Withdraw this request">
                                         <button
                                           className="fee-iconbtn fee-withdraw-btn"
-                                          onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } requestWithdrawHead(h); }}
+                                          onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } requestWithdrawHead(h); }}
                                           disabled={isOtherSession}
                                           style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                                         >
@@ -790,7 +790,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                   <Tooltip text={`Edit ${h.name}`}>
                                     <button
                                       className="fee-iconbtn"
-                                      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openEdit(t.key, h); }}
+                                      onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } openEdit(t.key, h); }}
                                       disabled={isOtherSession}
                                       title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
                                       style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -803,7 +803,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                   <Tooltip text={`Delete ${h.name}`}>
                                     <button
                                       className="fee-iconbtn danger"
-                                      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } requestDelete(t.key, h); }}
+                                      onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } requestDelete(t.key, h); }}
                                       disabled={isOtherSession}
                                       title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
                                       style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -1434,7 +1434,7 @@ function Transactions({ toast, isOtherSession }) {
             <Tooltip text={!canTxnCreate ? 'You do not have permission to add transactions' : `Record a new ${segLabel.toLowerCase()} entry`}>
               <button
                 className="fee-btn fee-btn-primary acc-newentry-btn"
-                onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openNew(); }}
+                onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } openNew(); }}
                 disabled={isOtherSession || !canTxnCreate}
                 title={!canTxnCreate ? 'You do not have permission to add transactions' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
                 style={(isOtherSession || !canTxnCreate)
@@ -1635,7 +1635,7 @@ function Transactions({ toast, isOtherSession }) {
                           ) : entryPending[String(x.recordId)] ? (
                             <PendingBadge
                               pend={entryPending[String(x.recordId)]}
-                              onWithdraw={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } confirmWithdraw({ pend: entryPending[String(x.recordId)], label: `${x.head || 'Entry'} — ${fmtMoney(x.amount)}`, setConfirm, toast, onDone: reloadEntryPending }); }}
+                              onWithdraw={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } confirmWithdraw({ pend: entryPending[String(x.recordId)], label: `${x.head || 'Entry'} — ${fmtMoney(x.amount)}`, setConfirm, toast, onDone: reloadEntryPending }); }}
                               disabled={isOtherSession}
                             />
                           ) : (
@@ -1647,7 +1647,7 @@ function Transactions({ toast, isOtherSession }) {
                               onClick={() => {
                                 if (isSalaryLocked) { toast('This entry can only be deleted from the HR module’s Financial tab', 'error'); return; }
                                 if (isFeeLocked) { toast('This entry can only be deleted from the Fee module', 'error'); return; }
-                                if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; }
                                 requestDelete(x);
                               }}
                               /* isSalaryLocked par `disabled` NAHI lagate — warna disabled button
@@ -1669,7 +1669,7 @@ function Transactions({ toast, isOtherSession }) {
                               onClick={() => {
                                 if (isSalaryLocked) { toast('This entry can only be edited from the HR module’s Financial tab', 'error'); return; }
                                 if (isFeeLocked) { toast('This entry can only be edited from the Fee module', 'error'); return; }
-                                if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; }
                                 openEdit(x);
                               }}
                               /* isSalaryLocked/isFeeLocked par `disabled` NAHI lagate — warna disabled button
@@ -3551,7 +3551,7 @@ function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReas
                   ) : walletPending[String(a.id)] ? (
                     <PendingBadge
                       pend={walletPending[String(a.id)]}
-                      onWithdraw={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } confirmWithdraw({ pend: walletPending[String(a.id)], label: a.name, setConfirm, toast, onDone: reloadWalletPending }); }}
+                      onWithdraw={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } confirmWithdraw({ pend: walletPending[String(a.id)], label: a.name, setConfirm, toast, onDone: reloadWalletPending }); }}
                       disabled={isOtherSession}
                     />
                   ) : (
@@ -4776,7 +4776,7 @@ function AccountBooks({ toast, isOtherSession }) {
                 <Tooltip text={!canBkCreate ? 'You do not have permission to add account books' : 'Open a new running account with a party'}>
                   <button
                     className="fee-btn fee-btn-primary"
-                    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setEditBook({ mode: 'add' }); }}
+                    onClick={() => { if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return; } setEditBook({ mode: 'add' }); }}
                     disabled={isOtherSession || !canBkCreate}
                     title={!canBkCreate ? 'You do not have permission to add account books' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
                     style={(isOtherSession || !canBkCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}

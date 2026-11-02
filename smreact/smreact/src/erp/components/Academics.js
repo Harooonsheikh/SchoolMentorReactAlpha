@@ -2251,7 +2251,7 @@ function ListView({ events, onReport, onEdit, onDelete, isOtherSession, toast })
               <Tooltip text={!hoEdit ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : `Edit ${ev.name}`)}>
                 <button
                   onClick={() => {
-                    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+                    if (isOtherSession) { toast?.("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
                     if (acp.denyWrite('activity', 'edit', toast)) return;
                     onEdit(ev);
                   }}
@@ -2268,7 +2268,7 @@ function ListView({ events, onReport, onEdit, onDelete, isOtherSession, toast })
               <Tooltip text={!hoDelete ? ACADEMICS_VIEW_ONLY_MSG : (isOtherSession ? 'Editing is only allowed for the current session' : `Delete ${ev.name}`)}>
                 <button
                   onClick={() => {
-                    if (isOtherSession) { toast?.('Method not allowed', 'error'); return; }
+                    if (isOtherSession) { toast?.("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
                     if (acp.denyWrite('activity', 'delete', toast)) return;
                     onDelete?.(ev);
                   }}
