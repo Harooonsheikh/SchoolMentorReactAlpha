@@ -20,7 +20,8 @@ import { useModules } from '../context/ModuleContext';
 import { rankedMatches } from '../utils/studentSearch';
 import { buildStandardReportHtml, StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel, reportAcademicYear } from '../reports/reportKit';
 
-const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
+const _moneyFmt = new Intl.NumberFormat('en-PK');
+const money = (n) => `Rs. ${_moneyFmt.format(Number(n) || 0)}`;
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 
@@ -1916,14 +1917,9 @@ function FamilyTreeChallansList({ toast }) {
          > 0 → Total Dues | < 0 → Advance. */
       let prevOut = {};
       try {
-        let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
-        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
-        let fromM = toM - 11, fromY = toY;                 // 12-month window
-        while (fromM <= 0) { fromM += 12; fromY -= 1; }
-        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        /* Running-ledger — stale stored Previous Pending se bachne ke liye (jaise
-           September ki receiving October ke baad hui to October ka stored 13,850 galat). */
-        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
+        /* LEAN: 12-mahine poora-branch ledger fetch ke bajaye server se seedha prev-dues
+           (usp_AHM_Branch_Prev_Dues). Stale stored Previous Pending se bachav wahi rehta hai. */
+        prevOut = await feeService.getPrevDues(mIdx + 1, appliedYear);
       } catch (e) { /* optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
@@ -3383,14 +3379,8 @@ function FeeChallansList({ toast }) {
       /* Payable ke liye live previous (byHead) — list jaisa. */
       let prevOut = {};
       try {
-        let toM = mIdx;
-        let toY = Number(exportYear);
-        if (toM === 0) { toM = 12; toY -= 1; }
-        let fromM = toM - 11;
-        let fromY = toY;
-        while (fromM <= 0) { fromM += 12; fromY -= 1; }
-        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, Number(exportYear));
+        /* LEAN: server se seedha prev-dues (12-mahine ledger fetch nahi). */
+        prevOut = await feeService.getPrevDues(mIdx + 1, Number(exportYear));
       } catch (e) { /* optional — bina prev ke bhi export chalega */ }
 
       const rows = [];
@@ -4419,7 +4409,7 @@ function FeeChallansList({ toast }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {students.length === 0 ? (
+                                                {!isOpen ? null : students.length === 0 ? (
                           <tr><td colSpan="9" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map((s, j) => {
                           const generated = isGenerated(c.key, s.reg);
@@ -9754,7 +9744,7 @@ function FeeReceivingIndividual({ toast }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {students.length === 0 ? (
+                                             {!isOpen ? null : students.length === 0 ? (
                           <tr><td colSpan="11" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map(s => {
                           const m = modelFor(c, s);
