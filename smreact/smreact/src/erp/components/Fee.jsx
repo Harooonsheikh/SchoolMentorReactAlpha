@@ -2090,12 +2090,34 @@ function FamilyTreeChallansList({ toast }) {
       heads: familyHeads,
     });
   };
-  const handleBulkGenerated = (famKey, regs) => {
-    setGenSet(prev => {
+  const handleBulkGenerated = (famKey, regs, result) => {
+    const markGenerated = () => setGenSet(prev => {
       const n = new Set(prev);
       regs.forEach(reg => n.add(keyOf(famKey, reg)));
       return n;
     });
+    /* Individual jaisa: sirf naye challan wale bachchon ka challan lao aur row (fig/id/rec)
+       me daalo — pehle generate ke baad data aata hi nahi tha (row purane defaults par).
+       "Generated" bhi tabhi mark karo jab data aa jaye. Bada batch / doosra mahina / fetch
+       fail → poora loadLedgers. */
+    const createdRows = (Array.isArray(result?.results) ? result.results : []).filter(r => r.created && r.studentID != null);
+    const fastPath = Number(result?.monthIdx) === monthIdx && createdRows.length > 0 && createdRows.length <= 5;
+    if (!fastPath) {
+      markGenerated();
+      loadLedgers();
+      return;
+    }
+    Promise.all(createdRows.map(r => feeService.getStudentChallans(r.studentID, monthIdx + 1, appliedYear)
+      .then(rows => ({ key: keyOf(famKey, r.reg), rec: pickMonthChallan(rows, monthIdx + 1, Number(appliedYear)) }))
+      .catch(() => ({ key: keyOf(famKey, r.reg), rec: null }))))
+      .then(list => {
+        const got = list.filter(x => x.rec);
+        setFigMap(prev => { const n = { ...prev }; got.forEach(({ key, rec }) => { n[key] = familyChildFigures(rec); }); return n; });
+        setRecMap(prev => { const n = { ...prev }; got.forEach(({ key, rec }) => { n[key] = rec; }); return n; });
+        setIdMap(prev => { const n = { ...prev }; got.forEach(({ key, rec }) => { if (rec.id != null) n[key] = rec.id; }); return n; });
+        markGenerated();
+        if (got.length < list.length) loadLedgers();
+      });
   };
   const openIndivGen = (f, ch) => {
     const lock = challanMonthLock(monthIdx, appliedYear, settings);
@@ -3518,13 +3540,34 @@ function FeeChallansList({ toast }) {
          asli id/requestNo le aao taake Withdraw chal sake. */
       loadPendingDiscountApprovals();
     }
-    setGenSet(prev => {
+    const markGenerated = (list) => setGenSet(prev => {
       const n = new Set(prev);
-      regs.forEach(reg => { if (!pendingRegs.has(String(reg))) n.add(keyOf(classKey, reg)); });
+      list.forEach(reg => { if (!pendingRegs.has(String(reg))) n.add(keyOf(classKey, reg)); });
       return n;
     });
-    /* Re-pull from the API so the new challans carry their real ids (needed for delete). */
-    loadChallans();
+    /* Chand students (single generate) → sirf unka naya challan lao aur row me daalo. Poori
+       branch ka mahina + 12 mahine ka ledger dobara mangwane me row 3-4 sec 0 dikhati thi.
+       Row ko "generated" bhi tabhi karo jab data aa jaye (0 na chamke). Bada batch / doosra
+       mahina / fetch fail → purana poora reload (new challans ki real ids delete ke liye). */
+    const createdRows = (Array.isArray(result?.results) ? result.results : []).filter(r => r.created && r.studentID != null);
+    const fastPath = Number(result?.monthIdx) === monthIdx && createdRows.length > 0 && createdRows.length <= 5;
+    if (!fastPath) {
+      markGenerated(regs);
+      loadChallans();
+      return;
+    }
+    Promise.all(createdRows.map(r => feeService.getStudentChallans(r.studentID, monthIdx + 1, appliedYear)
+      .then(rows => ({ reg: r.reg, rec: pickMonthChallan(rows, monthIdx + 1, Number(appliedYear)) }))
+      .catch(() => ({ reg: r.reg, rec: null }))))
+      .then(list => {
+        setChallanMap(prev => {
+          const next = { ...prev };
+          list.forEach(({ reg, rec }) => { if (rec) next[keyOf(classKey, reg)] = feeService.withPersistedGiveDisc(rec); });
+          return next;
+        });
+        markGenerated(regs);
+        if (list.some(x => !x.rec)) loadChallans();
+      });
   };
 
   /* ACTION column ke "Withdraw this challan request" icon se — wahi /api/Approvals/withdraw. */
@@ -6091,6 +6134,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      values detailRows.discount me jati hain aur API isReceiving:true bhejti hai. */
   const [giveDiscInput, setGiveDiscInput] = useState({});
   const [showGiveDisc, setShowGiveDisc] = useState(false);
+  /* Pay Now ek click ke baad save + slip tayar hone tak band — dohra click / dohri receiving na ho. */
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setSaving(false); }, [cfg]);
 
   useEffect(() => {
     if (!cfg) return;
@@ -6606,6 +6652,7 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
     /* Multiple Receiving OFF + is challan par pehle se receipt maujood → doosri
        receiving round bilkul mana. Inputs/button already disabled hain; ye guard
        last line of defence hai. */
+    if (saving) return;
     if (multipleReceivingBlocked) {
       toast('Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded', 'error');
       return;
@@ -6713,7 +6760,8 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
     };
     if (cfg.kind === 'child') payload.famKey = cfg.famKey;
     else payload.classKey = classMeta.key;
-    onSave(payload);
+    setSaving(true);
+    Promise.resolve(onSave(payload)).finally(() => setSaving(false));
   };
 
   return createPortal(
@@ -7243,10 +7291,12 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
               <button
                 className="fee-btn fee-btn-primary"
                 onClick={handleReceive}
-                disabled={multipleReceivingBlocked}
-                style={multipleReceivingBlocked ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+                disabled={multipleReceivingBlocked || saving}
+                style={(multipleReceivingBlocked || saving) ? { opacity: .55, cursor: 'not-allowed' } : undefined}
               >
-                {receivingNow < 0
+                {saving
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>
+                  : receivingNow < 0
                   ? <><i className="fa-solid fa-pen"></i> Update Received</>
                   : <><i className="fa-solid fa-check"></i> Pay Now (Installment {installmentCount + 1})</>}
               </button>
@@ -9184,6 +9234,10 @@ function FeeReceivingIndividual({ toast }) {
        Std/Discount/Received aur "Remaining Amount" nikaalti hai. Warna fallback
        chalta hai (std = recv = jo pay kiya) aur remaining hamesha 0 aati hai. */
     let slipChallan = rec || null;
+    /* Save ke baad server se taaza (isi challan ka) record + pichhle mahine ki li gayi fine —
+       slip receiving modal jaisi sahi bane. */
+    let freshRec = null;
+    let carriedFinePaid = 0;
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now = new Date().toISOString();
@@ -9311,6 +9365,7 @@ function FeeReceivingIndividual({ toast }) {
         try {
           const fp = await payCarriedFine(finePlan, finePayOpts);
           if (fp && !recvRes) recvRes = { success: false, pendingApproval: true, message: fp.message, approvalID: fp.approvalId, requestNo: fp.requestNo };
+          if (!fp) carriedFinePaid = finePlan.parts.reduce((a, p) => a + p.amount, 0);
         } catch (e) {
           toast(`Previous fine could not be recorded: ${e.message || 'error'}`, 'error');
         }
@@ -9347,6 +9402,19 @@ function FeeReceivingIndividual({ toast }) {
          (API discount ignore kare to bhi local map sahi rahe). */
       /* Pending (dusre mahine ka) challan is mahine ke map me mat daalo. */
       if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: slipChallan }));
+      /* Slip ko SERVER ka saved record chahiye (receiving modal jaisa sahi) — sirf isi challan
+         ko taaza lao (~0.5s), wahi data jis se 3-4 sec baad khulne wali slip sahi banti thi.
+         List me bhi yahi rakho taake turant dobara kholne par bhi sahi aaye. Fail → purana. */
+      try {
+        const rows = await feeService.getStudentChallans(rec.studentID,
+          Number(rec.startMonth || rec.month), Number(rec.startYear || rec.year));
+        const hit = (rows || []).find(r => Number(r.id) === Number(rec.id));
+        if (hit) {
+          freshRec = feeService.withPersistedGiveDisc(hit);
+          slipChallan = freshRec;
+          if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: freshRec }));
+        }
+      } catch (e) { /* purana (optimistic) slip */ }
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -9360,7 +9428,19 @@ function FeeReceivingIndividual({ toast }) {
        (minus = advance). Slip "update" (jama) nahi hoti. */
     let pendingSlipRows = null;
     let pendingSlipTotal = null;
-    if (rec) {
+    /* Server ka taaza record mila → wahi function jo baad me khulne wali (sahi) slip chalati
+       hai: is (aakhri) receiving ki installments se Std / Received / Remaining. Fine bhi isi
+       me (apni installment row), is liye payment.fine 0. */
+    const freshRows = freshRec ? latestReceivingSlipRows(freshRec) : null;
+    if (freshRows) {
+      pendingSlipRows = [...freshRows];
+      /* Pichhle mahine ki fine purane challan par gayi — popup ki "Late Fine (Previous)" line
+         jaisi slip me bhi (Previous Dues = Received, Remaining 0). */
+      if (carriedFinePaid > 0) {
+        pendingSlipRows.push({ name: feeService.LATE_FINE_HEAD, std: 0, disc: 0, recv: carriedFinePaid, prev: carriedFinePaid, _mgr: 0, _first: true });
+      }
+      pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0);
+    } else if (rec) {
       /* SIRF is receiving ki — Std = is se pehle ka baqaya (saari pichhli wasooli minus). */
       pendingSlipRows = installmentSlipRows(rec, receiveCtx.payments || [], {
           id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
@@ -9376,7 +9456,7 @@ function FeeReceivingIndividual({ toast }) {
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: pendingSlipTotal != null ? pendingSlipTotal : payload.amount,
-          perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+          perHead: payload.perHead, fine: freshRows ? 0 : (payload.fine || 0), prevByHead: payload.prevByHead,
           giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
         challan: slipChallan,
@@ -10578,6 +10658,8 @@ function FamilyTreeReceiving({ toast }) {
     /* Slip ko is receiving ke BAAD ka challan chahiye — warna wo fallback par
        chali jaati hai (std = recv) aur "Remaining Amount" kabhi nahi dikhti. */
     let slipChallan = rec || null;
+    /* Receive + taaza record ka promise — slip isi ke baad khulti hai. */
+    let famSaveDone = null;
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now = new Date().toISOString();
@@ -10683,17 +10765,32 @@ function FamilyTreeReceiving({ toast }) {
         toast('Enter at least one head amount to receive', 'warning');
         return;
       }
-      (recvBody.detailRows.length ? feeService.receiveInstallment(recvBody) : Promise.resolve(null))
+      famSaveDone = (recvBody.detailRows.length ? feeService.receiveInstallment(recvBody) : Promise.resolve(null))
         .then(async (recvRes) => {
           const pend = pendingFromResp(recvRes, '');
           if (payload.zeroSettle && rec?.id && !pend) feeService.markZeroReceive(rec.id);
           /* Pichhle mahine ki baqaya "Late Fine" par wasooli → purani fine row par. */
+          let carriedPaid = 0;
           if (finePlan && !pend) {
-            try { await payCarriedFine(finePlan, finePayOpts); } catch (e) { toast(`Previous fine could not be recorded: ${e.message || 'error'}`, 'error'); }
+            try {
+              const fp = await payCarriedFine(finePlan, finePayOpts);
+              if (!fp) carriedPaid = finePlan.parts.reduce((a, p) => a + p.amount, 0);
+            } catch (e) { toast(`Previous fine could not be recorded: ${e.message || 'error'}`, 'error'); }
           }
           loadFamilyChallans(); loadPending(true);
+          /* Slip ke liye server ka taaza record — sirf isi challan ka (~0.5s). */
+          let fresh = null;
+          if (!pend) {
+            try {
+              const rows = await feeService.getStudentChallans(rec.studentID,
+                Number(rec.startMonth || rec.month), Number(rec.startYear || rec.year));
+              const hit = (rows || []).find(r => Number(r.id) === Number(rec.id));
+              if (hit) fresh = feeService.withPersistedGiveDisc(hit);
+            } catch (e) { /* purana (optimistic) slip */ }
+          }
+          return { ok: true, fresh, carriedPaid };
         })
-        .catch(e => toast(e.message || 'Could not record payment', 'error'));
+        .catch(e => { toast(e.message || 'Could not record payment', 'error'); return { ok: false }; });
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
         detailRows: detailRowsForUi,
@@ -10738,11 +10835,29 @@ function FamilyTreeReceiving({ toast }) {
 
     /* Slip SIRF is receiving ki (Individual jaisa): Std = is payment se pehle ka baqaya,
        Received = abhi liya, Remaining = baad ka (minus = advance). */
-    const famSlipRows = rec ? installmentSlipRows(rec, receiveCtx?.payments || [], {
-      id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
-    }) : null;
-    const famSlipTotal = famSlipRows ? famSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0) : null;
-    if (f && ch) {
+    const receiveCtxSnap = receiveCtx;
+    const openFamSlip = ({ fresh = null, carriedPaid = 0 } = {}) => {
+      if (!(f && ch)) return;
+      /* Server ka taaza record mila → wahi latestReceivingSlipRows jo baad me khulne wali
+         (sahi) slip chalati hai; pichhle mahine ki fine popup jaisi alag line. Warna purana. */
+      let famSlipRows = fresh ? latestReceivingSlipRows(fresh) : null;
+      let famSlipTotal = null;
+      if (famSlipRows) {
+        famSlipRows = [...famSlipRows];
+        if (carriedPaid > 0) {
+          famSlipRows.push({ name: feeService.LATE_FINE_HEAD, std: 0, disc: 0, recv: carriedPaid, prev: carriedPaid, _mgr: 0, _first: true });
+        }
+        famSlipTotal = famSlipRows.reduce((a, r) => a + (r.recv || 0), 0);
+      } else {
+        famSlipRows = rec ? installmentSlipRows(rec, receiveCtxSnap?.payments || [], {
+          id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
+        }) : null;
+        famSlipTotal = famSlipRows ? famSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0) : null;
+      }
+      if (fresh && !pendingMode) {
+        ledgerRecRef.current[`${payload.famKey}|${payload.reg}`] = fresh;
+        if (ch.applicantsID != null) setChallanByStudent(prev => ({ ...prev, [String(ch.applicantsID)]: fresh }));
+      }
       setSlipCtx({
         classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
         period,
@@ -10750,15 +10865,18 @@ function FamilyTreeReceiving({ toast }) {
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: famSlipTotal != null ? famSlipTotal : payload.amount,
-          perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+          perHead: payload.perHead, fine: fresh ? 0 : (payload.fine || 0), prevByHead: payload.prevByHead,
           giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
-        challan: slipChallan,
+        challan: fresh || slipChallan,
         prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
       });
-    }
+    };
+    /* Receive mukammal + taaza record aane ke baad slip; fail par slip nahi (error toast). */
+    if (famSaveDone) famSaveDone.then(res => { if (res && res.ok) openFamSlip(res); });
+    else openFamSlip();
   };
 
   /* One child's ledger id for the applied month
@@ -12302,7 +12420,7 @@ const FEE_HIST_YEARS = ['2025', '2026', '2027'];
 const OLD_ERP_OCTOBER_BRANCHES = new Set([
   210668, 220965, 200554, 200543, 220944, 220896, 220946, 221003,
   210588, 210832, 220899, 210807, 210824, 210683, 220955, 200574,
-  220960, 220908, 210745, 221016, 140227,
+  220960, 220908, 210745, 221016, 140227,200422, 220974
 ]);
 function oldErpLastForBranch(branchId = Number(sessionStorage.getItem('branchID')) || 0) {
   const monthIdx = OLD_ERP_OCTOBER_BRANCHES.has(Number(branchId))
