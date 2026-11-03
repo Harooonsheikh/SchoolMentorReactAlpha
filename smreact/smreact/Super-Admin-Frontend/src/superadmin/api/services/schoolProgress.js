@@ -163,9 +163,12 @@ export async function listSchoolProgress() {
      jama hone ke baad bhi ERP / Launch Setup ka farq qaim rehta hai
      (Dashboard ke Inactive / Active Login cards isi par bant'te hain). */
   launch.forEach((r) => { r.setupType = 'launch'; });
-  inactiveNew.forEach((r) => { r.setupType = 'launch'; });
   erp.forEach((r) => { r.setupType = 'erp'; });
-  inactiveErp.forEach((r) => { r.setupType = 'erp'; });
+  /* isActive=false par backend launchSetup ko nazar-andaz karta hai — dono
+     calls wahi rows deti hain (category "InActive Schools"). Is liye inactive
+     row ka ERP/Launch group yahan se maloom NAHI; pehle sab ko 'launch' maan
+     liya jata tha. Asal group branch directory (launchSetup) me hai. */
+  [...inactiveNew, ...inactiveErp].forEach((r) => { r.setupType = null; });
   /* Inactive dono taraf se aa sakti hain; id par de-dupe. */
   const seen = new Set();
   const inactive = [...inactiveNew, ...inactiveErp].filter((r) => {

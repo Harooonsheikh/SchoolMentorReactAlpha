@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import ExcelJS from 'exceljs';
 import Tooltip from '../components/Tooltip';
 import { activeSessionName, buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
@@ -302,6 +303,44 @@ export const REPORT_KIT_CSS = `
 }
 .rp-btn.go:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(30,58,138,.45); }
 .rp-btn.go:active { transform:scale(.97); }
+
+/* ── Scrollable variant (<StandardReportPicker scrollable>) ──
+   For pickers whose filters can be taller than the screen (e.g. HR's
+   Employee Directory column picker). The dialog is capped to the viewport
+   and laid out as a flex column: header + footer stay put, only .rp-body
+   scrolls. min-height:0 lets the body shrink below its content height
+   inside the flex column (without it the dialog just grows past 90vh). */
+.report-picker-overlay.report-picker-overlay--scroll { overflow:hidden; overscroll-behavior:contain; }
+.report-picker.report-picker--scroll {
+  display:flex; flex-direction:column;
+  max-height:90vh;
+  max-height:min(90vh, calc(100vh - 40px));
+  max-height:min(90dvh, calc(100dvh - 40px));
+  min-height:0;
+  overflow:hidden;
+}
+.report-picker--scroll .rp-header,
+.report-picker--scroll .rp-footer { flex-shrink:0; }
+.report-picker--scroll .rp-body {
+  flex:1 1 auto; min-height:0;
+  overflow-y:auto; overflow-x:hidden;
+  overscroll-behavior:contain;
+  scrollbar-width:thin; scrollbar-color:rgba(30,58,138,.28) transparent;
+}
+.report-picker--scroll .rp-body::-webkit-scrollbar { width:8px; }
+.report-picker--scroll .rp-body::-webkit-scrollbar-track { background:transparent; }
+.report-picker--scroll .rp-body::-webkit-scrollbar-thumb {
+  background:rgba(30,58,138,.22); border-radius:8px;
+  border:2px solid transparent; background-clip:padding-box;
+}
+.report-picker--scroll .rp-body::-webkit-scrollbar-thumb:hover { background-color:rgba(30,58,138,.38); }
+@media (max-width:480px), (max-height:560px) {
+  .report-picker-overlay.report-picker-overlay--scroll { padding:10px; }
+  .report-picker.report-picker--scroll {
+    max-height:calc(100vh - 20px);
+    max-height:calc(100dvh - 20px);
+  }
+}
 `;
 
 /* Every format a report might offer — a module passes a subset of
@@ -648,7 +687,7 @@ export async function downloadReportExcel({ title, subtitle, metaLine, columns, 
    format-pill row renders exactly that many pills instead of a
    hardcoded pair.
    ═══════════════════════════════════════════════════════════════════ */
-export function StandardReportPicker({ open, title = 'Download Report', subtitle, formats = ['pdf'], defaultFormat, defaultStyle, onGenerate, onClose, filters, generateDisabled }) {
+export function StandardReportPicker({ open, title = 'Download Report', subtitle, formats = ['pdf'], defaultFormat, defaultStyle, onGenerate, onClose, filters, generateDisabled, scrollable = false }) {
   const [style, setStyle] = useState(defaultStyle || 'color');
   const [format, setFormat] = useState(defaultFormat || formats[0]);
 
@@ -683,10 +722,10 @@ export function StandardReportPicker({ open, title = 'Download Report', subtitle
 
   if (!open) return null;
 
-  return (
-    <div className="report-picker-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }} role="dialog" aria-modal="true" aria-labelledby="rp-title">
+  const dialog = (
+    <div className={`report-picker-overlay open${scrollable ? ' report-picker-overlay--scroll' : ''}`} onClick={e => { if (e.target === e.currentTarget) onClose(); }} role="dialog" aria-modal="true" aria-labelledby="rp-title">
       <style>{REPORT_KIT_CSS}</style>
-      <div className="report-picker">
+      <div className={`report-picker${scrollable ? ' report-picker--scroll' : ''}`}>
         <div className="rp-header">
           <div className="rp-header-left">
             <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
@@ -766,4 +805,10 @@ export function StandardReportPicker({ open, title = 'Download Report', subtitle
       </div>
     </div>
   );
+
+  /* Scrollable pickers render into <body> so `position:fixed` is always
+     relative to the viewport — an ancestor with a transform / filter /
+     animation (page-enter effects, cards) would otherwise become the
+     containing block and push the dialog off-screen. */
+  return scrollable && typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog;
 }

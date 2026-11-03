@@ -1452,22 +1452,9 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
   /* Employee Directory me sirf Active staff — Inactive shamil nahi. */
   const activeEmps = useMemo(() => emps.filter(e => e.status === 'Active'), [emps]);
 
-  /* Popup screen se lamba ho kar kat raha tha — dialog ko 92vh tak band karke andar scroll. */
-  const pickerBodyRef = useRef(null);
-  useEffect(() => {
-    const el = pickerBodyRef.current;
-    if (!el) return undefined;
-    let overlay = el.parentElement;
-    while (overlay && overlay !== document.body && getComputedStyle(overlay).position !== 'fixed') overlay = overlay.parentElement;
-    if (!overlay || overlay === document.body) return undefined;
-    let dialog = el;
-    while (dialog.parentElement && dialog.parentElement !== overlay) dialog = dialog.parentElement;
-    const prevD = { maxHeight: dialog.style.maxHeight, overflowY: dialog.style.overflowY, margin: dialog.style.margin };
-    const prevO = { alignItems: overlay.style.alignItems, padding: overlay.style.padding };
-    Object.assign(dialog.style, { maxHeight: '92vh', overflowY: 'auto', margin: 'auto' });
-    Object.assign(overlay.style, { alignItems: 'center', padding: '4vh 0' });
-    return () => { Object.assign(dialog.style, prevD); Object.assign(overlay.style, prevO); };
-  }, []);
+  /* Viewport fit: `scrollable` on StandardReportPicker (below) caps the dialog
+     to ~90vh, portals it to <body>, and scrolls only its body — header and
+     Download/Cancel footer stay visible. */
   /* ctx the directory generator needs: live employees + department /
      designation lookups + the /report-header branch (name, logo, address,
      session, generated date) — same shape the other HR reports build.
@@ -1989,6 +1976,45 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
 
   const activeEmps = useMemo(() => emps.filter(e => e.status === 'Active'), [emps]);
 
+  /* ── Employee search (client-side only — no extra API calls) ──
+     Filters the already-loaded active employees by name, employee ID,
+     designation or the row's payroll status for the selected month/year. */
+  const [search, setSearch] = useState('');
+
+  /* Each row's record exactly as PayrollRow receives it (with pending-approval
+     flags merged in), so the status we search on matches the badge shown. */
+  const payRows = useMemo(() => {
+    const mk = monthKey(month, year);
+    return activeEmps.map((e) => {
+      const base = empPayroll[e.id]?.[mk] || null;
+      const deletePendingFromLocal = base?.payrollID ? payrollDeletePendingMap[base.payrollID] : null;
+      const deletePendingFromApi = base?.payrollID ? pendingApprovals.find(a => a.entityId === base.payrollID && a.actionType && a.actionType.includes('delete')) : null;
+      const rec = base
+        ? { ...base, paymentPending: paymentPendingMap[`${e.id}_${mk}`] || base.paymentPending, deletePending: deletePendingFromLocal || deletePendingFromApi }
+        : null;
+      return { e, rec };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeEmps, empPayroll, month, year, paymentPendingMap, payrollDeletePendingMap, pendingApprovals]);
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return payRows;
+    /* A full status name (e.g. "generated") matches that status exactly, so it
+       doesn't also pull in "Not Generated"; anything else is a partial match. */
+    const STATUS_LABELS = ['not generated', 'generated', 'partially paid', 'paid', 'pending approval', 'payment pending approval', 'delete pending approval'];
+    const exactStatus = STATUS_LABELS.includes(q);
+    return payRows.filter(({ e, rec }) => {
+      const statusLabel = getPayrollRowStatus(rec).statusLabel.toLowerCase();
+      if (exactStatus) {
+        return q === 'pending approval' ? statusLabel.endsWith('pending approval') : statusLabel === q;
+      }
+      return [getFullName(e), e.eid, e.id, getDesigName(e.desId), statusLabel]
+        .some(v => v != null && String(v).toLowerCase().includes(q));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payRows, search, desigMap]);
+
   const stub = (label) => {
     setReportsId(null);
     setActionsId(null);
@@ -2223,6 +2249,32 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
               </select>
             </Tooltip>
           </div>
+          <div className="pay-filter-group pay-filter-search">
+            <label htmlFor="pay-emp-search"><i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Search</label>
+            <div className="emp-search">
+              <i className="fa-solid fa-magnifying-glass emp-search-icn" aria-hidden="true"></i>
+              <input
+                id="pay-emp-search"
+                type="text"
+                autoComplete="off"
+                placeholder="Search by employee name, ID, designation or status..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <Tooltip text="Clear search">
+                  <button
+                    type="button"
+                    className="emp-search-clear"
+                    onClick={() => setSearch('')}
+                    aria-label="Clear search"
+                  >
+                    <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+          </div>
           <div className="pay-status-legend">
             <Tooltip text="Payroll has not been generated for this month yet">
               <span className="pay-status-chip pay-status-chip--notgen">
@@ -2278,14 +2330,14 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
             title="No Active Employees"
             sub="Add active employees first to process payroll."
           />
+        ) : filteredRows.length === 0 ? (
+          <EmptyState
+            icon="fa-magnifying-glass"
+            title="No employees found"
+            sub={`No employees match “${search.trim()}” for ${month} ${year}. Try a different name, ID, designation or status.`}
+          />
         ) : (
-          activeEmps.map((e, i) => {
-            const mNum = PAY_MONTHS.indexOf(month) + 1;
-            const monthKey = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
-            const payKey = `${e.id}_${monthKey}`;
-            const rec = getRec(e.id);
-            const deletePendingFromLocal = rec?.payrollID ? payrollDeletePendingMap[rec.payrollID] : null;
-            const deletePendingFromApi = rec?.payrollID ? pendingApprovals.find(a => a.entityId === rec.payrollID && a.actionType && a.actionType.includes('delete')) : null;
+          filteredRows.map(({ e, rec }, i) => {
             return (
             <PayrollRow
               key={e.id}
@@ -2293,7 +2345,7 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
               emp={e}
               month={month}
               year={year}
-              rec={rec ? { ...rec, paymentPending: paymentPendingMap[payKey] || rec.paymentPending, deletePending: deletePendingFromLocal || deletePendingFromApi } : null}
+              rec={rec}
               loanRemaining={getLoanRemaining(e.id)}
               desigName={getDesigName(e.desId)}
               isOpen={openId === e.id}
@@ -2382,6 +2434,17 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
   );
 }
 
+/* Row status shown in the Financials table. Shared by PayrollRow (badge) and
+   the Financials search (status matching) so both always agree. */
+function getPayrollRowStatus(rec) {
+  if (!rec) return { status: 'notgen', statusLabel: 'Not Generated', statusIcon: 'fa-circle' };
+  if (rec.deletePending) return { status: 'delete-pending', statusLabel: 'Delete Pending Approval', statusIcon: 'fa-hourglass-half' };
+  if (rec.paymentPending) return { status: 'pending', statusLabel: 'Payment Pending Approval', statusIcon: 'fa-hourglass-half' };
+  if (rec.status === 'Paid') return { status: 'paid', statusLabel: 'Paid', statusIcon: 'fa-circle-check' };
+  if (rec.status === 'Partially Paid') return { status: 'partial', statusLabel: 'Partially Paid', statusIcon: 'fa-circle-half-stroke' };
+  return { status: 'gen', statusLabel: 'Generated', statusIcon: 'fa-clock' };
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    PAYROLL ROW — one per active employee, with expand-to-detail panel.
    ═══════════════════════════════════════════════════════════════════ */
@@ -2396,13 +2459,7 @@ function PayrollRow({
   const nm = getFullName(emp);
   const ini = nm.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
 
-  let status, statusLabel, statusIcon;
-  if (!rec) { status = 'notgen'; statusLabel = 'Not Generated'; statusIcon = 'fa-circle'; }
-  else if (rec.deletePending) { status = 'delete-pending'; statusLabel = 'Delete Pending Approval'; statusIcon = 'fa-hourglass-half'; }
-  else if (rec.paymentPending) { status = 'pending'; statusLabel = 'Payment Pending Approval'; statusIcon = 'fa-hourglass-half'; }
-  else if (rec.status === 'Paid') { status = 'paid'; statusLabel = 'Paid'; statusIcon = 'fa-circle-check'; }
-  else if (rec.status === 'Partially Paid') { status = 'partial'; statusLabel = 'Partially Paid'; statusIcon = 'fa-circle-half-stroke'; }
-  else { status = 'gen'; statusLabel = 'Generated'; statusIcon = 'fa-clock'; }
+  const { status, statusLabel, statusIcon } = getPayrollRowStatus(rec);
   const canPay = status !== 'paid' && status !== 'pending';
 
   return (
@@ -10620,6 +10677,8 @@ export const HR_CSS = `
   gap: 6px;
 }
 .pay-filter-group label i { font-size: 11px; color: var(--brand); opacity: .85; }
+.pay-filter-group.pay-filter-search { flex: 1 1 260px; min-width: 220px; max-width: 400px; }
+.pay-filter-search .emp-search input { height: 38px; }
 .pay-filter-group select {
   padding: 10px 13px;
   border: 1.5px solid var(--bl);
@@ -10899,6 +10958,12 @@ export const HR_CSS = `
    (e.g. a <select> with a long option), so fields never overflow the modal. */
 .pr-grid    { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .pr-grid.g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Employee Directory column picker — long field names wrap instead of
+   clipping; on phones the 3-col checkbox grid drops to 2 columns. */
+.report-picker--scroll .pr-grid label { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 420px) {
+  .report-picker--scroll .pr-grid.g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .pr-grid.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 .pr-field        { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

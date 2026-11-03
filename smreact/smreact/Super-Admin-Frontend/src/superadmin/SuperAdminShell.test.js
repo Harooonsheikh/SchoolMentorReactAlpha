@@ -5,6 +5,8 @@ import { adminDashboardToUi, dashboardBugToUi, composeImprovementDetail, IMP_STA
 import { INITIAL_TRANSACTIONS, calculateSchoolWiseSummary } from './transactionData';
 import { isMockMode } from './api';
 import { onelinkReportToUi } from './api/services/schoolProgress';
+import { feeRowOf, remainingDuesOf } from './api/services/payments';
+import { loadSchoolDirectory } from './api/services/dashboard';
 
 /* Dashboard ab hamesha LIVE chalti hai:
    GET .../api/AHM_School_Progress/admin_dashboard. jsdom me koi backend nahi,
@@ -67,7 +69,10 @@ beforeAll(() => {
   const okJson = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   global.fetch = (url, opts) => (String(url).includes('admin_dashboard') ? okJson(DASHBOARD_PAYLOAD)
     : String(url).includes('get_onelink_Report') ? okJson(ONELINK_PAYLOAD)
-      : (realFetch ? realFetch(url, opts) : Promise.reject(new Error('no network in jsdom'))));
+      /* Baqi har route foran 503 — jsdom me network hai hi nahi, aur asli
+         fetch ki der se aane wali "Network request failed" kisi AGLE test par
+         gir kar use fail kar deti thi. Screen in par apni error state dikhati hai. */
+      : Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ success: false, message: 'no network in jsdom' }) }));
 
   if (typeof window.matchMedia !== 'function') {
     window.matchMedia = (query) => ({
@@ -401,5 +406,58 @@ describe('Super Admin — 1LINK Overall Performance', () => {
     expect(modal.getByText('2026-10-14')).toBeInTheDocument();
     expect(modal.getByText('08:03:50')).toBeInTheDocument();
     expect(modal.getByText('Paid')).toBeInTheDocument();
+  });
+});
+
+describe('Dashboard data audit — shared fee rule & school directory', () => {
+  /* Challan ka `total` me pichhle dues pehle se jude hote hain (Generate
+     Challan = monthly + prevDues). Fee line sirf `monthly` ko challan ginti
+     hai — warna previous dues do baar jud jate thay (837,067 vs 615,421). */
+  test('feeRowOf counts the challan monthly charge, not its total', () => {
+    const row = feeRowOf({
+      prevDues: 1500,
+      challan: { monthly: 1500, total: 3000 },
+      recv: { discount: 200, receivedAmount: 1000 },
+    });
+    expect(row).toEqual({ prevDues: 1500, challan: 1500, discount: 200, received: 1000, receivable: 2800, pending: 1800 });
+  });
+
+  test('remainingDuesOf: no challan → 0, unpaid → total, received → remaining', () => {
+    expect(remainingDuesOf(null, null)).toBe(0);
+    expect(remainingDuesOf({ total: 2500 }, null)).toBe(2500);
+    expect(remainingDuesOf({ total: 2500 }, { remainingAmount: 300 })).toBe(300);
+    expect(remainingDuesOf({ total: 2500 }, { remainingAmount: -50 })).toBe(0);
+  });
+
+  test('loadSchoolDirectory classifies by directory isActive + launchSetup and keeps branches missing from branch-report', async () => {
+    const prev = global.fetch;
+    const ok = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const br = (id, name) => ({ branchID: id, branchName: name, totalStudents: 10, totalStaff: 2, generalDetails: { createdAt: '5/20/2026 4:11:12 PM' }, stateDetails: {}, compulsionDetails: {} });
+    global.fetch = (url) => {
+      const u = String(url);
+      if (u.includes('get-branches-with-permissions')) {
+        return ok([
+          { branch: { id: 1, name: 'ERP Active', isActive: true, launchSetup: 1, createdAt: '2026-05-20T10:00:00' } },
+          { branch: { id: 2, name: 'Launch Active', isActive: true, launchSetup: 0, createdAt: '2026-06-01T10:00:00' } },
+          { branch: { id: 3, name: 'ERP Inactive', isActive: false, launchSetup: 1, createdAt: '2026-06-01T10:00:00' } },
+          { branch: { id: 4, name: 'Not In Report', isActive: true, launchSetup: 1, createdAt: '2026-06-01T10:00:00' } },
+        ]);
+      }
+      if (u.includes('branch-report')) {
+        if (u.includes('isActive=false')) return ok({ data: [br(3, 'ERP Inactive')] });
+        return ok({ data: u.includes('launchSetup=1') ? [br(1, 'ERP Active')] : [br(2, 'Launch Active')] });
+      }
+      return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) });
+    };
+    try {
+      const d = await loadSchoolDirectory();
+      expect(d.erp.map((r) => r.id)).toEqual([1, 4]);
+      expect(d.launch.map((r) => r.id)).toEqual([2]);
+      expect(d.inactive).toEqual([expect.objectContaining({ id: 3, setupType: 'erp' })]);
+      expect(d.enriched).toBe(true);
+      expect(d.erp.find((r) => r.id === 4).students).toBe(0);
+    } finally {
+      global.fetch = prev;
+    }
   });
 });

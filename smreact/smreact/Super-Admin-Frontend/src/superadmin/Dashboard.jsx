@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fmt } from './dashboardData';
 import { pkr2 } from './transactionData';
 import { DASHBOARD_GATES } from './userMgmtData';
-import { fetchDashboard, schoolPermissionsApi, paymentsApi, schoolProgressApi } from './api';
+import { fetchDashboard, dashboardApi, schoolPermissionsApi, paymentsApi, schoolProgressApi } from './api';
 import SchoolListReport from './SchoolListReport';
 import OneLinkOverviewSection, { Modal } from './OneLinkSection';
 import { BugFormModal, BugReportsSection, BUG_SCOPE } from './BugManager';
@@ -51,94 +51,43 @@ const BI_PERIODS = [
 ];
 const biLabel = (id) => (BI_PERIODS.find((p) => p.id === id) || BI_PERIODS[2]).label;
 
-/* Fee ka apna period bar — yahan "All Time" ka koi matlab nahi (API sirf
-   chalte mahine ka fee data deti hai), is liye wo option nahi. */
-const FEE_PERIODS = BI_PERIODS.filter((p) => p.id !== 'all');
+/* Fee ka apna period bar. Challan / receiving MAHAANA hote hain (ledger par
+   ek mahina = ek challan), is liye sirf mahine wale options. "Today" /
+   "Yesterday" pehle yahan thay magar un par cards 0 dikhate thay — wo
+   aankra jhoota tha, kyunke us din ka koi alag fee hisaab hota hi nahi. */
+const FEE_PERIODS = BI_PERIODS.filter((p) => p.id === 'thisMonth' || p.id === 'lastMonth');
 
-/* ── Fee Analytics ke chhe card ────────────────────────────────────────
-   Challan / receiving School Payments se (is mahine ke generated challans
-   aur unki receiving). Hisaab har row par yahi hai, cards us ka jama hain:
-
-     After Discount = Previous Dues + Challan − Discount
-     Total Pending  = Previous Dues + Challan − Discount − Received
-
-   Doosre period par sab 0. */
-
-function thisPayPeriod() {
-  const n = new Date();
-  return { month: n.getMonth() + 1, year: n.getFullYear() };
-}
-
-const nFee = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-
-function pickPay(map, id) {
-  if (!map) return undefined;
-  return map[id] || map[Number(id)] || map[String(id)];
-}
-
-/** After Discount = prev + challan − discount
-    Pending        = prev + challan − discount − received */
-function settleFeeRow(r) {
-  const prevDues = nFee(r.prevDues);
-  const challan = nFee(r.challan);
-  const discount = nFee(r.discount);
-  const received = nFee(r.received);
-  const receivable = prevDues + challan - discount;
-  const pending = receivable - received;
-  return { ...r, prevDues, challan, discount, received, receivable, pending };
-}
-
-function sumFeeRows(rows) {
-  return rows.reduce((t, r) => ({
-    prevDues: t.prevDues + r.prevDues,
-    challan: t.challan + r.challan,
-    discount: t.discount + r.discount,
-    receivable: t.receivable + r.receivable,
-    received: t.received + r.received,
-    pending: t.pending + r.pending,
-  }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
-}
-
-/** Dashboard rows: School Payments challan + receiving, phir upar wala hisaab. */
-function overlayPayChallans(dash, challansById, schools, recvsById = {}) {
-  const names = {};
-  (schools || []).forEach((s) => { if (s?.id != null) names[s.id] = s.name; });
-  const seen = new Set();
-  const feeRows = (dash.feeRows || []).map((r) => {
-    seen.add(Number(r.id));
-    const ch = pickPay(challansById, r.id);
-    const recv = pickPay(recvsById, r.id);
-    return settleFeeRow({
-      ...r,
-      challan: ch ? nFee(ch.total) : 0,
-      received: recv ? nFee(recv.receivedAmount) : 0,
-      discount: recv ? nFee(recv.discount) : 0,
-    });
-  });
-  Object.keys(challansById || {}).forEach((key) => {
-    const id = Number(key);
-    if (!id || seen.has(id)) return;
-    const ch = challansById[key];
-    const recv = pickPay(recvsById, id);
-    feeRows.push(settleFeeRow({
-      id,
-      name: names[id] || names[key] || `Branch #${id}`,
-      prevDues: 0,
-      challan: nFee(ch?.total),
-      discount: recv ? nFee(recv.discount) : 0,
-      received: recv ? nFee(recv.receivedAmount) : 0,
-    }));
-  });
-  return { ...dash, feeRows, feeTotals: sumFeeRows(feeRows) };
-}
-
-
-/* Local YYYY-MM-DD — toISOString() UTC me badal deta hai, jis se Pakistan
-   ke waqt raat ke waqt "Today" ek din peeche chala jata. */
+/* ── Pakistan ka waqt ─────────────────────────────────────────────────
+   Mahina / din hamesha Asia/Karachi me — browser kisi aur timezone me ho
+   tab bhi "This Month" wahi mahina ho jo backend aur School Payments ginte hain. */
+const PK_TZ = 'Asia/Karachi';
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function pkToday() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: PK_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch {
+    return isoOf(new Date());
+  }
+}
+const shiftDay = (iso, n) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const shiftMonth = (ym, n) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
+
+/* Fee period id → { month, year } (School Payments ka period shape). */
+function feePeriodOf(id) {
+  const ym = id === 'lastMonth' ? shiftMonth(pkToday().slice(0, 7), -1) : pkToday().slice(0, 7);
+  return { month: Number(ym.slice(5, 7)), year: Number(ym.slice(0, 4)), key: ym };
+}
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const periodName = (p) => `${MONTH_NAMES[p.month - 1]} ${p.year}`;
+
+/* null / undefined = abhi maloom nahi (load ho raha / fail) → '—', 0 nahi. */
+const fmtOrDash = (n) => (n == null ? '—' : fmt(n));
+
+/* usertimespend-report har school ki alag call hai — ek waqt me itni hi. */
+const LOGIN_POOL = 6;
 
 function countSchoolsCreatedThisMonth(rows = []) {
-  const currentMonth = isoOf(new Date()).slice(0, 7);
+  const currentMonth = pkToday().slice(0, 7);
 
   return rows.filter((school) => {
     const signupDate = String(school.signupDate || '').trim();
@@ -158,31 +107,13 @@ function countBi(list, kind, periodId) {
     if (periodId === 'all') return true;
     if (!date) return false;
 
-    const now = new Date();
+    const today = pkToday();
     const dateStr = String(date).slice(0, 10);
 
-    if (periodId === 'today') {
-      return dateStr === isoOf(now);
-    }
-
-    if (periodId === 'yesterday') {
-      const yesterday = new Date(now);
-      yesterday.setDate(yesterday.getDate() - 1);
-      return dateStr === isoOf(yesterday);
-    }
-
-    if (periodId === 'thisMonth') {
-      return dateStr.slice(0, 7) === isoOf(now).slice(0, 7);
-    }
-
-    if (periodId === 'lastMonth') {
-      const lastMonth = new Date(
-        now.getFullYear(),
-        now.getMonth() - 1,
-        1
-      );
-      return dateStr.slice(0, 7) === isoOf(lastMonth).slice(0, 7);
-    }
+    if (periodId === 'today') return dateStr === today;
+    if (periodId === 'yesterday') return dateStr === shiftDay(today, -1);
+    if (periodId === 'thisMonth') return dateStr.slice(0, 7) === today.slice(0, 7);
+    if (periodId === 'lastMonth') return dateStr.slice(0, 7) === shiftMonth(today.slice(0, 7), -1);
 
     return false;
   };
@@ -211,63 +142,83 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const [viewAs, setViewAs] = useState('');   // '' = Super Admin; else a user id
   const [feePeriod, setFeePeriod] = useState('thisMonth');
   const [schoolReport, setSchoolReport] = useState(null);
+  /* School directory (dashboardApi.loadSchoolDirectory): { launch, erp,
+     inactive, enriched } — status + ERP/Launch group branch directory se,
+     students/staff branch-report se. Saare school cards isi ek list par. */
   const [progress, setProgress] = useState(null);
   const [progressErr, setProgressErr] = useState(null);
-  /* branchId → IS MAHINE ke logins (usertimespend-report: ERP + Mobile) */
-  const [monthLogins, setMonthLogins] = useState(null); /* branchId → school ka naam, report ki "School" column ke liye. Yeh
-     directory sirf tab mangwai jati hai jab pehli report khulti hai —
-     dashboard ke apne load par ek extra call nahi jati. */
+  /* branchId → IS MAHINE ke ERP logins (usertimespend-report, type 'erp').
+     Value null = us school ki call fail hui (maloom nahi), 0 nahi. */
+  const [monthLogins, setMonthLogins] = useState(null);
   const [branchNames, setBranchNames] = useState(null);
+  /* Fee ledger har mahine ke liye alag: { [YYYY-MM]: { status, rows, totals, error } }.
+     Period badalne par purane mahine ke aankre kabhi naye label ke neeche nahi aate. */
+  const [feeByPeriod, setFeeByPeriod] = useState({});
   /* Default "All Time" — is par cards API ki apni BugSummary dikhate hain. */
   const [bugPeriod, setBugPeriod] = useState('all');
   const [impPeriod, setImpPeriod] = useState('all');
   const today = todayLabel();
 
-  /* Overview: admin_dashboard, phir is mahine ke School Payments challans
-     (wahi ledger jo Challans tab padhta hai) challan column par chadha diye
-     jate hain. Payments na chale to challan 0 — ERP fee challan nahi dikhate. */
-  useEffect(() => {
-    let on = true;
+  /* Overview (students / staff / onboarding / videos / bugs): admin_dashboard. */
+  const loadOverview = useCallback(() => {
     setLoadErr(null);
-    (async () => {
-      const dash = await fetchDashboard();
-      let next = dash;
-      try {
-        const { schools } = await schoolPermissionsApi.listPermissionBranches();
-        /* Wahi directory reports ke "School" column aur Add Bug ke School
-           dropdown ko bhi — alag call nahi. */
-        if (on) setBranchNames((cur) => cur || Object.fromEntries((schools || []).map((s) => [s.id, s.name])));
-        const paySchools = (schools || []).map((s) => ({ id: s.id, name: s.name, students: 0 }));
-        const period = thisPayPeriod();
-        const [challans, recvs] = await Promise.all([
-          paymentsApi.listChallans(paySchools, {}, period),
-          paymentsApi.listReceivings(paySchools.map((s) => s.id), period),
-        ]);
-        next = overlayPayChallans(dash, challans, paySchools, recvs);
-      } catch (e) {
-        /* Challan / receiving na aaye to aankre 0 NAHI — wo jhoot hota
-           ("is mahine koi challan nahi"). Fee Analytics error dikhati hai. */
-        next = { ...overlayPayChallans(dash, {}, []), feeErr: e?.message || 'Could not load School Payments challans / receivings' };
+    return fetchDashboard().then(setD).catch((e) => { setLoadErr(e); });
+  }, []);
+  useEffect(() => { loadOverview(); }, [loadOverview]);
+
+  /* Har school ke IS MAHINE (Pakistan time) ke ERP logins. Ek waqt me
+     LOGIN_POOL calls (pehle saari ~300 ek saath jati thin), ek dafa hi chalti
+     hai (in-flight ref), aur fail hui call ko ek baar dobara koshish — phir bhi
+     fail ho to null ("maloom nahi"), 0 nahi. */
+  const loginsJob = useRef(null);
+  const loadMonthLogins = useCallback((prog) => {
+    if (loginsJob.current) return loginsJob.current;
+    const all = [...prog.launch, ...prog.erp, ...prog.inactive];
+    const month = pkToday().slice(0, 7);
+    const fetchOne = (id) => schoolProgressApi
+      .listUserTimeSpendReport({ branchId: id, month, type: 'erp' })
+      .then((rep) => Number(rep?.totalEntries) || 0);
+    const out = {};
+    let next = 0;
+    const worker = async () => {
+      while (next < all.length) {
+        const id = all[next++].id;
+        out[id] = await fetchOne(id).catch(() => fetchOne(id)).catch(() => null);
       }
-      if (on) setD(next);
-    })().catch((e) => { if (on) setLoadErr(e); });
-    return () => { on = false; };
+    };
+    loginsJob.current = Promise.all(Array.from({ length: Math.min(LOGIN_POOL, all.length) }, worker))
+      .then(() => setMonthLogins(out));
+    return loginsJob.current;
   }, []);
 
-  /* Bugs / Improvements — dono API ki EK hi `Bugs` list se bante hain, kind
-     par bant kar aur chune hue arse par chaan kar. (BugSummary bhi jawab me
-     aati hai, magar wo all-time hai aur improvements ko bhi bugs me ginti
-     hai — is liye cards yeh derived aankre dikhate hain taake dono section
-     aapas me mel khayen.) */
-  /* Cards aur report ek hi source se — dashboard khulte hi school-progress list
-     (aur is mahine ke logins) load karo, taake card ka number = list ka count. */
-  useEffect(() => {
-    if (progress) return;
-    schoolProgressApi.listSchoolProgress()
-      .then((p) => { setProgress(p); loadMonthLogins(p); })
+  const loadSchools = useCallback(() => {
+    setProgressErr(null);
+    return dashboardApi.loadSchoolDirectory()
+      .then((p) => {
+        setProgress(p);
+        /* Wahi directory reports ke "School" column aur Add Bug ke dropdown ko bhi. */
+        setBranchNames((cur) => cur || Object.fromEntries([...p.launch, ...p.erp, ...p.inactive].map((s) => [s.id, s.name])));
+        loadMonthLogins(p);
+      })
       .catch((e) => setProgressErr(e));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadMonthLogins]);
+  useEffect(() => { loadSchools(); }, [loadSchools]);
+
+  /* Fee Analytics + Current Month Details — School Payments ki wahi ledger
+     (paymentsApi.loadFeeLedger) chune hue mahine ke liye. */
+  const feePeriodInfo = feePeriodOf(feePeriod);
+  const feeKey = feePeriodInfo.key;
+  useEffect(() => {
+    if (!progress || feeByPeriod[feeKey]) return;
+    const p = feePeriodOf(feePeriod);
+    const schools = [...progress.launch, ...progress.erp, ...progress.inactive]
+      .map((s) => ({ id: s.id, name: s.name, students: s.students }));
+    setFeeByPeriod((cur) => ({ ...cur, [p.key]: { status: 'loading' } }));
+    paymentsApi.loadFeeLedger(schools, p)
+      .then((res) => setFeeByPeriod((cur) => ({ ...cur, [p.key]: { status: 'ok', ...res } })))
+      .catch((e) => setFeeByPeriod((cur) => ({ ...cur, [p.key]: { status: 'error', error: e?.message || 'Could not load School Payments records' } })));
+  }, [progress, feePeriod, feeKey, feeByPeriod]);
+  const retryFee = () => setFeeByPeriod((cur) => { const n = { ...cur }; delete n[feeKey]; return n; });
 
   const bugStats = useMemo(() => countBi(d?.bugList, 'bug', bugPeriod), [d, bugPeriod]);
   const impStats = useMemo(() => countBi(d?.bugList, 'improvement', impPeriod), [d, impPeriod]);
@@ -330,37 +281,17 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
     .filter((s) => s.id > 0)
     .sort((a, b) => a.name.localeCompare(b.name)), [branchNames]);
 
-  /* Har school ke IS MAHINE ke logins — ERP + Mobile dono ka totalEntries. */
-  const loadMonthLogins = useCallback((prog) => {
-    const all = [...prog.launch, ...prog.erp, ...prog.inactive];
-    const month = schoolProgressApi.formatMonthYm();
-    /* usertimespend-report ka data.totalEntries = is mahine ke logins (sirf ERP). */
-    Promise.all(all.map(async (s) => {
-      const rep = await schoolProgressApi
-        .listUserTimeSpendReport({ branchId: s.id, month, type: 'erp' })
-        .catch(() => null);
-      return [s.id, Number(rep?.totalEntries ?? rep?.TotalEntries ?? 0) || 0];
-    })).then((pairs) => setMonthLogins(Object.fromEntries(pairs)));
+  /* Report modal sirf wahi list dikhata hai jo card ginta hai — data mount par
+     hi load ho chuka hota hai (loadSchools), yahan koi nayi call nahi. */
+  const openSchoolReport = useCallback((key, title, description) => {
+    setSchoolReport({ key, title, description });
   }, []);
-
-  const openSchoolReport = useCallback((key, title, description, count) => {
-    setSchoolReport({ key, title, description, count });
-    const needLogins = key === 'activeLogin' || key === 'zeroLogin';
-    if (progress) {
-      if (needLogins && !monthLogins) loadMonthLogins(progress);
-      return;
-    }
-    setProgressErr(null);
-    schoolProgressApi.listSchoolProgress()
-      .then((p) => { setProgress(p); if (needLogins) loadMonthLogins(p); })
-      .catch((e) => setProgressErr(e));
-  }, [progress, monthLogins, loadMonthLogins]);
 
   const schoolLists = useMemo(() => {
     if (!progress) return null;
     const toRow = (r) => ({
       id: r.id, name: r.name, date: r.signupDate || '',
-      note: `Students: ${r.students} · Staff: ${r.staff}`
+      note: progress.enriched ? `Students: ${r.students} · Staff: ${r.staff}` : 'Students / staff unavailable',
     });
     const all = [...progress.launch, ...progress.erp, ...progress.inactive];
     return {
@@ -369,58 +300,55 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       launch: progress.launch.map(toRow),
       inactive: progress.inactive.map(toRow),
       /* Login wali dono lists sirf IS MAHINE ke logins par (monthLogins).
-         Jab tak load na ho, undefined → report "Loading" dikhati hai. */
+         Jab tak load na ho, undefined → report "Loading" dikhati hai. Jin
+         schools ki call fail hui (null) wo dono lists se bahar — unhe na 0
+         login wala kaha ja sakta hai na active. */
       zeroLogin: monthLogins
-        ? all.filter((r) => !monthLogins[r.id]).map((r) => ({ ...toRow(r), logins: 0 }))
+        ? all.filter((r) => monthLogins[r.id] === 0).map((r) => ({ ...toRow(r), logins: 0 }))
         : undefined,
       activeLogin: monthLogins
         ? all.filter((r) => monthLogins[r.id] > 0)
           .sort((a, b) => monthLogins[b.id] - monthLogins[a.id])
           .map((r) => ({ ...toRow(r), logins: monthLogins[r.id] }))
         : undefined,
-      students: all.filter((r) => r.students > 0).map((r) => ({ ...toRow(r), note: `Students: ${r.students}` })),
-      staff: all.filter((r) => r.staff > 0).map((r) => ({ ...toRow(r), note: `Staff: ${r.staff}` })),
+      /* branch-report na aaye to students/staff maloom nahi → undefined. */
+      students: progress.enriched ? all.filter((r) => r.students > 0).map((r) => ({ ...toRow(r), note: `Students: ${r.students}` })) : undefined,
+      staff: progress.enriched ? all.filter((r) => r.staff > 0).map((r) => ({ ...toRow(r), note: `Staff: ${r.staff}` })) : undefined,
     };
   }, [progress, monthLogins]);
-  const newErpThisMonth = progress
-    ? countSchoolsCreatedThisMonth(progress.erp)
-    : (d?.schools?.newErp ?? 0);
 
-  const newLaunchThisMonth = progress
-    ? countSchoolsCreatedThisMonth(progress.launch)
-    : (d?.schools?.newLaunch ?? 0);
+  /* "New this month" — usi list ki signup date (Pakistan ka mahina) se, taake
+     card, report aur This Month Progress teeno ek hi aankra dein. */
+  const newErpThisMonth = progress ? countSchoolsCreatedThisMonth(progress.erp) : null;
+  const newLaunchThisMonth = progress ? countSchoolsCreatedThisMonth(progress.launch) : null;
 
-  /* Card ka number = report list ka length. List load na ho to API wala fallback. */
-  const listCount = (key, fallback) =>
-    (schoolLists && Array.isArray(schoolLists[key])) ? schoolLists[key].length : fallback;
+  /* Card ka number = report list ka length. List load na hui ho / fail ho to
+     '—' (pehle yahan admin_dashboard ka alag aankra aa jata tha, jo list load
+     hote hi badal jata tha). */
+  const listCount = (key) =>
+    (schoolLists && Array.isArray(schoolLists[key])) ? schoolLists[key].length : null;
 
   /* Inactive / Active Login cards ka ERP + Launch Setup batwara — bilkul wahi
-     qaida jo zeroLogin / activeLogin lists ka hai (IS MAHINE ke logins), aur
-     group branch-report ke launchSetup se (row.setupType). Logins abhi na
-     aaye hon to null → card "—" dikhata hai. */
+     qaida jo zeroLogin / activeLogin lists ka hai, aur group branch directory
+     ke launchSetup se. `unknown` = jin schools ki login call fail hui. */
   const loginSplit = useMemo(() => {
     if (!progress || !monthLogins) return null;
-    const out = { zero: { erp: 0, launch: 0 }, active: { erp: 0, launch: 0 } };
+    const out = { zero: { erp: 0, launch: 0 }, active: { erp: 0, launch: 0 }, unknown: 0 };
     [...progress.launch, ...progress.erp, ...progress.inactive].forEach((r) => {
-      const type = r.setupType === 'erp' ? 'erp' : r.setupType === 'launch' ? 'launch' : null;
-      if (!type) return;
-      if (monthLogins[r.id] > 0) out.active[type] += 1;
-      else if (!monthLogins[r.id]) out.zero[type] += 1;
+      const n = monthLogins[r.id];
+      if (n == null) { out.unknown += 1; return; }
+      out[n > 0 ? 'active' : 'zero'][r.setupType === 'erp' ? 'erp' : 'launch'] += 1;
     });
     return out;
   }, [progress, monthLogins]);
 
-  /* Current Month Details ki rows— pehle period, phir search.
-
-     API sirf CHALTE mahine ki rows deti hai (route par koi from/to nahi),
-     is liye kisi bhi doosre arse par table khali rehti hai: us arse ka
-     record API ke paas hai hi nahi. Purani rows ko "Last Month" ke naam
-     se dikhana galat hota. */
+  /* Current Month Details ki rows — chune hue mahine ki fee ledger, phir search. */
+  const fee = useMemo(() => feeByPeriod[feeKey] || { status: 'loading' }, [feeByPeriod, feeKey]);
   const filtered = useMemo(() => {
-    const rows = feePeriod === 'thisMonth' ? (d?.feeRows || []) : [];
+    const rows = fee.status === 'ok' ? fee.rows : [];
     const q = search.trim().toLowerCase();
     return q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
-  }, [d, search, feePeriod]);
+  }, [fee, search]);
 
   /* ── Resolve the viewer and which sections their permissions allow ── */
   const viewUser = viewAs ? users.find((u) => String(u.id) === String(viewAs)) : null;
@@ -479,7 +407,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           <i className="fa-solid fa-triangle-exclamation" />
           <div className="db-block-ttl">Couldn't load the dashboard</div>
           <div className="db-block-sub">{loadErr.message || 'The dashboard service is unavailable.'}</div>
-          <button className="db-retry" onClick={() => { setD(null); setLoadErr(null); fetchDashboard().then(setD).catch(setLoadErr); }}>
+          <button className="db-retry" onClick={() => { setD(null); loadOverview(); }}>
             <i className="fa-solid fa-rotate-right" /> Retry
           </button>
         </div>
@@ -509,15 +437,12 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
     receivable: t.receivable + r.receivable, received: t.received + r.received, pending: t.pending + r.pending,
   }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
 
-  /* Fee Analytics cards ka jama — admin_dashboard ke CurrentMonthDetails se
-     (d.feeTotals, search se mustaqil). Fee data sirf CHALTE mahine ka hai, is
-     liye doosre arse par sab 0. */
-  const feeTotals = feePeriod === 'thisMonth'
-    ? (d.feeTotals || { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 })
-    : { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 };
-  /* Payments ki call fail hui ho to "this month" ke aankre maloom hi nahi — '—'. */
-  const feeErr = d.feeErr || '';
-  const feeVal = (v) => (feeErr && feePeriod === 'thisMonth' ? '—' : pkr2(v));
+  /* Fee Analytics cards = chune hue mahine ki School Payments ledger ka jama
+     (search se mustaqil). Load ho raha ho ya fail ho to '—', 0 kabhi nahi. */
+  const feeTotals = fee.status === 'ok' ? fee.totals : {};
+  const feeErr = fee.status === 'error' ? fee.error : '';
+  const feeVal = (v) => (fee.status === 'ok' ? pkr2(v) : '—');
+  const feeMonthWord = feePeriod === 'lastMonth' ? 'Last Month' : 'This Month';
   const totalStudents = d.students.total, totalStaff = d.staff.total;
 
   /* Bugs Summary ke cards:
@@ -598,8 +523,8 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           </div>
           <div className="fee-grid">
             <FeeCard tone="red" icon="fa-circle-exclamation" label="Previous Dues" val={feeVal(feeTotals.prevDues)} />
-            <FeeCard tone="teal" icon="fa-file-invoice" label="Fee Challan This Month" val={feeVal(feeTotals.challan)} />
-            <FeeCard tone="orange" icon="fa-percent" label="Fee Discount This Month" val={feeVal(feeTotals.discount)} />
+            <FeeCard tone="teal" icon="fa-file-invoice" label={`Fee Challan ${feeMonthWord}`} val={feeVal(feeTotals.challan)} />
+            <FeeCard tone="orange" icon="fa-percent" label={`Fee Discount ${feeMonthWord}`} val={feeVal(feeTotals.discount)} />
           </div>
           <div className="fee-grid-2">
             <FeeCard tone="slate" icon="fa-percent" label="Fee Challan After Discount" val={feeVal(feeTotals.receivable)} />
@@ -609,21 +534,14 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           {feeErr && (
             <div className="db-locked" style={{ marginTop: -8, marginBottom: 14, borderColor: 'rgba(220,38,38,.35)', color: '#B91C1C' }}>
               <i className="fa-solid fa-triangle-exclamation" />
-              <span>Fee figures unavailable — {feeErr}. Reload the dashboard to try again.</span>
+              <span>Fee figures unavailable for {periodName(feePeriodInfo)} — {feeErr}.</span>
+              <button className="db-retry" style={{ marginLeft: 8 }} onClick={retryFee}><i className="fa-solid fa-rotate-right" /> Retry</button>
             </div>
           )}
-          {/* Aankre admin_dashboard ke CurrentMonthDetails se (is chalte mahine
-              ke) — wahi rows jo neeche table me aati hain. Doosre arse ka fee
-              data API deti hi nahi, is liye un par cards 0 rehte hain. */}
-          {feePeriod === 'thisMonth' ? (!feeErr && (
+          {fee.status === 'ok' && (
             <div className="db-locked db-locked-ok" style={{ marginTop: -8 }}>
               <i className="fa-solid fa-circle-check" />
-              <span>This month: challan from <b>School Payments → Challans</b> (generated only). After discount = previous dues + challan − discount. Pending = that − received.</span>
-            </div>
-          )) : (
-            <div className="db-locked" style={{ marginTop: -8 }}>
-              <i className="fa-solid fa-circle-info" />
-              <span><code>admin_dashboard</code> only returns the <b>current month</b> — switch to <b>This Month</b> to see fee figures. Other periods aren't tracked by the API.</span>
+              <span>{periodName(feePeriodInfo)} — same records and formula as <b>School Payments → Receiving</b>: previous dues = last month's unpaid balance, challan = this month's charge. After discount = previous dues + challan − discount. Pending = that − received.</span>
             </div>
           )}
         </>
@@ -636,27 +554,34 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             <div className="section-hdr-icon"><i className="fa-solid fa-school" /></div>
             <div className="section-hdr-title">School Overview</div>
           </div>
+          {progressErr && (
+            <div className="db-locked" style={{ marginTop: -8, marginBottom: 14, borderColor: 'rgba(220,38,38,.35)', color: '#B91C1C' }}>
+              <i className="fa-solid fa-triangle-exclamation" />
+              <span>School figures unavailable — {progressErr.message || 'could not load the branch directory'}.</span>
+              <button className="db-retry" style={{ marginLeft: 8 }} onClick={loadSchools}><i className="fa-solid fa-rotate-right" /> Retry</button>
+            </div>
+          )}
           <div className="overview-grid" style={{ marginBottom: 14 }}>
-            <OvCard label="Active Schools" val={listCount('active', d.schools.active)} sub={<><b>↑ {d.schools.newLaunch + d.schools.newErp}</b> &nbsp;New this month</>} badge="blue" icon="fa-circle-check"
-              onClick={() => openSchoolReport('active', 'Active Schools', 'ERP + Launch Set-Up schools', d.schools.active)} />
-            <OvCard label="ERP Schools" val={listCount('erp', d.schools.erp)} sub={<><b>↑ {newErpThisMonth}</b> &nbsp;New this month</>} badge="teal" icon="fa-database"
-              onClick={() => openSchoolReport('erp', 'ERP Schools', 'Active schools running on ERP', d.schools.erp)} />
-            <OvCard label="Launch Set-Up Schools" val={listCount('launch', d.schools.launch)} sub={<><b>↑ {newLaunchThisMonth}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
-              onClick={() => openSchoolReport('launch', 'Launch Set-Up Schools', 'Active schools in launch set-up', d.schools.launch)} />
+            <OvCard label="Active Schools" val={listCount('active')} sub={<><b>↑ {progress ? fmt(newErpThisMonth + newLaunchThisMonth) : '—'}</b> &nbsp;New this month</>} badge="blue" icon="fa-circle-check"
+              onClick={() => openSchoolReport('active', 'Active Schools', 'ERP + Launch Set-Up schools')} />
+            <OvCard label="ERP Schools" val={listCount('erp')} sub={<><b>↑ {fmtOrDash(newErpThisMonth)}</b> &nbsp;New this month</>} badge="teal" icon="fa-database"
+              onClick={() => openSchoolReport('erp', 'ERP Schools', 'Active schools running on ERP')} />
+            <OvCard label="Launch Set-Up Schools" val={listCount('launch')} sub={<><b>↑ {fmtOrDash(newLaunchThisMonth)}</b> &nbsp;New this month</>} badge="purple" icon="fa-rocket"
+              onClick={() => openSchoolReport('launch', 'Launch Set-Up Schools', 'Active schools in launch set-up')} />
           </div>
           <div className="overview-grid" style={{ marginBottom: 28 }}>
             <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
-              onClick={() => openSchoolReport('zeroLogin', 'Inactive Schools', 'Registered schools with 0 logins', d.schools.inactive)}>
+              onClick={() => openSchoolReport('zeroLogin', 'Inactive Schools', 'Registered schools with 0 ERP logins this month')}>
               <div className="ov-lbl red">Inactive Schools</div>
               <OvSplit tone="red" erp={loginSplit?.zero.erp} launch={loginSplit?.zero.launch} />
-              <div className="ov-sub">Registered but <b className="red">0 logins</b> from 1st of this month to today</div>
+              <div className="ov-sub">Registered but <b className="red">0 logins</b> from 1st of this month to today{loginSplit?.unknown ? ` · ${loginSplit.unknown} couldn't be checked` : ''}</div>
               <div className="ov-badge ov-badge-red"><i className="fa-solid fa-user-slash" /></div>
             </div>
             <div className="ov-card" style={{ cursor: 'pointer' }} title="Click to view schools"
-              onClick={() => openSchoolReport('activeLogin', 'Active Login Schools', 'Schools that logged in at least once', d.schools.activeLogin)}>
+              onClick={() => openSchoolReport('activeLogin', 'Active Login Schools', 'Schools with at least one ERP login this month')}>
               <div className="ov-lbl green">Active Login Schools</div>
               <OvSplit tone="green" erp={loginSplit?.active.erp} launch={loginSplit?.active.launch} />
-              <div className="ov-sub">Logged in <b style={{ color: '#16A34A' }}>at least once</b> from 1st of this month to today</div>
+              <div className="ov-sub">Logged in <b style={{ color: '#16A34A' }}>at least once</b> from 1st of this month to today{loginSplit?.unknown ? ` · ${loginSplit.unknown} couldn't be checked` : ''}</div>
               <div className="ov-badge ov-badge-green"><i className="fa-solid fa-user-check" /></div>
             </div>
             {/* Onboarding status */}
@@ -822,15 +747,19 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 </tr>
               </thead>
               <tbody>
-                {feeErr && feePeriod === 'thisMonth' ? (
+                {fee.status === 'error' ? (
                   <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--err)', padding: '24px' }}>
                     <i className="fa-solid fa-triangle-exclamation" /> Fee details unavailable — {feeErr}.
                   </td></tr>
+                ) : fee.status !== 'ok' ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--tm)', padding: '24px' }}>
+                    <i className="fa-solid fa-spinner fa-spin" /> Loading School Payments records…
+                  </td></tr>
                 ) : pageRows.length === 0 ? (
                   <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--tm)', padding: '24px' }}>
-                    {feePeriod !== 'thisMonth'
-                      ? `The dashboard API only returns the current month — no fee records for ${biLabel(feePeriod)}.`
-                      : 'No schools match your search.'}
+                    {search.trim()
+                      ? 'No schools match your search.'
+                      : `No challans, receivings or previous dues for ${periodName(feePeriodInfo)}.`}
                   </td></tr>
                 ) : pageRows.map((r) => (
                   <tr key={r.id}>
@@ -881,11 +810,14 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               <div className="db-detail-card-icon"><i className="fa-solid fa-school" /></div>
               <div className="db-detail-card-title">School Details</div>
             </div>
-            <DetailRow label="Total Schools:" val={progress ? progress.launch.length + progress.erp.length + progress.inactive.length : d.schools.total} />
-            <DetailRow label="In Active Schools:" val={listCount('zeroLogin', d.schools.inactive)} tone="red" />
-            <DetailRow label="Active Schools:" val={listCount('active', d.schools.active)} tone="green" />
-            <DetailRow label="Launch Set-up Schools:" val={listCount('launch', d.schools.launch)} />
-            <DetailRow label="ERP Schools:" val={listCount('erp', d.schools.erp)} />
+            {/* Status ke hisaab se (branch directory ka isActive) — Total =
+                Active + In Active. Pehle "In Active" yahan 0-login wali list
+                thi, jo status nahi, is liye teeno aapas me jud-te nahi thay. */}
+            <DetailRow label="Total Schools:" val={progress ? progress.launch.length + progress.erp.length + progress.inactive.length : null} />
+            <DetailRow label="In Active Schools:" val={listCount('inactive')} tone="red" />
+            <DetailRow label="Active Schools:" val={listCount('active')} tone="green" />
+            <DetailRow label="Launch Set-up Schools:" val={listCount('launch')} />
+            <DetailRow label="ERP Schools:" val={listCount('erp')} />
           </div>
           {/* User Details */}
           <div className="db-detail-card">
@@ -927,8 +859,8 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 <div className="db-detail-card-icon" style={{ background: 'linear-gradient(135deg,#0F766E,#0D9488)' }}><i className="fa-solid fa-calendar-check" /></div>
                 <div className="db-detail-card-title">This Month Progress</div>
               </div>
-              <MonthRow label="New Schools in Launch Set-Up Tab:" val={d.schools.newLaunch} tone="blue" />
-              <MonthRow label="New Schools in ERP Tab:" val={d.schools.newErp} tone="blue" />
+              <MonthRow label="New Schools in Launch Set-Up Tab:" val={newLaunchThisMonth} tone="blue" />
+              <MonthRow label="New Schools in ERP Tab:" val={newErpThisMonth} tone="blue" />
               <MonthRow label="Total New Staff Sign Up:" val={d.staff.newSignup} tone="orange" />
               <MonthRow label="Total New Student Sign Up:" val={d.students.newSignup} tone="red" />
             </div>
@@ -949,7 +881,14 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 <i className="fa-solid fa-triangle-exclamation" />
                 <div className="db-block-ttl">Couldn't load schools</div>
                 <div className="db-block-sub">{progressErr.message}</div>
-                <button className="db-retry" onClick={() => { setProgressErr(null); schoolProgressApi.listSchoolProgress().then(setProgress).catch(setProgressErr); }}>Retry</button>
+                <button className="db-retry" onClick={loadSchools}>Retry</button>
+              </div>
+            ) : (progress && !progress.enriched && (schoolReport.key === 'students' || schoolReport.key === 'staff')) ? (
+              <div className="db-block" style={{ margin: 0 }}>
+                <i className="fa-solid fa-triangle-exclamation" />
+                <div className="db-block-ttl">School-wise counts unavailable</div>
+                <div className="db-block-sub">The School Status branch report did not load, so per-school students / staff can't be listed.</div>
+                <button className="db-retry" onClick={loadSchools}>Retry</button>
               </div>
             ) : (!schoolLists || schoolLists[schoolReport.key] === undefined) ? (
               <div style={{ textAlign: 'center', padding: 30, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</div>
@@ -981,7 +920,7 @@ function OvCard({ label, val, sub, badge, icon, onClick }) {
   return (
     <div className="ov-card" onClick={onClick} style={onClick ? { cursor: 'pointer' } : undefined} title={onClick ? 'Click to view schools' : undefined}>
       <div className="ov-lbl">{label}</div>
-      <div className="ov-val">{fmt(val)}</div>
+      <div className="ov-val">{fmtOrDash(val)}</div>
       <div className="ov-sub">{sub}</div>
       <div className={`ov-badge ov-badge-${badge}`}><i className={`fa-solid ${icon}`} /></div>
     </div>
@@ -1036,7 +975,7 @@ function DetailRow({ label, val, tone }) {
   return (
     <div className="db-detail-row">
       <span className="db-detail-row-lbl">{label}</span>
-      <span className={`db-detail-row-val${tone ? ` ${tone}` : ''}`}>{fmt(val)}</span>
+      <span className={`db-detail-row-val${tone ? ` ${tone}` : ''}`}>{fmtOrDash(val)}</span>
     </div>
   );
 }
@@ -1054,7 +993,7 @@ function MonthRow({ label, val, tone }) {
   return (
     <div className="month-row">
       <span className="month-row-lbl">{label}</span>
-      <span className={`month-row-val month-val-${tone}`}>{fmt(val)}</span>
+      <span className={`month-row-val month-val-${tone}`}>{fmtOrDash(val)}</span>
     </div>
   );
 }

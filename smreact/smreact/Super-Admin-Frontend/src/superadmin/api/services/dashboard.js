@@ -37,6 +37,8 @@
 import { ApiError } from '../client';
 import { SA_ADMIN_API_BASE, getSuperAdminToken } from '../config';
 import EP from '../endpoints';
+import { listPermissionBranches } from './schoolPermissions';
+import { listSchoolProgress } from './schoolProgress';
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const text = (v) => String(v ?? '').trim();
@@ -254,6 +256,52 @@ export function adminDashboardToUi(raw) {
     bugList: (Array.isArray(d.Bugs) ? d.Bugs : []).map(dashboardBugToUi),
     raw: d,
   };
+}
+
+/**
+ * Dashboard ke school cards ka EK source — branch directory
+ * (SchoolPermissions/get-branches-with-permissions), wahi list jo School
+ * Permissions aur School Payments dikhate hain:
+ *   isActive    → active / inactive
+ *   launchSetup → 1 = ERP, 0 = Launch Set-Up   (inactive par bhi maloom)
+ *
+ * branch-report (School Status) sirf students / staff ke liye jodi jati hai.
+ * Wo route kuch active branches chhor deta hai, aur isActive=false par
+ * launchSetup ko nazar-andaz karta hai — is liye ginti / group ke liye us par
+ * bharosa nahi kiya jata. Wo fail ho to sirf counts jaate hain (`enriched`
+ * false), school list nahi.
+ *
+ * @returns {Promise<{ launch, erp, inactive, enriched }>} har row:
+ *   { id, name, setupType: 'erp'|'launch', active, signupDate, students, staff }
+ */
+export async function loadSchoolDirectory() {
+  const [{ schools, permMap }, prog] = await Promise.all([
+    listPermissionBranches(),
+    listSchoolProgress().catch(() => null),
+  ]);
+  const report = {};
+  if (prog) [...prog.launch, ...prog.erp, ...prog.inactive].forEach((r) => { if (r.id) report[r.id] = r; });
+  const out = { launch: [], erp: [], inactive: [], enriched: !!prog };
+  const seen = new Set();
+  (schools || []).forEach((s) => {
+    const id = num(s.id);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const p = permMap?.[s.id] || {};
+    const r = report[id];
+    const row = {
+      id,
+      name: s.name || r?.name || `Branch #${id}`,
+      setupType: p.erpAccess ? 'erp' : 'launch',
+      active: !!p.activeBranch,
+      signupDate: text(s.raw?.createdAt).slice(0, 10) || r?.signupDate || '',
+      students: r ? num(r.students) : 0,
+      staff: r ? num(r.staff) : 0,
+    };
+    if (!row.active) out.inactive.push(row);
+    else (row.setupType === 'erp' ? out.erp : out.launch).push(row);
+  });
+  return out;
 }
 
 /** GET /api/AHM_School_Progress/admin_dashboard → mapped overview. */

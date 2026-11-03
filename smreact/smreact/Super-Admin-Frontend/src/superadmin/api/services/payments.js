@@ -57,14 +57,19 @@ const withTimeout = (promise, ms = CALL_TIMEOUT_MS) => new Promise((resolve, rej
   promise.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
 });
 
-/** items par fn chalao, ek waqt me `limit` — nateeja usi tarteeb me; fail/timeout → null. */
-async function mapPool(items, fn, limit = POOL_SIZE) {
+/** items par fn chalao, ek waqt me `limit` — nateeja usi tarteeb me; fail/timeout → null.
+    `failures` (optional array) me har fail/timeout wala item daal diya jata hai, taake
+    "record nahi mila" (null) aur "call fail hui" (bhi null) me farq kiya ja sake. */
+async function mapPool(items, fn, limit = POOL_SIZE, failures = null) {
   const out = new Array(items.length).fill(null);
   let next = 0;
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await withTimeout(fn(items[i], i)).catch(() => null);
+      out[i] = await withTimeout(fn(items[i], i)).catch(() => {
+        if (failures) failures.push(items[i]);
+        return null;
+      });
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
@@ -350,9 +355,9 @@ export async function getPaymentSummary(branchId, type = PAYMENT_TYPE) {
  * khulte hi table/cards isi se bharte hain.
  * @returns {Promise<Object>} { [branchId]: setup }  (jin ka record nahi, wo ghayab)
  */
-export async function listPaymentSummaries(branchIds = [], type = PAYMENT_TYPE) {
+export async function listPaymentSummaries(branchIds = [], type = PAYMENT_TYPE, { failures = null } = {}) {
   const ids = [...new Set(branchIds.map(Number).filter(Boolean))];
-  const rows = await mapPool(ids, (id) => getPaymentSummary(id, type));
+  const rows = await mapPool(ids, (id) => getPaymentSummary(id, type), POOL_SIZE, failures);
   const out = {};
   ids.forEach((id, i) => { if (rows[i]) out[id] = rows[i]; });
   return out;
@@ -606,7 +611,7 @@ export async function getChallan(branchId, school, setup, period) {
  * @param {Object} [period] { month, year } — kis mahine ke challans chahiye
  * @returns {Promise<Object>} { [branchId]: challan }
  */
-export async function listChallans(schools = [], setups = {}, period) {
+export async function listChallans(schools = [], setups = {}, period, { failures = null } = {}) {
   const out = {};
   try {
     /* Ek call me saari branches ke rows — har branch ki alag POST ki jagah. */
@@ -624,7 +629,7 @@ export async function listChallans(schools = [], setups = {}, period) {
     return out;
   } catch (e) {
     /* Bulk route na chale to purana tareeqa — branch-wise, magar pool me. */
-    const rows = await mapPool(schools, (s) => getChallan(s.id, s, setups[s.id], period));
+    const rows = await mapPool(schools, (s) => getChallan(s.id, s, setups[s.id], period), POOL_SIZE, failures);
     schools.forEach((s, i) => { if (rows[i]) out[s.id] = rows[i]; });
     return out;
   }
@@ -691,9 +696,97 @@ export async function getPreviousDues(branchId, school, setup, period) {
     getChallan(branchId, school, setup, prev).catch(() => null),
     getReceiving(branchId, prev).catch(() => null),
   ]);
+  return remainingDuesOf(challan, recv);
+}
+
+/**
+ * EK mahine ka bacha hua baqaya — Receiving tab, getPreviousDues aur Dashboard
+ * teeno isi ek qaide par chalte hain:
+ *   challan hi nahi                → 0
+ *   receiving hui                  → us receiving ka remainingAmount
+ *   challan bana, receiving nahi   → poora challan total
+ */
+export function remainingDuesOf(challan, recv) {
   if (!challan) return 0;
   const left = recv ? num(recv.remainingAmount) : num(challan.total);
   return Math.max(0, left);
+}
+
+/**
+ * Ek school ki EK mahine ki fee line — School Payments ▸ Receiving tab ki row
+ * aur Dashboard ki Fee Analytics / Current Month Details dono yahi istemal
+ * karte hain, taake dono ka hisaab kabhi alag na ho.
+ *
+ *   prevDues   — pichhle mahine ka bacha hua (remainingDuesOf)
+ *   challan    — IS mahine ka apna charge (challan.monthly, setup se) — challan
+ *                ka `total` NAHI, kyunke total me pichhle dues pehle se jude hote
+ *                hain; total lene se previous dues do baar gine jate.
+ *   discount / received — is mahine ki receiving se
+ *   receivable = prevDues + challan − discount
+ *   pending    = receivable − received
+ */
+export function feeRowOf({ prevDues = 0, challan = null, recv = null } = {}) {
+  const p = num(prevDues);
+  const c = challan ? num(challan.monthly) : 0;
+  const discount = recv ? num(recv.discount) : 0;
+  const received = recv ? num(recv.receivedAmount) : 0;
+  const receivable = p + c - discount;
+  return { prevDues: p, challan: c, discount, received, receivable, pending: receivable - received };
+}
+
+/**
+ * Dashboard ke liye EK mahine ki poori fee ledger — bilkul wahi data aur qaida
+ * jo School Payments ▸ Receiving tab ka hai (setup → challan → receiving →
+ * pichhle mahine ka baqaya), magar sirf un branches ke liye calls jahan zaroorat
+ * ho (jin ka is ya pichhle mahine ka challan bana ho).
+ *
+ * Koi bhi call fail ho to poora nateeja reject hota hai — adhoore aankre (jo
+ * fail hui branches ko 0 maan lete) dikhane se error behtar hai.
+ *
+ * @param {Array}  schools  [{ id, name, students }]
+ * @param {Object} period   { month, year }
+ * @returns {Promise<{ rows: Array, totals: Object }>}
+ */
+export async function loadFeeLedger(schools = [], period) {
+  const failures = [];
+  const prev = previousPeriod(period);
+  /* Ledger ek bulk call hai (cache shuda) — dono mahine usi se. */
+  const [curBare, prevChallans] = await Promise.all([
+    listChallans(schools, {}, period, { failures }),
+    listChallans(schools, {}, prev, { failures }),
+  ]);
+  const curIds = Object.keys(curBare);
+  const prevIds = Object.keys(prevChallans);
+  const [setups, recvs, prevRecvs] = await Promise.all([
+    /* Monthly charge setup se aata hai — sirf jin ka is mahine challan bana. */
+    listPaymentSummaries(curIds, PAYMENT_TYPE, { failures }),
+    listReceivings(curIds, period, { failures }),
+    listReceivings(prevIds, prev, { failures }),
+  ]);
+  if (failures.length) {
+    throw new ApiError(`${failures.length} payment record request(s) failed — totals would be incomplete`, 0);
+  }
+  /* Setup mil gaya to challan ka monthly/prevDues split usi se (ledger cache se,
+     koi nayi call nahi). */
+  const challans = await listChallans(schools.filter((s) => curBare[s.id]), setups, period);
+
+  const rows = [];
+  schools.forEach((s) => {
+    const challan = challans[s.id] || null;
+    const recv = recvs[s.id] || null;
+    const prevDues = remainingDuesOf(prevChallans[s.id], prevRecvs[s.id]);
+    if (!challan && !recv && !prevDues) return;
+    rows.push({ id: s.id, name: s.name, ...feeRowOf({ prevDues, challan, recv }) });
+  });
+  const totals = rows.reduce((t, r) => ({
+    prevDues: t.prevDues + r.prevDues,
+    challan: t.challan + r.challan,
+    discount: t.discount + r.discount,
+    receivable: t.receivable + r.receivable,
+    received: t.received + r.received,
+    pending: t.pending + r.pending,
+  }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
+  return { rows, totals };
 }
 
 /**
@@ -714,12 +807,8 @@ export async function listPreviousDues(schools = [], setups = {}, period) {
   const receivings = await listReceivings(Object.keys(challans), prev).catch(() => ({}));
   const out = {};
   for (const s of schools) {
-    const challan = challans[s.id];
-    if (!challan) { out[s.id] = 0; continue; }
-    const recv = receivings[s.id];
     /* Receiving hui to uska remaining sach hai; na hui to poora challan baqi. */
-    const left = recv ? num(recv.remainingAmount) : num(challan.total);
-    out[s.id] = Math.max(0, left);
+    out[s.id] = remainingDuesOf(challans[s.id], receivings[s.id]);
   }
   return out;
 }
@@ -857,9 +946,9 @@ export async function getReceiving(branchId, period) {
  * Kai branches ke receiving records ek saath (sab calls parallel).
  * @returns {Promise<Object>} { [branchId]: receiving }
  */
-export async function listReceivings(branchIds = [], period) {
+export async function listReceivings(branchIds = [], period, { failures = null } = {}) {
   const ids = [...new Set(branchIds.map(Number).filter(Boolean))];
-  const rows = await mapPool(ids, (id) => getReceiving(id, period));
+  const rows = await mapPool(ids, (id) => getReceiving(id, period), POOL_SIZE, failures);
   const out = {};
   ids.forEach((id, i) => { if (rows[i]) out[id] = rows[i]; });
   return out;

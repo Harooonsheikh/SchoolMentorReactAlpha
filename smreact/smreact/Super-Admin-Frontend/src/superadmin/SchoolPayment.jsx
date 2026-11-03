@@ -1407,10 +1407,13 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
                        is liye jis mahine ka challan abhi bana hi na ho uska
                        Total Dues khali dikhta tha — halanke pichhla baqaya
                        maujood hota tha. */
-                    const totalDues = Number(prevDuesStore[s.id]) || 0;
-                    const currentMonth = challan ? (challan.monthly || 0) : 0;
-                    const receivingDues = recv ? (recv.receivedAmount || 0) : 0;
-                    const discount = recv ? (recv.discount || 0) : 0;
+                    /* Hisaab paymentsApi.feeRowOf se — wahi function Dashboard ki
+                       Fee Analytics bhi chalati hai, taake dono kabhi alag na hon. */
+                    const fee = paymentsApi.feeRowOf({ prevDues: Number(prevDuesStore[s.id]) || 0, challan, recv });
+                    const totalDues = fee.prevDues;
+                    const currentMonth = fee.challan;
+                    const receivingDues = fee.received;
+                    const discount = fee.discount;
                     /* Total Payable
                          Total Dues + Current Month − Received Amount − Discount
     
@@ -1434,7 +1437,7 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
                        Zyada wasooli par jawab manfi aata hai (Dues khud usay
                        `dues-neg` me dikhata hai) — yeh chhupaya nahi jata, kyunke
                        wo school ka credit hai aur nazar aana chahiye. */
-                    const totalPayable = totalDues + currentMonth - receivingDues - discount;
+                    const totalPayable = fee.pending;
                     const remainingDues = recv ? (recv.remainingAmount || 0) : totalPayable;
                     /* ── Receiving ki halat — wahi teen soortein jo ERP ke Fee
                           module me hain (components/Fee.jsx → fee-recv-acts):

@@ -348,10 +348,11 @@ function ChartTooltip({ active, payload, label }) {
    this reads payload[0].payload.color instead of p.color (Recharts
    doesn't echo a plain <Bar fill> back onto payload[i].color the way
    it does for multi-series charts). Pass `showPct` for the donut so
-   each row also shows its share of the total. */
+   each row also shows its share of the total — that share must be
+   precomputed on the datum as `pct` (a Pie tooltip's payload only
+   contains the hovered slice, so the total can't be derived here). */
 function FeeChartTooltip({ active, payload, showPct }) {
   if (!active || !payload?.length) return null;
-  const total = showPct ? payload.reduce((a, p) => a + (p.value || 0), 0) : 0;
   return (
     <div style={{
       background: 'var(--bg-card, #fff)',
@@ -361,7 +362,8 @@ function FeeChartTooltip({ active, payload, showPct }) {
     }}>
       {payload.map((p, i) => {
         const color = p.payload?.color || p.color || p.fill;
-        const pct = showPct && total > 0 ? Math.round((p.value / total) * 100) : null;
+        const rawPct = p.payload?.pct;
+        const pct = showPct && Number.isFinite(rawPct) ? rawPct.toFixed(2) : null;
         return (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
@@ -885,12 +887,25 @@ const canSeeCard = useCallback(
   ]), [feeExtras]);
   /* Net Receivable − Received − Discount − Advance Adjustments = Pending —
      the same formula the Pending Fee card itself prints, just charted. */
-  const breakdownChartData = useMemo(() => ([
-    { name: 'Fee Received',        value: feeExtras.receivedTotal,          color: '#16A34A' },
-    { name: 'Discount Given',      value: feeExtras.discountTotal,          color: '#D97706' },
-    { name: 'Advance Adjustments', value: feeExtras.advanceAdjustmentTotal, color: '#7C3AED' },
-    { name: 'Pending Fee',         value: feeExtras.pendingTotal,           color: '#DC2626' },
-  ].filter(d => d.value > 0)), [feeExtras]);
+  /* Each slice's share is computed HERE against the sum of every plotted
+     slice. The tooltip can't derive it: a Pie tooltip's payload only holds
+     the hovered slice, so summing payload gave value/value = 100% always. */
+  const breakdownChartData = useMemo(() => {
+    const rows = [
+      { name: 'Fee Received',        value: feeExtras.receivedTotal,          color: '#16A34A' },
+      { name: 'Discount Given',      value: feeExtras.discountTotal,          color: '#D97706' },
+      { name: 'Advance Adjustments', value: feeExtras.advanceAdjustmentTotal, color: '#7C3AED' },
+      { name: 'Pending Fee',         value: feeExtras.pendingTotal,           color: '#DC2626' },
+    ]
+      .map(d => ({ ...d, value: Number(d.value) }))
+      // null / undefined / NaN / zero / negative → not a drawable slice
+      .filter(d => Number.isFinite(d.value) && d.value > 0);
+    const total = rows.reduce((a, d) => a + d.value, 0);
+    return rows.map(d => ({
+      ...d,
+      pct: total > 0 ? Math.round((d.value / total) * 10000) / 100 : 0,
+    }));
+  }, [feeExtras]);
   const collectionsChartData = useMemo(() => ([
     { name: 'Collected',         short: 'Collected',   value: feeExtras.receivedTotal, color: '#16A34A' },
     { name: 'Pending',           short: 'Pending',     value: feeExtras.pendingTotal,  color: '#DC2626' },
