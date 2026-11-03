@@ -9,6 +9,7 @@ import * as approvalsService from '../services/approvalsService';
 import * as dashboardService from '../services/dashboardService';
 import * as preEnrollmentService from '../services/preEnrollmentService';
 import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
+import { computePrevOut as prevDuesWorkerCompute } from '../services/prevDuesWorker';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
@@ -1922,7 +1923,7 @@ function FamilyTreeChallansList({ toast }) {
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         /* Running-ledger — stale stored Previous Pending se bachne ke liye (jaise
            September ki receiving October ke baad hui to October ka stored 13,850 galat). */
-        prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
       } catch (e) { /* optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
@@ -3205,7 +3206,7 @@ function FeeChallansList({ toast }) {
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         /* Running-ledger — stale stored Previous Pending se bachne ke liye. */
-        prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
         /* Covering (Sep–Nov ka Nov) challan jis ka baqaya baad wala (Oct) challan pehle hi
            CARRY kar chuka — row me us ke figures mat dikhao (dues double: 16,000 + advance
            −4,000). Row pichhle baqaye (prevOut: 12,000) par chale. */
@@ -3389,7 +3390,7 @@ function FeeChallansList({ toast }) {
         let fromY = toY;
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, Number(exportYear));
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, Number(exportYear));
       } catch (e) { /* optional — bina prev ke bhi export chalega */ }
 
       const rows = [];
@@ -8197,7 +8198,26 @@ function pickMonthChallan(rows, month, year) {
 }
 
 /* Running-ledger previous. viewMonth/viewYear: covering multi-month challans skip. */
+/* ── PERF: prevOutFromLedgerRows memoized ──────────────────────────────────
+   Running-balance compute (12-mahine × poora branch) bhaari hai aur HAR tab-open
+   par chalti thi → main-thread freeze. getLedgerRange ka `prevRows` array per
+   branch|window CACHED hai (save/receive par invalidateMonthChallans →
+   ledgerRangeCache.clear() → naya array). Us array reference par WeakMap memo:
+   same window ki dubara compute skip, save ke baad khud-ba-khud fresh.
+   Fresh-cloned entries return taake caller (jo .fine add karta hai) memo pollute na kare. */
+const _prevOutMemo = new WeakMap();
 function prevOutFromLedgerRows(prevRows, viewMonth = null, viewYear = null) {
+  if (!prevRows) return _prevOutFromLedgerRowsImpl(prevRows, viewMonth, viewYear);
+  let byKey = _prevOutMemo.get(prevRows);
+  if (!byKey) { byKey = new Map(); _prevOutMemo.set(prevRows, byKey); }
+  const vk = `${viewMonth}|${viewYear}`;
+  let base = byKey.get(vk);
+  if (!base) { base = _prevOutFromLedgerRowsImpl(prevRows, viewMonth, viewYear); byKey.set(vk, base); }
+  const out = {};
+  for (const id in base) out[id] = { ...base[id] };
+  return out;
+}
+function _prevOutFromLedgerRowsImpl(prevRows, viewMonth = null, viewYear = null) {
   /* SIRF aggregate carry rows ("Previous Pending" / arrear) — Launch Setup /
      Update Student ka "Previous Due" / "Previous Dues" head yahan NAHI.
      Woh normal billable head hai: pehle regex `/previous|…/` usay skip kar
@@ -8810,7 +8830,7 @@ function FeeReceivingIndividual({ toast }) {
         let fromM = toM - 11, fromY = toY;                 // 12-month window
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
         /* Har student ke PICHHLE challans (naya-pehle) — is mahine challan na ho to row me
            aakhri challan ka Previous Pending / Received / Remaining / Status dikhane ke liye
            (fully paid bhi — /pending paid challan wapas nahi deta). */
@@ -10292,7 +10312,7 @@ function FamilyTreeReceiving({ toast }) {
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         if (stale()) return;
-        prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
         /* Pichhle challans (naya-pehle) — is mahine challan na ho to receivable challan chunne ke liye. */
         const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
         setPriorByStudent(prior);
@@ -14979,7 +14999,17 @@ function unpaidFineOf(latest, settings) {
 
 /* Ledger-range rows → { [studentID]: [pichhle challans, naya-pehle] } (view mahine ko cover
    karne wale multi-month challans chhod kar). pickReceivableChallan isi list par chalta hai. */
+/* ── PERF: priorChallansByStudent memoized (same prevRows reference, same window) ── */
+const _priorMemo = new WeakMap();
 function priorChallansByStudent(prevRows, viewMonth, viewYear) {
+  if (!prevRows) return _priorChallansByStudentImpl(prevRows, viewMonth, viewYear);
+  let byKey = _priorMemo.get(prevRows);
+  if (!byKey) { byKey = new Map(); _priorMemo.set(prevRows, byKey); }
+  const vk = `${viewMonth}|${viewYear}`;
+  if (!byKey.has(vk)) byKey.set(vk, _priorChallansByStudentImpl(prevRows, viewMonth, viewYear));
+  return byKey.get(vk);
+}
+function _priorChallansByStudentImpl(prevRows, viewMonth, viewYear) {
   const prior = {};
   const seenIds = new Set();
   (prevRows || []).forEach(r => {
