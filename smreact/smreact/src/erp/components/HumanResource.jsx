@@ -1452,7 +1452,7 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
   /* Employee Directory me sirf Active staff — Inactive shamil nahi. */
   const activeEmps = useMemo(() => emps.filter(e => e.status === 'Active'), [emps]);
 
-  /* Popup screen se lamba ho kar kat raha tha — dialog ko 92vh tak band karke andar scroll. */
+   /* Dialog ko 78vh tak band karke center + scroll — StandardReportPicker ki inline styles override. */
   const pickerBodyRef = useRef(null);
   useEffect(() => {
     const el = pickerBodyRef.current;
@@ -1464,8 +1464,8 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
     while (dialog.parentElement && dialog.parentElement !== overlay) dialog = dialog.parentElement;
     const prevD = { maxHeight: dialog.style.maxHeight, overflowY: dialog.style.overflowY, margin: dialog.style.margin };
     const prevO = { alignItems: overlay.style.alignItems, padding: overlay.style.padding };
-    Object.assign(dialog.style, { maxHeight: '92vh', overflowY: 'auto', margin: 'auto' });
-    Object.assign(overlay.style, { alignItems: 'center', padding: '4vh 0' });
+    Object.assign(dialog.style, { maxHeight: '78vh', overflowY: 'auto', margin: 'auto' });
+    Object.assign(overlay.style, { alignItems: 'center', padding: '5vh 20px' });
     return () => { Object.assign(dialog.style, prevD); Object.assign(overlay.style, prevO); };
   }, []);
   /* ctx the directory generator needs: live employees + department /
@@ -1555,7 +1555,6 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
   return (
     <StandardReportPicker
       open
-      scrollable
       title="Employee Directory"
       subtitle="Choose which information to include, then export"
       formats={['pdf', 'word', 'excel']}
@@ -1568,36 +1567,40 @@ function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigN
       }}
       filters={
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, color: 'var(--tm)', flex: 1, minWidth: 220 }}>
-              Every column is selected by default. Uncheck anything you do not need for this export.
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, justifyContent: 'space-between' }}>
+            <div style={{ fontSize: 12, color: 'var(--tm)', lineHeight: 1.4 }}>
+              Every column is selected by default. Uncheck anything you do not need.
             </div>
-            <button type="button" className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 11.5 }} onClick={selectAll}><i className="fa-solid fa-check-double" aria-hidden="true"></i> Select All</button>
-            <button type="button" className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 11.5 }} onClick={clearAll}><i className="fa-solid fa-xmark" aria-hidden="true"></i> Clear All</button>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button type="button" className="btn-secondary" style={{ height: 30, padding: '0 10px', fontSize: 11 }} onClick={selectAll}><i className="fa-solid fa-check-double" aria-hidden="true"></i> All</button>
+              <button type="button" className="btn-secondary" style={{ height: 30, padding: '0 10px', fontSize: 11 }} onClick={clearAll}><i className="fa-solid fa-xmark" aria-hidden="true"></i> Clear</button>
+            </div>
           </div>
 
-          {Object.entries(groups).map(([group, fields]) => (
-            <div className="pr-section" key={group}>
-              <div className="pr-section-title"><i className="fa-solid fa-layer-group" aria-hidden="true"></i> {group}</div>
-              <div className="pr-grid g3">
-                {fields.map(f => (
-                  <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 600, color: 'var(--t1)', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={selected.has(f.key)} onChange={() => toggle(f.key)} /> {f.label}
-                  </label>
-                ))}
+<div className="dir-checkbox-scroll" style={{ maxHeight: 'clamp(140px, 22vh, 210px)', overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'var(--bm) transparent',border: '1px solid var(--bl)', borderRadius: 10, padding: '10px 10px 10px 6px', marginBottom: 6 }}>
+            {Object.entries(groups).map(([group, fields]) => (
+              <div className="pr-section" key={group}>
+                <div className="pr-section-title"><i className="fa-solid fa-layer-group" aria-hidden="true"></i> {group}</div>
+                <div className="pr-grid g3">
+                  {fields.map(f => (
+                    <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 600, color: 'var(--t1)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={selected.has(f.key)} onChange={() => toggle(f.key)} /> {f.label}
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
 
-          <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', background: 'rgba(2,132,199,.06)', border: '1px solid rgba(2,132,199,.2)', borderRadius: 8, padding: '10px 13px', marginTop: 4, fontSize: 12, color: 'var(--t2)', lineHeight: 1.5 }}>
-            <i className="fa-solid fa-circle-info" style={{ color: 'var(--info)', marginTop: 2, flexShrink: 0 }} aria-hidden="true"></i>
-            <span>
+          {/* <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', background: 'rgba(2,132,199,.06)', border: '1px solid rgba(2,132,199,.2)', borderRadius: 8, padding: '10px 13px', marginTop: 8, fontSize: 12, color: 'var(--t2)', lineHeight: 1.5 }}> */}
+            {/* <i className="fa-solid fa-circle-info" style={{ color: 'var(--info)', marginTop: 2, flexShrink: 0 }} aria-hidden="true"></i> */}
+            {/* <span>
               {selectedKeys.length} of {HR_DIRECTORY_FIELDS.length} extra columns selected (plus Name &amp; Emp ID, always included).{' '}
               {willBeLandscape
                 ? <>With this many columns, the report will print in <strong>Landscape</strong> so everything stays legible.</>
                 : <>The report will print in <strong>Portrait</strong>. Selecting more than 6 columns switches it to Landscape automatically.</>}
-            </span>
-          </div>
+            </span> */}
+          {/* </div> */}
         </>
       }
     />
@@ -8259,7 +8262,7 @@ export const HR_CSS = `
   z-index: 1000;
   display: none;
   align-items: center; justify-content: center;
-  padding: 20px;
+  padding: 36px 20px;
   font-family: var(--hr-font);
 }
 .ov.open { display: flex; animation: hrbFadeIn .14s ease-out; }
@@ -8270,7 +8273,7 @@ export const HR_CSS = `
   border-radius: var(--r-xl);
   width: 100%;
   max-width: 600px;
-  max-height: 92vh;
+  max-height: 84vh;
   overflow: hidden;
   box-shadow: var(--s-xl);
   border: 1px solid var(--bl);
@@ -8279,6 +8282,11 @@ export const HR_CSS = `
 }
 @media (max-width: 600px) {
   .modal { max-width: 96vw; }
+  .modal-head { padding: 14px 16px 10px; }
+  .modal-body { padding: 14px 16px 16px; }
+  .modal-foot { padding: 10px 16px; gap: 8px; }
+  .modal-foot .btn-primary,
+  .modal-foot .btn-secondary { flex: 1 1 auto; justify-content: center; }
 }
 @keyframes mIn {
   from { opacity: 0; transform: translateY(14px) scale(.97); }
@@ -8333,6 +8341,8 @@ export const HR_CSS = `
 .modal-close:hover { background: rgba(220, 38, 38, .1); color: var(--err); }
 .modal-body {
   padding: 20px 24px 24px;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   background: var(--card);
   color: var(--t1);
@@ -9020,6 +9030,7 @@ export const HR_CSS = `
 @media (max-width: 540px) {
   .ov { padding: 0; }
   .modal { border-radius: 0; max-height: 100vh; height: 100vh; max-width: 100vw; }
+  .dir-checkbox-scroll { max-height: 180px !important; }
   .modal .f-row { grid-template-columns: 1fr; }
   .confirm-dialog { border-radius: 22px 22px 0 0; max-width: 100%; align-self: flex-end; }
   .confirm-overlay.open { align-items: flex-end; padding: 0; }

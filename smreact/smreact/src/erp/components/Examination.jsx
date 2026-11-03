@@ -1463,57 +1463,78 @@ export default function Examination({ toast = () => { } }) {
 
   /* When a single-assessment card opens, load that student's real per-subject marks. */
   useEffect(() => {
-    if (!resCardCtx) { setResCardMarks(null); return undefined; }
+       if (!resCardCtx) { setResCardMarks(null); return undefined; }
     setResCardMarks(null); // pehle clear — sirf API data dikhe, static/stale flash na ho
     const { classID, sectionID, selectExam, termID, studentId } = resCardCtx;
     let cancelled = false;
     (async () => {
       try {
-        const rawSubs = await cbrApi.mergeSaSubjectsWithStudentMarks({
-          classID, sectionID, termID, examID: selectExam, studentID: studentId,
-        });
-        const subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-        // Direct marks fetch taa-ke obtain + remarks dono mil sakein
-        const records = await Promise.all(subs.map(async su => {
-          try {
-            const p = new URLSearchParams({
-              classID: String(classID), termID: String(termID ?? ''), ExamID: String(selectExam),
-              SubjectID: String(su.subjectID), StudentID: String(studentId), sectionID: String(sectionID), pageNo: '1',
-            });
-            const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
-            const d = await r.json();
-            const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
-            return { su, rec };
-          } catch { return { su, rec: null }; }
-        }));
-        if (cancelled) return;
-        const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
-        records.forEach(({ su, rec }) => {
-          obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
-          totals[su.subjectName] = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
-          if (rec?.remarks) remarks[su.subjectName] = rec.remarks;   // saved remarks → Comment column
-          if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
+
+        /* ── Single API — ek hi call mein sab subjects + marks ── */
+        const p = new URLSearchParams({
+          StudentID: String(studentId),
+          ExamID:    String(selectExam),
+          classID:   String(classID),
+          sectionID: String(sectionID),
+          ...(termID != null ? { TermID: String(termID) } : {}),
         });
-        // Student ka FINAL remark (getremarksbystudentfilters) → card ke Final Remarks mein
-        let finalRemark = '';
-        try {
-          const branchID = sessionStorage.getItem('branchID');
-          const fp = new URLSearchParams({
-            branchID: String(branchID), classID: String(classID), sectionID: String(sectionID),
-            examID: String(selectExam), termID: String(termID ?? ''), studentID: String(studentId),
-            pageNo: '1', pageCount: '20',
-          });
-          const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
-          const fd = await fr.json();
-          const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : (fd?.data || null));
-          finalRemark = frec?.remarks || '';
-        } catch (e) { /* no final remark */ }
-        // Card ke header ka avatar — student ki asli tasveer.
+        const res  = await fetch(buildUrl(`/api/getsaexaminationresultsbystudentidandexam?${p}`), { headers });
+        const json = await res.json();
+        const rows = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
+
+        if (cancelled) return;
+
+        const obtained = {}, totals = {}, remarks = {}, grades = {}, percentages = {};
+        const absentSubjects = [], subjectNames = [];
+
+        rows.forEach(row => {
+          const name = String(row.subjectName ?? '').trim();
+          if (!name || subjectNames.includes(name)) return;
+          subjectNames.push(name);
+
+          const obt = row.obtainMarks ?? '';
+          const tot = row.totalMarks  ?? '';
+          obtained[name]    = (obt === '' || obt == null) ? 0 : Number(obt);
+          totals[name]      = (tot === '' || tot == null) ? 0 : Number(tot);
+          if (row.remarks)    remarks[name]     = row.remarks;
+          if (row.grade)      grades[name]      = row.grade;
+          if (row.percentage) percentages[name] = row.percentage;
+
+          const absent = obt === '' || obt == null || String(obt).trim().toUpperCase() === 'AB';
+          if (absent) absentSubjects.push(name);
+        });
+
+        /* Overall values — sab rows mein same hoti hain, pehli se lete hain */
+        const first        = rows[0] || {};
+        const finalRemark  = first.studentFinalRemarks || first['Overall Remarks'] || '';
+        const overallGrade = first.finalGrade          || first['Overall Final Grade'] || '';
+        const overallPct   = first['Overall Percentage'] || '';
+        const ranking      = first.ranking || '';
+
         const photo = await rcStudentPhoto(classID, sectionID, studentId, resCardCtx.student?.registrationNumber);
         if (cancelled) return;
-        setResCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects, photo });
+
+        setResCardMarks({
+          subjects: subjectNames,
+          totals,
+          obtained,
+          remarks,
+          grades,
+          percentages,
+          finalRemark,
+          overallGrade,
+          overallPct,
+          ranking,
+          absentSubjects,
+          photo,
+          signature1:   first.signature1   || '',
+          signature2:   first.signature2   || '',
+          designation1: first.designation1 || '',
+          designation2: first.designation2 || '',
+          branchLogo:   first.branchLogo   || '',
+        });
       } catch (e) {
         console.error('Error loading single card subject marks:', e);
         if (!cancelled) setResCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -1522,7 +1543,6 @@ export default function Examination({ toast = () => { } }) {
     return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [resCardCtx]);
-
   /* When a student's card opens, load the real per-subject main-exam marks. */
   useEffect(() => {
     if (!cbrCardCtx) { setCbrCardMarks(null); return undefined; }
@@ -8481,7 +8501,7 @@ export default function Examination({ toast = () => { } }) {
           ? `${posNum}${posNum === 1 ? 'st' : posNum === 2 ? 'nd' : posNum === 3 ? 'rd' : 'th'}`
           : '—';
 
-        const cardStudent = {
+              const cardStudent = {
           id: stu.id,
           rollNo: stu.registrationNumber || stu.registrationNo || stu.rollNo || stu.id,
           name: stu.studentName || stu.name || stu.studentname || stu.StudentName
@@ -8490,20 +8510,29 @@ export default function Examination({ toast = () => { } }) {
             || '',
           father: stu.fatherName || stu.father || stu.fatherrName || '',
 
-          position: realPosition,
+          position: resCardMarks?.ranking || realPosition,
 
-          obtained: resCardMarks?.obtained || {},
-          manualRemarks: resCardMarks?.remarks || {},
-          finalRemarks: resCardMarks?.finalRemark || '',
+          obtained:      resCardMarks?.obtained     || {},
+          manualRemarks: resCardMarks?.remarks      || {},
+          finalRemarks:  resCardMarks?.finalRemark  || '',
           absentSubjects: resCardMarks?.absentSubjects || [],
-          photo: resCardMarks?.photo || rcPhotoFromRecord(stu) || '',   // header ke circle me asli tasveer
+          photo: resCardMarks?.photo || rcPhotoFromRecord(stu) || '',
           attendance: '—',
+          grades:       resCardMarks?.grades       || {},
+          percentages:  resCardMarks?.percentages  || {},
+          overallGrade: resCardMarks?.overallGrade || '',
+          overallPct:   resCardMarks?.overallPct   || '',
         };
 
         const cardRd = {
           released: false,
-          totalMarks: resCardMarks?.totals || {},   // sirf API data (koi static fallback nahi)
-          subjects: resCardMarks?.subjects || [],
+          totalMarks: resCardMarks?.totals   || {},
+          subjects:   resCardMarks?.subjects || [],
+          ...(resCardMarks?.signature1   ? { apiSignature1:   resCardMarks.signature1 }   : {}),
+          ...(resCardMarks?.signature2   ? { apiSignature2:   resCardMarks.signature2 }   : {}),
+          ...(resCardMarks?.designation1 ? { apiDesignation1: resCardMarks.designation1 } : {}),
+          ...(resCardMarks?.designation2 ? { apiDesignation2: resCardMarks.designation2 } : {}),
+          ...(resCardMarks?.branchLogo   ? { apiBranchLogo:   resCardMarks.branchLogo }   : {}),
         };
         const cardEx = { name: ex.name, classes: [resCardCtx.className || ''] };
         return (
