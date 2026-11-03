@@ -51,6 +51,13 @@ const EXTRA_NAV_BRANCHES = {
   approvals: ['15'], /* Approvals also live on branch 15 (branch 1 already via BRANCH1_ONLY_NAV) */
 };
 
+/* Modules that are live ONLY on the listed branchIDs and hidden on every other
+   branch. Unlike BRANCH1_ONLY_NAV, the user's permission still applies on the
+   allowed branches. Keyed by sidebar nav id. */
+const BRANCH_ONLY_NAV = {
+  cmp: ['1', '15'], /* School Compliance */
+};
+
 /* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
    Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
    rehta hai, to jis user ne aakhri baar Networks khola tha uske paas
@@ -102,6 +109,7 @@ const HumanResource  = lazyTab(() => import(/* webpackChunkName: "mod-hr" */    
 // const Networks = lazy(() => import('./Networks.jsx'));
 const StaffAppraisalPage = lazyTab(() => import(/* webpackChunkName: "mod-appraisal" */ './StaffAppraisalPage.jsx'));
 const Approvals      = lazyTab(() => import(/* webpackChunkName: "mod-approvals" */     './Approvals.jsx'));
+const SchoolCompliance = lazyTab(() => import(/* webpackChunkName: "mod-compliance" */ '../pages/SchoolCompliance/SchoolCompliance.jsx'));
 const SettingsModule = lazyTab(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
 const SchoolSOPs     = lazyTab(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
 const TeacherTrainings = lazyTab(() => import(/* webpackChunkName: "mod-trainings" */    '../pages/SchoolMentor/TeacherTrainings.jsx'));
@@ -145,6 +153,7 @@ const NAV_LABELS = {
   networks: 'Networks',
   appraisal: 'Staff Appraisals',
   approvals: 'Approvals',
+  cmp: 'School Compliance',
   crm: 'Admission CRM',
   sops: 'Policy Manuals',
   trainings: 'Teacher Trainings',
@@ -194,6 +203,7 @@ const NAV_SECTIONS = [
       /* { id: 'networks',  name: 'Networks',       icon: 'fa-circle-nodes' }, — ab Settings › Networks tab me */
       { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },     /* branchID 1 only */
       { id: 'approvals', name: 'Approvals',        icon: 'fa-square-check' },
+      { id: 'cmp',       name: 'School Compliance', icon: 'fa-clipboard-check' },   /* branch 1 & 15 only */
     ],
   },
   {
@@ -492,6 +502,7 @@ if (navId === 'mentorai') {
        likhi hain (School SOPs branch 5 par bhi live hai). Jahan dikhte hain
        wahan bhi user ki permission maani jati hai (registry-backed ones), ya
        bas dikh jate hain (Chat / e-Tube / Notifications jaise extras). */
+    if (BRANCH_ONLY_NAV[navId] && !BRANCH_ONLY_NAV[navId].includes(String(sessionStorage.getItem('branchID')))) return false;
     if (BRANCH1_ONLY_NAV.has(navId)) {
       const bid = String(sessionStorage.getItem('branchID'));
       const allowed = bid === '1' || (EXTRA_NAV_BRANCHES[navId] || []).includes(bid);
@@ -946,6 +957,11 @@ if (navId === 'mentorai') {
                 <Approvals toast={pushToast} />
               </Suspense>
             )}
+            {active === 'cmp' && (
+              <Suspense fallback={null}>
+                <SchoolCompliance toast={pushToast} />
+              </Suspense>
+            )}
             {active === 'settings' && (
               <Suspense fallback={null}>
                 <SettingsModule toast={pushToast} />
@@ -1015,7 +1031,7 @@ if (navId === 'mentorai') {
                 />
               </Suspense>
             )}
-            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'approvals' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
+            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'approvals' && active !== 'cmp' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
               <NavComingSoon label={NAV_LABELS[active] || 'This module'} />
             )}
           </main>

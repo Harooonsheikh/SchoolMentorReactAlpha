@@ -255,6 +255,17 @@ export const MODULE_TREE = [
       { id: 'approvals.my_requests', label: 'My Requests' },
       { id: 'approvals.review',      label: 'Pending Approvals & History' },
     ] },
+  { id: 'compliance',  label: 'School Compliance', icon: 'fa-clipboard-check',
+    children: [
+      /* ── SchoolCompliance.jsx's 7 L1 tabs, one permission each. ── */
+      { id: 'cmp.overview', label: 'Overview' },
+      { id: 'cmp.daily',    label: 'Daily Checks' },
+      { id: 'cmp.weekly',   label: 'Weekly Checks' },
+      { id: 'cmp.monthly',  label: 'Monthly Review' },
+      { id: 'cmp.problems', label: 'Problems & Follow-ups' },
+      { id: 'cmp.reports',  label: 'Reports' },
+      { id: 'cmp.setup',    label: 'Compliance Setup' },
+    ] },
   /* `label` seedha `menuName` ban kar API ko jata hai (apiPermissionsFromPerms)
      aur wapsi par usi se match hota hai — is liye wo "School SOPs" hi rahega
      jab tak DB ki saved rows na badlen. Screen par jo naam dikhana hai wo
@@ -914,6 +925,29 @@ export const MODULE_PERMISSIONS = {
   /* Approver view — Pending Approvals + History; approve/reject a
      request (approve). */
   'approvals.review':      ['view', 'approve'],
+
+  /* ─── SCHOOL COMPLIANCE — SchoolCompliance.jsx's 7 L1 tabs.
+     Real buttons per tab: Overview (read-only dashboard, no actions
+     of its own — open-task links just switch tabs); Daily/Weekly/
+     Monthly checklist pages (status buttons: Not Checked/Completed/
+     Issue Found/Not Applicable, remark, photo, bulk-complete, verify
+     completion on safety-critical items); Problems & Follow-ups
+     (Report a Problem, Assign, Mark In Progress, Mark Resolved,
+     Verify & Close); Reports (10 report tiles, View/Download PDF,
+     Word, Excel); Compliance Setup (toggle a checklist item on/off,
+     edit its assigned staff/evidence/verification/due-day — mapped to
+     Edit — plus add a school-specific item — mapped to Create — and
+     remove one the school added itself — mapped to Delete; the built-in
+     items can never be deleted, only turned off). */
+  'cmp.overview': ['view'],
+  'cmp.daily':    ['view', 'edit', 'create'],
+  'cmp.weekly':   ['view', 'edit', 'create'],
+  'cmp.monthly':  ['view', 'edit', 'create'],
+  /* Mark In Progress / Mark Resolved are status edits on an existing
+     problem (Edit); Verify & Close is the final sign-off (Approve). */
+  'cmp.problems': ['view', 'create', 'assign', 'edit', 'approve'],
+  'cmp.reports':  ['view', 'download', 'print'],
+  'cmp.setup':    ['view', 'create', 'edit', 'delete'],
 
   /* ─── SCHOOL SOPs — derived from real buttons in
          SchoolSOPs.jsx (audited 2026-05-31). Module is fully

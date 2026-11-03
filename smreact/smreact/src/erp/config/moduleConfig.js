@@ -33,6 +33,10 @@ export const MODULE_REGISTRY = [
      field), so it is coreLocked — always active for permitted users — like the
      other admin utilities (Audit Logs / User Permissions). Not branch-gated. */
   { id: 'approvals',        label: 'Approvals',         icon: 'fa-square-check',     group: 'ADMINISTRATION', route: '/approvals',          coreLocked: true  },
+  /* School Compliance has no backend module-permission field yet, so it is
+     ALWAYS_ON (below) and limited to branches 1 & 15 by BRANCH_ONLY_NAV in
+     components/App.js. */
+  { id: 'school_compliance', label: 'School Compliance', icon: 'fa-clipboard-check',  group: 'ADMINISTRATION', route: '/school-compliance',  coreLocked: false },
 
   /* ── SCHOOL MENTOR GROUP ─────────────────────────────────────── */
   /* UI par ye module "Policy Manuals" kehlata hai. Yahan label JAAN BOOJH kar
@@ -54,7 +58,7 @@ export const MODULE_REGISTRY = [
        normal rehte hain aur permission-matrix me bhi dikhte hain, bas sidebar
        se kabhi gayab nahi hote. Inventory ko har branch ke liye kholne ke liye
        yahan rakha gaya hai. */
-export const ALWAYS_ON_MODULES = ['inventory'];
+export const ALWAYS_ON_MODULES = ['inventory', 'school_compliance'];
 
 /* ─── Default activation state — every module enabled. */
 export const DEFAULT_MODULE_STATE = Object.fromEntries(
@@ -190,6 +194,7 @@ export const MODULE_TO_TREE_MAP = {
   hr:                'hr',
   appraisals:        'appraisals',
   approvals:         'approvals',
+  school_compliance: 'compliance',
   school_sops:       'sops',
   teacher_trainings: 'trainings',
   audit_logs:        'auditlogs',
@@ -222,6 +227,7 @@ export const MODULE_TO_NAV_MAP = {
   hr:                'hr',
   appraisals:        'appraisal',
   approvals:         'approvals',
+  school_compliance: 'cmp',
   school_sops:       'sops',
   teacher_trainings: 'trainings',
   networks:          'networks',
