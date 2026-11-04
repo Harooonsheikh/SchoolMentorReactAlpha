@@ -793,12 +793,14 @@ if (navId === 'mentorai') {
           </div>
 
           <div className="quick-bar" style={{ flexDirection: 'column', gap: 8 }}>
-            {/* Billing — every branch (each sees its own challans via branchID). */}
-            <Tooltip text="View invoices and payment status">
-              <button className="qb-btn" onClick={() => setActive('billing')} style={{ border: '1.5px solid #2563EB', color: '#2563EB', background: 'transparent', fontWeight: 600, width: '100%' }}>
-                <i className="fa-solid fa-file-invoice-dollar" style={{ fontSize: 11 }}></i> Billing
-              </button>
-            </Tooltip>
+            {/* Billing — sirf branch 1 aur 15 par (Accounts ke Billing tab wali rule). */}
+            {['1', '15'].includes(String(sessionStorage.getItem('branchID'))) && (
+              <Tooltip text="View invoices and payment status">
+                <button className="qb-btn" onClick={() => setActive('billing')} style={{ border: '1.5px solid #2563EB', color: '#2563EB', background: 'transparent', fontWeight: 600, width: '100%' }}>
+                  <i className="fa-solid fa-file-invoice-dollar" style={{ fontSize: 11 }}></i> Billing
+                </button>
+              </Tooltip>
+            )}
             <div style={{ display: 'flex', gap: 6 }}>
               <Tooltip text="Open your profile to view or update details">
                 <button className="qb-btn" onClick={() => setProfileOpen(true)} style={{ flex: 1 }}>
