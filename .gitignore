@@ -1,1 +1,32 @@
 **/node_modules/
+
+# ── Build / tool caches (never commit) ──────────────────────────────
+**/.cache/
+**/node_modules/.cache/
+**/.eslintcache
+**/.parcel-cache/
+**/.turbo/
+**/.next/
+**/*.tsbuildinfo
+
+# ── Generated output ────────────────────────────────────────────────
+# NOTE: build/ is NOT ignored yet: smreact/smreact/build and
+# Super-Admin-Frontend/build are still tracked (a deploy may use them).
+# Once deploys build from source, add `**/build/` here and untrack them.
+**/dist/
+**/coverage/
+
+# ── Logs / temp ─────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# ── Local env overrides ─────────────────────────────────────────────
+**/.env.local
+**/.env.*.local

@@ -1,0 +1,29 @@
+#!/bin/sh
+# Blocks commits that add/modify dependency folders, build caches, or files
+# larger than GitHub's comfortable limit (50 MB warning, 100 MB hard limit).
+# Enable once per clone:   git config core.hooksPath .githooks
+# Bypass (deliberate only): git commit --no-verify
+
+limit=52428800   # 50 MB
+fail=0
+
+# Added / copied / modified / renamed paths only (deletions are allowed).
+git -c core.quotepath=off diff --cached --name-only --diff-filter=ACMR | while IFS= read -r f; do
+  case "$f" in
+    node_modules/*|*/node_modules/*|.cache/*|*/.cache/*|*.eslintcache)
+      echo "pre-commit: blocked '$f' (dependencies / build cache must not be committed)" >&2
+      echo x ;;
+    *)
+      size=$(git cat-file -s ":$f" 2>/dev/null || echo 0)
+      if [ "$size" -gt "$limit" ]; then
+        echo "pre-commit: blocked '$f' ($((size / 1048576)) MB > 50 MB)" >&2
+        echo x
+      fi ;;
+  esac
+done | grep -q x && fail=1
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: unstage the files above (git restore --staged <path>) and retry." >&2
+  exit 1
+fi
+exit 0

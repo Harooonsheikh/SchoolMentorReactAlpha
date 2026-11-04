@@ -1,0 +1,2 @@
+# Git hooks must keep LF endings (a CRLF shebang breaks them)
+.githooks/* text eol=lf
