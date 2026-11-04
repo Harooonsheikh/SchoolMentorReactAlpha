@@ -20,6 +20,9 @@ import { rankedMatches, studentMatches } from '../utils/studentSearch';
 import { activeSessionName, apiMessage, approvalPending } from '../../utils/apiConfig';
 import IdCardDesigner from '../id-cards/IdCardDesigner';
 import IdCardQuickView from '../id-cards/IdCardQuickView';
+import * as feeService from '../services/feeService';
+import DiscountTypeToggle from './DiscountTypeToggle';
+import { DISCOUNT_TYPE_AMOUNT, DISCOUNT_TYPE_PERCENTAGE, calcDiscount } from '../utils/feeDiscount';
 
 /* ─── Module-wide helpers ─── */
 const MONTHS_SHORT_STU = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -2096,15 +2099,13 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
         ? Number(payload.family)
         : 0;
       /* Id ek hi baar resolve — documents aur family link dono isay use karte hain. */
-      let studentId = 0;
-      if (docUploads.length || removedDocIds.length || famId || mode === 'edit') {
-        studentId = existing?._id || studentService.studentIdFromSaveResponse(resp) || 0;
-        if (!studentId) {
-          const fresh = await studentService.getStuClasses();
-          for (const c of fresh) {
-                    const found = payload.reg ? c.students.find(s => s.reg === String(payload.reg)) : null;
-            if (found) { studentId = found._id; break; }
-          }
+      /* Fee Details (discounts) need the id after an add too, so it is always resolved. */
+      let studentId = existing?._id || studentService.studentIdFromSaveResponse(resp) || 0;
+      if (!studentId) {
+        const fresh = await studentService.getStuClasses();
+        for (const c of fresh) {
+          const found = payload.reg ? c.students.find(s => s.reg === String(payload.reg)) : null;
+          if (found) { studentId = found._id; break; }
         }
       }
       if (docUploads.length || removedDocIds.length) {
@@ -2188,10 +2189,58 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
 
       await reloadClasses();
       toast(mode === 'edit' ? 'Student updated successfully' : 'Student registered successfully', 'success');
-      setEditCfg(null);
+      /* The modal stays open for Fee Details; it gets the saved student back. */
+      if (!studentId) {
+        toast('Student saved, but Fee Details could not be opened (no id)', 'error');
+        setEditCfg(null);
+        return null;
+      }
+      return { studentId, name: `${payload.first || ''} ${payload.last || ''}`.trim(), cls: payload.cls, sec: payload.sec };
     } catch (err) {
       toast(err.message || 'Could not save student', 'error');
+      return null;
     }
+  };
+
+  /* Save Discount (Fee Details). Posts one save-fee-discount per changed head
+     (the modal already filtered to the changed ones). Closes the modal only
+     when every head went through; otherwise the modal stays open for a retry. */
+  const handleSaveDiscounts = async ({ studentId, name, cls: stuCls, sec: stuSec, changes }) => {
+    const row = list.find(c => c.cls === stuCls && c.sec === stuSec) || list.find(c => c.cls === stuCls);
+    const gradeID = row?._gradeId || 0;
+    const sectionID = row?._sectionId || 0;
+    const failed = [];
+    let pendingCount = 0;
+    for (const ch of changes) {
+      try {
+        /* A cleared saved discount goes to the server as 0. A new head with 0
+           has nothing to clear, so it is skipped. */
+        if (ch.amount === 0 && !ch.existingId) continue;
+        const resp = await feeService.saveFeeDiscount({
+          id: ch.existingId,
+          gradeID,
+          sectionID,
+          headID: ch.headID,
+          headName: ch.headName,
+          discountAmount: ch.amount,
+          studentID: studentId,
+          studentName: name,
+        });
+        if (hrService.hrPendingInfo(resp)) pendingCount += 1;
+      } catch (e) {
+        failed.push({ headName: ch.headName, message: e.message || 'Could not save' });
+      }
+    }
+    if (failed.length === 0) {
+      await reloadClasses();
+      toast(pendingCount
+        ? 'Fee discounts saved — some changes sent for approval'
+        : 'Fee discounts saved', pendingCount ? 'info' : 'success');
+      setEditCfg(null);
+    } else {
+      toast(`Could not save ${failed.map(f => f.headName).join(', ')}: ${failed[0].message}`, 'error');
+    }
+    return { failed };
   };
 
   return (
@@ -2391,6 +2440,8 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
           suggestedAdm={String(nextAdm || 1100)}
           onClose={() => setEditCfg(null)}
           onSave={handleSaveStudent}
+          onSaveDiscounts={handleSaveDiscounts}
+          feeStep
           toast={toast}
         />
       )}
@@ -2819,7 +2870,13 @@ function StuFormSection({ id, icon, title, open, setOpen, children }) {
   );
 }
 
-function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, families, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast, allowNewClassSection = false, requireAdmissionFields = true }) {
+/* Raw discount input for a saved amount, in the unit the Discount Type implies:
+   Rs for Fixed Amount, % of the standard fee for Percentage. */
+const rawForDiscType = (head, amount, type) => (type === DISCOUNT_TYPE_PERCENTAGE
+  ? (head.amount > 0 ? Math.round((amount * 10000) / head.amount) / 100 : 0)
+  : amount);
+
+function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, families, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, onSaveDiscounts, feeStep = false, toast, allowNewClassSection = false, requireAdmissionFields = true }) {
   const isEdit = cfg.mode === 'edit';
 
   /* Default values: from student if editing, otherwise auto-filled */
@@ -2925,12 +2982,26 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
     return () => { alive = false; };
   }, [classes, cls, sec]);
 
-  /* Discount table (keyed by fee head name) */
+  /* Discount table (keyed by fee head name). `disc` holds the raw input in the
+     unit the Discount Type implies: Rs for Fixed Amount, % for Percentage. */
+  const [discType, setDiscType] = useState(DISCOUNT_TYPE_AMOUNT);
   const [disc, setDisc] = useState(() => {
     const out = {};
     feeHeads.forEach(h => { out[h.name] = Number((init._disc || {})[h.name] || 0); });
     return out;
   });
+  /* Discounts already saved for this student, keyed by fee head id → { id, amt }.
+     "Changed" always means different from this, so Save Discount posts only the
+     heads the user actually edited. */
+  const [savedDisc, setSavedDisc] = useState({});
+  /* Set once the student exists: after Save & Next, or straight away when editing.
+     The Fee Details tab and its discount API calls need the student id. */
+  const [savedStudent, setSavedStudent] = useState(() => (
+    feeStep && isEdit && student?._id
+      ? { studentId: student._id, name: stuFullName(student), cls, sec }
+      : null
+  ));
+  const savedStudentId = savedStudent?.studentId || 0;
   useEffect(() => {
     /* Sync when feeHeads loads after first render */
     if (feeHeads.length === 0) return;
@@ -2943,6 +3014,31 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feeHeads]);
+
+  /* Store the saved discount rows as the baseline. `syncInputs` also fills the
+     inputs from them — used on a fresh open, never after a failed save (that
+     would wipe what the user typed for the heads that did not go through). */
+  const applySavedDisc = (rows, syncInputs) => {
+    const map = {};
+    (rows || []).filter(r => r.isActive !== false).forEach(r => {
+      map[String(r.headID)] = { id: r.id, amt: Number(r.discountAmount) || 0 };
+    });
+    setSavedDisc(map);
+    if (syncInputs) {
+      const out = {};
+      feeHeads.forEach(h => { out[h.name] = rawForDiscType(h, map[String(h.feeStructureID)]?.amt || 0, discType); });
+      setDisc(out);
+    }
+  };
+  useEffect(() => {
+    if (!feeStep || !savedStudentId) return undefined;
+    let alive = true;
+    feeService.getFeeDiscountsByStudent(savedStudentId)
+      .then(rows => { if (alive) applySavedDisc(rows, true); })
+      .catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feeStep, savedStudentId]);
 
   /* Esc + scroll lock */
   useEffect(() => {
@@ -3006,22 +3102,64 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
     });
   };
 
-  /* Discount handlers — clamped to max amount */
-  const setDiscFor = (head, val) => {
-    setDisc(prev => ({ ...prev, [head.name]: Math.max(0, Math.min(Number(val) || 0, head.amount)) }));
+  /* Switching Discount Type keeps every head's current discount amount and only
+     re-expresses it in the new unit (Rs ↔ %), so toggling never looks like a clear. */
+  const changeDiscType = (type) => {
+    if (type === discType) return;
+    const out = {};
+    feeHeads.forEach(h => {
+      const { discountAmount } = calcDiscount(h.amount, discType, disc[h.name]);
+      out[h.name] = rawForDiscType(h, discountAmount, type);
+    });
+    setDisc(out);
+    setDiscType(type);
   };
 
-  /* Live totals */
+  /* Discount handler — clamps the raw value to what the Discount Type allows
+     (0–100 % or 0–standard fee). */
+  const setDiscFor = (head, val) => {
+    const { discountValue } = calcDiscount(head.amount, discType, val);
+    setDisc(prev => ({ ...prev, [head.name]: discountValue }));
+  };
+
+  /* Live totals, always in Rs. */
   const totals = useMemo(() => {
     let std = 0, dsc = 0, net = 0;
     feeHeads.forEach(h => {
-      const d = Number(disc[h.name] || 0);
+      const { discountAmount } = calcDiscount(h.amount, discType, disc[h.name]);
       std += h.amount;
-      dsc += d;
-      net += Math.max(0, h.amount - d);
+      dsc += discountAmount;
+      net += Math.max(0, h.amount - discountAmount);
     });
     return { std, dsc, net };
-  }, [feeHeads, disc]);
+  }, [feeHeads, discType, disc]);
+
+  /* Save Discount (Fee Details tab). Posts ONLY the heads whose amount differs
+     from what is already saved; the parent makes the API calls and closes the
+     modal once every one of them succeeds. */
+  const handleSaveDiscounts = async () => {
+    if (saving || !savedStudent || !onSaveDiscounts) return;
+    const changes = [];
+    feeHeads.forEach(h => {
+      const { discountAmount } = calcDiscount(h.amount, discType, disc[h.name]);
+      const prev = savedDisc[String(h.feeStructureID)] || { id: 0, amt: 0 };
+      if (discountAmount !== prev.amt) {
+        changes.push({ headID: h.feeStructureID, headName: h.name, amount: discountAmount, prevAmt: prev.amt, existingId: prev.id });
+      }
+    });
+    if (!changes.length) { toast('No discount changes to save', 'info'); onClose(); return; }
+    setSaving(true);
+    try {
+      const { failed } = await onSaveDiscounts({ ...savedStudent, changes });
+      if (failed.length) {
+        /* Keep the modal open. Refresh the baseline so a retry only re-sends what is still different. */
+        const rows = await feeService.getFeeDiscountsByStudent(savedStudentId).catch(() => null);
+        if (rows) applySavedDisc(rows, false);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   /* Validation + save */
   const handleSubmit = async () => {
@@ -3040,9 +3178,6 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
       toast(`Registration No ${reg.trim()} is already taken by another student`, 'error');
       setTab('general'); return;
     }
-    const _disc = {};
-    Object.entries(disc).forEach(([k, v]) => { if (Number(v) > 0) _disc[k] = Number(v); });
-
     /* Collect the documents the user actually picked this session (they carry a
        real File). Fixed slots map to their backend documentType; custom docs use
        their free-text name. These upload after the student is saved. */
@@ -3063,15 +3198,21 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
        (reject nahi hota), phir bhi finally me lock khol dete hain. */
     setSaving(true);
     try {
-      await onSave({
+      const saved = await onSave({
         first: first.trim(), last: last.trim(), gender, dob,
          cls, sec, bform, nat, reg: manualReg ? reg.trim() : '', isManualReg: manualReg, adm, family, admdate,
         father: father.trim(), fcnic, focc, mobile: mobile.trim(),
         mother, mcnic, guardian, gcontact, email, address,
         pschool, pgrade, pcontact,
-        photo, stdDocs, docs: customDocs, _disc,
+        photo, stdDocs, docs: customDocs,
         pictureFile, docUploads, removedDocIds,
       });
+      /* Student saved — stay on the modal and move on to Fee Details. The modal
+         closes itself later, once the discounts are saved. */
+      if (feeStep && saved?.studentId) {
+        setSavedStudent(saved);
+        setTab('fee');
+      }
     } finally {
       setSaving(false);
     }
@@ -3174,9 +3315,18 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
           <button type="button" className={`stu-mtab${tab === 'general' ? ' active' : ''}`} onClick={() => setTab('general')}>
             <i className="fa-solid fa-circle-info"></i> General Information
           </button>
-       {/*    <button type="button" className={`stu-mtab${tab === 'fee' ? ' active' : ''}`} onClick={() => setTab('fee')}>
-            <i className="fa-solid fa-percent"></i> Fee Details
-          </button>*/}
+          {feeStep && (
+            <button
+              type="button"
+              className={`stu-mtab${tab === 'fee' ? ' active' : ''}`}
+              onClick={() => {
+                if (!savedStudentId) { toast('Student must be saved before the fee setup', 'info'); return; }
+                setTab('fee');
+              }}
+            >
+              <i className="fa-solid fa-percent"></i> Fee Details
+            </button>
+          )}
         </div>
 
         <div className="stu-modal-body">
@@ -3428,20 +3578,29 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
                   Fee heads are loaded from the standard class fee setup. Any discount or adjustment saved here will apply to this student's <strong>future fee challans</strong> unless changed later. Net payable recalculates automatically.
                 </span>
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <span className="stu-flabel" style={{ marginBottom: 0 }}>Discount Type</span>
+                <DiscountTypeToggle
+                  value={discType}
+                  onChange={changeDiscType}
+                  activeClassName="stu-btn-primary"
+                  idleClassName="stu-btn-ghost"
+                />
+              </div>
               <div className="stu-feewrap">
                 <table className="stu-feetable">
                   <thead>
                     <tr>
                       <th>Fee Head</th>
                       <th className="r">Standard Fee</th>
-                      <th className="r">Discount</th>
+                      <th className="r">Discount {discType === DISCOUNT_TYPE_PERCENTAGE ? '(%)' : '(Rs)'}</th>
                       <th className="r">Net Payable</th>
                     </tr>
                   </thead>
                   <tbody>
                     {feeHeads.map(h => {
-                      const d = Number(disc[h.name] || 0);
-                      const net = Math.max(0, h.amount - d);
+                      const { discountAmount } = calcDiscount(h.amount, discType, disc[h.name]);
+                      const net = Math.max(0, h.amount - discountAmount);
                       return (
                         <tr key={h.name}>
                           <td>
@@ -3454,10 +3613,15 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
                               className="stu-finput stu-disc-input"
                               type="number"
                               min="0"
-                              max={h.amount}
-                              value={d}
+                              max={discType === DISCOUNT_TYPE_PERCENTAGE ? 100 : h.amount}
+                              value={disc[h.name] || 0}
                               onChange={(e) => setDiscFor(h, e.target.value)}
                             />
+                            {discType === DISCOUNT_TYPE_PERCENTAGE && (
+                              <div style={{ fontSize: 10.5, color: 'var(--text-muted, #64748B)', marginTop: 2 }}>
+                                = Rs {discountAmount.toLocaleString('en-PK')}
+                              </div>
+                            )}
                           </td>
                           <td className="r mono"><strong>Rs {net.toLocaleString('en-PK')}</strong></td>
                         </tr>
@@ -3487,12 +3651,27 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
         <div className="stu-modal-foot">
           <div className="stu-modal-foot-hint">Fields marked <strong>*</strong> are required.</div>
           <button className="stu-btn-ghost" onClick={onClose} disabled={saving}>Close</button>
-          <button className="stu-btn-primary" onClick={handleSubmit} disabled={saving} aria-busy={saving}>
-            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i>{' '}
-            {saving
-              ? (isEdit ? 'Updating…' : 'Saving…')
-              : (isEdit ? 'Update Student' : 'Save Student')}
-          </button>
+          {(() => {
+            /* Fee step: General → Save & Next (saves the student, opens Fee Details)
+               → Save Discount (saves only the changed heads, then closes). A newly
+               added student is already saved, so Save & Next there just moves on
+               instead of inserting a duplicate. */
+            const onFeeTab = feeStep && tab === 'fee';
+            const addAlreadySaved = feeStep && !isEdit && !!savedStudentId;
+            const onClick = onFeeTab ? handleSaveDiscounts
+              : addAlreadySaved ? () => setTab('fee')
+              : handleSubmit;
+            const label = onFeeTab ? 'Save Discount'
+              : addAlreadySaved ? 'Next: Fee Details'
+              : feeStep ? (isEdit ? 'Update & Next' : 'Save & Next')
+              : (isEdit ? 'Update Student' : 'Save Student');
+            return (
+              <button className="stu-btn-primary" onClick={onClick} disabled={saving} aria-busy={saving}>
+                <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : (onFeeTab ? 'fa-percent' : 'fa-floppy-disk')}`}></i>{' '}
+                {saving ? (onFeeTab ? 'Saving…' : (isEdit ? 'Updating…' : 'Saving…')) : label}
+              </button>
+            );
+          })()}
         </div>
       </div>
     </div>

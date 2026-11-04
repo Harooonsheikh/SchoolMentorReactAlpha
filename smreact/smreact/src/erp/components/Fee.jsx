@@ -3890,12 +3890,10 @@ function FeeChallansList({ toast }) {
           const existing = idMap[String(head?.feeStructureID)] || {};
           const existingId = existing.id || 0;
           const num = Number(discountAmount) || 0;
-          /* Sirf > 0 discount server par save/update hota hai. 0 (clear) backend par
-             persist NAHI hota — backend 0 reject karta hai aur isActive:false ko ignore
-             kar ke record active + purana amount rakh deta hai (koi delete endpoint nahi).
-             Is liye 0 par koi call nahi bhejte; clear sirf is session ke local mirror se
-             chalta hai (challan generation aur discount box dono use karte hain). */
-          if (num > 0) {
+          /* Naya discount (> 0) save/update hota hai. Jo head pehle se saved tha aur
+             ab clear kiya (0) — usay bhi 0 ke saath server par bhejte hain. Naye head
+             par 0 ka koi matlab nahi, is liye wo skip hota hai. */
+          if (num > 0 || existingId) {
             const resp = await feeService.saveFeeDiscount({
               id: existingId,
               gradeID: student.gradeID || cls?._gradeId,
@@ -5633,8 +5631,8 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
                         type="number"
                         min="0"
                         max={r.std}
-                        /* 0 ki jagah field khaali dikhe (0 internally hi rehta hai). */
-                        value={discs[r.name] || ''}
+                        /* Khaali kiya to field 0 dikhaye — 0 save bhi hota hai. */
+                        value={discs[r.name] ?? 0}
                         onChange={e => setOne(r.name, e.target.value, r.std)}
                       />
                     </td>
