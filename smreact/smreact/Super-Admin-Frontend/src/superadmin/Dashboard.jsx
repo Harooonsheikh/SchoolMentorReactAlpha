@@ -321,7 +321,6 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const feeMonthWord = feePeriod === 'lastMonth' ? 'Last Month' : 'This Month';
 
   const errors = data.violations.filter((x) => x.severity === 'error');
-  const warnings = data.violations.filter((x) => x.severity === 'warning');
   const affected = [...new Set(metricsAffectedBy(data.violations))];
 
   if (accountInactive) {
@@ -384,18 +383,18 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         </div>
       )}
 
-      {/* API contract problems — never hidden, never turned into 0. */}
-      {data.violations.length > 0 && (
+      {/* API contract ERRORS — shown, never turned into 0. Warnings are not shown
+          on the page (they are still logged to the console). */}
+      {errors.length > 0 && (
         <div className="db-locked" data-testid="contract-banner"
-          style={errors.length ? { borderColor: 'rgba(220,38,38,.35)', color: '#B91C1C' } : { borderColor: 'rgba(217,119,6,.35)', color: '#B45309' }}>
+          style={{ borderColor: 'rgba(220,38,38,.35)', color: '#B91C1C' }}>
           <i className="fa-solid fa-triangle-exclamation" />
           <span>
-            {errors.length > 0 && <>Dashboard API returned {errors.length} missing / invalid field{errors.length === 1 ? '' : 's'} — affected values show “—”{affected.length ? ` (${affected.slice(0, 6).join(', ')}${affected.length > 6 ? ', …' : ''})` : ''}. </>}
-            {warnings.length > 0 && <>{warnings.length} data warning{warnings.length === 1 ? '' : 's'} from the API (values shown as sent). </>}
+            Dashboard API returned {errors.length} missing / invalid field{errors.length === 1 ? '' : 's'} — affected values show “—”{affected.length ? ` (${affected.slice(0, 6).join(', ')}${affected.length > 6 ? ', …' : ''})` : ''}.{' '}
             <details style={{ display: 'inline' }}>
               <summary style={{ cursor: 'pointer', display: 'inline' }}>Details</summary>
               <ul style={{ margin: '6px 0 0 16px' }}>
-                {data.violations.slice(0, 25).map((x) => <li key={`${x.path}|${x.issue}`}><code>{x.path}</code>: {x.issue}</li>)}
+                {errors.slice(0, 25).map((x) => <li key={`${x.path}|${x.issue}`}><code>{x.path}</code>: {x.issue}</li>)}
               </ul>
             </details>
           </span>
@@ -427,12 +426,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             <FeeCard tone="green" icon="fa-money-bill-wave" label="Fee Received" metric="fee.received" val={feeVal('fee.received')} />
             <FeeCard tone="red2" icon="fa-circle-exclamation" label="Total Pending" metric="fee.pending" val={feeVal('fee.pending')} />
           </div>
-          {feeAvailable ? (
-            <div className="db-locked db-locked-ok" style={{ marginTop: -8 }}>
-              <i className="fa-solid fa-circle-check" />
-              <span>{monthName(feeMonth)} — figures exactly as returned by the dashboard API (<b>admin_dashboard ▸ CurrentMonthDetails</b>), summed across {fmtCount(data.feeRows.length)} school{data.feeRows.length === 1 ? '' : 's'}.</span>
-            </div>
-          ) : (
+          {feeAvailable ? null : (
             <div className="db-locked" data-testid="fee-unavailable" style={{ marginTop: -8, marginBottom: 14 }}>
               <i className="fa-solid fa-circle-info" />
               <span>Fee figures for {monthName(feeMonth)} are not provided by the backend — the dashboard API returns the current month only. They are not recalculated in the browser.</span>
