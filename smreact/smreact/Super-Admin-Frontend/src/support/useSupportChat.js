@@ -328,8 +328,14 @@ if (isIncoming) {
     if (!id) return;
     const detail = await api.getSessionDetail(id);
     setSession(id);
-    // Opening a conversation clears its unread badge.
-    setActiveSessions((prev) => prev.map((s) => s.sessionId === id ? { ...s, unreadCount: 0 } : s));
+    // Opening a conversation clears its unread badge AND reconciles the row's
+    // agent with the authoritative per-session detail. The inbox-list endpoint
+    // (GET /sessions) can carry a stale/mismatched agent on a row; the side
+    // panel reads this row, so without this merge it would show the wrong
+    // assigned agent. GET /sessions/{id} is the source of truth for assignment.
+    setActiveSessions((prev) => prev.map((s) => s.sessionId === id
+      ? { ...s, unreadCount: 0, agentId: detail.agentId ?? s.agentId, agentName: detail.agentName ?? s.agentName }
+      : s));
     if (connRef.current) { try { await joinSession(connRef.current, id); } catch { /* ignore */ } }
     const rows = detail.messages || [];
     // Everything in the history is already on screen — the poller must not

@@ -30,6 +30,7 @@ import { emptyUsageMods, emptyMobileMods } from '../../statusData';
 /* Card / training rows par "kis ne banaya" — logged-in Super Admin ki wahi id
    jo /api/Auth/get-all-users bhi deti hai. */
 import { currentUserId } from './auth';
+import { validateOnelinkReport, reportContractViolations } from '../../dashboard/contract';
 
 /* API boolean → wohi lafz jo UI ke StatusBadge/StatePill samajhte hain. */
 const state = (v) => (v === true || v === 1 || String(v).toLowerCase() === 'true' ? 'Entered' : 'Not Entered');
@@ -996,23 +997,26 @@ export function onelinkTxnToRow(t, i = 0) {
 }
 
 /** Poora report payload → { totals, schoolWise, transactions }. */
+/* Totals: API value or null (missing → '—' on screen, never a silent 0). */
+const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
 export function onelinkReportToUi(data) {
   const t = data?.totals || {};
   const branches = Array.isArray(data?.branches) ? data.branches : [];
   const txns = Array.isArray(data?.transactions) ? data.transactions : [];
   return {
     totals: {
-      totalTransactions:        Number(t.totalTransactions) || 0,
-      totalCollection:          Number(t.totalCollection) || 0,
-      schoolsReceivingPayments: Number(t.schoolsReceivingPayments) || 0,
-      totalEnabledSchools:      Number(t.totalEnabledSchools) || 0,
-      avgTransactionValue:      Number(t.avgTransactionValue) || 0,
-      customerCharges:          Number(t.customerCharges) || 0,
-      providerPayable:          Number(t.providerPayable) || 0,
-      schoolMentorRevenue:      Number(t.schoolMentorRevenue) || 0,
-      customerChargePerTxn:     Number(t.customerChargePerTxn) || 0,
-      providerCostPerTxn:       Number(t.providerCostPerTxn) || 0,
-      marginPerTxn:             Number(t.marginPerTxn) || 0,
+      totalTransactions:        numOrNull(t.totalTransactions),
+      totalCollection:          numOrNull(t.totalCollection),
+      schoolsReceivingPayments: numOrNull(t.schoolsReceivingPayments),
+      totalEnabledSchools:      numOrNull(t.totalEnabledSchools),
+      avgTransactionValue:      numOrNull(t.avgTransactionValue),
+      customerCharges:          numOrNull(t.customerCharges),
+      providerPayable:          numOrNull(t.providerPayable),
+      schoolMentorRevenue:      numOrNull(t.schoolMentorRevenue),
+      customerChargePerTxn:     numOrNull(t.customerChargePerTxn),
+      providerCostPerTxn:       numOrNull(t.providerCostPerTxn),
+      marginPerTxn:             numOrNull(t.marginPerTxn),
     },
     schoolWise:   branches.map(onelinkBranchToRow).filter((r) => r.schoolId),
     transactions: txns.map(onelinkTxnToRow),
@@ -1029,6 +1033,7 @@ export async function getOnelinkReport({ fromDate, toDate, period } = {}) {
     + buildQuery({ fromDate, toDate, period: period || '' });
   const json = await getJson(url, '1LINK report');
   const data = json?.data ?? json?.Data ?? null;
+  reportContractViolations('get_onelink_Report', validateOnelinkReport(data));
   return onelinkReportToUi(data || {});
 }
 

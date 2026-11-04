@@ -234,6 +234,12 @@ export const EP = {
        (schoolProgress.getOnelinkReport isi ko bulata tha, magar yeh route yahan
        likha hi nahi tha — call TypeError par gir kar poora section 0 dikhata tha.) */
     onelinkReport: () => `${SA_ROOT}/api/AHM_School_Progress/get_onelink_Report`,
+    /* GET / PUT 1LINK transaction rates — Chain Management API on the SAME
+       host as SA_API_HOST (sandbox / live switch). Pehle yeh do URL
+       OneLinkSection me sandbox par hardcoded thay, is liye live build bhi
+       sandbox ke rates padhta / likhta. */
+    networkChargesGet: () => '/SchoolmentorChainManagementAPI/api/Network_Setup/GetCharges',
+    networkChargesUpdate: () => '/SchoolmentorChainManagementAPI/api/Network_Setup/UpdateCharges',
     /* POST — Follow-up Card (Notes/Calls/Messages) aur Onboarding Card, dono
        ek hi route par; `headType` batata hai kaunsa card hai aur
        `subHeadType` uska sub-tab / module. */

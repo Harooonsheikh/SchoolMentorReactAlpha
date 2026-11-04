@@ -31,16 +31,24 @@
                                  FeeDiscount, Receivable, ReceivedAmount,
                                  TotalPending } ] } }
 
-   Mapping sirf `adminDashboardToUi()` me hai — wahi shape jo Dashboard.jsx
-   pehle se padhta tha, taake screen ka baqi code jaisa hai waisa chale.
+   Mapping: `adminDashboardToUi()` har aankra METRIC REGISTRY
+   (../../dashboard/metrics.js) se padhta hai aur jawab ko contract
+   (../../dashboard/contract.js) par jaanchta hai. Koi field na aaye to null
+   ('—'), 0 nahi. Qaida: DASHBOARD_DATA_STANDARD.md.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError } from '../client';
 import { SA_ADMIN_API_BASE, getSuperAdminToken } from '../config';
 import EP from '../endpoints';
 import { listPermissionBranches } from './schoolPermissions';
 import { listSchoolProgress } from './schoolProgress';
+import { evaluateSource, evaluateSpec, metricsFor } from '../../dashboard/metrics';
+import { validateAdminDashboard, reportContractViolations } from '../../dashboard/contract';
+import { inPeriod } from '../../dashboard/periods';
 
+/* Record ids / branch ids only — NOT for displayed figures (those go through
+   the metric registry, where a missing value stays null). */
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const text = (v) => String(v ?? '').trim();
 
 /* Bug ki tafseel ek hi string me aati hai, kai lineon par:
@@ -157,105 +165,70 @@ export function dashboardBugToUi(b, i) {
 }
 
 /**
- * admin_dashboard ka `data` → wohi shape jo Dashboard.jsx padhta hai.
- * @param {Object} raw  jawab ka `data`
+ * admin_dashboard `data` → the Dashboard's view model.
+ *
+ * NO business arithmetic here: every figure is the registry's reading of an
+ * API field (dashboard/metrics.js). Missing / invalid fields become null
+ * (rendered '—') and are listed in `violations` — never replaced by 0.
+ *
+ * @param {Object} raw  the response's `data`
+ * @returns {{
+ *   values: Object<string, number|null>,   // metric id → API value
+ *   feeRows: Array, bugList: Array, videoCategories: Array,
+ *   violations: Array, raw: Object
+ * }}
  */
 export function adminDashboardToUi(raw) {
-  const d = raw || {};
+  const d = raw && typeof raw === 'object' ? raw : null;
+  const violations = validateAdminDashboard(d);
 
-  const erp      = num(d.ERP_Schools);
-  const launch   = num(d.LaunchSetup_Schools);
-  const active   = num(d.ActiveSchools);
-  const inactive = num(d.InActiveSchools);
-
-  /* "New this month" — API ka apna ThisMonthProgress block. */
-  const tmp       = d.ThisMonthProgress || {};
-  const newErp    = num(tmp.ERPSchools);
-  const newLaunch = num(tmp.LaunchSetupSchools);
-
-  const stu = d.TotalStudents || {};
-  const stf = d.TotalStaff || {};
-
-  /* Onboarding: API sirf do aankre deti hai (FullyTrained / InProcess).
-     "Total Modules" is route par hai hi nahi, is liye usay banate nahi —
-     null bhej kar screen "—" dikha deti hai (jhoota 15 likhne se behtar).
-     Percentage unhi do se: kitni schools mukammal train ho chukin. */
-  const ob           = d.OnboardingStatus || {};
-  const fullyTrained = num(ob.FullyTrained);
-  const inProcess    = num(ob.InProcess);
-  const tracked      = fullyTrained + inProcess;
-
-  const bs = d.BugSummary || {};
-
-  /* Current Month Details — Fee Analytics ke cards AUR neeche wali table,
-     dono isi ek list se bante hain (cards us list ka jama hain, taake table
-     aur cards kabhi alag na batayein). */
-  const feeRows = (Array.isArray(d.CurrentMonthDetails) ? d.CurrentMonthDetails : [])
-    .map((r, i) => ({
-      id:         num(r?.BranchID) || `fee-${i}`,
-      name:       text(r?.SchoolName) || '—',
-      prevDues:   num(r?.PreviousAmount),
-      challan:    num(r?.FeeChallan),
-      discount:   num(r?.FeeDiscount),
-      receivable: num(r?.Receivable),
-      received:   num(r?.ReceivedAmount),
-      pending:    num(r?.TotalPending),
-    }));
-
-  const feeTotals = feeRows.reduce((t, r) => ({
-    prevDues:   t.prevDues   + r.prevDues,
-    challan:    t.challan    + r.challan,
-    discount:   t.discount   + r.discount,
-    receivable: t.receivable + r.receivable,
-    received:   t.received   + r.received,
-    pending:    t.pending    + r.pending,
-  }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
-
-  /* Video categories ab API se aati hain (pehle screen par saat naam
-     hardcoded thay, jinka E-Tube ki asal categories se koi taalluq nahi tha). */
-  const byCat = {};
-  (Array.isArray(d.VideoCategories) ? d.VideoCategories : []).forEach((c) => {
-    byCat[text(c?.CategoryName) || '—'] = num(c?.VideoCount);
-  });
+  /* Current Month Details — the API's own rows, as sent (no recalculation). */
+  const feeRows = (Array.isArray(d?.CurrentMonthDetails) ? d.CurrentMonthDetails : []).map((r, i) => ({
+    key: `${i}:${text(r?.SchoolName)}`,
+    name: text(r?.SchoolName) || '—',
+    prevDues: numOrNull(r?.PreviousAmount),
+    challan: numOrNull(r?.FeeChallan),
+    discount: numOrNull(r?.FeeDiscount),
+    receivable: numOrNull(r?.Receivable),
+    received: numOrNull(r?.ReceivedAmount),
+    pending: numOrNull(r?.TotalPending),
+  }));
 
   return {
-    schools: {
-      total: active + inactive,
-      erp,
-      launch,
-      inactive,
-      active,
-      activeLogin: num(d.Active_Login_Schools),
-      newLaunch,
-      newErp,
-    },
-    onboarding: {
-      totalModules: null,                 // is API me nahi — screen "—" dikhati hai
-      fullyTrained,
-      inProcess,
-      pct: tracked ? Math.round((fullyTrained / tracked) * 100) : 0,
-    },
-    students: { total: num(stu.Overall), newSignup: num(stu.NewSignUp) },
-    staff:    { total: num(stf.Overall), newSignup: num(stf.NewSignUp) },
+    /* Period-independent metrics; bug / improvement counts here are All Time
+       (bugCountsFor() gives them for another period). */
+    values: evaluateSource('adminDashboard', d),
     feeRows,
-    feeTotals,
-    videos: { total: num(d.TotalVideos), byCat },
-    bugs: {
-      total:    num(bs.TotalBugs),
-      resolved: num(bs.ResolvedBugs),
-      pending:  num(bs.PendingBugs),
-    },
-    /* Poori bug list bhi jawab me aati hai — aur Bugs Summary + Improvements
-       Summary DONO isi list par chalti hain (Dashboard.jsx ka countBi):
-         • kind === 'bug' / 'improvement'  → kaunsa section
-         • date                            → Today / Yesterday / This Month /
-                                             Last Month / All Time ka filter
-         • solved                          → resolved vs pending
-       Isi liye BugSummary (upar wala `bugs`) se aankre thore alag nikal sakte
-       hain: wo all-time hai aur improvements ko bhi bug ginta hai. */
-    bugList: (Array.isArray(d.Bugs) ? d.Bugs : []).map(dashboardBugToUi),
+    bugList: (Array.isArray(d?.Bugs) ? d.Bugs : []).map(dashboardBugToUi),
+    videoCategories: (Array.isArray(d?.VideoCategories) ? d.VideoCategories : []).map((c) => ({
+      id: num(c?.CategoryID), name: text(c?.CategoryName) || '—', count: numOrNull(c?.VideoCount),
+    })),
+    violations,
     raw: d,
   };
+}
+
+/** Bug + improvement card values for one period, from the API's Bugs records. */
+export function bugCountsFor(raw, periodId, now) {
+  const ctx = { inPeriod: inPeriod(periodId, now) };
+  const out = {};
+  metricsFor('adminDashboard').filter((m) => m.periodFiltered).forEach((m) => { out[m.id] = evaluateSpec(m.spec, raw, ctx); });
+  return out;
+}
+
+/** Table rows for one kind + period — the same records the cards count. */
+export function bugRowsFor(bugList, kind, periodId, now) {
+  const keep = inPeriod(periodId, now);
+  return (bugList || []).filter((b) => b.kind === kind && keep(b.date));
+}
+
+/** Σ of fee rows (e.g. the searched table footer). null if any row is null. */
+export function sumFeeRows(rows) {
+  const keys = ['prevDues', 'challan', 'discount', 'receivable', 'received', 'pending'];
+  return Object.fromEntries(keys.map((k) => {
+    const vals = rows.map((r) => r[k]);
+    return [k, vals.some((v) => v === null) ? null : vals.reduce((a, b) => a + b, 0)];
+  }));
 }
 
 /**
@@ -304,18 +277,23 @@ export async function loadSchoolDirectory() {
   return out;
 }
 
-/** GET /api/AHM_School_Progress/admin_dashboard → mapped overview. */
-export async function fetchDashboard() {
+/**
+ * GET /api/AHM_School_Progress/admin_dashboard → validated view model.
+ * @param {{ signal?: AbortSignal }} [opts]  abort an outdated request
+ */
+export async function fetchDashboard({ signal } = {}) {
   const token = getSuperAdminToken();
   let res;
   try {
     res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.adminDashboard()}`, {
+      signal,
       headers: {
         accept: '*/*',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
   } catch (networkErr) {
+    if (networkErr?.name === 'AbortError') throw networkErr;
     throw new ApiError(networkErr.message || 'Network error', 0);
   }
 
@@ -323,5 +301,8 @@ export async function fetchDashboard() {
   if (!res.ok || (json && json.success === false)) {
     throw new ApiError(json?.message || `Could not load the dashboard (${res.status})`, res.status);
   }
-  return adminDashboardToUi(json?.data ?? json);
+  if (!json || typeof json !== 'object') throw new ApiError('The dashboard API returned an empty or non-JSON response', res.status);
+  const vm = adminDashboardToUi(json.data ?? json);
+  reportContractViolations('admin_dashboard', vm.violations);
+  return vm;
 }

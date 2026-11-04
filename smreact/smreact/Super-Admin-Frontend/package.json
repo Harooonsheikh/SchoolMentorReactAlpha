@@ -18,12 +18,67 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "test:dashboard": "react-scripts test --watchAll=false --testPathPattern src/superadmin/dashboard",
+    "verify:dashboard": "node scripts/verify-dashboard.js",
+    "lint:dashboard": "eslint --max-warnings=0 src/superadmin/Dashboard.jsx src/superadmin/OneLinkSection.jsx src/superadmin/dashboard src/superadmin/format.js src/superadmin/api/services/dashboard.js"
   },
   "eslintConfig": {
     "extends": [
       "react-app",
       "react-app/jest"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "src/superadmin/Dashboard.jsx",
+          "src/superadmin/OneLinkSection.jsx"
+        ],
+        "rules": {
+          "no-restricted-syntax": [
+            "error",
+            {
+              "selector": "LogicalExpression[operator='||'][right.type='Literal'][right.value=0]",
+              "message": "Dashboard data rule: do not default an API value to 0 — keep null and render '—' (DASHBOARD_DATA_STANDARD.md)."
+            },
+            {
+              "selector": "CallExpression[callee.property.name='toLocaleString']",
+              "message": "Dashboard data rule: format through src/superadmin/format.js."
+            }
+          ],
+          "no-restricted-imports": [
+            "error",
+            {
+              "paths": [
+                {
+                  "name": "./dashboardData",
+                  "message": "Removed — use ./format."
+                },
+                {
+                  "name": "./api/services/payments",
+                  "importNames": [
+                    "loadFeeLedger",
+                    "feeRowOf",
+                    "remainingDuesOf"
+                  ],
+                  "message": "Dashboard must not recalculate fees — use admin_dashboard via the metric registry."
+                }
+              ],
+              "patterns": []
+            }
+          ]
+        }
+      },
+      {
+        "files": [
+          "src/superadmin/dashboard/**/*.test.js"
+        ],
+        "rules": {
+          "testing-library/no-node-access": "off",
+          "testing-library/no-wait-for-multiple-assertions": "off",
+          "testing-library/no-unnecessary-act": "off"
+        }
+      }
     ]
   },
   "browserslist": {

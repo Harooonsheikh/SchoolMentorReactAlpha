@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react';
+import Pagination from './Pagination';
+import { paginate, PAGE_SIZE_OPTIONS } from './pageMath';
 import { schoolProgressApi } from './api';
 import { getSuperAdminIdentity } from './api/config';
 import { composeImprovementDetail, IMP_STATUS } from './api/services/dashboard';
@@ -274,10 +276,8 @@ export function ImprovementReportsSection({ rows, periodLabel, scope = '', onSco
   }, [rows, q, cat, mod, pri, scope, from, to]);
   const filtersOn = Boolean(q || cat || mod || pri || scope || from || to);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const curPage = Math.min(page, totalPages);
-  const start = (curPage - 1) * pageSize;
-  const pageRows = filtered.slice(start, start + pageSize);
+  const pg = paginate(filtered.length, page, pageSize);
+  const pageRows = filtered.slice(pg.start, pg.end);
   const resetPage = (fn) => (e) => { fn(e.target.value); setPage(1); };
   const clear = () => { setQ(''); setCat(''); setMod(''); setPri(''); onScope?.(IMP_SCOPE.all); setFrom(''); setTo(''); setPage(1); };
 
@@ -314,7 +314,7 @@ export function ImprovementReportsSection({ rows, periodLabel, scope = '', onSco
         <div className="card-header-right">
           <div className="tbl-show-row">
             Show <select className="tbl-show-sel" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
-              <option>10</option><option>25</option><option>50</option>
+              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
             </select> entries
           </div>
           <div className="tbl-search">
@@ -379,7 +379,7 @@ export function ImprovementReportsSection({ rows, periodLabel, scope = '', onSco
               </td></tr>
             ) : pageRows.map((r, i) => (
               <tr key={r.id}>
-                <td>{start + i + 1}</td>
+                <td>{pg.start + i + 1}</td>
                 <td className="bm-title">{r.title || '—'}</td>
                 <td><div className="bm-desc" title={r.descriptionText}>{r.description || '—'}</div></td>
                 <td>{r.category || '—'}</td>
@@ -412,18 +412,7 @@ export function ImprovementReportsSection({ rows, periodLabel, scope = '', onSco
         </table>
       </div>
 
-      <div className="pag-bar">
-        <div className="pag-info">
-          {filtered.length === 0 ? 'Showing 0 entries' : `Showing ${start + 1} to ${Math.min(start + pageSize, filtered.length)} of ${filtered.length} entries`}
-        </div>
-        <div className="pag-btns">
-          <button className="pag-btn" disabled={curPage <= 1} onClick={() => setPage(Math.max(1, curPage - 1))}>Previous</button>
-          {Array.from({ length: totalPages }, (_, k) => k + 1).map((n) => (
-            <button key={n} className={`pag-btn${n === curPage ? ' active' : ''}`} onClick={() => setPage(n)}>{n}</button>
-          ))}
-          <button className="pag-btn" disabled={curPage >= totalPages} onClick={() => setPage(Math.min(totalPages, curPage + 1))}>Next</button>
-        </div>
-      </div>
+      <Pagination {...pg} onPageChange={setPage} />
 
       {view && (
         <Modal title={view.title || 'Improvement details'} sub={`Improvement #${view.recordId || '—'}`} icon="fa-lightbulb" large onClose={() => setView(null)}

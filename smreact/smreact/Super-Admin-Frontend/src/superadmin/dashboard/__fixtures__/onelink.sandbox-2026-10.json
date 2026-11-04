@@ -1,0 +1,595 @@
+{
+ "success": true,
+ "data": {
+  "totals": {
+   "totalCollection": -1440,
+   "totalTransactions": 10,
+   "schoolsReceivingPayments": 3,
+   "totalEnabledSchools": 49,
+   "avgTransactionValue": -144,
+   "customerCharges": 5000,
+   "providerPayable": 1840,
+   "schoolMentorRevenue": 3160,
+   "customerChargePerTxn": 500,
+   "providerCostPerTxn": 200,
+   "marginPerTxn": 300,
+   "fromDate": "2026-10-01T00:00:00",
+   "toDate": "2026-10-31T00:00:00"
+  },
+  "branches": [
+   {
+    "schoolID": 221117,
+    "schoolName": "Airborne Educational System",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221140,
+    "schoolName": "Aslmia school sistum",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 1,
+    "schoolName": "Beacon Public School",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221155,
+    "schoolName": "Bright Future Education System",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 220989,
+    "schoolName": "Capital Grammar International School ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221161,
+    "schoolName": "CLICS School & Academy System",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221193,
+    "schoolName": "Codwanta",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221197,
+    "schoolName": "Concept School Grooming Brainiacs",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221079,
+    "schoolName": "Darul Falah Academy",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221156,
+    "schoolName": "General Nigar Pre-Cadet School ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221137,
+    "schoolName": "Ghulam Rabani",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221138,
+    "schoolName": "Ghulam Rabani",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221139,
+    "schoolName": "Ghulam Rabani",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221143,
+    "schoolName": "GREENWICH PUBLIC SCHOOL",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221050,
+    "schoolName": "Holy Place School System ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221106,
+    "schoolName": "Horizonford Grammar School ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221206,
+    "schoolName": "IKHLAS MISSION SCHOOL",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221121,
+    "schoolName": "Imperial School Of Excellence",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221170,
+    "schoolName": "Iqra Madina Tul Atfal Islamic School ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 210813,
+    "schoolName": "Islamia Public School",
+    "totalTransactions": 1,
+    "totalCollection": 10,
+    "providerPayable": 40,
+    "customerCharges": 500,
+    "schoolMentorRevenue": 460
+   },
+   {
+    "schoolID": 221168,
+    "schoolName": "Jamia Tur Rasheed Lahore",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221150,
+    "schoolName": "Kinder Castle  Pre School Skardu ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221165,
+    "schoolName": "Muhammad Younus",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 34,
+    "schoolName": "Muniba Mirza",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221199,
+    "schoolName": "National institute of medical sciences and Nursing college Layyah ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221123,
+    "schoolName": "National School & College Boys Campus Rawat ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221126,
+    "schoolName": "National School & College Girls Campus Rawat ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221127,
+    "schoolName": "National School & College Junior Campus Rawat ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221125,
+    "schoolName": "National School & College Main Primary Campus Rawat ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221122,
+    "schoolName": "Native school yousaf campus ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221159,
+    "schoolName": "NOOR E MUJASAM TAJWEED UL QURAN ACADEMY ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221130,
+    "schoolName": "Oxford Montessori and School System ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221179,
+    "schoolName": "PEN SCHOOLS PARADISE CAMPUS",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221119,
+    "schoolName": "Punjab Maktab",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 210628,
+    "schoolName": "SHAH WALI ULLAH GRAMMAR HIGH SCHOOL",
+    "totalTransactions": 1,
+    "totalCollection": -130,
+    "providerPayable": 200,
+    "customerCharges": 500,
+    "schoolMentorRevenue": 300
+   },
+   {
+    "schoolID": 221135,
+    "schoolName": "Smart Scholar school",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221190,
+    "schoolName": "TAS UsmanWala",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221077,
+    "schoolName": "The Dimensions Academy Pvt. Ltd.",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221177,
+    "schoolName": "THE EDUCATIONAL ACADEMY",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "totalTransactions": 8,
+    "totalCollection": -1320,
+    "providerPayable": 1600,
+    "customerCharges": 4000,
+    "schoolMentorRevenue": 2400
+   },
+   {
+    "schoolID": 20,
+    "schoolName": "The Learning School & College",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221128,
+    "schoolName": "The National School System Jhatta Hathial Campus ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221124,
+    "schoolName": "The National School System Mankiala Campus ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221207,
+    "schoolName": "The Rose Mary",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221195,
+    "schoolName": "THE SMART SCHOOL JARANWALA CAMPUS",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221148,
+    "schoolName": "The Spirit School",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221095,
+    "schoolName": "TLA",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 35,
+    "schoolName": "Tulip",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   },
+   {
+    "schoolID": 221180,
+    "schoolName": "Unique School System & Science Academy Gaggoo Chapter ",
+    "totalTransactions": 0,
+    "totalCollection": 0,
+    "providerPayable": 0,
+    "customerCharges": 0,
+    "schoolMentorRevenue": 0
+   }
+  ],
+  "transactions": [
+   {
+    "schoolID": 210813,
+    "schoolName": "Islamia Public School",
+    "txnID": 1,
+    "oneLinkRef": "10234020002610141280438",
+    "txnDate": "2026-10-14T00:00:00",
+    "txnTime": "08:03:50",
+    "studentName": "Student 1",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": 10,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 210628,
+    "schoolName": "SHAH WALI ULLAH GRAMMAR HIGH SCHOOL",
+    "txnID": 15,
+    "oneLinkRef": "10234020032610311296159",
+    "txnDate": "2026-10-31T00:00:00",
+    "txnTime": "15:17:39",
+    "studentName": "Student 2",
+    "admissionNo": "1001",
+    "feeType": "Online Fee",
+    "amount": -130,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 2,
+    "oneLinkRef": "10234020022610261289303",
+    "txnDate": "2026-10-26T00:00:00",
+    "txnTime": "19:47:52",
+    "studentName": "Student 3",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -190,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 3,
+    "oneLinkRef": "10234020022610261289303",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "15:41:45",
+    "studentName": "Student 4",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -150,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 4,
+    "oneLinkRef": "10234020022610261289303",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "16:07:53",
+    "studentName": "Student 5",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -150,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 5,
+    "oneLinkRef": "10234020022610271289303",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "16:16:30",
+    "studentName": "Student 6",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -150,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 6,
+    "oneLinkRef": "10234020022610271289303",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "18:15:03",
+    "studentName": "Student 7",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -150,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 12,
+    "oneLinkRef": "10234020022610271290993",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "19:18:53",
+    "studentName": "Student 8",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -190,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 13,
+    "oneLinkRef": "102340200226102713981531",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "19:38:59",
+    "studentName": "Student 9",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -190,
+    "status": "Paid"
+   },
+   {
+    "schoolID": 21,
+    "schoolName": "The Learning School  ( Sir Syed Campus )",
+    "txnID": 14,
+    "oneLinkRef": "10234020022610271290995",
+    "txnDate": "2026-10-27T00:00:00",
+    "txnTime": "20:37:51",
+    "studentName": "Student 10",
+    "admissionNo": null,
+    "feeType": "Online Fee",
+    "amount": -150,
+    "status": "Paid"
+   }
+  ]
+ }
+}

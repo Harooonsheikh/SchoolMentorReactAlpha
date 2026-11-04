@@ -1,0 +1,1287 @@
+{
+ "success": true,
+ "data": {
+  "ActiveSchools": 313,
+  "ERP_Schools": 211,
+  "LaunchSetup_Schools": 102,
+  "InActiveSchools": 24,
+  "Active_Login_Schools": 181,
+  "TotalStudents": {
+   "Overall": 39498,
+   "NewSignUp": 858
+  },
+  "TotalStaff": {
+   "Overall": 3105,
+   "NewSignUp": 538
+  },
+  "OnboardingStatus": {
+   "FullyTrained": 1,
+   "InProcess": 74
+  },
+  "BugSummary": {
+   "TotalBugs": 7,
+   "ResolvedBugs": 2,
+   "PendingBugs": 5
+  },
+  "Bugs": [
+   {
+    "ID": 15,
+    "BranchID": 19,
+    "Module": "Accounts",
+    "Developer": "Nimra Fatima",
+    "BugDetail": "Issue in Accounts\nIssue in Accounts\nPriority: High",
+    "Date": "2026-09-01",
+    "IsSolved": false,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-31T22:51:38.837",
+    "ModifiedBy": null,
+    "ModifiedAt": null
+   },
+   {
+    "ID": 11,
+    "BranchID": 1,
+    "Module": "mmm",
+    "Developer": "string string",
+    "BugDetail": "[Improvement] improvemment\ndescriyion\nPriority: Medium",
+    "Date": "2026-08-12",
+    "IsSolved": false,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-12T03:53:34.44",
+    "ModifiedBy": null,
+    "ModifiedAt": null
+   },
+   {
+    "ID": 10,
+    "BranchID": 1,
+    "Module": "attendane",
+    "Developer": "Duaa Rizvi",
+    "BugDetail": "bug\nbug des\nPriority: High",
+    "Date": "2026-08-12",
+    "IsSolved": false,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-12T03:53:12.78",
+    "ModifiedBy": null,
+    "ModifiedAt": null
+   },
+   {
+    "ID": 8,
+    "BranchID": 1,
+    "Module": "b",
+    "Developer": "Bilal Ahmed",
+    "BugDetail": "v\nb\nPriority: High",
+    "Date": "2026-08-12",
+    "IsSolved": false,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-12T03:10:18.58",
+    "ModifiedBy": null,
+    "ModifiedAt": null
+   },
+   {
+    "ID": 7,
+    "BranchID": 15,
+    "Module": "Acdemics Module",
+    "Developer": "Qasim",
+    "BugDetail": "Check pleaase leasson plan moudle",
+    "Date": "2026-08-10",
+    "IsSolved": true,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-11T04:03:39.003",
+    "ModifiedBy": 1,
+    "ModifiedAt": "2026-08-11T04:03:51.07"
+   },
+   {
+    "ID": 6,
+    "BranchID": 15,
+    "Module": "Fee module",
+    "Developer": "MR Aness",
+    "BugDetail": "fee calcultation issue",
+    "Date": "2026-09-12",
+    "IsSolved": false,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-11T04:00:50.247",
+    "ModifiedBy": 1,
+    "ModifiedAt": "2026-08-11T04:02:23.797"
+   },
+   {
+    "ID": 4,
+    "BranchID": 1,
+    "Module": "mkge",
+    "Developer": "sasa",
+    "BugDetail": "ss",
+    "Date": "2026-08-17",
+    "IsSolved": true,
+    "CreatedBy": 1,
+    "CreatedAt": "2026-08-07T07:50:50.537",
+    "ModifiedBy": 1,
+    "ModifiedAt": "2026-08-07T07:51:25.1"
+   }
+  ],
+  "TotalVideos": 2,
+  "VideoCategories": [
+   {
+    "CategoryID": 4,
+    "CategoryName": "Acdemics",
+    "VideoCount": 1
+   },
+   {
+    "CategoryID": 2,
+    "CategoryName": "Science Blocks",
+    "VideoCount": 1
+   },
+   {
+    "CategoryID": 1,
+    "CategoryName": "ZZ Probe 1787135292",
+    "VideoCount": 0
+   }
+  ],
+  "ThisMonthProgress": {
+   "ERPSchools": 0,
+   "LaunchSetupSchools": 3
+  },
+  "CurrentMonthDetails": [
+   {
+    "SchoolName": "Advance Learning School Of Excellence ",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "Aisha Noble School & College Odigram",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Al Aqsa Public School",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Al -Arqam Academy Of Excellence Havelian",
+    "PreviousAmount": 2190,
+    "FeeChallan": 2190,
+    "FeeDiscount": 0,
+    "Receivable": 4380,
+    "ReceivedAmount": 0,
+    "TotalPending": 4380
+   },
+   {
+    "SchoolName": "Al Asad College Tangi",
+    "PreviousAmount": 6552,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 6552,
+    "ReceivedAmount": 0,
+    "TotalPending": 6552
+   },
+   {
+    "SchoolName": "Al Asad School System Tangi",
+    "PreviousAmount": 28440,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 28440,
+    "ReceivedAmount": 0,
+    "TotalPending": 28440
+   },
+   {
+    "SchoolName": "Al Asr School System",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Al farabi high school dinga",
+    "PreviousAmount": 3020,
+    "FeeChallan": 3020,
+    "FeeDiscount": 0,
+    "Receivable": 6040,
+    "ReceivedAmount": 0,
+    "TotalPending": 6040
+   },
+   {
+    "SchoolName": "Al Ghazi School System",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Al Hira Public School Sarai Naimat Khan",
+    "PreviousAmount": 4000,
+    "FeeChallan": 4000,
+    "FeeDiscount": 0,
+    "Receivable": 8000,
+    "ReceivedAmount": 0,
+    "TotalPending": 8000
+   },
+   {
+    "SchoolName": "AL-FATAH Institute of Health Sciences",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "AL-FATEH COLLEGE  & ALLIED SCIENCES",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Ali Ali and Faizan-e-Fatima Academy",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Al-Noorian High School China Scheme Campus.",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "American Lycetuff DNK STEM School System Swabi Campus",
+    "PreviousAmount": 15560,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 15560,
+    "ReceivedAmount": 0,
+    "TotalPending": 15560
+   },
+   {
+    "SchoolName": "Aslmia school sistum",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Awais Qarni Model School Girls",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Bright Future High School Partab Garh Wan Adhan Pattoki Kasur ",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Bright Future Public School & College Islamkot",
+    "PreviousAmount": 21390,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 21390,
+    "ReceivedAmount": 0,
+    "TotalPending": 21390
+   },
+   {
+    "SchoolName": "Bright Future School",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Capital Grammar International School ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "CESKA",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Classic school system",
+    "PreviousAmount": 2430,
+    "FeeChallan": 2430,
+    "FeeDiscount": 0,
+    "Receivable": 4860,
+    "ReceivedAmount": 0,
+    "TotalPending": 4860
+   },
+   {
+    "SchoolName": "Concept Schools khudadad Campus",
+    "PreviousAmount": 7290,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 7290,
+    "ReceivedAmount": 0,
+    "TotalPending": 7290
+   },
+   {
+    "SchoolName": "Cordova Schools",
+    "PreviousAmount": 3300,
+    "FeeChallan": 3300,
+    "FeeDiscount": 0,
+    "Receivable": 6600,
+    "ReceivedAmount": 0,
+    "TotalPending": 6600
+   },
+   {
+    "SchoolName": "Daffodil Schools Tarnol Campus",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Dawn Public Schools Nawab Bhooti",
+    "PreviousAmount": 2840,
+    "FeeChallan": 2840,
+    "FeeDiscount": 0,
+    "Receivable": 5680,
+    "ReceivedAmount": 0,
+    "TotalPending": 5680
+   },
+   {
+    "SchoolName": "Divisional Public School, Sibi",
+    "PreviousAmount": 0,
+    "FeeChallan": 6030,
+    "FeeDiscount": 0,
+    "Receivable": 6030,
+    "ReceivedAmount": 0,
+    "TotalPending": 6030
+   },
+   {
+    "SchoolName": "dr abdul qadeer khan public school",
+    "PreviousAmount": 570,
+    "FeeChallan": 2070,
+    "FeeDiscount": 0,
+    "Receivable": 2640,
+    "ReceivedAmount": 0,
+    "TotalPending": 2640
+   },
+   {
+    "SchoolName": "ELITE SCHOLARS SECONDARY SCHOOL",
+    "PreviousAmount": 2000,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Ever Green Islamic School Yazman",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Ever Green Islamic School Yazman",
+    "PreviousAmount": 2250,
+    "FeeChallan": 2250,
+    "FeeDiscount": 0,
+    "Receivable": 4500,
+    "ReceivedAmount": 0,
+    "TotalPending": 4500
+   },
+   {
+    "SchoolName": "Evergreen Public School Shahdadkot",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Faran Public high School",
+    "PreviousAmount": 0,
+    "FeeChallan": 11595,
+    "FeeDiscount": 0,
+    "Receivable": 11595,
+    "ReceivedAmount": 0,
+    "TotalPending": 11595
+   },
+   {
+    "SchoolName": "General Nigar Pre-Cadet School ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "GGPS KARIGAR GHARI",
+    "PreviousAmount": 5610,
+    "FeeChallan": 5610,
+    "FeeDiscount": 0,
+    "Receivable": 11220,
+    "ReceivedAmount": 0,
+    "TotalPending": 11220
+   },
+   {
+    "SchoolName": "GREENWICH PUBLIC SCHOOL",
+    "PreviousAmount": 0,
+    "FeeChallan": 4900,
+    "FeeDiscount": 0,
+    "Receivable": 4900,
+    "ReceivedAmount": 0,
+    "TotalPending": 4900
+   },
+   {
+    "SchoolName": "HEADWAY GRAMMAR SCHOOL (LYARI)",
+    "PreviousAmount": 1190,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 1190,
+    "ReceivedAmount": 0,
+    "TotalPending": 1190
+   },
+   {
+    "SchoolName": "HEADWAY GRAMMAR SCHOOL (MALIR)",
+    "PreviousAmount": 7040,
+    "FeeChallan": 7040,
+    "FeeDiscount": 0,
+    "Receivable": 14080,
+    "ReceivedAmount": 0,
+    "TotalPending": 14080
+   },
+   {
+    "SchoolName": "High Aims School & College Dullewala",
+    "PreviousAmount": 0,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 1500,
+    "ReceivedAmount": 0,
+    "TotalPending": 1500
+   },
+   {
+    "SchoolName": "Hira Girls,Boys school and college",
+    "PreviousAmount": 610,
+    "FeeChallan": 5610,
+    "FeeDiscount": 0,
+    "Receivable": 6220,
+    "ReceivedAmount": 0,
+    "TotalPending": 6220
+   },
+   {
+    "SchoolName": "Hira School & College Kalakalay Swat",
+    "PreviousAmount": 0,
+    "FeeChallan": 4500,
+    "FeeDiscount": 0,
+    "Receivable": 4500,
+    "ReceivedAmount": 0,
+    "TotalPending": 4500
+   },
+   {
+    "SchoolName": "Holy Place School System ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2385,
+    "FeeDiscount": 0,
+    "Receivable": 2385,
+    "ReceivedAmount": 0,
+    "TotalPending": 2385
+   },
+   {
+    "SchoolName": "Horizonford Grammar School ",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "ILS Iqbal Campus Budha Goraya",
+    "PreviousAmount": 2700,
+    "FeeChallan": 2700,
+    "FeeDiscount": 0,
+    "Receivable": 5400,
+    "ReceivedAmount": 0,
+    "TotalPending": 5400
+   },
+   {
+    "SchoolName": "ILS Jinnah Campus (Chianwali)",
+    "PreviousAmount": 4900,
+    "FeeChallan": 4900,
+    "FeeDiscount": 0,
+    "Receivable": 9800,
+    "ReceivedAmount": 0,
+    "TotalPending": 9800
+   },
+   {
+    "SchoolName": "INSPIRE GRAMMAR SCHOOL MATTEKI",
+    "PreviousAmount": 2300,
+    "FeeChallan": 2300,
+    "FeeDiscount": 0,
+    "Receivable": 4600,
+    "ReceivedAmount": 0,
+    "TotalPending": 4600
+   },
+   {
+    "SchoolName": "Iqra School of Young Learners ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Islamia Academies,Multan",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Islamia Public School",
+    "PreviousAmount": 3520,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 3520,
+    "ReceivedAmount": 0,
+    "TotalPending": 3520
+   },
+   {
+    "SchoolName": "Jamia Gulzar-e-Madina Fateh Jang",
+    "PreviousAmount": 0,
+    "FeeChallan": 3000,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Jamia Tul Hira",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Javed Bahria Model School",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Jinnah Public School & College",
+    "PreviousAmount": 420,
+    "FeeChallan": 5420,
+    "FeeDiscount": 0,
+    "Receivable": 5840,
+    "ReceivedAmount": 0,
+    "TotalPending": 5840
+   },
+   {
+    "SchoolName": "K.B.Jackson Grammar High School",
+    "PreviousAmount": 2548,
+    "FeeChallan": 2548,
+    "FeeDiscount": 0,
+    "Receivable": 5096,
+    "ReceivedAmount": 0,
+    "TotalPending": 5096
+   },
+   {
+    "SchoolName": "KHR Schools Chichawatni Campus",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "KHURSHED PROGRESSIVE EDUCATIONAL ACADMEY TORDHER SWABI",
+    "PreviousAmount": 1590,
+    "FeeChallan": 1590,
+    "FeeDiscount": 0,
+    "Receivable": 3180,
+    "ReceivedAmount": 0,
+    "TotalPending": 3180
+   },
+   {
+    "SchoolName": "Kinder Castle  Pre School Skardu ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "KIPS School Khurrianwala Campus",
+    "PreviousAmount": 8100,
+    "FeeChallan": 8100,
+    "FeeDiscount": 0,
+    "Receivable": 16200,
+    "ReceivedAmount": 0,
+    "TotalPending": 16200
+   },
+   {
+    "SchoolName": "Knowledge Core School System",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "Leadership School System",
+    "PreviousAmount": 0,
+    "FeeChallan": 2080,
+    "FeeDiscount": 0,
+    "Receivable": 2080,
+    "ReceivedAmount": 0,
+    "TotalPending": 2080
+   },
+   {
+    "SchoolName": "Links International Islamic Schools",
+    "PreviousAmount": 3820,
+    "FeeChallan": 3820,
+    "FeeDiscount": 0,
+    "Receivable": 7640,
+    "ReceivedAmount": 0,
+    "TotalPending": 7640
+   },
+   {
+    "SchoolName": "Little Friends School",
+    "PreviousAmount": 0,
+    "FeeChallan": 3690,
+    "FeeDiscount": 0,
+    "Receivable": 3690,
+    "ReceivedAmount": 0,
+    "TotalPending": 3690
+   },
+   {
+    "SchoolName": "Luminous Education System",
+    "PreviousAmount": 4000,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Madina Model High School",
+    "PreviousAmount": 0,
+    "FeeChallan": 3000,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "MAH Homeschool and Learning Centre",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "MAS School System",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "Mera School System ",
+    "PreviousAmount": 0,
+    "FeeChallan": 5070,
+    "FeeDiscount": 0,
+    "Receivable": 5070,
+    "ReceivedAmount": 0,
+    "TotalPending": 5070
+   },
+   {
+    "SchoolName": "Momentous Schools Insight Campus",
+    "PreviousAmount": 4720,
+    "FeeChallan": 4720,
+    "FeeDiscount": 0,
+    "Receivable": 9440,
+    "ReceivedAmount": 0,
+    "TotalPending": 9440
+   },
+   {
+    "SchoolName": "Mughal's System",
+    "PreviousAmount": 10000,
+    "FeeChallan": -5000,
+    "FeeDiscount": 0,
+    "Receivable": 5000,
+    "ReceivedAmount": 0,
+    "TotalPending": 5000
+   },
+   {
+    "SchoolName": "Muhammad Younus",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Multan Superior School",
+    "PreviousAmount": 2595,
+    "FeeChallan": 2595,
+    "FeeDiscount": 0,
+    "Receivable": 5190,
+    "ReceivedAmount": 0,
+    "TotalPending": 5190
+   },
+   {
+    "SchoolName": "MY SCHOOL HARIPUR CAMPUS",
+    "PreviousAmount": 0,
+    "FeeChallan": 1860,
+    "FeeDiscount": 0,
+    "Receivable": 1860,
+    "ReceivedAmount": 0,
+    "TotalPending": 1860
+   },
+   {
+    "SchoolName": "Nafees Academy School System",
+    "PreviousAmount": 2880,
+    "FeeChallan": 2880,
+    "FeeDiscount": 0,
+    "Receivable": 5760,
+    "ReceivedAmount": 0,
+    "TotalPending": 5760
+   },
+   {
+    "SchoolName": "Nawar International School & College ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "NES CHARTERED",
+    "PreviousAmount": 0,
+    "FeeChallan": 6760,
+    "FeeDiscount": 0,
+    "Receivable": 6760,
+    "ReceivedAmount": 0,
+    "TotalPending": 6760
+   },
+   {
+    "SchoolName": "Newcastle International School",
+    "PreviousAmount": 4000,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "NIPAS College",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Noman Education Canter (Karim Park Campus)",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "NOOR E MUJASAM TAJWEED UL QURAN ACADEMY ",
+    "PreviousAmount": 0,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 1500,
+    "ReceivedAmount": 0,
+    "TotalPending": 1500
+   },
+   {
+    "SchoolName": "Oakwood Grammar School",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Orbit School System KPK",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "OXFORD SCHOOL VEHARI ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2385,
+    "FeeDiscount": 0,
+    "Receivable": 2385,
+    "ReceivedAmount": 0,
+    "TotalPending": 2385
+   },
+   {
+    "SchoolName": "Parwaan Model High School",
+    "PreviousAmount": 0,
+    "FeeChallan": 3580,
+    "FeeDiscount": 0,
+    "Receivable": 3580,
+    "ReceivedAmount": 0,
+    "TotalPending": 3580
+   },
+   {
+    "SchoolName": "Peace Education Foundation ",
+    "PreviousAmount": 0,
+    "FeeChallan": 5235,
+    "FeeDiscount": 0,
+    "Receivable": 5235,
+    "ReceivedAmount": 0,
+    "TotalPending": 5235
+   },
+   {
+    "SchoolName": "PEPPERDINE FOR ADVANCED STUDIES SKARDU CAMPUS",
+    "PreviousAmount": 4736,
+    "FeeChallan": 4736,
+    "FeeDiscount": 0,
+    "Receivable": 9472,
+    "ReceivedAmount": 0,
+    "TotalPending": 9472
+   },
+   {
+    "SchoolName": "Pioneer Girls High School",
+    "PreviousAmount": 0,
+    "FeeChallan": 3080,
+    "FeeDiscount": 0,
+    "Receivable": 3080,
+    "ReceivedAmount": 0,
+    "TotalPending": 3080
+   },
+   {
+    "SchoolName": "Punjab Grammar School",
+    "PreviousAmount": 3000,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Punjab Grammar School Wasowal campus",
+    "PreviousAmount": 4500,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 4500,
+    "ReceivedAmount": 0,
+    "TotalPending": 4500
+   },
+   {
+    "SchoolName": "Punjab International College Of Sciences",
+    "PreviousAmount": 2560,
+    "FeeChallan": 2560,
+    "FeeDiscount": 0,
+    "Receivable": 5120,
+    "ReceivedAmount": 0,
+    "TotalPending": 5120
+   },
+   {
+    "SchoolName": "Radiant Grammar School",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "Rising Star School",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "Saeed Public School Yar Hussain",
+    "PreviousAmount": 9570,
+    "FeeChallan": 9570,
+    "FeeDiscount": 0,
+    "Receivable": 19140,
+    "ReceivedAmount": 0,
+    "TotalPending": 19140
+   },
+   {
+    "SchoolName": "School of Excellence",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "shah international school",
+    "PreviousAmount": 0,
+    "FeeChallan": 3165,
+    "FeeDiscount": 0,
+    "Receivable": 3165,
+    "ReceivedAmount": 0,
+    "TotalPending": 3165
+   },
+   {
+    "SchoolName": "SHAH WALI ULLAH GRAMMAR HIGH SCHOOL",
+    "PreviousAmount": 6470,
+    "FeeChallan": 6470,
+    "FeeDiscount": 0,
+    "Receivable": 12940,
+    "ReceivedAmount": 0,
+    "TotalPending": 12940
+   },
+   {
+    "SchoolName": "Sir Syed Public Schools & Colleges for Boys & Girls Campus",
+    "PreviousAmount": 5410,
+    "FeeChallan": 5410,
+    "FeeDiscount": 0,
+    "Receivable": 10820,
+    "ReceivedAmount": 0,
+    "TotalPending": 10820
+   },
+   {
+    "SchoolName": "Skardovian Public School",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Smart Scholar school",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Step School DIK",
+    "PreviousAmount": 0,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 1500,
+    "ReceivedAmount": 0,
+    "TotalPending": 1500
+   },
+   {
+    "SchoolName": "Superior Grammar School ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Taleem group of schools ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Tasqif Group Of Education",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "The ABS Schooling system ",
+    "PreviousAmount": 4000,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "THE ASPIRE EDUCATION SYSTEM",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "The Best School",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "The Dimensions Academy Pvt. Ltd.",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "The Eagle Kindergarten and School ",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "THE EDUCATIONAL ACADEMY",
+    "PreviousAmount": 0,
+    "FeeChallan": 2301,
+    "FeeDiscount": 0,
+    "Receivable": 2301,
+    "ReceivedAmount": 0,
+    "TotalPending": 2301
+   },
+   {
+    "SchoolName": "The Future Professionals",
+    "PreviousAmount": 6370,
+    "FeeChallan": -50,
+    "FeeDiscount": 0,
+    "Receivable": 6320,
+    "ReceivedAmount": 0,
+    "TotalPending": 6320
+   },
+   {
+    "SchoolName": "The Generation High School ????",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "The Ions Secondary School Fateh Jang",
+    "PreviousAmount": 0,
+    "FeeChallan": 2800,
+    "FeeDiscount": 0,
+    "Receivable": 2800,
+    "ReceivedAmount": 0,
+    "TotalPending": 2800
+   },
+   {
+    "SchoolName": "The Laureates School",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "The Learners School",
+    "PreviousAmount": 2300,
+    "FeeChallan": 2300,
+    "FeeDiscount": 0,
+    "Receivable": 4600,
+    "ReceivedAmount": 0,
+    "TotalPending": 4600
+   },
+   {
+    "SchoolName": "The Message School  Huzaifa Campus ",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "The Mount Sinai School",
+    "PreviousAmount": 0,
+    "FeeChallan": 2560,
+    "FeeDiscount": 0,
+    "Receivable": 2560,
+    "ReceivedAmount": 0,
+    "TotalPending": 2560
+   },
+   {
+    "SchoolName": "The Multan Superior Academy",
+    "PreviousAmount": 0,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 1000,
+    "ReceivedAmount": 0,
+    "TotalPending": 1000
+   },
+   {
+    "SchoolName": "The Nation School",
+    "PreviousAmount": 70,
+    "FeeChallan": 1570,
+    "FeeDiscount": 0,
+    "Receivable": 1640,
+    "ReceivedAmount": 0,
+    "TotalPending": 1640
+   },
+   {
+    "SchoolName": "The Next Gen School Larkana",
+    "PreviousAmount": 0,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 1500,
+    "ReceivedAmount": 0,
+    "TotalPending": 1500
+   },
+   {
+    "SchoolName": "THE PINEFIELD SCHOOL",
+    "PreviousAmount": 0,
+    "FeeChallan": 1725,
+    "FeeDiscount": 0,
+    "Receivable": 1725,
+    "ReceivedAmount": 0,
+    "TotalPending": 1725
+   },
+   {
+    "SchoolName": "The Prime School System",
+    "PreviousAmount": 1500,
+    "FeeChallan": 1500,
+    "FeeDiscount": 0,
+    "Receivable": 3000,
+    "ReceivedAmount": 0,
+    "TotalPending": 3000
+   },
+   {
+    "SchoolName": "The Quaid School",
+    "PreviousAmount": 2625,
+    "FeeChallan": 2625,
+    "FeeDiscount": 0,
+    "Receivable": 5250,
+    "ReceivedAmount": 0,
+    "TotalPending": 5250
+   },
+   {
+    "SchoolName": "The Savvion School ( aproject of mmm group)",
+    "PreviousAmount": 0,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "The Science Hub School",
+    "PreviousAmount": 0,
+    "FeeChallan": 3030,
+    "FeeDiscount": 0,
+    "Receivable": 3030,
+    "ReceivedAmount": 0,
+    "TotalPending": 3030
+   },
+   {
+    "SchoolName": "The Sunrise Grammar School Bhopalwala",
+    "PreviousAmount": 2000,
+    "FeeChallan": 2000,
+    "FeeDiscount": 0,
+    "Receivable": 4000,
+    "ReceivedAmount": 0,
+    "TotalPending": 4000
+   },
+   {
+    "SchoolName": "Zaidi Academy",
+    "PreviousAmount": 1000,
+    "FeeChallan": 1000,
+    "FeeDiscount": 0,
+    "Receivable": 2000,
+    "ReceivedAmount": 0,
+    "TotalPending": 2000
+   },
+   {
+    "SchoolName": "Zps Education System",
+    "PreviousAmount": 6120,
+    "FeeChallan": 0,
+    "FeeDiscount": 0,
+    "Receivable": 6120,
+    "ReceivedAmount": 0,
+    "TotalPending": 6120
+   }
+  ]
+ }
+}

@@ -57,11 +57,5 @@ export const DASHBOARD_GATES = {
 export const userInitials = (name) => (name || '').slice(0, 2).toUpperCase() || 'SM';
 
 /* Build the page-window of numbered pagination buttons (1 … n with ellipses). */
-export function pageButtons(current, totalPages) {
-  const out = [];
-  for (let p = 1; p <= totalPages; p++) {
-    if (p === 1 || p === totalPages || Math.abs(p - current) <= 1) out.push(p);
-    else if (Math.abs(p - current) === 2) out.push('…');
-  }
-  return out;
-}
+/* Page buttons — the shared Super Admin pagination logic (./pageMath). */
+export { pageItems as pageButtons } from './pageMath';

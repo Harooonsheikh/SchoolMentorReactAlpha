@@ -1732,6 +1732,20 @@ export const SA_CSS = `
 .sa-root .pag-btn:hover:not(.active):not(:disabled){background:var(--muted)}
 .sa-root .pag-btn.active{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border-color:transparent}
 .sa-root .pag-btn:disabled{opacity:.45;cursor:not-allowed}
+.sa-root .pag-btn{font-variant-numeric:tabular-nums}
+.sa-root .pag-btn.active{cursor:default}
+.sa-root .pag-btn:focus-visible{outline:2px solid #2563EB;outline-offset:2px}
+.sa-root .pag-nav{padding:0 12px}
+.sa-root .pag-ellipsis{min-width:24px;height:32px;display:inline-flex;align-items:center;justify-content:center;color:var(--tm);font-size:12.5px;user-select:none}
+.sa-root .pag-compact{display:none;font-size:12px;font-weight:600;color:var(--t2);padding:0 6px;font-variant-numeric:tabular-nums}
+/* narrow screens: Previous · 7 / 14 · Next — no horizontal overflow */
+@media(max-width:560px){
+  .sa-root .pag-bar{justify-content:center}
+  .sa-root .pag-info{width:100%;text-align:center}
+  .sa-root .pag-page{display:none}
+  .sa-root .pag-num,.sa-root .pag-ellipsis{display:none}
+  .sa-root .pag-compact{display:inline}
+}
 
 /* school / user / video detail cards (db- prefixed to avoid clashing
    with the detail-card styles used by the payment + status modules) */

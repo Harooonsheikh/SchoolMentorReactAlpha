@@ -1,0 +1,2514 @@
+[
+ {
+  "branch": {
+   "id": 1,
+   "name": "Beacon Public School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 5,
+   "name": "Mughal's System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 16,
+   "name": "Milford Sounds",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 18,
+   "name": "Mentor",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 19,
+   "name": "SchoolMentor Alpha",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 20,
+   "name": "The Learning School & College",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 21,
+   "name": "The Learning School  ( Sir Syed Campus )",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 22,
+   "name": "The Learning School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 23,
+   "name": "Hamza Test",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 24,
+   "name": "KPS School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 25,
+   "name": "American Lyceum International school ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 27,
+   "name": "Jasmine High School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 28,
+   "name": "Lavender Hill High School Test",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 29,
+   "name": "Star Grammer School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 30,
+   "name": "City Public School Demo",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 31,
+   "name": "TORDHER BRANCH",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 32,
+   "name": "Forbels School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 33,
+   "name": "Noor Smart School ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 34,
+   "name": "Muniba Mirza",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 35,
+   "name": "Tulip",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 36,
+   "name": "Bright School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 37,
+   "name": "Bright School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 38,
+   "name": "The Sunrise Grammar School Bhopalwala",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 48,
+   "name": "The Ions Secondary School Fateh Jang",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 49,
+   "name": "Muridke International School & Academy",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 50,
+   "name": "Admin Office",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 52,
+   "name": "Knowledge Core School System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 53,
+   "name": "Jamia Gulzar-e-Madina Fateh Jang",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 54,
+   "name": "Advance Learning School Of Excellence ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 55,
+   "name": "Divisional Public School, Sibi",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 57,
+   "name": "The ABS Schooling system ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 60,
+   "name": "schoolmentor",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 61,
+   "name": "online",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 62,
+   "name": "Peace Education Foundation ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 63,
+   "name": "VIP Model High School",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 64,
+   "name": "The Islamic School ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 65,
+   "name": "Faran Public high School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 66,
+   "name": "THE ASPIRE EDUCATION SYSTEM",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 67,
+   "name": "The Message School  Huzaifa Campus ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 68,
+   "name": "Step School DIK",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 70,
+   "name": "Zps Education System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 71,
+   "name": "The Cambridge School Baffa Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 72,
+   "name": "The Cambridge School Shinkiari Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 74,
+   "name": "Hira School & College Kalakalay Swat",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 78,
+   "name": "Classic school system",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 80,
+   "name": "The Laureates School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 82,
+   "name": "THE PINEFIELD SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 84,
+   "name": "GGPS KARIGAR GHARI",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 86,
+   "name": "Hira Girls,Boys school and college",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 88,
+   "name": "shah international school",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 90,
+   "name": "KHR Schools Chichawatni Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 92,
+   "name": "MAS School System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 94,
+   "name": "The Learners School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 100,
+   "name": "Harmain Institute of Health Sciences",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 140227,
+   "name": "Daffodil Schools Tarnol Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 170302,
+   "name": "HEADWAY GRAMMAR SCHOOL (MALIR)",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200360,
+   "name": "THE SPIRIT SCHOOL Pakpattan",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200422,
+   "name": "Bilal Ideal School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200509,
+   "name": "ILS Jinnah Campus (Chianwali)",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200510,
+   "name": "Pioneer Girls High School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200518,
+   "name": "Nafees Academy School System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200543,
+   "name": "The Smart School Gujrat Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200554,
+   "name": "The Smart School city Campus Gujrat",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 200574,
+   "name": "UNIVERSITY GROUP OF SCHOOLS(SWABI CAMPUS)",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210588,
+   "name": "the reader line school",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210625,
+   "name": "American Lycetuff DNK STEM School System Swabi Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210628,
+   "name": "SHAH WALI ULLAH GRAMMAR HIGH SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210668,
+   "name": "Cambridge School of Excellence",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210680,
+   "name": "Oakwood Grammar School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210681,
+   "name": "PUNJAB GRAMMAR SCHOOL LALAMUSA",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210683,
+   "name": "Protostars' School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210704,
+   "name": "ILS Iqbal Campus Budha Goraya",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210710,
+   "name": "Links International Islamic Schools",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210724,
+   "name": "The Mount Sinai School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210745,
+   "name": "The Noor School & Science Academy Kalat",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210804,
+   "name": "ELITE SCHOLARS SECONDARY SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210807,
+   "name": "CENTURY STREAMS School Chakwal",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210809,
+   "name": "The Science Hub School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210813,
+   "name": "Islamia Public School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210824,
+   "name": "Dar ul ilam school Qadir Abad",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210828,
+   "name": "Multan Superior School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 210832,
+   "name": "Bright Star School And Academy",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220859,
+   "name": "Parwaan Model High School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220860,
+   "name": "Jinnah Public School & College",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220864,
+   "name": "The Quaid School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220867,
+   "name": "HEADWAY GRAMMAR SCHOOL (LYARI)",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220875,
+   "name": "Saeed Public School Yar Hussain",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220891,
+   "name": "NES CHARTERED",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220896,
+   "name": "Islamic Children Academy Odigram",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220897,
+   "name": "Luminous Education System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220899,
+   "name": "Al Hamd school system 325eb",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220906,
+   "name": "Radiant Grammar School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220908,
+   "name": "Faith Montessori Center",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220910,
+   "name": "Concept Schools khudadad Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220925,
+   "name": "Madina Model High School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220929,
+   "name": "Leadership School System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220930,
+   "name": "MAH Homeschool and Learning Centre",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220931,
+   "name": "Zaidi Academy",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220940,
+   "name": "MY SCHOOL HARIPUR CAMPUS",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220941,
+   "name": "Al Asad School System Tangi",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220944,
+   "name": "Mumtaz School System Madhora kalan",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220946,
+   "name": "Madina Model School Aaki",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220952,
+   "name": "Punjab Grammar School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220953,
+   "name": "Punjab Grammar School Wasowal campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220955,
+   "name": "Atlas college",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220957,
+   "name": "Cordova Schools",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220960,
+   "name": "PIAST Educational System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220961,
+   "name": "Test ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220962,
+   "name": "The Generation High School ????",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220965,
+   "name": "The Homeland School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220967,
+   "name": "Jamia Tul Hira",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220969,
+   "name": "New Generation Schooling System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220972,
+   "name": "Little Friends School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220973,
+   "name": "IMPACT School of Lahore",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220974,
+   "name": "Shah G Academy",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220977,
+   "name": "tes",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220979,
+   "name": "The Future Professionals",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220980,
+   "name": "Gulberg Branch",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220981,
+   "name": "THE OAKS WOOD GRAMMAR SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220982,
+   "name": "Evergreen Public School Shahdadkot",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220983,
+   "name": "OXFORD SCHOOL VEHARI ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220984,
+   "name": "AL-FATEH COLLEGE  & ALLIED SCIENCES",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220985,
+   "name": "AL-FATAH Institute of Health Sciences",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220986,
+   "name": "The Prime School System",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220987,
+   "name": "Mera School System ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220988,
+   "name": "Al Asad College Tangi",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220989,
+   "name": "Capital Grammar International School ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220990,
+   "name": "Oxford School Vehari",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220991,
+   "name": "Punjab International College Of Sciences",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220993,
+   "name": "Momentous Schools Insight Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220994,
+   "name": "Ravians School and College",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220995,
+   "name": "Bariah Model School I8/4 ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220996,
+   "name": "DAKSON Institute of Health Sciences",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 220997,
+   "name": "The Nation School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220998,
+   "name": "Al Aqsa Public School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 220999,
+   "name": "Deep Academy Mithi",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221000,
+   "name": "Oxford Grammar School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221001,
+   "name": "Rising Star School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221002,
+   "name": "Al farabi high school dinga",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221003,
+   "name": "Tasqif Group Of Education",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221004,
+   "name": "The Next Gen School Larkana",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221005,
+   "name": "dr abdul qadeer khan public school",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221006,
+   "name": "Al Asr School System",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221007,
+   "name": "Main Campus ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221008,
+   "name": "K.B.Jackson Grammar High School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221011,
+   "name": "Bright Future Public School & College Islamkot",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221016,
+   "name": "Islamic Misali School Faqirwali",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221019,
+   "name": "School of Excellence",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221024,
+   "name": "KHURSHED PROGRESSIVE EDUCATIONAL ACADMEY TORDHER SWABI",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221027,
+   "name": "Newcastle International School",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221038,
+   "name": "Skardovian Public School",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221039,
+   "name": "Iqra School of Young Learners ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221040,
+   "name": "SB INTERNATIONAL SCHOOL",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221041,
+   "name": "Nawar International School & College ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221042,
+   "name": "High Aims School & College Dullewala",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221043,
+   "name": "Future Leader Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221044,
+   "name": "Al Hira Public School Sarai Naimat Khan",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221045,
+   "name": "New Wisdom School System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221047,
+   "name": "Bright Future High School Partab Garh Wan Adhan Pattoki Kasur ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221049,
+   "name": "Aisha Noble School & College Odigram",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221050,
+   "name": "Holy Place School System ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221051,
+   "name": "a",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221052,
+   "name": "Al-Noorian High School China Scheme Campus.",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221053,
+   "name": "KIPS School Khurrianwala Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221054,
+   "name": "Al -Arqam Academy Of Excellence Havelian",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221055,
+   "name": "THE LIGHT ACADEMY ATTOCK",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221056,
+   "name": "INSPIRE GRAMMAR SCHOOL MATTEKI",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221057,
+   "name": "Al Ghazi School System",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221058,
+   "name": "King School Guliana",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221059,
+   "name": "Kehkashan Higher Secondary School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221060,
+   "name": "IIUI AMINA CAMPUS DIKHAN",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221061,
+   "name": "            INTERNATIONAL ISLAMIC UNIVERSITY ISLAMABAD SCHOOL (IIUI) AMINA CAMPUS DERA ISMAIL KHAN",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221062,
+   "name": "INTERNATIONAL ISLAMIC UNIVERSITY ISLAMABAD SCHOOL (IIUI) RAZZAQ CAMPUS DIKHAN",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221063,
+   "name": "City School Layyah",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221064,
+   "name": "NAI ROSHI MODEL SCHOOLTEST",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221065,
+   "name": "NIPAS College",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221067,
+   "name": "Hyderabad Campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221068,
+   "name": "Creative School citizen colony Hyderabad campus ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221069,
+   "name": "Pakistan Embassy International School and College Tehran",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221070,
+   "name": "Islamia Academies,Multan",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221071,
+   "name": "Rana Snaullah",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221072,
+   "name": "G 10 markaz Islamabad",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221073,
+   "name": "Sir Syed Public Schools & Colleges for Boys & Girls Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221074,
+   "name": "Hyderabad",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221075,
+   "name": "Al-Rehan Science Foundation High School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221076,
+   "name": "Javed Bahria Model School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221077,
+   "name": "The Dimensions Academy Pvt. Ltd.",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221078,
+   "name": "Al-Rehan Science Foundation High School",
+   "isActive": false,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221079,
+   "name": "Darul Falah Academy",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221080,
+   "name": "The City Angel School Chamb Mor",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221081,
+   "name": "City School Layyah",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221082,
+   "name": "Orbit School System KPK",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221083,
+   "name": "Dawn Public Schools Nawab Bhooti",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221084,
+   "name": "Ever Green Islamic School Yazman",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221085,
+   "name": "Ever Green Islamic School Yazman",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221086,
+   "name": "School of Excellence ",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221087,
+   "name": "Kips Khuriyanwala",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221088,
+   "name": "abc school ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221089,
+   "name": "PEPPERDINE FOR ADVANCED STUDIES SKARDU CAMPUS",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221090,
+   "name": "School Of Excellence Smart Campus Sujawal",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221091,
+   "name": "The Brilliant School Pano Aqil ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221092,
+   "name": "The Bright Future Grammer School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221093,
+   "name": "Knowledge Crest School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221094,
+   "name": "Rehman academy",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221095,
+   "name": "TLA",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221096,
+   "name": "CESKA",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221098,
+   "name": "STEP School Pakpttan",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221099,
+   "name": "Scouts Public School Yar Hussain",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221102,
+   "name": "THE EDUCATORS VIP GHOURI CAMPUS",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221104,
+   "name": "The Educators Gulshanabad Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221105,
+   "name": "The Educators New Adyala Defence campus ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221106,
+   "name": "Horizonford Grammar School ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221107,
+   "name": "PAKISTAN LYCEUM SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221109,
+   "name": "New Ittehad Sec. School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221110,
+   "name": "Peshawar Excellence School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221112,
+   "name": "Naveed Public High School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221113,
+   "name": "Noman Education Canter (Karim Park Campus)",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221114,
+   "name": "The Royal Education System ®",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221115,
+   "name": "Noor ul Huda Scholars Academy",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221116,
+   "name": "Alf Roots",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221117,
+   "name": "Airborne Educational System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221118,
+   "name": "Ever Shine Academy ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221119,
+   "name": "Punjab Maktab",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221120,
+   "name": "Sunrising Science Model School Bhera Sargodha",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221121,
+   "name": "Imperial School Of Excellence",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221122,
+   "name": "Native school yousaf campus ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221123,
+   "name": "National School & College Boys Campus Rawat ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221124,
+   "name": "The National School System Mankiala Campus ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221125,
+   "name": "National School & College Main Primary Campus Rawat ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221126,
+   "name": "National School & College Girls Campus Rawat ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221127,
+   "name": "National School & College Junior Campus Rawat ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221128,
+   "name": "The National School System Jhatta Hathial Campus ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221129,
+   "name": "Muslim Era School (School Mentor)",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221130,
+   "name": "Oxford Montessori and School System ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221131,
+   "name": "Talent Kids Campus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221133,
+   "name": "Main Campus ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221134,
+   "name": "The Multan Superior Academy",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221135,
+   "name": "Smart Scholar school",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221136,
+   "name": "Al Ilm Education System",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221137,
+   "name": "Ghulam Rabani",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221138,
+   "name": "Ghulam Rabani",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221139,
+   "name": "Ghulam Rabani",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221140,
+   "name": "Aslmia school sistum",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221141,
+   "name": "Taleem group of schools ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221142,
+   "name": "The Savvion School ( aproject of mmm group)",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221143,
+   "name": "GREENWICH PUBLIC SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221144,
+   "name": "Velocity Institute of Digital Skills",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221145,
+   "name": "Won't suggest saying before finalizing deal",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221146,
+   "name": "New Punjab Grammer Group of Schools",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221147,
+   "name": "Dar e Arqam School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221148,
+   "name": "The Spirit School",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221149,
+   "name": "Mawlawe sher Ali momond private school",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221150,
+   "name": "Kinder Castle  Pre School Skardu ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221151,
+   "name": "Awais Qarni Model School Girls",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221152,
+   "name": "Awais Qarni Model School Boys",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221153,
+   "name": "Superior Grammar School ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221154,
+   "name": "Bright Future School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221155,
+   "name": "Bright Future Education System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221156,
+   "name": "General Nigar Pre-Cadet School ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221157,
+   "name": "The Best School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221158,
+   "name": "Farooq Khan",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221159,
+   "name": "NOOR E MUJASAM TAJWEED UL QURAN ACADEMY ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221160,
+   "name": "Leaders campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221161,
+   "name": "CLICS School & Academy System",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221162,
+   "name": "Ali Ali and Faizan-e-Fatima Academy",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221163,
+   "name": "The Eagle Kindergarten and School ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221164,
+   "name": "Daska Branch, Main Campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221165,
+   "name": "Muhammad Younus",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221166,
+   "name": "Shafaqat ali aqib",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221167,
+   "name": "MODERN ISLAMIC SCHOOL",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221168,
+   "name": "Jamia Tur Rasheed Lahore",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221169,
+   "name": "Sajjad Ul Haq Qureshi",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221170,
+   "name": "Iqra Madina Tul Atfal Islamic School ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221171,
+   "name": "Hawkverse",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221172,
+   "name": "Hira elementary school Dina",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221173,
+   "name": "Jamia Anwar ul Uloom Kunz ul Huda Lilbanat",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221174,
+   "name": "Hira elementary school Dina",
+   "isActive": false,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221175,
+   "name": "National City School Dakhan Campus ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221176,
+   "name": "AGS PHALIA CAMPUS ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221177,
+   "name": "THE EDUCATIONAL ACADEMY",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221178,
+   "name": "The Savvy Public School Kabirwala ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221179,
+   "name": "PEN SCHOOLS PARADISE CAMPUS",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221180,
+   "name": "Unique School System & Science Academy Gaggoo Chapter ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221181,
+   "name": "Ever Green Montessori School ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221182,
+   "name": "Riseup School and College ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221183,
+   "name": "Ashabesuffa School",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221184,
+   "name": "Sardar Tabish",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221185,
+   "name": "Riphah International College Daska Campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221186,
+   "name": "STEP School Daska Campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221187,
+   "name": "STEP Academy Daska Campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221188,
+   "name": "Shahbaz Academy of Sciences Daska",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221189,
+   "name": "Gulbery Branch, Main Campus",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221190,
+   "name": "TAS UsmanWala",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221191,
+   "name": "Romana Shabbir",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221192,
+   "name": "Luminous Grammar School (Demo)",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221193,
+   "name": "Codwanta",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221194,
+   "name": "abc",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221195,
+   "name": "THE SMART SCHOOL JARANWALA CAMPUS",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221196,
+   "name": "Farhan primary school ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221197,
+   "name": "Concept School Grooming Brainiacs",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221198,
+   "name": "time school",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221199,
+   "name": "National institute of medical sciences and Nursing college Layyah ",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221200,
+   "name": "National institute of medical sciences and Nursing college Karor",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221201,
+   "name": "National Institute of Medical Sciences and Nursing College Chowk Azam",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221202,
+   "name": "unique public school",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221203,
+   "name": "SEEK Secondary School ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221204,
+   "name": "Fips Schooling System",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221205,
+   "name": "The Ilsa house of scholars",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221206,
+   "name": "IKHLAS MISSION SCHOOL",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221207,
+   "name": "The Rose Mary",
+   "isActive": true,
+   "launchSetup": 1
+  }
+ },
+ {
+  "branch": {
+   "id": 221208,
+   "name": "paradisemontesori552@gmail.com",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221209,
+   "name": "Iqra rozatul atfal Islamic school (Pakha Ghulam Campus)",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221210,
+   "name": "Mirha Nexus school",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ },
+ {
+  "branch": {
+   "id": 221211,
+   "name": "Noveria School ",
+   "isActive": true,
+   "launchSetup": 0
+  }
+ }
+]

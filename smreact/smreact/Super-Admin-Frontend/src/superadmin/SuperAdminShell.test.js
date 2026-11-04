@@ -149,25 +149,27 @@ describe('Super Admin — data layer', () => {
      jo Dashboard.jsx padhta hai. */
   test('admin_dashboard response maps onto the dashboard shape', () => {
     const d = adminDashboardToUi(DASHBOARD_PAYLOAD.data);
+    const v = d.values;
 
-    expect(d.schools).toMatchObject({ active: 71, erp: 38, launch: 33, inactive: 2, activeLogin: 6 });
-    expect(d.schools.total).toBe(73);                 // active + inactive
-    expect(d.schools.newErp).toBe(18);                // ThisMonthProgress
-    expect(d.schools.newLaunch).toBe(29);
-    expect(d.staff).toEqual({ total: 506, newSignup: 2 });
-    expect(d.students).toEqual({ total: 0, newSignup: 0 });
-    expect(d.bugs).toEqual({ total: 6, resolved: 2, pending: 4 });
-    expect(d.videos.total).toBe(1);
-    expect(d.videos.byCat['Science Blocks']).toBe(1);
+    expect(v).toMatchObject({
+      'schools.active': 71, 'schools.erp': 38, 'schools.launch': 33,
+      'details.inactiveSchools': 2,
+      'details.totalSchools': 73,                    // ActiveSchools + InActiveSchools
+      'schools.erpNew': 18, 'schools.launchNew': 29, // ThisMonthProgress
+      'staff.total': 506, 'staff.new': 2,
+      'students.total': 0, 'students.new': 0,        // a genuine API 0 stays 0
+      'videos.total': 1,
+    });
+    expect(d.videoCategories).toEqual([{ id: 1, name: 'Science Blocks', count: 1 }]);
 
-    // Fee cards table ka jama hain — dono kabhi alag na batayein.
-    expect(d.feeTotals.challan).toBe(4900);
-    expect(d.feeTotals.received).toBe(4900);
+    // Fee cards = Σ of the API's CurrentMonthDetails rows (same rows as the table).
+    expect(v['fee.challan']).toBe(4900);
+    expect(v['fee.received']).toBe(4900);
     expect(d.feeRows[0].name).toBe('Beacon Public School');
 
-    // "Total Modules" API me nahi — banaya nahi jata.
-    expect(d.onboarding.totalModules).toBeNull();
-    expect(d.onboarding.inProcess).toBe(6);
+    // No "Total Modules" in the API — not in the registry, never invented.
+    expect(v['onboarding.totalModules']).toBeUndefined();
+    expect(v['onboarding.inProcess']).toBe(6);
 
     // BugDetail parse: tag, unwan, tafseel aur priority alag alag.
     expect(d.bugList).toHaveLength(2);

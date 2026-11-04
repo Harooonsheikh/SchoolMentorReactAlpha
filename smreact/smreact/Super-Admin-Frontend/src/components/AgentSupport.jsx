@@ -384,9 +384,9 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
         subject: `Session #${row.sessionNumber || '—'} · ${row.schoolName}`,
         schoolName: row.schoolName,
         date: fmtDate(s.createdAt),
-        handledBy: s.assignedAgentName || 'Unassigned',
+        handledBy: s.agentName || 'Unassigned',
         closedAt: s.closedAt ? `${fmtDate(s.closedAt)} ${formatTime(s.closedAt)}` : '—',
-        closedBy: s.assignedAgentName || 'Support',
+        closedBy: s.agentName || 'Support',
         closingRemarks: s.closingRemarks || 'No remarks recorded.',
         totalMessages: row.totalMessages,
         totalAttachments: row.totalAttachments,
@@ -719,7 +719,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
                     <span className="ag-inbox-time">{s.lastMessageAt ? formatTime(s.lastMessageAt) : ''}</span>
                   </div>
                   <div className="ag-inbox-sub">
-                    <span>{s.campusName || s.assignedAgentName || 'Support session'}</span>
+                    <span>{s.campusName || s.agentName || 'Support session'}</span>
                     {s.unreadCount > 0 && <span className="ag-inbox-badge">{s.unreadCount}</span>}
                   </div>
                 </div>
@@ -1336,7 +1336,7 @@ function PreviousSessionsModal({ schoolName, sessions, loading, onOpen, onClose 
                   <span className="ag-prev-ttl">Session #{s.sessionNumber}</span>
                   <span className="ag-badge ag-badge-closed">Closed</span>
                 </div>
-                <div className="ag-prev-sub">{fmtDate(s.closedAt || s.createdAt)} · Handled by {s.assignedAgentName || 'Unassigned'}</div>
+                <div className="ag-prev-sub">{fmtDate(s.closedAt || s.createdAt)} · Handled by {s.agentName || 'Unassigned'}</div>
                 <div className="ag-prev-meta">
                   <span><i className="fa-regular fa-comment" aria-hidden="true" /> {s.totalMessages} messages</span>
                   <span><i className="fa-solid fa-paperclip" aria-hidden="true" /> {s.totalAttachments} attachments</span>

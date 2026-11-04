@@ -1,10 +1,16 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import Pagination from './Pagination';
+import { paginate, PAGE_SIZE_OPTIONS } from './pageMath';
 import {
-  TXN_RATE_CONFIG_INITIAL, marginOf, pkr2,
+  TXN_RATE_CONFIG_INITIAL, pkr2,
   periodFromQuick, periodFromCustom, previousPeriodOf, percentChange,
-  periodToRange, todayISO,
+  periodToRange,
 } from './transactionData';
-import { useApi, transactionsApi, schoolProgressApi } from './api';
+import { useApi, schoolProgressApi, EP } from './api';
+import { SA_API_HOST } from './api/config';
+import { evaluateSpec, METRIC_BY_ID } from './dashboard/metrics';
+import { pkToday } from './dashboard/periods';
+import { fmtCount, fmtPKR, isMissing } from './format';
 import { TransactionReport, RevenueReport } from './OneLinkReports';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -35,7 +41,7 @@ const CUSTOM_MODES = [
 
 export default function OneLinkOverviewSection({ toast }) {
   /* ── Global period filter (shared by both cards + reports) ── */
-  const today = todayISO();
+  const today = pkToday();
   const [quick, setQuick] = useState('thisMonth');
   const [customMode, setCustomMode] = useState('single');
   const [customDate, setCustomDate] = useState(today);
@@ -53,7 +59,7 @@ export default function OneLinkOverviewSection({ toast }) {
      match karti hain, magar effectiveFrom sirf yahin se aati hai. ── */
   const [rateConfig, setRateConfig] = useState(TXN_RATE_CONFIG_INITIAL);
 useEffect(() => {
-  fetch('https://sandbox-alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/api/Network_Setup/GetCharges', {
+  fetch(`${SA_API_HOST}${EP.schoolProgress.networkChargesGet()}`, {
     headers: { accept: '*/*' }
   })
     .then((r) => r.json())
@@ -89,21 +95,24 @@ useEffect(() => {
   const totals = current?.totals || {};
   const prevTotals = ready ? reportData.previous?.totals : null;
 
-  const totalTxns = totals.totalTransactions || 0;
-  const totalCollection = totals.totalCollection || 0;
-  const activeSchools = totals.schoolsReceivingPayments || 0;
-  const totalEnabled = totals.totalEnabledSchools || 0;
-  const avgTxn = totals.avgTransactionValue || 0;
-  const txnChange = prevTotals ? percentChange(totalTxns, prevTotals.totalTransactions || 0) : null;
-  const collectionChange = prevTotals ? percentChange(totalCollection, prevTotals.totalCollection || 0) : null;
+  /* Har aankra report ke `totals` ka wahi field (metric registry:
+     dashboard/metrics.js → onelink.*). Field na aaye to null → '—', 0 NAHI. */
+  const totalTxns = totals.totalTransactions ?? null;
+  const totalCollection = totals.totalCollection ?? null;
+  const activeSchools = totals.schoolsReceivingPayments ?? null;
+  const totalEnabled = totals.totalEnabledSchools ?? null;
+  const avgTxn = totals.avgTransactionValue ?? null;
+  const change = (cur, prev) => (isMissing(cur) || isMissing(prev) ? null : percentChange(cur, prev));
+  const txnChange = prevTotals ? change(totalTxns, prevTotals.totalTransactions) : null;
+  const collectionChange = prevTotals ? change(totalCollection, prevTotals.totalCollection) : null;
 
-  /* Charges / payable / revenue / margin server ke apne hisaab se (per-school
-     rate wahi lagata hai — yahan dobara nahi ginte). */
-  const customerCharges = totals.customerCharges || 0;
-  const providerPayable = totals.providerPayable || 0;
-  const smRevenue = totals.schoolMentorRevenue || 0;
-  /* Margin / txn: report deta hai to wahi, warna saved rate se nikaal lo. */
-  const margin = totals.marginPerTxn || marginOf(rateConfig);
+  /* Charges / payable / revenue / margin server ke apne hisaab se. Margin
+     pehle 0 aane par saved rate se khud bana liya jata tha (asal 0 chhup
+     jata) — ab sirf report ka marginPerTxn. */
+  const customerCharges = totals.customerCharges ?? null;
+  const providerPayable = totals.providerPayable ?? null;
+  const smRevenue = totals.schoolMentorRevenue ?? null;
+  const margin = totals.marginPerTxn ?? null;
 
   /* School-Wise sirf wo schools jin ki is period me transactions hain (API
      poore network ki rows 0 samet bhejti hai); id par ek hi row. */
@@ -112,9 +121,10 @@ useEffect(() => {
     return (current?.schoolWise || []).filter((r) => r.transactions > 0 && !seen.has(r.schoolId) && seen.add(r.schoolId));
   }, [current]);
   const transactions = useMemo(() => current?.transactions || [], [current]);
-  /* Kamyab = jin ka status Paid/Successful ho. Detail list na aaye (sirf
-     totals) to server ka total hi. */
-  const successfulTxns = transactions.length ? transactions.filter((t) => t.successful).length : totalTxns;
+  /* Kamyab = API ke transaction records me Paid/Successful status wale
+     (registry: onelink.successful). Records ki list hi na aaye to '—' —
+     pehle yahan chupke se total transactions dikh jate thay. */
+  const successfulTxns = current ? evaluateSpec(METRIC_BY_ID['onelink.successful'].spec, current.raw) : null;
   const show = (v) => (status === 'ready' ? v : '—');
 
   /* ── Modals / drill-down state ── */
@@ -194,23 +204,24 @@ useEffect(() => {
           </div>
           <div style={{ padding: '18px 20px' }}>
             <div className="rpt-stat-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)', marginBottom: 12 }}>
-              <ClickableStat label="Total Transactions" val={show(totalTxns.toLocaleString())} onClick={() => setShowBreakdown(true)}
+              <ClickableStat label="Total Transactions" metric="onelink.totalTransactions" val={show(fmtCount(totalTxns))} onClick={() => setShowBreakdown(true)}
                 sub={status === 'ready' && txnChange != null && <Comparison val={txnChange} />} />
               <div className="rpt-stat s-green">
-                <div className="rpt-stat-val">{show(pkr2(totalCollection))}</div>
+                <div className="rpt-stat-val" data-metric="onelink.totalCollection">{show(fmtPKR(totalCollection))}</div>
                 <div className="rpt-stat-lbl">Total Collection</div>
                 {status === 'ready' && collectionChange != null && <Comparison val={collectionChange} />}
               </div>
-              <ClickableStat label="Schools Receiving Payments" val={show(`${activeSchools} / ${totalEnabled}`)} onClick={() => setShowBreakdown(true)} tone="s-info" />
+              <ClickableStat label="Schools Receiving Payments" onClick={() => setShowBreakdown(true)} tone="s-info"
+                val={<><span data-metric="onelink.schoolsReceiving">{show(fmtCount(activeSchools))}</span> / <span data-metric="onelink.enabledSchools">{show(fmtCount(totalEnabled))}</span></>} />
               <div className="rpt-stat s-warn">
-                <div className="rpt-stat-val">{show(pkr2(avgTxn))}</div>
+                <div className="rpt-stat-val" data-metric="onelink.avgTransaction">{show(fmtPKR(avgTxn))}</div>
                 <div className="rpt-stat-lbl">Avg. Transaction Value</div>
               </div>
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>
               <i className="fa-solid fa-school" style={{ marginRight: 5, color: 'var(--brand)' }} />
               {status === 'ready'
-                ? <>{activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {totalEnabled} schools in the network.</>
+                ? <>{fmtCount(activeSchools)} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {fmtCount(totalEnabled)} schools in the network.</>
                 : status === 'error' ? 'Figures unavailable — the 1LINK report could not be loaded.' : 'Loading 1LINK figures…'}
             </div>
           </div>
@@ -231,18 +242,18 @@ useEffect(() => {
           </div>
           <div style={{ padding: '18px 20px' }}>
             <div className="rpt-stat-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 12 }}>
-              <div className="rpt-stat s-info"><div className="rpt-stat-val">{show(successfulTxns.toLocaleString())}</div><div className="rpt-stat-lbl">Successful Transactions</div></div>
-              <div className="rpt-stat s-warn"><div className="rpt-stat-val" style={{ fontSize: 15 }}>{show(pkr2(customerCharges))}</div><div className="rpt-stat-lbl">Customer Charges</div></div>
-              <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 15 }}>{show(pkr2(providerPayable))}</div><div className="rpt-stat-lbl">Provider Payable</div></div>
+              <div className="rpt-stat s-info"><div className="rpt-stat-val" data-metric="onelink.successful">{show(fmtCount(successfulTxns))}</div><div className="rpt-stat-lbl">Successful Transactions</div></div>
+              <div className="rpt-stat s-warn"><div className="rpt-stat-val" data-metric="onelink.customerCharges" style={{ fontSize: 15 }}>{show(fmtPKR(customerCharges))}</div><div className="rpt-stat-lbl">Customer Charges</div></div>
+              <div className="rpt-stat s-red"><div className="rpt-stat-val" data-metric="onelink.providerPayable" style={{ fontSize: 15 }}>{show(fmtPKR(providerPayable))}</div><div className="rpt-stat-lbl">Provider Payable</div></div>
             </div>
             <div className="rpt-stat s-green prominent" style={{ textAlign: 'left', padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                 <div>
                   <div className="rpt-stat-lbl" style={{ marginTop: 0 }}>School Mentor Revenue</div>
-                  <div className="rpt-stat-val" style={{ fontSize: 28, color: '#16A34A' }}>{show(pkr2(smRevenue))}</div>
+                  <div className="rpt-stat-val" data-metric="onelink.revenue" style={{ fontSize: 28, color: '#16A34A' }}>{show(fmtPKR(smRevenue))}</div>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--tm)', fontWeight: 600, textAlign: 'right' }}>
-                  Margin / txn<br /><span style={{ fontSize: 15, fontWeight: 800, color: '#16A34A' }}>{show(pkr2(margin))}</span>
+                  Margin / txn<br /><span data-metric="onelink.marginPerTxn" style={{ fontSize: 15, fontWeight: 800, color: '#16A34A' }}>{show(fmtPKR(margin))}</span>
                 </div>
               </div>
             </div>
@@ -275,7 +286,7 @@ useEffect(() => {
           onClose={() => setShowRateConfig(false)}
           onSave={async (payload) => {
             try {
-           const res = await fetch('https://sandbox-alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/api/Network_Setup/UpdateCharges', {
+           const res = await fetch(`${SA_API_HOST}${EP.schoolProgress.networkChargesUpdate()}`, {
   method: 'PUT',
   headers: { accept: '*/*', 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -325,7 +336,7 @@ setRateConfig(saved);
 }
 
 /* ── small presentational pieces ── */
-function ClickableStat({ label, val, onClick, sub, tone = '' }) {
+function ClickableStat({ label, val, metric, onClick, sub, tone = '' }) {
   return (
     <div
       className={`rpt-stat clickable ${tone}`}
@@ -335,7 +346,7 @@ function ClickableStat({ label, val, onClick, sub, tone = '' }) {
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
       data-tip="Click to view school-wise breakdown"
     >
-      <div className="rpt-stat-val">{val}</div>
+      <div className="rpt-stat-val" data-metric={metric}>{val}</div>
       <div className="rpt-stat-lbl">{label}</div>
       {sub}
     </div>
@@ -364,17 +375,8 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded, status = 'ready
     return list;
   }, [schoolWise, q, sort]);
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-  const curPage = Math.min(page, totalPages);
-  const start = (curPage - 1) * pageSize;
-  const pageRows = rows.slice(start, start + pageSize);
-
-  /* Page buttons: 1 … 4 5 6 … 12 (116 entries par bhi chhote rehte hain) */
-  const pageNums = [];
-  for (let n = 1; n <= totalPages; n++) {
-    if (n === 1 || n === totalPages || Math.abs(n - curPage) <= 1) pageNums.push(n);
-    else if (pageNums[pageNums.length - 1] !== '…') pageNums.push('…');
-  }
+  const pg = paginate(rows.length, page, pageSize);
+  const pageRows = rows.slice(pg.start, pg.end);
 
   const body = (
     <>
@@ -388,7 +390,7 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded, status = 'ready
         <div className="f-field">
           <label className="f-label">Show</label>
           <select className="f-input" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ width: 80 }}>
-            <option value={10}>10</option><option value={25}>25</option><option value={50}>50</option>
+            {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
         <div className="f-field">
@@ -422,10 +424,10 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded, status = 'ready
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: 'var(--tm)' }}><i className="fa-solid fa-school" style={{ fontSize: 24, opacity: 0.25, display: 'block', margin: '0 auto 10px' }} />{q.trim() ? 'No school matches your search.' : `No 1LINK transactions in ${periodLabel || 'this period'}.`}</td></tr>
                   ) : pageRows.map((r, i) => (
               <tr key={r.schoolId} style={{ cursor: 'pointer' }} onClick={() => onSelectSchool(r)}>
-                <td>{start + i + 1}</td>
+                <td>{pg.start + i + 1}</td>
                 <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{r.schoolName}</div><div style={{ fontSize: 10.5, color: 'var(--tm)' }}>{r.branch}</div></td>
                 <td>{r.schoolCode}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{r.transactions.toLocaleString()}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtCount(r.transactions)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr2(r.collection)}</td>
                 <td style={{ textAlign: 'right', color: 'var(--err)' }}>{pkr2(r.providerPayable)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)' }}>{pkr2(r.smRevenue)}</td>
@@ -436,7 +438,7 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded, status = 'ready
             <tfoot>
               <tr className="rpt-totals-row">
                 <td colSpan={3} style={{ padding: '10px 13px' }}>TOTALS ({rows.length} schools)</td>
-                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{rows.reduce((a, r) => a + r.transactions, 0).toLocaleString()}</td>
+                <td style={{ textAlign: 'right', padding: '10px 13px' }}>{fmtCount(rows.reduce((a, r) => a + r.transactions, 0))}</td>
                 <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr2(rows.reduce((a, r) => a + r.collection, 0))}</td>
                 <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr2(rows.reduce((a, r) => a + r.providerPayable, 0))}</td>
                 <td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr2(rows.reduce((a, r) => a + r.smRevenue, 0))}</td>
@@ -445,18 +447,7 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded, status = 'ready
             )}
         </table>
       </div>
-      <div className="pag-bar">
-        <div className="pag-info">
-          {rows.length === 0 ? 'Showing 0 entries' : `Showing ${start + 1} to ${Math.min(start + pageSize, rows.length)} of ${rows.length} entries`}
-        </div>
-        <div className="pag-btns">
-          <button className="pag-btn" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>Previous</button>
-          {pageNums.map((n, i) => (n === '…'
-            ? <span key={`e${i}`} style={{ padding: '0 6px', color: 'var(--tm)' }}>…</span>
-            : <button key={n} className={`pag-btn${n === curPage ? ' active' : ''}`} onClick={() => setPage(n)}>{n}</button>))}
-          <button className="pag-btn" disabled={curPage >= totalPages} onClick={() => setPage(curPage + 1)}>Next</button>
-        </div>
-      </div>
+      <Pagination {...pg} onPageChange={setPage} />
     </>
   );
 
@@ -509,6 +500,8 @@ function SchoolTransactionsTable({ rows }) {
   );
 }
 
+/* eslint-disable no-restricted-syntax -- RateConfigModal parses what the admin TYPES into the
+   form (empty field → 0); these are form inputs, not API values. */
 function RateConfigModal({ rateConfig, onClose, onSave }) {
   const [f, setF] = useState({ ...rateConfig });
   const [saving, setSaving] = useState(false);
@@ -578,6 +571,8 @@ await onSave({
 
 /* Dashboard bhi isi modal me Bugs / Improvements report kholta hai, is liye
    export hai — har report ek hi chrome me khule. */
+
+/* eslint-enable no-restricted-syntax */
 export function Modal({ title, sub, icon, large, onClose, footer, children, bodyStyle, closeDisabled }) {
   return (
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !closeDisabled) onClose(); }}>

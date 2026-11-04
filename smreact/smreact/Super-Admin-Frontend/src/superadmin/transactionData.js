@@ -17,6 +17,8 @@
    aur calculateSchoolWiseSummary() ka teesra parameter.
    ═══════════════════════════════════════════════════════════════════ */
 
+import { pkToday, shiftDay, shiftMonth } from './dashboard/periods';
+
 export const TXN_STATUS = { SUCCESS: 'Successful', FAILED: 'Failed', REVERSED: 'Reversed' };
 export const TXN_CHANNELS = ['1LINK', '1Bill'];
 
@@ -58,21 +60,17 @@ export const fmtDateLong = (iso) => (iso ? new Date(iso).toLocaleDateString('en-
    dashboard cards + the school-wise table + both reports all consume
    the SAME period object, so switching the filter once updates
    everything (no separate date pickers to keep in sync). */
-export function periodFromQuick(quick) {
-  const today = new Date();
-  const iso = (d) => d.toISOString().slice(0, 10);
-  const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  if (quick === 'today') return { mode: 'date', date: iso(today), label: 'Today' };
-  if (quick === 'yesterday') {
-    const y = new Date(today); y.setDate(y.getDate() - 1);
-    return { mode: 'date', date: iso(y), label: 'Yesterday' };
-  }
-  if (quick === 'thisMonth') return { mode: 'month', month: ym(today), label: 'This Month' };
-  if (quick === 'lastMonth') {
-    const l = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    return { mode: 'month', month: ym(l), label: 'Last Month' };
-  }
-  return periodFromQuick('today');
+/* Pakistan calendar (Asia/Karachi) — pehle Today/Yesterday UTC (toISOString)
+   se aur mahina browser ke local waqt se banta tha, is liye 00:00–05:00 PKT
+   ke beech "Today" pichhle din ki report mangta tha. */
+export function periodFromQuick(quick, now = new Date()) {
+  const today = pkToday(now);
+  const ym = today.slice(0, 7);
+  if (quick === 'today') return { mode: 'date', date: today, label: 'Today' };
+  if (quick === 'yesterday') return { mode: 'date', date: shiftDay(today, -1), label: 'Yesterday' };
+  if (quick === 'thisMonth') return { mode: 'month', month: ym, label: 'This Month' };
+  if (quick === 'lastMonth') return { mode: 'month', month: shiftMonth(ym, -1), label: 'Last Month' };
+  return periodFromQuick('today', now);
 }
 
 export function periodFromCustom(customMode, { date, from, to, month }) {
