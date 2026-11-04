@@ -20,6 +20,8 @@ import { useModules } from '../context/ModuleContext';
 import { rankedMatches } from '../utils/studentSearch';
 import { buildStandardReportHtml, StandardReportPicker, downloadReportAsWord, downloadReportHtmlAsExcel, reportAcademicYear } from '../reports/reportKit';
 
+/* PERF: ek hi formatter bana kar reuse — toLocaleString har call par naya banata tha
+   (list ke har cell par ~bhari). en-PK ka output same. */
 const _moneyFmt = new Intl.NumberFormat('en-PK');
 const money = (n) => `Rs. ${_moneyFmt.format(Number(n) || 0)}`;
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
@@ -1917,9 +1919,14 @@ function FamilyTreeChallansList({ toast }) {
          > 0 → Total Dues | < 0 → Advance. */
       let prevOut = {};
       try {
-        /* LEAN: 12-mahine poora-branch ledger fetch ke bajaye server se seedha prev-dues
-           (usp_AHM_Branch_Prev_Dues). Stale stored Previous Pending se bachav wahi rehta hai. */
-        prevOut = await feeService.getPrevDues(mIdx + 1, appliedYear);
+        let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
+        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
+        let fromM = toM - 11, fromY = toY;                 // 12-month window
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        /* Running-ledger — stale stored Previous Pending se bachne ke liye (jaise
+           September ki receiving October ke baad hui to October ka stored 13,850 galat). */
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
       } catch (e) { /* optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
@@ -3186,45 +3193,12 @@ function FeeChallansList({ toast }) {
       setChallanMap(map);
       setCoverMap(cover);
 
-      /* ── Pichhle mahino ka baqaya, RUN TIME par ──
-         Har student ka SABSE RECENT purana challan liya jaata hai (usi me pehle ka
-         carry-forward already shamil hota hai, is liye double-count nahi hota), phir
-         uska unpaid remainder nikaala jaata hai:
-           remainder = Σ (challanAmount − discount − receivedAmount)
-         remainder > 0 → Total Dues | remainder < 0 → Advance.
-         Isse current month ka challan banane se PEHLE hi dues/advance dikh jaate hain. */
-      let prevOut = {};
-      let priorMap = {};
-      try {
-        let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
-        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
-        let fromM = toM - 11, fromY = toY;                 // 12-month window
-        while (fromM <= 0) { fromM += 12; fromY -= 1; }
-        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        /* Running-ledger — stale stored Previous Pending se bachne ke liye. */
-        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
-        /* Covering (Sep–Nov ka Nov) challan jis ka baqaya baad wala (Oct) challan pehle hi
-           CARRY kar chuka — row me us ke figures mat dikhao (dues double: 16,000 + advance
-           −4,000). Row pichhle baqaye (prevOut: 12,000) par chale. */
-        const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
-        priorMap = prior;
-        Object.keys(prevOut).forEach(id => {
-          prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settings);
-        });
-        const cover2 = { ...cover };
-        let coverDropped = false;
-        Object.keys(cover2).forEach(k => {
-          const cr = cover2[k];
-          const latest = (prior[String(cr.studentID)] || [])[0];
-          if (!latest) return;
-          const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
-          const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
-          if (ls > cs && challanCarriesPrev(latest)) { delete cover2[k]; coverDropped = true; }
-        });
-        if (coverDropped) setCoverMap(cover2);
-      } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
-      setPrevOutMap(prevOut);
-      setPriorByStudent(priorMap);
+      /* ── PERF: prev-dues / prior ka BHAARI hisaab AUR get-by-month-range API tab-open par
+         NAHI — ye sirf tab chalta hai jab kisi class ka DETAILS (▼) khule (niche openKey-effect).
+         Is se Fee Challans tab TURANT khulta hai (sirf list + Generated counts, koi ledger call
+         nahi). Figures bilkul same — wahi logic, bas us class ke liye jab khuli ho. */
+      setPrevOutMap({});
+      setPriorByStudent({});
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
@@ -3242,6 +3216,57 @@ function FeeChallansList({ toast }) {
 
   /* Expanded row */
   const [openKey, setOpenKey] = useState(null);
+
+  /* ── PERF: prev-dues (prevOut) + prior-challans ka hisaab SIRF khuli class ke liye ──
+     Pehle ye poore branch ke liye tab-open par hota tha → bade branch par main-thread
+     hang. Ab jab koi class khule, sirf us class ke students ka data (12-mahine ledger
+     se filter kar ke) compute hota hai — chhota, foran, koi freeze nahi. Ledger cached
+     hai (loadChallans warm kar chuka), is liye pehli baar ke baad instant. Figures same:
+     wahi prevOutFromLedgerRows + priorChallansByStudent + fine + cover-drop, bas scope chhota. */
+  useEffect(() => {
+    if (!openKey) return;
+    const studs = studentsMap[openKey] || [];
+    if (!studs.length) return;
+    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    let cancelled = false;
+    (async () => {
+      try {
+        let toM = mIdx, toY = appliedYear;
+        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
+        let fromM = toM - 11, fromY = toY;
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        if (cancelled) return;
+        const sids = new Set(studs.map(s => String(s.studentID)));
+        const rows = allRows.filter(r => sids.has(String(r.studentID)));
+        const prevOut = prevOutFromLedgerRows(rows, mIdx + 1, appliedYear);
+        const prior = priorChallansByStudent(rows, mIdx + 1, appliedYear);
+        Object.keys(prevOut).forEach(id => {
+          prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settings);
+        });
+        if (cancelled) return;
+        setPrevOutMap(prev => ({ ...prev, ...prevOut }));
+        setPriorByStudent(prev => ({ ...prev, ...prior }));
+        /* cover-drop sirf IS class ke cover entries par (key `${classKey}|...`). */
+        setCoverMap(prev => {
+          let changed = false;
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (!k.startsWith(`${openKey}|`)) return;
+            const cr = next[k];
+            const latest = (prior[String(cr.studentID)] || [])[0];
+            if (!latest) return;
+            const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
+            const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
+            if (ls > cs && challanCarriesPrev(latest)) { delete next[k]; changed = true; }
+          });
+          return changed ? next : prev;
+        });
+      } catch (e) { /* previous dues optional — na mile to fallback figures */ }
+    })();
+    return () => { cancelled = true; };
+  }, [openKey, studentsMap, appliedMonth, appliedYear, settings]);
+
   const [confirm, setConfirm] = useState(null);
   const [busyMsg, setBusyMsg] = useState('');    // delete chal raha ho to center loader + screen lock
   const [bulkGen, setBulkGen] = useState(null);          // { classMeta, students, heads }
@@ -3379,8 +3404,14 @@ function FeeChallansList({ toast }) {
       /* Payable ke liye live previous (byHead) — list jaisa. */
       let prevOut = {};
       try {
-        /* LEAN: server se seedha prev-dues (12-mahine ledger fetch nahi). */
-        prevOut = await feeService.getPrevDues(mIdx + 1, Number(exportYear));
+        let toM = mIdx;
+        let toY = Number(exportYear);
+        if (toM === 0) { toM = 12; toY -= 1; }
+        let fromM = toM - 11;
+        let fromY = toY;
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, Number(exportYear));
       } catch (e) { /* optional — bina prev ke bhi export chalega */ }
 
       const rows = [];
@@ -3890,10 +3921,12 @@ function FeeChallansList({ toast }) {
           const existing = idMap[String(head?.feeStructureID)] || {};
           const existingId = existing.id || 0;
           const num = Number(discountAmount) || 0;
-          /* Naya discount (> 0) save/update hota hai. Jo head pehle se saved tha aur
-             ab clear kiya (0) — usay bhi 0 ke saath server par bhejte hain. Naye head
-             par 0 ka koi matlab nahi, is liye wo skip hota hai. */
-          if (num > 0 || existingId) {
+          /* Sirf > 0 discount server par save/update hota hai. 0 (clear) backend par
+             persist NAHI hota — backend 0 reject karta hai aur isActive:false ko ignore
+             kar ke record active + purana amount rakh deta hai (koi delete endpoint nahi).
+             Is liye 0 par koi call nahi bhejte; clear sirf is session ke local mirror se
+             chalta hai (challan generation aur discount box dono use karte hain). */
+          if (num > 0) {
             const resp = await feeService.saveFeeDiscount({
               id: existingId,
               gradeID: student.gradeID || cls?._gradeId,
@@ -4407,7 +4440,9 @@ function FeeChallansList({ toast }) {
                         </tr>
                       </thead>
                       <tbody>
-                                                {!isOpen ? null : students.length === 0 ? (
+                        {/* PERF: band class me student rows mat banao (sirf khule par) —
+                            warna 41 classes × ~27 rows ek saath DOM me → 5-7s render freeze. */}
+                        {!isOpen ? null : students.length === 0 ? (
                           <tr><td colSpan="9" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map((s, j) => {
                           const generated = isGenerated(c.key, s.reg);
@@ -5631,8 +5666,8 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
                         type="number"
                         min="0"
                         max={r.std}
-                        /* Khaali kiya to field 0 dikhaye — 0 save bhi hota hai. */
-                        value={discs[r.name] ?? 0}
+                        /* 0 ki jagah field khaali dikhe (0 internally hi rehta hai). */
+                        value={discs[r.name] || ''}
                         onChange={e => setOne(r.name, e.target.value, r.std)}
                       />
                     </td>
@@ -8811,73 +8846,10 @@ function FeeReceivingIndividual({ toast }) {
       /* ── Pichhle mahino ka LIVE baqaya (running-ledger) ──
          October me September ki receiving (7000) ghata hua sahi baqaya (6,850)
          carry-forward hota hai, na ke stale stored 13,850. */
-      let prevOut = {};
-      try {
-        let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
-        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
-        let fromM = toM - 11, fromY = toY;                 // 12-month window
-        while (fromM <= 0) { fromM += 12; fromY -= 1; }
-        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        prevOut = await prevDuesWorkerCompute(prevRows, mIdx + 1, appliedYear);
-        /* Har student ke PICHHLE challans (naya-pehle) — is mahine challan na ho to row me
-           aakhri challan ka Previous Pending / Received / Remaining / Status dikhane ke liye
-           (fully paid bhi — /pending paid challan wapas nahi deta). */
-        const prior = {};
-        const seenIds = new Set();
-        prevRows.forEach(r => {
-          if (!r || seenIds.has(r.id)) return;
-          seenIds.add(r.id);
-          if (ledgerCoversMonth(r, mIdx + 1, Number(appliedYear))) return;
-          const k = String(r.studentID);
-          (prior[k] = prior[k] || []).push(feeService.withPersistedGiveDisc(r));
-        });
-        Object.values(prior).forEach(list => list.sort((a, b) =>
-          (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month)) -
-          (Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month)) || (Number(b.id) - Number(a.id))));
-        /* Range API installments nahi deti (dates chahiye: "is mahine kitna receive hua").
-           Jin pichhle challans ki aakhri receiving ISI view-mahine me hai, un ke mahine
-           get-with-installments se (cached, sirf chand calls) poora record lo. */
-        try {
-          const viewYM = `${appliedYear}-${String(mIdx + 1).padStart(2, '0')}`;
-          const need = new Map();   // "m|y" → true
-          Object.values(prior).forEach(list => list.forEach(r => {
-            if (String(r.receivedDate || '').slice(0, 7) !== viewYM) return;
-            need.set(`${Number(r.startMonth || r.month)}|${Number(r.startYear || r.year)}`, true);
-          }));
-          if (need.size) {
-            const full = new Map();
-            const got = await Promise.all([...need.keys()].map(k => {
-              const [m0, y0] = k.split('|').map(Number);
-              return feeService.getMonthChallans(m0, y0).catch(() => []);
-            }));
-            got.flat().forEach(r => { if (r && r.id != null) full.set(Number(r.id), r); });
-            Object.keys(prior).forEach(k => {
-              prior[k] = prior[k].map(r => (full.has(Number(r.id)) ? feeService.withPersistedGiveDisc(full.get(Number(r.id))) : r));
-            });
-          }
-        } catch (e) { /* installments optional — na milen to purana hisaab */ }
-        setPriorByStudent(prior);
-        /* Sep–Nov challan November ko cover karta hai, magar Oct ka challan us ka baqaya pehle
-           hi CARRY kar chuka ho → November me Sep–Nov par wasooli double hoti. Aise covering
-           challan ko is mahine "generated" se hata do — row pichhle (Oct) challan par chalegi. */
-        const dropKeys = Object.keys(map).filter(k => {
-          const cr = map[k];
-          if (!isMultiMonthNonStartView(cr, mIdx + 1, Number(appliedYear))) return false;
-          const latest = (prior[String(cr.studentID)] || [])[0];
-          if (!latest) return false;
-          const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
-          const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
-          return ls > cs && challanCarriesPrev(latest);
-        });
-        if (dropKeys.length) {
-          const set2 = new Set(set);
-          const map2 = { ...map };
-          dropKeys.forEach(k => { set2.delete(k); delete map2[k]; });
-          setGenSet(set2);
-          setChallanMap(map2);
-        }
-      } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
-      setPrevOutMap(prevOut);
+      /* ── PERF: prev-dues/prior AUR get-by-month-range API tab-open par NAHI — sirf jab
+         kisi class ka DETAILS (▼) khule (niche openKey-effect). Tab turant khulta hai. */
+      setPrevOutMap({});
+      setPriorByStudent({});
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
@@ -8977,6 +8949,85 @@ function FeeReceivingIndividual({ toast }) {
 
   /* Expanded row */
   const [openKey, setOpenKey] = useState(null);
+
+  /* ── PERF: prev-dues (prevOut) + prior-challans ka hisaab SIRF khuli class ke liye ──
+     Pehle poore branch ke liye tab-open par hota tha → bade branch par hang. Ab sirf
+     khuli class ke students ka (12-mahine ledger se filter). Ledger loadChallans ne warm
+     kar diya hota hai → pehli baar ke baad instant. Figures same: wahi prevOut + prior
+     builder + installments + cover-drop, bas scope chhota (ek class). */
+  useEffect(() => {
+    if (!openKey) return;
+    const studs = studentsMap[openKey] || [];
+    if (!studs.length) return;
+    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    let cancelled = false;
+    (async () => {
+      try {
+        let toM = mIdx, toY = appliedYear;
+        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
+        let fromM = toM - 11, fromY = toY;
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        if (cancelled) return;
+        const sids = new Set(studs.map(s => String(s.studentID)));
+        const prevRows = allRows.filter(r => sids.has(String(r.studentID)));
+        const prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        /* Har student ke PICHHLE challans (naya-pehle). */
+        const prior = {};
+        const seenIds = new Set();
+        prevRows.forEach(r => {
+          if (!r || seenIds.has(r.id)) return;
+          seenIds.add(r.id);
+          if (ledgerCoversMonth(r, mIdx + 1, Number(appliedYear))) return;
+          const k = String(r.studentID);
+          (prior[k] = prior[k] || []).push(feeService.withPersistedGiveDisc(r));
+        });
+        Object.values(prior).forEach(list => list.sort((a, b) =>
+          (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month)) -
+          (Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month)) || (Number(b.id) - Number(a.id))));
+        /* Jin pichhle challans ki aakhri receiving ISI view-mahine me hai, un ke poore
+           records get-with-installments se (dates chahiye). */
+        try {
+          const viewYM = `${appliedYear}-${String(mIdx + 1).padStart(2, '0')}`;
+          const need = new Map();
+          Object.values(prior).forEach(list => list.forEach(r => {
+            if (String(r.receivedDate || '').slice(0, 7) !== viewYM) return;
+            need.set(`${Number(r.startMonth || r.month)}|${Number(r.startYear || r.year)}`, true);
+          }));
+          if (need.size) {
+            const full = new Map();
+            const got = await Promise.all([...need.keys()].map(k => {
+              const [m0, y0] = k.split('|').map(Number);
+              return feeService.getMonthChallans(m0, y0).catch(() => []);
+            }));
+            got.flat().forEach(r => { if (r && r.id != null) full.set(Number(r.id), r); });
+            Object.keys(prior).forEach(k => {
+              prior[k] = prior[k].map(r => (full.has(Number(r.id)) ? feeService.withPersistedGiveDisc(full.get(Number(r.id))) : r));
+            });
+          }
+        } catch (e) { /* installments optional */ }
+        if (cancelled) return;
+        setPrevOutMap(prev => ({ ...prev, ...prevOut }));
+        setPriorByStudent(prev => ({ ...prev, ...prior }));
+        /* cover-drop sirf IS class ke generated keys par (`${classKey}|...`). */
+        const dropKeys = Object.keys(challanMap).filter(k => {
+          if (!k.startsWith(`${openKey}|`)) return false;
+          const cr = challanMap[k];
+          if (!isMultiMonthNonStartView(cr, mIdx + 1, Number(appliedYear))) return false;
+          const latest = (prior[String(cr.studentID)] || [])[0];
+          if (!latest) return false;
+          const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
+          const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
+          return ls > cs && challanCarriesPrev(latest);
+        });
+        if (dropKeys.length) {
+          setChallanMap(prev => { const n = { ...prev }; dropKeys.forEach(k => delete n[k]); return n; });
+          setGenSet(prev => { const n = new Set(prev); dropKeys.forEach(k => n.delete(k)); return n; });
+        }
+      } catch (e) { /* previous dues optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, [openKey, studentsMap, appliedMonth, appliedYear, challanMap]);
 
   /* Receive modal context */
   const [receiveCtx, setReceiveCtx] = useState(null); // { classMeta, student, model, payments, viewOnly }
@@ -9742,7 +9793,8 @@ function FeeReceivingIndividual({ toast }) {
                         </tr>
                       </thead>
                       <tbody>
-                                             {!isOpen ? null : students.length === 0 ? (
+                        {/* PERF: band class me student rows mat banao (sirf khule par). */}
+                        {!isOpen ? null : students.length === 0 ? (
                           <tr><td colSpan="11" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map(s => {
                           const m = modelFor(c, s);
