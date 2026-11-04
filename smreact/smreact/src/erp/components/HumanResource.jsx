@@ -9099,12 +9099,11 @@ export const HR_CSS = `
    ═══════════════════════════════════════════════════════════════════ */
 
 /* Bigger modal width for the multi-section employee form */
-.modal-xl { max-width: 960px; }
+.modal-xl { max-width: 960px; height: 90vh; }
 .modal-xl .modal-body { padding: 18px 24px 16px; }
 
 /* .modal-lg — 1:1 port from HTML reference */
-.modal-lg { max-width: 900px; }
-
+.modal-lg { max-width: 900px; height: 84vh; }
 /* Underline tab bar (m-tabs / m-tab) */
 .m-tabs {
   display: flex;
