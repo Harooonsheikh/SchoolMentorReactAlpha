@@ -87,9 +87,15 @@ export default function Accounts({ toast }) {
      Wallets tab (id 'accounts') ab "Wallet" screen ki View permission se governed
      hai (User Permissions → Accounts → Wallet). Baqi tabs apne label ki View se. */
   const { can } = usePermissions();
-  const visibleTabs = ACC_TABS.filter(t => (t.id === 'accounts'
-    ? can('Accounts', 'Wallet', 'View')
-    : can('Accounts', t.label, 'View')));
+  /* Billing tab sirf in branches par dikhta hai; baqi branches par hide. */
+  const BILLING_TAB_BRANCHES = ['1', '15'];
+  const currentBranchId = String(sessionStorage.getItem('branchID') || '');
+  const visibleTabs = ACC_TABS.filter(t => {
+    if (t.id === 'billing' && !BILLING_TAB_BRANCHES.includes(currentBranchId)) return false;
+    return t.id === 'accounts'
+      ? can('Accounts', 'Wallet', 'View')
+      : can('Accounts', t.label, 'View');
+  });
 
   /* Active tab hide ho jaye to pehle visible tab par snap. */
   useEffect(() => {

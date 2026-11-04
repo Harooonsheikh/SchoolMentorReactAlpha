@@ -285,6 +285,7 @@ const MODULE_API_FIELD = {
   students: 'students',
   hr: 'humanResource',
   staffappraisals: 'staffAppraisals',
+  approvals: 'approvals',
   schoolsops: 'schoolSOPs',
   teachertrainings: 'teacherTrainings',
   mentorai: 'mentorAI',
