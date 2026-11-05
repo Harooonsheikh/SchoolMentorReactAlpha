@@ -3,6 +3,7 @@ import useAsync from '../../hooks/useAsync';
 import * as complianceService from '../../services/complianceService';
 import { ALL_STAFF, COMPLIANCE_AREAS, DAILY_AREA_OPTIONS, MONTHLY_CATEGORY_OPTIONS, TASK_LABEL_MAX_LENGTH } from '../../mock/compliance';
 import { FilterBar, Field, EmptyState } from './ComplianceShared';
+import { addArea } from '../../services/complianceApi';
 
 const FREQ_TABS = [
   { id: 'daily', label: 'Daily Checks' },
@@ -15,8 +16,14 @@ const FREQ_TABS = [
    task text has a hard maxLength (TASK_LABEL_MAX_LENGTH), with a live
    counter, so a long sentence can never overflow a checklist row here
    or a card on the mobile app later. */
-function AddItemModal({ open, freq, onClose, onSave }) {
-  const areaOptions = freq === 'daily' ? DAILY_AREA_OPTIONS
+function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
+
+  const uniqueAreas = [...new Map(areas.map(a => [a.name, a])).values()];
+  const areaOptions = freq === 'daily'
+  ? uniqueAreas.map(a => {
+      const local = DAILY_AREA_OPTIONS.find(o => o.label === a.name);
+      return { id: local?.id ?? String(a.id), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
+    })
     : freq === 'monthly' ? MONTHLY_CATEGORY_OPTIONS
     : COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id }));
 
@@ -112,6 +119,72 @@ function AddItemModal({ open, freq, onClose, onSave }) {
   );
 }
 
+
+const AREA_NAME_MAX = 60;
+
+function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
+  const [name, setName] = useState('');
+  const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    if (open) { setName(''); setErr(''); setSaving(false); }
+  }, [open]);
+
+  if (!open) return null;
+
+  const submit = async () => {
+    const text = name.trim();
+    if (!text) { setErr('Please enter the area name.'); return; }
+    if (existingNames.some(n => n.trim().toLowerCase() === text.toLowerCase())) {
+      setErr('This area already exists.'); return;
+    }
+    setSaving(true);
+    try {
+      await onSave(text);
+    } catch (e) {
+      setErr(e.message || 'Could not save the area.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal modal-md">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title"><i className="fa-solid fa-plus" style={{ marginRight: 8 }}></i>Add New Area</div>
+            <div className="modal-sub">The new area will appear in the Area list when you add a checklist item.</div>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+        </div>
+        <div className="modal-body">
+          <label className="form-group">
+            <span className="form-label">Area Name</span>
+            <input
+              className="form-input"
+              maxLength={AREA_NAME_MAX}
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              placeholder="e.g. Transport & Bus Safety"
+              autoFocus
+            />
+            <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{name.length} / {AREA_NAME_MAX} characters</div>
+          </label>
+          {err && <div className="cmp-field-err"><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {err}</div>}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>
+            <i className="fa-solid fa-plus" aria-hidden="true"></i> {saving ? 'Saving…' : 'Add Area'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    COMPLIANCE SETUP — turn checklist items on/off and configure who
    they're assigned to, whether evidence/verification is required, and
@@ -121,11 +194,19 @@ function AddItemModal({ open, freq, onClose, onSave }) {
    instances are generated (complianceService.saveTemplate clears the
    relevant instance cache so the change takes effect immediately).
    ═══════════════════════════════════════════════════════════════════ */
-export default function ComplianceSetup({ toast }) {
+export default function ComplianceSetup({ toast, areas = [] , onAreasChange = () => {} }) {
   const [freq, setFreq] = useState('daily');
   const { data: all, refetch } = useAsync(complianceService.getAllTemplates, []);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [areaOpen, setAreaOpen] = useState(false);
+
+const saveArea = async (name) => {
+  await addArea(name);        // fail ho to modal mein error dikhega
+  await onAreasChange();      // dropdown ke liye list dobara lo
+  setAreaOpen(false);
+  toast(`Area "${name}" added.`, 'success');
+};
 
   const filtered = useMemo(() => {
     const list = all?.[freq] || [];
@@ -198,14 +279,35 @@ export default function ComplianceSetup({ toast }) {
         <Field label="Search Checklist Items">
           <input className="form-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by task or area…" />
         </Field>
-        <Field label=" ">
-          <button type="button" className="btn btn-primary" style={{ height: 38 }} onClick={() => setAddOpen(true)}>
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Checklist Item
-          </button>
-        </Field>
+       <Field label=" ">
+  <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+    <button
+      type="button"
+      className="btn btn-secondary"
+      style={{ height: 38, flex: 1, justifyContent: 'center' }}
+      onClick={() => setAreaOpen(true)}
+    >
+       <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Area
+    </button>
+    <button
+      type="button"
+      className="btn btn-primary"
+      style={{ height: 38, flex: 1, justifyContent: 'center' }}
+      onClick={() => setAddOpen(true)}
+    >
+      <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Checklist Item
+    </button>
+  </div>
+</Field>
       </FilterBar>
 
-      <AddItemModal open={addOpen} freq={freq} onClose={() => setAddOpen(false)} onSave={addItem} />
+      <AddItemModal open={addOpen} freq={freq} areas={areas} onClose={() => setAddOpen(false)} onSave={addItem} />
+        <AddAreaModal
+  open={areaOpen}
+  existingNames={areas.map(a => a.name)}
+  onClose={() => setAreaOpen(false)}
+  onSave={saveArea}
+/>
 
       {grouped.length === 0 ? (
         <EmptyState icon="fa-sliders" title="No checklist items match your search" />

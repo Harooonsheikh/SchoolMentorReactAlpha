@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import Overview from './Overview';
 import DailyChecks from './DailyChecks';
@@ -7,6 +7,8 @@ import MonthlyReview from './MonthlyReview';
 import Problems from './Problems';
 import ComplianceReports from './ComplianceReports';
 import ComplianceSetup from './ComplianceSetup';
+import { ensureAreas, getAreas } from '../../services/complianceApi';
+import { DAILY_AREA_OPTIONS } from '../../mock/compliance';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL COMPLIANCE — module shell.
@@ -34,11 +36,18 @@ const TABS = [
 
 export default function SchoolCompliance({ toast = () => {} }) {
   const [tab, setTab] = useState('setup');
+  const [areas, setAreas] = useState([]);
+  
+   useEffect(() => {
+    ensureAreas(DAILY_AREA_OPTIONS.map((a) => a.label))
+      .then(setAreas)
+      .catch(() => toast('Areas load nahi ho sake.', 'error'));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   return (
     <>
       <style>{CMP_CSS}</style>
-
       <div className="page-header">
         <div className="page-title-row">
           <div className="page-title-icon" style={{ background: 'var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF))' }}>
@@ -67,7 +76,13 @@ export default function SchoolCompliance({ toast = () => {} }) {
       {tab === 'monthly'  && <MonthlyReview toast={toast} />}
       {tab === 'problems' && <Problems toast={toast} />}
       {tab === 'reports'  && <ComplianceReports toast={toast} />}
-      {tab === 'setup'    && <ComplianceSetup toast={toast} />}
+      {tab === 'setup' && (
+  <ComplianceSetup
+    toast={toast}
+    areas={areas}
+    onAreasChange={() => getAreas().then(setAreas)}
+  />
+)}
     </>
   );
 }
