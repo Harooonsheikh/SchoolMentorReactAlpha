@@ -88,18 +88,19 @@ function trackedFetch(...args) {
 }
 
 let preloadRun = null;
-/* Inside the debounce window this returns the load already in flight, so a screen
-   that mounts right after login waits for that same data instead of skipping it. */
+/* Fee data stays warm for the cache lifetime (10 min, the same as the background
+   refresh). Inside that window this returns the load already done or in flight, so
+   opening the Fee tab again from any module does not fetch the data again. */
+const FEE_PRELOAD_FRESH_MS = 10 * 60 * 1000;
 export function preloadFeeData({ force = false } = {}) {
-  if (!force && preloadRun && Date.now() - lastPreloadAt < 30 * 1000) return preloadRun;
+  if (!force && preloadRun && Date.now() - lastPreloadAt < FEE_PRELOAD_FRESH_MS) return preloadRun;
   preloadRun = runFeePreload({ force });
   return preloadRun;
 }
 async function runFeePreload({ force = false } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   if (!branchID || !sessionStorage.getItem('token')) return;
-  /* Login ke fauran baad App bhi mount hota hai — dono ek hi preload par chalen. */
-  if (!force && Date.now() - lastPreloadAt < 30 * 1000) return;
+  /* Set synchronously, so a second caller right after login shares this load. */
   lastPreloadAt = Date.now();
   if (force) invalidateAllFeeData();
 

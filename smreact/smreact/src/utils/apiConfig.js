@@ -19,6 +19,7 @@ const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
      https://sandbox-alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/swagger
 */
 const SANDBOX_API_URL = 'https://sandbox-alphaapi.schoolmentor.ai';
+// const SANDBOX_API_URL = 'https://alphaapi.schoolmentor.ai';
 const SANDBOX_ERP_URL = 'https://sandbox-erp.schoolmentor.ai';
 const LIVE_API_URL    = 'https://alphaapi.schoolmentor.ai';
 /* Live / sandbox ERP site origins — IIS reverse-proxies /api + SuperAdmin +
