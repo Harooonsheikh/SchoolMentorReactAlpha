@@ -508,7 +508,8 @@ function rcNormalizeSubjects(rawSubs, nameMap = {}) {
     let name = String(su.subjectName || nameMap[su.subjectID] || '').trim();
     if (cbrApi.saIsPlaceholderName(name, su.subjectID)) name = String(nameMap[su.subjectID] || '').trim();
     if (cbrApi.saIsPlaceholderName(name, su.subjectID)) name = '';
-    if (!idKey && !name) return;
+     if (!idKey && !name) return;
+    if (!name) return;
     const nameKey = name.toLowerCase();
     if (idKey && seenId.has(idKey)) return;
     if (name && seenName.has(nameKey)) return;
@@ -1619,8 +1620,7 @@ export default function Examination({ toast = () => { } }) {
         // Card ke header ka avatar — student ki asli tasveer.
         const photo = await rcStudentPhoto(grp.classID, grp.sectionID, st.studentID, st.rollNo);
         if (cancelled) return;
-        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects, photo });
-      } catch (e) {
+setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String(n).trim()), totals, obtained, remarks, finalRemark, absentSubjects, photo });      } catch (e) {
         console.error('Error loading card subject marks:', e);
         if (!cancelled) setCbrCardMarks({ subjects: [], totals: {}, obtained: {} });
       }
