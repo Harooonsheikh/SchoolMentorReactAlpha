@@ -170,9 +170,6 @@ export default function Fee({ toast = () => { } }) {
     feeService.preloadFeeData().catch(() => {}).then(() => { if (alive) setFeeDataReady(true); });
     return () => { alive = false; };
   }, []);
-  /* Loader while any Fee API request is in flight (feeService.trackedFetch). */
-  const [feeBusy, setFeeBusy] = useState(0);
-  useEffect(() => feeService.subscribeFeeBusy(setFeeBusy), []);
   /* Tab switch as a transition: the old tab stays up and the loader shows while the
      new tab's heavy rendering/calculation runs, instead of freezing the screen. */
   const [isTabPending, startTabTransition] = useTransition();
@@ -285,7 +282,10 @@ export default function Fee({ toast = () => { } }) {
           icon={activeMeta?.icon || 'fa-hammer'}
         />
       )}
-      {feeDataReady && (feeBusy > 0 || isTabPending) && (
+      {/* Sirf tab-switch rendering par. API-busy (feeBusy) par nahi — background calls
+          (prefetch / naam) ki wajah se data dikhne ke baad bhi pill aata rehta tha; har tab
+          ka apna loader pehle se hai. */}
+      {feeDataReady && isTabPending && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 110, background: 'rgba(15, 23, 42, 0.06)', borderRadius: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 999, background: 'var(--bg-card, #fff)', boxShadow: '0 6px 20px rgba(0,0,0,0.12)', color: 'var(--text-muted, #64748B)', fontSize: 13, fontWeight: 600 }}>
             <i className="fa-solid fa-spinner fa-spin" style={{ color: 'var(--primary, #1E3A8A)' }}></i>
@@ -3895,14 +3895,22 @@ function FeeChallansList({ toast }) {
       const active = (rows || []).filter(r => r.isActive !== false);
       /* headID → { id, amt } yaad rakho — save par update ke liye id chahiye. */
       const idMap = {};
-      active.forEach(r => { idMap[String(r.headID)] = { id: r.id, amt: Number(r.discountAmount) || 0 }; });
+      /* Ek head ke ek se zyada active records hon to SABSE NAYA (bada id) — wohi
+         challan/print me chalta hai, is liye update (aur 0 clear) bhi usi ka ho. */
+      active.forEach(r => {
+        const k = String(r.headID);
+        if (!idMap[k] || (Number(r.id) || 0) > (Number(idMap[k].id) || 0)) {
+          idMap[k] = { id: r.id, amt: Number(r.discountAmount) || 0 };
+        }
+      });
       discountIdRef.current[String(s.studentID)] = idMap;
       if (active.length) {
         const fromApi = {};
-        active.forEach(r => {
+        /* Har head ki value usi SABSE NAYE record se jo idMap me hai (challan bhi wohi parhta hai). */
+        Object.entries(idMap).forEach(([headID, rec]) => {
           /* headName API me khaali aata hai — headID ko head.feeStructureID se match karo. */
-          const head = heads.find(h => Number(h.feeStructureID) === Number(r.headID));
-          if (head) fromApi[head.name] = Number(r.discountAmount) || 0;
+          const head = heads.find(h => Number(h.feeStructureID) === Number(headID));
+          if (head) fromApi[head.name] = rec.amt;
         });
         /* API base, phir is session ke edits (0 clear samet) overlay — edits jeetein. */
         initial = { ...fromApi, ...localMirror };
@@ -3950,12 +3958,11 @@ function FeeChallansList({ toast }) {
           const existing = idMap[String(head?.feeStructureID)] || {};
           const existingId = existing.id || 0;
           const num = Number(discountAmount) || 0;
-          /* Sirf > 0 discount server par save/update hota hai. 0 (clear) backend par
-             persist NAHI hota — backend 0 reject karta hai aur isActive:false ko ignore
-             kar ke record active + purana amount rakh deta hai (koi delete endpoint nahi).
-             Is liye 0 par koi call nahi bhejte; clear sirf is session ke local mirror se
-             chalta hai (challan generation aur discount box dono use karte hain). */
-          if (num > 0) {
+          /* Naya discount (> 0) save/update hota hai. Jo head pehle se saved tha aur
+             ab clear kiya (0) — usay bhi 0 ke saath server par bhejte hain (id se
+             update), warna refresh par purana amount wapas aa jata tha. Naye head
+             par 0 ka koi matlab nahi, is liye wo skip hota hai. */
+          if (num > 0 || existingId) {
             const resp = await feeService.saveFeeDiscount({
               id: existingId,
               gradeID: student.gradeID || cls?._gradeId,
@@ -5695,8 +5702,10 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
                         type="number"
                         min="0"
                         max={r.std}
-                        /* 0 ki jagah field khaali dikhe (0 internally hi rehta hai). */
-                        value={discs[r.name] || ''}
+                        /* Koi discount na ho to field me 0 dikhe (khaali nahi). Focus par
+                           value select ho jati hai taake type karte hi 0 replace ho. */
+                        value={discs[r.name] ?? 0}
+                        onFocus={e => e.target.select()}
                         onChange={e => setOne(r.name, e.target.value, r.std)}
                       />
                     </td>
@@ -7559,7 +7568,8 @@ function installmentSlipRows(challan, payments, payment) {
     before -= earlierPaid;
     /* Is payment me kuch na liya ho magar baqaya ho to bhi head dikhe (Received "—",
        Remaining = baqaya). Poora ada shuda aur ab bhi kuch nahi → chhod do. */
-    if (!recv && !disc && Math.round(before) <= 0) return;
+    /* Manfi stored previous (backend ka galat −2,000) baqaya chhupa na de. */
+    if (!recv && !disc && Math.round(before - Math.min(0, feeHeadPrev(r) || 0)) <= 0) return;
     /* _mgr / _first: slip (toggle ON) is head ki PEHLI receiving par manager discount bhi
        dikhaye — Std gross, Discount = manager + give.
        Previous alag column me: is installment se pehle ka previous baqaya. Old-dues head
@@ -7610,7 +7620,8 @@ function latestReceivingSlipRows(challan) {
     const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
     const std = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0) - before;
     /* Is receiving me kuch na liya magar baqaya ho to bhi head dikhe (Received "—"). */
-    if (!recvNow && !discNow && Math.round(std) <= 0) return;
+    /* Manfi stored previous (backend ka galat −2,000) baqaya chhupa na de. */
+    if (!recvNow && !discNow && Math.round(std - Math.min(0, feeHeadPrev(r) || 0)) <= 0) return;
     const headName = r.subHead || r.head || '';
     const prevNow = isPreviousDuesHead(headName)
       ? Math.max(0, Math.round(std) - Math.max(0, Math.round((+r.challanAmount || 0) - mgr - before)))
@@ -7718,9 +7729,12 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   if (cfg.instRows && snapByHead) {
     const norm = (s) => String(s || '').toLowerCase().trim();
     const keys = Object.keys(snapByHead);
+    /* SIGNED: stored previous manfi (backend ka galat −500 / −3,000) ho to bhi wahi Std me fold
+       hua tha (Std 500 kam) — sirf musbat nikaalne se Std chhota reh jaata tha aur Remaining
+       server (pendingorAdv) se 500 kam aata tha. Ab jo fold hua tha wahi poora wapis nikaalo. */
     const folded = {};   // head → challan ka feeHeadPrev (jo Std me shaamil tha)
     (Array.isArray(chRows) ? chRows : []).forEach(r => {
-      if (!isPrevLabel(r)) folded[norm(r.subHead || r.head || '')] = Math.max(0, Math.round(+(feeHeadPrev(r)) || 0));
+      if (!isPrevLabel(r)) folded[norm(r.subHead || r.head || '')] = Math.round(+(feeHeadPrev(r)) || 0);
     });
     const used = new Set();
     baseRows.forEach(r => {
@@ -7738,9 +7752,17 @@ function FeeSlipModal({ cfg, onClose, toast }) {
     });
     /* Snapshot ke wo heads jo is slip ki rows me nahi (sirf-previous head jiska is mahine
        challan 0) — screen (recStudentModel) unhe apni row bana kar dikhata hai, slip bhi waise. */
+    /* Jo head pichhli installment me ada ho chuka (challan me us head par received) us ka
+       snapshot previous utna kam — warna paid head (Admission 7,000) slip par phir baqi dikhta. */
+    const paidBefore = {};
+    (Array.isArray(chRows) ? chRows : []).forEach(r => {
+      const nm = norm(r.subHead || r.head || '');
+      paidBefore[nm] = (paidBefore[nm] || 0) + (+r.receivedAmount || 0) + Math.max(0, +r.recvDiscount || 0);
+    });
     keys.forEach(k => {
       if (used.has(k)) return;
-      const p = Math.round(snapByHead[k]);
+      const snap = Math.round(snapByHead[k]);
+      const p = snap > 0 ? Math.max(0, snap - Math.round(paidBefore[norm(k)] || 0)) : snap;
       if (p) baseRows.push({ name: k, std: 0, disc: 0, recv: 0, prev: p });
     });
   }
@@ -12546,6 +12568,12 @@ const oldErpRowTotals = (r) => {
   return { challan, discount, recv, prev, net };
 };
 
+/* oldClasses ki row ab STUDENT object hai jis ke andar `.ledger` (old ERP row ya
+   null) hota hai. Hisaab hamesha ledger se — student object khud ledger nahi
+   (us ka apna `discount` field galat figure de deta). Ledger na ho → khaali (0).
+   Purani shakal (row khud ledger) bhi chalti rahe. */
+const oldErpLedgerOf = (r) => (r && Object.prototype.hasOwnProperty.call(r, 'ledger') ? (r.ledger || {}) : (r || {}));
+
 /* Net Payable / Previous Dues cell: musbat = baqaya (laal), manfi = advance —
    baqi Fee module ki tarah teal me minus ke saath, sifar sirf "0". */
 const oldErpDueCell = (n) => {
@@ -12957,10 +12985,13 @@ function FeeHistoryTab({ toast }) {
     const missing = ids.filter(id => !(id in empNames));
     if (!missing.length) return undefined;
     let alive = true;
-    Promise.all(missing.map(id => feeService.getEmployeeNameByLoginUser(id).then(n => [id, n])))
+    Promise.all(missing.map(id => feeService.getEmployeeNameByLoginUser(id).then(n => [id, n]).catch(() => [id, ''])))
       .then(pairs => { if (alive) setEmpNames(prev => ({ ...prev, ...Object.fromEntries(pairs) })); });
     return () => { alive = false; };
   }, [records, empNames]);
+  /* Naam abhi aa rahe hain → loader hi dikhe (screen + chhota "Loading…" pill nahi). */
+  const namesPending = useMemo(() => records.some(r =>
+    [r.modifiedBy, r.createdBy].some(id => id && !(String(id) in empNames))), [records, empNames]);
 
   /* Section ka naam apne id se — kabhi old ERP hamari hi section id bhej deta
      hai, to us surat me asal naam dikha dete hain. */
@@ -13006,6 +13037,12 @@ function FeeHistoryTab({ toast }) {
     */
 
     const byGrade = new Map();
+    /* applicantID → ledger row (pehla match) — har student par poori list find() nahi. */
+    const ledgerById = new Map();
+    oldSummary.forEach(row => {
+      const k = String(row.applicantID ?? row.applicantsID ?? row.applicantId ?? row.studentID ?? '').trim();
+      if (!ledgerById.has(k)) ledgerById.set(k, row);
+    });
 
     Object.values(studentsMap || {})
       .flat()
@@ -13017,15 +13054,7 @@ function FeeHistoryTab({ toast }) {
           student.applicantId ??
           student.studentID;
 
-        const ledger = oldSummary.find(row => {
-          const oldId =
-            row.applicantID ??
-            row.applicantsID ??
-            row.applicantId ??
-            row.studentID;
-
-          return String(oldId || '').trim() === String(studentApplicantId || '').trim();
-        });
+        const ledger = ledgerById.get(String(studentApplicantId || '').trim());
 
         const gradeKey = String(student.gradeID || '');
 
@@ -13385,7 +13414,7 @@ function FeeHistoryTab({ toast }) {
               ) : oldClasses.map((oc, i) => {
                 const isOpen = openKey === oc.key;
                 const tot = oc.rows.reduce((a, r) => {
-                  const t = oldErpRowTotals(r);
+                  const t = oldErpRowTotals(oldErpLedgerOf(r));
                   return {
                     prev: a.prev + t.prev, challan: a.challan + t.challan,
                     disc: a.disc + t.discount, recv: a.recv + t.recv, net: a.net + t.net,
@@ -13433,10 +13462,10 @@ function FeeHistoryTab({ toast }) {
                               </tr>
                             </thead>
                             <tbody>
-                              {oc.rows.length === 0 ? (
+                              {!isOpen ? null : oc.rows.length === 0 ? (
                                 <tr><td colSpan="8" className="fee-stbl-empty">No old ERP records for this class in {oldPeriod}.</td></tr>
                               ) : oc.rows.map(row => {
-                                const ledger = row.ledger || row;
+                                const ledger = oldErpLedgerOf(row);
                                 const t = oldErpRowTotals(ledger);
 
                                 const hit = resolveOldStudent(
@@ -13496,12 +13525,18 @@ function FeeHistoryTab({ toast }) {
             </div>
           )}
         </>
+      ) : (histLoading || classesLoading || namesPending) ? (
+        /* Data aane tak sirf bada loader (module-load jaisa) — adhi screen nahi. */
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, minHeight: 320, color: 'var(--text-muted, #64748B)' }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 28, color: 'var(--primary, #1E3A8A)' }}></i>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>Loading fee history…</div>
+        </div>
       ) : (
         <>
           <RepLoadState
-            loading={histLoading}
+            loading={false}
             error={histError}
-            empty={!histLoading && !histError && records.length === 0}
+            empty={!histError && records.length === 0}
             emptyText={`No challans exist for ${periodLabel}.`}
           />
 
@@ -13722,7 +13757,8 @@ function FeeHistoryTab({ toast }) {
                             </thead>
                           )}
                           <tbody>
-                            {students.length === 0 ? (
+                            {/* Band dropdown → student rows/history ka hisaab hi nahi (rukawat). */}
+                            {!isOpen ? null : students.length === 0 ? (
                               <tr><td colSpan="9" className="fee-stbl-empty">No students in this section.</td></tr>
                             ) : students.map(s => {
                               const months = historyFor(c, s);
@@ -14360,7 +14396,7 @@ function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
 function buildOldErpReportHTML({ blocks, period, school = null }) {
   const meta = feeReportSchool(school);
   const sumRows = (rows) => rows.reduce((a, r) => {
-    const t = oldErpRowTotals(r);
+    const t = oldErpRowTotals(oldErpLedgerOf(r));
     return {
       prev: a.prev + t.prev, challan: a.challan + t.challan,
       disc: a.disc + t.discount, recv: a.recv + t.recv, net: a.net + t.net,
@@ -14378,15 +14414,19 @@ function buildOldErpReportHTML({ blocks, period, school = null }) {
   const pages = blocks.filter(b => b.rows.length).map(b => {
     const t = sumRows(b.rows);
     const body = b.rows.map((r, i) => {
-      const v = oldErpRowTotals(r);
-      const hit = b.resolve(r.applicantID);
+      /* Row = student (+ `.ledger`) — figures ledger se, naam/reg student se
+         (screen wali table jaisa hi). */
+      const ledger = oldErpLedgerOf(r);
+      const v = oldErpRowTotals(ledger);
+      const hit = b.resolve(ledger.applicantID || ledger.applicantsID || r.applicantsID || r.studentID);
       const sec = hit ? hit.c.sec : (b.onlySec || '—');
+      const fallbackName = r.name || r.applicantName || `Applicant #${ledger.applicantID || r.applicantsID || ''}`;
       return `<tr>
         <td>${i + 1}</td>
         <td>${hit ? escHtml(hit.s.reg) : '—'}</td>
         <td>${hit
           ? `<b>${escHtml(hit.s.name)}</b><br/><span style="color:#64748B;font-size:10px">s/o ${escHtml(hit.s.father || '—')}</span>`
-          : `<b>Applicant #${escHtml(String(r.applicantID))}</b><br/><span style="color:#64748B;font-size:10px">old ERP record</span>`}</td>
+          : `<b>${escHtml(String(fallbackName))}</b><br/><span style="color:#64748B;font-size:10px">old ERP record</span>`}</td>
         <td>${escHtml(sec)}</td>
         <td class="right ${v.prev > 0 ? 'red' : ''}">${v.prev.toLocaleString('en-PK')}</td>
         <td class="right">${v.challan.toLocaleString('en-PK')}</td>
