@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
@@ -162,6 +162,20 @@ export default function Fee({ toast = () => { } }) {
   const [tab, setTab] = useState('structure');
   const [structSeg, setStructSeg] = useState('student');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  /* Tab body loader: stays until the Fee data preload finishes. Runs again on every
+     mount, so opening the module or refreshing the browser shows it until data is in. */
+  const [feeDataReady, setFeeDataReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    feeService.preloadFeeData().catch(() => {}).then(() => { if (alive) setFeeDataReady(true); });
+    return () => { alive = false; };
+  }, []);
+  /* Loader while any Fee API request is in flight (feeService.trackedFetch). */
+  const [feeBusy, setFeeBusy] = useState(0);
+  useEffect(() => feeService.subscribeFeeBusy(setFeeBusy), []);
+  /* Tab switch as a transition: the old tab stays up and the loader shows while the
+     new tab's heavy rendering/calculation runs, instead of freezing the screen. */
+  const [isTabPending, startTabTransition] = useTransition();
 
   /* Screen (tab/segment) View permission — jis screen ka View nahi wo hide. */
   const { can } = usePermissions();
@@ -221,7 +235,7 @@ export default function Fee({ toast = () => { } }) {
           <Tooltip key={t.id} text={`Open ${t.label}`}>
             <button
               className={`fee-subtab${tab === t.id ? ' active' : ''}`}
-              onClick={() => setTab(t.id)}
+              onClick={() => startTabTransition(() => setTab(t.id))}
             >
               <i className={`fa-solid ${t.icon}`}></i> {t.label}
             </button>
@@ -230,7 +244,13 @@ export default function Fee({ toast = () => { } }) {
       </div>
 
       {/* ── Tab body ── */}
-      {tab === 'structure' ? (
+      <div style={{ position: 'relative' }}>
+      {!feeDataReady ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, minHeight: 320, color: 'var(--text-muted, #64748B)' }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 28, color: 'var(--primary, #1E3A8A)' }}></i>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>Loading fee data…</div>
+        </div>
+      ) : tab === 'structure' ? (
         <>
           {/* 3-segment pill bar (View permission ke hisaab se) */}
           <div className="fee-seg fee-seg-3">
@@ -265,6 +285,15 @@ export default function Fee({ toast = () => { } }) {
           icon={activeMeta?.icon || 'fa-hammer'}
         />
       )}
+      {feeDataReady && (feeBusy > 0 || isTabPending) && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 110, background: 'rgba(15, 23, 42, 0.06)', borderRadius: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 999, background: 'var(--bg-card, #fff)', boxShadow: '0 6px 20px rgba(0,0,0,0.12)', color: 'var(--text-muted, #64748B)', fontSize: 13, fontWeight: 600 }}>
+            <i className="fa-solid fa-spinner fa-spin" style={{ color: 'var(--primary, #1E3A8A)' }}></i>
+            Loading…
+          </div>
+        </div>
+      )}
+      </div>
 
       <TutorialModal
         open={tutorialOpen}

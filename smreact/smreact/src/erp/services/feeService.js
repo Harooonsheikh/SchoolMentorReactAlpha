@@ -50,7 +50,7 @@ const jsonKey = path => `json:${path}`;
 
 async function getJsonCached(path, ttl) {
   const result = await cachedRead(jsonKey(path), ttl, async () => {
-    const res = await fetch(buildUrl(path), { headers: { Accept: '*/*' } });
+    const res = await trackedFetch(buildUrl(path), { headers: { Accept: '*/*' } });
     const json = await res.json().catch(() => null);
     return { ok: res.ok, json };
   });
@@ -69,7 +69,33 @@ function seedJson(path, json) {
    Endpoint na ho (404) to har read apni request khud karti hai — kuch toot-ta nahi. */
 let feeBootstrapMissing = false;
 let lastPreloadAt = 0;
-export async function preloadFeeData({ force = false } = {}) {
+/* Every Fee API call goes through trackedFetch, so the Fee screen can show a loader
+   while any request is still in flight. subscribeFeeBusy gets the live count. */
+let feeRequestsInFlight = 0;
+const feeBusyListeners = new Set();
+function changeFeeBusy(delta) {
+  feeRequestsInFlight += delta;
+  feeBusyListeners.forEach(fn => fn(feeRequestsInFlight));
+}
+export function subscribeFeeBusy(fn) {
+  feeBusyListeners.add(fn);
+  fn(feeRequestsInFlight);
+  return () => { feeBusyListeners.delete(fn); };
+}
+function trackedFetch(...args) {
+  changeFeeBusy(1);
+  return fetch(...args).finally(() => changeFeeBusy(-1));
+}
+
+let preloadRun = null;
+/* Inside the debounce window this returns the load already in flight, so a screen
+   that mounts right after login waits for that same data instead of skipping it. */
+export function preloadFeeData({ force = false } = {}) {
+  if (!force && preloadRun && Date.now() - lastPreloadAt < 30 * 1000) return preloadRun;
+  preloadRun = runFeePreload({ force });
+  return preloadRun;
+}
+async function runFeePreload({ force = false } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   if (!branchID || !sessionStorage.getItem('token')) return;
   /* Login ke fauran baad App bhi mount hota hai — dono ek hi preload par chalen. */
@@ -79,7 +105,7 @@ export async function preloadFeeData({ force = false } = {}) {
 
   if (!feeBootstrapMissing) {
     try {
-      const res = await fetch(buildUrl(`/api/FeeModule/bootstrap?branchId=${branchID}`), {
+      const res = await trackedFetch(buildUrl(`/api/FeeModule/bootstrap?branchId=${branchID}`), {
         headers: { Accept: '*/*' },
       });
       if (res.status === 404) {
@@ -274,7 +300,7 @@ export async function getFeeGrades() {
 
 async function getFeeGradesByGradeOnly() {
   const branchID = sessionStorage.getItem('branchID') || 0;
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), {
+  const res  = await trackedFetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -401,7 +427,7 @@ async function fetchFeeClassStudentsUncached(branchID) {
 export async function getFeeGradeHeads(gradeId) {
   if (!gradeId) return [];
   const branchID = sessionStorage.getItem('branchID') || 0;
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-grade-feeheads/${branchID}/${gradeId}`), {
+  const res  = await trackedFetch(buildUrl(`/api/LaunchSetup/get-grade-feeheads/${branchID}/${gradeId}`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -419,7 +445,7 @@ export async function saveFeeHead({ feeStructureID = 0, gradeId, name, amt }) {
   const branchID = sessionStorage.getItem('branchID') || 0;
   const userID   = Number(sessionStorage.getItem('UserID')) || 0;
   const now      = new Date().toISOString();
-  const res  = await fetch(buildUrl('/api/LaunchSetup/save-grade-feehead'), {
+  const res  = await trackedFetch(buildUrl('/api/LaunchSetup/save-grade-feehead'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -447,7 +473,7 @@ export async function saveFeeHead({ feeStructureID = 0, gradeId, name, amt }) {
 }
 
 export async function deleteFeeHead(feeStructureID) {
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-grade-feehead/${feeStructureID}`), {
+  const res  = await trackedFetch(buildUrl(`/api/LaunchSetup/delete-grade-feehead/${feeStructureID}`), {
     method: 'DELETE',
     headers: { Accept: '*/*' },
   });
@@ -486,7 +512,7 @@ export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, head
        asal (>0) amount ke saath isActive:false bhejta hai. */
     isActive:       isActive !== false,
   };
-  const res = await fetch(buildUrl('/api/Student/save-fee-discount'), {
+  const res = await trackedFetch(buildUrl('/api/Student/save-fee-discount'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -522,7 +548,7 @@ export async function getUserApprovalRequests() {
    { approvalId, userId }. */
 export async function withdrawFeeDiscount(approvalId) {
   const userId = Number(sessionStorage.getItem('UserID')) || 0;
-  const res = await fetch(buildUrl('/api/Approvals/withdraw'), {
+  const res = await trackedFetch(buildUrl('/api/Approvals/withdraw'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify({ approvalId: Number(approvalId) || 0, userId }),
@@ -540,7 +566,7 @@ export async function withdrawFeeDiscount(approvalId) {
    Returns only that student's rows: { headID, discountAmount, ... }. */
 export async function getFeeDiscountsByStudent(studentId) {
   if (!studentId) return [];
-  const res = await fetch(buildUrl(`/api/Student/get-fee-discounts-by-student/${studentId}`), {
+  const res = await trackedFetch(buildUrl(`/api/Student/get-fee-discounts-by-student/${studentId}`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -614,7 +640,7 @@ export async function getTransportFeeSetups() {
 
 export async function getTransportFeeSetup(id) {
   if (!id) return null;
-  const res = await fetch(buildUrl(`/api/TransportFeeSetup/get/${id}`), {
+  const res = await trackedFetch(buildUrl(`/api/TransportFeeSetup/get/${id}`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -671,7 +697,7 @@ function mapVehicleFromApi(row = {}) {
 }
 
 async function manageVehicle(payload) {
-  const res = await fetch(buildUrl('/api/TransportFeeSetup/manage_vehicle'), {
+  const res = await trackedFetch(buildUrl('/api/TransportFeeSetup/manage_vehicle'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1065,7 +1091,7 @@ export async function getFeeSettings() {
     discountHealDone.add(branchID);
     if (readDiscountColumnLs() == null) writeDiscountColumnLs(false);
     settings.showDiscount = readDiscountColumnLs() ?? false;
-    fetch(buildUrl('/api/FeeChallanSettings/save'), {
+    trackedFetch(buildUrl('/api/FeeChallanSettings/save'), {
       method: 'POST',
       headers: { Accept: '*/*', 'Content-Type': 'application/json' },
       body: JSON.stringify(mapFeeSettingsToApi(settings)),   // showDiscount: true
@@ -1128,7 +1154,7 @@ export function getFamilies() {
 
 async function fetchFamilies() {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
-  const res = await fetch(buildUrl('/api/FamilyTree/familytreecrud'), {
+  const res = await trackedFetch(buildUrl('/api/FamilyTree/familytreecrud'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1189,7 +1215,7 @@ export async function saveFeeHeads(classKey, heads) { await delay(); return clon
 export async function saveTransportFee(classKey, rows) { await delay(); return clone({ classKey, rows }); }
 export async function saveStudentTransport(classKey, reg, payload) {
   const body = mapTransportSetupToApi(payload);
-  const res = await fetch(buildUrl('/api/TransportFeeSetup/save'), {
+  const res = await trackedFetch(buildUrl('/api/TransportFeeSetup/save'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1243,7 +1269,7 @@ export async function saveFeeSettings(payload) {
   /* Show Discount toggle = sirf Disc column (local); server ko hamesha true. */
   writeDiscountColumnLs(payload?.showDiscount !== false);
   const body = mapFeeSettingsToApi(payload);
-  const res = await fetch(buildUrl('/api/FeeChallanSettings/save'), {
+  const res = await trackedFetch(buildUrl('/api/FeeChallanSettings/save'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1679,7 +1705,7 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
                 '| range:', payload.ledger.startMonth
                   ? `${payload.ledger.startMonth}/${payload.ledger.startYear}-${payload.ledger.endMonth}/${payload.ledger.endYear}`
                   : `${payload.ledger.month}/${payload.ledger.year}`);
-    const res = await fetch(buildUrl('/api/BranchLedger/create-challan-installment'), {
+    const res = await trackedFetch(buildUrl('/api/BranchLedger/create-challan-installment'), {
       method: 'POST',
       headers: { Accept: '*/*', 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1780,7 +1806,7 @@ export async function getMonthChallans(month, year) {
   if (monthChallansCache.has(key)) return monthChallansCache.get(key);
 
   const promise = (async () => {
-    const res = await fetch(
+    const res = await trackedFetch(
       buildUrl(`/api/BranchLedger/get-with-installments?branchId=${branchID}&month=${month}&year=${year}`),
       { headers: { Accept: '*/*' } },
     );
@@ -1955,7 +1981,7 @@ export function installmentsToPayments(challan) {
    reference any of them. Values carry name / father / phone / reg. */
 export async function getBranchRosterMaps() {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
     { headers: { Accept: '*/*' } },
   );
@@ -2051,7 +2077,7 @@ export async function getPendingChallans({ studentId, gradeId, sectionId, includ
   const key = qs.toString();
   if (!fresh && pendingCache.has(key)) return pendingCache.get(key);
   const promise = (async () => {
-    const res = await fetch(buildUrl(`/api/BranchLedger/pending?${key}`), { headers: { Accept: '*/*' } });
+    const res = await trackedFetch(buildUrl(`/api/BranchLedger/pending?${key}`), { headers: { Accept: '*/*' } });
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.success === false) {
       throw new Error(apiMessage(json) || 'Could not load pending challans');
@@ -2081,7 +2107,7 @@ export async function getFeeDefaulters(scope = 'all', month = null, year = null)
   if (month) qs.set('month', String(month));
   if (year)  qs.set('year', String(year));
 
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/fee-defaulters?${qs.toString()}`),
     { headers: { Accept: '*/*' } },
   );
@@ -2109,7 +2135,7 @@ export async function getPrevDues(month, year) {
   if (prevDuesCache.has(key)) return prevDuesCache.get(key);
 
   const promise = (async () => {
-    const res = await fetch(
+    const res = await trackedFetch(
       buildUrl(`/api/BranchLedger/prev-dues?branchId=${branchID}&month=${month}&year=${year}`),
       { headers: { Accept: '*/*' } },
     );
@@ -2159,7 +2185,7 @@ export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
   if (ledgerRangeCache.has(key)) return ledgerRangeCache.get(key);
 
   const promise = (async () => {
-    const res = await fetch(
+    const res = await trackedFetch(
       buildUrl(`/api/BranchLedger/get-by-month-range?branchId=${branchID}&fromMonth=${fromMonth}&fromYear=${fromYear}&toMonth=${toMonth}&toYear=${toYear}`),
       { headers: { Accept: '*/*' } },
     );
@@ -2186,7 +2212,7 @@ export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
    dono arrays defensive tareeqe se nikaale jaate hain. */
 export async function getOldErpLedger(month, year) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/oldERPbranchledger?branchId=${branchID}&month=${month}&year=${year}`),
     { headers: { Accept: '*/*' } },
   );
@@ -2216,7 +2242,7 @@ export async function getOldErpLedger(month, year) {
 export async function getOldErpLedgerByClassSection(month, year, gradeId, sectionId) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
   const qs = `branchId=${branchID}&month=${month}&year=${year}&gradeId=${Number(gradeId) || 0}&sectionId=${Number(sectionId) || 0}`;
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/oldERPbranchledger_byClassSection?${qs}`),
     { headers: { Accept: '*/*' } },
   );
@@ -2387,7 +2413,7 @@ export async function getEmployeeNameByLoginUser(loginUserId) {
   const token = sessionStorage.getItem('token');
   const p = (async () => {
     try {
-      const res = await fetch(buildUrl(`/api/HR/get-employee-by-loginuser/${id}`), {
+      const res = await trackedFetch(buildUrl(`/api/HR/get-employee-by-loginuser/${id}`), {
         headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
       const json = await res.json().catch(() => null);
@@ -2423,7 +2449,7 @@ export async function receivePayment(body) {
 /* Totals format — README §5.9. receivedAmount / discount = NEW TOTALS (not delta). */
 export async function receivePaymentInstallment(body) {
   const cleaned = stripPendingFromReceiveBody(body);
-  const res = await fetch(buildUrl('/api/BranchLedger/receive-payment-installment'), {
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/receive-payment-installment'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(cleaned),
@@ -2444,7 +2470,7 @@ export async function receivePaymentInstallment(body) {
    README §4.3 / §5.4 — Receiving modal Pay Now uses this. */
 export async function receiveInstallment(body) {
   const cleaned = stripPendingFromReceiveBody(body);
-  const res = await fetch(buildUrl('/api/BranchLedger/receive-installment'), {
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/receive-installment'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(cleaned),
@@ -2646,7 +2672,7 @@ function stripPendingFromReceiveBody(body) {
 }
 
 export async function createChallanInstallment(payload) {
-  const res = await fetch(buildUrl('/api/BranchLedger/create-challan-installment'), {
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/create-challan-installment'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -2664,7 +2690,7 @@ export async function createChallanInstallment(payload) {
    kar ke response me wapas bhejta hai; get-with-installments (branch ledger) se bhi
    padhi ja sakti hai. forceNew:true har dafa nayi PSID banata hai. */
 export async function generatePsid(payload) {
-  const res = await fetch(buildUrl('/api/BranchLedger/generate-psid'), {
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/generate-psid'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -2696,7 +2722,7 @@ export async function getWithInstallments({ branchId, studentId, month, year } =
   if (studentId != null && studentId !== '') qs.set('studentId', String(studentId));
   if (month != null && month !== '') qs.set('month', String(month));
   if (year != null && year !== '') qs.set('year', String(year));
-  const res = await fetch(buildUrl(`/api/BranchLedger/get-with-installments?${qs}`), {
+  const res = await trackedFetch(buildUrl(`/api/BranchLedger/get-with-installments?${qs}`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -2709,7 +2735,7 @@ export async function getWithInstallments({ branchId, studentId, month, year } =
 
 export async function getInstallments(ledgerId, detailId) {
   const qs = detailId != null && detailId !== '' ? `?detailId=${detailId}` : '';
-  const res = await fetch(buildUrl(`/api/BranchLedger/installments/${ledgerId}${qs}`), {
+  const res = await trackedFetch(buildUrl(`/api/BranchLedger/installments/${ledgerId}${qs}`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -2725,7 +2751,7 @@ export async function updateInstallment(ledgerId, installmentId, body) {
     modifiedBy: userID,
     ...(body || {}),
   };
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/update-installment/${ledgerId}/${installmentId}`),
     {
       method: 'PUT',
@@ -3046,7 +3072,7 @@ export async function clearReceiving(ledgerId) {
   if (!id) throw new Error('Missing challan id to clear receiving');
   const userID = Number(sessionStorage.getItem('UserID')) || 0;
   const qs = userID ? `?modifiedBy=${userID}` : '';
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/clear-receiving/${id}${qs}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },
   );
@@ -3071,7 +3097,7 @@ export async function deleteReceivingInstallment(ledgerId) {
 
 export async function deleteReceivingDetailInstallment(detailId) {
   const userID = Number(sessionStorage.getItem('UserID')) || 0;
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/delete-receiving-detail-installment/${detailId}?modifiedBy=${userID}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },
   );
@@ -3106,7 +3132,7 @@ export async function bulkDeleteChallansByClass({ gradeId, sectionId, month, yea
     year: String(Number(year) || 0),
     employeeId: String(employeeId),
   });
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/bulk-delete-by-class?${qs}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },
   );
@@ -3122,7 +3148,7 @@ export async function deleteChallanInstallment(ledgerId) {
   /* employeeId param me logged-in UserID (6803 jaisi) jaati hai — approval isi user ke
      against bane (approvals_by_user?userId= wahi UserID). */
   const employeeId = currentUserId();
-  const res = await fetch(
+  const res = await trackedFetch(
     buildUrl(`/api/BranchLedger/delete-challan-installment/${ledgerId}?employeeId=${employeeId}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },
   );
@@ -3162,7 +3188,7 @@ export async function deleteFamilyTreeDetail({ id, treeID = 0, applicantsID = 0,
     sectionID:    Number(sectionID) || 0,
     createdBy:    userID,
   };
-  const res  = await fetch(buildUrl('/api/FamilyTree/familytreedetailcrud'), {
+  const res  = await trackedFetch(buildUrl('/api/FamilyTree/familytreedetailcrud'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -3222,7 +3248,7 @@ export async function getOneLinkPayments(opts = {}) {
     month:      String(opts.month || now.getMonth() + 1),
     year:       String(opts.year  || now.getFullYear()),
   });
-  const res = await fetch(
+  const res = await trackedFetch(
     buildSuperAdminUrl(`/api/AHM_School_Progress/branch_onelink-payments?${params.toString()}`),
     { headers: { Accept: '*/*' } },
   );
