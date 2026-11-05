@@ -1548,11 +1548,11 @@ const FEE_MONTHS = [
    "Previous"/"next" are measured against today's real month, not the month
    picker, so changing the filter can't shift what the gate means. Returns the
    reason a month is barred, or null when it's fine. */
-/* Sirf in branches ko previous-month challan CREATE karne ki ijazat hai.
-   Receiving isPastView se band rehti hai. */
-const PREV_MONTH_CHALLAN_BRANCHES = new Set([210780, 220979]);
-/* Ye branch previous month ka challan + receiving kar sakti hai aur month/year picker dekhti hai. */
-const PREV_MONTH_FULL_BRANCHES = new Set([220979]);
+/* Branch-specific exceptions removed: every school follows the standard
+   previous-month rules. Both sets are empty, so isPrevMonthFullBranch() is
+   always false and the previous month is locked unless the school setting allows it. */
+const PREV_MONTH_CHALLAN_BRANCHES = new Set();
+const PREV_MONTH_FULL_BRANCHES = new Set();
 function isPrevMonthFullBranch() {
   return PREV_MONTH_FULL_BRANCHES.has(Number(sessionStorage.getItem('branchID')) || 0);
 }
