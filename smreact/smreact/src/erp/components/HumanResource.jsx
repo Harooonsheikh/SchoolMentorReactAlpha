@@ -8397,7 +8397,7 @@ export const HR_CSS = `
   transition: var(--tr);
 }
 .modal-close:hover { background: rgba(220, 38, 38, .1); color: var(--err); }
-.modal-body {
+.ov .modal-body {
   padding: 20px 24px 24px;
   flex: 1 1 0;
   min-height: 0;
@@ -11926,8 +11926,8 @@ export const HR_CSS = `
   .modal-head-icon { width: 36px; height: 36px; font-size: 14px; }
   .modal-title { font-size: 14px; }
   .modal-sub { font-size: 11px; }
-  .modal-body { padding: 14px 14px !important; }
-  .modal-foot { padding: 12px 14px; flex-wrap: wrap; gap: 8px; }
+  .ov .modal-body { padding: 14px 14px !important; }
+    .modal-foot { padding: 12px 14px; flex-wrap: wrap; gap: 8px; }
   .modal-foot > .btn-primary,
   .modal-foot > .btn-secondary,
   .modal-foot > .btn { flex: 1 1 auto; min-width: 0; }
