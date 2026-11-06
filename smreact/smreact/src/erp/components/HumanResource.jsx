@@ -924,10 +924,10 @@ function DeptModal({ mode, dept, onClose, onSave }) {
   return createPortal((
     <div
       className="ov open"
-      role="dialog" aria-modal="true" aria-labelledby="dept-modal-title"
+        role="dialog" aria-modal="true" aria-labelledby="dept-modal-title"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="modal">
+      <div className="modal dept-modal">
         <div className="modal-head">
           <div className="modal-head-left">
             <div className="modal-head-icon"><i className="fa-solid fa-building" aria-hidden="true"></i></div>
@@ -1001,10 +1001,10 @@ function DesigModal({ mode, desig, defaultDId, depts, onClose, onSave }) {
   return createPortal((
     <div
       className="ov open"
-      role="dialog" aria-modal="true" aria-labelledby="desig-modal-title"
+         role="dialog" aria-modal="true" aria-labelledby="desig-modal-title"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="modal">
+      <div className="modal desig-modal">
         <div className="modal-head">
           <div className="modal-head-left">
             <div className="modal-head-icon"><i className="fa-solid fa-id-badge" aria-hidden="true"></i></div>
@@ -8405,6 +8405,8 @@ export const HR_CSS = `
   background: var(--card);
   color: var(--t1);
 }
+.desig-modal .modal-body,
+.dept-modal .modal-body { flex: 1 1 auto; }
 .modal-foot {
   display: flex; gap: 9px; justify-content: flex-end;
   padding: 14px 24px;
