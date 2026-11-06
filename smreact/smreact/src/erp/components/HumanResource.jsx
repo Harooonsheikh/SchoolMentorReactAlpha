@@ -5714,7 +5714,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
               <div className="m-section-title"><i className="fa-solid fa-briefcase" aria-hidden="true"></i> Official Details</div>
 
               <div className="f-row-3">
-                <div className="f-group"><label className="f-label">Employee ID</label><input className="f-input" placeholder="Auto-generated (e.g. EMP-001)" value={form.eid} onChange={(e) => set('eid', e.target.value)} /></div>
+                <div className="f-group"><label className="f-label">Employee ID</label><input className="f-input" placeholder="Auto-generated (e.g. EMP-001)" value={form.eid} readOnly tabIndex={-1} title="Employee ID is auto-generated and cannot be changed" style={{ background: '#f1f5f9', color: '#64748b', cursor: 'not-allowed' }} /></div>
                 <div className="f-group"><label className="f-label">Date of Joining</label><input type="date" className="f-input" value={form.join} onChange={(e) => set('join', e.target.value)} /></div>
                 <div className="f-group"><label className="f-label">Status</label>
                   <select className="f-select2" value={form.status} onChange={(e) => set('status', e.target.value)}>

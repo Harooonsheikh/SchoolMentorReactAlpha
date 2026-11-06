@@ -1644,7 +1644,11 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     modifiedAt: now,
     modifiedBy: userID,
     isActive: true,
+    previousDues: Math.max(0, Math.round(Number(student.dues) || 0)),   // old dues → PSID amount
     detailRows,
+    
+   
+    
   };
 
   if (isMultiMonth) {
