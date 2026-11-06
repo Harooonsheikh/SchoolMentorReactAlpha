@@ -3226,8 +3226,9 @@ function FeeChallansList({ toast }) {
          NAHI — ye sirf tab chalta hai jab kisi class ka DETAILS (▼) khule (niche openKey-effect).
          Is se Fee Challans tab TURANT khulta hai (sirf list + Generated counts, koi ledger call
          nahi). Figures bilkul same — wahi logic, bas us class ke liye jab khuli ho. */
-      setPrevOutMap({});
-      setPriorByStudent({});
+      // setPrevOutMap({});
+      // setPriorByStudent({});
+          
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
@@ -3242,6 +3243,7 @@ function FeeChallansList({ toast }) {
 
   /* Load on mount and whenever the student roster or applied month/year change. */
   useEffect(() => { loadChallans(); }, [loadChallans]);
+      useEffect(() => { setPrevOutMap({}); setPriorByStudent({}); }, [appliedMonth, appliedYear]);
 
   /* Expanded row */
   const [openKey, setOpenKey] = useState(null);
@@ -8899,8 +8901,9 @@ function FeeReceivingIndividual({ toast }) {
          carry-forward hota hai, na ke stale stored 13,850. */
       /* ── PERF: prev-dues/prior AUR get-by-month-range API tab-open par NAHI — sirf jab
          kisi class ka DETAILS (▼) khule (niche openKey-effect). Tab turant khulta hai. */
-      setPrevOutMap({});
-      setPriorByStudent({});
+      // setPrevOutMap({});
+      // setPriorByStudent({});
+          // useEffect(() => { setPrevOutMap({}); setPriorByStudent({}); }, [appliedMonth, appliedYear]);
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
@@ -8913,6 +8916,7 @@ function FeeReceivingIndividual({ toast }) {
   }, [studentsMap, appliedMonth, appliedYear, toast, settings.enableMonthClosing]);
 
   useEffect(() => { loadChallans(); }, [loadChallans]);
+  useEffect(() => { setPrevOutMap({}); setPriorByStudent({}); }, [appliedMonth, appliedYear]);
 
   /* Receipts mirror (mutable so we can add new payments locally) */
   const [receipts, setReceipts] = useState(null);
