@@ -22,7 +22,8 @@ const TITLE = {
   Overdue: 'Payment Overdue',
 };
 
-export async function getBillingAnnouncements() {
+// export async function getBillingAnnouncements() {
+async function getBillingReminderAnnouncements() {
   const branchId = Number(sessionStorage.getItem('branchID')) || 0;
   if (!branchId) return [];
   const res = await fetch(
@@ -59,5 +60,53 @@ export async function getBillingAnnouncements() {
       _ts: ok ? dt.getTime() : 0,
     });
   });
-  return out;
+  // return out;
+    return out;
 }
+
+/* Super Admin → Notifications block se bheji gayi notifications.
+   GET .../SchoolMentorSuperAdminAPI/api/AHM_Notification/list
+   → { success, data: [{ notificationID, title, message, notificationType,
+                         audienceType, createdDate|createdAt|sentAt, sentBy }] } */
+async function getSuperAdminNotifications() {
+  const res = await fetch(buildSuperAdminUrl('/api/AHM_Notification/list'), {
+    method: 'GET', headers: { Accept: '*/*' },
+  });
+  if (!res.ok) return [];
+  const json = await res.json().catch(() => null);
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows
+    .filter((n) => n && (n.title || n.message))
+    .map((n, idx) => {
+      const created = n.date || n.createdDate || n.createdAt || n.sentAt || '';
+      const dt = created ? new Date(created) : null;
+      const ok = dt && !Number.isNaN(+dt);
+      const text = String(n.message ?? n.body ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      return {
+        id: `sa-${n.notificationID ?? n.id ?? idx}`,
+        sender: 'School Mentor — HQ',
+        title: n.title || 'School Mentor Notice',
+        preview: text,
+        description: text,
+        category: n.notificationType || 'General',
+        date: ok ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : String(created).slice(0, 10),
+        time: '',
+        status: ok && (Date.now() - dt.getTime()) <= 7 * 86400000 ? 'new' : 'read',
+        _ts: ok ? dt.getTime() : 0,
+      };
+    });
+}
+
+/* Dashboard card: Super Admin notifications + billing reminders. Ek API fail
+   ho (404 etc.) to doosri phir bhi dikhe. */
+export async function getBillingAnnouncements() {
+  const [sa, bill] = await Promise.allSettled([
+    getSuperAdminNotifications(),
+    getBillingReminderAnnouncements(),
+  ]);
+  return [
+    ...(sa.status === 'fulfilled' ? sa.value : []),
+    ...(bill.status === 'fulfilled' ? bill.value : []),
+  ];
+}
+

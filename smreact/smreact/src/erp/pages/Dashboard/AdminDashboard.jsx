@@ -1025,38 +1025,70 @@ const canSeeCard = useCallback(
   const [billingAnnouncements, setBillingAnnouncements] = useState([]);
   useEffect(() => {
     let alive = true;
-    getBillingAnnouncements()
-      .then((list) => { if (alive) setBillingAnnouncements(list); })
-      .catch(() => {});
+        getBillingAnnouncements()
+      .then((list) => { console.log('HQ announcements:', list); if (alive) setBillingAnnouncements(list); })
+      .catch((err) => { console.error('HQ announcements error:', err); });
     return () => { alive = false; };
   }, []);
 
   /* Newest announcement surfaces in the top card; sender + count of
      remaining new ones are computed for the pill + footer line. */
-  /* LIVE announcements (get-dashboard Announcements — PascalCase Title/Body/
-     AnnounceDate). Card lowercase fields padhta hai → normalize; bina title/body
-     wali junk entries filter. */
-  const liveAnnouncements = [...(Array.isArray(D.Announcements) ? D.Announcements : [])
+//   /* LIVE announcements (get-dashboard Announcements — PascalCase Title/Body/
+//      AnnounceDate). Card lowercase fields padhta hai → normalize; bina title/body
+//      wali junk entries filter. */
+//   const liveAnnouncements = [...(Array.isArray(D.Announcements) ? D.Announcements : [])
+//     .map((a, idx) => {
+//       const created = a.AnnounceDate || a.announceDate || a.Date || a.date || a.CreatedDate || '';
+// const dt = created ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(created)) ? `${created}T00:00:00` : created) : null;
+//       const validDt = dt && !Number.isNaN(+dt);
+//       const rawBody = a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '';
+//       /* Body rich-text editor se HTML (<ul><li><b>…) aata hai — card pe plain text dikhana hai. */
+//       const preview = htmlToPlainText(rawBody);      return {
+//         id: a.ID ?? a.id ?? `an-${idx}`,
+//         sender: a.Sender ?? a.sender ?? a.CreatedBy ?? 'School Mentor — HQ',
+//         title: (a.Title ?? a.title ?? a.Subject ?? '') || 'Untitled notice',
+//         preview,
+//         description: preview,
+//         category: a.Category ?? a.category ?? 'General',
+//         date: validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
+// time: '',
+//       status: validDt && (Date.now() - dt.getTime()) <= 7 * 86400000 ? 'new' : 'read',
+//         _ts: validDt ? dt.getTime() : 0,
+//       };
+//     })
+// .filter((a) => a.title || a.preview), ...billingAnnouncements].sort((p, q) => q._ts - p._ts);
+  /* School Mentor Announcements card = SIRF SchoolMentor (Super Admin / HQ) ki
+     notifications (getBillingAnnouncements). get-dashboard ki Announcements
+     branch/school ki apni hoti hain (mobile app se) — woh is card me NAHI aati. */
+  // const liveAnnouncements = [...billingAnnouncements].sort((p, q) => (q._ts || 0) - (p._ts || 0));
+    /* Head (School Head / Principal / Admin) → SchoolMentor HQ ki announcements.
+     Baqi sab (Teacher waghera) → sirf branch ki announcements (get-dashboard). */
+  const accountType = String(sessionStorage.getItem('accountType') || '');
+  const isSchoolHead = /head|principal|admin/i.test(accountType);
+
+  const branchAnnouncements = (Array.isArray(D.Announcements) ? D.Announcements : [])
     .map((a, idx) => {
       const created = a.AnnounceDate || a.announceDate || a.Date || a.date || a.CreatedDate || '';
-const dt = created ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(created)) ? `${created}T00:00:00` : created) : null;
+      const dt = created ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(created)) ? `${created}T00:00:00` : created) : null;
       const validDt = dt && !Number.isNaN(+dt);
-      const rawBody = a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '';
-      /* Body rich-text editor se HTML (<ul><li><b>…) aata hai — card pe plain text dikhana hai. */
-      const preview = htmlToPlainText(rawBody);      return {
+      const preview = htmlToPlainText(a.Body ?? a.body ?? a.Message ?? a.message ?? a.Description ?? a.description ?? '');
+      return {
         id: a.ID ?? a.id ?? `an-${idx}`,
-        sender: a.Sender ?? a.sender ?? a.CreatedBy ?? 'School Mentor — HQ',
+        sender: a.Sender ?? a.sender ?? 'School Administration',
         title: (a.Title ?? a.title ?? a.Subject ?? '') || 'Untitled notice',
         preview,
         description: preview,
         category: a.Category ?? a.category ?? 'General',
         date: validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
-time: '',
-      status: validDt && (Date.now() - dt.getTime()) <= 7 * 86400000 ? 'new' : 'read',
+        time: '',
+        status: validDt && (Date.now() - dt.getTime()) <= 7 * 86400000 ? 'new' : 'read',
         _ts: validDt ? dt.getTime() : 0,
       };
     })
-.filter((a) => a.title || a.preview), ...billingAnnouncements].sort((p, q) => q._ts - p._ts);
+    .filter((a) => a.title || a.preview);
+
+  const liveAnnouncements = (isSchoolHead ? [...billingAnnouncements] : branchAnnouncements)
+    .sort((p, q) => (q._ts || 0) - (p._ts || 0));
   const latestAnnouncement = liveAnnouncements[0] || null;
 const newAnnouncementCount = liveAnnouncements.filter((a) => a.status === 'new').length;
 
