@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import useAsync from '../../hooks/useAsync';
-import * as complianceService from '../../services/complianceService';
 import { ALL_STAFF, COMPLIANCE_AREAS, DAILY_AREA_OPTIONS, MONTHLY_CATEGORY_OPTIONS, TASK_LABEL_MAX_LENGTH } from '../../mock/compliance';
 import { FilterBar, Field, EmptyState } from './ComplianceShared';
-import { addArea } from '../../services/complianceApi';
+import {
+  addArea, taskAction, toTemplate, norm, isDailyArea, WEEKLY_AREA_NAME,
+} from '../../services/complianceApi';
 
 const FREQ_TABS = [
   { id: 'daily', label: 'Daily Checks' },
@@ -17,15 +17,17 @@ const FREQ_TABS = [
    counter, so a long sentence can never overflow a checklist row here
    or a card on the mobile app later. */
 function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
+  const idByName = new Map(areas.map(a => [norm(a.name), a.id]));
+  const weeklyAreaId = idByName.get(norm(WEEKLY_AREA_NAME));
 
-  const uniqueAreas = [...new Map(areas.map(a => [a.name, a])).values()];
   const areaOptions = freq === 'daily'
-  ? uniqueAreas.map(a => {
-      const local = DAILY_AREA_OPTIONS.find(o => o.label === a.name);
-      return { id: local?.id ?? String(a.id), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
-    })
-    : freq === 'monthly' ? MONTHLY_CATEGORY_OPTIONS
-    : COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id }));
+    ? [...new Map(areas.filter(isDailyArea).map(a => [a.name, a])).values()].map(a => {
+        const local = DAILY_AREA_OPTIONS.find(o => o.label === a.name);
+        return { id: local?.id ?? String(a.id), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
+      })
+    : freq === 'monthly'
+      ? MONTHLY_CATEGORY_OPTIONS.map(o => ({ ...o, backendId: idByName.get(norm(o.label)) }))
+      : COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id, backendId: weeklyAreaId }));
 
   const [areaId, setAreaId] = useState(areaOptions[0]?.id || '');
   const [label, setLabel] = useState('');
@@ -34,6 +36,7 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
   const [evidenceAllowed, setEvidenceAllowed] = useState(true);
   const [verificationRequired, setVerificationRequired] = useState(false);
   const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
 
   React.useEffect(() => {
     if (!open) return;
@@ -44,6 +47,7 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
     setEvidenceAllowed(true);
     setVerificationRequired(false);
     setErr('');
+    setSaving(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, freq]);
 
@@ -51,15 +55,22 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
 
   const chosenArea = areaOptions.find(a => a.id === areaId) || areaOptions[0];
 
-  const submit = () => {
+  const submit = async () => {
     const text = label.trim();
     if (!text) { setErr('Please enter the task.'); return; }
     if (text.length > TASK_LABEL_MAX_LENGTH) { setErr(`Please keep the task under ${TASK_LABEL_MAX_LENGTH} characters.`); return; }
-    if (!chosenArea) { setErr(freq === 'weekly' ? 'Please choose a dashboard area.' : freq === 'daily' ? 'Please choose an area.' : 'Please choose a category.'); return; }
-    const payload = freq === 'weekly'
-      ? { area: 'weekly', areaLabel: 'Weekly Review', dashArea: chosenArea.dashArea, label: text, assignedStaff, dueDay, evidenceAllowed, verificationRequired }
-      : { area: chosenArea.id, areaLabel: chosenArea.label, dashArea: chosenArea.dashArea, label: text, assignedStaff, evidenceAllowed, verificationRequired };
-    onSave(payload);
+    if (!chosenArea?.backendId) { setErr('Please select an area.'); return; }
+
+    const payload = {
+      areaId: chosenArea.backendId,
+      area: freq === 'weekly' ? 'weekly' : chosenArea.id,
+      areaLabel: freq === 'weekly' ? 'Weekly Review' : chosenArea.label,
+      dashArea: chosenArea.dashArea,
+      label: text, assignedStaff, evidenceAllowed, verificationRequired,
+      ...(freq === 'weekly' ? { dueDay } : {}),
+    };
+    setSaving(true);
+    try { await onSave(payload); } finally { setSaving(false); }
   };
 
   return (
@@ -75,7 +86,7 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
         <div className="modal-body">
           <label className="form-group">
             <span className="form-label">{freq === 'weekly' ? 'Dashboard Area' : freq === 'daily' ? 'Area' : 'Category'}</span>
-            <select className="form-input" value={areaId} onChange={e => setAreaId(e.target.value)}>
+            <select className="form-input" value={chosenArea?.id ?? ''} onChange={e => setAreaId(e.target.value)}>
               {areaOptions.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
             </select>
           </label>
@@ -112,13 +123,14 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={submit}><i className="fa-solid fa-plus" aria-hidden="true"></i> Add Item</button>
+          <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>
+            <i className="fa-solid fa-plus" aria-hidden="true"></i> {saving ? 'Saving…' : 'Add Item'}
+          </button>
         </div>
       </div>
     </div>
   );
 }
-
 
 const AREA_NAME_MAX = 60;
 
@@ -186,27 +198,39 @@ function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   COMPLIANCE SETUP — turn checklist items on/off and configure who
-   they're assigned to, whether evidence/verification is required, and
-   (for weekly items) which weekday they're due. Schools are not
-   hardcoded to one fixed checklist — every item here can be disabled,
-   and a disabled item is excluded from the next time its period's
-   instances are generated (complianceService.saveTemplate clears the
-   relevant instance cache so the change takes effect immediately).
+   COMPLIANCE SETUP — tasks ab backend (task-list) se aate hain.
+   Add / update / delete task-action se hota hai.
    ═══════════════════════════════════════════════════════════════════ */
-export default function ComplianceSetup({ toast, areas = [] , onAreasChange = () => {} }) {
+export default function ComplianceSetup({
+  toast,
+  areas = [],
+  tasks = null,
+  onAreasChange = () => {},
+  onTasksChange = () => {},
+}) {
   const [freq, setFreq] = useState('daily');
-  const { data: all, refetch } = useAsync(complianceService.getAllTemplates, []);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [areaOpen, setAreaOpen] = useState(false);
 
-const saveArea = async (name) => {
-  await addArea(name);        // fail ho to modal mein error dikhega
-  await onAreasChange();      // dropdown ke liye list dobara lo
-  setAreaOpen(false);
-  toast(`Area "${name}" added.`, 'success');
-};
+  /* task-list ke rows ko daily / weekly / monthly mein baantna */
+  const all = useMemo(() => {
+    if (!tasks) return null;
+    const areaMap = new Map(areas.map(a => [a.id, a.name]));
+    const list = tasks.map(t => toTemplate(t, areaMap));
+    return {
+      daily:   list.filter(t => t.frequency === 'daily'),
+      weekly:  list.filter(t => t.frequency === 'weekly'),
+      monthly: list.filter(t => t.frequency === 'monthly'),
+    };
+  }, [tasks, areas]);
+
+  const saveArea = async (name) => {
+    await addArea(name);        // fail ho to modal mein error dikhega
+    await onAreasChange();      // dropdown ke liye list dobara lo
+    setAreaOpen(false);
+    toast(`Area "${name}" added.`, 'success');
+  };
 
   const filtered = useMemo(() => {
     const list = all?.[freq] || [];
@@ -224,27 +248,33 @@ const saveArea = async (name) => {
     return [...map.values()];
   }, [filtered]);
 
-  const patch = async (id, p) => {
-    await complianceService.saveTemplate(freq, id, p);
-    refetch();
+  const patch = async (t, p) => {
+    try {
+      await taskAction('update', { ...t, ...p });
+      await onTasksChange();
+    } catch (e) { toast(e.message || 'Update failed.', 'error'); }
   };
 
-  const toggleActive = (t) => {
-    patch(t.id, { active: !t.active });
+  const toggleActive = async (t) => {
+    await patch(t, { active: !t.active });
     toast(`"${t.label}" ${t.active ? 'disabled' : 'enabled'}.`, 'success');
   };
 
   const addItem = async (payload) => {
-    await complianceService.addTemplate(freq, payload);
-    setAddOpen(false);
-    refetch();
-    toast('New checklist item added.', 'success');
+    try {
+      await taskAction('insert', { ...payload, frequency: freq, active: true });
+      setAddOpen(false);
+      await onTasksChange();
+      toast('New checklist item added.', 'success');
+    } catch (e) { toast(e.message || 'Item not saved', 'error'); }
   };
 
   const removeItem = async (t) => {
-    await complianceService.deleteTemplate(freq, t.id);
-    refetch();
-    toast(`"${t.label}" removed.`, 'success');
+    try {
+      await taskAction('delete', t);
+      await onTasksChange();
+      toast(`"${t.label}" removed.`, 'success');
+    } catch (e) { toast(e.message || 'Delete not allowed', 'error'); }
   };
 
   return (
@@ -279,37 +309,39 @@ const saveArea = async (name) => {
         <Field label="Search Checklist Items">
           <input className="form-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by task or area…" />
         </Field>
-       <Field label=" ">
-  <div style={{ display: 'flex', gap: 10, width: '100%' }}>
-    <button
-      type="button"
-      className="btn btn-secondary"
-      style={{ height: 38, flex: 1, justifyContent: 'center' }}
-      onClick={() => setAreaOpen(true)}
-    >
-       <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Area
-    </button>
-    <button
-      type="button"
-      className="btn btn-primary"
-      style={{ height: 38, flex: 1, justifyContent: 'center' }}
-      onClick={() => setAddOpen(true)}
-    >
-      <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Checklist Item
-    </button>
-  </div>
-</Field>
+        <Field label=" ">
+          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ height: 38, flex: 1, justifyContent: 'center' }}
+              onClick={() => setAreaOpen(true)}
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Area
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ height: 38, flex: 1, justifyContent: 'center' }}
+              onClick={() => setAddOpen(true)}
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Checklist Item
+            </button>
+          </div>
+        </Field>
       </FilterBar>
 
       <AddItemModal open={addOpen} freq={freq} areas={areas} onClose={() => setAddOpen(false)} onSave={addItem} />
-        <AddAreaModal
-  open={areaOpen}
-  existingNames={areas.map(a => a.name)}
-  onClose={() => setAreaOpen(false)}
-  onSave={saveArea}
-/>
+      <AddAreaModal
+        open={areaOpen}
+        existingNames={areas.map(a => a.name)}
+        onClose={() => setAreaOpen(false)}
+        onSave={saveArea}
+      />
 
-      {grouped.length === 0 ? (
+      {!all ? (
+        <div className="cmp-card">Loading checklist…</div>
+      ) : grouped.length === 0 ? (
         <EmptyState icon="fa-sliders" title="No checklist items match your search" />
       ) : grouped.map(g => (
         <div key={g.area} className="cmp-card">
@@ -331,23 +363,19 @@ const saveArea = async (name) => {
                       {t.custom && <span className="cmp-badge cmp-badge--purple" style={{ marginLeft: 8 }}>Custom</span>}
                       {t.restrictedToPermission && <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Visible based on your permissions</div>}
                     </td>
-                    <td>
-                      <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.assignedStaff} onChange={e => patch(t.id, { assignedStaff: e.target.value })}>
-                        {ALL_STAFF.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </td>
+                    <td>{t.assignedStaff || '—'}</td>
                     {freq === 'weekly' && (
                       <td>
-                        <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.dueDay} onChange={e => patch(t.id, { dueDay: e.target.value })}>
+                        <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.dueDay} onChange={e => patch(t, { dueDay: e.target.value })}>
                           {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
                       </td>
                     )}
                     <td>
-                      <input type="checkbox" checked={t.evidenceAllowed} onChange={e => patch(t.id, { evidenceAllowed: e.target.checked })} />
+                      <input type="checkbox" checked={t.evidenceAllowed} disabled title="Backend support coming soon" />
                     </td>
                     <td>
-                      <input type="checkbox" checked={t.verificationRequired} onChange={e => patch(t.id, { verificationRequired: e.target.checked })} />
+                      <input type="checkbox" checked={t.verificationRequired} onChange={e => patch(t, { verificationRequired: e.target.checked })} />
                     </td>
                     <td>
                       <label className="cmp-switch">

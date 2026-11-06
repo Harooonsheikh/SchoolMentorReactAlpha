@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import useAsync from '../../hooks/useAsync';
-import * as complianceService from '../../services/complianceService';
+import * as complianceApi from '../../services/complianceApi';
 import { FilterBar, Field, ProblemModal, ProblemStatusBadge, PriorityBadge, EmptyState, initials } from './ComplianceShared';
 import { PROBLEM_CATEGORIES, PROBLEM_PRIORITIES, ROLE_STAFF } from '../../mock/compliance';
 
 const ALL_STAFF = [...new Set(Object.values(ROLE_STAFF).flat())];
+const fetchProblems = () => complianceApi.getProblems();
 
 /* ═══════════════════════════════════════════════════════════════════
    PROBLEMS & FOLLOW-UPS — full lifecycle: Open → Assigned →
@@ -15,7 +16,7 @@ const ALL_STAFF = [...new Set(Object.values(ROLE_STAFF).flat())];
    Overview and are never folded into the completion percentage.
    ═══════════════════════════════════════════════════════════════════ */
 export default function Problems({ toast }) {
-  const { data: problems = [], refetch } = useAsync(complianceService.getProblems, []);
+  const { data: problems = [], refetch } = useAsync(fetchProblems, []);
 
   const [category, setCategory] = useState('');
   const [priority, setPriority] = useState('');
@@ -36,23 +37,27 @@ export default function Problems({ toast }) {
   }).sort((a, b) => new Date(b.reportDate) - new Date(a.reportDate)), [problems, category, priority, status, search]);
 
   const advance = async (p, nextStatus, extra = {}) => {
-    const actionText = {
-      'Assigned': `Assigned to ${extra.assignedTo || p.assignedTo}.`,
-      'In Progress': 'Marked In Progress.',
-      'Resolved': `Marked Resolved${extra.resolutionRemarks ? ` — ${extra.resolutionRemarks}` : '.'}`,
-      'Verified and Closed': 'Verified and closed.',
-    }[nextStatus];
-    await complianceService.updateProblem(p.id, { status: nextStatus, ...extra }, { by: 'Dr. Islahudin', action: actionText });
-    refetch();
+  const step = { 'In Progress': 'progress', 'Resolved': 'resolve', 'Verified and Closed': 'verify' }[nextStatus];
+  if (!step) return;
+  try {
+    await complianceApi.problemStep(step, p, { remarks: extra.resolutionRemarks });
+    await refetch();
     toast(`"${p.title}" ${nextStatus.toLowerCase()}.`, 'success');
-  };
+  } catch (e) {
+    toast(e.message || 'Update nahi ho saka.', 'error');
+  }
+}
 
   const saveNewProblem = async (payload) => {
-    await complianceService.createProblem({ ...payload, reportedBy: 'Dr. Islahudin' });
+  try {
+    await complianceApi.reportProblem(payload);
     setReportOpen(false);
-    refetch();
+    await refetch();
     toast('Problem reported.', 'success');
-  };
+  } catch (e) {
+    toast(e.message || 'Problem report nahi ho saki.', 'error');
+  }
+};
 
   return (
     <>
@@ -102,7 +107,11 @@ export default function Problems({ toast }) {
                     <td>{p.category}</td>
                     <td><PriorityBadge priority={p.priority} /></td>
                     <td>{p.reportedBy}</td>
-                    <td><span className="cmp-avatar">{initials(p.assignedTo)}</span> {p.assignedTo}</td>
+                    <td>
+  {p.assignedTo === '—'
+    ? <span style={{ color: 'var(--text-muted)' }}>Unassigned</span>
+    : <><span className="cmp-avatar">{initials(p.assignedTo)}</span> {p.assignedTo}</>}
+</td>
                     <td>{p.dueDate}</td>
                     <td><ProblemStatusBadge status={p.status} /></td>
                   </tr>
@@ -149,9 +158,9 @@ function ProblemActions({ p, onAdvance }) {
   if (p.status === 'Verified and Closed') return <div style={{ fontSize: 12, color: '#16A34A', fontWeight: 700 }}><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Verified and closed.</div>;
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-      {p.status === 'Open' && (
+      {/* {p.status === 'Open' && (
         <button type="button" className="btn btn-secondary" onClick={() => onAdvance(p, 'Assigned')}>Assign</button>
-      )}
+      )} */}
       {(p.status === 'Open' || p.status === 'Assigned') && (
         <button type="button" className="btn btn-secondary" onClick={() => onAdvance(p, 'In Progress')}>Mark In Progress</button>
       )}

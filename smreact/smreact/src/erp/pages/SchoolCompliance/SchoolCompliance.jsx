@@ -7,8 +7,9 @@ import MonthlyReview from './MonthlyReview';
 import Problems from './Problems';
 import ComplianceReports from './ComplianceReports';
 import ComplianceSetup from './ComplianceSetup';
-import { ensureAreas, getAreas } from '../../services/complianceApi';
+import { ensureAreas, ensureTasks, getAreas, getTasks, SEED_AREA_NAMES } from '../../services/complianceApi';
 import { DAILY_AREA_OPTIONS } from '../../mock/compliance';
+
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL COMPLIANCE — module shell.
@@ -35,14 +36,28 @@ const TABS = [
 ];
 
 export default function SchoolCompliance({ toast = () => {} }) {
-  const [tab, setTab] = useState('setup');
-  const [areas, setAreas] = useState([]);
-  
-   useEffect(() => {
-    ensureAreas(DAILY_AREA_OPTIONS.map((a) => a.label))
-      .then(setAreas)
-      .catch(() => toast('Areas load nahi ho sake.', 'error'));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+const [tab, setTab] = useState('setup');
+const [areas, setAreas] = useState([]);
+const [tasks, setTasks] = useState(null);
+const [loadError, setLoadError] = useState('');
+
+const load = () => {
+  setLoadError('');
+  ensureAreas(SEED_AREA_NAMES)
+    .then((a) => {
+      setAreas(a);
+      return ensureTasks(a).then(setTasks);
+    })
+    .catch((err) => {
+      console.error('School Compliance load failed:', err);
+      const msg = err?.message || 'Compliance data load failed.';
+      setLoadError(msg);
+      toast(msg, 'error');
+      setTasks((prev) => prev ?? []);   // "Loading…" par atka na rahe
+    });
+};
+
+useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -61,6 +76,13 @@ export default function SchoolCompliance({ toast = () => {} }) {
       </div>
 
       <div className="cmp-tabs">
+        {loadError && (
+  <div className="cmp-critical-banner">
+    <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+    <span style={{ flex: 1 }}>{loadError}</span>
+    <button type="button" className="btn btn-secondary" onClick={load}>Retry</button>
+  </div>
+)}
         {TABS.map(t => (
           <Tooltip key={t.id} text={`Open ${t.label}`}>
             <button type="button" className={`cmp-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
@@ -76,11 +98,13 @@ export default function SchoolCompliance({ toast = () => {} }) {
       {tab === 'monthly'  && <MonthlyReview toast={toast} />}
       {tab === 'problems' && <Problems toast={toast} />}
       {tab === 'reports'  && <ComplianceReports toast={toast} />}
-      {tab === 'setup' && (
+     {tab === 'setup' && (
   <ComplianceSetup
     toast={toast}
     areas={areas}
+    tasks={tasks}
     onAreasChange={() => getAreas().then(setAreas)}
+    onTasksChange={() => getTasks().then(setTasks)}
   />
 )}
     </>
