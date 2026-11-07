@@ -15616,6 +15616,7 @@ function ReportPanelDefaulter({ toast }) {
   const school = useContext(FeeReportBranchContext);
   const [seg, setSeg] = useState('all');                 // 'all' | 'month'
   const [openKey, setOpenKey] = useState(null);
+  const [query, setQuery] = useState('');                // client-side search
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
   const [year, setYear] = useState(String(new Date().getFullYear()));
 
@@ -15681,6 +15682,68 @@ function ReportPanelDefaulter({ toast }) {
     paid:     summary.fullyCleared || 0,
   };
 
+  /* ── Search (client-side) ─────────────────────────────────────────
+     Pehle se fetch ho chuke `groups` par hi filter — koi naya API call nahi.
+     Har row ke searchable fields (student name, father, reg no, contact, class,
+     section, unpaid heads, due date, amounts) ko WORDS me toro — harf aur hindse
+     alag, taake number poora rahe ("Grade 10" → ['grade','10']).
+
+     Matching word-level hai. Pehle poore haystack par substring match tha, is
+     liye "Grade 1" ka token "1" ... "Grade 10"/"11"/"12" ke andar bhi mil jata
+     tha aur ghalat grades aa jate the. Ab:
+       • number token (1, 10) → poora number barabar hona zaroori hai, is liye
+         Grade 1 aur Grade 10 do alag classes hain. (3+ hindson wala number —
+         reg no / contact / year — prefix bhi match kar leta hai.)
+       • text token (ali, gra) → kisi word ke andar kahin bhi mil jaye (partial),
+         to student-name aur section search pehle jaisi hi rehti hai. */
+  const searchWords = (v) =>
+    String(v ?? '').toLowerCase().replace(/,/g, '').match(/[a-z]+|\d+/g) || [];
+
+  const rowWords = (x, c) => ({
+    /* text tokens: sab fields (naam, father, heads, amounts …) */
+    text: [
+      x.s?.name, x.s?.father, x.s?.reg, studentPhone(x.s),
+      c?.cls, c?.sec,
+      (x.heads || []).join(' '),
+      x.due, fmtDMY(x.due),
+      x.rem, x.finePend,
+    ].flatMap(searchWords),
+    /* number tokens: sirf pehchan wale fields — class, section, reg no, contact
+       aur due date. Amounts jaan kar bahar hain: warna "Grade 1" ka "1" kisi
+       Grade 11 student ki fine/baqaya "1" se match kar ke usay le aata tha. */
+    nums: [
+      c?.cls, c?.sec, x.s?.reg, studentPhone(x.s), x.due, fmtDMY(x.due),
+    ].flatMap(searchWords),
+  });
+
+  const wordHit = (t, w) => (/^\d+$/.test(t)
+    ? w.nums.some(n => n === t || (t.length >= 3 && n.startsWith(t)))
+    : w.text.some(s => s.includes(t)));
+
+  const searchTokens = useMemo(() => searchWords(query), [query]);
+  const searching = searchTokens.length > 0;
+
+  /* Class group ke andar students filter hote hain; jis class me koi match na ho
+     woh group chhup jata hai. Search khaali hote hi poori list wapas aa jati hai. */
+  const filteredGroups = useMemo(() => {
+    if (!searching) return groups;
+    return groups
+      .map(g => ({
+        ...g,
+        list: g.list.filter(x => {
+          const words = rowWords(x, g.c);
+          return searchTokens.every(t => wordHit(t, words));
+        }),
+      }))
+      .filter(g => g.list.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, searchTokens, searching]);
+
+  const matchCount = useMemo(
+    () => filteredGroups.reduce((a, g) => a + g.list.length, 0),
+    [filteredGroups]
+  );
+
   const reportTitle = `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`;
   const downloadReport = (style, format) => {
     const html = buildRepDefaulterHTML({ groups, totals, month, year, scope: seg, isBW: style === 'bw', school });
@@ -15738,6 +15801,25 @@ function ReportPanelDefaulter({ toast }) {
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
             </div>
+            <div className="fee-field" style={{ flex: '1 1 240px', minWidth: 220, maxWidth: 340 }}>
+              <span className="fee-label">Search Records</span>
+              <div className="fee-search-box">
+                <i className="fa-solid fa-magnifying-glass"></i>
+                <input
+                  value={query}
+                  autoComplete="off"
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="Search student, class, section..."
+                />
+                {query && (
+                  <Tooltip text="Clear search">
+                    <button type="button" className="fee-search-clear" onClick={() => setQuery('')} aria-label="Clear search">
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
             <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
@@ -15751,9 +15833,11 @@ function ReportPanelDefaulter({ toast }) {
           <div className="fee-th fee-right">Total Pending</div>
           <div className="fee-th fee-center">Details</div>
         </div>
-        {groups.map(({ c, list }, i) => {
+        {filteredGroups.map(({ c, list }, i) => {
           const pend = list.reduce((a, x) => a + x.rem, 0);
-          const isOpen = openKey === c.key;
+          /* Search ke dauran matching class groups khud khul jate hain taake
+             expandable rows ke andar ke students bhi nazar aayen. */
+          const isOpen = searching || openKey === c.key;
           return (
             <div key={c.key} className="fee-rowwrap">
               <div className={`fee-row fee-rep-clsrow-grid${isOpen ? ' open' : ''}`} onClick={() => setOpenKey(isOpen ? null : c.key)}>
@@ -15806,16 +15890,74 @@ function ReportPanelDefaulter({ toast }) {
             </div>
           );
         })}
+        {searching && matchCount === 0 && (
+          <div className="fee-rowwrap">
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 22, fontSize: 13.5, fontWeight: 600 }}>
+              <i className="fa-solid fa-magnifying-glass" style={{ marginRight: 8, opacity: .6 }}></i>
+              No records found for "<b>{query.trim()}</b>"
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
 }
+
+/* ── Report search matcher (field-specific) ───────────────────
+   Pehle saare fields jor kar ek string banti thi aur usme substring match hota
+   tha — is liye "Grade 1" ka "1" ... "Grade 10"/"11" ke andar bhi mil jata tha
+   aur ghalat grades, sections aur students aa jate the.
+
+   Ab har field apne matlab ke hisaab se match hota hai:
+     • code (class, section)              → poora word barabar ho, is liye
+       Grade 1 ≠ Grade 10, Class 9 ≠ Class 90, Section A ≠ Section AB
+     • name (student, father)             → 3+ harf ka token word ke andar kahin
+       bhi (partial name search); is se chhota token name par nahi chalta
+     • id   (reg no, contact, challan no)  → 3+ ka poora word ya prefix. 1-2
+       hindse ka token sirf code par chalta hai: chhota challan/reg no ("10")
+       warna "Grade 10" ki search me Grade 1 ka row le aata tha
+     • misc (received by, method, challan month) → 3+ harf ka partial
+
+   Dates aur amounts jaan kar search se bahar hain: in ke numbers (month "11",
+   fine "1" waghera) class/section numbers se takra kar ghalat rows laate the.
+
+   Query ke generic lafz (class/grade/section/student ...) nikal diye jaate hain,
+   to "Grade 1", "Class 1" aur "1" — teeno ek hi class laate hain. Har query
+   word ka kisi field se match hona zaroori hai (AND), is liye "Grade 1 Ahmed"
+   sirf Grade 1 ke Ahmed ko laata hai, Grade 10 ke Ahmed ko nahi. */
+const REP_SEARCH_SKIP = new Set([
+  'class', 'classes', 'grade', 'grades', 'section', 'sections', 'sec',
+  'student', 'students', 'name', 'reg', 'regno', 'no', 'ch', 'voucher',
+]);
+
+/* Harf aur hindse alag words me — number poora rehta hai ("Grade 10" → ['grade','10']). */
+const repSearchWords = (v) =>
+  String(v ?? '').toLowerCase().replace(/,/g, '').match(/[a-z]+|\d+/g) || [];
+
+const repSearchTokens = (q) => repSearchWords(q).filter(w => !REP_SEARCH_SKIP.has(w));
+
+/* fields = { code: [], name: [], id: [], misc: [] } — raw values, null safe. */
+const repSearchMatch = (tokens, fields) => {
+  const words = (list) => (list || []).flatMap(repSearchWords);
+  const code = words(fields.code);
+  const name = words(fields.name);
+  const id   = words(fields.id);
+  const misc = words(fields.misc);
+  const partial = (list, t) => t.length >= 3 && list.some(w => w.includes(t));
+  return tokens.every(t => (
+    code.includes(t)
+    || (t.length >= 3 && id.some(w => w === t || w.startsWith(t)))
+    || partial(name, t)
+    || partial(misc, t)
+  ));
+};
 
 /* ════════════ 2. GENERAL FEE COLLECTIONS ════════════ */
 function ReportPanelCollection({ toast }) {
   const school = useContext(FeeReportBranchContext);
   const [seg, setSeg] = useState('daily');
   const [openKey, setOpenKey] = useState(null);
+  const [query, setQuery] = useState('');
   const today = localTodayISO();
   const [date, setDate] = useState(today);
   const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
@@ -15909,6 +16051,44 @@ function ReportPanelCollection({ toast }) {
   const rangeLabel = seg === 'daily' ? range.start : seg === 'month' ? `${month} ${year}` : `${range.start} – ${range.end}`;
   const voucherOf = (x) => `CH-${x.rec.id}${seg === 'paid' ? '' : `/${x.last.no}`}`;
 
+  /* ── Search ──────────────────────────────────────────────────────────────
+     Teeno tabs (Daily / Monthly / Paid) ke liye wahi field-specific matcher —
+     dekhein repSearchMatch upar. Search pehle se load ho chuke poore dataset par
+     chalti hai (sirf khuli rows par nahi); date / month / year filters jaise the
+     waise hi lagte hain aur unhi ke records me search hoti hai. */
+  const rowSearchFields = (x) => ({
+    code: [x.c?.cls, x.c?.sec],
+    name: [x.s?.name, x.s?.father],
+    id:   [x.s?.reg, studentPhone(x.s), x.rec?.id],
+    misc: [byName(x), x.method, ledgerMonthLabel(x.rec)],
+  });
+
+  const searchTokens = useMemo(() => repSearchTokens(query), [query]);
+  const searching = searchTokens.length > 0;
+
+  /* Tab ya date/month/year filter badalne par purana search result na reh jaye. */
+  useEffect(() => { setQuery(''); }, [seg, date, month, year, from, to]);
+
+  /* Class group ke andar rows filter hoti hain; jis class me koi match na ho woh
+     group chhup jata hai. Search khaali hote hi poori list wapas aa jati hai.
+
+     Agar query sirf class/section ka naam hai (e.g. "Grade 5") to poora group
+     waise ka waisa rakho — chahe us din/mahine me us class ki ek bhi receipt na
+     ho. Bina search ke bhi yeh class row list me hoti hai (andar "No collections
+     in this range."), is liye search me bhi usi tarah dikhni chahiye; warna
+     maujood class "No records found" de deti thi. */
+  const filteredGroups = useMemo(() => {
+    if (!searching) return groups;
+    return groups
+      .map(g => {
+        if (repSearchMatch(searchTokens, { code: [g.c?.cls, g.c?.sec] })) return g;
+        const list = g.list.filter(x => repSearchMatch(searchTokens, rowSearchFields(x)));
+        return list.length ? { ...g, list } : null;
+      })
+      .filter(Boolean);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, searchTokens, searching, empNames, seg]);
+
   const reportTitle = `Collection Report — ${rangeLabel}`;
   const downloadReport = (style, format) => {
     if (loading) { toast('Ledger is still loading — try again in a moment', 'warning'); return; }
@@ -15989,6 +16169,25 @@ function ReportPanelCollection({ toast }) {
                 </div>
               </>
             )}
+            <div className="fee-field" style={{ flex: '1 1 240px', minWidth: 220, maxWidth: 340 }}>
+              <span className="fee-label">Search Records</span>
+              <div className="fee-search-box">
+                <i className="fa-solid fa-magnifying-glass"></i>
+                <input
+                  value={query}
+                  autoComplete="off"
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="Search student, class, section..."
+                />
+                {query && (
+                  <Tooltip text="Clear search">
+                    <button type="button" className="fee-search-clear" onClick={() => setQuery('')} aria-label="Clear search">
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
             <RepActions title={reportTitle} onGenerate={downloadReport} />
           </div>
         </div>
@@ -16001,9 +16200,11 @@ function ReportPanelCollection({ toast }) {
           <div className="fee-th fee-center">Section</div>
           <div className="fee-th fee-center">Details</div>
         </div>
-        {groups.map(({ c, list }, i) => {
+        {filteredGroups.map(({ c, list }, i) => {
           const colTot = list.reduce((a, x) => a + (x.amount || 0), 0);
-          const isOpen = openKey === c.key;
+          /* Search ke dauran matching class groups khud khul jate hain taake
+             expandable rows ke andar ke records bhi nazar aayen. */
+          const isOpen = searching || openKey === c.key;
           return (
             <div key={c.key} className="fee-rowwrap">
               <div className={`fee-row${isOpen ? ' open' : ''}`} style={{ gridTemplateColumns: '60px 1fr 1fr 80px' }} onClick={() => setOpenKey(isOpen ? null : c.key)}>
@@ -16093,6 +16294,14 @@ function ReportPanelCollection({ toast }) {
             </div>
           );
         })}
+        {searching && filteredGroups.length === 0 && (
+          <div className="fee-rowwrap">
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 22, fontSize: 13.5, fontWeight: 600 }}>
+              <i className="fa-solid fa-magnifying-glass" style={{ marginRight: 8, opacity: .6 }}></i>
+              No records found for "<b>{query.trim()}</b>"
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
