@@ -102,6 +102,24 @@ export async function addArea(name, branchId = getBranchId()) {
   return json;
 }
 
+/* GET branch ke employees — Assigned To dropdown ke liye
+   returns [{ id, name }] */
+export async function getBranchEmployees(branchId = getBranchId()) {
+  const res = await fetch(buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchId}`), {
+    method: 'GET',
+    headers: authHeaders(),
+    cache: 'no-store',
+  });
+  const json = await readJson(res, 'get-employees-by-branch');
+  const data = json?.data ?? json;
+  return (Array.isArray(data) ? data : [])
+    .map(e => ({
+      id: Number(e.id) || 0,
+      name: `${e.firstName || ''} ${e.lastName || ''}`.trim() || e.fullName || e.name || `Employee #${e.id}`,
+    }))
+    .filter(e => e.id > 0);
+}
+
 /////////
 
 /* ── Area naam helpers ── */
@@ -181,7 +199,7 @@ export function ensureTasks(areas) {
   if (!taskSeedPromise) {
     taskSeedPromise = (async () => {
       const branchId = getBranchId();
-      let tasks = await getTasks(branchId);
+      let tasks = await getTasks(branchId); 
 
       const have = new Set(tasks.map(t => `${norm(t.type)}|${norm(t.task)}`));
       const idByName = new Map(areas.map(a => [norm(a.name), a.id]));
@@ -389,3 +407,21 @@ export async function problemStep(step, problem, { remarks = '' } = {}) {
   });
   return readJson(res, `problem-${step}`);
 }
+
+/* POST problem-delete (application/json) — body: { id, modifiedBy }
+   NOTE: endpoint ka naam backend se confirm karna hai; alag ho to sirf
+   yahan PROBLEM_DELETE_PATH badal dein. */
+const PROBLEM_DELETE_PATH = 'problem-delete';
+
+export async function deleteProblem(problem) {
+  const me = currentUser();
+  const res = await fetch(buildUrl(`${BASE}/${PROBLEM_DELETE_PATH}`), {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ id: Number(problem.id), modifiedBy: me.name }),
+  });
+  return readJson(res, PROBLEM_DELETE_PATH);
+}
+
+
+

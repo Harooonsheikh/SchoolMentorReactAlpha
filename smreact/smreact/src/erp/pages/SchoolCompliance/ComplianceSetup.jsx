@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ALL_STAFF, COMPLIANCE_AREAS, DAILY_AREA_OPTIONS, MONTHLY_CATEGORY_OPTIONS, TASK_LABEL_MAX_LENGTH } from '../../mock/compliance';
-import { FilterBar, Field, EmptyState } from './ComplianceShared';
+import { COMPLIANCE_AREAS, MONTHLY_CATEGORY_OPTIONS, DAILY_AREA_OPTIONS, TASK_LABEL_MAX_LENGTH } from '../../mock/compliance';
+import { FilterBar, Field, EmptyState, ConfirmDialog } from './ComplianceShared';
 import {
-  addArea, taskAction, toTemplate, norm, isDailyArea, WEEKLY_AREA_NAME,
+  addArea, taskAction, toTemplate, norm, isDailyArea, WEEKLY_AREA_NAME, getBranchEmployees,
 } from '../../services/complianceApi';
 
 const FREQ_TABS = [
@@ -11,45 +11,80 @@ const FREQ_TABS = [
   { id: 'monthly', label: 'Monthly Review' },
 ];
 
-/* "Add New Checklist Item" — lets a school add its own task on top of
-   the built-in ones, which are never changed or removed by this. The
-   task text has a hard maxLength (TASK_LABEL_MAX_LENGTH), with a live
-   counter, so a long sentence can never overflow a checklist row here
-   or a card on the mobile app later. */
-function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/* HTML escape — ConfirmDialog message dangerouslySetInnerHTML use karta hai */
+const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* Area dropdown ke options — Add aur Edit dono isi ko use karte hain */
+function buildAreaOptions(freq, areas) {
   const idByName = new Map(areas.map(a => [norm(a.name), a.id]));
   const weeklyAreaId = idByName.get(norm(WEEKLY_AREA_NAME));
 
-  const areaOptions = freq === 'daily'
-    ? [...new Map(areas.filter(isDailyArea).map(a => [a.name, a])).values()].map(a => {
-        const local = DAILY_AREA_OPTIONS.find(o => o.label === a.name);
-        return { id: local?.id ?? String(a.id), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
-      })
-    : freq === 'monthly'
-      ? MONTHLY_CATEGORY_OPTIONS.map(o => ({ ...o, backendId: idByName.get(norm(o.label)) }))
-      : COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id, backendId: weeklyAreaId }));
+  if (freq === 'daily') {
+    return [...new Map(areas.filter(isDailyArea).map(a => [a.name, a])).values()].map(a => {
+      const local = DAILY_AREA_OPTIONS.find(o => o.label === a.name);
+      return { id: local?.id ?? String(a.id), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
+    });
+  }
+  if (freq === 'monthly') {
+    return MONTHLY_CATEGORY_OPTIONS.map(o => ({ ...o, backendId: idByName.get(norm(o.label)) }));
+  }
+  return COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id, backendId: weeklyAreaId }));
+}
 
-  const [areaId, setAreaId] = useState(areaOptions[0]?.id || '');
+/* Edit mode mein task ka current area dhoondna */
+function findInitialAreaId(freq, options, editing) {
+  if (!editing) return options[0]?.id || '';
+  const match = freq === 'weekly'
+    ? options.find(o => o.id === editing.dashArea)
+    : options.find(o => o.backendId === editing.areaId);
+  return (match || options[0])?.id || '';
+}
+
+/* "Add New Checklist Item" / "Edit Checklist Item" — `editing` mile to
+   edit mode, warna add mode. Task text par hard maxLength
+   (TASK_LABEL_MAX_LENGTH) aur live counter. */
+/* Edit mode mein current assignee — pehle id se, warna naam se match */
+function findInitialAssignee(employees, editing) {
+  if (!editing) return '';
+  const byId = employees.find(e => e.id === Number(editing.assignedTo));
+  if (byId) return String(byId.id);
+  const byName = employees.find(e => norm(e.name) === norm(editing.assignedStaff));
+  return byName ? String(byName.id) : '';
+}
+
+function ItemModal({ open, freq, areas = [], employees = [], employeesLoading = false, editing = null, onClose, onSave }) {
+  const isEdit = !!editing;
+  const areaOptions = buildAreaOptions(freq, areas);
+
+  const [areaId, setAreaId] = useState('');
   const [label, setLabel] = useState('');
-  const [assignedStaff, setAssignedStaff] = useState(ALL_STAFF[0] || '');
+  const [assignedTo, setAssignedTo] = useState('');   // employee id (string)
   const [dueDay, setDueDay] = useState('Friday');
   const [evidenceAllowed, setEvidenceAllowed] = useState(true);
-  const [verificationRequired, setVerificationRequired] = useState(false);
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState(false);
 
   React.useEffect(() => {
     if (!open) return;
-    setAreaId(areaOptions[0]?.id || '');
-    setLabel('');
-    setAssignedStaff(ALL_STAFF[0] || '');
-    setDueDay('Friday');
-    setEvidenceAllowed(true);
-    setVerificationRequired(false);
+    setAreaId(findInitialAreaId(freq, areaOptions, editing));
+    setLabel(editing?.label || '');
+    setAssignedTo(findInitialAssignee(employees, editing));
+    setDueDay(editing?.dueDay || 'Friday');
+    setEvidenceAllowed(editing ? editing.evidenceAllowed !== false : true);
     setErr('');
     setSaving(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, freq]);
+  }, [open, freq, editing]);
+
+  /* Employees modal khulne ke baad load hon to edit wala assignee set karo */
+  React.useEffect(() => {
+    if (open && editing && !assignedTo && employees.length) {
+      setAssignedTo(findInitialAssignee(employees, editing));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees]);
 
   if (!open) return null;
 
@@ -60,17 +95,27 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
     if (!text) { setErr('Please enter the task.'); return; }
     if (text.length > TASK_LABEL_MAX_LENGTH) { setErr(`Please keep the task under ${TASK_LABEL_MAX_LENGTH} characters.`); return; }
     if (!chosenArea?.backendId) { setErr('Please select an area.'); return; }
+    const assignee = employees.find(e => String(e.id) === String(assignedTo));
+    if (!assignee) { setErr('Please select an employee to assign.'); return; }
 
     const payload = {
+      assignedTo: assignee.id,
+      assignedStaff: assignee.name,
       areaId: chosenArea.backendId,
       area: freq === 'weekly' ? 'weekly' : chosenArea.id,
       areaLabel: freq === 'weekly' ? 'Weekly Review' : chosenArea.label,
       dashArea: chosenArea.dashArea,
-      label: text, assignedStaff, evidenceAllowed, verificationRequired,
+      label: text, evidenceAllowed,
       ...(freq === 'weekly' ? { dueDay } : {}),
     };
     setSaving(true);
-    try { await onSave(payload); } finally { setSaving(false); }
+    try {
+      await onSave(payload);
+    } catch (e) {
+      setErr(e?.message || 'Could not save the task.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -78,8 +123,13 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
       <div className="modal modal-md">
         <div className="modal-header">
           <div>
-            <div className="modal-title"><i className="fa-solid fa-plus" style={{ marginRight: 8 }}></i>Add New Checklist Item</div>
-            <div className="modal-sub">Added next to the existing checklist — nothing already there is changed or removed.</div>
+            <div className="modal-title">
+              <i className={`fa-solid ${isEdit ? 'fa-pen' : 'fa-plus'}`} style={{ marginRight: 8 }}></i>
+              {isEdit ? 'Edit Checklist Item' : 'Add New Checklist Item'}
+            </div>
+            <div className="modal-sub">
+              {isEdit ? 'Changes apply to this task from now on.' : 'Added next to the existing checklist — nothing already there is changed or removed.'}
+            </div>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
         </div>
@@ -98,15 +148,23 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
           <div className="cmp-filter-grid" style={{ marginBottom: 6 }}>
             <label className="form-group cmp-field">
               <span className="form-label">Assigned To</span>
-              <select className="form-input" value={assignedStaff} onChange={e => setAssignedStaff(e.target.value)}>
-                {ALL_STAFF.map(s => <option key={s} value={s}>{s}</option>)}
+              <select
+                className="form-input"
+                value={assignedTo}
+                onChange={e => setAssignedTo(e.target.value)}
+                disabled={employeesLoading}
+              >
+                <option value="">
+                  {employeesLoading ? 'Loading employees…' : employees.length ? 'Select employee' : 'No employees found'}
+                </option>
+                {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
               </select>
             </label>
             {freq === 'weekly' && (
               <label className="form-group cmp-field">
                 <span className="form-label">Due Day</span>
                 <select className="form-input" value={dueDay} onChange={e => setDueDay(e.target.value)}>
-                  {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => <option key={d} value={d}>{d}</option>)}
+                  {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </label>
             )}
@@ -114,17 +172,14 @@ function AddItemModal({ open, freq, areas = [], onClose, onSave }) {
               <input type="checkbox" checked={evidenceAllowed} onChange={e => setEvidenceAllowed(e.target.checked)} />
               <span className="form-label" style={{ margin: 0 }}>Evidence (Photo) Allowed</span>
             </label>
-            <label className="form-group cmp-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 22 }}>
-              <input type="checkbox" checked={verificationRequired} onChange={e => setVerificationRequired(e.target.checked)} />
-              <span className="form-label" style={{ margin: 0 }}>Needs Verification (Safety)</span>
-            </label>
           </div>
           {err && <div className="cmp-field-err"><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {err}</div>}
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> {saving ? 'Saving…' : 'Add Item'}
+            <i className={`fa-solid ${isEdit ? 'fa-floppy-disk' : 'fa-plus'}`} aria-hidden="true"></i>{' '}
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Item'}
           </button>
         </div>
       </div>
@@ -147,15 +202,15 @@ function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
 
   const submit = async () => {
     const text = name.trim();
-    if (!text) { setErr('Please enter the area name.'); return; }
+    if (!text) { setErr('Please enter the category name.'); return; }
     if (existingNames.some(n => n.trim().toLowerCase() === text.toLowerCase())) {
-      setErr('This area already exists.'); return;
+      setErr('This category already exists.'); return;
     }
     setSaving(true);
     try {
       await onSave(text);
     } catch (e) {
-      setErr(e.message || 'Could not save the area.');
+      setErr(e.message || 'Could not save the category.');
       setSaving(false);
     }
   };
@@ -165,14 +220,14 @@ function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
       <div className="modal modal-md">
         <div className="modal-header">
           <div>
-            <div className="modal-title"><i className="fa-solid fa-plus" style={{ marginRight: 8 }}></i>Add New Area</div>
-            <div className="modal-sub">The new area will appear in the Area list when you add a checklist item.</div>
+            <div className="modal-title"><i className="fa-solid fa-plus" style={{ marginRight: 8 }}></i>Add New Category</div>
+            <div className="modal-sub">The new category will appear in the Category list when you add a checklist item.</div>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
         </div>
         <div className="modal-body">
           <label className="form-group">
-            <span className="form-label">Area Name</span>
+            <span className="form-label">Category Name</span>
             <input
               className="form-input"
               maxLength={AREA_NAME_MAX}
@@ -189,7 +244,7 @@ function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
         <div className="modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> {saving ? 'Saving…' : 'Add Area'}
+            <i className="fa-solid fa-plus" aria-hidden="true"></i> {saving ? 'Saving…' : 'Add Category'}
           </button>
         </div>
       </div>
@@ -197,9 +252,12 @@ function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
   );
 }
 
+const iconBtn = { height: 32, width: 32, padding: 0, justifyContent: 'center' };
+
 /* ═══════════════════════════════════════════════════════════════════
-   COMPLIANCE SETUP — tasks ab backend (task-list) se aate hain.
-   Add / update / delete task-action se hota hai.
+   COMPLIANCE SETUP — tasks backend (task-list) se aate hain.
+   Add / edit / delete task-action se hota hai. Ab har task (built-in
+   ho ya custom) edit aur delete ho sakta hai.
    ═══════════════════════════════════════════════════════════════════ */
 export default function ComplianceSetup({
   toast,
@@ -211,7 +269,22 @@ export default function ComplianceSetup({
   const [freq, setFreq] = useState('daily');
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState(null);   // jis task ko edit kar rahe hain
   const [areaOpen, setAreaOpen] = useState(false);
+  const [confirm, setConfirm] = useState(null);
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+
+  /* Branch ke employees — Assigned To dropdown ke liye (ek dafa load) */
+  React.useEffect(() => {
+    let alive = true;
+    getBranchEmployees()
+      .then(list => { if (alive) setEmployees(list); })
+      .catch(e => { if (alive) toast(e.message || 'Could not load employees.', 'error'); })
+      .finally(() => { if (alive) setEmployeesLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* task-list ke rows ko daily / weekly / monthly mein baantna */
   const all = useMemo(() => {
@@ -229,13 +302,14 @@ export default function ComplianceSetup({
     await addArea(name);        // fail ho to modal mein error dikhega
     await onAreasChange();      // dropdown ke liye list dobara lo
     setAreaOpen(false);
-    toast(`Area "${name}" added.`, 'success');
+    toast(`Category "${name}" added.`, 'success');
   };
 
   const filtered = useMemo(() => {
     const list = all?.[freq] || [];
-    return search
-      ? list.filter(t => t.label.toLowerCase().includes(search.toLowerCase()) || t.areaLabel.toLowerCase().includes(search.toLowerCase()))
+    const q = search.toLowerCase();
+    return q
+      ? list.filter(t => t.label.toLowerCase().includes(q) || t.areaLabel.toLowerCase().includes(q))
       : list;
   }, [all, freq, search]);
 
@@ -252,12 +326,17 @@ export default function ComplianceSetup({
     try {
       await taskAction('update', { ...t, ...p });
       await onTasksChange();
-    } catch (e) { toast(e.message || 'Update failed.', 'error'); }
+      return true;
+    } catch (e) {
+      toast(e.message || 'Update failed.', 'error');
+      return false;
+    }
   };
 
   const toggleActive = async (t) => {
-    await patch(t, { active: !t.active });
-    toast(`"${t.label}" ${t.active ? 'disabled' : 'enabled'}.`, 'success');
+    if (await patch(t, { active: !t.active })) {
+      toast(`"${t.label}" ${t.active ? 'disabled' : 'enabled'}.`, 'success');
+    }
   };
 
   const addItem = async (payload) => {
@@ -269,6 +348,14 @@ export default function ComplianceSetup({
     } catch (e) { toast(e.message || 'Item not saved', 'error'); }
   };
 
+  /* Edit — error modal ke andar dikhe, is liye yahan throw hone dete hain */
+  const saveEdit = async (payload) => {
+    await taskAction('update', { ...editing, ...payload });
+    setEditing(null);
+    await onTasksChange();
+    toast('Checklist item updated.', 'success');
+  };
+
   const removeItem = async (t) => {
     try {
       await taskAction('delete', t);
@@ -276,6 +363,15 @@ export default function ComplianceSetup({
       toast(`"${t.label}" removed.`, 'success');
     } catch (e) { toast(e.message || 'Delete not allowed', 'error'); }
   };
+
+  const askRemove = (t) => setConfirm({
+    title: 'Delete this task?',
+    message: `<b>${esc(t.label)}</b> will be removed from <b>${esc(t.areaLabel)}</b>.`,
+    hint: t.custom ? '' : 'This is a built-in task. If you only want to pause it, turn it off with the Active switch instead.',
+    confirmLabel: 'Delete',
+    icon: 'fa-trash',
+    onConfirm: () => removeItem(t),
+  });
 
   return (
     <>
@@ -292,7 +388,7 @@ export default function ComplianceSetup({
           </div>
           <div className="cmp-intro-item">
             <div className="cmp-intro-item-h"><i className="fa-solid fa-shield-halved" aria-hidden="true"></i> What matters most</div>
-            <p>Safety tasks are the most important ones. They need a short note before they can be marked Completed, and some of them also need the Principal to verify them. Below, you can turn any task on or off, choose who is responsible for it, and decide if it needs a photo or verification.</p>
+            <p>Safety tasks are the most important ones. They need a short note before they can be marked Completed, and some of them also need the Principal to verify them. Below, you can turn any task on or off, edit or delete it, and decide if it needs a photo or verification.</p>
           </div>
         </div>
       </div>
@@ -317,7 +413,7 @@ export default function ComplianceSetup({
               style={{ height: 38, flex: 1, justifyContent: 'center' }}
               onClick={() => setAreaOpen(true)}
             >
-              <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Area
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Add New Category
             </button>
             <button
               type="button"
@@ -331,13 +427,15 @@ export default function ComplianceSetup({
         </Field>
       </FilterBar>
 
-      <AddItemModal open={addOpen} freq={freq} areas={areas} onClose={() => setAddOpen(false)} onSave={addItem} />
+      <ItemModal open={addOpen} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} onClose={() => setAddOpen(false)} onSave={addItem} />
+      <ItemModal open={!!editing} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} editing={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
       <AddAreaModal
         open={areaOpen}
         existingNames={areas.map(a => a.name)}
         onClose={() => setAreaOpen(false)}
         onSave={saveArea}
       />
+      <ConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
 
       {!all ? (
         <div className="cmp-card">Loading checklist…</div>
@@ -347,35 +445,41 @@ export default function ComplianceSetup({
         <div key={g.area} className="cmp-card">
           <div className="cmp-card-title" style={{ marginBottom: 10 }}>{g.areaLabel}</div>
           <div className="cmp-table-wrap">
-            <table className="cmp-table">
+            <table className="cmp-table" style={{ tableLayout: 'fixed' }}>
+              <colgroup>
+                <col />
+                <col style={{ width: 150 }} />
+                {freq === 'weekly' && <col style={{ width: 140 }} />}
+                <col style={{ width: 150 }} />
+                <col style={{ width: 90 }} />
+                <col style={{ width: 96 }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Task</th><th>Assigned To</th>
                   {freq === 'weekly' && <th>Due Day</th>}
-                  <th>Evidence Required</th><th>Verification Required</th><th>Active</th><th></th>
+                  <th>Evidence Required</th><th>Active</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {g.items.map(t => (
-                  <tr key={t.id} style={{ opacity: t.active ? 1 : .5 }}>
-                    <td>
+                  <tr key={t.id}>
+                    <td style={{ opacity: t.active ? 1 : .5 }}>
                       {t.label}
                       {t.custom && <span className="cmp-badge cmp-badge--purple" style={{ marginLeft: 8 }}>Custom</span>}
                       {t.restrictedToPermission && <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Visible based on your permissions</div>}
                     </td>
-                    <td>{t.assignedStaff || '—'}</td>
+                    <td style={{ opacity: t.active ? 1 : .5 }}>{t.assignedStaff || '—'}</td>
                     {freq === 'weekly' && (
                       <td>
                         <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.dueDay} onChange={e => patch(t, { dueDay: e.target.value })}>
-                          {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => <option key={d} value={d}>{d}</option>)}
+                          {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
                       </td>
                     )}
                     <td>
                       <input type="checkbox" checked={t.evidenceAllowed} disabled title="Backend support coming soon" />
-                    </td>
-                    <td>
-                      <input type="checkbox" checked={t.verificationRequired} onChange={e => patch(t, { verificationRequired: e.target.checked })} />
                     </td>
                     <td>
                       <label className="cmp-switch">
@@ -384,11 +488,14 @@ export default function ComplianceSetup({
                       </label>
                     </td>
                     <td>
-                      {t.custom && (
-                        <button type="button" className="btn btn-secondary" style={{ height: 32, width: 32, padding: 0 }} title="Remove this item" onClick={() => removeItem(t)}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <button type="button" className="btn btn-secondary" style={iconBtn} title="Edit this task" aria-label={`Edit ${t.label}`} onClick={() => setEditing(t)}>
+                          <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                        </button>
+                        <button type="button" className="btn btn-secondary" style={{ ...iconBtn, color: '#DC2626' }} title="Delete this task" aria-label={`Delete ${t.label}`} onClick={() => askRemove(t)}>
                           <i className="fa-solid fa-trash" aria-hidden="true"></i>
                         </button>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))}

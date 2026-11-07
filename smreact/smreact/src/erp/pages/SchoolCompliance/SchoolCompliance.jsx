@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
-import Overview from './Overview';
+// import Overview from './Overview';   // Overview tab abhi hidden hai
 import DailyChecks from './DailyChecks';
 import WeeklyChecks from './WeeklyChecks';
 import MonthlyReview from './MonthlyReview';
@@ -27,7 +27,7 @@ import { DAILY_AREA_OPTIONS } from '../../mock/compliance';
 
 const TABS = [
   { id: 'setup',    icon: 'fa-sliders',           label: 'Compliance Setup' },
-  { id: 'overview', icon: 'fa-gauge-high',       label: 'Overview' },
+  // { id: 'overview', icon: 'fa-gauge-high',       label: 'Overview' },   // abhi hidden — wapas lana ho to uncomment karein
   { id: 'daily',    icon: 'fa-list-check',        label: 'Daily Checks' },
   { id: 'weekly',   icon: 'fa-calendar-week',     label: 'Weekly Checks' },
   { id: 'monthly',  icon: 'fa-calendar-days',     label: 'Monthly Review' },
@@ -92,7 +92,7 @@ useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-
         ))}
       </div>
 
-      {tab === 'overview' && <Overview toast={toast} onNavigate={setTab} />}
+      {/* {tab === 'overview' && <Overview toast={toast} onNavigate={setTab} />} */}
       {tab === 'daily'    && <DailyChecks toast={toast} />}
       {tab === 'weekly'   && <WeeklyChecks toast={toast} />}
       {tab === 'monthly'  && <MonthlyReview toast={toast} />}

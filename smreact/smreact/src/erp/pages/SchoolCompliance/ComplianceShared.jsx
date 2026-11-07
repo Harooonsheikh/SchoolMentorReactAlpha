@@ -219,13 +219,18 @@ export function Field({ label, children }) {
    Problems & Follow-ups' own standalone "Report a Problem" button
    (opened with no pre-fill). Uses the same global .modal-* chrome +
    .form-group/.form-label/.form-input as the rest of the ERP. ─── */
-export function ProblemModal({ open, initial, categories, staffOptions, onClose, onSave }) {
+/* `employees` ([{ id, name }]) diya ho to Assign To dropdown branch ke
+   asli employees dikhata hai aur save par employee id (`assignTo`) bhejta
+   hai; warna purani `staffOptions` (naam) list use hoti hai. */
+export function ProblemModal({ open, initial, categories, staffOptions, employees, employeesLoading = false, onClose, onSave }) {
+  const useEmployees = Array.isArray(employees);
+  const defaultAssignee = useEmployees ? '' : (staffOptions?.[0] || '');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState(categories?.[0] || 'Facilities');
   const [location, setLocation] = useState('');
   const [priority, setPriority] = useState('Medium');
-  const [assignedTo, setAssignedTo] = useState(staffOptions?.[0] || '');
+  const [assignedTo, setAssignedTo] = useState(defaultAssignee);
   const [dueDate, setDueDate] = useState('');
   const [photo, setPhoto] = useState(null);
   const [err, setErr] = useState('');
@@ -237,7 +242,7 @@ export function ProblemModal({ open, initial, categories, staffOptions, onClose,
     setCategory(initial?.category || categories?.[0] || 'Facilities');
     setLocation(initial?.location || '');
     setPriority(initial?.priority || 'Medium');
-    setAssignedTo(staffOptions?.[0] || '');
+    setAssignedTo(defaultAssignee);
     setDueDate('');
     setPhoto(initial?.photo || null);
     setErr('');
@@ -250,7 +255,14 @@ export function ProblemModal({ open, initial, categories, staffOptions, onClose,
     if (!title.trim()) { setErr('Please enter a problem title.'); return; }
     if (!description.trim()) { setErr('Please describe the problem.'); return; }
     if (!dueDate) { setErr('Please choose a due date.'); return; }
-    onSave({ title: title.trim(), description: description.trim(), category, location: location.trim(), priority, assignedTo, dueDate, photo });
+    const base = { title: title.trim(), description: description.trim(), category, location: location.trim(), priority, dueDate, photo };
+    if (useEmployees) {
+      const assignee = employees.find(e => String(e.id) === String(assignedTo));
+      if (!assignee) { setErr('Please select an employee to assign.'); return; }
+      onSave({ ...base, assignTo: assignee.id, assignedTo: assignee.name });
+      return;
+    }
+    onSave({ ...base, assignedTo });
   };
 
   return (
@@ -291,9 +303,18 @@ export function ProblemModal({ open, initial, categories, staffOptions, onClose,
             </label>
             <label className="form-group cmp-field">
               <span className="form-label">Assign To</span>
-              <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-                {(staffOptions || []).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              {useEmployees ? (
+                <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)} disabled={employeesLoading}>
+                  <option value="">
+                    {employeesLoading ? 'Loading employees…' : employees.length ? 'Select employee' : 'No employees found'}
+                  </option>
+                  {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                </select>
+              ) : (
+                <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
+                  {(staffOptions || []).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
             </label>
             <label className="form-group cmp-field">
               <span className="form-label">Due Date</span>

@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import useAsync from '../../hooks/useAsync';
 import * as complianceApi from '../../services/complianceApi';
-import { FilterBar, Field, ProblemModal, ProblemStatusBadge, PriorityBadge, EmptyState, initials } from './ComplianceShared';
-import { PROBLEM_CATEGORIES, PROBLEM_PRIORITIES, ROLE_STAFF } from '../../mock/compliance';
+import { FilterBar, Field, ProblemModal, ProblemStatusBadge, PriorityBadge, EmptyState, initials, ConfirmDialog } from './ComplianceShared';
+import { PROBLEM_CATEGORIES, PROBLEM_PRIORITIES } from '../../mock/compliance';
 
-const ALL_STAFF = [...new Set(Object.values(ROLE_STAFF).flat())];
 const fetchProblems = () => complianceApi.getProblems();
+
+/* HTML escape — ConfirmDialog message dangerouslySetInnerHTML use karta hai */
+const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* ═══════════════════════════════════════════════════════════════════
    PROBLEMS & FOLLOW-UPS — full lifecycle: Open → Assigned →
@@ -24,6 +26,20 @@ export default function Problems({ toast }) {
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [confirm, setConfirm] = useState(null);
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+
+  /* Branch ke employees — Report a Problem ke Assign To dropdown ke liye */
+  React.useEffect(() => {
+    let alive = true;
+    complianceApi.getBranchEmployees()
+      .then(list => { if (alive) setEmployees(list); })
+      .catch(e => { if (alive) toast(e.message || 'Could not load employees.', 'error'); })
+      .finally(() => { if (alive) setEmployeesLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => problems.filter(p => {
     if (category && p.category !== category) return false;
@@ -58,6 +74,25 @@ export default function Problems({ toast }) {
     toast(e.message || 'Problem report nahi ho saki.', 'error');
   }
 };
+
+  const removeProblem = async (p) => {
+    try {
+      await complianceApi.deleteProblem(p);
+      if (expanded === p.id) setExpanded(null);
+      await refetch();
+      toast(`"${p.title}" deleted.`, 'success');
+    } catch (e) {
+      toast(e.message || 'Could not delete the problem.', 'error');
+    }
+  };
+
+  const askRemove = (p) => setConfirm({
+    title: 'Delete this problem?',
+    message: `<b>${esc(p.title)}</b> will be permanently removed from Problems &amp; Follow-ups.`,
+    confirmLabel: 'Delete',
+    icon: 'fa-trash',
+    onConfirm: () => removeProblem(p),
+  });
 
   return (
     <>
@@ -97,7 +132,7 @@ export default function Problems({ toast }) {
       ) : (
         <div className="cmp-table-wrap">
           <table className="cmp-table">
-            <thead><tr><th></th><th>Problem</th><th>Category</th><th>Priority</th><th>Reported By</th><th>Assigned To</th><th>Due Date</th><th>Status</th></tr></thead>
+            <thead><tr><th></th><th>Problem</th><th>Category</th><th>Priority</th><th>Reported By</th><th>Assigned To</th><th>Due Date</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
             <tbody>
               {filtered.map(p => (
                 <React.Fragment key={p.id}>
@@ -114,10 +149,22 @@ export default function Problems({ toast }) {
 </td>
                     <td>{p.dueDate}</td>
                     <td><ProblemStatusBadge status={p.status} /></td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ height: 32, width: 32, padding: 0, justifyContent: 'center', color: '#DC2626' }}
+                        title="Delete this problem"
+                        aria-label={`Delete ${p.title}`}
+                        onClick={e => { e.stopPropagation(); askRemove(p); }}
+                      >
+                        <i className="fa-solid fa-trash" aria-hidden="true"></i>
+                      </button>
+                    </td>
                   </tr>
                   {expanded === p.id && (
                     <tr>
-                      <td colSpan={8} style={{ background: 'var(--bg-muted)' }}>
+                      <td colSpan={9} style={{ background: 'var(--bg-muted)' }}>
                         <div style={{ padding: '12px 4px' }}>
                           <div style={{ marginBottom: 10 }}><b>Description:</b> {p.description}</div>
                           {p.resolutionRemarks && <div style={{ marginBottom: 10 }}><b>Resolution Remarks:</b> {p.resolutionRemarks}</div>}
@@ -146,9 +193,11 @@ export default function Problems({ toast }) {
 
       <ProblemModal
         open={reportOpen} initial={null}
-        categories={PROBLEM_CATEGORIES} staffOptions={ALL_STAFF}
+        categories={PROBLEM_CATEGORIES}
+        employees={employees} employeesLoading={employeesLoading}
         onClose={() => setReportOpen(false)} onSave={saveNewProblem}
       />
+      <ConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
     </>
   );
 }
