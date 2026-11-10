@@ -2781,6 +2781,8 @@ function FamilyTreeChallansList({ toast }) {
         defaultMonth={appliedMonth}
         defaultYear={appliedYear}
         genSet={genSet}
+        /* Multi-month challan se covered bachay — rec mila magar genSet me nahi. */
+        coverSet={new Set(Object.keys(recMap).filter(k => !(genSet && genSet.has(k))))}
         keyOf={keyOf}
           onClose={() => setBulkGen(null)}
         onGenerated={handleBulkGenerated}
@@ -4550,6 +4552,15 @@ function FeeChallansList({ toast }) {
                             if (!hasHeadPrev) {
                               fig.dues = byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0);
                             }
+                            else {
+                              /* pendingorAdv aksar adhoora/stale → fresh challan (koi wasooli nahi)
+                                 par previous dues running-ledger (authority) se lo. */
+                              const totRecv = rows.reduce((a, r) => a + (Number(r.receivedAmount) || 0), 0);
+                              if (totRecv === 0) {
+                                const runningPrev = byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0);
+                                if (runningPrev > 0) fig.dues = runningPrev;
+                              }
+                            }
                             /* IS challan ka overpay (overAdv) pehle PRIOR dues ko kam kare —
                                warna ek taraf 2,500 Total Dues aur doosri taraf −500 Advance
                                dikhta jabke net sirf 2,000 baqaya hai. Jo overpay bache wahi
@@ -4784,6 +4795,7 @@ function FeeChallansList({ toast }) {
         defaultYear={appliedYear}
         discountMap={discountMap}
         genSet={genSet}
+        coverSet={new Set(Object.keys(coverMap))}
         keyOf={keyOf}
         onClose={() => setBulkGen(null)}
           onGenerated={handleBulkGenerated}
@@ -4857,6 +4869,9 @@ function BulkGenerateModal({
      sirf local state par bharosa karna galat discount bhej deta tha. */
   fetchDiscounts = null,
   genSet, keyOf, onClose, onGenerated, toast,
+  /* Pichhle mahine se shuru hue multi-month challan (Sep–Nov) me covered students ki keys.
+     BULK me inka naya challan NAHI banta — sirf row ka Regenerate button (singleMode) banaye. */
+  coverSet = null,
   familyMode = false, singleMode = false,
   /* Month Closing ON → active period (defaultMonth) se aage ke mahine na dikhein. */
   monthClosing = false,
@@ -4986,11 +5001,26 @@ function BulkGenerateModal({
 
     /* Filter out already-generated for the picked month */
     const monthIdx = FEE_MONTHS.indexOf(month);
-    const targets = students.filter(s => !(genSet && genSet.has(keyOf(classMeta.key, s.reg))));
-    const skipCount = total - targets.length;
+    const isGen = (s) => !!(genSet && genSet.has(keyOf(classMeta.key, s.reg)));
+    /* coverSet list wale mahine (defaultMonth) ka hai — modal me doosra mahina chuna ho to
+       lagu nahi. Single (Regenerate / individual) generate par kabhi skip nahi. */
+    const isCovered = (s) => !singleMode && month === defaultMonth
+      && !!(coverSet && coverSet.has(keyOf(classMeta.key, s.reg)));
+    const targets = students.filter(s => !isGen(s) && !isCovered(s));
+    const coverSkip = students.filter(s => !isGen(s) && isCovered(s)).length;
+    const skipCount = total - targets.length - coverSkip;
+    const coverNote = coverSkip > 0
+      ? `${coverSkip} skipped — covered by multi-month challan (use Regenerate)`
+      : '';
 
     if (targets.length === 0) {
-      toast(`All ${total} challan${total === 1 ? '' : 's'} are already generated for ${month}`, 'info');
+      if (coverSkip > 0) {
+        toast(skipCount > 0
+          ? `${skipCount} already generated, ${coverNote}`
+          : `No challan generated — ${coverNote}`, 'info');
+      } else {
+        toast(`All ${total} challan${total === 1 ? '' : 's'} are already generated for ${month}`, 'info');
+      }
       onClose();
       return;
     }
@@ -5048,6 +5078,7 @@ function BulkGenerateModal({
           if (already > 0) parts.push(`already generated ${already}`);
           if (failN > 0) parts.push(`failed ${failN}`);
           if (skipCount > 0 && already === 0) parts.push(`${skipCount} skipped — already existed`);
+          if (coverNote) parts.push(coverNote);
           const msg = parts.length
             ? parts.join(', ')
             : 'No challans generated';
