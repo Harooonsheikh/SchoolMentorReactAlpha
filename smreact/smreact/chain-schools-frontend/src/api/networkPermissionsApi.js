@@ -83,8 +83,13 @@ export async function fetchNetworkPermissions(networkId = currentNetworkId()) {
   return remember(networkId, flags)
 }
 
+/* Ye modules har network ke liye live hain — network module flag inhein nahi rokta.
+   (User ki menu permission ab bhi lagti hai.) */
+const ALWAYS_LIVE_NAV = new Set(['academics', 'examination', 'approvals'])
+
 /** Sidebar item dikhana hai? Flags abhi na aaye hon (null) to gated item chhupa. */
 export function isNavItemAllowed(key, flags) {
+  if (ALWAYS_LIVE_NAV.has(key)) return true
   const field = NAV_PERMISSION_FIELD[key]
   if (!field) return true
   if (!flags) return false

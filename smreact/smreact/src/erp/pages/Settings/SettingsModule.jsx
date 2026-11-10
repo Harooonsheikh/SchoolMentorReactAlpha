@@ -39,10 +39,10 @@ const SETTINGS_SUBTABS = [
     desc: 'Join school networks and manage your memberships & requests.' },
   { id: 'mobileapp',  label: 'Parents App Settings', icon: 'fa-mobile-screen-button',
     desc: 'Control which features the Parents mobile app shows for this school.' },
-  /* Approvals settings — live on branchID 1 and 15; hidden elsewhere.
-     Still respects the user's Settings → Approvals View permission below. */
+  /* Approvals settings — on every branch; still respects the user's
+     Settings → Approvals View permission below. */
   { id: 'approvals',  label: 'Approvals',            icon: 'fa-square-check',
-    desc: 'Require Super Admin sign-off before certain sensitive changes take effect.', approvalBranches: ['1', '15'] },
+    desc: 'Require Super Admin sign-off before certain sensitive changes take effect.' },
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
@@ -55,12 +55,7 @@ export default function SettingsModule({ toast = () => {} }) {
   /* Layer 1 — only show sub-tabs the user can View. Tab labels map 1:1
      to the `can()` submenu strings (Academic Sessions, Signature Management,
      Networks, Parents App Settings, Approvals). */
-  /* Approvals tab only on allow-listed branches (1 + 15). */
-  const branchId = String(sessionStorage.getItem('branchID') || '');
-  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => {
-    if (t.approvalBranches && !t.approvalBranches.includes(branchId)) return false;
-    return can('Settings', t.label, 'View');
-  });
+  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => can('Settings', t.label, 'View'));
 
   /* Snap to first visible tab if the active one is now hidden.
      When head office sets approvalType=disable, Approvals tab stays openable

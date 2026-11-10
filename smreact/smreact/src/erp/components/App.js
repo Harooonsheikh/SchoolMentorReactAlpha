@@ -41,15 +41,13 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
    Permissions → School SOPs) aur user permission se chalta hai. */
 /* Inventory ab branch-1-only nahi raha — har branch par live hai. Normal module
    activation (ALWAYS_ON_MODULES, moduleConfig) + user permission se chalta hai. */
-const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'appraisal', 'trainings', 'etube', 'notifications', 'approvals']);
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'appraisal', 'trainings', 'etube', 'notifications']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
    Branch par khulne ke baad bhi module wahi user permission maanta hai jo
    branch 1 par — sirf branch ki rukawat hatti hai, permission ki nahi. */
-const EXTRA_NAV_BRANCHES = {
-  approvals: ['15'], /* Approvals also live on branch 15 (branch 1 already via BRANCH1_ONLY_NAV) */
-};
+const EXTRA_NAV_BRANCHES = {};
 
 /* Modules that are live ONLY on the listed branchIDs and hidden on every other
    branch. Unlike BRANCH1_ONLY_NAV, the user's permission still applies on the

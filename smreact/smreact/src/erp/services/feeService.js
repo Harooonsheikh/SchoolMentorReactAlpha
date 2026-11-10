@@ -1528,8 +1528,15 @@ export function daysLate(dueDate, receivingDate) {
   return Math.max(0, Math.floor((rec - due) / dayMs));
 }
 
-/* Is challan par is receiving date tak banti kul fine. */
+/* false → frontend fine calculation band (computeFine hamesha 0). */
+const FINE_CALC_ENABLED = false;
+
+/* Is challan par is receiving date tak banti kul fine.
+   DISABLED: receive ke waqt frontend fine calculate nahi karta. Fine sirf API ki
+   Late Fine rows se aati hai (billed/received wahan se). Purana calculation wapas
+   chahiye to ye guard hata dein. */
 export function computeFine({ dueDate, receivingDate, settings } = {}) {
+  if (!FINE_CALC_ENABLED) return 0;
   if (!settings?.fineEnabled) return 0;
   const amt = Number(settings.fineAmt) || 0;
   if (amt <= 0) return 0;
