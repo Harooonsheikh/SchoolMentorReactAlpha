@@ -106,7 +106,7 @@ export default function LogDetailsModal({ log, onClose }) {
             <span className="al-detail-val">{log.details}</span>
           </div>
 
-          {/* ─── Old / New value ─── */}
+          {/* ─── Old / New value ─── (hidden for now, user request)
           <div className="al-detail-row">
             <div className="al-detail-block before">
               <div className="al-detail-lbl">Old Value</div>
@@ -117,6 +117,7 @@ export default function LogDetailsModal({ log, onClose }) {
               <div className="al-detail-val">{log.newValue || '—'}</div>
             </div>
           </div>
+          */}
 
           {/* ─── Forensics placeholders (IP + Device) ─── */}
           <div className="al-detail-grid" style={{ marginBottom: 0 }}>
