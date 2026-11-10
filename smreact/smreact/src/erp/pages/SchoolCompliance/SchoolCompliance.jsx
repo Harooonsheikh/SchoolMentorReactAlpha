@@ -8,7 +8,6 @@ import Problems from './Problems';
 import ComplianceReports from './ComplianceReports';
 import ComplianceSetup from './ComplianceSetup';
 import { ensureAreas, ensureTasks, getAreas, getTasks, SEED_AREA_NAMES } from '../../services/complianceApi';
-import { DAILY_AREA_OPTIONS } from '../../mock/compliance';
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -17,12 +16,17 @@ import { DAILY_AREA_OPTIONS } from '../../mock/compliance';
    7 sections (Overview / Daily Checks / Weekly Checks / Monthly
    Review / Problems & Follow-ups / Reports / Compliance Setup) behind
    one L1 tab bar, same pattern as every other multi-section ERP
-   module (Fee.jsx's FEE_TABS / .fee-subtabs). Everything below reads
-   from src/services/complianceService.js, which generates real,
-   deterministic checklist instances from the templates in
-   src/mock/compliance.js and genuinely persists status updates for
-   the session (in-memory — this is a frontend prototype, nothing
-   survives a full page reload, and no page pretends otherwise).
+   module (Fee.jsx's FEE_TABS / .fee-subtabs).
+
+   Compliance Setup, Daily / Weekly / Monthly Checks aur Problems &
+   Follow-ups — sab asli backend se chalte hain
+   (src/erp/services/complianceApi.js -> AHM_Branch_Compliance_Area).
+   Areas + task list ek dafa yahan load hoti hai aur chaaron tabs ko
+   props se jati hai, is liye Setup mein kiya hua add/edit foran check
+   tabs mein bhi dikhta hai (aur ulta bhi).
+
+   Reports tab filhal src/erp/services/complianceService.js (in-memory
+   mock) par hai — us ka apna API wiring abhi baqi hai.
    ═══════════════════════════════════════════════════════════════════ */
 
 const TABS = [
@@ -59,6 +63,10 @@ const load = () => {
 
 useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+/* Task list dobara lana — Setup aur teeno check tabs isi ko use karte hain */
+const refreshTasks = () => getTasks().then(setTasks);
+const refreshAreas = () => getAreas().then(setAreas);
+
 
   return (
     <>
@@ -93,9 +101,12 @@ useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-
       </div>
 
       {/* {tab === 'overview' && <Overview toast={toast} onNavigate={setTab} />} */}
-      {tab === 'daily'    && <DailyChecks toast={toast} />}
-      {tab === 'weekly'   && <WeeklyChecks toast={toast} />}
-      {tab === 'monthly'  && <MonthlyReview toast={toast} />}
+      {/* Daily / Weekly / Monthly — Setup wala hi backend task list
+          (areas + tasks) in teeno ko jata hai, is liye Setup mein
+          banaya/badla hua task foran yahan bhi nazar aata hai. */}
+      {tab === 'daily'    && <DailyChecks   toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} />}
+      {tab === 'weekly'   && <WeeklyChecks  toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} />}
+      {tab === 'monthly'  && <MonthlyReview toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} />}
       {tab === 'problems' && <Problems toast={toast} />}
       {tab === 'reports'  && <ComplianceReports toast={toast} />}
      {tab === 'setup' && (
@@ -103,8 +114,8 @@ useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-
     toast={toast}
     areas={areas}
     tasks={tasks}
-    onAreasChange={() => getAreas().then(setAreas)}
-    onTasksChange={() => getTasks().then(setTasks)}
+    onAreasChange={refreshAreas}
+    onTasksChange={refreshTasks}
   />
 )}
     </>
@@ -208,16 +219,37 @@ const CMP_CSS = `
 .cmp-chip--safety { background: rgba(var(--brand-primary-rgb),.12); color: var(--brand-solid,#1E40AF); }
 .cmp-chip--warn { background: rgba(217,119,6,.14); color: #B45309; }
 
-.cmp-seg { display: inline-flex; border: 1.5px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden; margin-bottom: 12px; }
+.cmp-seg { display: inline-flex; border: 1.5px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden; margin-bottom: 14px; }
 .cmp-seg-4 { width: 100%; }
 .cmp-seg-btn { flex: 1; padding: 8px 10px; font: 600 11.5px/1 var(--font-body); color: var(--text-secondary); background: var(--bg-card); border: none; border-right: 1.5px solid var(--border-light); cursor: pointer; }
 .cmp-seg-btn:last-child { border-right: none; }
 .cmp-seg-btn.active { background: var(--brand-solid, #1E3A8A); color: #fff; }
-.cmp-row-fields { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.cmp-row-fields { display: flex; gap: 16px; align-items: stretch; flex-wrap: wrap; }
+.cmp-row-remark { flex: 1 1 280px; margin-bottom: 0 !important; display: flex; flex-direction: column; }
+.cmp-row-remark .cmp-textarea { flex: 1; }
+
+/* Evidence photo + Save — ek hi column mein, photo ke neeche Save */
+.cmp-row-side { display: flex; flex-direction: column; gap: 8px; width: 176px; flex-shrink: 0; }
+.cmp-row-side .form-label { margin-bottom: 0; }
+.cmp-row-side .cmp-photo, .cmp-row-side .cmp-photo-upload { width: 100%; }
+.cmp-row-side .cmp-photo-upload { flex-direction: row; gap: 6px; justify-content: center; }
+.cmp-row-side .cmp-photo-upload i { font-size: 16px; }
+.cmp-row-side .cmp-photo-preview { width: 100%; height: 86px; }
 .cmp-textarea { width: 100%; min-height: 60px; padding: 8px 12px; border: 1.5px solid var(--border-light); border-radius: var(--radius-md); font: 500 12.5px/1.4 var(--font-body); color: var(--text-primary); background: var(--bg-card); resize: vertical; }
 .cmp-field-err { display: flex; align-items: center; gap: 6px; margin-top: 8px; font: 600 11.5px/1.3 var(--font-body); color: #DC2626; }
 .cmp-verified { display: flex; align-items: center; gap: 6px; margin-top: 10px; font: 700 11.5px/1 var(--font-body); color: #16A34A; }
 .cmp-verify-btn { margin-top: 10px; height: 32px; padding: 0 14px; font-size: 11.5px; }
+
+/* Checklist row ka Save (remark + photo) */
+.cmp-save-btn { height: 36px; width: 100%; justify-content: center; font-size: 12px; }
+.cmp-row-state { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 14px; font: 600 10.5px/1.2 var(--font-body); color: var(--text-muted); text-align: center; }
+.cmp-row-state.unsaved { color: #B45309; }
+
+/* Save shuda photo — click par poori khulti hai; load na ho to link */
+.cmp-photo-preview a { display: block; width: 100%; height: 100%; }
+.cmp-photo-failed { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 100%; background: var(--bg-muted); color: var(--brand-solid, #1E40AF); font: 600 10.5px/1.2 var(--font-body); text-decoration: none; text-align: center; padding: 6px; }
+.cmp-photo-failed i { font-size: 15px; }
+.cmp-photo-saved { position: absolute; bottom: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #16A34A; color: #fff; font-size: 8px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 
 .cmp-photo-upload { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px; border: 1.5px dashed var(--border-light); border-radius: var(--radius-md); color: var(--text-muted); font: 600 11.5px/1 var(--font-body); cursor: pointer; }
 .cmp-photo-upload:hover { border-color: var(--brand-primary); color: var(--brand-solid, #1E40AF); }

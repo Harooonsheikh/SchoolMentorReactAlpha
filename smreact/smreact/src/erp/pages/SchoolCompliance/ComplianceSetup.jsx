@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { COMPLIANCE_AREAS, MONTHLY_CATEGORY_OPTIONS, DAILY_AREA_OPTIONS, TASK_LABEL_MAX_LENGTH } from '../../mock/compliance';
 import { FilterBar, Field, EmptyState, ConfirmDialog } from './ComplianceShared';
 import {
-  addArea, taskAction, toTemplate, norm, isDailyArea, WEEKLY_AREA_NAME, getBranchEmployees,
+  addArea, taskAction, toTemplate, norm, areasOfType, WEEKLY_AREA_NAME, getBranchEmployees,
 } from '../../services/complianceApi';
 
 const FREQ_TABS = [
@@ -17,20 +17,50 @@ const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* Area dropdown ke options — Add aur Edit dono isi ko use karte hain */
+/* Ek naam ke kai area records hon (duplicate) to hamesha pehla / sab se
+   purana (choti id) lo — taake usi naam ke saare tasks ek hi area mein jayen */
+function uniqueAreasByName(areas) {
+  const byName = new Map();
+  [...areas].sort((a, b) => Number(a.id) - Number(b.id)).forEach(a => {
+    const key = norm(a.name);
+    if (key && !byName.has(key)) byName.set(key, a);
+  });
+  return [...byName.values()];
+}
+
+/* Har tab (daily / weekly / monthly) ka dropdown sirf APNE type ke areas
+   dikhata hai — backend area ka `type` (areaTypeOf). Custom area ki id
+   wahi key hai jo toTemplate us ke tasks ko deta hai (`area-<naam>`). */
+const customKeyOf = (name) => `area-${norm(name)}`;
+
 function buildAreaOptions(freq, areas) {
-  const idByName = new Map(areas.map(a => [norm(a.name), a.id]));
-  const weeklyAreaId = idByName.get(norm(WEEKLY_AREA_NAME));
+  const unique = uniqueAreasByName(areasOfType(areas, freq));
 
   if (freq === 'daily') {
-    return [...new Map(areas.filter(isDailyArea).map(a => [a.name, a])).values()].map(a => {
-      const local = DAILY_AREA_OPTIONS.find(o => o.label === a.name);
-      return { id: local?.id ?? String(a.id), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
+    return unique.map(a => {
+      const local = DAILY_AREA_OPTIONS.find(o => norm(o.label) === norm(a.name));
+      return { id: local?.id ?? customKeyOf(a.name), label: a.name, dashArea: local?.dashArea ?? 'administration', backendId: a.id };
     });
   }
+
   if (freq === 'monthly') {
-    return MONTHLY_CATEGORY_OPTIONS.map(o => ({ ...o, backendId: idByName.get(norm(o.label)) }));
+    const idByName = new Map(unique.map(a => [norm(a.name), a.id]));
+    const fixed = MONTHLY_CATEGORY_OPTIONS.map(o => ({ ...o, backendId: idByName.get(norm(o.label)) }));
+    const fixedNames = new Set(MONTHLY_CATEGORY_OPTIONS.map(o => norm(o.label)));
+    const custom = unique
+      .filter(a => !fixedNames.has(norm(a.name)))
+      .map(a => ({ id: customKeyOf(a.name), label: a.name, dashArea: 'administration', backendId: a.id }));
+    return [...fixed, ...custom];
   }
-  return COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id, backendId: weeklyAreaId }));
+
+  /* weekly: 6 fixed dashboard areas ("Weekly Review" backend area mein save
+     hote hain) + school ki apni weekly categories (apne backend area mein) */
+  const weeklyReview = unique.find(a => norm(a.name) === norm(WEEKLY_AREA_NAME));
+  const fixed = COMPLIANCE_AREAS.map(a => ({ id: a.id, label: a.label, dashArea: a.id, backendId: weeklyReview?.id }));
+  const custom = unique
+    .filter(a => a !== weeklyReview)
+    .map(a => ({ id: customKeyOf(a.name), label: a.name, dashArea: customKeyOf(a.name), backendId: a.id }));
+  return [...fixed, ...custom];
 }
 
 /* Edit mode mein task ka current area dhoondna */
@@ -38,7 +68,8 @@ function findInitialAreaId(freq, options, editing) {
   if (!editing) return options[0]?.id || '';
   const match = freq === 'weekly'
     ? options.find(o => o.id === editing.dashArea)
-    : options.find(o => o.backendId === editing.areaId);
+    : (options.find(o => o.backendId === editing.areaId)
+      || options.find(o => norm(o.label) === norm(editing.areaLabel)));   // duplicate area record ho to naam se
   return (match || options[0])?.id || '';
 }
 
@@ -102,8 +133,8 @@ function ItemModal({ open, freq, areas = [], employees = [], employeesLoading = 
       assignedTo: assignee.id,
       assignedStaff: assignee.name,
       areaId: chosenArea.backendId,
-      area: freq === 'weekly' ? 'weekly' : chosenArea.id,
-      areaLabel: freq === 'weekly' ? 'Weekly Review' : chosenArea.label,
+      area: freq === 'weekly' && chosenArea.id === chosenArea.dashArea && COMPLIANCE_AREAS.some(a => a.id === chosenArea.id) ? 'weekly' : chosenArea.id,
+      areaLabel: freq === 'weekly' && COMPLIANCE_AREAS.some(a => a.id === chosenArea.id) ? WEEKLY_AREA_NAME : chosenArea.label,
       dashArea: chosenArea.dashArea,
       label: text, evidenceAllowed,
       ...(freq === 'weekly' ? { dueDay } : {}),
@@ -189,7 +220,7 @@ function ItemModal({ open, freq, areas = [], employees = [], employeesLoading = 
 
 const AREA_NAME_MAX = 60;
 
-function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
+function AddAreaModal({ open, freqLabel = '', existingNames = [], onClose, onSave }) {
   const [name, setName] = useState('');
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState(false);
@@ -221,7 +252,9 @@ function AddAreaModal({ open, existingNames = [], onClose, onSave }) {
         <div className="modal-header">
           <div>
             <div className="modal-title"><i className="fa-solid fa-plus" style={{ marginRight: 8 }}></i>Add New Category</div>
-            <div className="modal-sub">The new category will appear in the Category list when you add a checklist item.</div>
+            <div className="modal-sub">
+              This category is added to <b>{freqLabel}</b> only and will appear in its list when you add a checklist item there.
+            </div>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
         </div>
@@ -299,10 +332,10 @@ export default function ComplianceSetup({
   }, [tasks, areas]);
 
   const saveArea = async (name) => {
-    await addArea(name);        // fail ho to modal mein error dikhega
+    await addArea(name, freq);  // jis tab par hain usi ka type — fail ho to modal mein error dikhega
     await onAreasChange();      // dropdown ke liye list dobara lo
     setAreaOpen(false);
-    toast(`Category "${name}" added.`, 'success');
+    toast(`Category "${name}" added to ${FREQ_TABS.find(f => f.id === freq)?.label || freq}.`, 'success');
   };
 
   const filtered = useMemo(() => {
@@ -312,6 +345,10 @@ export default function ComplianceSetup({
       ? list.filter(t => t.label.toLowerCase().includes(q) || t.areaLabel.toLowerCase().includes(q))
       : list;
   }, [all, freq, search]);
+
+  /* Backend kabhi assignedToName khali bhejta hai — tab employee id se naam lo */
+  const employeeNameById = useMemo(() => new Map(employees.map(e => [e.id, e.name])), [employees]);
+  const assigneeName = (t) => t.assignedStaff || employeeNameById.get(Number(t.assignedTo)) || '—';
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -431,7 +468,11 @@ export default function ComplianceSetup({
       <ItemModal open={!!editing} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} editing={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
       <AddAreaModal
         open={areaOpen}
-        existingNames={areas.map(a => a.name)}
+        freqLabel={FREQ_TABS.find(f => f.id === freq)?.label || ''}
+        existingNames={[
+          ...buildAreaOptions(freq, areas).map(o => o.label),
+          ...(freq === 'weekly' ? [WEEKLY_AREA_NAME] : []),
+        ]}
         onClose={() => setAreaOpen(false)}
         onSave={saveArea}
       />
@@ -470,7 +511,7 @@ export default function ComplianceSetup({
                       {t.custom && <span className="cmp-badge cmp-badge--purple" style={{ marginLeft: 8 }}>Custom</span>}
                       {t.restrictedToPermission && <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Visible based on your permissions</div>}
                     </td>
-                    <td style={{ opacity: t.active ? 1 : .5 }}>{t.assignedStaff || '—'}</td>
+                    <td style={{ opacity: t.active ? 1 : .5 }}>{assigneeName(t)}</td>
                     {freq === 'weekly' && (
                       <td>
                         <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.dueDay} onChange={e => patch(t, { dueDay: e.target.value })}>

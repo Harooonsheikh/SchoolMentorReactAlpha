@@ -48,20 +48,25 @@ export async function getAreas(branchId = getBranchId()) {
   return Array.isArray(data) ? data : [];
 }
 
-/* POST area-add-list — body: { items: [{ id, branchId, name }] } */
-export async function addAreas(names, branchId = getBranchId()) {
+/* POST area-add-list — body: { items: [{ id, branchId, name, type }] }
+   `items` mein string (sirf naam) ya { name, type } dono chal jate hain */
+export async function addAreas(items, branchId = getBranchId()) {
   const res = await fetch(buildUrl(`${BASE}/area-add-list`), {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
-      items: names.map((name) => ({ id: 0, branchId, name })),
+      items: items.map((it) => {
+        const name = typeof it === 'string' ? it : it.name;
+        return { id: 0, branchId, name, type: typeof it === 'string' ? seedTypeOf(name) : (it.type || seedTypeOf(name)) };
+      }),
     }),
   });
   if (!res.ok) throw new Error('area-add-list failed');
   return res.json().catch(() => null);
 }
 
-/* Module khulte hi: jo areas backend mein nahi hain sirf wohi save karo */
+/* Module khulte hi: jo areas backend mein nahi hain sirf wohi save karo.
+   Match naam + type dono par hota hai (ek naam daily aur weekly dono mein ho sakta hai). */
 let seedPromise = null; // module level: dono effect calls ek hi kaam share karenge
 
 export function ensureAreas(defaultNames) {
@@ -69,8 +74,10 @@ export function ensureAreas(defaultNames) {
     seedPromise = (async () => {
       const branchId = getBranchId();
       let areas = await getAreas(branchId);
-      const existing = new Set(areas.map((a) => a.name));
-      const missing = defaultNames.filter((n) => !existing.has(n));
+      const existing = new Set(areas.map((a) => `${areaTypeOf(a)}|${norm(a.name)}`));
+      const missing = defaultNames
+        .map((n) => (typeof n === 'string' ? { name: n, type: seedTypeOf(n) } : n))
+        .filter((s) => !existing.has(`${s.type}|${norm(s.name)}`));
 
       if (missing.length) {
         await addAreas(missing, branchId);
@@ -85,14 +92,14 @@ export function ensureAreas(defaultNames) {
   return seedPromise;
 }
 
-/* POST area-action — action: 'insert' */
-export async function addArea(name, branchId = getBranchId()) {
+/* POST area-action — action: 'insert'. type: 'daily' | 'weekly' | 'monthly' */
+export async function addArea(name, type = 'daily', branchId = getBranchId()) {
   const res = await fetch(buildUrl(`${BASE}/area-action`), {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
       action: 'insert',
-      data: { id: 0, branchId, name: name.trim() },
+      data: { id: 0, branchId, name: name.trim(), type: AREA_TYPES.includes(type) ? type : 'daily' },
     }),
   });
   const json = await res.json().catch(() => null);
@@ -126,15 +133,94 @@ export async function getBranchEmployees(branchId = getBranchId()) {
 export const norm = (s) => String(s || '').trim().toLowerCase();
 export const WEEKLY_AREA_NAME = 'Weekly Review';
 
+/* -- Check (Daily / Weekly / Monthly) helpers --
+   Backend har task ki MOJOODA check state rakhta hai (status, remarks,
+   remarksPic, checkDate) - per-date history ka koi endpoint nahi hai.
+   Is liye page jo period chuna hua hai us se checkDate match kare to hi
+   wo status dikhata hai, warna task us period ke liye "Not Checked" hai. */
+const pad2 = (n) => String(n).padStart(2, '0');
+const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/* Asli aaj ki tareekh (local, UTC shift ke bina) */
+export const todayIso = () => isoOf(new Date());
+
+/* Us hafte ka Monday */
+export const weekKeyOf = (iso) => {
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return todayIso();
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return isoOf(d);
+};
+export const monthKeyOf = (iso) => String(iso).slice(0, 7);
+export const shiftWeekKey = (key, delta) => {
+  const d = new Date(`${key}T00:00:00`);
+  d.setDate(d.getDate() + delta * 7);
+  return isoOf(d);
+};
+export const shiftMonthKey = (key, delta) => {
+  const [y, m] = String(key).split('-').map(Number);
+  const d = new Date(y, (m - 1) + delta, 1);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+};
+
+/* Backend ki checkDate (date ya date-time) -> 'YYYY-MM-DD' */
+export function checkDateIso(v) {
+  const str = String(v || '').trim();
+  if (!str) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
+  const d = new Date(str);
+  return Number.isNaN(d.getTime()) ? '' : isoOf(d);
+}
+
+/* Status string ko STATUS keys par normalize karna ('Not Checked',
+   'not-checked', khali - sab not_checked) */
+const STATUS_KEYS = Object.values(STATUS);
+export function normStatus(v) {
+  const k = String(v || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return STATUS_KEYS.includes(k) ? k : STATUS.NOT_CHECKED;
+}
+
+/* checkDate chuni hui period ke andar hai? */
+export function inPeriod(checkIso, frequency, periodKey) {
+  if (!periodKey) return true;
+  if (!checkIso) return false;
+  if (frequency === 'weekly') return weekKeyOf(checkIso) === periodKey;
+  if (frequency === 'monthly') return monthKeyOf(checkIso) === periodKey;
+  return checkIso === periodKey;
+}
+
 export const SEED_AREA_NAMES = [
   ...DAILY_AREA_OPTIONS.map(a => a.label),
   ...MONTHLY_CATEGORY_OPTIONS.map(a => a.label),
   WEEKLY_AREA_NAME,
 ];
 
-const RESERVED = new Set([...MONTHLY_CATEGORY_OPTIONS.map(a => a.label), WEEKLY_AREA_NAME].map(norm));
-/* Daily dropdown mein monthly categories aur Weekly Review nahi dikhani */
-export const isDailyArea = (a) => !RESERVED.has(norm(a.name));
+/* ── Area type (daily / weekly / monthly) ──
+   Backend ab har area ke saath `type` save karta hai. Purane records jin
+   ka type khali hai un ka type naam se andaza lagate hain: monthly ki
+   fixed categories -> monthly, "Weekly Review" -> weekly, baqi -> daily. */
+export const AREA_TYPES = ['daily', 'weekly', 'monthly'];
+const MONTHLY_NAMES = new Set(MONTHLY_CATEGORY_OPTIONS.map(a => norm(a.label)));
+
+/* Default (seed) naam ka type */
+export function seedTypeOf(name) {
+  const n = norm(name);
+  if (n === norm(WEEKLY_AREA_NAME)) return 'weekly';
+  if (MONTHLY_NAMES.has(n)) return 'monthly';
+  return 'daily';
+}
+
+/* Backend area ka type — `type` valid ho to wahi, warna naam se */
+export function areaTypeOf(a) {
+  const t = norm(a?.type);
+  return AREA_TYPES.includes(t) ? t : seedTypeOf(a?.name);
+}
+
+/* Sirf ek type ke areas */
+export const areasOfType = (areas, type) => (areas || []).filter(a => areaTypeOf(a) === type);
+
+/* Daily dropdown mein sirf daily type ke areas */
+export const isDailyArea = (a) => areaTypeOf(a) === 'daily';
 
 /* ── Seed ke liye local dummy tasks ── */
 const SEED_TEMPLATES = [...DAILY_TEMPLATES, ...WEEKLY_TEMPLATES, ...MONTHLY_TEMPLATES];
@@ -180,8 +266,20 @@ export async function taskAction(action, task, branchId = getBranchId()) {
   if (Number(task.assignedTo) > 0) fd.append('AssignedTo', task.assignedTo);
   fd.append('IsVerification', !!task.verificationRequired);
   fd.append('IsActive', task.active !== false);
-  fd.append('Status', task.status || STATUS.NOT_CHECKED);
+  fd.append('Status', normStatus(task.status));
   fd.append('Remarks', task.remarks || '');
+
+  /* Check state - Setup se edit/toggle hone par bhi yeh fields jaisi ki
+     waisi wapas jati hain, ta ke mark kiya hua status ya evidence gum
+     na ho. Nayi photo (data URL / File) ho to file upload hoti hai,
+     warna purana path hi wapas bhej dete hain. */
+  if (task.checkDate) fd.append('CheckDate', task.checkDate);
+  if (Number(task.verifiedBy) > 0) fd.append('VerifiedBy', task.verifiedBy);
+  const pic = await toFile(task.photo);
+  if (pic) fd.append('RemarksPicFile', pic, pic.name || 'evidence.jpg');
+  else fd.append('RemarksPic', task.remarksPic || '');
+  const me = currentUser();
+  if (me.name) fd.append(action === 'insert' ? 'CreatedBy' : 'ModifiedBy', me.name);
 
   const token = sessionStorage.getItem('token') || '';
   const res = await fetch(buildUrl(`${BASE}/task-action`), {
@@ -202,13 +300,19 @@ export function ensureTasks(areas) {
       let tasks = await getTasks(branchId); 
 
       const have = new Set(tasks.map(t => `${norm(t.type)}|${norm(t.task)}`));
-      const idByName = new Map(areas.map(a => [norm(a.name), a.id]));
+      /* type + naam se area id (sab se purana record) — ek naam alag
+         types mein ho to bhi task sahi area mein jaye */
+      const idByKey = new Map();
+      [...areas].sort((a, b) => Number(a.id) - Number(b.id)).forEach(a => {
+        const key = `${areaTypeOf(a)}|${norm(a.name)}`;
+        if (!idByKey.has(key)) idByKey.set(key, a.id);
+      });
 
       const items = SEED_TEMPLATES
         .map(t => ({
           id: 0,
           branchId,
-          areaId: idByName.get(norm(areaNameOf(t))),
+          areaId: idByKey.get(`${t.frequency}|${norm(areaNameOf(t))}`),
           areaName: areaNameOf(t),
           type: t.frequency,
           task: t.label,
@@ -235,17 +339,26 @@ export function ensureTasks(areas) {
 export function toTemplate(t, areaMap = new Map()) {
   const frequency = norm(t.type) || 'daily';
   const areaName = t.areaName || areaMap.get(t.areaId) || '';
-  const opts = frequency === 'monthly' ? MONTHLY_CATEGORY_OPTIONS : DAILY_AREA_OPTIONS;
+  /* Weekly ki apni (custom) category — "Weekly Review" ke ilawa koi bhi
+     weekly area. Ye apne naam ke group / dashboard area mein dikhti hai. */
+  const customWeekly = frequency === 'weekly' && !!areaName && norm(areaName) !== norm(WEEKLY_AREA_NAME);
+  const opts = frequency === 'monthly' ? MONTHLY_CATEGORY_OPTIONS
+    : frequency === 'daily' ? DAILY_AREA_OPTIONS : [];
   const local = opts.find(o => norm(o.label) === norm(areaName));
+  /* Custom area ko NAAM se key karo, id se nahi — backend mein ek hi naam
+     ke do area records hon to bhi ek hi group bane */
+  const customKey = areaName ? `area-${norm(areaName)}` : `area-${t.areaId}`;
 
   return {
     id: String(t.id),
     backendId: t.id,
     areaId: t.areaId,
     frequency,
-    area: frequency === 'weekly' ? 'weekly' : (local?.id ?? `area-${t.areaId}`),
-    areaLabel: frequency === 'weekly' ? WEEKLY_AREA_NAME : (areaName || 'Other'),
-    dashArea: LOCAL_DASH.get(t.task) ?? local?.dashArea ?? 'administration',
+    area: frequency === 'weekly' ? (customWeekly ? customKey : 'weekly')
+      : (local?.id ?? customKey),
+    areaLabel: frequency === 'weekly' ? (customWeekly ? areaName : WEEKLY_AREA_NAME) : (areaName || 'Other'),
+    dashArea: customWeekly ? customKey
+      : (LOCAL_DASH.get(t.task) ?? local?.dashArea ?? 'administration'),
     label: t.task,
     assignedStaff: t.assignedToName || '',
     assignedTo: t.assignedTo ?? 0,
@@ -255,9 +368,68 @@ export function toTemplate(t, areaMap = new Map()) {
     active: t.isActive !== false,
     custom: !LOCAL_DASH.has(t.task),
     restrictedToPermission: local?.id === 'finance' ? 'cmp.finance' : null,
-    status: t.status,
-    remarks: t.remarks,
+    status: normStatus(t.status),
+    remarks: t.remarks || '',
+    remarksPic: t.remarksPic || '',
+    checkDate: checkDateIso(t.checkDate),
+    verifiedBy: Number(t.verifiedBy) || 0,
+    verifiedByName: t.verifiedByName || '',
   };
+}
+
+/* -- Backend row -> Daily/Weekly/Monthly ka checklist "instance" shape
+   (ChecklistGroup / ChecklistRow jo expect karte hain). `periodKey`
+   diya ho to status sirf usi period ka dikhta hai. -- */
+export function toInstance(t, { areaMap = new Map(), employeeNames = new Map(), periodKey = null } = {}) {
+  const tpl = toTemplate(t, areaMap);
+  const current = inPeriod(tpl.checkDate, tpl.frequency, periodKey);
+  const verifierName = tpl.verifiedByName || employeeNames.get(tpl.verifiedBy) || '';
+  return {
+    ...tpl,
+    /* id mein period bhi hai — date/week/month badalne par ChecklistRow
+       dobara mount ho (warna purane period ka remark textarea mein reh
+       jata hai). Backend ke liye asli id `backendId` hai. */
+    id: periodKey ? `${tpl.id}@${periodKey}` : tpl.id,
+    taskId: tpl.id,
+    /* ChecklistRow aur filterInstances naam par chalte hain; employee id
+       alag (assignedToId) rakhi hai ta ke save par wahi wapas jaye */
+    assignedTo: tpl.assignedStaff || employeeNames.get(Number(tpl.assignedTo)) || '-',
+    assignedToId: Number(tpl.assignedTo) || 0,
+    status: current ? tpl.status : STATUS.NOT_CHECKED,
+    remark: current ? tpl.remarks : '',
+    evidence: current ? (resolveMediaUrl(tpl.remarksPic) || null) : null,
+    verifiedById: current ? tpl.verifiedBy : 0,
+    verifiedBy: current && tpl.verifiedBy ? (verifierName || 'Verified') : null,
+    periodKey,
+  };
+}
+
+/* -- Ek check ka status / remark / evidence / verification save karna --
+   `instance` toInstance ka output hai, `patch` ChecklistRow se aata hai
+   ({ status, remark, evidence } ya { verifiedBy }). `checkDate` wo din
+   hai jis period ko user dekh raha hai. */
+export function saveTaskCheck(instance, patch = {}) {
+  const photo = patch.evidence !== undefined ? patch.evidence : instance.evidence;
+  const freshPhoto = photo instanceof Blob || (typeof photo === 'string' && photo.startsWith('data:'));
+  const verifiedBy = patch.verifiedBy !== undefined ? (Number(patch.verifiedBy) || 0) : (instance.verifiedById || 0);
+
+  return taskAction('update', {
+    backendId: instance.backendId,
+    areaId: instance.areaId,
+    frequency: instance.frequency,
+    label: instance.label,
+    dueDay: instance.dueDay,
+    assignedTo: instance.assignedToId ?? instance.assignedTo,
+    verificationRequired: instance.verificationRequired,
+    active: instance.active,
+    status: patch.status ?? instance.status,
+    remarks: patch.remark !== undefined ? patch.remark : (instance.remark || ''),
+    checkDate: patch.checkDate || instance.checkDate || todayIso(),
+    verifiedBy,
+    /* nayi photo -> file jayegi; purani rahe to wahi path; hata di to khali */
+    remarksPic: freshPhoto ? '' : (photo ? (instance.remarksPic || '') : ''),
+    photo,
+  });
 }
 
 /* ═══════════ PROBLEMS & FOLLOW-UPS ═══════════ */
@@ -330,8 +502,12 @@ export function toProblem(r) {
    hisab se check kar lein (DevTools > Application > Session Storage). */
 const currentUser = () => ({
   id: Number(sessionStorage.getItem('employee_ID') || sessionStorage.getItem('UserID')) || 0,
-  name: sessionStorage.getItem('userName') || sessionStorage.getItem('UserName') || '',
+  name: sessionStorage.getItem('userName') || sessionStorage.getItem('UserName')
+    || sessionStorage.getItem('displayName') || '',
 });
+
+/* Daily/Weekly/Monthly tabs ko verify aur problem-report ke liye chahiye */
+export const getCurrentUser = currentUser;
 
 async function postForm(path, fd) {
   const token = sessionStorage.getItem('token') || '';

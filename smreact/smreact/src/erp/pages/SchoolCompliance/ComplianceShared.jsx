@@ -75,6 +75,15 @@ export function ConfirmDialog({ cfg, onClose }) {
    Academics.js's ResourceModal already uses for file uploads, just
    scoped to images here. ─── */
 export function PhotoAttach({ value, onChange }) {
+  /* `value` ya to abhi chuni hui photo ka data URL hai, ya server par
+     save shuda photo ka URL. Server wali thumbnail click par poori
+     khulti hai, aur agar kisi wajah se load na ho (slow network,
+     ad-blocker) to broken icon ki jagah "Open" link dikhta hai. */
+  const [failed, setFailed] = useState(false);
+  const saved = typeof value === 'string' && !value.startsWith('data:') && !value.startsWith('blob:');
+
+  React.useEffect(() => { setFailed(false); }, [value]);
+
   const onFile = e => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -83,21 +92,36 @@ export function PhotoAttach({ value, onChange }) {
     reader.onload = () => onChange(reader.result);
     reader.readAsDataURL(f);
   };
-  return (
-    <div className="cmp-photo">
-      {value ? (
-        <div className="cmp-photo-preview">
-          <img src={value} alt="Evidence" />
-          <button type="button" className="cmp-photo-remove" onClick={() => onChange(null)} aria-label="Remove photo">
-            <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-          </button>
-        </div>
-      ) : (
+
+  if (!value) {
+    return (
+      <div className="cmp-photo">
         <label className="cmp-photo-upload">
           <i className="fa-solid fa-camera" aria-hidden="true"></i> Add Photo
           <input type="file" accept="image/*" onChange={onFile} hidden />
         </label>
-      )}
+      </div>
+    );
+  }
+
+  const thumb = <img src={value} alt="Evidence" onError={() => setFailed(true)} />;
+
+  return (
+    <div className="cmp-photo">
+      <div className="cmp-photo-preview">
+        {failed ? (
+          <a className="cmp-photo-failed" href={value} target="_blank" rel="noreferrer">
+            <i className="fa-solid fa-image" aria-hidden="true"></i>
+            <span>Open photo</span>
+          </a>
+        ) : saved ? (
+          <a href={value} target="_blank" rel="noreferrer" title="Open the full photo">{thumb}</a>
+        ) : thumb}
+        <button type="button" className="cmp-photo-remove" onClick={() => onChange(null)} aria-label="Remove photo">
+          <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        {saved && !failed && <span className="cmp-photo-saved" title="Saved"><i className="fa-solid fa-check" aria-hidden="true"></i></span>}
+      </div>
     </div>
   );
 }
@@ -109,16 +133,46 @@ export function PhotoAttach({ value, onChange }) {
    until verified. ─── */
 export function ChecklistRow({ item, onUpdate, onReportProblem }) {
   const [open, setOpen] = useState(false);
+  /* Status, remark aur photo — teeno sirf local rehte hain. Koi API call
+     nahi hoti jab tak user Save na dabaye; tab teeno ek hi call mein
+     jate hain. */
+  const [status, setStatus] = useState(item.status);
   const [remark, setRemark] = useState(item.remark || '');
   const [photo, setPhoto] = useState(item.evidence || null);
   const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
-  const save = (status) => {
-    if (status === STATUS.ISSUE_FOUND && !remark.trim()) { setErr('Please describe the issue in the remark before saving.'); return; }
-    if (status === STATUS.COMPLETED && item.verificationRequired && !remark.trim()) { setErr('This is a safety-related check — please add a short remark before marking it Completed.'); return; }
+  /* Is task ka data backend par badla (save ke baad refetch) to local
+     fields wahi apna lete hain — nayi photo ka asli URL bhi isi tarah
+     data URL ki jagah aa jata hai, warna wohi photo baar baar upload
+     hoti. Deps primitive hain, is liye kisi doosre row ke refetch par
+     ye nahi chalta. */
+  React.useEffect(() => {
+    setStatus(item.status);
+    setRemark(item.remark || '');
+    setPhoto(item.evidence || null);
+    setDirty(false);
     setErr('');
-    onUpdate(item.id, { status, remark: remark.trim(), evidence: photo });
-    if (status === STATUS.ISSUE_FOUND) onReportProblem(item, remark.trim(), photo);
+  }, [item.status, item.remark, item.evidence]);
+
+  const pick = (s) => { setStatus(s); setDirty(true); setErr(''); };
+
+  /* Ek hi API call — status + remark + photo ek saath */
+  const save = async () => {
+    if (status === STATUS.ISSUE_FOUND && !remark.trim()) { setErr('Please describe the issue in the remark before saving.'); return; }
+    if (status === STATUS.COMPLETED && item.verificationRequired && !remark.trim()) { setErr('This is a safety-related check — please add a short remark before saving it as Completed.'); return; }
+    setErr('');
+    setSaving(true);
+    try {
+      const ok = await onUpdate(item.id, { status, remark: remark.trim(), evidence: photo });
+      if (ok !== false) {
+        setDirty(false);
+        if (status === STATUS.ISSUE_FOUND) onReportProblem(item, remark.trim(), photo);
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -130,6 +184,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem }) {
             <span className="cmp-row-assignee"><span className="cmp-avatar">{initials(item.assignedTo)}</span> {item.assignedTo}</span>
             {item.verificationRequired && <span className="cmp-chip cmp-chip--safety"><i className="fa-solid fa-shield-halved" aria-hidden="true"></i> Safety Check</span>}
             {item.verificationRequired && item.status === STATUS.COMPLETED && !item.verifiedBy && <span className="cmp-chip cmp-chip--warn">Needs Verification</span>}
+            {dirty && <span className="cmp-chip cmp-chip--warn"><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Unsaved</span>}
           </div>
         </div>
         <div className="cmp-row-main-r">
@@ -142,24 +197,50 @@ export function ChecklistRow({ item, onUpdate, onReportProblem }) {
         <div className="cmp-row-body" onClick={e => e.stopPropagation()}>
           <div className="cmp-seg cmp-seg-4">
             {[STATUS.NOT_CHECKED, STATUS.COMPLETED, STATUS.ISSUE_FOUND, STATUS.NOT_APPLICABLE].map(s => (
-              <button key={s} type="button" className={`cmp-seg-btn${item.status === s ? ' active' : ''}`} onClick={() => save(s)}>
+              <button key={s} type="button" className={`cmp-seg-btn${status === s ? ' active' : ''}`} disabled={saving} onClick={() => pick(s)}>
                 {STATUS_META[s].label}
               </button>
             ))}
           </div>
           <div className="cmp-row-fields">
-            <label className="form-group" style={{ flex: 1 }}>
+            <label className="form-group cmp-row-remark">
               <span className="form-label">Remark</span>
-              <textarea className="cmp-textarea" rows={2} value={remark} onChange={e => setRemark(e.target.value)} placeholder="Optional remark…" />
+              <textarea className="cmp-textarea" rows={3} value={remark} onChange={e => { setRemark(e.target.value); setDirty(true); }} placeholder="Optional remark…" />
             </label>
-            <PhotoAttach value={photo} onChange={setPhoto} />
+
+            {/* Evidence photo aur us ke neeche Save — remark ya photo
+                badal kar Save karne se mojooda status ke saath dono
+                save ho jate hain (status buttons khud bhi save karte
+                hain). */}
+            <div className="cmp-row-side">
+              <span className="form-label">Evidence Photo</span>
+              <PhotoAttach value={photo} onChange={v => { setPhoto(v); setDirty(true); }} />
+              <button type="button" className="btn btn-primary cmp-save-btn" disabled={saving || !dirty} onClick={save}>
+                <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} aria-hidden="true"></i>{' '}
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              {/* <span className={`cmp-row-state${dirty && !saving ? ' unsaved' : ''}`}>
+                {saving
+                  ? 'Saving…'
+                  : dirty
+                    ? <><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> Unsaved changes</>
+                    : <><i className="fa-solid fa-circle-check" aria-hidden="true"></i> All changes saved</>}
+              </span> */}
+            </div>
           </div>
           {err && <div className="cmp-field-err"><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {err}</div>}
+
           {item.verificationRequired && item.status === STATUS.COMPLETED && (
             item.verifiedBy
               ? <div className="cmp-verified"><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Verified by {item.verifiedBy}</div>
               : (
-                <button type="button" className="btn btn-secondary cmp-verify-btn" onClick={() => onUpdate(item.id, { verifiedBy: 'Dr. Islahudin' })}>
+                <button
+                  type="button"
+                  className="btn btn-secondary cmp-verify-btn"
+                  disabled={dirty || saving}
+                  title={dirty ? 'Save your changes first' : 'Verify this completed check'}
+                  onClick={() => onUpdate(item.id, { verifiedBy: true })}
+                >
                   <i className="fa-solid fa-stamp" aria-hidden="true"></i> Verify Completion
                 </button>
               )
