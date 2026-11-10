@@ -2442,29 +2442,41 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
       setLoadingGrades(false);
     }
   }
+  /* Preschool class? — getclassesinexam ka isPreSchooling, ya TYPE column (pClassTypes). */
+  const isPreschoolResCls = (cls, key) => cls?.isPreSchooling === true || pClassTypes[key] === 'preschool';
+
+  /* Single Assessment visibility map — grade classes /sauploadmarksGetvisibility se,
+     preschool classes /sauploadmarksPreschoolingGetvisibility se; har class apni
+     type wali list me match hoti hai. */
+  const fetchResVisibilityMap = async (examId, termID, selectExam, classes) => {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const params = new URLSearchParams({ termID: String(termID), examID: String(selectExam), branchID: String(branchID) });
+    const get = (path) => fetch(buildUrl(`${path}?${params.toString()}`),
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+      .then(r => (r.ok ? r.json() : [])).then(d => (Array.isArray(d) ? d : [])).catch(() => []);
+    const list = classes || [];
+    const needPre = list.some((c, i) => isPreschoolResCls(c, `rcls_${examId}_${c.sectionID}_${i}`));
+    const [gradeVis, preVis] = await Promise.all([
+      get('/api/sauploadmarksGetvisibility'),
+      needPre ? get('/api/sauploadmarksPreschoolingGetvisibility') : Promise.resolve([]),
+    ]);
+    const visMap = {};
+    list.forEach((cls, i) => {
+      const key = `rcls_${examId}_${cls.sectionID}_${i}`;
+      const src = isPreschoolResCls(cls, key) ? preVis : gradeVis;
+      const item = src.find(it => Number(it.sectionID) === Number(cls.sectionID) && Number(it.classID) === Number(cls.classID));
+      if (item) visMap[key] = item.isResultVisibleToParents;
+    });
+    return visMap;
+  };
+
   // Single Assessment visibility (publish/release state) GET API se reload — button state update.
   const loadResVisibility = async (examId = resExamId, classes = examClasses) => {
     const selectedExam = filtered.find(ex => ex.id === examId);
     if (!selectedExam) return;
     try {
-      const branchID = sessionStorage.getItem('branchID');
-      const token = sessionStorage.getItem('token');
-      const params = new URLSearchParams({
-        termID: String(selectedExam.termID), examID: String(selectedExam.selectExam), branchID: String(branchID),
-      });
-      const response = await fetch(buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
-        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-      const data = await response.json();
-      const visMap = {};
-      if (Array.isArray(data)) {
-        data.forEach(item => {
-          (classes || []).forEach((cls, i) => {
-            if (Number(cls.sectionID) === Number(item.sectionID) && Number(cls.classID) === Number(item.classID)) {
-              visMap[`rcls_${examId}_${cls.sectionID}_${i}`] = item.isResultVisibleToParents;
-            }
-          });
-        });
-      }
+      const visMap = await fetchResVisibilityMap(examId, selectedExam.termID, selectedExam.selectExam, classes);
       setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
     } catch (error) { console.error('Error fetching visibility:', error); }
   };
@@ -2487,7 +2499,12 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         isResultVisibleToParents: !released,
       };
 
-      const res = await fetch(buildUrl('/api/sauploadmarksUpdatevissibility'), {
+      /* Preschool class → preschool visibility API (path ki spelling backend jaisi
+         "peeschooling" hi hai), warna grade wali. */
+      const visPath = isPreschoolResCls(cls, key)
+        ? '/api/sauploadmarkspeeschoolingUpdatevissibility'
+        : '/api/sauploadmarksUpdatevissibility';
+      const res = await fetch(buildUrl(visPath), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -5784,35 +5801,8 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                   setPClassLevels(prev => ({ ...prev, ...levels }));
                 }
                 try {
-                  const branchID = sessionStorage.getItem('branchID');
-                  const token = sessionStorage.getItem('token');
-
-                  const params = new URLSearchParams({
-                    termID: String(termID),
-                    examID: String(selectExamId),
-                    branchID: String(branchID)
-                  });
-
-                  const response = await fetch(
-                    buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
-                    { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-                  );
-
-                  const data = await response.json();
-
-                  // Visibility map build karo
-                  const visMap = {};
-                  if (Array.isArray(data)) {
-                    data.forEach(item => {
-                      classes.forEach((cls, i) => {
-                        if (Number(cls.sectionID) === Number(item.sectionID) &&
-                          Number(cls.classID) === Number(item.classID)) {
-                          const key = `rcls_${id}_${cls.sectionID}_${i}`;
-                          visMap[key] = item.isResultVisibleToParents;
-                        }
-                      });
-                    });
-                  }
+                  // Visibility map — grade + preschool dono GET, har class apni type se
+                  const visMap = await fetchResVisibilityMap(id, termID, selectExamId, classes);
                   setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
 
                 } catch (error) {
@@ -5893,7 +5883,8 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                         const className = `${cls.gradeName} - ${cls.sectionName}`;
                         const isPreschool = pClassTypes[key] === 'preschool';
                         const pcd = pResultData[key] || { released: false, students: [] };
-                        const isRelP = !!pcd.released;
+                        /* Preschool released — visibility API (PreschoolingGetvisibility) pehle, local fallback */
+                        const isRelP = examVisibilityMap[key] ?? !!pcd.released;
                         const shownRel = isPreschool ? isRelP : isRel;
                         const rowLevel = pClassLevels[key] || 'kg';
                         const rowSlo = pSlo[rowLevel] || {};
@@ -6011,7 +6002,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                     className={`res-publish-btn${shownRel ? ' released' : ''}`}
                                     disabled={isOtherSession || !canSingleEdit}
                                     style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                                    onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (isPreschool) { setPConfirmPublish({ key, className, released: isRelP }); return; } togglePublish(key, className, isRel, cls); }}
+                                    onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } if (isPreschool) { setPConfirmPublish({ key, className, released: isRelP, cls }); return; } togglePublish(key, className, isRel, cls); }}
                                   >
                                     <i className={`fa-solid ${shownRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
                                     {shownRel ? 'Unpublish' : 'Publish Result'}
@@ -8341,10 +8332,43 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
               <button
                 className={`confirm-btn confirm-btn--confirm${pConfirmPublish.released ? '' : ' primary-style'}`}
                 onClick={async () => {
-                  await preschoolService.publishClass(pConfirmPublish.key, !pConfirmPublish.released);
-                  setPResultData(await preschoolService.getPreschoolResultData());
-                  toast(pConfirmPublish.released ? 'Preschool result unpublished' : 'Preschool result published!', 'success');
-                  setPConfirmPublish(null);
+                  const { key, released } = pConfirmPublish;
+                  /* cls na ho (purana modal state) to row key `rcls_<exam>_<section>_<i>` ke index se. */
+                  const cls = pConfirmPublish.cls || examClasses[Number(String(key).split('_').pop())];
+                  const selectedExam = filtered.find(e => e.id === resExamId);
+                  if (!cls?.classID || !cls?.sectionID) {
+                    toast('Class info not found — please reload the exam and try again.', 'error');
+                    setPConfirmPublish(null);
+                    return;
+                  }
+                  try {
+                    /* Preschool visibility API (path ki spelling backend jaisi "peeschooling"). */
+                    const res = await fetch(buildUrl('/api/sauploadmarkspeeschoolingUpdatevissibility'), {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+                        Accept: 'application/json',
+                      },
+                      body: JSON.stringify({
+                        classID: Number(cls.classID),
+                        sectionID: Number(cls.sectionID),
+                        examID: Number(selectedExam?.selectExam) || 0,
+                        termID: Number(selectedExam?.termID) || 0,
+                        branchID: Number(sessionStorage.getItem('branchID')) || 0,
+                        isResultVisibleToParents: !released,
+                      }),
+                    });
+                    if (!res.ok) throw new Error('API failed');
+                    await preschoolService.publishClass(key, !released);
+                    setPResultData(await preschoolService.getPreschoolResultData());
+                    await loadResVisibility();
+                    toast(released ? 'Preschool result unpublished' : 'Preschool result published!', 'success');
+                  } catch {
+                    toast('Failed to update visibility. Please try again.', 'error');
+                  } finally {
+                    setPConfirmPublish(null);
+                  }
                 }}
               >
                 {pConfirmPublish.released ? 'Yes, Unpublish' : 'Yes, Publish'}
