@@ -486,8 +486,20 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
           <div className="msai-step-title">Lesson Plans Setup</div>
           <div className="msai-form-grid">
             {renderUnitSelect()}
-            <Field label="Number of Lesson Plans"><input type="number" min={1} max={10} value={setupForm.count} onChange={e => setSetupForm(f => ({ ...f, count: Math.max(1, Number(e.target.value) || 1) }))} /></Field>
-            <Field label="Duration (minutes)"><input type="number" min={10} max={90} value={setupForm.duration} onChange={e => setSetupForm(f => ({ ...f, duration: Math.max(10, Number(e.target.value) || 40) }))} /></Field>
+                   <Field label="Number of Lesson Plans">
+              <div className="msai-stepper">
+                <button type="button" aria-label="Decrease" onClick={() => setSetupForm(f => ({ ...f, count: Math.max(1, f.count - 1) }))}>−</button>
+                <span>{setupForm.count}</span>
+                <button type="button" aria-label="Increase" onClick={() => setSetupForm(f => ({ ...f, count: Math.min(10, f.count + 1) }))}>+</button>
+              </div>
+            </Field>
+            <Field label="Duration (minutes)">
+              <div className="msai-stepper">
+                <button type="button" aria-label="Decrease" onClick={() => setSetupForm(f => ({ ...f, duration: Math.max(10, f.duration - 5) }))}>−</button>
+                <span>{setupForm.duration}</span>
+                <button type="button" aria-label="Increase" onClick={() => setSetupForm(f => ({ ...f, duration: Math.min(90, f.duration + 5) }))}>+</button>
+              </div>
+            </Field>
           </div>
           <Field label="Additional Instructions (optional)">
             <div className="msai-field-voice-wrap">
@@ -663,7 +675,13 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
           <div className="msai-step-title">Configure — {nbType.name}</div>
           <span className="msai-mode-tag" style={{ background: `${nbType.color}1A`, color: nbType.color, alignSelf: 'flex-start' }}>{nbType.name}</span>
           {!NB_SINGLE_OUTPUT_TYPES.includes(nbType.id) && (
-            <Field label="Number of Items"><input type="number" min={1} max={20} value={nbForm.count} onChange={e => setNbForm(f => ({ ...f, count: Math.max(1, Number(e.target.value) || 1) }))} /></Field>
+            <Field label="Number of Items">
+              <div className="msai-stepper">
+                <button type="button" aria-label="Decrease" onClick={() => setNbForm(f => ({ ...f, count: Math.max(1, f.count - 1) }))}>−</button>
+                <span>{nbForm.count}</span>
+                <button type="button" aria-label="Increase" onClick={() => setNbForm(f => ({ ...f, count: Math.min(20, f.count + 1) }))}>+</button>
+              </div>
+            </Field>
           )}
           <Field label="Main Question">
             <div className="msai-field-voice-wrap">

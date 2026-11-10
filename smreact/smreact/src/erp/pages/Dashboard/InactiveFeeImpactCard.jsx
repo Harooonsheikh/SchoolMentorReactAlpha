@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatedNumber } from './MentorAIResponseParts';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
-import { computeInactiveFeeImpact } from './inactiveFeeImpact';
+import { loadInactiveFeeImpact, EMPTY_INACTIVE_IMPACT } from './inactiveFeeImpact';
 import InactiveStudentsReportModal from './InactiveStudentsReportModal';
 
 const IFI_CSS = `
@@ -12,18 +12,24 @@ const IFI_CSS = `
 .ifi-cell-val { font:800 13.5px/1.2 var(--dash-font); color:var(--text-primary); letter-spacing:-.01em; }
 `;
 
-export default function InactiveFeeImpactCard({ feeData, monthIdx, monthLabel, duration = 900 }) {
+export default function InactiveFeeImpactCard({ monthIdx, year, duration = 900 }) {
   const [reportOpen, setReportOpen] = useState(false);
 
-  const cardRange = useMemo(() => {
-    const from = `2026-${String(monthIdx + 1).padStart(2, '0')}-01`;
-    const to = new Date(2026, monthIdx + 1, 0).toISOString().slice(0, 10);
-    return { from, to };
-  }, [monthIdx]);
+   const yr = Number(year) || new Date().getFullYear();
+  const monthLabel = new Date(yr, monthIdx, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
-  const cardImpact = useMemo(() => {
-    return computeInactiveFeeImpact({ ...feeData, monthIdx, ...cardRange });
-  }, [feeData, monthIdx, cardRange]);
+  /* LIVE — dashboard ke selected fee month ka data (filterType=Month). */
+  const [cardImpact, setCardImpact] = useState(EMPTY_INACTIVE_IMPACT);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    loadInactiveFeeImpact({ filterType: 'Month', month: monthIdx + 1, year: yr })
+      .then((d) => { if (alive) setCardImpact(d); })
+      .catch((e) => { console.error('Inactive Students Fee API error:', e); if (alive) setCardImpact(EMPTY_INACTIVE_IMPACT); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [monthIdx, yr]);
 
   return (
     <>
@@ -72,7 +78,7 @@ export default function InactiveFeeImpactCard({ feeData, monthIdx, monthLabel, d
         </div>
       </div>
 
-      {reportOpen && <InactiveStudentsReportModal feeData={feeData} monthIdx={monthIdx} onClose={() => setReportOpen(false)} />}
+{reportOpen && <InactiveStudentsReportModal monthIdx={monthIdx} year={yr} onClose={() => setReportOpen(false)} />}
     </>
   );
 }

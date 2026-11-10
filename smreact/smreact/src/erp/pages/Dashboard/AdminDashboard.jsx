@@ -880,7 +880,9 @@ const canSeeCard = useCallback(
     { name: 'Previous Dues',              short: 'Prev. Dues',     value: feeExtras.previousDuesTotal,      color: '#EF4444' },
     { name: 'Total Net Receivable',       short: 'Net Receivable', value: feeExtras.netReceivableTotal,     color: '#1E40AF' },
     { name: 'Fee Received',               short: 'Received',       value: feeExtras.receivedTotal,          color: '#16A34A' },
-    { name: 'Discount Given',             short: 'Discount',       value: feeExtras.discountTotal,          color: '#D97706' },
+    // { name: 'Discount Given',             short: 'Discount',       value: feeExtras.discountTotal,          color: '#D97706' },
+       { name: 'Discount Given',             short: 'Discount',       value: feeExtras.receivingDiscountTotal, color: '#D97706' },
+   
     { name: 'Advance Adjustments',        short: 'Adv. Adjusted',  value: feeExtras.advanceAdjustmentTotal, color: '#7C3AED' },
     { name: 'Pending Fee',                short: 'Pending',        value: feeExtras.pendingTotal,           color: '#DC2626' },
     { name: 'Advance Payments Received',  short: 'Adv. Received',  value: feeExtras.advanceTotal,           color: '#A78BFA' },
@@ -893,7 +895,8 @@ const canSeeCard = useCallback(
   const breakdownChartData = useMemo(() => {
     const rows = [
       { name: 'Fee Received',        value: feeExtras.receivedTotal,          color: '#16A34A' },
-      { name: 'Discount Given',      value: feeExtras.discountTotal,          color: '#D97706' },
+      // { name: 'Discount Given',      value: feeExtras.discountTotal,          color: '#D97706' },
+            { name: 'Discount Given',      value: feeExtras.receivingDiscountTotal, color: '#D97706' },
       { name: 'Advance Adjustments', value: feeExtras.advanceAdjustmentTotal, color: '#7C3AED' },
       { name: 'Pending Fee',         value: feeExtras.pendingTotal,           color: '#DC2626' },
     ]
@@ -1575,7 +1578,7 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
                   <ResponsiveContainer key={feeGridReplay.replayKey} width="100%" height={260}>
                     <PieChart>
                       <Pie
-                        data={breakdownChartData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="85%" paddingAngle={2}
+                        data={breakdownChartData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="85%" paddingAngle={1} minAngle={6}
                         isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
                       >
                         {breakdownChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
@@ -1976,18 +1979,9 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
               month. Rendered right after Advance Payments, as a
               complementary informational card. ═════════ */}
           {canSeeCard('fee_inactivestudents') ? (
-          <InactiveFeeImpactCard
-            feeData={{
-              classes: faClasses,
-              studentsMap: faStudentsMap,
-              headsMap: faHeadsMap,
-              discMap: faDiscMap,
-              generatedSet: faGeneratedSet,
-              receipts: faReceipts,
-              advanceLedger: faAdvanceLedger,
-            }}
+             <InactiveFeeImpactCard
             monthIdx={feeMonthIdx}
-            monthLabel={feeMonthLabel}
+            year={feeYear}
             duration={CHART_ANIM_MS}
           />
           ) : <LockedCard title="Inactive Students | Fee Impact" icon="fa-user-slash" />}

@@ -14,8 +14,12 @@ export const getMentorAIToken = async ({
     formData.append("principal", principal);
 
     const response = await mentorAiApi.post(
-        "/ai/api/auth/token/",
-        formData
+        // "/ai/api/auth/token/",
+        // formData
+
+                "/ai/api/auth/token/",
+        formData,
+        { headers: { Authorization: undefined } }
     );
 
     return response.data;

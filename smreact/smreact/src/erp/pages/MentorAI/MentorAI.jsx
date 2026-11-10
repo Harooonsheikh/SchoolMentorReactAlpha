@@ -657,7 +657,7 @@ const MENTORAI_CSS = `
 .msai-content-type-card--sm { padding:14px 16px; }
 .msai-content-type-card.selected { border-color:var(--brand-primary); background:var(--brand-light); box-shadow:var(--shadow-sm); }
 .msai-stepper { display:flex; align-items:center; gap:0; border:1.5px solid var(--border-light); border-radius:var(--radius-md); overflow:hidden; width:fit-content; }
-.msai-stepper button { width:36px; height:38px; border:none; background:var(--bg-muted); color:var(--text-secondary); font:800 16px/1 var(--font-body); cursor:pointer; }
+.msai-stepper button { width:40px; height:40px; touch-action:manipulation; border:none; background:var(--bg-muted); color:var(--text-secondary); font:800 16px/1 var(--font-body); cursor:pointer; }
 .msai-stepper button:hover { background:var(--brand-light); color:var(--brand-primary); }
 .msai-stepper span { width:44px; text-align:center; font:800 13px/1 var(--font-body); color:var(--text-primary); }
 .msai-toggle-row { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:var(--radius-md); background:var(--bg-muted); font:700 12.5px/1 var(--font-body); color:var(--text-primary); cursor:pointer; }

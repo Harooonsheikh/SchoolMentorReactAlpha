@@ -117,6 +117,34 @@ export async function getOneLinkPayments(opts = {}) {
   return json?.data || {};
 }
 
+/* Inactive Students | Fee Impact — card + report.
+   filterType: Month (month+year) | FromTo (fromDate+toDate) | SingleDate (singleDate). */
+export async function getInactiveStudentsFee(branchId, opts = {}) {
+  const cur = currentMonthYear();
+  const branchID = Number(branchId) || Number(sessionStorage.getItem('branchID')) || 0;
+  const pad = (n) => String(n).padStart(2, '0');
+  const today = new Date();
+  const todayISO = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const monthStartISO = `${cur.year}-${pad(cur.month)}-01`;
+  const params = new URLSearchParams({
+    filterType: opts.filterType || 'Month',
+    fromDate:   opts.fromDate   || monthStartISO,
+    toDate:     opts.toDate     || todayISO,
+    singleDate: opts.singleDate || todayISO,
+    month:      String(opts.month || cur.month),
+    year:       String(opts.year  || cur.year),
+  });
+  const res = await fetch(
+    buildUrl(`/get-inactive-students-fee/${branchID}?${params.toString()}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load inactive students fee');
+  }
+  return json?.data ?? json ?? {};
+}
+
 /* App-adoption report — un logon ki list jinhon ne mobile app install/register
    ki (FCM token registered = "downloaded"). Yehi endpoint dashboard ke Teachers/
    Parents "Downloaded" count ka source hai.

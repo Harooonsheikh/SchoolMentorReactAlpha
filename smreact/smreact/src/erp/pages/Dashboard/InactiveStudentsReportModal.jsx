@@ -1,18 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DASH_MODAL_CSS } from './dashModalCss';
-import { computeInactiveFeeImpact } from './inactiveFeeImpact';
+import { loadInactiveFeeImpact, EMPTY_INACTIVE_IMPACT } from './inactiveFeeImpact';
 import { buildStandardReportHtml, buildReportTableHtml, openReportWindow } from '../../reports/reportKit';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => `PKR ${(Number(n) || 0).toLocaleString('en-PK')}`;
 
-export default function InactiveStudentsReportModal({ feeData, monthIdx, onClose, toast = () => {} }) {
+export default function InactiveStudentsReportModal({ monthIdx, year, onClose, toast = () => {} }) {
+  const yr = Number(year) || new Date().getFullYear();
+  const ym = `${yr}-${String(monthIdx + 1).padStart(2, '0')}`;
   const [mode, setMode] = useState('month');
   const [day, setDay] = useState(todayISO());
-  const [month, setMonth] = useState(`2026-${String(monthIdx + 1).padStart(2, '0')}`);
-  const [from, setFrom] = useState('2026-05-01');
-  const [to, setTo] = useState('2026-05-31');
+  const [month, setMonth] = useState(ym);
+  const [from, setFrom] = useState(`${ym}-01`);
+  const [to, setTo] = useState(todayISO());
 
   const range = useMemo(() => {
     if (mode === 'day') return { from: day, to: day, label: new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) };
@@ -27,15 +29,29 @@ export default function InactiveStudentsReportModal({ feeData, monthIdx, onClose
     return { from: f, to: t, label: `${lbl(f)} – ${lbl(t)}` };
   }, [mode, day, month, from, to]);
 
-  const report = useMemo(() => computeInactiveFeeImpact({ ...feeData, monthIdx, from: range.from, to: range.to }), [feeData, monthIdx, range]);
+  /* LIVE — Day → SingleDate, Month → Month, Custom Date Range → FromTo. */
+  const [report, setReport] = useState(EMPTY_INACTIVE_IMPACT);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    let q;
+    if (mode === 'day') q = { filterType: 'SingleDate', singleDate: range.from };
+    else if (mode === 'month') { const [y, m] = month.split('-').map(Number); q = { filterType: 'Month', month: m, year: y }; }
+    else q = { filterType: 'FromTo', fromDate: range.from, toDate: range.to };
+    setLoading(true);
+    loadInactiveFeeImpact(q)
+      .then((d) => { if (alive) setReport(d); })
+      .catch((e) => { console.error('Inactive Students Fee API error:', e); if (alive) setReport(EMPTY_INACTIVE_IMPACT); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [mode, month, range]);
 
   const handleDownload = () => {
     const columns = [
       { key: 'name', label: 'Student Name' }, { key: 'reg', label: 'Admission No.' },
       { key: 'cls', label: 'Class' }, { key: 'sec', label: 'Section' }, { key: 'inactiveDate', label: 'Deactivation Date' },
-      { key: 'currentChallanExcluded', label: 'Current Challan' }, { key: 'previousDuesExcluded', label: 'Previous Dues' },
-      { key: 'feeReceivedExcluded', label: 'Fee Received' }, { key: 'receivingDiscountExcluded', label: 'Receiving Discount' },
-      { key: 'advanceAdjustmentExcluded', label: 'Advance Adjustment' }, { key: 'unusedAdvanceBalance', label: 'Unused Advance' },
+      { key: 'reason', label: 'Reason' },
+      { key: 'unusedAdvanceBalance', label: 'Unused Advance' },
       { key: 'netImpact', label: 'Net Fee Impact' },
     ];
     const rows = report.rows.map(r => ({
@@ -46,7 +62,7 @@ export default function InactiveStudentsReportModal({ feeData, monthIdx, onClose
       netImpact: fmt(r.netImpact),
     }));
     const bodyHtml = buildReportTableHtml({ columns, rows, isColor: true, emptyText: 'No students were inactivated during this period.' });
-    const html = buildStandardReportHtml({ title: 'Inactive Students — Fee Impact Report', subtitleLine: range.label, format: 'pdf', isColor: true, bodyHtml, orientation: 'landscape' });
+    const html = buildStandardReportHtml({ title: 'Inactive Students — Fee Impact Report', subtitleLine: range.label, format: 'pdf', isColor: true, bodyHtml,orientation: 'portrait' });
     openReportWindow(html);
     toast('Inactive Students Report — sent to print.', 'success');
   };
@@ -94,7 +110,7 @@ export default function InactiveStudentsReportModal({ feeData, monthIdx, onClose
               </>
             )}
             <div className="drr-actions">
-              <button type="button" className="up-btn up-btn-primary" onClick={handleDownload}>
+              <button type="button" className="up-btn up-btn-primary" onClick={handleDownload} disabled={loading}>
                 <i className="fa-solid fa-download" aria-hidden="true"></i> Download Report
               </button>
             </div>
@@ -102,7 +118,12 @@ export default function InactiveStudentsReportModal({ feeData, monthIdx, onClose
 
           <div className="isr-period"><i className="fa-solid fa-calendar-check" aria-hidden="true"></i> {range.label}</div>
 
-          {report.studentsInactivated === 0 ? (
+            {loading ? (
+            <div className="up-empty">
+              <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /></div>
+              <div className="up-empty-t">Loading inactive students…</div>
+            </div>
+          ) : (report.studentsInactivated === 0 && report.rows.length === 0) ? (
             <div className="up-empty">
               <div className="up-empty-ic"><i className="fa-solid fa-circle-check" aria-hidden="true"></i></div>
               <div className="up-empty-t">No students were inactivated during this period.</div>

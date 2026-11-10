@@ -15,7 +15,16 @@ export function setErpNavHandlers(next) {
 }
 
 /** Log out: hand back to the host (clears session + shows login). */
+// export function logout() {
+//   if (handlers.onLogout) { handlers.onLogout(); return; }
 export function logout() {
+  // Mentor AI ka purana token saaf karo, taake agla login fresh token le
+  try {
+    localStorage.removeItem("mentor_ai_access");
+    localStorage.removeItem("mentor_ai_refresh");
+    localStorage.removeItem("mentor_ai_user");
+  } catch (e) { /* ignore */ }
+
   if (handlers.onLogout) { handlers.onLogout(); return; }
   // Fallback (standalone use only)
   try { sessionStorage.clear(); } catch (e) { /* ignore */ }

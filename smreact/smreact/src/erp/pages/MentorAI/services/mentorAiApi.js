@@ -11,9 +11,55 @@ export const secureMentorUrl = (u) =>
     MENTOR_AI_BASE
   ) : u;
 
+// const mentorAiApi = axios.create({
+//     baseURL: MENTOR_AI_BASE,
+// });
+
+
 const mentorAiApi = axios.create({
     baseURL: MENTOR_AI_BASE,
 });
+
+let tokenPromise = null;
+
+export function fetchFreshMentorToken() {
+    if (!tokenPromise) {
+        const formData = new FormData();
+        formData.append("branch", sessionStorage.getItem("branchID"));
+        formData.append("user", sessionStorage.getItem("UserID"));
+        formData.append("principal", sessionStorage.getItem("accountType") === "School Head");
+
+        tokenPromise = axios
+            .post(`${MENTOR_AI_BASE}/ai/api/auth/token/`, formData)
+            .then(({ data }) => {
+                localStorage.setItem("mentor_ai_access", data.access);
+                localStorage.setItem("mentor_ai_refresh", data.refresh);
+                localStorage.setItem("mentor_ai_user", JSON.stringify(data.user));
+                return data.access;
+            })
+            .finally(() => { tokenPromise = null; });
+    }
+    return tokenPromise;
+}
+
+mentorAiApi.interceptors.response.use(
+    (res) => res,
+    async (error) => {
+        const original = error.config;
+        if (error.response?.status === 401 && original && !original._retried) {
+            original._retried = true;
+            try {
+                const token = await fetchFreshMentorToken();
+                original.headers = original.headers || {};
+                original.headers.Authorization = `Bearer ${token}`;
+                return mentorAiApi(original);
+            } catch (e) {
+                return Promise.reject(error);
+            }
+        }
+        return Promise.reject(error);
+    }
+);
 mentorAiApi.interceptors.request.use((config) => {
 
     const token = localStorage.getItem(
