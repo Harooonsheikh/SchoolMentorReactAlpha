@@ -257,14 +257,24 @@ export const MODULE_TREE = [
     ] },
   { id: 'compliance',  label: 'School Compliance', icon: 'fa-clipboard-check',
     children: [
-      /* ── SchoolCompliance.jsx's 7 L1 tabs, one permission each. ── */
+      /* ── SchoolCompliance.jsx ke L1 tabs, one permission each. Compliance
+            Setup ke andar 3 sub-tabs (Daily / Weekly / Monthly) hain jahan
+            tasks bante hain — Fee ke "Fee Setup & Settings" segments ki
+            tarah teeno alag permission screens hain, taake e.g. kisi ko
+            sirf Weekly allowed ho to Setup me bhi sirf Weekly sub-tab
+            dikhe. Setup L1 tab tab dikhta hai jab teeno me se kisi ek ka
+            View granted ho. `label` = API subMenuName —
+            compliancePermissions.js isi se match karta hai, is liye dono
+            jagah ek saath badlein. ── */
       { id: 'cmp.overview', label: 'Overview' },
+      { id: 'cmp.setup_daily',   label: 'Compliance Setup - Daily',   group: 'Compliance Setup' },
+      { id: 'cmp.setup_weekly',  label: 'Compliance Setup - Weekly',  group: 'Compliance Setup' },
+      { id: 'cmp.setup_monthly', label: 'Compliance Setup - Monthly', group: 'Compliance Setup' },
       { id: 'cmp.daily',    label: 'Daily Checks' },
       { id: 'cmp.weekly',   label: 'Weekly Checks' },
       { id: 'cmp.monthly',  label: 'Monthly Review' },
       { id: 'cmp.problems', label: 'Problems & Follow-ups' },
       { id: 'cmp.reports',  label: 'Reports' },
-      { id: 'cmp.setup',    label: 'Compliance Setup' },
     ] },
   /* `label` seedha `menuName` ban kar API ko jata hai (apiPermissionsFromPerms)
      aur wapsi par usi se match hota hai — is liye wo "School SOPs" hi rahega
@@ -939,15 +949,39 @@ export const MODULE_PERMISSIONS = {
      Edit — plus add a school-specific item — mapped to Create — and
      remove one the school added itself — mapped to Delete; the built-in
      items can never be deleted, only turned off). */
+  /* Enforcement: src/erp/pages/SchoolCompliance/compliancePermissions.js.
+     Jis action ka grant nahi uska button HIDE hota hai (disable nahi). */
   'cmp.overview': ['view'],
-  'cmp.daily':    ['view', 'edit', 'create'],
-  'cmp.weekly':   ['view', 'edit', 'create'],
-  'cmp.monthly':  ['view', 'edit', 'create'],
-  /* Mark In Progress / Mark Resolved are status edits on an existing
-     problem (Edit); Verify & Close is the final sign-off (Approve). */
-  'cmp.problems': ['view', 'create', 'assign', 'edit', 'approve'],
-  'cmp.reports':  ['view', 'download', 'print'],
-  'cmp.setup':    ['view', 'create', 'edit', 'delete'],
+
+  /* Daily / Weekly / Monthly check tabs (shared ChecklistRow):
+       Edit    → status buttons, remark, evidence photo, Save,
+                 "Mark All Non-Safety Tasks Completed"
+       Create  → "Issue Found" save hone par Report-a-Problem modal
+                 (naya problem banta hai)
+       Approve → safety task par "Verify Completion" (supervisor sign-off)
+     Sirf View → row khulti hai magar status/remark/photo read-only. */
+  'cmp.daily':    ['view', 'create', 'edit', 'approve'],
+  'cmp.weekly':   ['view', 'create', 'edit', 'approve'],
+  'cmp.monthly':  ['view', 'create', 'edit', 'approve'],
+
+  /* Report a Problem (Create — Assign To isi form ka hissa hai, alag Assign
+     button nahi); Mark In Progress / Mark Resolved are status edits on an
+     existing problem (Edit); Verify & Close is the final sign-off
+     (Approve); row ka trash button (Delete). */
+  'cmp.problems': ['view', 'create', 'edit', 'delete', 'approve'],
+
+  /* View Report (on-page preview) + Download PDF / Word / Excel. Alag
+     Print button nahi — PDF wali window se print hota hai. */
+  'cmp.reports':  ['view', 'download'],
+
+  /* Compliance Setup ke 3 sub-tabs, har ek apne task list ke liye:
+       View   → sub-tab dikhta hai (na ho to hide)
+       Create → Add New Checklist Item, Add New Category
+       Edit   → Edit (pen) button, Active switch, weekly Due Day
+       Delete → Delete (trash) button */
+  'cmp.setup_daily':   ['view', 'create', 'edit', 'delete'],
+  'cmp.setup_weekly':  ['view', 'create', 'edit', 'delete'],
+  'cmp.setup_monthly': ['view', 'create', 'edit', 'delete'],
 
   /* ─── SCHOOL SOPs — derived from real buttons in
          SchoolSOPs.jsx (audited 2026-05-31). Module is fully

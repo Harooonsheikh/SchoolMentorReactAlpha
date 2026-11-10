@@ -130,8 +130,19 @@ export function PhotoAttach({ value, onChange }) {
    optional photo, and (when Issue Found) a "Report Problem" action.
    Safety-critical items (verificationRequired) cannot be saved as
    Completed without a remark, and show a "Needs Verification" chip
-   until verified. ─── */
-export function ChecklistRow({ item, onUpdate, onReportProblem }) {
+   until verified.
+
+   `perms` (us tab ki permissions — compliancePermissions.js):
+     canEdit    → status buttons / remark / photo / Save. Na ho to row
+                  read-only (status, remark aur photo sirf dikhte hain).
+     canCreate  → Issue Found save hone par Report-a-Problem modal khulta
+                  hai. Na ho to sirf status + remark save hota hai.
+     canApprove → safety task ka "Verify Completion" button.
+   Default sab false — caller bhoole to row read-only rahe (fail-closed). ─── */
+const NO_ROW_PERMS = { canEdit: false, canCreate: false, canApprove: false };
+
+export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_PERMS }) {
+  const { canEdit, canCreate, canApprove } = perms;
   const [open, setOpen] = useState(false);
   /* Status, remark aur photo — teeno sirf local rehte hain. Koi API call
      nahi hoti jab tak user Save na dabaye; tab teeno ek hi call mein
@@ -168,7 +179,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem }) {
       const ok = await onUpdate(item.id, { status, remark: remark.trim(), evidence: photo });
       if (ok !== false) {
         setDirty(false);
-        if (status === STATUS.ISSUE_FOUND) onReportProblem(item, remark.trim(), photo);
+        if (status === STATUS.ISSUE_FOUND && canCreate) onReportProblem(item, remark.trim(), photo);
       }
     } finally {
       setSaving(false);
@@ -193,7 +204,39 @@ export function ChecklistRow({ item, onUpdate, onReportProblem }) {
         </div>
       </div>
 
-      {open && (
+      {open && !canEdit && (
+        /* Sirf View — jo save hai wohi dikhao, badalne ka koi control nahi */
+        <div className="cmp-row-body" onClick={e => e.stopPropagation()}>
+          <div className="cmp-row-fields">
+            <div className="form-group cmp-row-remark">
+              <span className="form-label">Remark</span>
+              <div style={{ fontSize: 12.5, color: item.remark ? 'var(--text-primary)' : 'var(--text-muted)', whiteSpace: 'pre-wrap' }}>
+                {item.remark || 'No remark.'}
+              </div>
+            </div>
+            <div className="cmp-row-side">
+              <span className="form-label">Evidence Photo</span>
+              {item.evidence ? (
+                <a href={item.evidence} target="_blank" rel="noreferrer" title="Open the full photo">
+                  <img src={item.evidence} alt="Evidence" style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 8, border: '1.5px solid var(--border-light)' }} />
+                </a>
+              ) : (
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No photo.</div>
+              )}
+            </div>
+          </div>
+          {item.verificationRequired && item.status === STATUS.COMPLETED && item.verifiedBy && (
+            <div className="cmp-verified"><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Verified by {item.verifiedBy}</div>
+          )}
+          {item.verificationRequired && item.status === STATUS.COMPLETED && !item.verifiedBy && canApprove && (
+            <button type="button" className="btn btn-secondary cmp-verify-btn" title="Verify this completed check" onClick={() => onUpdate(item.id, { verifiedBy: true })}>
+              <i className="fa-solid fa-stamp" aria-hidden="true"></i> Verify Completion
+            </button>
+          )}
+        </div>
+      )}
+
+      {open && canEdit && (
         <div className="cmp-row-body" onClick={e => e.stopPropagation()}>
           <div className="cmp-seg cmp-seg-4">
             {[STATUS.NOT_CHECKED, STATUS.COMPLETED, STATUS.ISSUE_FOUND, STATUS.NOT_APPLICABLE].map(s => (
@@ -233,7 +276,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem }) {
           {item.verificationRequired && item.status === STATUS.COMPLETED && (
             item.verifiedBy
               ? <div className="cmp-verified"><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Verified by {item.verifiedBy}</div>
-              : (
+              : canApprove && (
                 <button
                   type="button"
                   className="btn btn-secondary cmp-verify-btn"
@@ -251,7 +294,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem }) {
   );
 }
 
-export function ChecklistGroup({ group, onUpdate, onReportProblem, defaultOpen = false }) {
+export function ChecklistGroup({ group, onUpdate, onReportProblem, perms, defaultOpen = false }) {
   const [expanded, setExpanded] = useState(defaultOpen);
   const done = group.items.filter(i => i.status === STATUS.COMPLETED || i.status === STATUS.NOT_APPLICABLE).length;
   return (
@@ -266,7 +309,7 @@ export function ChecklistGroup({ group, onUpdate, onReportProblem, defaultOpen =
       {expanded && (
         <div className="cmp-group-body">
           {group.items.map(item => (
-            <ChecklistRow key={item.id} item={item} onUpdate={onUpdate} onReportProblem={onReportProblem} />
+            <ChecklistRow key={item.id} item={item} onUpdate={onUpdate} onReportProblem={onReportProblem} perms={perms} />
           ))}
         </div>
       )}

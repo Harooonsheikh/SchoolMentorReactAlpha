@@ -3,6 +3,7 @@ import useAsync from '../../hooks/useAsync';
 import * as complianceApi from '../../services/complianceApi';
 import { FilterBar, Field, ProblemModal, ProblemStatusBadge, PriorityBadge, EmptyState, initials, ConfirmDialog } from './ComplianceShared';
 import { PROBLEM_CATEGORIES, PROBLEM_PRIORITIES } from '../../mock/compliance';
+import { useComplianceActions } from './compliancePermissions';
 
 const fetchProblems = () => complianceApi.getProblems();
 
@@ -29,6 +30,10 @@ export default function Problems({ toast }) {
   const [confirm, setConfirm] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(true);
+
+  /* Permissions — Create: Report a Problem; Edit: Mark In Progress /
+     Resolved; Approve: Verify & Close; Delete: trash button. */
+  const { canCreate, canEdit, canDelete, canApprove } = useComplianceActions('problems');
 
   /* Branch ke employees — Report a Problem ke Assign To dropdown ke liye */
   React.useEffect(() => {
@@ -91,16 +96,18 @@ export default function Problems({ toast }) {
     message: `<b>${esc(p.title)}</b> will be permanently removed from Problems &amp; Follow-ups.`,
     confirmLabel: 'Delete',
     icon: 'fa-trash',
-    onConfirm: () => removeProblem(p),
+    onConfirm: () => (canDelete ? removeProblem(p) : undefined),
   });
 
   return (
     <>
       <div className="cmp-card-h" style={{ marginBottom: 14 }}>
         <div className="cmp-card-title"><i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Problems &amp; Follow-ups</div>
+        {canCreate && (
         <button type="button" className="btn btn-primary" onClick={() => setReportOpen(true)}>
           <i className="fa-solid fa-flag" aria-hidden="true"></i> Report a Problem
         </button>
+        )}
       </div>
 
       <FilterBar>
@@ -132,7 +139,7 @@ export default function Problems({ toast }) {
       ) : (
         <div className="cmp-table-wrap">
           <table className="cmp-table">
-            <thead><tr><th></th><th>Problem</th><th>Category</th><th>Priority</th><th>Reported By</th><th>Assigned To</th><th>Due Date</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
+            <thead><tr><th></th><th>Problem</th><th>Category</th><th>Priority</th><th>Reported By</th><th>Assigned To</th><th>Due Date</th><th>Status</th>{canDelete && <th style={{ textAlign: 'right' }}>Actions</th>}</tr></thead>
             <tbody>
               {filtered.map(p => (
                 <React.Fragment key={p.id}>
@@ -149,6 +156,7 @@ export default function Problems({ toast }) {
 </td>
                     <td>{p.dueDate}</td>
                     <td><ProblemStatusBadge status={p.status} /></td>
+                    {canDelete && (
                     <td style={{ textAlign: 'right' }}>
                       <button
                         type="button"
@@ -161,10 +169,11 @@ export default function Problems({ toast }) {
                         <i className="fa-solid fa-trash" aria-hidden="true"></i>
                       </button>
                     </td>
+                    )}
                   </tr>
                   {expanded === p.id && (
                     <tr>
-                      <td colSpan={9} style={{ background: 'var(--bg-muted)' }}>
+                      <td colSpan={canDelete ? 9 : 8} style={{ background: 'var(--bg-muted)' }}>
                         <div style={{ padding: '12px 4px' }}>
                           <div style={{ marginBottom: 10 }}><b>Description:</b> {p.description}</div>
                           {p.resolutionRemarks && <div style={{ marginBottom: 10 }}><b>Resolution Remarks:</b> {p.resolutionRemarks}</div>}
@@ -179,7 +188,7 @@ export default function Problems({ toast }) {
                             ))}
                           </div>
 
-                          <ProblemActions p={p} onAdvance={advance} />
+                          <ProblemActions p={p} onAdvance={advance} canEdit={canEdit} canApprove={canApprove} />
                         </div>
                       </td>
                     </tr>
@@ -192,7 +201,7 @@ export default function Problems({ toast }) {
       )}
 
       <ProblemModal
-        open={reportOpen} initial={null}
+        open={canCreate && reportOpen} initial={null}
         categories={PROBLEM_CATEGORIES}
         employees={employees} employeesLoading={employeesLoading}
         onClose={() => setReportOpen(false)} onSave={saveNewProblem}
@@ -202,7 +211,7 @@ export default function Problems({ toast }) {
   );
 }
 
-function ProblemActions({ p, onAdvance }) {
+function ProblemActions({ p, onAdvance, canEdit = false, canApprove = false }) {
   const [remarks, setRemarks] = useState(p.resolutionRemarks || '');
   if (p.status === 'Verified and Closed') return <div style={{ fontSize: 12, color: '#16A34A', fontWeight: 700 }}><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Verified and closed.</div>;
   return (
@@ -210,16 +219,16 @@ function ProblemActions({ p, onAdvance }) {
       {/* {p.status === 'Open' && (
         <button type="button" className="btn btn-secondary" onClick={() => onAdvance(p, 'Assigned')}>Assign</button>
       )} */}
-      {(p.status === 'Open' || p.status === 'Assigned') && (
+      {canEdit && (p.status === 'Open' || p.status === 'Assigned') && (
         <button type="button" className="btn btn-secondary" onClick={() => onAdvance(p, 'In Progress')}>Mark In Progress</button>
       )}
-      {(p.status === 'Assigned' || p.status === 'In Progress') && (
+      {canEdit && (p.status === 'Assigned' || p.status === 'In Progress') && (
         <>
           <input className="form-input" style={{ minWidth: 220 }} placeholder="Resolution remarks…" value={remarks} onChange={e => setRemarks(e.target.value)} />
           <button type="button" className="btn btn-primary" onClick={() => onAdvance(p, 'Resolved', { resolutionRemarks: remarks })}>Mark Resolved</button>
         </>
       )}
-      {p.status === 'Resolved' && (
+      {canApprove && p.status === 'Resolved' && (
         <button type="button" className="btn btn-primary" onClick={() => onAdvance(p, 'Verified and Closed')}>
           <i className="fa-solid fa-stamp" aria-hidden="true"></i> Verify &amp; Close
         </button>

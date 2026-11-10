@@ -4,6 +4,7 @@ import { FilterBar, Field, EmptyState, ConfirmDialog } from './ComplianceShared'
 import {
   addArea, taskAction, toTemplate, norm, areasOfType, WEEKLY_AREA_NAME, getBranchEmployees,
 } from '../../services/complianceApi';
+import { useComplianceActions, useComplianceTabs, setupScreenOf } from './compliancePermissions';
 
 const FREQ_TABS = [
   { id: 'daily', label: 'Daily Checks' },
@@ -308,6 +309,19 @@ export default function ComplianceSetup({
   const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(true);
 
+  /* Permissions — har sub-tab (Daily / Weekly / Monthly) ki apni screen.
+     Jis sub-tab ka View nahi wo hide (e.g. sirf Weekly allowed ho to sirf
+     Weekly dikhe); active sub-tab hide ho to pehle visible par snap.
+     Buttons usi sub-tab ke actions se hide hote hain. */
+  const { canOpen } = useComplianceTabs();
+  const visibleFreqTabs = FREQ_TABS.filter(f => canOpen(setupScreenOf(f.id)));
+  const freqAllowed = visibleFreqTabs.some(f => f.id === freq);
+  React.useEffect(() => {
+    if (!freqAllowed && visibleFreqTabs[0]) setFreq(visibleFreqTabs[0].id);
+  }, [freqAllowed, visibleFreqTabs]);
+  const { canCreate, canEdit, canDelete } = useComplianceActions(setupScreenOf(freq));
+  const showActions = canEdit || canDelete;
+
   /* Branch ke employees — Assigned To dropdown ke liye (ek dafa load) */
   React.useEffect(() => {
     let alive = true;
@@ -431,7 +445,7 @@ export default function ComplianceSetup({
       </div>
 
       <div className="cmp-tabs" style={{ marginBottom: 16 }}>
-        {FREQ_TABS.map(f => (
+        {visibleFreqTabs.map(f => (
           <button key={f.id} type="button" className={`cmp-tab${freq === f.id ? ' active' : ''}`} onClick={() => setFreq(f.id)}>
             {f.label}
           </button>
@@ -442,6 +456,7 @@ export default function ComplianceSetup({
         <Field label="Search Checklist Items">
           <input className="form-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by task or area…" />
         </Field>
+        {canCreate && (
         <Field label=" ">
           <div style={{ display: 'flex', gap: 10, width: '100%' }}>
             <button
@@ -462,12 +477,13 @@ export default function ComplianceSetup({
             </button>
           </div>
         </Field>
+        )}
       </FilterBar>
 
-      <ItemModal open={addOpen} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} onClose={() => setAddOpen(false)} onSave={addItem} />
-      <ItemModal open={!!editing} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} editing={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
+      <ItemModal open={canCreate && addOpen} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} onClose={() => setAddOpen(false)} onSave={addItem} />
+      <ItemModal open={canEdit && !!editing} freq={freq} areas={areas} employees={employees} employeesLoading={employeesLoading} editing={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
       <AddAreaModal
-        open={areaOpen}
+        open={canCreate && areaOpen}
         freqLabel={FREQ_TABS.find(f => f.id === freq)?.label || ''}
         existingNames={[
           ...buildAreaOptions(freq, areas).map(o => o.label),
@@ -493,14 +509,14 @@ export default function ComplianceSetup({
                 {freq === 'weekly' && <col style={{ width: 140 }} />}
                 <col style={{ width: 150 }} />
                 <col style={{ width: 90 }} />
-                <col style={{ width: 96 }} />
+                {showActions && <col style={{ width: 96 }} />}
               </colgroup>
               <thead>
                 <tr>
                   <th>Task</th><th>Assigned To</th>
                   {freq === 'weekly' && <th>Due Day</th>}
                   <th>Evidence Required</th><th>Active</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
+                  {showActions && <th style={{ textAlign: 'right' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -514,30 +530,42 @@ export default function ComplianceSetup({
                     <td style={{ opacity: t.active ? 1 : .5 }}>{assigneeName(t)}</td>
                     {freq === 'weekly' && (
                       <td>
-                        <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.dueDay} onChange={e => patch(t, { dueDay: e.target.value })}>
-                          {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
-                        </select>
+                        {canEdit ? (
+                          <select className="form-input" style={{ height: 32, fontSize: 11.5 }} value={t.dueDay} onChange={e => patch(t, { dueDay: e.target.value })}>
+                            {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        ) : (t.dueDay || '—')}
                       </td>
                     )}
                     <td>
                       <input type="checkbox" checked={t.evidenceAllowed} disabled title="Backend support coming soon" />
                     </td>
                     <td>
-                      <label className="cmp-switch">
-                        <input type="checkbox" checked={t.active} onChange={() => toggleActive(t)} />
-                        <span />
-                      </label>
+                      {canEdit ? (
+                        <label className="cmp-switch">
+                          <input type="checkbox" checked={t.active} onChange={() => toggleActive(t)} />
+                          <span />
+                        </label>
+                      ) : (
+                        <span style={{ fontSize: 12, fontWeight: 600, color: t.active ? '#16A34A' : 'var(--text-muted)' }}>{t.active ? 'On' : 'Off'}</span>
+                      )}
                     </td>
+                    {showActions && (
                     <td>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        {canEdit && (
                         <button type="button" className="btn btn-secondary" style={iconBtn} title="Edit this task" aria-label={`Edit ${t.label}`} onClick={() => setEditing(t)}>
                           <i className="fa-solid fa-pen" aria-hidden="true"></i>
                         </button>
+                        )}
+                        {canDelete && (
                         <button type="button" className="btn btn-secondary" style={{ ...iconBtn, color: '#DC2626' }} title="Delete this task" aria-label={`Delete ${t.label}`} onClick={() => askRemove(t)}>
                           <i className="fa-solid fa-trash" aria-hidden="true"></i>
                         </button>
+                        )}
                       </div>
                     </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

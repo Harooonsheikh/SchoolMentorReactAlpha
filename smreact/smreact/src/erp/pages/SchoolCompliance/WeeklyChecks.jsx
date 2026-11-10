@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { filterInstances } from './complianceData';
 import { ChecklistGroup, FilterBar, Field, ProblemModal, EmptyState } from './ComplianceShared';
 import useComplianceChecks, { groupItems, staffOptionsOf, categoryOf } from './useComplianceChecks';
+import { useComplianceActions } from './compliancePermissions';
 import { STATUS, PROBLEM_CATEGORIES, COMPLIANCE_AREAS } from '../../mock/compliance';
 import { todayIso, weekKeyOf, shiftWeekKey } from '../../services/complianceApi';
 
@@ -37,6 +38,10 @@ export default function WeeklyChecks({ toast, areas = [], tasks = null, onTasksC
   const [assignedTo, setAssignedTo] = useState('');
   const [status, setStatus] = useState('');
   const [problemModal, setProblemModal] = useState(null);
+
+  /* Permissions — Edit: status/remark/photo/Save; Create: Issue Found par
+     Report-a-Problem; Approve: Verify Completion. Sirf View = read-only. */
+  const perms = useComplianceActions('weekly');
 
   const list = instances || [];
   const staffOptions = useMemo(() => staffOptionsOf(list), [list]);
@@ -109,13 +114,13 @@ export default function WeeklyChecks({ toast, areas = [], tasks = null, onTasksC
               sub={list.length ? 'Try widening the staff or status filter.' : 'Add weekly items from the Compliance Setup tab.'}
             />
           ) : groups.map(g => (
-            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} defaultOpen />
+            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} perms={perms} defaultOpen />
           ))}
         </>
       )}
 
       <ProblemModal
-        open={!!problemModal} initial={problemModal}
+        open={perms.canCreate && !!problemModal} initial={problemModal}
         categories={PROBLEM_CATEGORIES}
         employees={employees} employeesLoading={employeesLoading}
         onClose={() => setProblemModal(null)} onSave={onSaveProblem}

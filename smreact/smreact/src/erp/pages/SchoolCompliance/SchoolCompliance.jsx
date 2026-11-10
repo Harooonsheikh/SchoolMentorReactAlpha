@@ -8,6 +8,8 @@ import Problems from './Problems';
 import ComplianceReports from './ComplianceReports';
 import ComplianceSetup from './ComplianceSetup';
 import { ensureAreas, ensureTasks, getAreas, getTasks, SEED_AREA_NAMES } from '../../services/complianceApi';
+import { useComplianceTabs } from './compliancePermissions';
+import { EmptyState } from './ComplianceShared';
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -44,6 +46,15 @@ const [tab, setTab] = useState('setup');
 const [areas, setAreas] = useState([]);
 const [tasks, setTasks] = useState(null);
 const [loadError, setLoadError] = useState('');
+
+/* Tab level permission — jis tab ka View granted nahi wo hide. Active tab
+   hide ho jaye (ya default 'setup' allowed na ho) to pehle visible par snap. */
+const { ready: permsReady, canOpen } = useComplianceTabs();
+const visibleTabs = TABS.filter(t => canOpen(t.id));
+const tabAllowed = visibleTabs.some(t => t.id === tab);
+useEffect(() => {
+  if (permsReady && !tabAllowed && visibleTabs[0]) setTab(visibleTabs[0].id);
+}, [permsReady, tabAllowed, visibleTabs]);
 
 const load = () => {
   setLoadError('');
@@ -91,7 +102,7 @@ const refreshAreas = () => getAreas().then(setAreas);
     <button type="button" className="btn btn-secondary" onClick={load}>Retry</button>
   </div>
 )}
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <Tooltip key={t.id} text={`Open ${t.label}`}>
             <button type="button" className={`cmp-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
               <i className={`fa-solid ${t.icon}`} aria-hidden="true"></i> {t.label}
@@ -100,6 +111,14 @@ const refreshAreas = () => getAreas().then(setAreas);
         ))}
       </div>
 
+      {permsReady && visibleTabs.length === 0 && (
+        <EmptyState
+          icon="fa-lock"
+          title="You don't have access to School Compliance"
+          sub="Please contact your school admin to get permission."
+        />
+      )}
+      {permsReady && tabAllowed && (<>
       {/* {tab === 'overview' && <Overview toast={toast} onNavigate={setTab} />} */}
       {/* Daily / Weekly / Monthly — Setup wala hi backend task list
           (areas + tasks) in teeno ko jata hai, is liye Setup mein
@@ -118,6 +137,7 @@ const refreshAreas = () => getAreas().then(setAreas);
     onTasksChange={refreshTasks}
   />
 )}
+      </>)}
     </>
   );
 }

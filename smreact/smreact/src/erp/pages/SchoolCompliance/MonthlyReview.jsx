@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { filterInstances } from './complianceData';
 import { ChecklistGroup, FilterBar, Field, ProblemModal, EmptyState } from './ComplianceShared';
 import useComplianceChecks, { groupItems, staffOptionsOf, categoryOf } from './useComplianceChecks';
+import { useComplianceActions } from './compliancePermissions';
 import { STATUS, PROBLEM_CATEGORIES, MONTHLY_CATEGORY_OPTIONS } from '../../mock/compliance';
 import { todayIso, monthKeyOf, shiftMonthKey } from '../../services/complianceApi';
 
@@ -36,6 +37,10 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
   const [assignedTo, setAssignedTo] = useState('');
   const [status, setStatus] = useState('');
   const [problemModal, setProblemModal] = useState(null);
+
+  /* Permissions — Edit: status/remark/photo/Save; Create: Issue Found par
+     Report-a-Problem; Approve: Verify Completion. Sirf View = read-only. */
+  const perms = useComplianceActions('monthly');
 
   const list = instances || [];
   const staffOptions = useMemo(() => staffOptionsOf(list), [list]);
@@ -100,13 +105,13 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
               sub={list.length ? 'Try widening the staff or status filter.' : 'Add monthly items from the Compliance Setup tab.'}
             />
           ) : groups.map((g, i) => (
-            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} defaultOpen={i === 0} />
+            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} perms={perms} defaultOpen={i === 0} />
           ))}
         </>
       )}
 
       <ProblemModal
-        open={!!problemModal} initial={problemModal}
+        open={perms.canCreate && !!problemModal} initial={problemModal}
         categories={PROBLEM_CATEGORIES}
         employees={employees} employeesLoading={employeesLoading}
         onClose={() => setProblemModal(null)} onSave={onSaveProblem}

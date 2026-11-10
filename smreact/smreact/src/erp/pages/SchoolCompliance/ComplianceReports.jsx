@@ -9,6 +9,7 @@ import {
   buildStandardReportHtml, buildReportTableHtml, openReportWindow,
   downloadReportAsWord, downloadReportExcel, reportPalette, reportStatusPill, reportFileName, REPORT_ACADEMIC_YEAR,
 } from '../../reports/reportKit';
+import { useComplianceActions } from './compliancePermissions';
 
 const ALL_STAFF = [...new Set(Object.values(ROLE_STAFF).flat())];
 
@@ -72,20 +73,25 @@ function useReportBuilder({ title, columns, data, rowMapper, groupKey, kpis, emp
    preview is already visible by default — View Report mainly exists
    as the explicit, expected affordance and re-confirms/keeps it open. */
 function ReportActions({ onView, onDownloadPdf, onDownloadWord, onDownloadExcel, disabled }) {
+  /* PDF / Word / Excel sirf Download permission par (warna hide). View
+     Report har us user ko jo Reports tab dekh sakta hai. */
+  const { canDownload } = useComplianceActions('reports');
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
       <button type="button" className="btn btn-secondary" disabled={disabled} onClick={onView}>
         <i className="fa-solid fa-eye" aria-hidden="true"></i> View Report
       </button>
+      {canDownload && (
       <button type="button" className="btn btn-primary" disabled={disabled} onClick={onDownloadPdf}>
         <i className="fa-solid fa-file-pdf" aria-hidden="true"></i> Download PDF
       </button>
-      {onDownloadWord && (
+      )}
+      {canDownload && onDownloadWord && (
         <button type="button" className="btn btn-secondary" disabled={disabled} onClick={onDownloadWord}>
           <i className="fa-brands fa-microsoft" aria-hidden="true"></i> Word
         </button>
       )}
-      {onDownloadExcel && (
+      {canDownload && onDownloadExcel && (
         <button type="button" className="btn btn-secondary" disabled={disabled} onClick={onDownloadExcel}>
           <i className="fa-solid fa-file-excel" aria-hidden="true"></i> Excel
         </button>
