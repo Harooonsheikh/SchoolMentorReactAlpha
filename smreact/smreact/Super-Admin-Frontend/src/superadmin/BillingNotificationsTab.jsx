@@ -119,6 +119,23 @@ function DeliveryHistory({ refreshKey }) {
   const pages = Math.max(1, Math.ceil(state.totalCount / HISTORY_PAGE_SIZE));
   const val = (o, k) => o[k] ?? o[k[0].toUpperCase() + k.slice(1)];
 
+  /* Server har channel (ERP Banner / Push and Bell) ki alag row likhta hai —
+     ek hi message (challan + type + status + sentOn minute) ko ek row me,
+     channels jor kar. */
+  const rows = [];
+  const byKey = {};
+  state.items.forEach((d) => {
+    const k = [val(d, 'challanID'), val(d, 'reminderType'), String(val(d, 'status') || '').toLowerCase(), String(val(d, 'sentOn') || '').slice(0, 16)].join('|');
+    const channel = val(d, 'channel');
+    const label = HISTORY_CHANNEL_LABEL[channel] || channel;
+    if (byKey[k]) {
+      if (label && !byKey[k].channels.includes(label)) byKey[k].channels.push(label);
+      return;
+    }
+    byKey[k] = { d, channels: label ? [label] : [] };
+    rows.push(byKey[k]);
+  });
+
   return (
     <>
       <div style={{ padding: '0 18px 10px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -128,11 +145,11 @@ function DeliveryHistory({ refreshKey }) {
           <option value="BeforeDue">Before due</option>
           <option value="Overdue">Overdue</option>
         </select>
-        <span style={{ fontSize: 11, color: 'var(--tm)' }}>{state.totalCount} record{state.totalCount === 1 ? '' : 's'}</span>
+        <span style={{ fontSize: 11, color: 'var(--tm)' }}>{rows.length} message{rows.length === 1 ? '' : 's'} shown · {state.totalCount} channel deliver{state.totalCount === 1 ? 'y' : 'ies'} in total</span>
       </div>
       <div className="tbl-wrap" style={{ margin: '0 18px 12px' }}>
         <table className="ch-table">
-          <thead><tr><th>School</th><th style={{ width: 90 }}>Challan</th><th style={{ width: 110 }}>Type</th><th style={{ width: 120 }}>Channel</th><th style={{ width: 100, textAlign: 'right' }}>Amount</th><th style={{ width: 90, textAlign: 'center' }}>Status</th><th style={{ width: 150 }}>Sent On</th></tr></thead>
+          <thead><tr><th>School</th><th style={{ width: 90 }}>Challan</th><th style={{ width: 110 }}>Type</th><th style={{ width: 170 }}>Channel</th><th style={{ width: 100, textAlign: 'right' }}>Amount</th><th style={{ width: 90, textAlign: 'center' }}>Status</th><th style={{ width: 150 }}>Sent On</th></tr></thead>
           <tbody>
             {state.loading ? (
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 30, color: 'var(--tm)', fontSize: 12.5 }}><i className="fa-solid fa-spinner fa-spin" /> Loading delivery history…</td></tr>
@@ -140,14 +157,13 @@ function DeliveryHistory({ refreshKey }) {
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 30, color: 'var(--err)', fontSize: 12.5 }}><i className="fa-solid fa-triangle-exclamation" /> {state.error}</td></tr>
             ) : state.items.length === 0 ? (
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 30, color: 'var(--tm)', fontSize: 12.5 }}>No reminders sent yet. Rows appear here after the next scheduled send.</td></tr>
-            ) : state.items.map((d, i) => {
+            ) : rows.map(({ d, channels }, i) => {
               const id = val(d, 'id') ?? i;
               const status = String(val(d, 'status') || '');
               const failed = status.toLowerCase() === 'failed';
               const reason = val(d, 'failureReason');
               const body = val(d, 'messageBody');
               const sentOn = val(d, 'sentOn');
-              const channel = val(d, 'channel');
               const rType = val(d, 'reminderType');
               const open = openId === id;
               return (
@@ -156,7 +172,7 @@ function DeliveryHistory({ refreshKey }) {
                     <td>{val(d, 'schoolName') || `Branch #${val(d, 'branchID') ?? '—'}`}</td>
                     <td>{val(d, 'challanID') ?? '—'}</td>
                     <td style={{ fontSize: 12 }}>{HISTORY_TYPE_LABEL[rType] || rType || '—'}</td>
-                    <td style={{ fontSize: 12 }}>{HISTORY_CHANNEL_LABEL[channel] || channel || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{channels.length ? channels.join(' + ') : '—'}</td>
                     <td style={{ textAlign: 'right', fontSize: 12 }}>{val(d, 'amount') != null ? Number(val(d, 'amount')).toLocaleString() : '—'}</td>
                     <td style={{ textAlign: 'center' }}><span className={`badge ${failed ? 'b-red' : status.toLowerCase() === 'sent' ? 'b-green' : 'b-gray'}`} style={{ fontSize: 9 }}>{status || '—'}</span></td>
                     <td style={{ fontSize: 11, color: 'var(--tm)' }}>{sentOn ? new Date(sentOn).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>

@@ -91,15 +91,22 @@ export function PermissionsProvider({ children }) {
   /* Super Admin → Billing Automation restriction (GET /api/BillingAutoSetup):
      'read_only' / 'full' par har user (School Head bhi) sirf View/Download/
      Print kar sakta hai — `can()` ke zariye har gated module ke edit/delete
-     khud chhup jaate hain. Tab par wapas aane par aur har minute dobara check. */
+     khud chhup jaate hain. Login par, phir har 5 minute dobara check; tab par
+     wapas aane par sirf tab jab pichle check ko 5 minute guzar chuke hon. */
   const [billingLock, setBillingLock] = useState(null);   // null | 'read_only' | 'full'
   useEffect(() => {
+    const EVERY_MS = 5 * 60 * 1000;
     let alive = true;
-    const check = () => fetchBillingRestriction().then((mode) => { if (alive && mode !== undefined) setBillingLock(mode); });
+    let lastAt = 0;
+    const check = () => {
+      lastAt = Date.now();
+      fetchBillingRestriction().then((mode) => { if (alive && mode !== undefined) setBillingLock(mode); });
+    };
+    const onFocus = () => { if (Date.now() - lastAt >= EVERY_MS) check(); };
     check();
-    const timer = setInterval(check, 60000);
-    window.addEventListener('focus', check);
-    return () => { alive = false; clearInterval(timer); window.removeEventListener('focus', check); };
+    const timer = setInterval(check, EVERY_MS);
+    window.addEventListener('focus', onFocus);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener('focus', onFocus); };
   }, []);
   useEffect(() => {
     setBillingReadOnly(!!billingLock);

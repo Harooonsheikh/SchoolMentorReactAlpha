@@ -58,6 +58,8 @@ async function getBillingReminderAnnouncements() {
       time: '',
       status: ok && (Date.now() - dt.getTime()) <= 7 * 86400000 ? 'new' : 'read',
       _ts: ok ? dt.getTime() : 0,
+      _challanID: r.challanID,
+      _type: r.reminderType,
     });
   });
   // return out;
@@ -75,8 +77,12 @@ async function getSuperAdminNotifications() {
   if (!res.ok) return [];
   const json = await res.json().catch(() => null);
   const rows = Array.isArray(json?.data) ? json.data : [];
+  /* List SAARI branches ki deti hai — branchID wali sirf usi branch ki
+     (e.g. "New Invoice Generated"); branchID khaali/0 = sab ke liye. */
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
   return rows
     .filter((n) => n && (n.title || n.message))
+    .filter((n) => !Number(n.branchID) || Number(n.branchID) === branchId)
     .map((n, idx) => {
       const created = n.date || n.createdDate || n.createdAt || n.sentAt || '';
       const dt = created ? new Date(created) : null;
@@ -104,9 +110,16 @@ export async function getBillingAnnouncements() {
     getSuperAdminNotifications(),
     getBillingReminderAnnouncements(),
   ]);
-  return [
-    ...(sa.status === 'fulfilled' ? sa.value : []),
-    ...(bill.status === 'fulfilled' ? bill.value : []),
-  ];
+  const billList = bill.status === 'fulfilled' ? bill.value : [];
+  /* Invoice generate hone par server dono jagah likhta hai (Notification list
+     "New Invoice Generated … invoice #693" + delivery history Generated/693) —
+     delivery history wala rakho, list ka duplicate hatao. */
+  const genChallans = new Set(billList.filter((b) => b._type === 'Generated').map((b) => String(b._challanID)));
+  const saList = (sa.status === 'fulfilled' ? sa.value : []).filter((n) => {
+    if (String(n.category).toLowerCase() !== 'billing') return true;
+    const m = String(n.description).match(/invoice\s*#(\d+)/i);
+    return !(m && genChallans.has(m[1]));
+  });
+  return [...saList, ...billList];
 }
 
