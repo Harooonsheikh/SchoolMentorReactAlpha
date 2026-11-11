@@ -29,10 +29,9 @@ export const MODULE_REGISTRY = [
   { id: 'hr',               label: 'Human Resource',    icon: 'fa-users',            group: 'ADMINISTRATION', route: '/hr',                 coreLocked: false },
   { id: 'networks',         label: 'Networks',          icon: 'fa-circle-nodes',     group: 'ADMINISTRATION', route: '/networks',           coreLocked: true  },
   { id: 'appraisals',       label: 'Staff Appraisals',  icon: 'fa-star-half-stroke', group: 'ADMINISTRATION', route: '/appraisals',         coreLocked: false },
-  /* Approvals runs on self-contained mock data (no backend module-permission
-     field), so it is coreLocked — always active for permitted users — like the
-     other admin utilities (Audit Logs / User Permissions). Not branch-gated. */
-  { id: 'approvals',        label: 'Approvals',         icon: 'fa-square-check',     group: 'ADMINISTRATION', route: '/approvals',          coreLocked: true  },
+  /* Approvals follows the module-permission `approvals` flag (API_FIELD_TO_MODULE_MAP).
+     Off for a branch → sidebar item and screen hidden there. */
+  { id: 'approvals',        label: 'Approvals',         icon: 'fa-square-check',     group: 'ADMINISTRATION', route: '/approvals',          coreLocked: false },
   /* School Compliance has no backend module-permission field yet, so it is
      ALWAYS_ON (below) and limited to branches 1 & 15 by BRANCH_ONLY_NAV in
      components/App.js. */
@@ -97,6 +96,7 @@ export const API_FIELD_TO_MODULE_MAP = {
   auditLogs:         'audit_logs',
   settings:          'settings',
   userPermissions:   'user_permissions',
+  approvals:         'approvals',
   /* Sub-feature flag — JAAN BOOJH kar MODULE_REGISTRY se bahar (sidebar nav
      nahi banta). Fee ke 1Link / PSID payment controls isi par chhupte/dikhte
      hain: Fee.jsx → useModules().isActive('one_link_integration').
@@ -169,11 +169,11 @@ export function mapApiPermissionsToModuleState(payload) {
   const oneLinkRaw = lowered['1linkintegration'] ?? lowered['onelinkintegration'] ?? lowered['onelink'];
   if (oneLinkRaw !== undefined) state.one_link_integration = truthy(oneLinkRaw);
 
-  /* coreLocked hamesha on. */
-  for (const m of MODULE_REGISTRY) if (m.coreLocked) state[m.id] = true;
-
-  /* ALWAYS-ON module (inventory) har branch par on — API `false` bheje to bhi. */
-  for (const id of ALWAYS_ON_MODULES) state[id] = true;
+  /* Global rule for every module: the API value wins whenever its field is sent.
+     coreLocked / ALWAYS-ON modules are on only as a fallback, when the API does
+     not send a field for them (e.g. Launch Setup, School Compliance). */
+  for (const m of MODULE_REGISTRY) if (m.coreLocked && state[m.id] === undefined) state[m.id] = true;
+  for (const id of ALWAYS_ON_MODULES) if (state[id] === undefined) state[id] = true;
 
   return state;
 }

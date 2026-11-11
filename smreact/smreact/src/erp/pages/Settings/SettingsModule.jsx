@@ -47,7 +47,7 @@ const SETTINGS_SUBTABS = [
 
 export default function SettingsModule({ toast = () => {} }) {
   const { can } = usePermissions();
-  const { approvalType } = useModules();
+  const { approvalType, isActive } = useModules();
   const [sub, setSub] = useState('sessions');
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const approvalsDisabled = approvalType === 'disable';
@@ -55,7 +55,10 @@ export default function SettingsModule({ toast = () => {} }) {
   /* Layer 1 — only show sub-tabs the user can View. Tab labels map 1:1
      to the `can()` submenu strings (Academic Sessions, Signature Management,
      Networks, Parents App Settings, Approvals). */
-  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => can('Settings', t.label, 'View'));
+  /* Approvals sub-tab follows the module-permission `approvals` flag: off → hidden. */
+  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => (
+    (t.id !== 'approvals' || isActive('approvals')) && can('Settings', t.label, 'View')
+  ));
 
   /* Snap to first visible tab if the active one is now hidden.
      When head office sets approvalType=disable, Approvals tab stays openable
