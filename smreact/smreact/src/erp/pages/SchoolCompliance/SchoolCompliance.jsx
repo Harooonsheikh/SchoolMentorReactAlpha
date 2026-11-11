@@ -7,7 +7,7 @@ import MonthlyReview from './MonthlyReview';
 import Problems from './Problems';
 import ComplianceReports from './ComplianceReports';
 import ComplianceSetup from './ComplianceSetup';
-import { ensureAreas, ensureTasks, getAreas, getTasks, SEED_AREA_NAMES } from '../../services/complianceApi';
+import { ensureAreas, ensureTasks, getAreas, getTasks, getBranchEmployees, SEED_AREA_NAMES } from '../../services/complianceApi';
 import { useComplianceTabs } from './compliancePermissions';
 import { EmptyState } from './ComplianceShared';
 
@@ -27,8 +27,8 @@ import { EmptyState } from './ComplianceShared';
    props se jati hai, is liye Setup mein kiya hua add/edit foran check
    tabs mein bhi dikhta hai (aur ulta bhi).
 
-   Reports tab filhal src/erp/services/complianceService.js (in-memory
-   mock) par hai — us ka apna API wiring abhi baqi hai.
+   Reports tab bhi isi areas + task list + employees aur backend ki
+   problem-list se banta hai — koi mock data nahi.
    ═══════════════════════════════════════════════════════════════════ */
 
 const TABS = [
@@ -46,6 +46,12 @@ const [tab, setTab] = useState('setup');
 const [areas, setAreas] = useState([]);
 const [tasks, setTasks] = useState(null);
 const [loadError, setLoadError] = useState('');
+/* Branch ke employees — module khulne par SIRF ek dafa load hote hain aur
+   saare tabs (Setup, Daily, Weekly, Monthly, Problems) ko props se milte
+   hain, ta ke tab badalne par API dobara na chale. Module se bahar ja kar
+   wapas aane par (remount) hi dobara load honge. */
+const [employees, setEmployees] = useState([]);
+const [employeesLoading, setEmployeesLoading] = useState(true);
 
 /* Tab level permission — jis tab ka View granted nahi wo hide. Active tab
    hide ho jaye (ya default 'setup' allowed na ho) to pehle visible par snap. */
@@ -73,6 +79,15 @@ const load = () => {
 };
 
 useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+useEffect(() => {
+  let alive = true;
+  getBranchEmployees()
+    .then((list) => { if (alive) setEmployees(list); })
+    .catch((e) => { if (alive) toast(e?.message || 'Could not load employees.', 'error'); })
+    .finally(() => { if (alive) setEmployeesLoading(false); });
+  return () => { alive = false; };
+}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 /* Task list dobara lana — Setup aur teeno check tabs isi ko use karte hain */
 const refreshTasks = () => getTasks().then(setTasks);
@@ -123,11 +138,11 @@ const refreshAreas = () => getAreas().then(setAreas);
       {/* Daily / Weekly / Monthly — Setup wala hi backend task list
           (areas + tasks) in teeno ko jata hai, is liye Setup mein
           banaya/badla hua task foran yahan bhi nazar aata hai. */}
-      {tab === 'daily'    && <DailyChecks   toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} />}
-      {tab === 'weekly'   && <WeeklyChecks  toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} />}
-      {tab === 'monthly'  && <MonthlyReview toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} />}
-      {tab === 'problems' && <Problems toast={toast} />}
-      {tab === 'reports'  && <ComplianceReports toast={toast} />}
+      {tab === 'daily'    && <DailyChecks   toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} />}
+      {tab === 'weekly'   && <WeeklyChecks  toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} />}
+      {tab === 'monthly'  && <MonthlyReview toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} />}
+      {tab === 'problems' && <Problems toast={toast} employees={employees} employeesLoading={employeesLoading} />}
+      {tab === 'reports'  && <ComplianceReports toast={toast} areas={areas} tasks={tasks} employees={employees} />}
      {tab === 'setup' && (
   <ComplianceSetup
     toast={toast}
@@ -135,6 +150,8 @@ const refreshAreas = () => getAreas().then(setAreas);
     tasks={tasks}
     onAreasChange={refreshAreas}
     onTasksChange={refreshTasks}
+    employees={employees}
+    employeesLoading={employeesLoading}
   />
 )}
       </>)}
@@ -262,6 +279,7 @@ const CMP_CSS = `
 
 /* Checklist row ka Save (remark + photo) */
 .cmp-save-btn { height: 36px; width: 100%; justify-content: center; font-size: 12px; }
+.cmp-row-side .cmp-save-btn { margin-top: auto; }   /* photo ho ya na ho, Save hamesha neeche */
 .cmp-row-state { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 14px; font: 600 10.5px/1.2 var(--font-body); color: var(--text-muted); text-align: center; }
 .cmp-row-state.unsaved { color: #B45309; }
 

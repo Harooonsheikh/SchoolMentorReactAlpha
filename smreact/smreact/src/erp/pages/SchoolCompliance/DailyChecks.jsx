@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { filterInstances } from './complianceData';
 import { ChecklistGroup, FilterBar, Field, ProblemModal, EmptyState } from './ComplianceShared';
-import useComplianceChecks, { groupItems, staffOptionsOf, categoryOf } from './useComplianceChecks';
+import useComplianceChecks, { groupItems, staffOptionsOf, filterByStaff, categoryOf } from './useComplianceChecks';
 import { useComplianceActions } from './compliancePermissions';
 import { STATUS, PROBLEM_CATEGORIES, DAILY_AREA_OPTIONS } from '../../mock/compliance';
-import { todayIso } from '../../services/complianceApi';
+import { todayIso, areasOfType, norm } from '../../services/complianceApi';
 
 const DAILY_ORDER = DAILY_AREA_OPTIONS.map(a => a.id);
 
@@ -19,11 +19,12 @@ const DAILY_ORDER = DAILY_AREA_OPTIONS.map(a => a.id);
    & Follow-ups mein chala jata hai. Tafseel useComplianceChecks.js ke
    header mein hai (per-date history ki backend limitation samet).
    ═══════════════════════════════════════════════════════════════════ */
-export default function DailyChecks({ toast, areas = [], tasks = null, onTasksChange = () => {} }) {
+export default function DailyChecks({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false }) {
   const [date, setDate] = useState(todayIso);
 
   const { instances, employees, employeesLoading, busy, update, bulkComplete, saveProblem } = useComplianceChecks({
     frequency: 'daily', periodKey: date, checkDate: date, tasks, areas, onTasksChange, toast,
+    employees: branchEmployees, employeesLoading: branchEmployeesLoading,
   });
 
   const [area, setArea] = useState('');
@@ -37,12 +38,28 @@ export default function DailyChecks({ toast, areas = [], tasks = null, onTasksCh
 
   const list = instances || [];
 
-  /* Area aur staff dropdown — jo asal mein in tasks par mojood hain */
-  const areaOptions = useMemo(() => groupItems(list, { order: DAILY_ORDER })
-    .map(g => ({ id: g.area, label: g.areaLabel })), [list]);
-  const staffOptions = useMemo(() => staffOptionsOf(list), [list]);
+  /* Inspection Area dropdown — branch ke SAARE daily areas (area-list),
+     chahe us din un mein task ho ya na ho. Id wahi banti hai jo
+     toTemplate task ko deta hai (fixed area ki id, warna area-<naam>),
+     ta ke filter match kare. */
+  const areaOptions = useMemo(() => {
+    const map = new Map();
+    areasOfType(areas, 'daily').forEach(a => {
+      const local = DAILY_AREA_OPTIONS.find(o => norm(o.label) === norm(a.name));
+      const id = local?.id ?? `area-${norm(a.name)}`;
+      if (a.name && !map.has(id)) map.set(id, { id, label: a.name });
+    });
+    /* Kisi task ka area list mein na ho (purana data) to wo bhi rahe */
+    groupItems(list).forEach(g => { if (!map.has(g.area)) map.set(g.area, { id: g.area, label: g.areaLabel }); });
+    const opts = [...map.values()];
+    return [
+      ...DAILY_ORDER.map(id => opts.find(o => o.id === id)).filter(Boolean),
+      ...opts.filter(o => !DAILY_ORDER.includes(o.id)),
+    ];
+  }, [areas, list]);
+  const staffOptions = useMemo(() => staffOptionsOf(employees), [employees]);
 
-  const filtered = useMemo(() => filterInstances(list, { area, assignedTo, status }), [list, area, assignedTo, status]);
+  const filtered = useMemo(() => filterInstances(filterByStaff(list, assignedTo, employees), { area, status }), [list, area, assignedTo, status, employees]);
   const groups = useMemo(() => groupItems(filtered, { order: DAILY_ORDER }), [filtered]);
 
   const reportProblem = (item, remark, photo) => {
@@ -71,9 +88,9 @@ export default function DailyChecks({ toast, areas = [], tasks = null, onTasksCh
           </select>
         </Field>
         <Field label="Assigned Staff">
-          <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-            <option value="">All Staff</option>
-            {staffOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)} disabled={employeesLoading}>
+            <option value="">{employeesLoading ? "Loading staff…" : "All Staff"}</option>
+            {staffOptions.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
           </select>
         </Field>
         <Field label="Status">
@@ -106,11 +123,11 @@ export default function DailyChecks({ toast, areas = [], tasks = null, onTasksCh
           {groups.length === 0 ? (
             <EmptyState
               icon="fa-clipboard-check"
-              title={list.length ? 'No tasks match these filters' : 'No daily checklist items yet'}
-              sub={list.length ? 'Try widening the area, staff, or status filter.' : 'Add daily items from the Compliance Setup tab.'}
+              title={list.length ? 'No tasks match these filters' : (date === todayIso() ? 'Tasks are not added today' : `Tasks are not added on ${date}`)}
+              sub={list.length ? 'Try widening the area, staff, or status filter.' : 'Pick another date to see other records, or add daily items from the Compliance Setup tab.'}
             />
           ) : groups.map(g => (
-            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} perms={perms} />
+            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} perms={perms} defaultOpen />
           ))}
         </>
       )}

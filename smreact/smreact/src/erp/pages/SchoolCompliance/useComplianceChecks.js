@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import * as complianceApi from '../../services/complianceApi';
 import { STATUS, STATUS_META } from '../../mock/compliance';
 
@@ -46,9 +46,35 @@ export function groupItems(items, { keyOf = (i) => i.area, labelOf = (i) => i.ar
   return [...first, ...rest];
 }
 
-/* Filter dropdown ke liye wohi staff jo in tasks par assigned hain */
-export function staffOptionsOf(items) {
-  return [...new Set(items.map((i) => i.assignedTo).filter((n) => n && n !== '-'))].sort();
+/* Assigned Staff filter dropdown — branch ke SAARE employees
+   (get-employees-by-branch), naam ke hisaab se sorted */
+export function staffOptionsOf(employees) {
+  return [...(employees || [])].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/* Assigned Staff filter — employee id se match, aur purane tasks
+   (jin par sirf naam hai, id nahi) ke liye naam se */
+export function filterByStaff(items, staffId, employees) {
+  if (!staffId) return items;
+  const emp = (employees || []).find((e) => String(e.id) === String(staffId));
+  const name = complianceApi.norm(emp?.name);
+  return items.filter((i) =>
+    (i.assignedToId && String(i.assignedToId) === String(staffId))
+    || (!i.assignedToId && name && complianceApi.norm(i.assignedTo) === name));
+}
+
+/* Backend task list -> ek frequency + period ke checklist instances.
+   Daily / Weekly / Monthly tabs aur Reports tab dono yahi use karte hain,
+   ta ke report ke numbers bilkul tab jaise hon. */
+export function buildCheckInstances({ tasks, areas = [], employeeNames = new Map(), frequency, periodKey }) {
+  if (!tasks) return null;
+  const areaMap = new Map((areas || []).map((a) => [a.id, a.name]));
+  return tasks
+    .map((t) => complianceApi.toInstance(t, { areaMap, employeeNames, periodKey }))
+    .filter((i) => i.frequency === frequency && i.active)
+    /* Sirf wohi tasks jo chuni hui period (din / hafta / mahina) mein
+       add hue. Jis row par created date hi na ho use chhupate nahi. */
+    .filter((i) => !i.createdDate || complianceApi.inPeriod(i.createdDate, frequency, periodKey));
 }
 
 export default function useComplianceChecks({
@@ -59,32 +85,18 @@ export default function useComplianceChecks({
   areas = [],
   onTasksChange = () => {},
   toast = () => {},
+  employees = [],          // parent (SchoolCompliance) se — module khulne par ek dafa load
+  employeesLoading = false,
 }) {
-  const [employees, setEmployees] = useState([]);
-  const [employeesLoading, setEmployeesLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-
-  /* Branch ke employees — assignee ka naam aur Report a Problem ka
-     Assign To dropdown (backend kabhi assignedToName khali bhejta hai) */
-  useEffect(() => {
-    let alive = true;
-    complianceApi.getBranchEmployees()
-      .then((list) => { if (alive) setEmployees(list); })
-      .catch(() => { /* naam na mile to id se '-' dikha dete hain */ })
-      .finally(() => { if (alive) setEmployeesLoading(false); });
-    return () => { alive = false; };
-  }, []);
 
   const employeeNames = useMemo(() => new Map(employees.map((e) => [e.id, e.name])), [employees]);
 
   /* tasks === null => ab bhi load ho rahe hain */
-  const instances = useMemo(() => {
-    if (!tasks) return null;
-    const areaMap = new Map((areas || []).map((a) => [a.id, a.name]));
-    return tasks
-      .map((t) => complianceApi.toInstance(t, { areaMap, employeeNames, periodKey }))
-      .filter((i) => i.frequency === frequency && i.active);
-  }, [tasks, areas, employeeNames, frequency, periodKey]);
+  const instances = useMemo(
+    () => buildCheckInstances({ tasks, areas, employeeNames, frequency, periodKey }),
+    [tasks, areas, employeeNames, frequency, periodKey],
+  );
 
   const byId = useMemo(() => new Map((instances || []).map((i) => [i.id, i])), [instances]);
 

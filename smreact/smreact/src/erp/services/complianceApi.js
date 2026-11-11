@@ -265,6 +265,7 @@ export async function taskAction(action, task, branchId = getBranchId()) {
   fd.append('DueDay', task.dueDay || '');
   if (Number(task.assignedTo) > 0) fd.append('AssignedTo', task.assignedTo);
   fd.append('IsVerification', !!task.verificationRequired);
+  fd.append('IsEvidenceRequired', task.evidenceAllowed !== false);
   fd.append('IsActive', task.active !== false);
   fd.append('Status', normStatus(task.status));
   fd.append('Remarks', task.remarks || '');
@@ -319,6 +320,7 @@ export function ensureTasks(areas) {
           dueDay: t.frequency === 'weekly' ? (t.dueDay || 'Friday') : '',
           assignedToName: t.assignedStaff,
           isVerification: !!t.verificationRequired,
+          isEvidenceRequired: true,
           isActive: true,
           status: STATUS.NOT_CHECKED,
           remarks: '',
@@ -363,7 +365,8 @@ export function toTemplate(t, areaMap = new Map()) {
     assignedStaff: t.assignedToName || '',
     assignedTo: t.assignedTo ?? 0,
     dueDay: t.dueDay || 'Friday',
-    evidenceAllowed: true,                       // backend mein is ka field nahi hai
+    /* Backend: isEvidenceRequired. Purane rows par null aaye to default true */
+    evidenceAllowed: t.isEvidenceRequired !== false,
     verificationRequired: !!t.isVerification,
     active: t.isActive !== false,
     custom: !LOCAL_DASH.has(t.task),
@@ -372,6 +375,9 @@ export function toTemplate(t, areaMap = new Map()) {
     remarks: t.remarks || '',
     remarksPic: t.remarksPic || '',
     checkDate: checkDateIso(t.checkDate),
+    /* Task kab add hua — Daily/Weekly/Monthly tabs isi se chuni hui
+       date / week / month ke tasks dikhate hain */
+    createdDate: checkDateIso(t.createdDate ?? t.createdAt ?? t.createdOn ?? t.createdDateTime ?? t.insertDate ?? t.entryDate),
     verifiedBy: Number(t.verifiedBy) || 0,
     verifiedByName: t.verifiedByName || '',
   };
@@ -421,6 +427,7 @@ export function saveTaskCheck(instance, patch = {}) {
     dueDay: instance.dueDay,
     assignedTo: instance.assignedToId ?? instance.assignedTo,
     verificationRequired: instance.verificationRequired,
+    evidenceAllowed: instance.evidenceAllowed,   // status save par Setup wali value na badle
     active: instance.active,
     status: patch.status ?? instance.status,
     remarks: patch.remark !== undefined ? patch.remark : (instance.remark || ''),
@@ -584,19 +591,15 @@ export async function problemStep(step, problem, { remarks = '' } = {}) {
   return readJson(res, `problem-${step}`);
 }
 
-/* POST problem-delete (application/json) — body: { id, modifiedBy }
-   NOTE: endpoint ka naam backend se confirm karna hai; alag ho to sirf
-   yahan PROBLEM_DELETE_PATH badal dein. */
-const PROBLEM_DELETE_PATH = 'problem-delete';
-
+/* DELETE problem-delete/{id} — id path mein jati hai, body nahi */
 export async function deleteProblem(problem) {
-  const me = currentUser();
-  const res = await fetch(buildUrl(`${BASE}/${PROBLEM_DELETE_PATH}`), {
-    method: 'POST',
+  const id = Number(problem?.id);
+  if (!id) throw new Error('Could not delete: problem id is missing.');
+  const res = await fetch(buildUrl(`${BASE}/problem-delete/${id}`), {
+    method: 'DELETE',
     headers: authHeaders(),
-    body: JSON.stringify({ id: Number(problem.id), modifiedBy: me.name }),
   });
-  return readJson(res, PROBLEM_DELETE_PATH);
+  return readJson(res, 'problem-delete');
 }
 
 

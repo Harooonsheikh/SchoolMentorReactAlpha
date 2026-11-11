@@ -159,7 +159,15 @@ export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_P
      data URL ki jagah aa jata hai, warna wohi photo baar baar upload
      hoti. Deps primitive hain, is liye kisi doosre row ke refetch par
      ye nahi chalta. */
+  /* Har status ka apna remark + photo (draft). Saved status ka draft
+     backend wala remark/photo hai; baqi status khali shuru hote hain.
+     Status badalne par us status ka draft dikhta hai, is liye "Issue
+     Found" ka remark/photo "Completed" par nahi aata. Backend sirf ek
+     remark/photo rakhta hai — Save par chune hue status ka draft hi jata hai. */
+  const drafts = React.useRef({});
+
   React.useEffect(() => {
+    drafts.current = { [item.status]: { remark: item.remark || '', photo: item.evidence || null } };
     setStatus(item.status);
     setRemark(item.remark || '');
     setPhoto(item.evidence || null);
@@ -167,7 +175,17 @@ export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_P
     setErr('');
   }, [item.status, item.remark, item.evidence]);
 
-  const pick = (s) => { setStatus(s); setDirty(true); setErr(''); };
+  const pick = (s) => {
+    if (s === status) return;
+    drafts.current[status] = { remark, photo };          // mojooda status ka likha hua yaad rakho
+    const next = drafts.current[s] || { remark: '', photo: null };
+    setStatus(s);
+    setRemark(next.remark);
+    setPhoto(next.photo);
+    /* Wapas saved status par bina kisi badlav ke aaye to Unsaved nahi */
+    setDirty(!(s === item.status && next.remark === (item.remark || '') && next.photo === (item.evidence || null)));
+    setErr('');
+  };
 
   /* Ek hi API call — status + remark + photo ek saath */
   const save = async () => {
@@ -214,6 +232,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_P
                 {item.remark || 'No remark.'}
               </div>
             </div>
+            {(item.evidenceAllowed !== false || item.evidence) && (
             <div className="cmp-row-side">
               <span className="form-label">Evidence Photo</span>
               {item.evidence ? (
@@ -224,6 +243,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_P
                 <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No photo.</div>
               )}
             </div>
+            )}
           </div>
           {item.verificationRequired && item.status === STATUS.COMPLETED && item.verifiedBy && (
             <div className="cmp-verified"><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Verified by {item.verifiedBy}</div>
@@ -248,7 +268,7 @@ export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_P
           <div className="cmp-row-fields">
             <label className="form-group cmp-row-remark">
               <span className="form-label">Remark</span>
-              <textarea className="cmp-textarea" rows={3} value={remark} onChange={e => { setRemark(e.target.value); setDirty(true); }} placeholder="Optional remark…" />
+              <textarea className="cmp-textarea" rows={3} value={remark} onChange={e => { setRemark(e.target.value); setDirty(true); }} placeholder={status === STATUS.ISSUE_FOUND ? 'Describe the issue (required)…' : `Optional remark for ${STATUS_META[status]?.label || 'this status'}…`} />
             </label>
 
             {/* Evidence photo aur us ke neeche Save — remark ya photo
@@ -256,8 +276,11 @@ export function ChecklistRow({ item, onUpdate, onReportProblem, perms = NO_ROW_P
                 save ho jate hain (status buttons khud bhi save karte
                 hain). */}
             <div className="cmp-row-side">
-              <span className="form-label">Evidence Photo</span>
-              <PhotoAttach value={photo} onChange={v => { setPhoto(v); setDirty(true); }} />
+              {/* Setup mein "Evidence Required" off ho to photo ka option nahi */}
+              {item.evidenceAllowed !== false && (<>
+                <span className="form-label">Evidence Photo</span>
+                <PhotoAttach value={photo} onChange={v => { setPhoto(v); setDirty(true); }} />
+              </>)}
               <button type="button" className="btn btn-primary cmp-save-btn" disabled={saving || !dirty} onClick={save}>
                 <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} aria-hidden="true"></i>{' '}
                 {saving ? 'Saving…' : 'Save'}

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { filterInstances } from './complianceData';
 import { ChecklistGroup, FilterBar, Field, ProblemModal, EmptyState } from './ComplianceShared';
-import useComplianceChecks, { groupItems, staffOptionsOf, categoryOf } from './useComplianceChecks';
+import useComplianceChecks, { groupItems, staffOptionsOf, filterByStaff, categoryOf } from './useComplianceChecks';
 import { useComplianceActions } from './compliancePermissions';
 import { STATUS, PROBLEM_CATEGORIES, MONTHLY_CATEGORY_OPTIONS } from '../../mock/compliance';
 import { todayIso, monthKeyOf, shiftMonthKey } from '../../services/complianceApi';
@@ -24,7 +24,7 @@ function monthLabel(mKey) {
    remark field se aate hain (wohi remark backend par task ke saath
    save hota hai) — koi alag notes system nahi.
    ═══════════════════════════════════════════════════════════════════ */
-export default function MonthlyReview({ toast, areas = [], tasks = null, onTasksChange = () => {} }) {
+export default function MonthlyReview({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false }) {
   const [mKey, setMKey] = useState(() => monthKeyOf(todayIso()));
 
   /* Chalta mahina ho to check aaj ki tareekh par, warna us mahine ki 1 */
@@ -32,6 +32,7 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
 
   const { instances, employees, employeesLoading, update, saveProblem } = useComplianceChecks({
     frequency: 'monthly', periodKey: mKey, checkDate, tasks, areas, onTasksChange, toast,
+    employees: branchEmployees, employeesLoading: branchEmployeesLoading,
   });
 
   const [assignedTo, setAssignedTo] = useState('');
@@ -43,9 +44,9 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
   const perms = useComplianceActions('monthly');
 
   const list = instances || [];
-  const staffOptions = useMemo(() => staffOptionsOf(list), [list]);
+  const staffOptions = useMemo(() => staffOptionsOf(employees), [employees]);
 
-  const filtered = useMemo(() => filterInstances(list, { assignedTo, status }), [list, assignedTo, status]);
+  const filtered = useMemo(() => filterInstances(filterByStaff(list, assignedTo, employees), { status }), [list, assignedTo, status, employees]);
   const groups = useMemo(() => groupItems(filtered, { order: MONTHLY_ORDER }), [filtered]);
 
   const reportProblem = (item, remark, photo) => {
@@ -74,9 +75,9 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
           </div>
         </Field>
         <Field label="Responsible Person">
-          <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-            <option value="">All Staff</option>
-            {staffOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)} disabled={employeesLoading}>
+            <option value="">{employeesLoading ? "Loading staff…" : "All Staff"}</option>
+            {staffOptions.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
           </select>
         </Field>
         <Field label="Status">
@@ -101,11 +102,11 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
           {groups.length === 0 ? (
             <EmptyState
               icon="fa-calendar-days"
-              title={list.length ? 'No monthly review items match these filters' : 'No monthly review items yet'}
-              sub={list.length ? 'Try widening the staff or status filter.' : 'Add monthly items from the Compliance Setup tab.'}
+              title={list.length ? 'No monthly review items match these filters' : (mKey === monthKeyOf(todayIso()) ? 'Tasks are not added this month' : `Tasks are not added in ${monthLabel(mKey)}`)}
+              sub={list.length ? 'Try widening the staff or status filter.' : 'Pick another month to see other records, or add monthly items from the Compliance Setup tab.'}
             />
-          ) : groups.map((g, i) => (
-            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} perms={perms} defaultOpen={i === 0} />
+          ) : groups.map(g => (
+            <ChecklistGroup key={g.area} group={g} onUpdate={update} onReportProblem={reportProblem} perms={perms} defaultOpen />
           ))}
         </>
       )}

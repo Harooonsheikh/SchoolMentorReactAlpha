@@ -18,7 +18,7 @@ const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
    real, not decorative. Critical problems get their own banner on
    Overview and are never folded into the completion percentage.
    ═══════════════════════════════════════════════════════════════════ */
-export default function Problems({ toast }) {
+export default function Problems({ toast, employees = [], employeesLoading = false }) {
   const { data: problems = [], refetch } = useAsync(fetchProblems, []);
 
   const [category, setCategory] = useState('');
@@ -28,23 +28,10 @@ export default function Problems({ toast }) {
   const [expanded, setExpanded] = useState(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [confirm, setConfirm] = useState(null);
-  const [employees, setEmployees] = useState([]);
-  const [employeesLoading, setEmployeesLoading] = useState(true);
 
   /* Permissions — Create: Report a Problem; Edit: Mark In Progress /
      Resolved; Approve: Verify & Close; Delete: trash button. */
   const { canCreate, canEdit, canDelete, canApprove } = useComplianceActions('problems');
-
-  /* Branch ke employees — Report a Problem ke Assign To dropdown ke liye */
-  React.useEffect(() => {
-    let alive = true;
-    complianceApi.getBranchEmployees()
-      .then(list => { if (alive) setEmployees(list); })
-      .catch(e => { if (alive) toast(e.message || 'Could not load employees.', 'error'); })
-      .finally(() => { if (alive) setEmployeesLoading(false); });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const filtered = useMemo(() => problems.filter(p => {
     if (category && p.category !== category) return false;

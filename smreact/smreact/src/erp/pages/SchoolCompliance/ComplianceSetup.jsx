@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { COMPLIANCE_AREAS, MONTHLY_CATEGORY_OPTIONS, DAILY_AREA_OPTIONS, TASK_LABEL_MAX_LENGTH } from '../../mock/compliance';
 import { FilterBar, Field, EmptyState, ConfirmDialog } from './ComplianceShared';
 import {
-  addArea, taskAction, toTemplate, norm, areasOfType, WEEKLY_AREA_NAME, getBranchEmployees,
+  addArea, taskAction, toTemplate, norm, areasOfType, WEEKLY_AREA_NAME,
 } from '../../services/complianceApi';
 import { useComplianceActions, useComplianceTabs, setupScreenOf } from './compliancePermissions';
 
@@ -299,6 +299,8 @@ export default function ComplianceSetup({
   tasks = null,
   onAreasChange = () => {},
   onTasksChange = () => {},
+  employees = [],            // parent (SchoolCompliance) module khulne par ek dafa load karta hai
+  employeesLoading = false,
 }) {
   const [freq, setFreq] = useState('daily');
   const [search, setSearch] = useState('');
@@ -306,8 +308,6 @@ export default function ComplianceSetup({
   const [editing, setEditing] = useState(null);   // jis task ko edit kar rahe hain
   const [areaOpen, setAreaOpen] = useState(false);
   const [confirm, setConfirm] = useState(null);
-  const [employees, setEmployees] = useState([]);
-  const [employeesLoading, setEmployeesLoading] = useState(true);
 
   /* Permissions — har sub-tab (Daily / Weekly / Monthly) ki apni screen.
      Jis sub-tab ka View nahi wo hide (e.g. sirf Weekly allowed ho to sirf
@@ -321,17 +321,6 @@ export default function ComplianceSetup({
   }, [freqAllowed, visibleFreqTabs]);
   const { canCreate, canEdit, canDelete } = useComplianceActions(setupScreenOf(freq));
   const showActions = canEdit || canDelete;
-
-  /* Branch ke employees — Assigned To dropdown ke liye (ek dafa load) */
-  React.useEffect(() => {
-    let alive = true;
-    getBranchEmployees()
-      .then(list => { if (alive) setEmployees(list); })
-      .catch(e => { if (alive) toast(e.message || 'Could not load employees.', 'error'); })
-      .finally(() => { if (alive) setEmployeesLoading(false); });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /* task-list ke rows ko daily / weekly / monthly mein baantna */
   const all = useMemo(() => {
@@ -524,7 +513,6 @@ export default function ComplianceSetup({
                   <tr key={t.id}>
                     <td style={{ opacity: t.active ? 1 : .5 }}>
                       {t.label}
-                      {t.custom && <span className="cmp-badge cmp-badge--purple" style={{ marginLeft: 8 }}>Custom</span>}
                       {t.restrictedToPermission && <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Visible based on your permissions</div>}
                     </td>
                     <td style={{ opacity: t.active ? 1 : .5 }}>{assigneeName(t)}</td>
@@ -537,8 +525,13 @@ export default function ComplianceSetup({
                         ) : (t.dueDay || '—')}
                       </td>
                     )}
-                    <td>
-                      <input type="checkbox" checked={t.evidenceAllowed} disabled title="Backend support coming soon" />
+                    <td style={{ opacity: t.active ? 1 : .5 }}>
+                      {/* Read-only: `disabled` nahi lagaya kyun ke browser use grey kar deta hai
+                          aur checked nahi lagta. Badalna ho to Edit modal se. */}
+                      <input type="checkbox" checked={!!t.evidenceAllowed} readOnly tabIndex={-1}
+                        onClick={e => e.preventDefault()} style={{ cursor: 'default' }}
+                        title="Change this from Edit" aria-label="Evidence required" />
+
                     </td>
                     <td>
                       {canEdit ? (
