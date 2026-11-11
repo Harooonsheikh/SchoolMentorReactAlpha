@@ -13,6 +13,7 @@ import {
   calculateAttendanceResult, timeToMinutes,
 } from "../utils/attendanceRules";
 import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
+import StudentAbsenteeismReport from './StudentAbsenteeismReport';
 import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName, StandardReportPicker, reportAcademicYear } from '../reports/reportKit';
   /* ============================================================================
     SchoolMentor ERP — Attendance Module (React / JSX)
@@ -3903,6 +3904,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 </div>
               );
             })}
+            <StudentAbsenteeismReport studentData={studentData} toast={toast} />
           </div>
         )}
 
