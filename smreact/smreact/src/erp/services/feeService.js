@@ -136,7 +136,7 @@ async function runFeePreload({ force = false } = {}) {
     getFamilies(),
     getPendingChallans({}),
     getMonthChallans(m + 1, y),
-    getLedgerRange(prev.fromM, prev.fromY, prev.toM, prev.toY),
+    // getLedgerRange(prev.fromM, prev.fromY, prev.toM, prev.toY),
   ]);
   scheduleFeeRefresh();
 }

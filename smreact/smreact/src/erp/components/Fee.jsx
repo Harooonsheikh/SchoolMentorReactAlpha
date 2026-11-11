@@ -1582,6 +1582,12 @@ const FEE_MONTHS = [
    always false and the previous month is locked unless the school setting allows it. */
 const PREV_MONTH_CHALLAN_BRANCHES = new Set();
 const PREV_MONTH_FULL_BRANCHES = new Set();
+/* Fee Receiving → "Available Advance Balance" + "Adjust From Advance Balance".
+   Sirf ye branches dekh sakti hain (abhi ke liye 1 aur 15). */
+const ADVANCE_ADJUST_BRANCHES = new Set([1, 15]);
+function isAdvanceAdjustBranch() {
+  return ADVANCE_ADJUST_BRANCHES.has(Number(sessionStorage.getItem('branchID')) || 0);
+}
 function isPrevMonthFullBranch() {
   return PREV_MONTH_FULL_BRANCHES.has(Number(sessionStorage.getItem('branchID')) || 0);
 }
@@ -3256,27 +3262,36 @@ function FeeChallansList({ toast }) {
      se filter kar ke) compute hota hai — chhota, foran, koi freeze nahi. Ledger cached
      hai (loadChallans warm kar chuka), is liye pehli baar ke baad instant. Figures same:
      wahi prevOutFromLedgerRows + priorChallansByStudent + fine + cover-drop, bas scope chhota. */
+  /* Ek hi jagah se prev-dues: class ke students ka { prevOut, prior } (fine ke saath).
+     Effect (class khulne par) AUR preview/download dono isi ko await karte hain — taake
+     table, preview aur download hamesha ek hi figure dikhayein, state ke timing par nahi. */
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const loadClassPrev = useCallback(async (studs) => {
+    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    let toM = mIdx, toY = appliedYear;
+    if (toM === 0) { toM = 12; toY = appliedYear - 1; }
+    let fromM = toM - 11, fromY = toY;
+    while (fromM <= 0) { fromM += 12; fromY -= 1; }
+    const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);   // cached per range
+    const sids = new Set(studs.map(s => String(s.studentID)));
+    const rows = allRows.filter(r => sids.has(String(r.studentID)));
+    const prevOut = prevOutFromLedgerRows(rows, mIdx + 1, appliedYear);
+    const prior = priorChallansByStudent(rows, mIdx + 1, appliedYear);
+    Object.keys(prevOut).forEach(id => {
+      prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settingsRef.current);
+    });
+    return { prevOut, prior };
+  }, [appliedMonth, appliedYear]);
+
   useEffect(() => {
     if (!openKey) return;
     const studs = studentsMap[openKey] || [];
     if (!studs.length) return;
-    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     let cancelled = false;
     (async () => {
       try {
-        let toM = mIdx, toY = appliedYear;
-        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
-        let fromM = toM - 11, fromY = toY;
-        while (fromM <= 0) { fromM += 12; fromY -= 1; }
-        const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        if (cancelled) return;
-        const sids = new Set(studs.map(s => String(s.studentID)));
-        const rows = allRows.filter(r => sids.has(String(r.studentID)));
-        const prevOut = prevOutFromLedgerRows(rows, mIdx + 1, appliedYear);
-        const prior = priorChallansByStudent(rows, mIdx + 1, appliedYear);
-        Object.keys(prevOut).forEach(id => {
-          prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settings);
-        });
+        const { prevOut, prior } = await loadClassPrev(studs);
         if (cancelled) return;
         setPrevOutMap(prev => ({ ...prev, ...prevOut }));
         setPriorByStudent(prev => ({ ...prev, ...prior }));
@@ -3298,7 +3313,7 @@ function FeeChallansList({ toast }) {
       } catch (e) { /* previous dues optional — na mile to fallback figures */ }
     })();
     return () => { cancelled = true; };
-  }, [openKey, studentsMap, appliedMonth, appliedYear, settings]);
+  }, [openKey, studentsMap, loadClassPrev]);
 
   const [confirm, setConfirm] = useState(null);
   const [busyMsg, setBusyMsg] = useState('');    // delete chal raha ho to center loader + screen lock
@@ -3732,16 +3747,26 @@ function FeeChallansList({ toast }) {
     return { [classMeta.key]: perReg };
   }, [classFeeStruct, headsMap, discountMap]);
 
+  /* Running-ledger dues/advance/byHead students par lagao — table ke figure se same.
+     Agar state me figure abhi nahi (effect ab tak nahi chala) to wahi loader await karo,
+     taake preview/download kabhi stored snapshot (galat chhota amount) na dikhaye. */
+  const studentsWithPrev = async (students) => {
+    const pick = (pm, s) => pm[String(s.studentID)] || pm[String(s.applicantsID)] || null;
+    let pm = prevOutMap;
+    if (students.some(s => !pick(pm, s))) {
+      try { const { prevOut } = await loadClassPrev(students); pm = { ...pm, ...prevOut }; }
+      catch (e) { /* loader fail → stored figures par hi fallback */ }
+    }
+    return students.map(s => {
+      const p = pick(pm, s);
+      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null, prevFine: p.fine || 0 } : s;
+    });
+  };
   const openPreview = async (ctx) => {
     const r = resolveCtx(ctx);
     if (!r) { toast('Nothing to preview', 'info'); return; }
     const dMap = await fetchStudentDiscounts(r.classMeta, r.students);
-    /* Running-ledger dues/advance/byHead students par lagao — challan ka previous card ke
-       barabar rahe aur advance Net me sahi minus ho. */
-    const students = r.students.map(s => {
-      const p = prevOutMap[String(s.studentID)] || prevOutMap[String(s.applicantsID)] || null;
-      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null, prevFine: p.fine || 0 } : s;
-    });
+    const students = await studentsWithPrev(r.students);
     const inner = buildChallanInner({
       classMeta: r.classMeta, students, heads: r.heads,
       settings, discountMap: dMap, bw: false, school: branchHeader,
@@ -3763,10 +3788,7 @@ function FeeChallansList({ toast }) {
     if (!r) { toast('Nothing to download', 'info'); return; }
     const bw = theme === 'bw';
     const dMap = await fetchStudentDiscounts(r.classMeta, r.students);
-    const students = r.students.map(s => {
-      const p = prevOutMap[String(s.studentID)] || prevOutMap[String(s.applicantsID)] || null;
-      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null, prevFine: p.fine || 0 } : s;
-    });
+    const students = await studentsWithPrev(r.students);
     const html = buildChallanHTML({
       classMeta: r.classMeta, students, heads: r.heads,
       settings, discountMap: dMap, bw, size, school: branchHeader,
@@ -6229,6 +6251,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      values detailRows.discount me jati hain aur API isReceiving:true bhejti hai. */
   const [giveDiscInput, setGiveDiscInput] = useState({});
   const [showGiveDisc, setShowGiveDisc] = useState(false);
+  /* Adjust From Advance Balance — checkbox + amount (sirf branch 1/15 par dikhta hai). */
+  const [adjustFromAdvance, setAdjustFromAdvance] = useState(false);
+  const [advanceAdjustInput, setAdvanceAdjustInput] = useState('');
   /* Pay Now ek click ke baad save + slip tayar hone tak band — dohra click / dohri receiving na ho. */
   const [saving, setSaving] = useState(false);
   useEffect(() => { setSaving(false); }, [cfg]);
@@ -6237,6 +6262,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
     setRemarks('');
+    setAdjustFromAdvance(false); setAdvanceAdjustInput('');
     setFineRecvInput(null);
     setFineGiveInput(0);
     /* "Received" input KUL wasooli (pehle jama + ab ki). Naya paisa = input − paid.
@@ -6639,6 +6665,19 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter = totalAmt - alreadyPaid - receivingNow;
 
+  /* Available Advance Balance + Adjust From Advance Balance (branch 1 / 15 only).
+     Max adjust = stored advance (advCredit) capped by what is still payable. */
+  const advAdjustBranchOn = !viewOnly && isAdvanceAdjustBranch() && advancePaymentReceivingOn;
+  const availableAdvance  = Math.max(0, advCredit);
+  const remainingForAdjust = Math.max(0, remainAfter);
+  const maxAdvanceAdjust  = advAdjustBranchOn ? Math.min(availableAdvance, remainingForAdjust) : 0;
+  const advAdjustAmt      = adjustFromAdvance ? Math.max(0, Number(advanceAdjustInput) || 0) : 0;
+  const advAdjustInvalid  = adjustFromAdvance && advAdjustAmt > maxAdvanceAdjust;
+  const toggleAdjustFromAdvance = (checked) => {
+    setAdjustFromAdvance(checked);
+    if (checked) setAdvanceAdjustInput(String(maxAdvanceAdjust || ''));
+  };
+
   /* ── 9-column payment-flow table ke footer sums (sirf display) ──
      Previous Dues + This Month's Challan − Discount = Net Payable ·
      Net Payable − Give Discount = Final Net Payable · Final − Pay Now = Remaining.
@@ -6748,6 +6787,10 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
        receiving round bilkul mana. Inputs/button already disabled hain; ye guard
        last line of defence hai. */
     if (saving) return;
+    if (adjustFromAdvance) {
+      toast('Advance adjustment saving is not connected in this project yet — uncheck "Adjust From Advance Balance" to receive cash.', 'error');
+      return;
+    }
     if (multipleReceivingBlocked) {
       toast('Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded', 'error');
       return;
@@ -7279,6 +7322,58 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
               })()}
             </span>
           </div>
+
+          {/* Available Advance Balance — branch 1 / 15 only. */}
+          {advAdjustBranchOn && availableAdvance > 0 && (
+            <div className="fee-recv-paystrip fee-recv-advstrip">
+              <div className="fee-recv-paycard">
+                <span className="fee-recv-paylbl">Available Advance Balance</span>
+                <span className="fee-recv-payval amber">{money(availableAdvance)}</span>
+                <span className="fee-recv-paysub">Amount already available from previous advance payments</span>
+              </div>
+            </div>
+          )}
+
+          {/* Adjust From Advance Balance — separate installment, never combined with cash Pay Now. */}
+          {advAdjustBranchOn && maxAdvanceAdjust > 0 && (
+            <div className="fee-adv-adjust-box">
+              <label className="fee-adv-check-row">
+                <input
+                  type="checkbox"
+                  checked={adjustFromAdvance}
+                  onChange={e => toggleAdjustFromAdvance(e.target.checked)}
+                />
+                <span>Adjust From Advance Balance</span>
+              </label>
+              {adjustFromAdvance && (
+                <div className="fee-adv-adjust-body">
+                  <div className="fee-field">
+                    <span className="fee-label">Advance Adjustment Amount</span>
+                    <input
+                      className="fee-input"
+                      type="number"
+                      min="0"
+                      max={maxAdvanceAdjust}
+                      value={advanceAdjustInput}
+                      onChange={e => setAdvanceAdjustInput(e.target.value)}
+                      placeholder={`Up to ${maxAdvanceAdjust.toLocaleString('en-PK')}`}
+                    />
+                    {advAdjustInvalid && (
+                      <div className="fee-adv-err">Adjustment amount cannot exceed available advance balance.</div>
+                    )}
+                  </div>
+                  <div className="fee-adv-adjust-preview">
+                    <span>Remaining Payable After Adjustment</span>
+                    <b>{money(Math.max(0, remainingForAdjust - Math.min(advAdjustAmt, maxAdvanceAdjust)))}</b>
+                  </div>
+                </div>
+              )}
+              <div className="fee-adv-adjust-hint">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>Advance Adjustment is recorded as its own, separate installment — it is never combined with a cash Pay Now round in the same transaction.</span>
+              </div>
+            </div>
+          )}
 
           <div className="fee-recv-paystrip">
             <div className="fee-recv-paycard">
@@ -24106,6 +24201,27 @@ const FEE_CSS = `
 .fee-recv-payval.green { color: #16A34A; }
 .fee-recv-payval.blue  { color: #1E3A8A; }
 .fee-recv-payval.red   { color: #DC2626; }
+.fee-recv-payval.amber { color: #B45309; }
+.fee-recv-paysub { font-size: 11px; color: var(--text-muted); }
+.fee-adv-adjust-box {
+  margin: 14px 0;
+  padding: 14px 16px;
+  border: 1px solid #F3C9A6;
+  border-radius: 12px;
+  background: #FBF3EE;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fee-adv-check-row { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; color: var(--text-primary); cursor: pointer; }
+.fee-adv-check-row input { width: 18px; height: 18px; accent-color: #B45309; }
+.fee-adv-adjust-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+.fee-adv-adjust-body .fee-field { max-width: 240px; }
+.fee-adv-adjust-preview { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-muted); }
+.fee-adv-adjust-preview b { font-size: 18px; font-weight: 800; color: #B45309; }
+.fee-adv-err { font-size: 12px; color: #DC2626; margin-top: 4px; }
+.fee-adv-adjust-hint { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.fee-adv-adjust-hint i { color: #B45309; margin-top: 2px; }
 
 .fee-recv-hist-title {
   display: flex;
