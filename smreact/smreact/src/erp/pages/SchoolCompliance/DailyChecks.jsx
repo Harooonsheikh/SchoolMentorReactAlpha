@@ -19,12 +19,12 @@ const DAILY_ORDER = DAILY_AREA_OPTIONS.map(a => a.id);
    & Follow-ups mein chala jata hai. Tafseel useComplianceChecks.js ke
    header mein hai (per-date history ki backend limitation samet).
    ═══════════════════════════════════════════════════════════════════ */
-export default function DailyChecks({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false }) {
+export default function DailyChecks({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false, onProblemsChange = () => {} }) {
   const [date, setDate] = useState(todayIso);
 
   const { instances, employees, employeesLoading, busy, update, bulkComplete, saveProblem } = useComplianceChecks({
     frequency: 'daily', periodKey: date, checkDate: date, tasks, areas, onTasksChange, toast,
-    employees: branchEmployees, employeesLoading: branchEmployeesLoading,
+    employees: branchEmployees, employeesLoading: branchEmployeesLoading, onProblemsChange,
   });
 
   const [area, setArea] = useState('');

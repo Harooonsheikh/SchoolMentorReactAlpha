@@ -24,7 +24,7 @@ function monthLabel(mKey) {
    remark field se aate hain (wohi remark backend par task ke saath
    save hota hai) — koi alag notes system nahi.
    ═══════════════════════════════════════════════════════════════════ */
-export default function MonthlyReview({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false }) {
+export default function MonthlyReview({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false, onProblemsChange = () => {} }) {
   const [mKey, setMKey] = useState(() => monthKeyOf(todayIso()));
 
   /* Chalta mahina ho to check aaj ki tareekh par, warna us mahine ki 1 */
@@ -32,7 +32,7 @@ export default function MonthlyReview({ toast, areas = [], tasks = null, onTasks
 
   const { instances, employees, employeesLoading, update, saveProblem } = useComplianceChecks({
     frequency: 'monthly', periodKey: mKey, checkDate, tasks, areas, onTasksChange, toast,
-    employees: branchEmployees, employeesLoading: branchEmployeesLoading,
+    employees: branchEmployees, employeesLoading: branchEmployeesLoading, onProblemsChange,
   });
 
   const [assignedTo, setAssignedTo] = useState('');

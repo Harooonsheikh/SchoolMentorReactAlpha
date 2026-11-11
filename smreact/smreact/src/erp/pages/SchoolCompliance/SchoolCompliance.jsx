@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 // import Overview from './Overview';   // Overview tab abhi hidden hai
 import DailyChecks from './DailyChecks';
@@ -7,7 +7,7 @@ import MonthlyReview from './MonthlyReview';
 import Problems from './Problems';
 import ComplianceReports from './ComplianceReports';
 import ComplianceSetup from './ComplianceSetup';
-import { ensureAreas, ensureTasks, getAreas, getTasks, getBranchEmployees, SEED_AREA_NAMES } from '../../services/complianceApi';
+import { ensureAreas, ensureTasks, getAreas, getTasks, getBranchEmployees, getProblems, SEED_AREA_NAMES } from '../../services/complianceApi';
 import { useComplianceTabs } from './compliancePermissions';
 import { EmptyState } from './ComplianceShared';
 
@@ -89,6 +89,41 @@ useEffect(() => {
   return () => { alive = false; };
 }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+/* Problems list — Problems tab pehli dafa khulne par load hoti hai aur
+   module band hone tak yahin rehti hai, ta ke tab badal kar wapas aane
+   par API dobara na chale. problems === null => abhi load nahi hui. */
+const [problems, setProblems] = useState(null);
+const problemsReq = useRef(null);
+const mounted = useRef(true);
+/* Mount par true bhi set karna zaroori hai — StrictMode (dev) mein React
+   mount → unmount → mount karta hai; sirf cleanup ho to ye false hi reh
+   jata aur response kabhi state mein na aata ("Loading…" par atak jata) */
+useEffect(() => {
+  mounted.current = true;
+  return () => { mounted.current = false; };
+}, []);
+
+const loadProblems = () => {
+  if (problemsReq.current) return problemsReq.current;   // ek waqt mein ek hi call
+  problemsReq.current = getProblems()
+    .then((list) => { if (mounted.current) setProblems(list); })
+    .catch((e) => {
+      if (!mounted.current) return;
+      toast(e?.message || 'Could not load problems.', 'error');
+      setProblems((prev) => prev ?? []);
+    })
+    .finally(() => { problemsReq.current = null; });
+  return problemsReq.current;
+};
+
+useEffect(() => {
+  if (tab === 'problems' && problems === null) loadProblems();
+}, [tab, problems]); // eslint-disable-line react-hooks/exhaustive-deps
+
+/* Daily/Weekly/Monthly se naya problem report hua — list purani ho gayi,
+   agli dafa Problems tab khulne par dobara load hogi */
+const markProblemsStale = () => setProblems(null);
+
 /* Task list dobara lana — Setup aur teeno check tabs isi ko use karte hain */
 const refreshTasks = () => getTasks().then(setTasks);
 const refreshAreas = () => getAreas().then(setAreas);
@@ -138,10 +173,10 @@ const refreshAreas = () => getAreas().then(setAreas);
       {/* Daily / Weekly / Monthly — Setup wala hi backend task list
           (areas + tasks) in teeno ko jata hai, is liye Setup mein
           banaya/badla hua task foran yahan bhi nazar aata hai. */}
-      {tab === 'daily'    && <DailyChecks   toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} />}
-      {tab === 'weekly'   && <WeeklyChecks  toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} />}
-      {tab === 'monthly'  && <MonthlyReview toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} />}
-      {tab === 'problems' && <Problems toast={toast} employees={employees} employeesLoading={employeesLoading} />}
+      {tab === 'daily'    && <DailyChecks   toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} onProblemsChange={markProblemsStale} />}
+      {tab === 'weekly'   && <WeeklyChecks  toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} onProblemsChange={markProblemsStale} />}
+      {tab === 'monthly'  && <MonthlyReview toast={toast} areas={areas} tasks={tasks} onTasksChange={refreshTasks} employees={employees} employeesLoading={employeesLoading} onProblemsChange={markProblemsStale} />}
+      {tab === 'problems' && <Problems toast={toast} employees={employees} employeesLoading={employeesLoading} problems={problems} onProblemsChange={loadProblems} />}
       {tab === 'reports'  && <ComplianceReports toast={toast} areas={areas} tasks={tasks} employees={employees} />}
      {tab === 'setup' && (
   <ComplianceSetup

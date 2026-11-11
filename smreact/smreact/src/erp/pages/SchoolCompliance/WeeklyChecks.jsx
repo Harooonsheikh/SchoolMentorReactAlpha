@@ -24,7 +24,7 @@ function weekLabel(weekKey) {
    weekly tasks sab ek hi "Weekly Review" area mein rehte hain; har
    task ka Due Day Setup se aata hai.
    ═══════════════════════════════════════════════════════════════════ */
-export default function WeeklyChecks({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false }) {
+export default function WeeklyChecks({ toast, areas = [], tasks = null, onTasksChange = () => {}, employees: branchEmployees = [], employeesLoading: branchEmployeesLoading = false, onProblemsChange = () => {} }) {
   const [weekKey, setWeekKey] = useState(() => weekKeyOf(todayIso()));
 
   /* Jo hafta dekh rahe hain wo chal raha ho to check aaj ki tareekh par
@@ -33,7 +33,7 @@ export default function WeeklyChecks({ toast, areas = [], tasks = null, onTasksC
 
   const { instances, employees, employeesLoading, update, saveProblem } = useComplianceChecks({
     frequency: 'weekly', periodKey: weekKey, checkDate, tasks, areas, onTasksChange, toast,
-    employees: branchEmployees, employeesLoading: branchEmployeesLoading,
+    employees: branchEmployees, employeesLoading: branchEmployeesLoading, onProblemsChange,
   });
 
   const [assignedTo, setAssignedTo] = useState('');

@@ -87,6 +87,7 @@ export default function useComplianceChecks({
   toast = () => {},
   employees = [],          // parent (SchoolCompliance) se — module khulne par ek dafa load
   employeesLoading = false,
+  onProblemsChange = () => {},   // naya problem report hone par parent ki Problems list purani
 }) {
   const [busy, setBusy] = useState(false);
 
@@ -161,13 +162,14 @@ export default function useComplianceChecks({
   const saveProblem = useCallback(async (payload) => {
     try {
       await complianceApi.reportProblem(payload);
+      onProblemsChange();
       toast('Problem reported — visible in Problems & Follow-ups.', 'success');
       return true;
     } catch (e) {
       toast(e?.message || 'Could not report the problem.', 'error');
       return false;
     }
-  }, [toast]);
+  }, [toast, onProblemsChange]);
 
   return { instances, employees, employeesLoading, employeeNames, busy, update, bulkComplete, saveProblem };
 }

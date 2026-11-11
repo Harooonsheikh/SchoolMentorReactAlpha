@@ -1,11 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import useAsync from '../../hooks/useAsync';
 import * as complianceApi from '../../services/complianceApi';
 import { FilterBar, Field, ProblemModal, ProblemStatusBadge, PriorityBadge, EmptyState, initials, ConfirmDialog } from './ComplianceShared';
 import { PROBLEM_CATEGORIES, PROBLEM_PRIORITIES } from '../../mock/compliance';
 import { useComplianceActions } from './compliancePermissions';
 
-const fetchProblems = () => complianceApi.getProblems();
 
 /* HTML escape — ConfirmDialog message dangerouslySetInnerHTML use karta hai */
 const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,8 +16,11 @@ const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
    real, not decorative. Critical problems get their own banner on
    Overview and are never folded into the completion percentage.
    ═══════════════════════════════════════════════════════════════════ */
-export default function Problems({ toast, employees = [], employeesLoading = false }) {
-  const { data: problems = [], refetch } = useAsync(fetchProblems, []);
+export default function Problems({ toast, employees = [], employeesLoading = false, problems: problemList = null, onProblemsChange = () => {} }) {
+  /* List parent (SchoolCompliance) rakhta hai — null => abhi load ho rahi hai */
+  const loading = problemList === null;
+  const problems = problemList || [];
+  const refetch = onProblemsChange;
 
   const [category, setCategory] = useState('');
   const [priority, setPriority] = useState('');
@@ -121,8 +122,10 @@ export default function Problems({ toast, employees = [], employeesLoading = fal
         </Field>
       </FilterBar>
 
-      {filtered.length === 0 ? (
-        <EmptyState icon="fa-circle-check" title="No problems match these filters" />
+      {loading ? (
+        <EmptyState icon="fa-spinner fa-spin" title="Loading…" />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon="fa-circle-check" title={problems.length ? 'No problems match these filters' : 'No problems reported yet'} />
       ) : (
         <div className="cmp-table-wrap">
           <table className="cmp-table">
