@@ -1480,6 +1480,9 @@ export default function Examination({ toast = () => { } }) {
           classID:   String(classID),
           sectionID: String(sectionID),
           ...(termID != null ? { TermID: String(termID) } : {}),
+          /* Subject ka saved (manual) comment `remarks` me — is flag ke baghair
+             API wo nahi bhejti aur card auto comment (grading) dikha deta hai. */
+          includeRemarks: 'true',
         });
         const res  = await fetch(buildUrl(`/api/getsaexaminationresultsbystudentidandexam?${p}`), { headers });
         const json = await res.json();
