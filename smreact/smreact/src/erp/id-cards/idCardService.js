@@ -44,6 +44,10 @@ export function defaultDesign(kind) {
     photoShape: theme.defaultPhotoShape,
     photoSizePct: 100,
     fields: [...(DEFAULT_FIELD_ORDER[kind] || [])],
+    /* Per-field text size, keyed by field key → percent (100 = default).
+       Har field ki apni size (bilkul photoSizePct ki tarah) — jo field yahan
+       na ho woh 100% par render hoti hai. */
+    fieldSizes: {},
     branding: {
       showLogo: true, logoSizePct: 100, logoPlacement: 'left',
       showSchoolName: true, showAddress: true, showContact: true,
@@ -103,6 +107,7 @@ export async function getIdCardDesign(kind, schoolName) {
     backOptions: { ...base.backOptions, ...(saved.backOptions || {}) },
     qr: { ...base.qr, ...(saved.qr || {}) },
     barcode: { ...base.barcode, ...(saved.barcode || {}) },
+    fieldSizes: { ...base.fieldSizes, ...(saved.fieldSizes || {}) },
   });
 }
 

@@ -162,9 +162,9 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
   const rows = useMemo(() => {
     if (!current) return [];
     const ctx = { ...current.ctx, school: branding, issueDate, expiryDate };
-    return resolveDisplayFields(kind, design.fields, current.entity, ctx);
+    return resolveDisplayFields(kind, design.fields, current.entity, ctx, false, design.fieldSizes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [current, design.fields, branding, kind, issueDate, expiryDate]);
+}, [current, design.fields, design.fieldSizes, branding, kind, issueDate, expiryDate]);
 
   /* Back-of-card extra fields — independent selection/order from the
      front's `rows`, same resolver + same catalog (a school might want
@@ -172,9 +172,9 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
   const backRows = useMemo(() => {
     if (!current) return [];
     const ctx = { ...current.ctx, school: branding, issueDate, expiryDate };
-    return resolveDisplayFields(kind, design.backFields || [], current.entity, ctx);
+    return resolveDisplayFields(kind, design.backFields || [], current.entity, ctx, false, design.fieldSizes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [current, design.backFields, branding, kind, issueDate, expiryDate]);
+}, [current, design.backFields, design.fieldSizes, branding, kind, issueDate, expiryDate]);
 
   /* QR/barcode each have independent Front/Back visibility (design.qr /
      design.barcode) — "enabled" just means at least one side wants it,
@@ -243,6 +243,14 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     });
   };
 
+  /* Per-field text size (percent) — mirrors the photo's size slider, but
+     keyed by field. Clamped to the same 70–140 range so no field can be
+     shrunk/blown out past what the card layout can hold. */
+  const setFieldSize = (key, pct) => setDesign((d) => ({
+    ...d,
+    fieldSizes: { ...(d.fieldSizes || {}), [key]: Math.max(70, Math.min(140, Number(pct) || 100)) },
+  }));
+
   const patchBackOptions = (patch) => setDesign((d) => ({ ...d, backOptions: { ...d.backOptions, ...patch } }));
   const toggleBackField = (key) => {
     setDesign((d) => {
@@ -302,7 +310,7 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     logoDataUrl: branding.logo || null,
     branding: design.branding,
     school: branding,
-    rows: resolveDisplayFields(kind, design.fields, item.entity, { ...item.ctx, school: branding, issueDate, expiryDate }),
+    rows: resolveDisplayFields(kind, design.fields, item.entity, { ...item.ctx, school: branding, issueDate, expiryDate }, false, design.fieldSizes),
     qrSrc, // regenerated per-item at build time for bulk (see below); IdCardFace/renderCardFaceHtml apply qrShowOn per-face themselves
     barcodeSrc,
     qrShowOn, barcodeShowOn,
@@ -316,7 +324,7 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     backOptions: kind === 'student'
       ? { ...design.backOptions, showIdText: false }
       : design.backOptions,
-    backRows: resolveDisplayFields(kind, design.backFields || [], item.entity, { ...item.ctx, school: branding, issueDate, expiryDate }),
+    backRows: resolveDisplayFields(kind, design.backFields || [], item.entity, { ...item.ctx, school: branding, issueDate, expiryDate }, false, design.fieldSizes),
   });
 
   /* A back page is worth printing whenever it would show SOMETHING —
@@ -504,13 +512,21 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
                         return orderable.map((key, i) => {
                           const f = allFields(kind).find((x) => x.key === key);
                           if (!f) return null;
+                          const sizePct = Number(design.fieldSizes?.[key]) || 100;
                           return (
-                            <div key={key} className="idcd-order-row">
-                              <span className="idcd-order-label">{f.label}</span>
-                              <div className="idcd-order-btns">
-                                <button type="button" disabled={i === 0} onClick={() => moveField(key, -1)} aria-label="Move up"><i className="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
-                                <button type="button" disabled={i === orderable.length - 1} onClick={() => moveField(key, 1)} aria-label="Move down"><i className="fa-solid fa-arrow-down" aria-hidden="true"></i></button>
-                                <button type="button" onClick={() => toggleField(key)} aria-label="Remove"><i className="fa-solid fa-xmark" aria-hidden="true"></i></button>
+                            <div key={key} className="idcd-order-row idcd-order-row-sized">
+                              <div className="idcd-order-main">
+                                <span className="idcd-order-label">{f.label}</span>
+                                <div className="idcd-order-btns">
+                                  <button type="button" disabled={i === 0} onClick={() => moveField(key, -1)} aria-label="Move up"><i className="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
+                                  <button type="button" disabled={i === orderable.length - 1} onClick={() => moveField(key, 1)} aria-label="Move down"><i className="fa-solid fa-arrow-down" aria-hidden="true"></i></button>
+                                  <button type="button" onClick={() => toggleField(key)} aria-label="Remove"><i className="fa-solid fa-xmark" aria-hidden="true"></i></button>
+                                </div>
+                              </div>
+                              <div className="idcd-order-size">
+                                <span>Size</span>
+                                <input type="range" min="70" max="140" value={sizePct} onChange={(e) => setFieldSize(key, e.target.value)} aria-label={`${f.label} text size`} />
+                                <span className="idcd-order-size-val">{sizePct}%</span>
                               </div>
                             </div>
                           );
@@ -956,6 +972,12 @@ const IDCD_CSS = `
 .idcd-color-row label{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#64748B;font-weight:700}
 .idcd-order-list{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
 .idcd-order-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:8px;background:#F8FAFF;border:1px solid #EFF2FA}
+.idcd-order-row-sized{flex-direction:column;align-items:stretch;gap:6px}
+.idcd-order-main{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.idcd-order-size{display:flex;align-items:center;gap:8px}
+.idcd-order-size>span:first-child{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#64748B}
+.idcd-order-size input[type="range"]{flex:1;accent-color:#1E3A8A}
+.idcd-order-size-val{font-size:10.5px;font-weight:800;color:#1E3A8A;min-width:34px;text-align:right}
 .idcd-order-label{font-size:12px;font-weight:700;color:#0F172A}
 .idcd-order-btns{display:flex;gap:2px}
 .idcd-order-btns button{width:24px;height:24px;border-radius:6px;border:1px solid #E5E7EB;background:#fff;color:#64748B;cursor:pointer;font-size:10px}

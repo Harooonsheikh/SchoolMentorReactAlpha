@@ -35,9 +35,12 @@ function codeHtml(src, size = 46, isBarcode = false) {
 }
 
 function rowsHtml(rows, { size = 9.5, gap = 3, color = '#0F172A', muted = '#94A3B8', dense } = {}) {
-  return `<div style="display:flex;flex-direction:column;gap:${dense ? 1.5 : gap}px;min-width:0">${rows.map((r) => `
-    <div style="min-width:0"><span style="font-size:${size - 2}px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:${muted};margin-right:5px">${esc(r.label)}:</span><span style="font-size:${size}px;font-weight:700;color:${color};word-break:break-word">${esc(r.value)}</span></div>
-  `).join('')}</div>`;
+  /* Per-field size — r.sizePct (100 = default) scales this row's label +
+     value, mirroring the on-screen preview's Rows component exactly. */
+  return `<div style="display:flex;flex-direction:column;gap:${dense ? 1.5 : gap}px;min-width:0">${rows.map((r) => {
+    const k = (r.sizePct || 100) / 100;
+    return `<div style="min-width:0"><span style="font-size:${(size - 2) * k}px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:${muted};margin-right:5px">${esc(r.label)}:</span><span style="font-size:${size * k}px;font-weight:700;color:${color};word-break:break-word">${esc(r.value)}</span></div>`;
+  }).join('')}</div>`;
 }
 
 /* The enclosing .idc2-page/.idc2-cell (buildSingleCardDocument /
@@ -119,9 +122,9 @@ export function renderCardFaceHtml({
       <div style="flex:1;display:flex;flex-direction:${orientation === 'vertical' ? 'column' : 'row'};align-items:${orientation === 'vertical' ? 'center' : 'flex-start'};gap:12px;padding:14px;overflow:hidden">
         ${photoHtml(photoDataUrl, photoShape, orientation, photoSizePct, photoTheme, showPhoto)}
         <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:0">
-          ${rows.slice(0, 1).map((r) => `<div style="font-size:14px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.value)}</div>`).join('')}
+          ${rows.slice(0, 1).map((r) => `<div style="font-size:${14 * ((r.sizePct || 100) / 100)}px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.value)}</div>`).join('')}
           <div style="display:flex;flex-wrap:wrap;gap:5px;overflow:hidden">
-            ${rows.slice(1).map((r) => `<span style="font-size:8.5px;font-weight:700;color:#fff;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);border-radius:999px;padding:3px 8px;white-space:nowrap">${esc(r.label)}: ${esc(r.value)}</span>`).join('')}
+            ${rows.slice(1).map((r) => `<span style="font-size:${8.5 * ((r.sizePct || 100) / 100)}px;font-weight:700;color:#fff;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);border-radius:999px;padding:3px 8px;white-space:nowrap">${esc(r.label)}: ${esc(r.value)}</span>`).join('')}
           </div>
         </div>
       </div>
@@ -175,7 +178,7 @@ export function renderCardFaceHtml({
       <div style="flex:1;display:flex;flex-direction:${orientation === 'vertical' ? 'column' : 'row'};align-items:${orientation === 'vertical' ? 'center' : 'flex-start'};gap:12px;padding:4px 14px 10px;position:relative;overflow:hidden">
         ${photoHtml(photoDataUrl, photoShape, orientation, photoSizePct, c, showPhoto)}
         <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:0;overflow:hidden">
-          ${rows.map((r, i) => `<div style="display:flex;align-items:center;gap:6px;font-size:9.5px;min-width:0"><span style="width:5px;height:5px;border-radius:50%;background:${i % 2 === 0 ? c.primary : c.secondary};flex-shrink:0"></span><span style="font-weight:700;color:#0F172A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(r.value)}</span></div>`).join('')}
+          ${rows.map((r, i) => `<div style="display:flex;align-items:center;gap:6px;font-size:${9.5 * ((r.sizePct || 100) / 100)}px;min-width:0"><span style="width:5px;height:5px;border-radius:50%;background:${i % 2 === 0 ? c.primary : c.secondary};flex-shrink:0"></span><span style="font-weight:700;color:#0F172A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(r.value)}</span></div>`).join('')}
         </div>
       </div>
       ${qrSrc ? `<div style="${qrPositionCss(qrPosition)}">${codeHtml(qrSrc, scalePx(30, qrSizePct))}</div>` : ''}
@@ -192,7 +195,7 @@ export function renderCardFaceHtml({
       </div>
       <div style="flex:1;display:flex;flex-direction:column;padding:12px;gap:8px;min-width:0">
         ${headerName ? `<div style="font-size:9px;font-weight:700;color:${c.primary};text-transform:uppercase;letter-spacing:.5px">${headerName}</div>` : ''}
-        ${rows.slice(0, 1).map((r) => `<div style="font-size:13px;font-weight:900;color:#0F172A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.value)}</div>`).join('')}
+        ${rows.slice(0, 1).map((r) => `<div style="font-size:${13 * ((r.sizePct || 100) / 100)}px;font-weight:900;color:#0F172A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.value)}</div>`).join('')}
         ${rowsHtml(rows.slice(1), { size: 9, gap: 3, color: '#0F172A', muted: '#94A3B8', dense: true })}
       </div>
     </div>
@@ -276,7 +279,10 @@ body{margin:0;background:#fff}
 .idc2-section-label{font:800 12px/1 'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;text-transform:uppercase;letter-spacing:.6px;color:#475569;margin-bottom:4mm}
 .idc2-sheet{display:flex;flex-wrap:wrap;gap:4mm;margin-bottom:4mm}
 .idc2-sheet.idc2-break{page-break-after:always}
-.idc2-cell{width:${wMm}mm;height:${hMm}mm;outline:1px dashed #CBD5E1;outline-offset:2px;page-break-inside:avoid}
+/* Har cell bilkul single-card ke .idc2-page jaisa hi hai (flex-centered,
+   white bg, overflow hidden) taake bulk card hu-ba-hu single card jaisa
+   render ho — sirf cut-guide ke liye halki dashed outline extra hai. */
+.idc2-cell{width:${wMm}mm;height:${hMm}mm;display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden;outline:1px dashed #CBD5E1;outline-offset:2px;page-break-inside:avoid}
 </style></head><body>
 ${sheetsHtml}
 </body></html>`;

@@ -78,8 +78,8 @@ export default function IdCardQuickView({ kind, entity, ctx = {}, idValue, displ
   const issueDate = design.issueDate || todayIso();
   const expiryDate = design.expiryDate || plusOneYearIso();
   const fullCtx = { ...ctx, school: branding, issueDate, expiryDate };
-  const rows = resolveDisplayFields(kind, design.fields, entity, fullCtx);
-  const backRows = resolveDisplayFields(kind, design.backFields || [], entity, fullCtx);
+  const rows = resolveDisplayFields(kind, design.fields, entity, fullCtx, false, design.fieldSizes);
+  const backRows = resolveDisplayFields(kind, design.backFields || [], entity, fullCtx, false, design.fieldSizes);
   const backHasContent = qrShowOn.back || barcodeShowOn.back
     || design.backOptions?.showBanner !== false
     || design.backOptions?.showIdText !== false

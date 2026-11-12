@@ -1880,12 +1880,77 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
       const reqs = await approvalsService.getMyRequests();
       const m = {};
       (reqs || []).forEach((r) => {
-        const hay = `${r.module || ''} ${r.actionType || ''} ${r.actionLabel || ''}`.toLowerCase();
-        const isStudent = hay.includes('student') || hay.includes('family');
-        if (r.status === 'pending' && isStudent && r.entityId != null) {
-          m[String(r.entityId)] = { approvalId: r.apiId, requestNo: r.id };
+        const at  = String(r.actionType || '').toLowerCase();
+        const hay = `${r.module || ''} ${at} ${r.actionLabel || ''}`.toLowerCase();
+        /* Student se juri pending request: Add/Edit/Mark-Inactive/Family to
+           module/label me "student"/"family" rakhti hain, lekin Fee Discount
+           ki request ka module "Fee" (actionType `fee_discount`) hota hai — is
+           me "student" nahi aata, is liye use alag se shamil karte hain, warna
+           discount ki pending request badge kabhi nahi dikhti. */
+        const isStudent = hay.includes('student') || hay.includes('family') || at === 'fee_discount';
+        if (r.status === 'pending' && isStudent) {
+          const info = { approvalId: r.apiId, requestNo: r.id };
+          /* Add/Edit/Mark-Inactive ki request ka entityId KHUD student ka _id
+             hota hai — us par key karo. Lekin Fee Discount ki request ka
+             entityId discount record ki id hota hai (student ka nahi), is liye
+             us ke studentId par bhi key karo — row to _id (== studentId) par
+             badge dhoondti hai. Dono key karne se har kism ki pending request
+             sahi student ki row par lagti hai. */
+          if (r.entityId != null) m[String(r.entityId)] = info;
+          if (r.studentId != null) m[String(r.studentId)] = info;
         }
       });
+
+      /* Fee Discount pending — WAHI raw tareeka jo Fee module ki (pehle se
+         chalti hui) "Pending Approval" badge use karti hai: approvals_by_user
+         ki KACHCHI rows me `module === 'FeeDiscount'` (ya requestNo ka `FD-`
+         prefix) + `r.studentID`. studentID student ke `_id` (yani student API
+         ka `id`, e.g. 73) ke barabar hota hai, is liye badge theek us student
+         ki row par lagti hai. mapApiRequest ke derived fields par bharosa karne
+         ke bajaye seedha wahi field parhte hain jo Fee module me kaam karti hai. */
+      try {
+        const rawRows = await feeService.getUserApprovalRequests();
+        /* student id kai naamon se aa sakta hai — sab candidate ids nikal kar
+           har ek par key karte hain, taake jis bhi naam se aaye badge lag jaye. */
+        const idsFromXml = (xml) => {
+          const out = [];
+          const s = String(xml || '');
+          const re = /<(?:StudentID|studentId|ApplicantsID|ApplicantsId)>\s*(\d+)\s*<\/(?:StudentID|studentId|ApplicantsID|ApplicantsId)>/gi;
+          let m2; while ((m2 = re.exec(s))) out.push(m2[1]);
+          return out;
+        };
+        const discountRows = [];
+        (rawRows || []).forEach((r) => {
+          if (String(r.status).toLowerCase() !== 'pending') return;
+          const reqNo = String(r.requestNo || '');
+          const mod = String(r.module || '');
+          /* Discount ki pehchaan: module FeeDiscount, FD- prefix, ya discount
+             wale fields (headName/discountAmount) ki mojoodgi. */
+          const isDiscount = /feediscount/i.test(mod) || /^fd-/i.test(reqNo)
+            || r.discountAmount != null || r.headName != null || r.headID != null;
+          if (!isDiscount) return;
+          const candidates = [
+            r.studentID, r.studentId, r.applicantsID, r.applicantsId, r.recordID, r.recordId,
+            ...idsFromXml(r.detailsXml), ...idsFromXml(r.DetailsXml),
+          ].filter((v) => v != null && v !== '').map(String);
+          discountRows.push({ reqNo, mod, id: r.id, candidates });
+          candidates.forEach((sid) => {
+            const prev = m[sid];
+            if (!prev || Number(r.id) > Number(prev.approvalId)) {
+              m[sid] = { approvalId: r.id, requestNo: r.requestNo };
+            }
+          });
+        });
+        /* DIAGNOSTIC (hatana hai jab pending-badge pakka chal jaye): console me
+           dekho konsi discount rows pending hain aur unke candidate student ids
+           kya hain. In ids me se koi student ke _id (student API ka `id`, e.g.
+           73/74) se match karna chahiye — na kare to wahi mismatch hai. */
+        if (discountRows.length) {
+          // eslint-disable-next-line no-console
+          console.log('[stu-pending] pending discount rows:', JSON.stringify(discountRows));
+        }
+      } catch (e) { /* optional — na mile to baaqi badges phir bhi dikhenge */ }
+
       /* Drop ghost add-rows whose request left "pending"; keep the rest and
          give each a pending badge entry (keyed by its synthetic row id). */
       const ghosts = reconcilePendingAdds(STU_PENDING_MOD, reqs);
@@ -2215,7 +2280,11 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
     const gradeID = row?._gradeId || 0;
     const sectionID = row?._sectionId || 0;
     const failed = [];
-    let pendingCount = 0;
+    /* Approval ka intezaar karne wali pehli head ka {approvalId, requestNo} —
+       isi se us student ki row par (Active Students list me, jahan Add/Edit/
+       Mark-Inactive ka badge bhi dikhta hai) wahi "Pending Approval" badge +
+       Withdraw lagta hai jo Fee module ki challan list me dikhta hai. */
+    let pend = null;
     for (const ch of changes) {
       try {
         /* A cleared saved discount goes to the server as 0. A new head with 0
@@ -2231,16 +2300,21 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
           studentID: studentId,
           studentName: name,
         });
-        if (hrService.hrPendingInfo(resp)) pendingCount += 1;
+        const p = hrService.hrPendingInfo(resp);
+        if (p && !pend) pend = p;
       } catch (e) {
         failed.push({ headName: ch.headName, message: e.message || 'Could not save' });
       }
     }
     if (failed.length === 0) {
       await reloadClasses();
-      toast(pendingCount
-        ? 'Fee discounts saved — some changes sent for approval'
-        : 'Fee discounts saved', pendingCount ? 'info' : 'success');
+      if (pend) {
+        setPendingMap((m) => ({ ...m, [String(studentId)]: pend }));
+        loadPending();
+        toast('Fee discount sent for approval', 'info');
+      } else {
+        toast('Fee discounts saved', 'success');
+      }
       setEditCfg(null);
     } else {
       toast(`Could not save ${failed.map(f => f.headName).join(', ')}: ${failed[0].message}`, 'error');

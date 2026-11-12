@@ -133,12 +133,20 @@ export function findField(kind, key) {
    that resolves to no data (unless it was explicitly forced on via
    `showEmpty`, e.g. so a school can still show an "Emergency Contact:"
    label as a fill-in-by-hand blank line if it really wants to). */
-export function resolveDisplayFields(kind, fieldKeys, entity, ctx, showEmpty = false) {
+export function resolveDisplayFields(kind, fieldKeys, entity, ctx, showEmpty = false, fieldSizes = null) {
   const catalog = allFields(kind);
   return (fieldKeys || [])
     .map((key) => catalog.find((f) => f.key === key))
     .filter((f) => f && !f.kind && !f.unavailable)
-    .map((f) => ({ key: f.key, label: f.label, value: f.getValue ? f.getValue(entity, ctx) : undefined }))
+    .map((f) => ({
+      key: f.key,
+      label: f.label,
+      value: f.getValue ? f.getValue(entity, ctx) : undefined,
+      /* Per-field text size (percent) — carried onto the row so both the
+         React preview and the print/HTML builder scale this field's font
+         by it, exactly like the photo's size option. Missing = 100%. */
+      sizePct: (fieldSizes && Number(fieldSizes[f.key])) || 100,
+    }))
     .filter((row) => showEmpty || (row.value !== undefined && row.value !== null && String(row.value).trim() !== ''));
 }
 

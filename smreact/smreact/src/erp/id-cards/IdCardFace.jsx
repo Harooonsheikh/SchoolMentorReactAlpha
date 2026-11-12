@@ -63,12 +63,18 @@ function Rows({ rows, size = 9.5, gap = 3, color, muted, dense }) {
   if (!rows.length) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: dense ? 1.5 : gap, minWidth: 0 }}>
-      {rows.map((r) => (
-        <div key={r.key} style={{ minWidth: 0 }}>
-          <span style={{ fontSize: size - 2, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.3px', color: muted, marginRight: 5 }}>{r.label}:</span>
-          <span style={{ fontSize: size, fontWeight: 700, color, wordBreak: 'break-word' }}>{r.value}</span>
-        </div>
-      ))}
+      {rows.map((r) => {
+        /* Per-field size — row.sizePct (100 = default) scales both the value
+           and its label, so Name/Father's Name/etc. each get their own size
+           just like the photo. */
+        const k = (r.sizePct || 100) / 100;
+        return (
+          <div key={r.key} style={{ minWidth: 0 }}>
+            <span style={{ fontSize: (size - 2) * k, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.3px', color: muted, marginRight: 5 }}>{r.label}:</span>
+            <span style={{ fontSize: size * k, fontWeight: 700, color, wordBreak: 'break-word' }}>{r.value}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -217,10 +223,10 @@ export default function IdCardFace({
         <div style={{ flex: 1, display: 'flex', flexDirection: orientation === 'vertical' ? 'column' : 'row', alignItems: orientation === 'vertical' ? 'center' : 'flex-start', gap: 12, padding: 14, overflow: 'hidden' }}>
           <PhotoBox show={showPhoto} photoDataUrl={photoDataUrl} shape={photoShape} orientation={orientation} sizePct={photoSizePct} theme={{ colors: { ...c, surface: 'rgba(255,255,255,.2)', border: 'rgba(255,255,255,.4)', primary: '#fff' } }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
-            {rows.slice(0, 1).map((r) => <div key={r.key} style={{ fontSize: 14, fontWeight: 900, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.value}</div>)}
+            {rows.slice(0, 1).map((r) => <div key={r.key} style={{ fontSize: 14 * ((r.sizePct || 100) / 100), fontWeight: 900, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.value}</div>)}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, overflow: 'hidden' }}>
               {rows.slice(1).map((r) => (
-                <span key={r.key} style={{ fontSize: 8.5, fontWeight: 700, color: '#fff', background: 'rgba(255,255,255,.18)', border: '1px solid rgba(255,255,255,.3)', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>
+                <span key={r.key} style={{ fontSize: 8.5 * ((r.sizePct || 100) / 100), fontWeight: 700, color: '#fff', background: 'rgba(255,255,255,.18)', border: '1px solid rgba(255,255,255,.3)', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>
                   {r.label}: {r.value}
                 </span>
               ))}
@@ -286,7 +292,7 @@ export default function IdCardFace({
           <PhotoBox show={showPhoto} photoDataUrl={photoDataUrl} shape={photoShape} orientation={orientation} sizePct={photoSizePct} theme={theme} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: 1, minWidth: 0, overflow: 'hidden' }}>
             {rows.map((r, i) => (
-              <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, minWidth: 0 }}>
+              <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5 * ((r.sizePct || 100) / 100), minWidth: 0 }}>
                 <span style={{ width: 5, height: 5, borderRadius: '50%', background: i % 2 === 0 ? c.primary : c.secondary, flexShrink: 0 }} />
                 <span style={{ fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{r.value}</span>
               </div>
@@ -313,7 +319,7 @@ export default function IdCardFace({
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 12, gap: 8, minWidth: 0 }}>
           {headerName && <div style={{ fontSize: 9, fontWeight: 700, color: c.primary, textTransform: 'uppercase', letterSpacing: '.5px' }}>{headerName}</div>}
-          {rows.slice(0, 1).map((r) => <div key={r.key} style={{ fontSize: 13, fontWeight: 900, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.value}</div>)}
+          {rows.slice(0, 1).map((r) => <div key={r.key} style={{ fontSize: 13 * ((r.sizePct || 100) / 100), fontWeight: 900, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.value}</div>)}
           <Rows rows={rows.slice(1)} size={9} gap={3} color="#0F172A" muted="#94A3B8" dense />
         </div>
       </div>
