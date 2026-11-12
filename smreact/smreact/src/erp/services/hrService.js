@@ -1154,6 +1154,10 @@ const HR_EMPLOYMENT_KEYS = [
   'manager', 'shift', 'role', 'isPrinciple', 'isParent', 'qual',
 ];
 const HR_SALARY_KEYS = ['basicSalary', 'payMethod', 'bankName', 'bankAcc'];
+const HR_LEAVE_KEYS = [
+  'annual', 'casual', 'sick', 'maternity', 'balance',
+  'deductEn', 'absentDed', 'unpaidDed',
+];
 
 function hrValEq(a, b) {
   const na = a == null || a === '' ? '' : String(a).trim();
@@ -1341,10 +1345,14 @@ export async function saveHrEmployee(payload = {}) {
     }
   }
 
-  /* ── Leave / docs / assignments — alag endpoints (apni approvals) ── */
-  if (payload.leaves) {
+  /* ── Leave / docs / assignments — alag endpoints (apni approvals) ──
+     Leave: naya employee → hamesha save. Edit → sirf jab leave tab badli ho. */
+  const leavesDirty = isNew
+    || !payload.leavesOriginal
+    || hrKeysDirty(payload.leaves, payload.leavesOriginal, HR_LEAVE_KEYS);
+  if (payload.leaves && leavesDirty) {
     await saveHrLeaveSettings({
-      id: payload.leaves._leaveId || 0,
+      id: payload.leaves._leaveId || payload.leavesOriginal?._leaveId || 0,
       employeeID: employeeId,
       leaves: payload.leaves,
     });

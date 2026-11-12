@@ -5316,12 +5316,21 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   };
 
   /* Leave settings live on their own endpoint — on edit, pull the saved record
-     and merge it into the form (blank fields stay blank if the employee has none). */
+     and merge it into the form (blank fields stay blank if the employee has none).
+     Leave ka original snapshot bhi YAHIN update hota hai (data load hone ke baad),
+     taake save par sirf tab leave API chale jab leave waqai badli ho. */
+  const leavesOriginalRef = useRef(
+    isEdit && emp ? { ...blank.leaves, ...(emp.leaves || {}) } : null
+  );
   useEffect(() => {
     if (!isEdit || !emp?.id) return;
     let alive = true;
     hrService.getHrLeaveSettings(emp.id)
-      .then(l => { if (alive && l) setForm(f => ({ ...f, leaves: { ...f.leaves, ...l } })); })
+      .then(l => {
+        if (!alive || !l) return;
+        leavesOriginalRef.current = { ...leavesOriginalRef.current, ...l };
+        setForm(f => ({ ...f, leaves: { ...f.leaves, ...l } }));
+      })
       .catch(() => { });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5551,6 +5560,8 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       /* Edit: original snapshot so saveHrEmployee sirf dirty section ki API
          call kare (salary change → update-employee-salary, personal → save-employee). */
       original: isEdit ? originalEmpRef.current : null,
+      /* Edit: leave ka original — leave tab na badla ho to save-leave-settings skip. */
+      leavesOriginal: isEdit ? leavesOriginalRef.current : null,
       docUploads,
       removedDocIds,
       leaves: {
