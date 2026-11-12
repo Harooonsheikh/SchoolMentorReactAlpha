@@ -13,7 +13,6 @@ import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionTo
 import { loadReportBranch } from '../reports/reportKit';
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
-import useMobileAppPermission from '../hooks/useMobileAppPermission';
 import {
   chatUserId, chatEmployeeId, chatBranchId, fetchUnseenCount,
   fetchChatContacts, getOpenChatId, chatDisplayName,
@@ -41,7 +40,8 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
    Permissions → School SOPs) aur user permission se chalta hai. */
 /* Inventory ab branch-1-only nahi raha — har branch par live hai. Normal module
    activation (ALWAYS_ON_MODULES, moduleConfig) + user permission se chalta hai. */
-const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'appraisal', 'trainings', 'etube', 'notifications']);
+/* eTube yahan se hata — ab har branch par sirf User Permission ('E-Tube') se dikhta hai. */
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'appraisal', 'trainings', 'notifications']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
@@ -445,9 +445,8 @@ const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).joi
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
   const { canModule, fullAccess, ready: permsReady, readOnly, billingLock } = usePermissions();
-  /* Super Admin → Manage Mobile App Permissions. GET /manage-mobileapp-permission
-     Chat / Mentor AI / eTube in flags se on/off hote hain. */
-  const mobilePerms = useMobileAppPermission();
+  /* Chat / eTube ab SIRF ERP User Permission se governed hain — Super Admin ki
+     /manage-mobileapp-permission API login ke baad call nahi hoti. */
   const navItemVisible = (navId) => {
     /* Jab tak school ka module-activation aur user ki permissions dono na
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
@@ -481,20 +480,7 @@ if (navId === 'mentorai') {
      Access phir bhi PERMISSION se governed: School Head (fullAccess) ya jise
      "Mentor AI" module di gayi ho — baqi users ko phir bhi nahi dikhta. */
   return fullAccess || canModule('Mentor AI');
-}    if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
-      /* Flag tab tak na maano jab tak jawab na aa jaye — warna 'off' wali
-         branch par Chat ek pal ke liye dikh kar ghayab hoti hai. */
-      if (navId === 'chat' && !mobilePerms.ready) return false;
-      if (mobilePerms.ready && mobilePerms.hasRow) {
-        const allowed = navId === 'chat' ? mobilePerms.chatMode !== 'off'
-          : navId === 'mentorai' ? mobilePerms.mentorAi.enabled
-            : mobilePerms.etube.enabled;
-        if (!allowed) return false;
-        const gmod = NAV_TO_MODULE_MAP[navId];
-        const glabel = gmod ? MODULE_ID_TO_LABEL[gmod] : null;
-        return glabel ? (fullAccess || canModule(glabel)) : true;
-      }
-    }
+}
     /* Master-branch-only extras: hidden on every branch except branchID 1 —
        aur un branchon ke ilawa jo EXTRA_NAV_BRANCHES me is nav ke liye
        likhi hain (School SOPs branch 5 par bhi live hai). Jahan dikhte hain
@@ -537,18 +523,13 @@ if (navId === 'mentorai') {
     if (active === 'approvals' && approvalType === 'disable') {
       /* fall through to first visible nav */
     } else {
-    /* Chat / eTube ka faisla Mobile App permission (useMobileAppPermission) se
-       hota hai — wo aane se pehle navItemVisible('chat') false deta hai. Pehle
-       isi waqt redirect ho jata tha: Chat par refresh → Dashboard. Jawab aane
-       tak ruko; phir bhi hidden ho to hi redirect. */
-    if (!mobilePerms.ready && (active === 'chat' || active === 'etube')) return;
     if (navItemVisible(active)) return;
     }
     for (const section of NAV_SECTIONS) {
       const found = section.items.find((it) => navItemVisible(it.id));
       if (found) { setActive(found.id); return; }
     }
-  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, active, approvalType]);
+  }, [permsReady, modulesReady, active, approvalType]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'
@@ -979,16 +960,12 @@ if (navId === 'mentorai') {
             )}
             {active === 'etube' && (
               <Suspense fallback={null}>
-                <ETube
-                  toast={pushToast}
-                  canView={!mobilePerms.hasRow || mobilePerms.etube.viewing}
-                  canUpload={!mobilePerms.hasRow || mobilePerms.etube.uploading}
-                />
+                <ETube toast={pushToast} />
               </Suspense>
             )}
             {active === 'chat' && (
               <Suspense fallback={null}>
-                <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={onChatUnreadChange} />
+                <Chat toast={pushToast} onUnreadChange={onChatUnreadChange} />
               </Suspense>
             )}
             {active === 'notifications' && (
