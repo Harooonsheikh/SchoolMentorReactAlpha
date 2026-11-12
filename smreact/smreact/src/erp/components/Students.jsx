@@ -1431,6 +1431,10 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
   const classesLoading = classes == null;
   const inactList = inactive || [];
   const famList   = families || [];
+  /* families null = abhi tak server se load nahi huin → Family Tree tab
+     ko loader dikhao, warna fetch complete hone se pehle "No family trees
+     yet" galat flash hota tha. */
+  const familiesLoading = families == null;
 
   const [tab, setTab] = useState('active');
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -1519,6 +1523,7 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
         />
       ) : tab === 'family' ? (
         <FamilyTree
+          loading={familiesLoading}
           classes={classList}
           setClasses={setClasses}
           families={famList}
@@ -3700,7 +3705,9 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   const canInDownload = can('Students', 'Inactive Students', 'Download');
   /* school identity for the report header */
   const { data: school = {} } = useAsync(studentService.getStuSchool, {});
-  const [loading, setLoading] = useState(false);
+  /* true se shuru — warna effect chalne se pehle ek frame ke liye
+     "No inactive students" galat dikh jata tha. */
+  const [loading, setLoading] = useState(true);
 
   /* Inactive students ki API tab hit karo jab ye tab khule (component mount) —
      module load par nahi. Har baar tab kholne par fresh data. */
@@ -5797,7 +5804,7 @@ function buildStuFamilyReportHTML(families, classes, school) {
 /* ═══════════════════════════════════════════════════════════════════
    FAMILY TREE tab
    ═══════════════════════════════════════════════════════════════════ */
-function FamilyTree({ classes, families, setFamilies, school, toast }) {
+function FamilyTree({ loading = false, classes, families, setFamilies, school, toast }) {
   const { can } = usePermissions();
   const canFamCreate   = can('Students', 'Family Tree', 'Create');
   const canFamEdit     = can('Students', 'Family Tree', 'Edit');
@@ -6100,7 +6107,12 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
           <div className="th c">Details</div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="stu-empty">
+            <div className="stu-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+            <div className="stu-empty-title">Loading family trees…</div>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="stu-empty">
             <div className="stu-empty-ic"><i className="fa-solid fa-people-roof"></i></div>
             <div className="stu-empty-title">{search ? 'No families match your search' : 'No family trees yet'}</div>
