@@ -391,6 +391,118 @@ function ProblemsReportPanel() {
    Monthly Review ki "Staff Planning & Review" category ke tasks, staff
    ke hisaab se. Staff list wohi log hain jin ko us mahine yeh tasks
    assigned hain. */
+
+/* Multi-select dropdown — selected staff andar chips ki shakal mein.
+   Kuch select na ho = All Staff. */
+function StaffMultiSelect({ options, value, onChange, placeholder = 'All Staff' }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const boxRef = React.useRef(null);
+
+  /* Bahar click ya Esc par band */
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onKey = e => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  React.useEffect(() => { if (!open) setQ(''); }, [open]);
+
+  const toggle = name => onChange(value.includes(name) ? value.filter(s => s !== name) : [...value, name]);
+  const remove = (e, name) => { e.stopPropagation(); onChange(value.filter(s => s !== name)); };
+  const shown = options.filter(o => o.toLowerCase().includes(q.trim().toLowerCase()));
+  const disabled = options.length === 0;
+
+  return (
+    <div ref={boxRef} style={{ position: 'relative' }}>
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="form-input"
+        onClick={() => !disabled && setOpen(o => !o)}
+        onKeyDown={e => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen(o => !o); } }}
+        style={{
+          display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6,
+          height: 'auto', minHeight: 48, cursor: disabled ? 'not-allowed' : 'pointer',
+          paddingRight: 40, opacity: disabled ? 0.6 : 1,
+        }}
+      >
+        {value.length === 0 ? (
+          <span style={{ color: 'var(--text-muted)' }}>{disabled ? 'No staff this month' : placeholder}</span>
+        ) : value.map(name => (
+          <span key={name} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            background: 'rgba(30,58,138,.08)', color: '#1E3A8A',
+            borderRadius: 999, padding: '4px 6px 4px 10px', fontSize: 13, fontWeight: 600,
+          }}>
+            {name}
+            <span
+              role="button"
+              aria-label={`Remove ${name}`}
+              onClick={e => remove(e, name)}
+              style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: '50%', cursor: 'pointer', background: 'rgba(30,58,138,.12)' }}
+            >
+              <i className="fa-solid fa-xmark" style={{ fontSize: 10 }} aria-hidden="true"></i>
+            </span>
+          </span>
+        ))}
+        <i
+          className={`fa-solid fa-chevron-${open ? 'up' : 'down'}`}
+          aria-hidden="true"
+          style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: 'var(--text-muted)' }}
+        ></i>
+      </div>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 50,
+          background: 'var(--bg-card, #fff)', border: '1.5px solid var(--border-light)',
+          borderRadius: 12, boxShadow: '0 12px 32px rgba(15,23,42,.14)', overflow: 'hidden',
+        }}>
+          <div style={{ padding: 10, borderBottom: '1px solid var(--border-light)' }}>
+            <input
+              autoFocus
+              className="form-input"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="Search staff…"
+              style={{ height: 38 }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12.5 }}>
+              <button type="button" className="btn-link" style={{ background: 'none', border: 0, padding: 0, color: '#1E3A8A', fontWeight: 600, cursor: 'pointer' }} onClick={() => onChange([...options])}>Select all</button>
+              <button type="button" className="btn-link" style={{ background: 'none', border: 0, padding: 0, color: 'var(--text-muted)', fontWeight: 600, cursor: 'pointer' }} onClick={() => onChange([])}>Clear</button>
+            </div>
+          </div>
+          <div role="listbox" aria-multiselectable="true" style={{ maxHeight: 240, overflowY: 'auto', padding: 6 }}>
+            {shown.map(name => {
+              const on = value.includes(name);
+              return (
+                <label key={name} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px',
+                  borderRadius: 8, cursor: 'pointer', fontSize: 14,
+                  background: on ? 'rgba(30,58,138,.06)' : 'transparent',
+                }}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(name)} />
+                  {name}
+                </label>
+              );
+            })}
+            {shown.length === 0 && <div style={{ padding: 10, fontSize: 13, color: 'var(--text-muted)' }}>No staff match “{q}”.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const REVIEW_COLUMNS = [{ key: 'staff', label: 'Staff Member' }, { key: 'total', label: 'Total Tasks' }, { key: 'completed', label: 'Completed' }, { key: 'pending', label: 'Pending' }, { key: 'issues', label: 'Issues Found' }, { key: 'pct', label: 'Completion %' }];
 
 function MonthlyStaffReviewReportPanel() {
@@ -402,13 +514,12 @@ function MonthlyStaffReviewReportPanel() {
   const staffItems = useMemo(() => monthly.filter(i => i.area === 'staff'), [monthly]);
   const staffNames = useMemo(() => [...new Set(staffItems.map(staffNameOf))].sort(), [staffItems]);
 
+  /* Mahina badalne par jo staff us mahine mein nahi, wo khud nikal jate hain */
   const picked = selected.filter(s => staffNames.includes(s));
   const only = mode === 'select' && picked.length ? picked : null;
   const rows = useMemo(() => staffRows(staffItems, { only }), [staffItems, only]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { previewHtml, downloadPdf, downloadWord, downloadExcel } = useReportBuilder({ title: 'Monthly Staff Review Report', columns: REVIEW_COLUMNS, data: rows, rowMapper: staffRowMapper, emptyText: 'No staff planning & review tasks for this month.' });
-
-  const toggleStaff = (name) => setSelected(sel => sel.includes(name) ? sel.filter(s => s !== name) : [...sel, name]);
 
   return (
     <div className="cmp-card">
@@ -423,16 +534,22 @@ function MonthlyStaffReviewReportPanel() {
         </Field>
       </div>
 
+      {/* "Select Staff" tab par neeche left side dropdown — Month jitni
+          chaurai (grid ka pehla column). <label> ki jagah div, warna
+          label ke andar click dropdown ko baar baar khol/band karta. */}
       {mode === 'select' && (
-        <div className="cmp-staff-picker">
-          {staffNames.map(s => (
-            <label key={s} className={`cmp-staff-chip${picked.includes(s) ? ' on' : ''}`}>
-              <input type="checkbox" checked={picked.includes(s)} onChange={() => toggleStaff(s)} />
-              {s}
-            </label>
-          ))}
-          {staffNames.length === 0 && <div className="cmp-staff-hint">No staff have staff planning &amp; review tasks this month.</div>}
-          {staffNames.length > 0 && picked.length === 0 && <div className="cmp-staff-hint">No one selected yet &mdash; showing all staff until you pick someone.</div>}
+        <div className="cmp-filter-grid" style={{ marginBottom: 6 }}>
+          <div className="form-group cmp-field">
+            <span className="form-label">Select Staff</span>
+            <StaffMultiSelect
+              options={staffNames}
+              value={picked}
+              onChange={setSelected}
+              placeholder="Please select staff here"
+            />
+            {staffNames.length === 0 && <div className="cmp-staff-hint">No staff have staff planning &amp; review tasks this month.</div>}
+            {staffNames.length > 0 && picked.length === 0 && <div className="cmp-staff-hint">No one selected yet &mdash; showing all staff until you pick someone.</div>}
+          </div>
         </div>
       )}
 

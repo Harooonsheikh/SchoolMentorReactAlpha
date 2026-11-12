@@ -369,6 +369,18 @@ export function Field({ label, children }) {
 /* `employees` ([{ id, name }]) diya ho to Assign To dropdown branch ke
    asli employees dikhata hai aur save par employee id (`assignTo`) bhejta
    hai; warna purani `staffOptions` (naam) list use hoti hai. */
+
+/* Har field ka error usi field ke neeche — proper form validation. */
+function FieldError({ msg }) {
+  if (!msg) return null;
+  return (
+    <div className="cmp-field-err" style={{ marginTop: 6 }}>
+      <i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {msg}
+    </div>
+  );
+}
+const ERR_BORDER = { borderColor: '#DC2626', boxShadow: '0 0 0 3px rgba(220,38,38,.12)' };
+
 export function ProblemModal({ open, initial, categories, staffOptions, employees, employeesLoading = false, onClose, onSave }) {
   const useEmployees = Array.isArray(employees);
   const defaultAssignee = useEmployees ? '' : (staffOptions?.[0] || '');
@@ -380,7 +392,15 @@ export function ProblemModal({ open, initial, categories, staffOptions, employee
   const [assignedTo, setAssignedTo] = useState(defaultAssignee);
   const [dueDate, setDueDate] = useState('');
   const [photo, setPhoto] = useState(null);
-  const [err, setErr] = useState('');
+  const [errors, setErrors] = useState({});
+
+  /* Pehli ghalat field par focus/scroll karne ke liye */
+  const refs = {
+    title: React.useRef(null),
+    description: React.useRef(null),
+    assignedTo: React.useRef(null),
+    dueDate: React.useRef(null),
+  };
 
   React.useEffect(() => {
     if (!open) return;
@@ -392,20 +412,37 @@ export function ProblemModal({ open, initial, categories, staffOptions, employee
     setAssignedTo(defaultAssignee);
     setDueDate('');
     setPhoto(initial?.photo || null);
-    setErr('');
+    setErrors({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial]);
 
   if (!open) return null;
 
+  /* User field theek kare to us field ka error foran hat jaye */
+  const clearErr = key => setErrors(prev => (prev[key] ? { ...prev, [key]: '' } : prev));
+
   const submit = () => {
-    if (!title.trim()) { setErr('Please enter a problem title.'); return; }
-    if (!description.trim()) { setErr('Please describe the problem.'); return; }
-    if (!dueDate) { setErr('Please choose a due date.'); return; }
+    const next = {};
+    if (!title.trim()) next.title = 'Please enter a problem title.';
+    if (!description.trim()) next.description = 'Please describe the problem.';
+    let assignee = null;
+    if (useEmployees) {
+      assignee = employees.find(e => String(e.id) === String(assignedTo));
+      if (!assignee) next.assignedTo = 'Please select an employee.';
+    }
+    if (!dueDate) next.dueDate = 'Please choose a due date.';
+
+    const firstBad = ['title', 'description', 'assignedTo', 'dueDate'].find(k => next[k]);
+    if (firstBad) {
+      setErrors(next);
+      const el = refs[firstBad].current;
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); }
+      return;
+    }
+
+    setErrors({});
     const base = { title: title.trim(), description: description.trim(), category, location: location.trim(), priority, dueDate, photo };
     if (useEmployees) {
-      const assignee = employees.find(e => String(e.id) === String(assignedTo));
-      if (!assignee) { setErr('Please select an employee to assign.'); return; }
       onSave({ ...base, assignTo: assignee.id, assignedTo: assignee.name });
       return;
     }
@@ -424,12 +461,31 @@ export function ProblemModal({ open, initial, categories, staffOptions, employee
         </div>
         <div className="modal-body">
           <label className="form-group">
-            <span className="form-label">Problem Title</span>
-            <input className="form-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Washroom requires cleaning" />
+            <span className="form-label">Problem Title <span style={{ color: '#DC2626' }}>*</span></span>
+            <input
+              ref={refs.title}
+              className="form-input"
+              style={errors.title ? ERR_BORDER : undefined}
+              aria-invalid={!!errors.title}
+              value={title}
+              onChange={e => { setTitle(e.target.value); clearErr('title'); }}
+              placeholder="e.g. Washroom requires cleaning"
+            />
+            <FieldError msg={errors.title} />
           </label>
           <label className="form-group">
-            <span className="form-label">Description</span>
-            <textarea className="cmp-textarea" rows={3} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe what you found…" />
+            <span className="form-label">Description <span style={{ color: '#DC2626' }}>*</span></span>
+            <textarea
+              ref={refs.description}
+              className="cmp-textarea"
+              style={errors.description ? ERR_BORDER : undefined}
+              aria-invalid={!!errors.description}
+              rows={3}
+              value={description}
+              onChange={e => { setDescription(e.target.value); clearErr('description'); }}
+              placeholder="Describe what you found…"
+            />
+            <FieldError msg={errors.description} />
           </label>
           <div className="cmp-filter-grid" style={{ marginBottom: 14 }}>
             <label className="form-group cmp-field">
@@ -449,28 +505,45 @@ export function ProblemModal({ open, initial, categories, staffOptions, employee
               </select>
             </label>
             <label className="form-group cmp-field">
-              <span className="form-label">Assign To</span>
+              <span className="form-label">Assign To {useEmployees && <span style={{ color: '#DC2626' }}>*</span>}</span>
               {useEmployees ? (
-                <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)} disabled={employeesLoading}>
+                <select
+                  ref={refs.assignedTo}
+                  className="form-input"
+                  style={errors.assignedTo ? ERR_BORDER : undefined}
+                  aria-invalid={!!errors.assignedTo}
+                  value={assignedTo}
+                  onChange={e => { setAssignedTo(e.target.value); clearErr('assignedTo'); }}
+                  disabled={employeesLoading}
+                >
                   <option value="">
                     {employeesLoading ? 'Loading employees…' : employees.length ? 'Select employee' : 'No employees found'}
                   </option>
                   {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                 </select>
               ) : (
-                <select className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
+                <select ref={refs.assignedTo} className="form-input" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
                   {(staffOptions || []).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
+              <FieldError msg={errors.assignedTo} />
             </label>
             <label className="form-group cmp-field">
-              <span className="form-label">Due Date</span>
-              <input type="date" className="form-input" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+              <span className="form-label">Due Date <span style={{ color: '#DC2626' }}>*</span></span>
+              <input
+                ref={refs.dueDate}
+                type="date"
+                className="form-input"
+                style={errors.dueDate ? ERR_BORDER : undefined}
+                aria-invalid={!!errors.dueDate}
+                value={dueDate}
+                onChange={e => { setDueDate(e.target.value); clearErr('dueDate'); }}
+              />
+              <FieldError msg={errors.dueDate} />
             </label>
           </div>
           <span className="form-label">Photo (optional)</span>
           <div style={{ marginTop: 6 }}><PhotoAttach value={photo} onChange={setPhoto} /></div>
-          {err && <div className="cmp-field-err" style={{ marginTop: 10 }}><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {err}</div>}
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
