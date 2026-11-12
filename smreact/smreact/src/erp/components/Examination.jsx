@@ -1340,6 +1340,18 @@ export default function Examination({ toast = () => { } }) {
           rank: String(c.ranking ?? c.Ranking ?? '—'),
         };
       });
+      /* Combined Pos. = COMBINED grand-obtained par rank. Backend `ranking` sirf MAIN exam
+         ke marks ka rank hota hai (updaterankings table) — is liye combined total me aage
+         wala student peeche dikh raha tha. Standard competition ranking: barabar grand →
+         same rank; 0 / no marks → "—". */
+      const sfx = n => (n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+      const ordered = students.filter(s => s.grandObt > 0).sort((a, b) => b.grandObt - a.grandObt);
+      let prevObt = null, curRank = 0;
+      ordered.forEach((s, i) => {
+        if (prevObt === null || s.grandObt !== prevObt) { curRank = i + 1; prevObt = s.grandObt; }
+        s.rank = `${curRank}${sfx(curRank)}`;
+      });
+      students.forEach(s => { if (!(s.grandObt > 0)) s.rank = '—'; });
       setCbrResults(prev => prev.map(g => g.id === cr.id ? { ...g, students, studentsLoaded: true } : g));
     } catch (e) {
       console.error('Error loading combined-result students:', e);
@@ -7855,8 +7867,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         if (!grp) return null;
         const st = grp.students.find(s => s.rollNo === cbrCardCtx.studentRollNo);
         if (!st) return null;
-        const rankNum = parseInt(st.rank, 10) || 1;
-        const rankSfx = (st.rank.match(/[a-z]+$/i) || ['th'])[0];
+        // Rank na ho to card par "—" (pehle `|| 1` se "1th" chhap jata tha).
+        const rankNum = parseInt(st.rank, 10) || '—';
+        const rankSfx = Number.isFinite(rankNum) ? ((String(st.rank).match(/[a-z]+$/i) || ['th'])[0]) : '';
         const cardStudent = {
           id: st.rollNo,
           rollNo: st.rollNo,
@@ -15373,9 +15386,10 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
           };
         }, () => cancelled);
 
-        // Jis student ka rank API se nahi aaya, grand obtained se class position.
-        const needRank = built.some(c => !c.student._combined.rank);
-        if (needRank) {
+        // Combined position HAMESHA grand obtained se (table jaisa). API `ranking` sirf MAIN
+        // exam ka rank hai, is liye use ignore karte hain.
+        built.forEach(c => { c.student._combined.rank = 0; c.student._combined.rankSfx = ''; });
+        {
           const order = built
             .map((c, i) => ({ i, obt: Number(c.student._combined.grandObt) || 0, name: c.student.name }))
             .filter(x => x.obt > 0)
