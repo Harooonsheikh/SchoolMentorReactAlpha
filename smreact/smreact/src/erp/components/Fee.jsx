@@ -3273,7 +3273,15 @@ function FeeChallansList({ toast }) {
     if (toM === 0) { toM = 12; toY = appliedYear - 1; }
     let fromM = toM - 11, fromY = toY;
     while (fromM <= 0) { fromM += 12; fromY -= 1; }
-    const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);   // cached per range
+    /* FAST: lean prev-dues SP se dues/byHead FORAN — heavy 12-month ledger ka intezar kiye
+       bina TOTAL DUES turant; dues value validated-identical. */
+    try {
+      const fastPO = await feeService.getPrevDues(mIdx + 1, appliedYear);
+      const scoped = {};
+      studs.forEach(s => { const id = String(s.studentID); if (fastPO[id]) scoped[id] = fastPO[id]; });
+      if (Object.keys(scoped).length) setPrevOutMap(prev => ({ ...prev, ...scoped }));
+    } catch { /* lean prev-dues optional */ }
+    const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
     const sids = new Set(studs.map(s => String(s.studentID)));
     const rows = allRows.filter(r => sids.has(String(r.studentID)));
     const prevOut = prevOutFromLedgerRows(rows, mIdx + 1, appliedYear);
@@ -6262,7 +6270,6 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
     setRemarks('');
-    setAdjustFromAdvance(false); setAdvanceAdjustInput('');
     setFineRecvInput(null);
     setFineGiveInput(0);
     /* "Received" input KUL wasooli (pehle jama + ab ki). Naya paisa = input − paid.
@@ -6665,19 +6672,6 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter = totalAmt - alreadyPaid - receivingNow;
 
-  /* Available Advance Balance + Adjust From Advance Balance (branch 1 / 15 only).
-     Max adjust = stored advance (advCredit) capped by what is still payable. */
-  const advAdjustBranchOn = !viewOnly && isAdvanceAdjustBranch() && advancePaymentReceivingOn;
-  const availableAdvance  = Math.max(0, advCredit);
-  const remainingForAdjust = Math.max(0, remainAfter);
-  const maxAdvanceAdjust  = advAdjustBranchOn ? Math.min(availableAdvance, remainingForAdjust) : 0;
-  const advAdjustAmt      = adjustFromAdvance ? Math.max(0, Number(advanceAdjustInput) || 0) : 0;
-  const advAdjustInvalid  = adjustFromAdvance && advAdjustAmt > maxAdvanceAdjust;
-  const toggleAdjustFromAdvance = (checked) => {
-    setAdjustFromAdvance(checked);
-    if (checked) setAdvanceAdjustInput(String(maxAdvanceAdjust || ''));
-  };
-
   /* ── 9-column payment-flow table ke footer sums (sirf display) ──
      Previous Dues + This Month's Challan − Discount = Net Payable ·
      Net Payable − Give Discount = Final Net Payable · Final − Pay Now = Remaining.
@@ -6787,10 +6781,6 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
        receiving round bilkul mana. Inputs/button already disabled hain; ye guard
        last line of defence hai. */
     if (saving) return;
-    if (adjustFromAdvance) {
-      toast('Advance adjustment saving is not connected in this project yet — uncheck "Adjust From Advance Balance" to receive cash.', 'error');
-      return;
-    }
     if (multipleReceivingBlocked) {
       toast('Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded', 'error');
       return;
@@ -7322,58 +7312,6 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
               })()}
             </span>
           </div>
-
-          {/* Available Advance Balance — branch 1 / 15 only. */}
-          {advAdjustBranchOn && availableAdvance > 0 && (
-            <div className="fee-recv-paystrip fee-recv-advstrip">
-              <div className="fee-recv-paycard">
-                <span className="fee-recv-paylbl">Available Advance Balance</span>
-                <span className="fee-recv-payval amber">{money(availableAdvance)}</span>
-                <span className="fee-recv-paysub">Amount already available from previous advance payments</span>
-              </div>
-            </div>
-          )}
-
-          {/* Adjust From Advance Balance — separate installment, never combined with cash Pay Now. */}
-          {advAdjustBranchOn && maxAdvanceAdjust > 0 && (
-            <div className="fee-adv-adjust-box">
-              <label className="fee-adv-check-row">
-                <input
-                  type="checkbox"
-                  checked={adjustFromAdvance}
-                  onChange={e => toggleAdjustFromAdvance(e.target.checked)}
-                />
-                <span>Adjust From Advance Balance</span>
-              </label>
-              {adjustFromAdvance && (
-                <div className="fee-adv-adjust-body">
-                  <div className="fee-field">
-                    <span className="fee-label">Advance Adjustment Amount</span>
-                    <input
-                      className="fee-input"
-                      type="number"
-                      min="0"
-                      max={maxAdvanceAdjust}
-                      value={advanceAdjustInput}
-                      onChange={e => setAdvanceAdjustInput(e.target.value)}
-                      placeholder={`Up to ${maxAdvanceAdjust.toLocaleString('en-PK')}`}
-                    />
-                    {advAdjustInvalid && (
-                      <div className="fee-adv-err">Adjustment amount cannot exceed available advance balance.</div>
-                    )}
-                  </div>
-                  <div className="fee-adv-adjust-preview">
-                    <span>Remaining Payable After Adjustment</span>
-                    <b>{money(Math.max(0, remainingForAdjust - Math.min(advAdjustAmt, maxAdvanceAdjust)))}</b>
-                  </div>
-                </div>
-              )}
-              <div className="fee-adv-adjust-hint">
-                <i className="fa-solid fa-circle-info"></i>
-                <span>Advance Adjustment is recorded as its own, separate installment — it is never combined with a cash Pay Now round in the same transaction.</span>
-              </div>
-            </div>
-          )}
 
           <div className="fee-recv-paystrip">
             <div className="fee-recv-paycard">
@@ -9148,10 +9086,21 @@ function FeeReceivingIndividual({ toast }) {
         if (toM === 0) { toM = 12; toY = appliedYear - 1; }
         let fromM = toM - 11, fromY = toY;
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        /* FAST: lean prev-dues SP se dues/byHead FORAN — heavy 12-month ledger ka intezar
+           kiye bina TOTAL DUES turant; dues value validated-identical. */
+        try {
+          const fastPO = await feeService.getPrevDues(mIdx + 1, appliedYear);
+          if (!cancelled) {
+            const scoped = {};
+            studs.forEach(s => { const id = String(s.studentID); if (fastPO[id]) scoped[id] = fastPO[id]; });
+            if (Object.keys(scoped).length) setPrevOutMap(prev => ({ ...prev, ...scoped }));
+          }
+        } catch { /* lean prev-dues optional */ }
         const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         if (cancelled) return;
         const sids = new Set(studs.map(s => String(s.studentID)));
         const prevRows = allRows.filter(r => sids.has(String(r.studentID)));
+        /* prevOut — ledger rows se per-student dues/advance (fast path ke baad bhi merge hota hai). */
         const prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
         /* Har student ke PICHHLE challans (naya-pehle). */
         const prior = {};
@@ -24201,27 +24150,6 @@ const FEE_CSS = `
 .fee-recv-payval.green { color: #16A34A; }
 .fee-recv-payval.blue  { color: #1E3A8A; }
 .fee-recv-payval.red   { color: #DC2626; }
-.fee-recv-payval.amber { color: #B45309; }
-.fee-recv-paysub { font-size: 11px; color: var(--text-muted); }
-.fee-adv-adjust-box {
-  margin: 14px 0;
-  padding: 14px 16px;
-  border: 1px solid #F3C9A6;
-  border-radius: 12px;
-  background: #FBF3EE;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.fee-adv-check-row { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; color: var(--text-primary); cursor: pointer; }
-.fee-adv-check-row input { width: 18px; height: 18px; accent-color: #B45309; }
-.fee-adv-adjust-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
-.fee-adv-adjust-body .fee-field { max-width: 240px; }
-.fee-adv-adjust-preview { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-muted); }
-.fee-adv-adjust-preview b { font-size: 18px; font-weight: 800; color: #B45309; }
-.fee-adv-err { font-size: 12px; color: #DC2626; margin-top: 4px; }
-.fee-adv-adjust-hint { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-muted); }
-.fee-adv-adjust-hint i { color: #B45309; margin-top: 2px; }
 
 .fee-recv-hist-title {
   display: flex;
