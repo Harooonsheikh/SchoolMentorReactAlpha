@@ -339,11 +339,11 @@ export default function ComplianceSetup({
     };
   }, [tasks, areas]);
 
-  const saveArea = async (name) => {
+    const saveArea = async (name) => {
     await addArea(name, freq);  // jis tab par hain usi ka type — fail ho to modal mein error dikhega
-    await onAreasChange();      // dropdown ke liye list dobara lo
     setAreaOpen(false);
     toast(`Category "${name}" added to ${FREQ_TABS.find(f => f.id === freq)?.label || freq}.`, 'success');
+    await onAreasChange();      // toaster ke baad dropdown ke liye list dobara lo
   };
 
   const filtered = useMemo(() => {
@@ -367,46 +367,45 @@ export default function ComplianceSetup({
     return [...map.values()];
   }, [filtered]);
 
-  const patch = async (t, p) => {
+    /* successMsg diya ho to server success par FORAN toaster, phir list refresh */
+  const patch = async (t, p, successMsg = '') => {
     try {
       await taskAction('update', { ...t, ...p });
-      await onTasksChange();
-      return true;
     } catch (e) {
       toast(e.message || 'Update failed.', 'error');
       return false;
     }
+    if (successMsg) toast(successMsg, 'success');
+    await onTasksChange();
+    return true;
   };
 
-  const toggleActive = async (t) => {
-    if (await patch(t, { active: !t.active })) {
-      toast(`"${t.label}" ${t.active ? 'disabled' : 'enabled'}.`, 'success');
-    }
-  };
+  const toggleActive = (t) =>
+    patch(t, { active: !t.active }, `"${t.label}" ${t.active ? 'disabled' : 'enabled'}.`);
 
-  const addItem = async (payload) => {
+    const addItem = async (payload) => {
     try {
       await taskAction('insert', { ...payload, frequency: freq, active: true });
-      setAddOpen(false);
-      await onTasksChange();
-      toast('New checklist item added.', 'success');
-    } catch (e) { toast(e.message || 'Item not saved', 'error'); }
+    } catch (e) { toast(e.message || 'Item not saved', 'error'); return; }
+    setAddOpen(false);
+    toast('New checklist item added.', 'success');
+    await onTasksChange();
   };
 
   /* Edit — error modal ke andar dikhe, is liye yahan throw hone dete hain */
   const saveEdit = async (payload) => {
     await taskAction('update', { ...editing, ...payload });
     setEditing(null);
-    await onTasksChange();
     toast('Checklist item updated.', 'success');
+    await onTasksChange();
   };
 
   const removeItem = async (t) => {
     try {
       await taskAction('delete', t);
-      await onTasksChange();
-      toast(`"${t.label}" removed.`, 'success');
-    } catch (e) { toast(e.message || 'Delete not allowed', 'error'); }
+    } catch (e) { toast(e.message || 'Delete not allowed', 'error'); return; }
+    toast(`"${t.label}" removed.`, 'success');
+    await onTasksChange();
   };
 
   const askRemove = (t) => setConfirm({
