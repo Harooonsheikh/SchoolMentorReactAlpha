@@ -314,7 +314,9 @@ const CMP_CSS = `
 
 /* Checklist row ka Save (remark + photo) */
 .cmp-save-btn { height: 36px; width: 100%; justify-content: center; font-size: 12px; }
-.cmp-row-side .cmp-save-btn { margin-top: auto; }   /* photo ho ya na ho, Save hamesha neeche */
+.cmp-row-side .cmp-save-btn { margin-top: auto; }
+/* Add Item / Add Category — form khali ho to halka (disabled) */
+.cmp-modal-submit:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; transform: none; pointer-events: none; }   /* photo ho ya na ho, Save hamesha neeche */
 .cmp-row-state { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 14px; font: 600 10.5px/1.2 var(--font-body); color: var(--text-muted); text-align: center; }
 .cmp-row-state.unsaved { color: #B45309; }
 

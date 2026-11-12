@@ -122,6 +122,11 @@ function ItemModal({ open, freq, areas = [], employees = [], employeesLoading = 
 
   const chosenArea = areaOptions.find(a => a.id === areaId) || areaOptions[0];
 
+  /* Add Item / Save Changes tab hi enable jab Area, Task aur Assigned To bhare hon */
+  const formFilled = !!chosenArea?.backendId
+    && !!label.trim() && label.trim().length <= TASK_LABEL_MAX_LENGTH
+    && employees.some(e => String(e.id) === String(assignedTo));
+
   const submit = async () => {
     const text = label.trim();
     if (!text) { setErr('Please enter the task.'); return; }
@@ -209,7 +214,7 @@ function ItemModal({ open, freq, areas = [], employees = [], employeesLoading = 
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>
+          <button type="button" className="btn btn-primary cmp-modal-submit" onClick={submit} disabled={saving || !formFilled}>
             <i className={`fa-solid ${isEdit ? 'fa-floppy-disk' : 'fa-plus'}`} aria-hidden="true"></i>{' '}
             {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Item'}
           </button>
@@ -267,7 +272,7 @@ function AddAreaModal({ open, freqLabel = '', existingNames = [], onClose, onSav
               maxLength={AREA_NAME_MAX}
               value={name}
               onChange={e => setName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && name.trim() && !saving) submit(); }}
               placeholder="e.g. Transport & Bus Safety"
               autoFocus
             />
@@ -277,7 +282,7 @@ function AddAreaModal({ open, freqLabel = '', existingNames = [], onClose, onSav
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>
+          <button type="button" className="btn btn-primary cmp-modal-submit" onClick={submit} disabled={saving || !name.trim()}>
             <i className="fa-solid fa-plus" aria-hidden="true"></i> {saving ? 'Saving…' : 'Add Category'}
           </button>
         </div>
@@ -484,7 +489,7 @@ export default function ComplianceSetup({
       <ConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
 
       {!all ? (
-        <div className="cmp-card">Loading checklist…</div>
+        <EmptyState icon="fa-spinner fa-spin" title="Loading…" />
       ) : grouped.length === 0 ? (
         <EmptyState icon="fa-sliders" title="No checklist items match your search" />
       ) : grouped.map(g => (

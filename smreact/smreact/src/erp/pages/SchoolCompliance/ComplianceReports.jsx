@@ -5,7 +5,7 @@ import { todayIso, weekKeyOf, monthKeyOf, shiftWeekKey } from '../../services/co
 import { completionPct, countByStatus } from './complianceData';
 import { Field } from './ComplianceShared';
 import { buildCheckInstances, groupItems } from './useComplianceChecks';
-import { STATUS, PROBLEM_CATEGORIES, PROBLEM_PRIORITIES, DAILY_AREA_OPTIONS } from '../../mock/compliance';
+import { STATUS, PROBLEM_CATEGORIES, PROBLEM_PRIORITIES, DAILY_AREA_OPTIONS, MONTHLY_CATEGORY_OPTIONS } from '../../mock/compliance';
 import {
   buildStandardReportHtml, buildReportTableHtml, openReportWindow,
   downloadReportAsWord, downloadReportExcel, reportPalette, reportStatusPill, reportFileName, REPORT_ACADEMIC_YEAR,
@@ -13,6 +13,16 @@ import {
 import { useComplianceActions } from './compliancePermissions';
 
 const DAILY_ORDER = DAILY_AREA_OPTIONS.map(a => a.id);
+const MONTHLY_ORDER = MONTHLY_CATEGORY_OPTIONS.map(c => c.id);
+
+/* Report table har naye area par heading lagata hai. Tasks backend ki
+   tarteeb (id) mein aate hain, is liye ek area ke tasks beech mein
+   doosre area aane se toot jate the aur area 2 baar dikhta tha. Pehle
+   area-wise group karke (tabs wali tarteeb) phir flat karte hain. */
+function sortByArea(items, freq) {
+  const order = freq === 'daily' ? DAILY_ORDER : freq === 'monthly' ? MONTHLY_ORDER : [];
+  return groupItems(items, { order }).flatMap(g => g.items);
+}
 const CLOSED_PROBLEM = ['Resolved', 'Verified and Closed'];
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -210,7 +220,8 @@ function PeriodReportPanel({ freq, title, icon }) {
   const activeWeek = weeks.includes(weekKey) ? weekKey : weeks[0];
   const periodKey = isWeekly ? activeWeek : dateKey;
 
-  const instances = useInstances(freq, periodKey);
+  const rawInstances = useInstances(freq, periodKey);
+  const instances = useMemo(() => sortByArea(rawInstances, freq), [rawInstances, freq]);
   const by = countByStatus(instances);
   const view = useReportView();
 
@@ -312,7 +323,9 @@ const identity = (r) => r;
 function PendingTasksReportPanel() {
   const all = useCurrentInstances();
   const view = useReportView();
-  const rows = useMemo(() => all.filter(i => i.status === STATUS.NOT_CHECKED), [all]);
+  /* Frequency ke andar bhi area-wise, ta ke ek area ke tasks ikatthe rahen */
+  const rows = useMemo(() => ['Daily', 'Weekly', 'Monthly'].flatMap(fl =>
+    sortByArea(all.filter(i => i.freqLabel === fl && i.status === STATUS.NOT_CHECKED), fl.toLowerCase())), [all]);
   const { previewHtml, downloadPdf, downloadWord, downloadExcel } = useReportBuilder({ title: 'Pending Tasks Report', columns: PENDING_COLUMNS, data: rows, rowMapper: identity, groupKey: 'freqLabel', emptyText: 'No pending tasks — everything is up to date.' });
   return (
     <div className="cmp-card">
@@ -332,7 +345,7 @@ function OverdueTasksReportPanel() {
   const yesterday = useMemo(yesterdayIso, []);
   const items = useInstances('daily', yesterday);
   const view = useReportView();
-  const rows = useMemo(() => items.filter(i => i.status === STATUS.NOT_CHECKED), [items]);
+  const rows = useMemo(() => sortByArea(items.filter(i => i.status === STATUS.NOT_CHECKED), 'daily'), [items]);
   const { previewHtml, downloadPdf, downloadWord, downloadExcel } = useReportBuilder({ title: 'Overdue Tasks Report', columns: OVERDUE_COLUMNS, data: rows, rowMapper: overdueRowMapper, emptyText: 'No overdue tasks from yesterday.' });
   return (
     <div className="cmp-card">

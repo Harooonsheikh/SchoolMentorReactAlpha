@@ -298,7 +298,12 @@ export function ensureTasks(areas) {
   if (!taskSeedPromise) {
     taskSeedPromise = (async () => {
       const branchId = getBranchId();
-      let tasks = await getTasks(branchId); 
+      let tasks = await getTasks(branchId);
+
+      /* Seed SIRF pehli dafa — jab branch ke paas ek bhi task na ho.
+         Naam se "missing" dhoondne par edit (rename) ya delete kiya hua
+         built-in task har reload par dobara ban jata tha. */
+      if (tasks.length > 0) return tasks;
 
       const have = new Set(tasks.map(t => `${norm(t.type)}|${norm(t.task)}`));
       /* type + naam se area id (sab se purana record) — ek naam alag
