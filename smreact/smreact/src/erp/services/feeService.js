@@ -3271,7 +3271,7 @@ export async function getOneLinkPayments(opts = {}) {
   return json?.data || {};
 }
 
-/* ── Advance adjustment (branches 1 / 15) — no-account variants ──
+/* ── Advance adjustment (sab branches) — no-account variants ──
    DELETE /api/BranchLedger/clear-receiving-withoutaccount-delete/{ledgerId}?modifiedBy=
    POST   /api/BranchLedger/receive-payment-installment-withoutaccount-delete
    Account entry NAHI hatti / NAHI banti. */

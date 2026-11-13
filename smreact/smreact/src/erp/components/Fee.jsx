@@ -1584,9 +1584,12 @@ const FEE_MONTHS = [
 const PREV_MONTH_CHALLAN_BRANCHES = new Set();
 const PREV_MONTH_FULL_BRANCHES = new Set();
 /* Fee Receiving → "Available Advance Balance" + "Adjust From Advance Balance".
-   Sirf ye branches dekh sakti hain (abhi ke liye 1 aur 15). */
+   Ab SAB branches ke liye ON (pehle sirf 1 aur 15). Kisi branch ko band karna ho to
+   ADVANCE_ADJUST_ALL false karke ADVANCE_ADJUST_BRANCHES me sirf allowed branch ids rakhein. */
+const ADVANCE_ADJUST_ALL = true;
 const ADVANCE_ADJUST_BRANCHES = new Set([1, 15]);
 function isAdvanceAdjustBranch() {
+  if (ADVANCE_ADJUST_ALL) return true;
   return ADVANCE_ADJUST_BRANCHES.has(Number(sessionStorage.getItem('branchID')) || 0);
 }
 function isPrevMonthFullBranch() {

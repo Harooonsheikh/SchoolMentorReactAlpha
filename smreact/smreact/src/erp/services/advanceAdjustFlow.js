@@ -1,4 +1,4 @@
-/* Advance Adjustment flow (branches 1 / 15 only).
+/* Advance Adjustment flow (sab branches — isAdvanceAdjustBranch() in Fee.jsx).
 
    Save (Pay Now with "Adjust From Advance Balance" ticked):
      1. Previous month ka challan dhoondo jis par advance (pendingorAdv < 0) hai.
