@@ -1093,12 +1093,13 @@ export default function Examination({ toast = () => { } }) {
   const { data: pClassTypes = {}, setData: setPClassTypes } = useAsync(preschoolService.getClassAssessmentTypes, []);
   const { data: pClassLevels = {}, setData: setPClassLevels } = useAsync(preschoolService.getClassPreschoolLevels, []);
   const { data: pResultData = {}, setData: setPResultData } = useAsync(preschoolService.getPreschoolResultData, []);
-  /* Preschool list ka progress/status real marks API se: { [key]: { [studentId]: ratedCount } }.
+  /* Preschool list ka progress/status real marks API se: { [key]: { [studentId]: ['sub_slo', ...] } }.
+     Render par current SLO list se filter hota hai (PSD/deleted SLO ratings count na hon).
      Class expand par (aur modal save ke baad) load hota hai — refresh par bhi sahi dikhe. */
   const [pMarkCounts, setPMarkCounts] = useState({});
   const loadPreMarkCounts = async (key, cls, examId, termId) => {
     try {
-      const counts = await preschoolService.getClassPreschoolMarkCounts({ gradeId: cls.classID, sectionId: cls.sectionID, examId, termId });
+      const counts = await preschoolService.getClassPreschoolMarkKeys({ gradeId: cls.classID, sectionId: cls.sectionID, examId, termId });
       setPMarkCounts(prev => ({ ...prev, [key]: counts }));
     } catch (e) { console.error('Could not load preschool mark counts:', e); }
   };
@@ -5925,6 +5926,13 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                         const rowLevel = pClassLevels[key] || 'kg';
                         const rowSlo = pSlo[rowLevel] || {};
                         const rowSloTotal = (pLearningAreas || []).reduce((a, la) => a + ((rowSlo[la.id] || []).length), 0);
+                        /* Is class level ki current SLO ids — marks API rows (preSLOId) inhi se match hon.
+                           SLO id se match (subject id se nahi): learning areas ke duplicate naam
+                           (e.g. Montessori 273/275) ki wajah se subject id mismatch ho sakta hai. */
+                        const rowSloIds = new Set();
+                        (pLearningAreas || []).forEach(la => (rowSlo[la.id] || []).forEach(s => {
+                          if (s.dbId != null) rowSloIds.add(String(s.dbId));
+                        }));
                         return (
                           <div key={key} className="res-row-wrap">
                             <div
@@ -5951,7 +5959,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                          karne do — pehle record hatao. Local pMarkCounts se fast check,
                                          warna authoritative API se. */
                                       if (isPreschool) {
-                                        let hasRecords = Object.values(pMarkCounts[key] || {}).some(n => Number(n) > 0);
+                                        let hasRecords = Object.values(pMarkCounts[key] || {}).some(v => (Array.isArray(v) ? v.length : Number(v)) > 0);
                                         if (!hasRecords) {
                                           try {
                                             const counts = await preschoolService.getClassPreschoolMarkCounts({
@@ -6259,9 +6267,11 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                             };
                                             const ad = (pcd.students || []).find(s => String(s.studentId) === String(st.id));
                                             const prog = pProgressForStudent(ad, (pLearningAreas || []).length, rowSloTotal);
-                                            /* done real marks API se (pMarkCounts) — refresh par bhi sahi; na mile to local. */
-                                            const realDone = pMarkCounts[key]?.[String(st.id)];
-                                            const done = realDone != null ? realDone : prog.done;
+                                            /* done real marks API se (pMarkCounts) — refresh par bhi sahi; na mile to local.
+                                               Sirf current SLO list wale keys gino (PSD field / deleted SLO ratings nahi). */
+                                            const realKeys = pMarkCounts[key]?.[String(st.id)];
+                                            const realDone = Array.isArray(realKeys) ? new Set(realKeys.map(k => k.split('_')[1]).filter(id => rowSloIds.has(id))).size : realKeys;
+                                            const done = realDone != null ? Math.min(realDone, prog.total || realDone) : prog.done;
                                             const total = prog.total;
                                             const pct = total ? Math.round((done / total) * 100) : 0;
                                             return (

@@ -653,7 +653,18 @@ export async function getStudentSloAssessments({ gradeId, sectionId, studentId, 
 /* List ke progress/status ke liye: poori class/section ke saved marks ek hi
    get-by-all call se (studentId omit → sab students) → per-student rated-SLO
    count. Return: { [studentId]: count }. */
-export async function getClassPreschoolMarkCounts({ gradeId, sectionId, examId, termId }) {
+export async function getClassPreschoolMarkCounts(params) {
+  const keys = await getClassPreschoolMarkKeys(params);
+  const counts = {};
+  Object.entries(keys).forEach(([sid, list]) => { counts[sid] = list.length; });
+  return counts;
+}
+
+/* Per student rated `${preSubjectId}_${preSLOId}` keys: { [studentId]: string[] }.
+   NOTE: response me PSD field ratings bhi isi endpoint pe aati hain (preSLOId =
+   PSD field id, e.g. 161 Discipline) — is liye progress ke liye caller in keys ko
+   class ki current SLO list se filter kare, warna done > total (49/44) ho jata hai. */
+export async function getClassPreschoolMarkKeys({ gradeId, sectionId, examId, termId }) {
   const res = await apiGet('preschooling-marks-get-by-all', {
     branchId: getBranchId(),
     gradeId: Number(gradeId) || 0,
@@ -671,9 +682,9 @@ export async function getClassPreschoolMarkCounts({ gradeId, sectionId, examId, 
     if (!sid || !sub || !slo || code === '' || code == null) return;
     (byStudent[sid] = byStudent[sid] || new Set()).add(`${sub}_${slo}`);
   });
-  const counts = {};
-  Object.entries(byStudent).forEach(([sid, set]) => { counts[sid] = set.size; });
-  return counts;
+  const out = {};
+  Object.entries(byStudent).forEach(([sid, set]) => { out[sid] = [...set]; });
+  return out;
 }
 
 export async function saveSloAssessment({ id, gradeId, sectionId, studentId, preSubjectId, preSLOId, code, examId, termId, action }) {
