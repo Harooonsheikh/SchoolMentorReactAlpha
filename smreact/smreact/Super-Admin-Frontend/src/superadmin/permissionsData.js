@@ -62,6 +62,7 @@ export const MODULE_GROUPS = [
     { key: 'hr',             name: 'Human Resource',   icon: 'fa-people-group' },
     { key: 'staffappraisals', name: 'Staff Appraisals', icon: 'fa-star-half-stroke' },
     { key: 'approvals',      name: 'Approvals',        icon: 'fa-square-check' },
+    { key: 'schoolcompliance', name: 'School Compliance', icon: 'fa-shield-halved' },
   ] },
   { label: 'School Mentor', modules: [
     { key: 'schoolsops',       name: 'Policy Manuals',    icon: 'fa-book-open' },
@@ -132,7 +133,7 @@ export function defaultPerms(school) {
     modules: {
       academics: on, examination: on, papergenerator: on, attendance: on, timetable: on,
       fee: on, accounts: on, inventory: false, onelink: false,
-      admissioncrm: on, students: on, hr: on, staffappraisals: false, approvals: on,
+      admissioncrm: on, students: on, hr: on, staffappraisals: false, approvals: on, schoolcompliance: on,
       schoolsops: false, teachertrainings: false, mentorai: on,
       auditlogs: on, settings: on, userpermissions: on,
     },
