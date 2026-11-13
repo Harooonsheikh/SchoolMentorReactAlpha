@@ -12,6 +12,7 @@ import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds }
 import { computePrevOut as prevDuesWorkerCompute } from '../services/prevDuesWorker';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
+import { runAdvanceAdjust, reverseAdvanceAdjust, isAdvanceAdjustReceipt } from '../services/advanceAdjustFlow';
 import { downloadDocxFromHtml } from '../../utils/docx';
 import { qrSvg } from '../../utils/qr';
 import { code128BSvg } from '../../utils/barcode';
@@ -6270,6 +6271,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
     setRemarks('');
+    /* Modal dobara kholne par Adjust From Advance untick ho — pichhla adjustment save nahi hua. */
+    setAdjustFromAdvance(false); setAdvanceAdjustInput('');
     setFineRecvInput(null);
     setFineGiveInput(0);
     /* "Received" input KUL wasooli (pehle jama + ab ki). Naya paisa = input − paid.
@@ -6354,7 +6357,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
           const giveInRem = (cfg.challan || histFoldedSeed) ? 0 : hist;
           const paidPos = Math.max(0, paidSeed);
           const remainingNow = Math.max(0, owedSeed - giveInRem - paidPos);
-          seed[h.name] = paidPos + remainingNow;
+          /* Branch 1/15: Received default 0 (sirf already-paid), user khud type/adjust kare. */
+          seed[h.name] = isAdvanceAdjustBranch() ? paidPos : paidPos + remainingNow;
         }
       } else {
         seed[h.name] = paidSeed;
@@ -6411,6 +6415,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      banta (niche rows.map me lagta hai). Sirf inputs/figures gate hote hain; save
      ka payload/challanFigures/advApplied math jyun ka tyun. */
   const advancePaymentReceivingOn = settings?.advancePaymentReceiving !== false;
+  /* Branch 1/15: the advance is never netted into the challan math. It only comes in
+     through "Adjust From Advance Balance", which fills the Received column. */
+  const advHiddenNow = !viewOnly && isAdvanceAdjustBranch();
 
   /* Per-head already-received. Session `payments` are lost on refresh, so when a
      real challan exists take each head's authoritative receivedAmount from its
@@ -6453,7 +6460,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
     const paid = +perHeadPaid[h.name] || 0;
     const after = h.net;
     const headPrev = useHeadPrev ? (+h.prev || 0) : 0;   // us head ka previous (owed me shamil)
-    const owed = after + headPrev;
+    const owed = after + (advHiddenNow && headPrev < 0 ? 0 : headPrev);
     /* Head ka owed MINUS ho (advance/credit — this-month magar previous bara advance) to wo
        CREDIT head hai: yahan collect NAHI karte; credit total par advApplied se apply hota. */
     const isCredit = useHeadPrev && owed < 0;
@@ -6668,7 +6675,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   /* Give Discount (hist/typed) Total Net Payable se ghatao — warna Remaining After
      slip ke 0 ke bawajood discount jaisa baqaya dikhata hai. */
   const giveMathTotal = rows.reduce((a, r) => a + (r.giveDisc || 0), 0) + fineGive;
-  const totalAmt = totalAfter + model.prev - model.advance + fineDueNet - giveMathTotal;
+  const totalAmt = totalAfter + (advHiddenNow
+    ? (useHeadPrev ? rows.reduce((a, r) => a + Math.max(0, r.headPrev || 0), 0) : Math.max(0, model.prev || 0))
+    : model.prev) - model.advance + fineDueNet - giveMathTotal;
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter = totalAmt - alreadyPaid - receivingNow;
 
@@ -6679,7 +6688,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      Late Fine) ko condition ke mutabiq shamil karta hai taake footer un ke saath mile. */
   const aggPrevShown = !useHeadPrev && model.prev > 0 && !(model.heads || []).some(h => /previous|pending|arrear/i.test(h.name));
   const advRowShown = !useHeadPrev && advCredit > 0;
-  const flowSumHeadPrev = rows.reduce((a, r) => a + (r.headPrev || 0), 0);
+  /* Branch 1/15: negative (advance) previous footer me nahi jor'te — jo cell me "—" hai wahi total me. */
+  const flowSumHeadPrev = rows.reduce((a, r) => a + (advHiddenNow && (r.headPrev || 0) < 0 ? 0 : (r.headPrev || 0)), 0);
   const flowPrevDues = flowSumHeadPrev + (aggPrevShown ? model.prev : 0);
   const flowChallan = totalChallan + fineDue;
   const flowNet = rows.reduce((a, r) => a + r.netShow, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDueNet;
@@ -6713,6 +6723,50 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      challanFigures ka math jyun ka tyun. Default ON par ye hamesha false rehta hai. */
   const priorReceiptExists = installmentCount >= 1 || alreadyPaid > 0;
   const multipleReceivingBlocked = !viewOnly && settings?.multipleReceiving === false && priorReceiptExists;
+  /* Available Advance Balance + Adjust From Advance Balance — design port (branch 1/15 only). */
+  /* Available Advance Balance = total of every head's pendingorAdv advance (negative
+     previousPendingorAdv, shown as a positive amount), summed across all heads. */
+  const pendingAdvanceTotal     = (challan?.detailRows || []).reduce((a, r) =>
+    a + Math.max(0, -(Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0)), 0);
+  /* Card + box sirf un students ke liye jinka pendingorAdv negative (advance) hai. */
+  /* Non-head-wise challans me advance negative previous (model.prev < 0) me aata hai. */
+  /* Student ka asli advance = previous pending ka negative total (footer/list wala). Per-head sum double-count karta tha. */
+  const availableAdvance        = Math.max(0, -(+model.prev || 0)) || Math.max(0, +model.advance || 0);
+  const remainingBeforeAdjust   = Math.max(0, totalAmt - alreadyPaid);
+  const maxAdvanceAdjust        = (advancePaymentReceivingOn && !multipleReceivingBlocked)
+    ? availableAdvance : 0;
+  const advAdjustAmt            = adjustFromAdvance ? Math.max(0, Number(advanceAdjustInput) || 0) : 0;
+  const advAdjustInvalid        = adjustFromAdvance && advAdjustAmt > maxAdvanceAdjust;
+  /* Advance amount ko heads me left-to-right bharta hai: pehla head poora, phir agla, etc.
+     Received column (perHeadInput) me jaata hai; user baad me aur amount bhi add kar sakta hai. */
+  const allocateAdvance = (amt) => {
+    let left = Math.max(0, Number(amt) || 0);
+    const next = {};
+    rows.forEach(r => {
+      const rem = Math.max(0, r.owed - r.paid);
+      const take = Math.min(rem, left);
+      left -= take;
+      next[r.name] = r.paid + take;
+    });
+    /* Jo amount heads ke owed se zyada bache, wo top (pehli) head par add hota hai. */
+    if (left > 0 && rows.length) {
+      const first = rows[0];
+      next[first.name] = (next[first.name] ?? first.paid) + left;
+    }
+    setPerHeadInput(prev => ({ ...prev, ...next }));
+  };
+  const toggleAdjustFromAdvance = (checked) => {
+    setAdjustFromAdvance(checked);
+    if (checked) {
+      setAdvanceAdjustInput(String(maxAdvanceAdjust || ''));
+      allocateAdvance(maxAdvanceAdjust);
+    } else {
+      const reset = {};
+      rows.forEach(r => { reset[r.name] = r.paid; });
+      setPerHeadInput(prev => ({ ...prev, ...reset }));
+    }
+  };
+  const showAdvanceDesign = !viewOnly && isAdvanceAdjustBranch();
   /* Aggregate "Previous Pending" row (jab head-wise prev na ho) ke installment cells. */
   let prevInstRun = +model.prev || 0;
   const prevInst = (payments || []).map(p => {
@@ -6842,6 +6896,12 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
       amount: receivingNow,
       perHead,
       pendByHead,
+      /* Branch 1/15: Adjust From Advance tick ho to advance-adjust flow (no-account), warna normal. */
+      advanceAdjust: !!(adjustFromAdvance && isAdvanceAdjustBranch()),
+      /* Slip ke liye modal ke exact per-head numbers (Previous / Std / Discount / Received / Remaining). */
+      slipRows: !isAdvanceAdjustBranch() ? [] : rows
+        .filter(r => !r.isCredit && (r.recvNow !== 0 || (r.disc || 0) > 0 || (r.headPrev || 0) !== 0))
+        .map((r, i) => ({ name: r.name, std: r.std || 0, disc: r.disc || 0, recv: r.recvNow || 0, prev: r.headPrev > 0 ? r.headPrev : 0, _mgr: 0, _first: i === 0 })),
       /* Correction (net minus) — receipt/slip aur history ise adjustment dikhayein,
          normal wasooli nahi. */
       isAdjustment: receivingNow < 0,
@@ -6968,7 +7028,7 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
           )}
           */}
 
-          <div className="fee-recv-info">
+          <div className={`fee-recv-info${showAdvanceDesign ? ' fee-recv-info--3' : ''}`}>
             <div className="fee-recv-info-item">
               <span className="fee-recv-info-lbl">Fine Type</span>
               <span className="fee-recv-info-val">{settings?.fineEnabled ? (settings.fineType === 'daily' ? 'Per day' : 'Fixed') : '—'}</span>
@@ -7042,6 +7102,61 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
             </div>
           )}
 
+          {showAdvanceDesign && availableAdvance > 0 && (
+            <div className="fee-recv-paystrip fee-recv-advstrip">
+              <div className="fee-recv-paycard">
+                <span className="fee-recv-paylbl">Available Advance Balance</span>
+                <span className="fee-recv-payval amber">{money(availableAdvance)}</span>
+                <span className="fee-recv-paysub">Amount already available from previous advance payments</span>
+              </div>
+            </div>
+          )}
+
+          {showAdvanceDesign && availableAdvance > 0 && (
+            <div className="fee-adv-adjust-box">
+              <label className="fee-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={adjustFromAdvance}
+                  disabled={maxAdvanceAdjust <= 0}
+                  onChange={e => toggleAdjustFromAdvance(e.target.checked)}
+                />
+                <span>Adjust From Advance Balance</span>
+              </label>
+              {adjustFromAdvance && (
+                <div className="fee-adv-adjust-body">
+                  <div className="fee-field">
+                    <span className="fee-label">Advance Adjustment Amount</span>
+                    <input
+                      className="fee-input"
+                      type="number"
+                      min="0"
+                      max={maxAdvanceAdjust}
+                      value={advanceAdjustInput}
+                      onChange={e => {
+                        const capped = Math.min(Math.max(0, Number(e.target.value) || 0), maxAdvanceAdjust);
+                        setAdvanceAdjustInput(String(capped));
+                        allocateAdvance(capped);
+                      }}
+                      placeholder={`Up to ${maxAdvanceAdjust.toLocaleString('en-PK')}`}
+                    />
+                    {advAdjustInvalid && (
+                      <div className="fee-pc-err">Adjustment amount cannot exceed available advance balance.</div>
+                    )}
+                  </div>
+                  <div className="fee-adv-adjust-preview">
+                    <span>Remaining Payable After Adjustment</span>
+                    <b>{money(Math.max(0, remainingBeforeAdjust - Math.min(advAdjustAmt, maxAdvanceAdjust)))}</b>
+                  </div>
+                </div>
+              )}
+              <div className="fee-adv-adjust-hint">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>Advance Adjustment is recorded as its own, separate installment — it is never combined with a cash Pay Now round in the same transaction.</span>
+              </div>
+            </div>
+          )}
+
           <div className="fee-stbl-wrap" style={{ marginTop: 14 }}>
             <table className="fee-stbl fee-recv-table flow">
               <thead>
@@ -7076,7 +7191,7 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
                     <td className="fee-right">
                       {r.headPrev > 0
                         ? <span className="flow-prevtag">{money(r.headPrev)}</span>
-                        : (r.headPrev < 0 ? money(r.headPrev) : <span className="fee-recv-dash">—</span>)}
+                        : (r.headPrev < 0 && !showAdvanceDesign ? money(r.headPrev) : <span className="fee-recv-dash">—</span>)}
                     </td>
                     <td className="fee-right">{money(r.std)}</td>
                     <td className="fee-right">{r.disc > 0 ? money(r.disc) : '0'}</td>
@@ -7739,6 +7854,16 @@ function FeeSlipModal({ cfg, onClose, toast }) {
      slip me sirf received nahi, poora breakup dikhe. Challan na mile to fallback: sirf
      received (perHead). */
   const chRows = cfg.challan && Array.isArray(cfg.challan.detailRows) ? cfg.challan.detailRows : null;
+  /* Combined slip: har head ka Previous / Std / Discount / Received (total) / Remaining — challan ke detailRows se,
+     single installment slip wale columns jaisa. */
+  const combinedBreakup = combined ? headWiseNames.map(name => {
+    const cr = (chRows || []).find(r => String(r.subHead || r.head || '').trim().toLowerCase() === String(name).trim().toLowerCase());
+    const prev = cr ? (feeHeadPrev(cr) || 0) : 0;
+    const std = cr ? (+cr.challanAmount || 0) : 0;
+    const disc = cr ? (+cr.discount || 0) : 0;
+    const total = combinedRows.reduce((a, p) => a + (+(p.perHead?.[name]) || 0), 0);
+    return { name, prev: Math.round(prev), std: Math.round(std), disc: Math.round(disc), total: Math.round(total), remaining: Math.round(std + prev - disc - total) };
+  }) : [];
   /* Stored "Previous Pending" GENERATION-time snapshot hai — pichhle mahine ki receiving
      baad me ho to stale (jaise 13,850 jabke asal 6,850). Receiving component live value
      (running-ledger) cfg.prevStd me bhejta hai; mile to prev row ka Std usse override. */
@@ -8172,17 +8297,23 @@ function FeeSlipModal({ cfg, onClose, toast }) {
                 <table className="fee-slip-tbl fee-slip-heads">
                   <thead>
                     <tr>
-                      <th>Fee Head</th>
-                      {combinedRows.map((p, i) => <th key={p.id || i}>Inst. {i + 1}</th>)}
-                      <th>Total</th>
+                      <th>Head</th>
+                      <th>Previous Dues</th>
+                      <th>Std. Amount</th>
+                      <th>Discount</th>
+                      <th>Received</th>
+                      <th>Remaining</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {headWiseRows.map(r => (
+                    {combinedBreakup.map(r => (
                       <tr key={r.name}>
                         <td>{headLabel(r.name)}</td>
-                        {r.perInstallment.map((v, i) => <td key={i}>{v.toLocaleString('en-PK')}</td>)}
-                        <td><b>{r.total.toLocaleString('en-PK')}</b></td>
+                        <td>{r.prev ? r.prev.toLocaleString('en-PK') : '—'}</td>
+                        <td>{r.std.toLocaleString('en-PK')}</td>
+                        <td>{r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>
+                        <td>{r.total.toLocaleString('en-PK')}</td>
+                        <td><b>{r.remaining === 0 ? '—' : r.remaining.toLocaleString('en-PK')}</b></td>
                       </tr>
                     ))}
                   </tbody>
@@ -8657,7 +8788,9 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     if (Math.abs(remNo) > Math.abs(remWith)) disc += giveFromPays;
   }
   const payable = Math.max(0, prev + thisMonth - disc - advance) + billedFine;
-  const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
+  /* Unclamped: previous advance (negative dues) ko clamp se nahi kaatna — warna Remaining advance chhod deta. */
+  /* Branch 1/15 par unclamped (previous advance ko clamp se nahi kaatna); baaqi branches purana formula. */
+  const remaining = (isAdvanceAdjustBranch() ? (prev + thisMonth - disc - advance + billedFine) : payable) - paid;   /* MINUS = advance (total se zyada wasool) */
  let status = 'none';
 const hasRecvActivity = (challan && Array.isArray(challan.detailRows))
   ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0)
@@ -9537,7 +9670,18 @@ function FeeReceivingIndividual({ toast }) {
          slip/receipt na bane. Pending → optimistic receipt revert + badge. */
       let recvRes = null;
       try {
-        recvRes = recvBody.detailRows.length ? await feeService.receiveInstallment(recvBody) : null;
+        if (payload.advanceAdjust && rec) {
+          const mm = Number(rec.startMonth || rec.month), yy = Number(rec.startYear || rec.year);
+          const prevM = mm === 1 ? 12 : mm - 1, prevY = mm === 1 ? yy - 1 : yy;
+          await runAdvanceAdjust({
+            studentID: rec.studentID, currentChallan: rec, perHead: payload.perHead || {},
+            userId: userID, paymentMethod: payMethodForApi, receivedDate: payload.date || '',
+            prevMonth: prevM, prevYear: prevY,
+          });
+          recvRes = { success: true };
+        } else {
+          recvRes = recvBody.detailRows.length ? await feeService.receiveInstallment(recvBody) : null;
+        }
       } catch (e) {
         toast(e.message || 'Could not record payment', 'error');
         setReceipts(prev => (prev || []).map(r => (
@@ -9621,7 +9765,15 @@ function FeeReceivingIndividual({ toast }) {
        hai: is (aakhri) receiving ki installments se Std / Received / Remaining. Fine bhi isi
        me (apni installment row), is liye payment.fine 0. */
     const freshRows = freshRec ? latestReceivingSlipRows(freshRec) : null;
-    if (freshRows) {
+    /* Instant slip = wahi function jo reopen wali slip chalata hai (installmentSlipRows),
+       taaza saved record par — taake Pay Now ke turant baad aur reopen me numbers same hon. */
+    const instantRows = freshRec ? installmentSlipRows(freshRec, receiveCtx.payments || [], {
+      id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
+    }) : null;
+    if (instantRows && instantRows.length) {
+      pendingSlipRows = instantRows;
+      pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0);
+    } else if (freshRows) {
       pendingSlipRows = [...freshRows];
       /* Pichhle mahine ki fine purane challan par gayi — popup ki "Late Fine (Previous)" line
          jaisi slip me bhi (Previous Dues = Received, Remaining 0). */
@@ -9629,6 +9781,10 @@ function FeeReceivingIndividual({ toast }) {
         pendingSlipRows.push({ name: feeService.LATE_FINE_HEAD, std: 0, disc: 0, recv: carriedFinePaid, prev: carriedFinePaid, _mgr: 0, _first: true });
       }
       pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0);
+    } else if (payload.slipRows && payload.slipRows.length) {
+      /* Slip modal ke numbers par — server record ke bajaye. */
+      pendingSlipRows = payload.slipRows;
+      pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0);
     } else if (rec) {
       /* SIRF is receiving ki — Std = is se pehle ka baqaya (saari pichhli wasooli minus). */
       pendingSlipRows = installmentSlipRows(rec, receiveCtx.payments || [], {
@@ -9672,7 +9828,9 @@ function FeeReceivingIndividual({ toast }) {
           return;
         }
         try {
-          const res = await feeService.deleteReceiving(rec.id);
+          const res = isAdvanceAdjustReceipt(rec.id)
+            ? (await reverseAdvanceAdjust({ currentChallanId: rec.id, userId: Number(sessionStorage.getItem('UserID')) || 0 }), { success: true })
+            : await feeService.deleteReceiving(rec.id);
           const pending = pendingFromResp(res, 'Receiving deletion sent for approval');
           if (pending) {
             /* Receiving delete nahi hui — approval ka intezaar. Receipt waise hi rehta
@@ -10971,12 +11129,23 @@ function FamilyTreeReceiving({ toast }) {
           /* Slip ke liye server ka taaza record — sirf isi challan ka (~0.5s). */
           let fresh = null;
           if (!pend) {
-            try {
-              const rows = await feeService.getStudentChallans(rec.studentID,
-                Number(rec.startMonth || rec.month), Number(rec.startYear || rec.year));
-              const hit = (rows || []).find(r => Number(r.id) === Number(rec.id));
-              if (hit) fresh = feeService.withPersistedGiveDisc(hit);
-            } catch (e) { /* purana (optimistic) slip */ }
+            /* Server abhi naya receipt nahi dikhata ho to chhota intezaar — jab tak naya
+               receipt saved record me na aaye (ya ~6s) tab tak taaza record lo. */
+            const sumRecv = (ch) => (ch?.detailRows || []).reduce((a, r) => a + (Number(r.receivedAmount) || 0), 0);
+            const before = sumRecv(rec);
+            const expectDelta = Object.values(payload.perHead || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+            for (let attempt = 0; attempt < 8; attempt++) {
+              try {
+                const rows = await feeService.getStudentChallans(rec.studentID,
+                  Number(rec.startMonth || rec.month), Number(rec.startYear || rec.year));
+                const hit = (rows || []).find(r => Number(r.id) === Number(rec.id));
+                if (hit) {
+                  fresh = feeService.withPersistedGiveDisc(hit);
+                  if (!expectDelta || sumRecv(hit) >= before + expectDelta) break;
+                }
+              } catch (e) { /* purana (optimistic) slip */ }
+              await new Promise(res => setTimeout(res, 800));
+            }
           }
           return { ok: true, fresh, carriedPaid };
         })
@@ -24131,6 +24300,32 @@ const FEE_CSS = `
   gap: 12px;
   margin-top: 18px;
 }
+.fee-recv-info--3 { grid-template-columns: repeat(3, 1fr); }
+.fee-recv-advstrip { grid-template-columns: minmax(220px, 340px); margin-top: 14px; margin-bottom: 0; }
+.fee-adv-adjust-box {
+  border: 1.5px solid rgba(180,83,9,.28);
+  background: rgba(180,83,9,.05);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-top: 14px;
+}
+.fee-checkbox-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; color: var(--text-primary);
+  cursor: pointer;
+}
+.fee-checkbox-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: #B45309; cursor: pointer; }
+.fee-adv-adjust-body { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+.fee-adv-adjust-preview { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--text-muted); }
+.fee-adv-adjust-preview b { font-size: 17px; color: #B45309; font-variant-numeric: tabular-nums; }
+.fee-adv-adjust-hint {
+  display: flex; align-items: flex-start; gap: 6px;
+  font-size: 11px; color: var(--text-muted); margin-top: 10px;
+}
+.fee-adv-adjust-hint i { color: #B45309; margin-top: 1px; flex-shrink: 0; }
+[data-theme="dark"] .fee-adv-adjust-box { background: rgba(251,191,36,.08); border-color: rgba(251,191,36,.3); }
+[data-theme="dark"] .fee-adv-adjust-preview b { color: #FCD34D; }
+[data-theme="dark"] .fee-adv-adjust-hint i { color: #FCD34D; }
 .fee-recv-paycard {
   display: flex;
   flex-direction: column;
@@ -24141,6 +24336,10 @@ const FEE_CSS = `
   background: var(--bg-card);
 }
 .fee-recv-paylbl { font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: .3px; text-transform: uppercase; }
+.fee-recv-paysub { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+.fee-recv-payval.amber { color: #B45309; }
+.fee-recv-payval.blue  { color: var(--brand-solid, #1E3A8A); }
+[data-theme="dark"] .fee-recv-payval.amber { color: #FCD34D; }
 .fee-recv-payval {
   font-size: 18px;
   font-weight: 800;

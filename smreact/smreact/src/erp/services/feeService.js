@@ -3270,3 +3270,34 @@ export async function getOneLinkPayments(opts = {}) {
   }
   return json?.data || {};
 }
+
+/* ── Advance adjustment (branches 1 / 15) — no-account variants ──
+   DELETE /api/BranchLedger/clear-receiving-withoutaccount-delete/{ledgerId}?modifiedBy=
+   POST   /api/BranchLedger/receive-payment-installment-withoutaccount-delete
+   Account entry NAHI hatti / NAHI banti. */
+export async function clearReceivingNoAccount(ledgerId, modifiedBy = 0) {
+  const id = Number(ledgerId) || 0;
+  if (!id) throw new Error('Missing challan id to clear receiving');
+  const res = await trackedFetch(
+    buildUrl(`/api/BranchLedger/clear-receiving-withoutaccount-delete/${id}?modifiedBy=${Number(modifiedBy) || 0}`),
+    { method: 'DELETE', headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not clear the receiving');
+  clearStoredGiveDisc(id);
+  clearZeroReceiveMark(id);
+  invalidateMonthChallans();
+  return json;
+}
+export async function receiveNoAccount(body) {
+  const cleaned = stripPendingFromReceiveBody(body);
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/receive-payment-installment-withoutaccount-delete'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(cleaned),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not record the receiving');
+  invalidateMonthChallans();
+  return json;
+}
