@@ -294,13 +294,25 @@ function AccLoader({ title }) {
    then leaves approvals_by_user) — reload() is also called right after a
    save/delete returns pendingApproval so the badge appears immediately.
    ═══════════════════════════════════════════════════════════════════ */
+/* In-flight dedupe: ek hi waqt me kai jagah se getMyRequests chale (jaise tab
+   khulte waqt 3 jagah se) to sab ek hi request ka jawab share karein. Caching
+   nahi — request khatam hote hi agla call taaza data laata hai. */
+let myRequestsInflight = null;
+function getMyRequestsShared() {
+  if (!myRequestsInflight) {
+    myRequestsInflight = approvalsService.getMyRequests()
+      .finally(() => { myRequestsInflight = null; });
+  }
+  return myRequestsInflight;
+}
+
 function usePendingApprovals(actionTypes) {
   const [pendingMap, setPendingMap] = useState({});
   const key = Array.isArray(actionTypes) ? actionTypes.join('|') : String(actionTypes);
   const reload = useCallback(async () => {
     const set = new Set(key.split('|'));
     try {
-      const reqs = await approvalsService.getMyRequests();
+      const reqs = await getMyRequestsShared();
       const m = {};
       (reqs || []).forEach((r) => {
         if (r.status === 'pending' && set.has(r.actionType) && r.entityId != null) {
@@ -408,6 +420,9 @@ function ChartOfAccounts({ toast, isOtherSession }) {
     : id === 2 || /expense|expenditure/i.test(name) ? { icon: 'fa-arrow-trend-down', cls: 'exp' }
     : { icon: 'fa-layer-group', cls: 'all' };
 
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -434,12 +449,12 @@ function ChartOfAccounts({ toast, isOtherSession }) {
       return built;
     } catch (e) {
       console.error('Error loading account types:', e);
-      toast('Could not load chart of accounts', 'error');
+         toastRef.current('Could not load chart of accounts', 'error');
       return null;
     } finally {
       setLoading(false);
     }
-  }, [branchID, toast]);
+}, [branchID]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -458,7 +473,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
 
   const loadPending = useCallback(async () => {
     try {
-      const reqs = await approvalsService.getMyRequests();
+const reqs = await getMyRequestsShared();
       const m = {};
       (reqs || []).forEach((r) => {
         if (r.status === 'pending' && r.actionType === 'accounts_head' && r.entityId != null) {
@@ -1177,6 +1192,9 @@ function Transactions({ toast, isOtherSession }) {
 
   /* Entries are scoped to branch + account type + month + year. `ym` is the
      'YYYY-MM' month-picker value. */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
   const loadSeg = useCallback(async (s, ym) => {
     const [y, m] = (ym || '').split('-');
     if (!y || !m) return;
@@ -1190,7 +1208,7 @@ function Transactions({ toast, isOtherSession }) {
       setTxns(prev => ({ ...prev, [s]: (json?.data || []).map(mapEntry) }));
     } catch (e) {
       console.error('Error loading transactions:', e);
-      toast('Could not load transactions', 'error');
+           toastRef.current('Could not load transactions', 'error');
       setTxns(prev => ({ ...prev, [s]: [] }));
     } finally {
       setLoadingSeg(false);
@@ -3215,29 +3233,42 @@ function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReas
 
   const defaultId = (list.find(a => a.isDefault) || list[0] || {}).id;
   const activeAccounts = list.filter(a => a.status === 'active');
-  /* Ledger (manage-transactions) is the source of truth, same rows as the
-     statement. Server's stored CurrentBalance can go stale. */
-  const [ledgerBal, setLedgerBal] = useState({});
-  useEffect(() => {
-    if (!accounts || accounts.length === 0) return undefined;
-    let cancelled = false;
-    Promise.all(accounts.map(a =>
-      accountsService.getWalletTransactions(a.id)
-        .then(rows => {
-          // if (!rows || rows.length === 0) return [a.id, null];
-                    if (!rows) return [a.id, null];
-          const net = rows.reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0);
-          return [a.id, (Number(a.opening) || 0) + net];
-        })
-        .catch(() => [a.id, null])
-    )).then(pairs => {
-      if (cancelled) return;
-      const map = {};
-      pairs.forEach(([id, v]) => { if (v != null) map[id] = v; });
-      setLedgerBal(map);
+   /* Ledger (manage-transactions) is the source of truth, same rows as the
+     statement. Server's stored CurrentBalance can go stale.
+     Har wallet ka "net" (credits − debits) cache me; balance = opening + net.
+     Sirf woh wallets fetch hote hain jin ka net cache me nahi (naya wallet),
+     ya jo kisi action se badle (transfer ke from/to, transaction wala wallet).
+     Opening edit / disable / re-enable par koi ledger call nahi. */
+  const [walletNet, setWalletNet] = useState({}); // id → net
+  const netLoadingRef = useRef(new Set());
+  const loadNets = useCallback(async (ids) => {
+    const todo = [...new Set(ids)].filter(id => id != null && !netLoadingRef.current.has(id));
+    if (!todo.length) return;
+    todo.forEach(id => netLoadingRef.current.add(id));
+    const pairs = await Promise.all(todo.map(id =>
+      accountsService.getWalletTransactions(id)
+        .then(rows => [id, rows ? rows.reduce((s, m) => s + (m.kind === 'credit' ? m.amount : -m.amount), 0) : null])
+        .catch(() => [id, null])
+    ));
+    todo.forEach(id => netLoadingRef.current.delete(id));
+    setWalletNet(prev => {
+      const next = { ...prev };
+      pairs.forEach(([id, v]) => { if (v == null) delete next[id]; else next[id] = v; });
+      return next;
     });
-    return () => { cancelled = true; };
-  }, [accounts, transfers]);
+  }, []);
+  /* Sirf naye wallets (jin ka net cache me nahi) ka ledger laao. */
+  const walletNetRef = useRef(walletNet);
+  walletNetRef.current = walletNet;
+  useEffect(() => {
+    if (!accounts || accounts.length === 0) return;
+    loadNets(accounts.map(a => a.id).filter(id => !(id in walletNetRef.current)));
+  }, [accounts, loadNets]);
+  const ledgerBal = useMemo(() => {
+    const map = {};
+    (accounts || []).forEach(a => { if (walletNet[a.id] != null) map[a.id] = (Number(a.opening) || 0) + walletNet[a.id]; });
+    return map;
+  }, [accounts, walletNet]);
   const balanceOf = (a) => (ledgerBal[a.id] != null
     ? ledgerBal[a.id]
     : accountsService.computeFinAccountBalance(a, serverTxns, transferList, defaultId));
@@ -3248,6 +3279,15 @@ function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReas
   const [statementFor, setStatementFor] = useState(null); // account
   const [txnFor, setTxnFor] = useState(null); // account → Add Transaction (ledger) modal
   const [confirm, setConfirm] = useState(null);
+
+  /* Stable onClose: inline arrow har render par nayi banti thi, jis se
+     WalletTxnModal ka useEffect ledger dobara fetch karta tha. Band hone par
+     sirf usi wallet ka net dobara laao (balance foran sahi). */
+  const closeTxnModal = useCallback(() => {
+    const acc = txnFor;
+    setTxnFor(null);
+    if (acc) loadNets([acc.id]);
+  }, [txnFor, loadNets]);
   /* Wallet accounts / transfers awaiting approval → row badge + Withdraw. */
   const [walletPending, reloadWalletPending] = usePendingApprovals('wallet_account');
   const [transferPending, reloadTransferPending] = usePendingApprovals('wallet_transfer');
@@ -3399,6 +3439,7 @@ function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReas
     }
     /* Balances can change server-side, so refresh both lists. */
     await Promise.all([reloadTransfers(), reloadAccounts()]).catch(() => {});
+    loadNets([payload.fromId, payload.toId]);   // sirf yeh 2 wallets badle
     const fromName = list.find(a => a.id === payload.fromId)?.name || 'account';
     const toName = list.find(a => a.id === payload.toId)?.name || 'account';
     toast(`Transferred ${fmtMoney(payload.amount)} from ${fromName} to ${toName}`, 'success');
@@ -3423,6 +3464,7 @@ function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReas
         /* Approval on: nothing removed yet — keep the transfer & balances. */
         if (approvalPending(resp)) { toast(apiMessage(resp) || 'Delete sent for approval', 'info'); reloadTransferPending(); return; }
         await Promise.all([reloadTransfers(), reloadAccounts()]).catch(() => {});
+        loadNets([t.fromId, t.toId]);   // sirf yeh 2 wallets badle
         toast('Transfer deleted', 'success');
       },
     });
@@ -3675,7 +3717,7 @@ function AccountsManagementTab({ toast, isOtherSession = false, otherSessionReas
         defaultId={defaultId}
         onClose={() => setStatementFor(null)}
       />
-      <WalletTxnModal account={txnFor} onClose={() => setTxnFor(null)} toast={toast} />
+      <WalletTxnModal account={txnFor} onClose={closeTxnModal} toast={toast} />
       <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
       <AccConfirmDialog
         cfg={ghostWithdraw ? {
@@ -6248,18 +6290,42 @@ function Reports({ toast }) {
     return [dateMonth(today)];
   }, [repType, fromDate, toDate, today, plMode, plMonth, plFrom, plTo, cashDate, masMode, masMonth, masFrom, masTo]);
 
-  const loadReportData = useCallback(async () => {
+   /* Month-wise cache { 'YYYY-MM': { rev:[], exp:[] } }. Report type / filter
+     badalne par sirf woh months fetch hote hain jo cache me nahi. "Load Report"
+     (force) sab dobara laata hai. Agar kisi entry ki date se month na nikle to
+     cache nahi karte (purana behavior). toast ref me — deps me ho to har toast
+     par dobara fetch hota tha. */
+  const monthCacheRef = useRef({});
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const loadReportData = useCallback(async (force = false) => {
+    const cache = monthCacheRef.current;
+    const missing = force === true ? reportMonths : reportMonths.filter(m => !cache[m]);
+    const build = () => ({
+      rev: reportMonths.flatMap(m => cache[m]?.rev || []),
+      exp: reportMonths.flatMap(m => cache[m]?.exp || []),
+    });
+    if (!missing.length) { setTxnData(build()); return; }
     setReportLoading(true);
     try {
-      const next = await accountsService.getAccEntriesForMonths(reportMonths);
-      setTxnData(next);
+      const next = await accountsService.getAccEntriesForMonths(missing);
+      const all = [...(next?.rev || []), ...(next?.exp || [])];
+      const datesOk = all.every(x => missing.includes(String(x.date || '').slice(0, 7)));
+      if (!datesOk) { setTxnData(next); return; }   // safe fallback: cache mat karo
+      missing.forEach(m => {
+        cache[m] = {
+          rev: (next?.rev || []).filter(x => String(x.date).slice(0, 7) === m),
+          exp: (next?.exp || []).filter(x => String(x.date).slice(0, 7) === m),
+        };
+      });
+      setTxnData(build());
     } catch (e) {
-      toast(e?.message || 'Could not load account report data', 'error');
+      toastRef.current(e?.message || 'Could not load account report data', 'error');
       setTxnData({ rev: [], exp: [] });
     } finally {
       setReportLoading(false);
     }
-  }, [reportMonths, toast]);
+  }, [reportMonths]);
 
   useEffect(() => { loadReportData(); }, [loadReportData]);
 
@@ -6583,7 +6649,7 @@ function Reports({ toast }) {
             )}
 
             <Tooltip text="Reload report data with the current filters">
-              <button type="button" className="fee-btn fee-btn-primary" onClick={loadReportData} disabled={reportLoading}>
+              <button type="button" className="fee-btn fee-btn-primary" onClick={() => loadReportData(true)} disabled={reportLoading}>
                 <i className={`fa-solid ${reportLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}`}></i> {reportLoading ? 'Loading...' : 'Load Report'}
               </button>
             </Tooltip>
