@@ -39,7 +39,7 @@ function rowsHtml(rows, { size = 9.5, gap = 3, color = '#0F172A', muted = '#94A3
      value, mirroring the on-screen preview's Rows component exactly. */
   return `<div style="display:flex;flex-direction:column;gap:${dense ? 1.5 : gap}px;min-width:0">${rows.map((r) => {
     const k = (r.sizePct || 100) / 100;
-    return `<div style="min-width:0"><span style="font-size:${(size - 2) * k}px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:${muted};margin-right:5px">${esc(r.label)}:</span><span style="font-size:${size * k}px;font-weight:700;color:${color};word-break:break-word">${esc(r.value)}</span></div>`;
+    return `<div style="min-width:0;font-size:${size * k}px;line-height:1.3"><span style="font-size:${(size - 2) * k}px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:${muted};margin-right:5px">${esc(r.label)}:</span><span style="font-size:${size * k}px;font-weight:700;color:${color};word-break:break-word">${esc(r.value)}</span></div>`;
   }).join('')}</div>`;
 }
 
@@ -49,7 +49,10 @@ function rowsHtml(rows, { size = 9.5, gap = 3, color = '#0F172A', muted = '#94A3
    itself just fills it — no aspect-ratio guessing needed at print time
    (unlike the on-screen preview, which has no such fixed container). */
 function cardShellOpen(orientation, bg, extra = '') {
-  return `<div class="idc2-card" style="position:relative;overflow:hidden;width:100%;height:100%;border-radius:14px;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;display:flex;flex-direction:column;background:${bg};${extra}">`;
+  /* font-size/line-height yahan fix — warna print doc ka default 16px strut
+     har row ki line ~21px oonchi kar deta tha (text 9.5px hone ke bawajood),
+     rows door door ho jaati theen aur aakhri field (DOB) card se kat jaati thi. */
+  return `<div class="idc2-card" style="position:relative;overflow:hidden;width:100%;height:100%;border-radius:14px;font-size:10px;line-height:1.3;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;display:flex;flex-direction:column;background:${bg};${extra}">`;
 }
 
 function backFaceHtml({ theme, orientation, qrSrc, barcodeSrc, idText, branding, school, backOptions = {}, backRows = [], qrPosition = 'center', qrSizePct = 100 }) {
@@ -208,10 +211,17 @@ const FA_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/al
 /* One physical card per page — used for a single student/employee's
    download/print. Front + back (if the design's QR/barcode live on
    the back) each get their own exact-size page. */
-export function buildSingleCardDocument({ title, sizeId, orientation, frontHtml, backHtml }) {
+/* `pages` (optional) = [{ frontHtml, backHtml }] — multiple cards, har card
+   ka front aur back apne alag exact-size page par (card1 front, card1 back,
+   card2 front, ...). Pehle saare cards ka HTML jod kar EK hi page mein daal
+   diya jaata tha, jis se 22 cards ek card ki jagah mein pichak jaate the. */
+export function buildSingleCardDocument({ title, sizeId, orientation, frontHtml, backHtml, pages }) {
   const size = CARD_SIZES[sizeId] || CARD_SIZES.cr80;
   const wMm = orientation === 'vertical' ? size.hMm : size.wMm;
   const hMm = orientation === 'vertical' ? size.wMm : size.hMm;
+  const list = Array.isArray(pages) && pages.length ? pages : [{ frontHtml, backHtml }];
+  const pagesHtml = list.map((p) => `<div class="idc2-page">${p.frontHtml}</div>
+${p.backHtml ? `<div class="idc2-page">${p.backHtml}</div>` : ''}`).join('\n');
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(title)}</title>
 <link rel="stylesheet" href="${FA_CDN}">
 <style>
@@ -225,8 +235,7 @@ body{margin:0;padding:10mm;background:#EEF2F9;display:flex;flex-direction:column
 }
 .idc2-page{width:${wMm}mm;height:${hMm}mm;display:flex;align-items:center;justify-content:center;background:#fff}
 </style></head><body>
-<div class="idc2-page">${frontHtml}</div>
-${backHtml ? `<div class="idc2-page">${backHtml}</div>` : ''}
+${pagesHtml}
 </body></html>`;
 }
 

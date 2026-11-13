@@ -353,8 +353,7 @@ export default function IdCardDesigner({ kind, entities: entitiesProp, school: s
     const title = entities.length === 1 ? `ID Card — ${entities[0].displayName}` : `ID Cards — ${entities.length} ${kind === 'staff' ? 'Employees' : 'Students'}`;
     const html = buildSingleCardDocument({
       title, sizeId: design.sizeId, orientation: design.orientation,
-      frontHtml: pages.map((p) => p.frontHtml).join(''),
-      backHtml: pages.filter((p) => p.backHtml).map((p) => p.backHtml).join(''),
+      pages, // har card apne alag page par — sab ek page mein join nahi
     });
     openPrintWindow(html, toast);
   };
