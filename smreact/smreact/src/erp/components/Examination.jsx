@@ -11147,10 +11147,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     .slice(0, 3);
 
 
-  // Need Attention: below 70%
+  // Need Attention: sirf 55% se neeche wale subjects, sab se kam percentage pehle, max 7.
+  // 3 tak normal rows; 3 se zyada hon to compact rows.
   const improvements = sorted
-    .filter(d => d.pct < 70)
-    .slice(0, 3);
+    .filter(d => d.pct < 55)
+    .slice()
+    .reverse()
+    .slice(0, 7);
+  const needCompact = improvements.length > 3;
 
   const tilesEnabled = [];
   if (opt['Show Percentage']) tilesEnabled.push({ icon: 'fa-chart-line', label: 'Overall %', val: `${ovPct}%`, col: C.blu, bg: C.bluL, bdr: C.bluBdr });
@@ -11457,8 +11461,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             <div style={{ fontSize: 11, fontWeight: 800, color: C.textP }}>Needs Attention</div>
           </div>
           {improvements.length > 0 ? improvements.map(d => (
-            <div key={d.s} style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 9, padding: '7px 10px', borderRadius: 8, background: C.accL, border: `1px solid ${C.accBdr}` }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: C.acc + '18', color: C.acc, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{d.pct}%</div>
+            <div key={d.s} style={{ display: 'flex', alignItems: 'center', gap: needCompact ? 7 : 9, marginBottom: needCompact ? 5 : 9, padding: needCompact ? '4px 8px' : '7px 10px', borderRadius: 8, background: C.accL, border: `1px solid ${C.accBdr}` }}>
+              <div style={{ width: needCompact ? 28 : 36, height: needCompact ? 28 : 36, borderRadius: 8, background: C.acc + '18', color: C.acc, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: needCompact ? 10 : 11, fontWeight: 800, flexShrink: 0 }}>{d.pct}%</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.textP, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
                 <div style={{ fontSize: 9, color: C.acc, fontWeight: 600, marginTop: 1 }}>Focus and improve</div>
