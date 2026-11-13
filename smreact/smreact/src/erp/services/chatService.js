@@ -332,11 +332,50 @@ function mergeContacts(rows) {
   }));
 }
 
+/* ─── Request sharing for the polled reads ───
+   App.js (sidebar badge + new-message toast) and Chat.jsx (sidebar list) both
+   poll get-chat-contacts every 5 s, and both ask get-unseen-chat-count after a
+   chat is seen — previously each sent its own identical request. Now:
+     • concurrent callers share ONE in-flight request, and
+     • a result younger than the TTL is reused (TTL < the 5 s poll, so every
+       poll still gets fresh data; only same-moment duplicates are merged).
+   Any write (post-chat-message / mark-messages-seen) invalidates both, so the
+   read right after a write is always fresh. Callers get their own copies. */
+const CONTACTS_TTL_MS = 4000;
+const UNSEEN_TTL_MS = 2000;
+const sharedReads = new Map();   // key → { at, pending, promise }
+
+function sharedRead(key, ttl, load, { fresh = false } = {}) {
+  const hit = sharedReads.get(key);
+  if (!fresh && hit && (hit.pending || Date.now() - hit.at < ttl)) return hit.promise;
+  const entry = { at: Date.now(), pending: true };
+  entry.promise = load().then(
+    (value) => { entry.pending = false; entry.at = Date.now(); return value; },
+    (err) => { if (sharedReads.get(key) === entry) sharedReads.delete(key); throw err; },
+  );
+  sharedReads.set(key, entry);
+  return entry.promise;
+}
+
+/** Drop cached contact lists / unseen counts — call after any chat write. */
+export function invalidateChatReads() { sharedReads.clear(); }
+
+/** Tests only: forget every module-level cache. */
+export function __resetChatCaches() {
+  sharedReads.clear();
+  dirCache = { at: 0, key: '', list: null, promise: null };
+  appUsersInflight = null;
+}
+
 /** Jin se pehle baat ho chuki — sidebar ki recent list. */
-export async function fetchChatContacts(branchId, userId) {
-  const res = await fetch(buildUrl(`/get-chat-contacts/${branchId}/${userId}`), { headers: authHeaders() });
-  const json = await readJson(res, 'chat contacts');
-  return mergeContacts(json?.data);
+export async function fetchChatContacts(branchId, userId, { fresh = false } = {}) {
+  const list = await sharedRead(`contacts|${branchId}|${userId}`, CONTACTS_TTL_MS, async () => {
+    const res = await fetch(buildUrl(`/get-chat-contacts/${branchId}/${userId}`), { headers: authHeaders() });
+    const json = await readJson(res, 'chat contacts');
+    return mergeContacts(json?.data);
+  }, { fresh });
+  /* Har caller ki apni copy — ek ki tabdeeli doosre ke data me na jaye. */
+  return list.map(c => ({ ...c, students: [...c.students] }));
 }
 
 /* Staff rows par do safaiyan. Parents par ye laagu NAHI hotin — ek hi walid
@@ -625,7 +664,15 @@ export async function fetchNewChatDirectory(branchId, empId) {
     "App active" dikhta.
     Ek id ki kai rows aati hain (har device) — kisi EK me bhi token ho to installed.
     API fail ho to `null` — UI tab "Not on app" ka jhoota nishan nahi dikhata. */
-export async function fetchAppUserIds(branchId) {
+/* Chat open + New Chat modal open ask for this at the same moment — share it. */
+let appUsersInflight = null;
+export function fetchAppUserIds(branchId) {
+  if (!appUsersInflight) {
+    appUsersInflight = loadAppUserIds(branchId).finally(() => { appUsersInflight = null; });
+  }
+  return appUsersInflight;
+}
+async function loadAppUserIds(branchId) {
   try {
     const res = await fetch(buildUrl(`/get-users-fcm-status/${branchId}`), { headers: authHeaders() });
     const json = await readJson(res, 'app users');
@@ -695,12 +742,14 @@ export function pendingMessage({ text = '', file = null }) {
   };
 }
 
-/** Nav badge ke liye total unseen. */
+/** Nav badge ke liye total unseen. (Shared: Chat + App badge ek hi request.) */
 export async function fetchUnseenCount(branchId, userId) {
   try {
-    const res = await fetch(buildUrl(`/get-unseen-chat-count/${branchId}/${userId}`), { headers: authHeaders() });
-    const json = await readJson(res, 'unseen count');
-    return Number(json?.unseenChatCount) || 0;
+    return await sharedRead(`unseen|${branchId}|${userId}`, UNSEEN_TTL_MS, async () => {
+      const res = await fetch(buildUrl(`/get-unseen-chat-count/${branchId}/${userId}`), { headers: authHeaders() });
+      const json = await readJson(res, 'unseen count');
+      return Number(json?.unseenChatCount) || 0;
+    });
   } catch (_) {
     return 0;
   }
@@ -1006,6 +1055,8 @@ export async function postChatMessage({ fromUserId, toUserId, branchId, message 
     headers: authHeaders(),   // Content-Type FormData khud lagata hai (boundary ke saath)
     body: form,
   });
+  /* Server state changed → the next contacts / unseen read must be fresh. */
+  invalidateChatReads();
   const json = await res.json().catch(() => null);
   if (!res.ok || (json && json.success === false)) {
     throw new Error((json && (json.message || json.Message)) || 'Message could not be sent');
@@ -1031,7 +1082,10 @@ export async function markMessagesSeen(branchId, contactUserId, meId) {
       body: '',
     });
     const json = await res.json().catch(() => null);
-    return Number(json?.updatedRows) || 0;
+    const updated = Number(json?.updatedRows) || 0;
+    /* Kuch seen hua → cached unseen counts ab purane; agla read taza. */
+    if (updated > 0) invalidateChatReads();
+    return updated;
   } catch (_) {
     return 0;   // seen na ho paye to chat phir bhi khulni chahiye
   }
@@ -1050,13 +1104,24 @@ export function getOpenChatId() { return openChatId; }
 
 /* Parent ka naam get-chat-contacts me ghalat sibling ka hota hai (login 269 par
    "test test") — naam roster se resolve shuda directory se. 5 min cache. */
-let dirCache = { at: 0, key: '', list: null };
-async function cachedDirectory(branchId, empId) {
+/* Directory = 3–4 requests (contact-list + roster + employees [+ principal's
+   contact-list]). It is shared by the Chat list enrichment, the New Chat modal
+   and the new-message toast name, so it is loaded ONCE and reused for 5 min;
+   concurrent callers share the in-flight load. */
+const DIR_TTL_MS = 5 * 60 * 1000;
+let dirCache = { at: 0, key: '', list: null, promise: null };
+export function cachedDirectory(branchId, empId, { fresh = false } = {}) {
   const key = `${branchId}|${empId}`;
-  if (dirCache.list && dirCache.key === key && Date.now() - dirCache.at < 5 * 60 * 1000) return dirCache.list;
-  const list = await fetchNewChatDirectory(branchId, empId);
-  dirCache = { at: Date.now(), key, list };
-  return list;
+  if (dirCache.key === key) {
+    if (dirCache.promise) return dirCache.promise;
+    if (!fresh && dirCache.list && Date.now() - dirCache.at < DIR_TTL_MS) return Promise.resolve(dirCache.list);
+  }
+  const promise = fetchNewChatDirectory(branchId, empId).then(
+    (list) => { if (dirCache.promise === promise) dirCache = { at: Date.now(), key, list, promise: null }; return list; },
+    (err) => { if (dirCache.promise === promise) dirCache = { ...dirCache, promise: null }; throw err; },
+  );
+  dirCache = { ...dirCache, key, promise, ...(dirCache.key === key ? {} : { list: null, at: 0 }) };
+  return promise;
 }
 
 /** Notification me dikhane wala naam — directory (sahi) warna API wala. */

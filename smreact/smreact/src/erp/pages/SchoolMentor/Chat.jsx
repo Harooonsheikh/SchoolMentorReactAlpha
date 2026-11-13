@@ -8,7 +8,7 @@ import {
   chatEmployeeId,
   chatBranchId,
   fetchChatContacts,
-  fetchNewChatDirectory,
+  cachedDirectory,
   fetchAppUserIds,
   fetchConversation,
   fetchUnseenFromMe,
@@ -55,6 +55,14 @@ import { pingChat, nudgeChatOnFocus } from '../../services/chatActivity';
 const POLL_MS = 5000;
 /* Har itne polls baad directory se chhooti hui staff chats dhoondo (~1 min). */
 const DISCOVER_EVERY = 12;
+/* Har DISCOVER_EVERY tick par sirf pehle se mili (discovered) staff chats
+   taza hoti hain; POORI directory ka scan (har staff ki get-conversation —
+   bari school me darjanon calls) sirf itne ticks baad (5 s × 60 = 5 min). */
+const FULL_DISCOVER_EVERY = 60;
+/* Khuli chat: naya message na ho to har tick poori conversation nahi aati.
+   Ye safety-net sync (5 s × 12 = 1 min) doosre device se bheje messages
+   waghera pakad leta hai. */
+const OPEN_CHAT_FULL_SYNC_EVERY = 12;
 /* Sidebar ka preview/waqt conversation se banta hai, aur har contact ki apni
    call hai — is liye load par sirf itni chats ka preview lete hain. Baqi ka
    preview chat kholne par bhar jata hai. */
@@ -190,6 +198,11 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   const matchRefs = useRef({});
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
+  /* Poll tick ko taza list / receipts chahiye bina interval dobara banaye. */
+  const contactsRef = useRef(contacts);
+  contactsRef.current = contacts;
+  const receiptsRef = useRef(receipts);
+  receiptsRef.current = receipts;
   /* App.js ka notifier khuli chat ka notification nahi dikhata. Mobile par
      list wapas aaye (conversation band) to koi chat "khuli" nahi. */
   useEffect(() => {
@@ -264,13 +277,29 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
      block karti thin (discoverStaffChats har staff ka poora conversation
      mangata hai). Ab list dikhne ke BAAD background me chalti hain, aur jawab
      aate hi naam theek + chhooti staff chats shamil ho jati hain. */
-  const enrichContacts = useCallback(async (rawRows) => {
-    try { directoryRef.current = await fetchNewChatDirectory(branchId, chatEmployeeId()); } catch (_) { /* purani directory hi */ }
+  /* `full` = poori directory scan (har staff ki conversation); warna sirf pehle
+     se mili hidden staff chats taza. Ek waqt me ek hi scan — pichla abhi chal
+     raha ho to naya shuru nahi hota (overlap = dohri calls). Directory shared
+     cache se (5 min) — har scan par 3–4 requests dobara nahi. */
+  const scanningRef = useRef(false);
+  const enrichContacts = useCallback(async (rawRows, { full = true } = {}) => {
+    if (scanningRef.current) return;
+    scanningRef.current = true;
+    try {
+    try { directoryRef.current = await cachedDirectory(branchId, chatEmployeeId()); } catch (_) { /* purani directory hi */ }
     const apiRows = mapWithDirectory(rawRows);
     publishContacts(apiRows);   // sahi naam foran
     try {
       const known = new Set(apiRows.map(r => r.userId));
-      const found = await discoverStaffChats(branchId, me, chatEmployeeId(), known, undefined, directoryRef.current);
+      let found;
+      if (full) {
+        found = await discoverStaffChats(branchId, me, chatEmployeeId(), known, undefined, directoryRef.current);
+      } else {
+        const ids = [...discoveredRef.current.keys()].filter(id => !known.has(id));
+        const res = await Promise.all(ids.map(id => fetchConversation(me, id, branchId)
+          .then(msgs => ({ contact: discoveredRef.current.get(id), msgs })).catch(() => null)));
+        found = res.filter(r => r && r.msgs.length);
+      }
       /* `local` — is contact ka unread backend nahi ginta, localUnreadCounts ginta hai. */
       found.forEach(({ contact }) => discoveredRef.current.set(contact.userId, { ...contact, local: true }));
       if (found.length) {
@@ -283,7 +312,15 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
         publishContacts(apiRows);   // discovered staff list me shamil
       }
     } catch (_) { /* directory na mile to API wali list hi kaafi */ }
+    } finally {
+      scanningRef.current = false;
+    }
   }, [branchId, me, mapWithDirectory, publishContacts]);
+
+  /* Poll ke liye: get-chat-contacts ka ASLI unseenCount (khuli chat ka bhi —
+     mapWithDirectory usay list me 0 dikhata hai). Isi se pata chalta hai ke
+     khuli chat me naya message aaya ya nahi. */
+  const rawUnreadRef = useRef(new Map());
 
   const loadContacts = useCallback(async ({ silent = false } = {}) => {
     if (!me || !branchId) {
@@ -294,8 +331,10 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     if (!silent) setLoading(true);
     try {
       const rawRows = await fetchChatContacts(branchId, me);
+      rawUnreadRef.current = new Map(rawRows.map(r => [r.userId, Number(r.unread) || 0]));
       const tick = discoverTick.current++;
       const scan = !silent || tick % DISCOVER_EVERY === 0;
+      const fullScan = !silent || tick % FULL_DISCOVER_EVERY === 0;
       /* FAST: ek hi call (get-chat-contacts) ke baad maujooda directory se map
          kar ke list FORAN dikhado — spinner yahin band. */
       const apiRows = mapWithDirectory(rawRows);
@@ -303,7 +342,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       setLoadError('');
       if (!silent) setLoading(false);
       /* Mehengi scan background me — list ko block na kare. */
-      if (scan) enrichContacts(rawRows);
+      if (scan) enrichContacts(rawRows, { full: fullScan });
       return rows;
     } catch (err) {
       setLoadError(err.message || 'Could not load chats');
@@ -314,9 +353,14 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     }
   }, [me, branchId, mapWithDirectory, publishContacts, enrichContacts]);
 
+  /* Spinner sirf AAKHRI khuli chat ka band kare — tezi se chat badalne par
+     purani chat ka jawab nayi chat ka spinner pehle hi na hata de. Messages
+     contact id par rakhe jate hain, is liye purana jawab ghalat chat me nahi jata. */
+  const spinnerTokenRef = useRef(null);
   const loadConversation = useCallback(async (userId, { spinner = false } = {}) => {
     if (!userId || !me || !branchId) return;
-    if (spinner) setConvLoading(true);
+    const token = {};
+    if (spinner) { spinnerTokenRef.current = token; setConvLoading(true); }
     try {
       /* messages ke saath hi read-receipt — dono ek hi baar me, taake tick
          message ke saath hi sahi rang me aaye. */
@@ -330,12 +374,23 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     } catch (err) {
       if (spinner) toastRef.current(err.message || 'Could not load this conversation', 'error');
     } finally {
-      if (spinner) setConvLoading(false);
+      if (spinner && spinnerTokenRef.current === token) setConvLoading(false);
     }
   }, [me, branchId]);
 
-  /* first load: recent chats + kaun app par logged in hai + nav badge */
+  /* Sirf blue-tick (contact ne meri kitni messages nahi dekhin) — poori
+     conversation dobara laaye baghair. */
+  const refreshReceipt = useCallback(async (userId) => {
+    const unseenFromMe = await fetchUnseenFromMe(branchId, userId, me);
+    setReceipts(prev => (prev[userId] === unseenFromMe ? prev : { ...prev, [userId]: unseenFromMe }));
+  }, [branchId, me]);
+
+  /* first load: recent chats + kaun app par logged in hai + nav badge.
+     StrictMode dev me effect do dafa chalta hai — pehli load ek hi dafa. */
+  const firstLoadRef = useRef(false);
   useEffect(() => {
+    if (firstLoadRef.current) return undefined;
+    firstLoadRef.current = true;
     let alive = true;
     /* Chat page khulte hi poll zinda — page open + focus rehne tak har tick
        ise barhata rehta hai (poll tick me pingChat), to ye khula rehta hai. */
@@ -379,31 +434,44 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
      chats ke liye thodi thodi kar ke le aao (ek saath sab nahi). */
   /* Jis contact ke UNSEEN messages hain us ki row par "N new messages" dikhta
      hai (preview nahi) — conversation click par hi aati hai. */
+  /* Har poll `contacts` naya array banata hai → ye effect har 5 s dobara chalta
+     tha, beech wala batch phenk kar wahi conversations dobara mangta tha (aur
+     StrictMode me pehli load hi do dafa). Ab: jo preview abhi raste me hai
+     (previewInflight) wo dobara nahi mangte, aur uska jawab hamesha lagta hai.
+     Khuli chat ka preview nahi — usay loadConversation khud laata hai. */
+  const previewInflight = useRef(new Set());
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   useEffect(() => {
     const pending = contacts
-      .filter(c => !previewDone.current.has(c.userId) && (c.local || !(Number(c.unread) > 0)))
+      .filter(c => !previewDone.current.has(c.userId) && !previewInflight.current.has(c.userId)
+        && c.userId !== activeRef.current && (c.local || !(Number(c.unread) > 0)))
       .slice(0, PREVIEW_LIMIT);
     if (!pending.length) return;
-    let alive = true;
+    pending.forEach(c => previewInflight.current.add(c.userId));
     (async () => {
       for (let i = 0; i < pending.length; i += PREVIEW_BATCH) {
-        if (!alive) return;
+        if (!mountedRef.current) return;
         const batch = pending.slice(i, i + PREVIEW_BATCH);
         const results = await Promise.all(batch.map(c =>
           fetchConversation(me, c.userId, branchId).then(msgs => [c.userId, msgs]).catch(() => null)));
-        /* "Done" sirf tab jab jawab waqai lag jaye. Pehle fetch se PEHLE mark
-           hota tha — effect beech me cancel ho (StrictMode / contacts badle)
-           to jawab phenk diya jata aur row hamesha "No messages yet" rehti. */
-        if (!alive) return;
-        results.filter(Boolean).forEach(([id]) => previewDone.current.add(id));
+        batch.forEach(c => previewInflight.current.delete(c.userId));
+        if (!mountedRef.current) return;
+        /* "Done" sirf tab jab jawab waqai lag jaye. Jo chat beech me khul kar
+           taza load ho chuki (previewDone) us par purana preview na likho. */
+        const fresh = results.filter(r => r && !previewDone.current.has(r[0]));
+        if (!fresh.length) continue;
+        fresh.forEach(([id]) => previewDone.current.add(id));
         setHistory(prev => {
           const next = { ...prev };
-          results.filter(Boolean).forEach(([id, msgs]) => { next[id] = msgs; });
+          fresh.forEach(([id, msgs]) => { next[id] = msgs; });
           return next;
         });
       }
     })();
-    return () => { alive = false; };
   }, [contacts, me, branchId]);
 
   /* naye messages ke liye polling (is API me server push nahi hai) */
@@ -415,9 +483,9 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       /* Page khula + focus → poll zinda rakho (global badge/notification poll
          bhi isi window par chalte hain). */
       pingChat();
-      loadContacts({ silent: true });
+      const n = ++tick;
       /* App install / logout badalta rehta hai — ~har minute taza FCM status. */
-      if (++tick % 12 === 0) refreshAppUsers();
+      if (n % 12 === 0) refreshAppUsers();
       /* Sirf WAQAI screen par khuli chat seen karo — mobile par list wapas aa
          gayi ho to activeId reh jata hai magar user use dekh nahi raha; us ke
          naye messages unseen hi rehne chahiyen (warna ginti kabhi nahi barhti). */
@@ -431,7 +499,24 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
          chat waqai khuli ho aur seen hui ho (neeche), warna khali poll par ye
          call nahi jati. */
       const open = document.hasFocus() ? getOpenChatId() : null;
-      if (open) loadConversation(open).then(() => markMessagesSeen(branchId, open, me)).then(refreshApiUnseen);
+      /* Khuli chat: pehle contacts aane do (us me isi chat ka ASLI unseenCount
+         hai), phir sirf zaroorat ho to:
+           • naya message aaya (unseen > 0) / local-hidden ya nayi chat /
+             har ~1 min safety sync → conversation + seen + badge count
+           • meri messages abhi unseen (grey tick) → sirf receipt (1 call)
+           • kuch nahi badla → koi call nahi.
+         Pehle har 5 s par conversation + receipt + mark-seen + unseen-count
+         (4 calls) jati thin, chahe kuch naya ho ya na ho. */
+      loadContacts({ silent: true }).then(() => {
+        if (!open || getOpenChatId() !== open || !mountedRef.current) return;
+        const c = contactsRef.current.find(x => x.userId === open);
+        const incoming = rawUnreadRef.current.get(open) || 0;
+        if (!c || c.local || c.provisional || incoming > 0 || n % OPEN_CHAT_FULL_SYNC_EVERY === 0) {
+          loadConversation(open).then(() => markMessagesSeen(branchId, open, me)).then(refreshApiUnseen);
+        } else if ((receiptsRef.current[open] || 0) > 0) {
+          refreshReceipt(open);
+        }
+      });
     }, POLL_MS);
     /* Window par wapas aaye → khuli chat ab dekhi ja rahi hai: naye messages
        lao aur seen karo. */
@@ -442,7 +527,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     };
     window.addEventListener('focus', onFocus);
     return () => { clearInterval(id); window.removeEventListener('focus', onFocus); };
-  }, [me, branchId, loadContacts, loadConversation, refreshAppUsers, refreshApiUnseen]);
+  }, [me, branchId, loadContacts, loadConversation, refreshAppUsers, refreshApiUnseen, refreshReceipt]);
 
   /* ── derived ─────────────────────────────────────────────────── */
 
@@ -573,10 +658,15 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
 
   /* Ek hi rasta bhejne ka — text, attachment ya dono (file ke saath draft
      caption ban jata hai, bilkul mobile app ki tarah). */
+  /* `sending` state agle render tak nahi badalta — tez double Enter / double
+     click par wahi message do dafa post ho sakta tha. Ref foran lag jata hai. */
+  const sendingRef = useRef(false);
   const send = useCallback(async ({ text = '', file = null }) => {
     const to = activeRef.current;
     if (!to) { toastRef.current('Select a conversation first', 'warning'); return; }
     if (!text.trim() && !file) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     /* User ne message bheja → poll 2 min ke liye zinda (chat module). */
     pingChat();
     setSending(true);
@@ -609,6 +699,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       toastRef.current(err.message || 'Message could not be sent', 'error');
     } finally {
       if (pending.url) URL.revokeObjectURL(pending.url);
+      sendingRef.current = false;
       setSending(false);
     }
   }, [me, branchId, loadConversation, loadContacts]);
@@ -627,6 +718,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   useEffect(() => () => { if (pastedRef.current?.url) URL.revokeObjectURL(pastedRef.current.url); }, []);
 
   const sendText = () => {
+    if (sendingRef.current) return;   // pichla message abhi ja raha hai
     const cur = pastedRef.current;
     if (cur) {
       setPasted(null);                       // preview foran hatao; bubble send() dikhata hai
@@ -1273,7 +1365,8 @@ function ImageAttachment({ m, caption }) {
 /* ── New Chat modal — staff directory get-contact-list se ── */
 function NewChatModal({ me, branchId, appState, onRefreshApp, onClose, onStartChat, toast, initialDirectory = null }) {
   /* Main screen se mili directory (agar ho) → modal foran bhar jata hai; warna
-     khali + spinner. Taza data background fetch se phir bhi aata hai. */
+     khali + spinner. Data shared directory cache se (5 min) — wahi jo Chat list
+     ne abhi laya; purana ho to taza aata hai. */
   const seed = (initialDirectory || []).filter(r => r.userId !== me);
   const hadSeed = seed.length > 0;
   const [rows, setRows] = useState(seed);
@@ -1296,7 +1389,7 @@ function NewChatModal({ me, branchId, appState, onRefreshApp, onClose, onStartCh
         /* Mobile app ka New Chat workflow: contact-list (+ principal ki list
            agar apni me bachay kam hon) + LaunchSetup roster. Har row ki
            `userId` LOGIN id hai — wahi chat id; apni row `me` se hat jati hai. */
-        const data = await fetchNewChatDirectory(branchId, chatEmployeeId());
+        const data = await cachedDirectory(branchId, chatEmployeeId());
         if (alive) setRows(data.filter(r => r.userId !== me));
       } catch (err) {
         /* Seed pehle se dikh raha ho to error na dikhao — purani list hi sahi. */

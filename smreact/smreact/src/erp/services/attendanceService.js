@@ -193,11 +193,13 @@ export async function monthlySetup(payload) {
 // attendanceService.js
 
 // ✅ Staff Attendance Update/Get ke liye function
-export async function staffAttendance(payload) {
+/* opts.signal (optional) lets the caller abort a superseded GET. */
+export async function staffAttendance(payload, opts = {}) {
   const token = sessionStorage.getItem("token");
 
   const response = await fetch(buildUrl("/api/staff-attendance"), {
     method: "POST",
+    signal: opts.signal,
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
@@ -365,11 +367,13 @@ export async function getEmployeesByBranch(isActive) {
 
 // Student attendance endpoint → /api/student-attendance
 // Same endpoint for every op; only `action` changes: get · insert.
-export async function studentAttendance(payload) {
+/* opts.signal (optional) lets the caller abort a superseded GET. */
+export async function studentAttendance(payload, opts = {}) {
   const token = sessionStorage.getItem("token");
 
   const response = await fetch(buildUrl("/api/student-attendance"), {
     method: "POST",
+    signal: opts.signal,
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",

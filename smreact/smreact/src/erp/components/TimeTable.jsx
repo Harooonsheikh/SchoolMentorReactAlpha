@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
@@ -621,7 +621,43 @@ export default function TimeTable({ toast = () => {} }) {
   const [day, setDay] = useState(0);          // 0 = Monday
   const [expandedKey, setExpandedKey] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const { data = {}, setData, refetch: reloadTimeTable, loading: ttLoading } = useAsync(timeTableService.getTimeTable, []);
+  /* Screen khuli rehne tak classes / employees / subjects / report header EK
+     baar aate hain aur har jagah (Update, Auto Generate, reports) wahi istemal
+     hote hain; screen band hote hi cache saaf. Ye effect useAsync se PEHLE
+     hona zaroori hai (effects isi tarteeb se chalte hain). */
+  useEffect(() => timeTableService.retainTimeTableCache(), []);
+  const { data = {}, setData, loading: ttLoading } = useAsync(timeTableService.getTimeTable, []);
+
+  /* Save / delete / generate ke baad SIRF badle hue din(on) ki rows dobara
+     mangwao — poora hafta, employees aur subjects nahi. Har din ka apna
+     sequence: purana jawab naye ke upar nahi likhta. Screen band ho to
+     chalti hui reload cancel. */
+  const reloadSeq = useRef({});
+  const reloadCtls = useRef(new Set());
+  useEffect(() => {
+    const ctls = reloadCtls.current;
+    return () => { ctls.forEach((c) => c.abort()); ctls.clear(); };
+  }, []);
+  const reloadDays = useCallback(async (days) => {
+    const list = [...new Set((days || []).map(Number))].filter((d) => DAYS[d]);
+    if (!list.length) return;
+    const mine = {};
+    list.forEach((d) => { reloadSeq.current[d] = (reloadSeq.current[d] || 0) + 1; mine[d] = reloadSeq.current[d]; });
+    const ctl = new AbortController();
+    reloadCtls.current.add(ctl);
+    try {
+      const part = await timeTableService.getTimeTableDays(list, { signal: ctl.signal });
+      setData((prev) => {
+        const next = { ...(prev || {}) };
+        Object.entries(part).forEach(([d, v]) => { if (reloadSeq.current[d] === mine[d]) next[d] = v; });
+        return next;
+      });
+    } catch (e) {
+      if (e?.name !== 'AbortError') throw e;
+    } finally {
+      reloadCtls.current.delete(ctl);
+    }
+  }, [setData]);
   /* Real class×section rows and branch teachers (no more dummy data). */
   const { data: classes = [], loading: classesLoading } = useAsync(timeTableService.getTimeTableClasses, []);
   /* Loader sirf pehli load par dikhe. Save ke baad reload par table chhupna nahi chahiye. */
@@ -662,7 +698,7 @@ export default function TimeTable({ toast = () => {} }) {
     try {
       const allPeriods = Object.values(data[day] || {}).flat();
       await timeTableService.deleteClassDayTimeTable(allPeriods);
-      await reloadTimeTable();
+      await reloadDays([day]);
       toast(`${DAYS[day]} timetable cleared for all classes`, 'success');
     } catch (e) {
       console.error('Could not clear day timetable:', e);
@@ -675,7 +711,7 @@ export default function TimeTable({ toast = () => {} }) {
   const deleteClassDay = async (key) => {
     try {
       await timeTableService.deleteClassDayTimeTable((data[day] || {})[key] || []);
-      await reloadTimeTable();
+      await reloadDays([day]);
       toast(`Timetable removed for ${DAYS[day]}`, 'success');
     } catch (e) {
       console.error('Could not delete class timetable:', e);
@@ -933,7 +969,7 @@ export default function TimeTable({ toast = () => {} }) {
           onClose={() => setEditTarget(null)}
           onSave={async (periods) => {
             try {
-              await timeTableService.replaceClassDayTimeTable({
+              const res = await timeTableService.replaceClassDayTimeTable({
                 dayIndex: day,
                 classID: editTarget.classID,
                 sectionID: editTarget.sectionID,
@@ -941,7 +977,8 @@ export default function TimeTable({ toast = () => {} }) {
                 oldPeriods: dayData[editTarget.key] || [],
                 periods,
               });
-              await reloadTimeTable();
+              /* Kuch badla hi nahi tha → na likha gaya, na reload ki zarurat. */
+              if (!res?.unchanged) await reloadDays([day]);
               toast(`Timetable saved for ${DAYS[day]}!`, 'success');
             } catch (e) {
               console.error('Could not save timetable:', e);
@@ -1010,18 +1047,29 @@ export default function TimeTable({ toast = () => {} }) {
               /* Build THUNKS (don't invoke yet) so runLimited controls how many
                  requests fire at once — avoids the pending-forever pile-up. */
               const jobs = [];
+              /* Sirf wahi din reload hon jin me sach me kuch likha gaya (ya
+                 likhna nakaam hua — tab server ki asal haalat dikhani hai). */
+              const touched = new Set();
               Object.entries(newData).forEach(([di, classMap]) => {
                 Object.entries(classMap).forEach(([key, periods]) => {
                   const [classID, sectionID] = key.split('_');
-                  jobs.push(() => timeTableService.replaceClassDayTimeTable({
-                    dayIndex: Number(di), classID, sectionID, classOrder: 0,
-                    oldPeriods: (data[di] || {})[key] || [],
-                    periods,
-                  }));
+                  jobs.push(async () => {
+                    try {
+                      const res = await timeTableService.replaceClassDayTimeTable({
+                        dayIndex: Number(di), classID, sectionID, classOrder: 0,
+                        oldPeriods: (data[di] || {})[key] || [],
+                        periods,
+                      });
+                      if (!res?.unchanged) touched.add(Number(di));
+                    } catch (err) {
+                      touched.add(Number(di));
+                      throw err;
+                    }
+                  });
                 });
               });
               await runLimited(jobs, 4);
-              await reloadTimeTable();
+              await reloadDays([...touched]);
               toast(
                 `Timetable generated — ${summary.classCount} class${summary.classCount !== 1 ? 'es' : ''} × ${summary.dayCount} days`,
                 'success'

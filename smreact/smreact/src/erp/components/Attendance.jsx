@@ -1,10 +1,9 @@
-  import React, { useState, useMemo, useCallback, useEffect } from "react";
+  import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
   import { createPortal } from "react-dom";
   import Tooltip from "./Tooltip";
   import TutorialModal from "./TutorialModal";
   import * as attendanceService from "../services/attendanceService";
   import * as profileService from "../services/profileService";
-  import useAsync from "../hooks/useAsync";
   import { useModuleReadOnly, validateSessionDateFromStorage } from "../pages/Settings/settingsStore";
   import { usePermissions } from "../context/PermissionsContext";
 import { rankedMatches } from "../utils/studentSearch";
@@ -582,7 +581,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
      maxAccuracyMeters) match what the real backend's school-location API is
      expected to return, so this isn't just a mock shape — it's the same one a
      real API can be wired into later with no restructuring. */
-  function GeofenceSection({ setup, onSave, saving, toast }) {
+  function GeofenceSection({ setup, onSave, saving, toast, loadProfile }) {
     const [draft, setDraft] = useState(setup);
     useEffect(() => { setDraft(setup); }, [setup]);
     const [locating, setLocating] = useState(false);
@@ -590,8 +589,17 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
     /* School / Campus Name is never typed here — it's the same school
        name already used everywhere else in this ERP (profileService),
        so staff on the mobile app see the one real school name, never a
-       second, independently-typed copy that could drift out of sync. */
-    const { data: profile } = useAsync(profileService.getProfile, []);
+       second, independently-typed copy that could drift out of sync.
+       loadProfile is the module's cached loader → the profile API runs once
+       per module visit, not again every time this tab is re-opened. */
+    const [profile, setProfile] = useState(null);
+    useEffect(() => {
+      let alive = true;
+      (loadProfile ? loadProfile() : profileService.getProfile())
+        .then((p) => { if (alive) setProfile(p); })
+        .catch(() => { /* getProfile already falls back to session data */ });
+      return () => { alive = false; };
+    }, [loadProfile]);
     const schoolDisplayName = profile?.campus || profile?.name || "";
 
     /* Geo-fence is always on now (enable/disable toggle hidden) — validate and
@@ -746,9 +754,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   /* ─── Tab 1: Attendance Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onSaveStaffRules, onSaveStudentRules, onSaveGeofence, savingSetup = false }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onSaveStaffRules, onSaveStudentRules, onSaveGeofence, savingSetup = false, loadProfile }) {
     const { can } = usePermissions();
-    const canHolCreate   = can("Attendance", "Attendance Setup", "Create");
+    const canHolCreate  = can("Attendance", "Attendance Setup", "Create");
     const canHolEdit     = can("Attendance", "Attendance Setup", "Edit");
     const canHolDelete   = can("Attendance", "Attendance Setup", "Delete");
     const canHolDownload = can("Attendance", "Attendance Setup", "Download");
@@ -993,7 +1001,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         <StudentWorkingHoursSection setup={attendanceSetup} onSave={onSaveStudentRules} saving={savingSetup} toast={toast} />
 
         {/* Geo-Fenced Attendance — school location + radius for mobile self-attendance */}
-        <GeofenceSection setup={attendanceSetup} onSave={onSaveGeofence} saving={savingSetup} toast={toast} />
+        <GeofenceSection setup={attendanceSetup} onSave={onSaveGeofence} saving={savingSetup} toast={toast} loadProfile={loadProfile} />
       </>
     );
   }
@@ -1002,7 +1010,7 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
   // Special sentinel: selecting this applies the holiday to every class+section.
   const WHOLE_SCHOOL_OPT = { classID: -1, sectionID: -1, label: "Whole School", whole: true };
 
-  function HolidayModal({ initial, defaultMonth, onClose, onSave }) {
+  function HolidayModal({ initial, defaultMonth, onClose, onSave, loadClasses }) {
     const isEdit = !!initial;
     const [title, setTitle] = useState(initial?.title || "");
     const [desc, setDesc]   = useState(initial?.desc  || "");
@@ -1023,13 +1031,14 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
       return () => document.removeEventListener("keydown", onKey);
     }, [onClose]);
 
-    // Add Holiday par click hote hi classes wali API call karke options bharo.
+    // Add Holiday par click hote hi classes laao — module ka cached loader
+    // (loadClasses) use hota hai, to har dafa modal kholne par API dobara nahi chalti.
     useEffect(() => {
       let alive = true;
       (async () => {
         try {
           setClassLoading(true);
-          const opts = await attendanceService.getClassesForBranch();
+          const opts = await (loadClasses ? loadClasses() : attendanceService.getClassesForBranch());
           if (alive) setClassOpts(opts);
         } catch (err) {
           console.error("Could not load classes", err);
@@ -1039,9 +1048,9 @@ import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExce
         }
       })();
       return () => { alive = false; };
-    }, []);
+    }, [loadClasses]);
 
-    const removeChip = (c) => setClasses((prev) => prev.filter((x) => optKey(x) !== optKey(c)));
+    const removeChip =(c) => setClasses((prev) => prev.filter((x) => optKey(x) !== optKey(c)));
     const addChip = (c) => {
       setClasses((prev) => {
         // Whole School clears individual selections; picking a class clears Whole School.
@@ -3807,7 +3816,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     HTML-faithful: 2 sub-tabs (General / Individual). General = 4 grp-card
     accordions, each with embedded report rows + inline filters + Generate.
     Individual = expandable student class rows + flat staff list. */
-  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [], sessionName = "", staffTrackOut = true }) {
+  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [], sessionName = "", staffTrackOut = true, onIndividualOpen }) {
     /* Staff "Time In Only" → Short Leavers report ka koi matlab nahi (SL Time Out se banta hai). */
     const reportGroups = REPORT_GROUPS.map((g) => ({
       ...g,
@@ -3818,6 +3827,13 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [openClassIdx, setOpenClassIdx] = useState(null);
     const [highlightStudent, setHighlightStudent] = useState(null); // student id of highlighted row
     const [highlightStaff, setHighlightStaff]     = useState(null); // empId of highlighted row
+
+    /* Today's per-class % and per-staff status are shown ONLY in the Individual
+       sub-tab — tell the parent when it opens so those APIs run on demand
+       (General Reports never needs them). */
+    useEffect(() => {
+      if (subTab === "individual") onIndividualOpen?.();
+    }, [subTab, onIndividualOpen]);
 
     /* Flat student list with class info (for the search dropdown) — REAL data. */
     const allStudents = (studentData || []).flatMap((cl, ci) =>
@@ -4307,12 +4323,19 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
   /* ─── Toast host (used when no parent onToast is supplied) ─────────────────── */
   function useToasts(external) {
     const [toasts, setToasts] = useState([]);
+    /* The parent's onToast is a fresh function on every App render; keep it in
+       a ref so `toast` stays referentially stable. Otherwise every callback /
+       effect that lists `toast` as a dep is rebuilt (and re-run) on each
+       parent render. */
+    const externalRef = useRef(external);
+    useEffect(() => { externalRef.current = external; }, [external]);
     const toast = useCallback((message, type = "info") => {
-      if (external) { external(message, type); return; }
+      const ext = externalRef.current;
+      if (ext) { ext(message, type); return; }
       const id = Date.now() + Math.random();
       setToasts((t) => [...t, { id, message, type }]);
       setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
-    }, [external]);
+    }, []);
     return { toasts, toast };
   }
 
@@ -4341,12 +4364,32 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const { can } = usePermissions();
     const TABS = ALL_TABS.filter((t) => can("Attendance", t.label, "View"));
     const [tab, setTab] = useState("holidays");
+    /* The tab actually on screen. Data loaders key off THIS (not `tab`) so a
+       user without Attendance Setup permission never fires that tab's APIs in
+       the one render before the snap below moves them to their first tab. */
+    const visibleTab = TABS.some((t) => t.id === tab) ? tab : (TABS[0]?.id || null);
 
     /* Active tab hide ho jaye to pehle visible par snap. */
     useEffect(() => {
       if (TABS.some((t) => t.id === tab)) return;
       if (TABS[0]) setTab(TABS[0].id);
     }, [TABS, tab]);
+
+    /* ── On-demand loader cache ───────────────────────────────────────────────
+       once(key, fn) runs fn the FIRST time a key is asked for and hands every
+       later / concurrent caller the same promise — so a section's API fires
+       only when that section is opened, never twice (StrictMode double effects,
+       re-renders, re-opening a tab). A failed load forgets its key so the next
+       open retries once — no automatic retry loop. Lives in a ref → per module
+       visit (leaving & re-entering Attendance starts fresh). */
+    const onceRef = useRef({});
+    const once = useCallback((key, fn) => {
+      const store = onceRef.current;
+      if (!store[key]) {
+        store[key] = Promise.resolve().then(fn).catch((err) => { delete store[key]; throw err; });
+      }
+      return store[key];
+    }, []);
     const [tutorialOpen, setTutorialOpen] = useState(false);
     // Holidays load per-month from the API when a month is expanded.
     const [holidays, setHolidays]         = useState([]);
@@ -4427,7 +4470,20 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     /* Modal state for Tab 2 (Student) */
     const [markStIdx, setMarkStIdx]       = useState(null); // class index pending mark/update
     const [markStDate, setMarkStDate]     = useState(null); // selected date for student mark modal (null → today)
-    const { data: studentData = [], setData: setStudentData, loading: studentLoading } = useAsync(() => attendanceService.getClassStudentList(), []);
+    /* Class → section → student roster. Needed only by Student Attendance and
+       Reports → loaded on demand when one of them opens (see tab loader). */
+    const [studentData, setStudentData]   = useState([]);
+    const [studentLoading, setStudentLoading] = useState(true);
+    const ensureStudentData = useCallback(() => once("roster", async () => {
+      setStudentLoading(true);
+      try {
+        const rows = await attendanceService.getClassStudentList();
+        setStudentData(rows || []);
+        return rows;
+      } finally {
+        setStudentLoading(false);
+      }
+    }).catch((err) => { console.error("Could not load class roster:", err); }), [once]);
 
     /* Modal state for Tab 3 (Staff) */
     const [markSfOpen, setMarkSfOpen]     = useState(false);
@@ -4439,13 +4495,13 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
        marked. ON → past dates (within the active session) can be marked/edited.
        Future dates stay blocked regardless. */
     const [prevDaysAttendance, setPrevDaysAttendance] = useState(false);
-    useEffect(() => {
-      let alive = true;
-      attendanceService.getPreviousDaysAttendance()
-        .then((v) => { if (alive) setPrevDaysAttendance(!!v); })
-        .catch(() => { /* API fail → stays OFF (safe default) */ });
-      return () => { alive = false; };
-    }, []);
+    /* Read by Attendance Setup (the toggle) and the Student / Staff calendars
+       (past-date marking) → fetched once, when the first of those opens. */
+    const ensurePrevDays = useCallback(() => once("prevDays", async () => {
+      const v = await attendanceService.getPreviousDaysAttendance();
+      setPrevDaysAttendance(!!v);
+      return v;
+    }).catch(() => { /* API fail → stays OFF (safe default) */ }), [once]);
     const togglePrevDaysAttendance = useCallback(() => {
       if (blockIfReadOnly()) return;
       const next = !prevDaysAttendance;
@@ -4462,29 +4518,28 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [staffTodayMarked, setStaffTodayMarked] = useState(true);
     const [staffLoading, setStaffLoading] = useState(true);
 
-    // Student/Staff Attendance → real employees from the branch.
-    useEffect(() => {
-      (async () => {
-        try {
-          const emps = await attendanceService.getEmployeesByBranch();
-          setEmployees(emps);
-          setStaffData(emps.map((e) => ({
-            id:    e.id,
-            name:  `${e.firstName || ""} ${e.lastName || ""}`.trim() || "—",
-            empId: `EMP-${e.id}`,
-            desig: e.designationName || "—",
-            dept:  e.departmentName || "—",
-            email: e.email || "",
-            phone: e.phone || "",
-            status: "", inTime: "", outTime: "", from: "", marked: false,
-          })));
-               } catch (err) {
-          console.error("Could not load employees:", err);
-        } finally {
-          setStaffLoading(false);
-        }
-      })();
-    }, []);
+    // Student/Staff Attendance + Reports → real employees from the branch.
+    // Loaded on demand (once) when one of those tabs opens — not on module mount.
+    const ensureEmployees = useCallback(() => once("employees", async () => {
+      setStaffLoading(true);
+      try {
+        const emps = await attendanceService.getEmployeesByBranch();
+        setEmployees(emps);
+        setStaffData(emps.map((e) => ({
+          id:    e.id,
+          name:  `${e.firstName || ""} ${e.lastName || ""}`.trim() || "—",
+          empId: `EMP-${e.id}`,
+          desig: e.designationName || "—",
+          dept:  e.departmentName || "—",
+          email: e.email || "",
+          phone: e.phone || "",
+          status: "", inTime: "", outTime: "", from: "", marked: false,
+        })));
+        return emps;
+      } finally {
+        setStaffLoading(false);
+      }
+    }).catch((err) => { console.error("Could not load employees:", err); }), [once]);
 
     // class+section (gradeId-sectionId) → class teacher name.
     // Prefer Class-attendance assignees (HR "Class Teacher — Attendance Marking"),
@@ -4525,66 +4580,82 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [reportPicker,   setReportPicker]   = useState(null); // { title, context, ... }
     const [reportPreview,  setReportPreview]  = useState(null); // { title, html }
     const [indivTarget,    setIndivTarget]    = useState(null); // { type, name, detail, id } | null
-    const [branchSchool,   setBranchSchool]   = useState(null); // /report-header → { name, logo, address, session }
     const [reportSessions, setReportSessions] = useState([]);   // [{ ID, SessionName }] for report filters
     // const [activeSessionName, setActiveSessionName] = useState(""); // active session ka SessionName (e.g. "2026-2027")
 
-    // Report header (branch info) + session list — for the Holiday report picker.
-    useEffect(() => {
-      (async () => {
-        try { setBranchSchool(await attendanceService.getReportHeader()); }
-        catch (err) { console.error("Could not load report header:", err); }
-        try { setReportSessions(await attendanceService.getSessionsForBranch()); }
-        catch (err) { console.error("Could not load sessions:", err); }
-        // // Active session ka naam — poore module mein "Academic Year"/Session yahi dikhega.
-        // try {
-        //   const active = await attendanceService.getActiveSession();
-        //   if (active?.SessionName) setActiveSessionName(active.SessionName);
-        // } catch (err) { console.error("Could not load active session name:", err); }
-      })();
-    }, []);
-// Attendance component mein, useAsync ki jagah yeh use karo
-const { data: attendanceSetup = DEFAULT_ATTENDANCE_SETUP, setData: setAttendanceSetup } = useAsync(attendanceService.getAttendanceSetup, [], DEFAULT_ATTENDANCE_SETUP);
+    // Report header (branch info: name / logo / address / session) — needed only
+    // when a report is GENERATED, so it is fetched lazily (once) at that moment
+    // instead of on module mount. Report builders receive the resolved value.
+    const ensureBranchSchool = useCallback(() => once("reportHeader",
+      () => attendanceService.getReportHeader()
+    ).catch((err) => { console.error("Could not load report header:", err); return null; }), [once]);
+    // Branch session list — only a fallback for the Yearly Holiday report when
+    // the active session's name is unknown / a different year is chosen.
+    const ensureReportSessions = useCallback(() => once("reportSessions", async () => {
+      const list = await attendanceService.getSessionsForBranch();
+      setReportSessions(list);
+      return list;
+    }).catch((err) => { console.error("Could not load sessions:", err); return []; }), [once]);
+
+// Attendance Setup rules (staff / student / geofence). Every tab reads them
+// (trackOut columns, mark modals, setup cards) → loaded once per module visit.
+const [attendanceSetup, setAttendanceSetup] = useState(DEFAULT_ATTENDANCE_SETUP);
+const ensureAttendanceSetup = useCallback(() => once("setup", async () => {
+  const s = await attendanceService.getAttendanceSetup();
+  if (s) setAttendanceSetup(s);
+  return s;
+}).catch((err) => { console.error("Could not load attendance setup:", err); }), [once]);
 const [savingSetup, setSavingSetup] = useState(false);
 const [weeklyOff, setWeeklyOff] = useState([]);
 const [weeklyOffLoading, setWeeklyOffLoading] = useState(true);
+// Latest weekly-off selection, readable from async report code without
+// waiting for a re-render; and the server row IDs from the last GET (used by
+// Save & Update so it doesn't need a second GET just to learn the IDs).
+const weeklyOffRef    = useRef([]);
+const weeklyOffIdsRef = useRef(null); // { dayIdx: ID } | null (unknown → Save does a GET)
+useEffect(() => { weeklyOffRef.current = weeklyOff; }, [weeklyOff]);
 
-// GET weekly off data on component mount
-// Attendance component mein, useEffect ke ANDAR yeh change karo
-useEffect(() => {
-  const fetchWeeklyOff = async () => {
-    try {
-      setWeeklyOffLoading(true);
-      const response = await attendanceService.getWeeklyOffSetup();
-      console.log("Fetched weekly off response:", response);
-      
-      // ✅ RESPONSE SE data ARRAY NIKALO
-      const data = response?.data || [];
-      
-      if (Array.isArray(data) && data.length > 0) {
-        // ✅ WeekDay strings ko index mein convert karo
-        const weekDays = data
-          .map(item => {
-            const index = DAYS_F.indexOf(item.WeekDay); // ✅ Capital W (WeekDay)
-            return index !== -1 ? index : null;
-          })
-          .filter(idx => idx !== null);
-        
-        console.log("Converted weekdays:", weekDays);
-        setWeeklyOff(weekDays);
-      } else {
-        setWeeklyOff([]);
-      }
-    } catch (error) {
-      console.error("Error fetching weekly off:", error);
-      setWeeklyOff([]);
-    } finally {
-      setWeeklyOffLoading(false);
-    }
-  };
+/* weekly-off GET response → { days: [dayIdx], ids: { dayIdx: ID } } */
+const parseWeeklyOff = (response) => {
+  const data = Array.isArray(response?.data) ? response.data : [];
+  const days = [];
+  const ids = {};
+  data.forEach((item) => {
+    const index = DAYS_F.indexOf(item.WeekDay); // ✅ Capital W (WeekDay)
+    if (index !== -1) { days.push(index); ids[index] = item.ID; }
+  });
+  return { days, ids };
+};
 
-  fetchWeeklyOff();
-}, []);
+// GET weekly off data — on demand (once) when a tab that shows it opens:
+// Attendance Setup (day cards) and the Student / Staff calendars.
+const ensureWeeklyOff = useCallback(() => once("weeklyOff", async () => {
+  setWeeklyOffLoading(true);
+  try {
+    const response = await attendanceService.getWeeklyOffSetup();
+    const { days, ids } = parseWeeklyOff(response);
+    weeklyOffRef.current = days;
+    weeklyOffIdsRef.current = ids;
+    setWeeklyOff(days);
+    return days;
+  } finally {
+    setWeeklyOffLoading(false);
+  }
+}).catch((error) => {
+  console.error("Error fetching weekly off:", error);
+  setWeeklyOff([]);
+  return [];
+}), [once]);
+
+// Reports: weekly-off days for working-day maths. Uses what's already loaded
+// (incl. unsaved local toggles, same as before); fetches only if never loaded.
+const reportWeeklyOff = useCallback(async () => {
+  await ensureWeeklyOff();
+  return weeklyOffRef.current;
+}, [ensureWeeklyOff]);
+
+// Profile (school name for the Geo-fence card) — once per module visit.
+const loadProfile = useCallback(() => once("profile", () => profileService.getProfile()), [once]);
     const openReportPicker = useCallback((cfg) => setReportPicker(cfg), []);
     const openMarkSt = useCallback((idx, dateStr) => {
       if (blockIfReadOnly()) return;
@@ -4667,14 +4738,19 @@ useEffect(() => {
       if (__error) { toast(__error, "error"); return; }
       const target = indivTarget;
       // Modal ko generation ke baad band karo taake button par spinner dikhe.
-      const records = await fetchIndividualAttendance(target, fromDate, toDate);
+      // Header + weekly-off are fetched lazily (cached) only now, at generation.
+      const [records, branchSchool, weeklyOff] = await Promise.all([
+        fetchIndividualAttendance(target, fromDate, toDate),
+        ensureBranchSchool(),
+        reportWeeklyOff(),
+      ]);
       const trackOut = target.type === "student"
         ? attendanceSetup.studentTrackingMode !== "in_only"
         : attendanceSetup.staffTrackingMode !== "in_only";
       const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool, trackOut });
       setIndivTarget(null);
       deliverAttReport(`${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html, format);
-    }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool, deliverAttReport, attendanceSetup]);
+    }, [indivTarget, holidays, toast, fetchIndividualAttendance, ensureBranchSchool, reportWeeklyOff, deliverAttReport, attendanceSetup]);
 
     const openMarkSf = useCallback(async (dateStr) => {
       if (blockIfReadOnly()) return;
@@ -4768,11 +4844,18 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       // "Time In Only" → reports me Out Time aur SL nahi (student / staff alag setting).
       const stuOut = attendanceSetup.studentTrackingMode !== "in_only";
       const sfOut  = attendanceSetup.staffTrackingMode !== "in_only";
+      // Branch header + weekly-off — fetched lazily (cached) only when a report is
+      // generated. These locals intentionally shadow the state of the same name.
+      const [branchSchool, weeklyOff] = await Promise.all([ensureBranchSchool(), reportWeeklyOff()]);
       let html, title;
       if (effective === "holidayYearly") {
         // Chosen session (name → ID) → fetch that session's holidays from the API.
         const yearName = filters.year || activeSessionName;
-        const sess = reportSessions.find((s) => s.SessionName === yearName);
+        // Active session → its ID is already known (ensureSessionID below); the
+        // branch session list is fetched only for a DIFFERENT year.
+        const sess = yearName && yearName !== activeSessionName
+          ? (await ensureReportSessions()).find((s) => s.SessionName === yearName)
+          : null;
         const sessionID = sess?.ID || reportPicker?.sessionID || await ensureSessionID();
         const branchID  = Number(sessionStorage.getItem("branchID"));
         const classes   = await ensureClasses();
@@ -4935,7 +5018,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       deliverAttReport(title, html, format);
       // ensureClasses/ensureSessionID are defined later; referenced via closure at call time.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool, activeSessionName, deliverAttReport, attendanceSetup]);
+    }, [holidays, studentData, staffData, reportPicker, ensureReportSessions, ensureBranchSchool, reportWeeklyOff, activeSessionName, deliverAttReport, attendanceSetup]);
 
     /* General Reports tab → trigger generateReport with the style/format chosen
       in the shared StandardReportPicker modal (see ReportRow). */
@@ -4981,9 +5064,10 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
     }, [employees]);
 
     // GET saved attendance for a class/section (today) → prefill statuses + counts.
-    const loadStudentMarks = useCallback(async (idx, dateOverride) => {
+    // Resolves { map, ok } — ok=false when the GET failed (so caches can retry).
+    const fetchStudentMarks = useCallback(async (idx, dateOverride) => {
       const row = studentData[idx];
-      if (!row) return {};
+      if (!row) return { map: {}, ok: false };
       const branchID  = Number(sessionStorage.getItem("branchID"));
       const sessionID = await ensureSessionID();
       const todayStr = new Date().toISOString().slice(0, 10);
@@ -4991,6 +5075,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const attendanceDate = dateOverride || todayStr;
       const map = {};
       let markerId = null; // CreatedBy of first marked record → who marked attendance
+      let ok = false;
       try {
         const res = await attendanceService.studentAttendance({
           id: 0, branchID, studentID: 0, sessionID,
@@ -4998,6 +5083,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           attendanceDate, status: "", platform: "ERP",
           isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
         });
+        ok = true;
         (res?.data || [])
           .filter((rec) =>
             String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === attendanceDate &&
@@ -5025,7 +5111,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       }
       // Past date is loaded only to prefill the mark modal — do NOT overwrite the
       // today-oriented class table with a past date's counts.
-      if (attendanceDate !== todayStr) return map;
+      if (attendanceDate !== todayStr) return { map, ok };
       // Reflect saved statuses + times into the class row (detail table + counts).
       // Class Teacher: HR assignment first; if missing, who marked (CreatedBy).
       const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
@@ -5040,8 +5126,43 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           ...countList(students),
         };
       }));
-      return map;
+      return { map, ok };
     }, [studentData, ensureSessionID, setStudentData, teacherMap, employeeNameById]);
+
+    // Same as before for existing callers (mark modal prefill, past-date expand):
+    // a FRESH GET each time, returns the status map. Identical calls that overlap
+    // (e.g. the Mark modal's mount effect run twice by StrictMode) share the one
+    // in-flight request instead of sending it twice.
+    const marksInflightRef = useRef(new Map()); // "idx|date" → Promise<map>
+    const loadStudentMarks = useCallback((idx, dateOverride) => {
+      const key = `${idx}|${dateOverride || ""}`;
+      const inflight = marksInflightRef.current;
+      if (!inflight.has(key)) {
+        const p = fetchStudentMarks(idx, dateOverride)
+          .then((r) => r.map)
+          .finally(() => { if (inflight.get(key) === p) inflight.delete(key); });
+        inflight.set(key, p);
+      }
+      return inflight.get(key);
+    }, [fetchStudentMarks]);
+
+    /* Today's marks per class, cached per day: the Student tab's on-open load,
+       re-opening the tab and expanding a class all share ONE request per class.
+       (Opening the Mark modal still does its own fresh GET before editing.) */
+    const todayMarksRef = useRef(new Map()); // "YYYY-MM-DD|classID-sectionID" → Promise<map>
+    const ensureTodayMarks = useCallback((idx) => {
+      const r = studentData[idx];
+      if (!r) return Promise.resolve({});
+      const key = `${new Date().toISOString().slice(0, 10)}|${r.classID}-${r.sectionID}`;
+      const cache = todayMarksRef.current;
+      if (!cache.has(key)) {
+        cache.set(key, fetchStudentMarks(idx).then(({ map, ok }) => {
+          if (!ok) cache.delete(key); // failed → next open retries
+          return map;
+        }));
+      }
+      return cache.get(key);
+    }, [studentData, fetchStudentMarks]);
 
     // Save Attendance → action:"insert" for EACH student.
     const saveStudentMarks = useCallback(async (idx, studentRows, dateOverride) => {
@@ -5116,14 +5237,21 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
 
     // Student tab active → GET saved attendance for EVERY class (so the table
     // shows P/A/L counts without needing to expand each class).
+    // Already-loaded classes come from the per-day cache (no request).
     const loadAllStudentMarks = useCallback(async () => {
-      await Promise.all(studentData.map((_, idx) => loadStudentMarks(idx)));
-    }, [studentData, loadStudentMarks]);
+      await Promise.all(studentData.map((_, idx) => ensureTodayMarks(idx)));
+    }, [studentData, ensureTodayMarks]);
 
     // Calendar par koi date select → us date ki per-class attendance (P/A/L,
     // status, Platform, class teacher) laao → StudentDatePanel bhare.
+    // A newer date click ABORTS the previous date's still-running requests, and a
+    // superseded response can never overwrite the newer date's panel.
     const [dateAttendance, setDateAttendance] = useState(null); // { key, rows, loading }
+    const dateAbortRef = useRef(null);
     const loadDateAttendance = useCallback(async (dateStr) => {
+      dateAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      dateAbortRef.current = ctrl;
       setDateAttendance({ key: dateStr, rows: [], loading: true });
       const branchID  = Number(sessionStorage.getItem("branchID"));
       const sessionID = await ensureSessionID();
@@ -5135,7 +5263,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
             classID: r.classID, sectionID: r.sectionID,
             attendanceDate: dateStr, status: "", platform: "ERP",
             isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
-          });
+          }, { signal: ctrl.signal });
           // Backend saare classes/dates de deta hai → sirf IS class+section ke,
           // aur SELECTED date ke records rakho (warna har class mein same data aa jata).
           recs = (res?.data || []).filter((rec) =>
@@ -5144,7 +5272,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
             String(rec.SectionID ?? rec.sectionID) === String(r.sectionID)
           );
         } catch (err) {
-          console.error("Error loading date attendance:", err);
+          if (err?.name !== "AbortError") console.error("Error loading date attendance:", err);
         }
         const counts = emptyCounts();
         let platform = "";
@@ -5163,6 +5291,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           markedBy: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
         };
       }));
+      if (ctrl.signal.aborted) return; // a newer date was selected meanwhile
       setDateAttendance({ key: dateStr, rows, loading: false });
     }, [studentData, ensureSessionID, teacherMap]);
 
@@ -5178,6 +5307,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const sessionID = await ensureSessionID();
       const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate();
       const offDates = new Set(); // weekly-off + holiday dates (union → no double count)
+      const weeklyOff = await reportWeeklyOff(); // loaded on demand (cached)
 
       // 1) Weekly-off dates — har date jiska weekday `weeklyOff` me hai.
       //    JS getDay(): Sunday=0…Saturday=6 → DAYS_F index (Monday=0…Sunday=6) = (getDay()+6)%7.
@@ -5213,7 +5343,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       // 3) Working days = daysInMonth − off dates (weekly-off ∪ holidays).
       const workingDays = Math.max(0, daysInMonth - offDates.size);
       return { daysInMonth, workingDays };
-    }, [ensureSessionID, weeklyOff]);
+    }, [ensureSessionID, reportWeeklyOff]);
 
     // Monthly Holiday report ke liye — us month ke holidays (grouped) laao,
     // taake Reports tab se bhi bina Holidays tab visit kiye report ban jaye.
@@ -5424,25 +5554,36 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
     }, [studentData, ensureSessionID, makeRecordClassResolver, teacherMap]);
 
     // Branch class+section list — cached; used to turn ClassID/SectionID into names.
-    const ensureClasses = useCallback(async () => {
-      if (classList.length) return classList;
-      try {
-        const list = await attendanceService.getClassesForBranch();
-        setClassList(list);
-        return list;
-      } catch (err) {
-        console.error("Could not load classes:", err);
-        return [];
-      }
-    }, [classList]);
+    // One shared request: holidays load, the Add/Edit Holiday modal and the
+    // Yearly report all reuse it (concurrent callers get the same promise).
+    const ensureClasses = useCallback(() => once("classes", async () => {
+      const list = await attendanceService.getClassesForBranch();
+      setClassList(list);
+      return list;
+    }).catch((err) => {
+      console.error("Could not load classes:", err);
+      return [];
+    }), [once]);
 
-    // Month expand → fetch that month's holidays via action:"get".
-    const loadMonthHolidays = useCallback(async (monthIdx) => {
+    // Months whose holidays are already loaded this visit (by the tab's
+    // initial load or an expand) → expanding them again needs no request.
+    const holidayMonthsLoadedRef = useRef(new Set());
+
+    // Month expand → fetch that month's holidays via action:"get" — only if that
+    // month isn't loaded yet. `force` (after an insert) always refetches it.
+    const loadMonthHolidays = useCallback(async (monthIdx, { force = false } = {}) => {
       const branchID   = Number(sessionStorage.getItem("branchID"));
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const sessionID  = await ensureSessionID();
-      const classes    = await ensureClasses();
          if (!sessionID) return;
+      if (!force) {
+        // Initial all-months load still running → wait for it instead of
+        // firing a duplicate GET for the same month.
+        const pending = onceRef.current[`holidays:${sessionID}`];
+        if (pending) { try { await pending; } catch { /* fall through to own GET */ } }
+        if (holidayMonthsLoadedRef.current.has(monthIdx)) return;
+      }
+      const classes    = await ensureClasses();
       setLoadingMonth(monthIdx);
       try {
         const res = await attendanceService.monthlySetup({
@@ -5461,6 +5602,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         });
         const grouped = groupHolidayRows(res?.data || [], classes).filter((h) => h.month === monthIdx);
         setHolidays((prev) => [...prev.filter((h) => h.month !== monthIdx), ...grouped]);
+        holidayMonthsLoadedRef.current.add(monthIdx);
       } catch (err) {
         console.error("Error loading holidays:", err);
         toast("Failed to load holidays for this month.", "error");
@@ -5471,32 +5613,37 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
 
     // Attendance Setup tab active hote hi saara data API se laao (action:"get").
     // UI kahi change nahi — bas har month ka data fetch karke populate hota hai.
+    // ONCE per module visit (per session): switching tabs and coming back reuses
+    // what is loaded — add / edit / delete keep the list in sync locally.
     const loadAllHolidays = useCallback(async () => {
-      const branchID   = Number(sessionStorage.getItem("branchID"));
-      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const sessionID  = await ensureSessionID();
       if (!sessionID) return; // session nahi → monthly-setup API hit nahi
-      setHolidaysLoading(true);
-      const classes    = await ensureClasses();
-      try {
-        const results = await Promise.all(
-          MONTHS.map((_, i) =>
-            attendanceService.monthlySetup({
-              id: 0, branchID, sessionID,
-              holidayTitle: "", description: "", dateFrom: "", dateTo: "",
-              month: i + 1, action: "get",
-              createdBy: employeeID, modifiedBy: employeeID, classIDs: [],
-            }).then((res) => res?.data || []).catch(() => [])
-          )
-        );
-        // Flat rows → grouped by holiday ID (each holiday once, all classes inside).
-             setHolidays(groupHolidayRows(results.flat(), classes));
-      } catch (err) {
-        console.error("Error loading holidays:", err);
-      } finally {
-        setHolidaysLoading(false);
-      }
-    }, [ensureSessionID, ensureClasses]);
+      return once(`holidays:${sessionID}`, async () => {
+        const branchID   = Number(sessionStorage.getItem("branchID"));
+        const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+        setHolidaysLoading(true);
+        const classes    = await ensureClasses();
+        try {
+          const results = await Promise.all(
+            MONTHS.map((_, i) =>
+              attendanceService.monthlySetup({
+                id: 0, branchID, sessionID,
+                holidayTitle: "", description: "", dateFrom: "", dateTo: "",
+                month: i + 1, action: "get",
+                createdBy: employeeID, modifiedBy: employeeID, classIDs: [],
+              }).then((res) => { holidayMonthsLoadedRef.current.add(i); return res?.data || []; })
+                .catch(() => []) // failed month stays "not loaded" → its expand retries
+            )
+          );
+          // Flat rows → grouped by holiday ID (each holiday once, all classes inside).
+               setHolidays(groupHolidayRows(results.flat(), classes));
+        } catch (err) {
+          console.error("Error loading holidays:", err);
+        } finally {
+          setHolidaysLoading(false);
+        }
+      }).catch(() => {});
+    }, [ensureSessionID, ensureClasses, once]);
 // Attendance component mein loadStaffAttendance function add karo
 // Attendance component mein - loadStaffAttendance ko replace karo
 
@@ -5556,14 +5703,35 @@ const loadStaffAttendance = useCallback(async (dateStr) => {
     return data;
   } catch (error) {
     console.error("Error loading staff attendance:", error);
-    return [];
+    return null; // failed (callers ignore the value; the today-cache retries)
   }
 }, []);
 
+/* Today's staff attendance, cached per day: opening the Staff tab, re-opening
+   it, expanding a staff row and the Reports → Individual list share ONE GET.
+   Saving / past-date edits still refresh it explicitly via loadStaffAttendance. */
+const staffTodayRef = useRef(null); // { date, promise }
+const ensureTodayStaff = useCallback(() => {
+  const today = new Date().toISOString().slice(0, 10);
+  const c = staffTodayRef.current;
+  if (c && c.date === today) return c.promise;
+  const promise = loadStaffAttendance(today).then((data) => {
+    if (data == null && staffTodayRef.current?.promise === promise) staffTodayRef.current = null;
+    return data;
+  });
+  staffTodayRef.current = { date: today, promise };
+  return promise;
+}, [loadStaffAttendance]);
+
 // Staff calendar par koi date select → us date ki staff attendance (view-only,
 // global staffData ko touch kiye bagair — marking hamesha "today" par safe rahe).
+// A newer date click aborts the previous one; a stale response is discarded.
 const [staffDateAttendance, setStaffDateAttendance] = useState(null); // { key, rows, loading }
+const staffDateAbortRef = useRef(null);
 const loadStaffDateAttendance = useCallback(async (dateStr) => {
+  staffDateAbortRef.current?.abort();
+  const ctrl = new AbortController();
+  staffDateAbortRef.current = ctrl;
   setStaffDateAttendance({ key: dateStr, rows: [], loading: true });
   const branchID = Number(sessionStorage.getItem("branchID"));
   let recs = [];
@@ -5572,11 +5740,12 @@ const loadStaffDateAttendance = useCallback(async (dateStr) => {
       id: 0, staffID: 0, branchID, attendanceDate: dateStr,
       checkInTime: "", checkOutTime: "", status: "", platform: "",
       isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
-    });
+    }, { signal: ctrl.signal });
     recs = res?.data || [];
   } catch (err) {
-    console.error("Error loading staff date attendance:", err);
+    if (err?.name !== "AbortError") console.error("Error loading staff date attendance:", err);
   }
+  if (ctrl.signal.aborted) return; // superseded by a newer date selection
   const rows = staffData.map((s) => {
     const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
     return {
@@ -5668,29 +5837,63 @@ return (staffData || []).map((s) => {
   };
 });
 }, [staffData, fetchMonthHolidayInfo]);
-// Attendance component mein - useEffect add karo
+/* ── Tab-scoped, on-demand loading ──────────────────────────────────────────
+   Each tab fetches ONLY what it shows, the first time it is opened; the once()
+   cache makes re-opening a tab (or StrictMode's double effect) free.
+     every tab        → attendance setup rules (trackOut columns, mark modals)
+     Attendance Setup → weekly off, previous-days flag, holidays (+ profile, in its card)
+     Student          → roster, employees (class teacher), weekly off, previous-days, today's marks
+     Staff            → employees, weekly off, previous-days, today's staff attendance
+     Reports          → roster + employees (filters / search); today's marks &
+                        staff status only when the Individual sub-tab is opened;
+                        header / weekly-off / sessions only when a report is generated */
+useEffect(() => {
+  if (!visibleTab) return;
+  ensureAttendanceSetup();
+  if (visibleTab === "holidays" || visibleTab === "student" || visibleTab === "staff") {
+    ensureWeeklyOff();
+    ensurePrevDays();
+  }
+  if (visibleTab === "student" || visibleTab === "reports") ensureStudentData();
+  if (visibleTab === "student" || visibleTab === "staff" || visibleTab === "reports") ensureEmployees();
+}, [visibleTab, ensureAttendanceSetup, ensureWeeklyOff, ensurePrevDays, ensureStudentData, ensureEmployees]);
+
+// Reports → Individual sub-tab opened (it shows today's class % + staff status).
+const [rptIndividualOpen, setRptIndividualOpen] = useState(false);
+const onIndividualOpen = useCallback(() => setRptIndividualOpen(true), []);
+const needTodayStaff = visibleTab === "staff"   || (visibleTab === "reports" && rptIndividualOpen);
+const needTodayMarks = visibleTab === "student" || (visibleTab === "reports" && rptIndividualOpen);
 
 useEffect(() => {
-  if ((tab === "staff" || tab === "reports") && staffData.length) {
-    // Staff/Reports tab active (aur employees loaded) → today's attendance GET.
-    const today = new Date().toISOString().slice(0, 10);
-    loadStaffAttendance(today);
-  }
+  // Staff tab (or Reports → Individual) + employees loaded → today's attendance (cached per day).
+  if (needTodayStaff && staffData.length) ensureTodayStaff();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [tab, staffData.length]);
+}, [needTodayStaff, staffData.length]);
     useEffect(() => {
-        if (tab === "holidays" && activeSessionID) loadAllHolidays();
+        if (visibleTab === "holidays" && activeSessionID) loadAllHolidays();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tab, activeSessionID]);
-    // Student/Reports tab open (aur data ready) → saari classes ki attendance GET.
+    }, [visibleTab, activeSessionID]);
+    // Student tab (or Reports → Individual) open (aur data ready) → har class ki
+    // aaj ki attendance — already-loaded classes cache se, dobara GET nahi.
     useEffect(() => {
-       if ((tab === "student" || tab === "reports") && studentData.length && activeSessionID) loadAllStudentMarks();
+       if (needTodayMarks && studentData.length && activeSessionID) loadAllStudentMarks();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tab, studentData.length, activeSessionID]);
+    }, [needTodayMarks, studentData.length, activeSessionID]);
+
+    // Leaving the module → abort any still-running calendar-date requests.
+    useEffect(() => () => {
+      dateAbortRef.current?.abort();
+      staffDateAbortRef.current?.abort();
+    }, []);
 
     // Yearly Holiday report picker open → classes list ready karo (class filter ke liye).
+    // Session list only as a fallback when the active session's name is unknown
+    // (the picker then lists the branch sessions instead).
     useEffect(() => {
-      if (reportPicker?.context === "holidayYearly") ensureClasses();
+      if (reportPicker?.context === "holidayYearly") {
+        ensureClasses();
+        if (!activeSessionName) ensureReportSessions();
+      }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [reportPicker]);
 
@@ -5802,25 +6005,22 @@ const onSaveWeeklyOff = useCallback(async () => {
 
   console.log("Weekly Off Days to save:", weeklyOff);
 
-  // Current saved days laao taake IDs mil sakein. Agar ye GET fail ho (500 etc.) to
-  // bhi SAVE ko mat roko — savedDaysMap khali maan kar selected days save kar do.
-  let currentData = [];
-  try {
-    const currentResponse = await attendanceService.getWeeklyOffSetup();
-    currentData = currentResponse?.data || [];
-  } catch (getErr) {
-    console.warn("getWeeklyOffSetup (initial) failed — empty saved state se aage barhte hain:", getErr);
+  // Saved days + their IDs: reuse the IDs from the last weekly-off GET (tab load
+  // or the refresh after the previous save) — no extra GET on every click. Only
+  // when they're unknown (that GET failed) fetch them now. Agar ye GET fail ho
+  // (500 etc.) to bhi SAVE ko mat roko — savedDaysMap khali maan kar save kar do.
+  let savedDaysMap = weeklyOffIdsRef.current ? { ...weeklyOffIdsRef.current } : null;
+  if (!savedDaysMap) {
+    try {
+      const currentResponse = await attendanceService.getWeeklyOffSetup();
+      savedDaysMap = parseWeeklyOff(currentResponse).ids;
+    } catch (getErr) {
+      console.warn("getWeeklyOffSetup (initial) failed — empty saved state se aage barhte hain:", getErr);
+      savedDaysMap = {};
+    }
   }
 
   try {
-    // Current saved days with their IDs
-    const savedDaysMap = {};
-    currentData.forEach(item => {
-      const dayIndex = DAYS_F.indexOf(item.WeekDay);
-      if (dayIndex !== -1) {
-        savedDaysMap[dayIndex] = item.ID;
-      }
-    });
 
     console.log("Saved days map:", savedDaysMap);
     console.log("Selected days (weeklyOff):", weeklyOff);
@@ -5873,20 +6073,19 @@ const onSaveWeeklyOff = useCallback(async () => {
       return;
     }
 
+    // Server rows changed → the cached IDs are stale until the refresh succeeds.
+    weeklyOffIdsRef.current = null;
     const results = await Promise.all(savePromises);
     console.log("All operations completed:", results);
 
     // Refresh — agar ye GET fail ho to bhi save successful hi maana jaye (local state rahe).
+    // It also stores the new row IDs for the next Save & Update.
     try {
       const refreshedResponse = await attendanceService.getWeeklyOffSetup();
-      const refreshedData = refreshedResponse?.data || [];
-      const weekDays = refreshedData
-        .map(item => {
-          const index = DAYS_F.indexOf(item.WeekDay);
-          return index !== -1 ? index : null;
-        })
-        .filter(idx => idx !== null);
-      setWeeklyOff(weekDays);
+      const { days, ids } = parseWeeklyOff(refreshedResponse);
+      weeklyOffIdsRef.current = ids;
+      weeklyOffRef.current = days;
+      setWeeklyOff(days);
     } catch (refreshErr) {
       console.warn("getWeeklyOffSetup (refresh) failed — local state rakhte hain:", refreshErr);
     }
@@ -5946,7 +6145,10 @@ const saveHoliday = useCallback(async (payload) => {
       });
       toast(payload.id ? "Holiday updated" : "Holiday added", "success");
       setHolModal(null);
-    }, [toast, setHolidays, ensureSessionID, blockIfReadOnly]);
+      // New holiday → re-read ONLY its month so the row carries the real server ID
+      // (edit / delete need it). Previously a later month expand re-fetched it.
+      if (!payload.id) loadMonthHolidays(payload.month, { force: true });
+    }, [toast, setHolidays, ensureSessionID, blockIfReadOnly, loadMonthHolidays]);
 
     const editingHoliday  = holModal?.id != null ? holidays.find((h) => h.id === holModal.id) : null;
     const deletingHoliday = delHolId    != null ? holidays.find((h) => h.id === delHolId)    : null;
@@ -6024,6 +6226,7 @@ const saveHoliday = useCallback(async (payload) => {
             onSaveStudentRules={onSaveStudentRules}
             onSaveGeofence={onSaveGeofence}
             savingSetup={savingSetup}
+            loadProfile={loadProfile}
           />
         )}
         {tab === "student" && (
@@ -6034,7 +6237,7 @@ const saveHoliday = useCallback(async (payload) => {
             openMarkSt={openMarkSt}
             openReportPicker={openReportPicker}
             toast={toast}
-            onExpandClass={loadStudentMarks}
+            onExpandClass={(idx, date) => (date ? loadStudentMarks(idx, date) : ensureTodayMarks(idx))}
             teacherMap={teacherMap}
                 onSelectDate={loadDateAttendance}
             dateAttendance={dateAttendance}
@@ -6053,7 +6256,7 @@ const saveHoliday = useCallback(async (payload) => {
             openMarkSf={openMarkSf}
             openReportPicker={openReportPicker}
             toast={toast}
-            onExpandStaff={() => loadStaffAttendance()}
+            onExpandStaff={ensureTodayStaff}
                  onSelectDate={loadStaffDateAttendance}
             staffDateAttendance={staffDateAttendance}
             staffLoading={staffLoading}
@@ -6073,6 +6276,7 @@ const saveHoliday = useCallback(async (payload) => {
             classOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
             sessionName={activeSessionName}
             staffTrackOut={attendanceSetup.staffTrackingMode !== "in_only"}
+            onIndividualOpen={onIndividualOpen}
           />
         )}
 
@@ -6083,6 +6287,7 @@ const saveHoliday = useCallback(async (payload) => {
             defaultMonth={holModal.monthIdx}
             onClose={() => setHolModal(null)}
             onSave={saveHoliday}
+            loadClasses={ensureClasses}
           />
         )}
         {deletingHoliday && (
