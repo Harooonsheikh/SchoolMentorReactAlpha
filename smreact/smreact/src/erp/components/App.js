@@ -52,9 +52,7 @@ const EXTRA_NAV_BRANCHES = {};
 /* Modules that are live ONLY on the listed branchIDs and hidden on every other
    branch. Unlike BRANCH1_ONLY_NAV, the user's permission still applies on the
    allowed branches. Keyed by sidebar nav id. */
-const BRANCH_ONLY_NAV = {
-  cmp: ['1', '15'], /* School Compliance */
-};
+const BRANCH_ONLY_NAV = {};
 
 /* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
    Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
@@ -201,7 +199,7 @@ const NAV_SECTIONS = [
       /* { id: 'networks',  name: 'Networks',       icon: 'fa-circle-nodes' }, — ab Settings › Networks tab me */
       { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },     /* branchID 1 only */
       { id: 'approvals', name: 'Approvals',        icon: 'fa-square-check' },
-      { id: 'cmp',       name: 'School Compliance', icon: 'fa-clipboard-check' },   /* branch 1 & 15 only */
+      { id: 'cmp',       name: 'School Compliance', icon: 'fa-clipboard-check' },   /* schoolCompliance module-permission flag */
     ],
   },
   {

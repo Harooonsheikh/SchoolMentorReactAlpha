@@ -32,9 +32,8 @@ export const MODULE_REGISTRY = [
   /* Approvals follows the module-permission `approvals` flag (API_FIELD_TO_MODULE_MAP).
      Off for a branch → sidebar item and screen hidden there. */
   { id: 'approvals',        label: 'Approvals',         icon: 'fa-square-check',     group: 'ADMINISTRATION', route: '/approvals',          coreLocked: false },
-  /* School Compliance has no backend module-permission field yet, so it is
-     ALWAYS_ON (below) and limited to branches 1 & 15 by BRANCH_ONLY_NAV in
-     components/App.js. */
+  /* School Compliance follows the module-permission `schoolCompliance` flag
+     (API_FIELD_TO_MODULE_MAP), same as every other module. */
   { id: 'school_compliance', label: 'School Compliance', icon: 'fa-clipboard-check',  group: 'ADMINISTRATION', route: '/school-compliance',  coreLocked: false },
 
   /* ── SCHOOL MENTOR GROUP ─────────────────────────────────────── */
@@ -57,7 +56,7 @@ export const MODULE_REGISTRY = [
        normal rehte hain aur permission-matrix me bhi dikhte hain, bas sidebar
        se kabhi gayab nahi hote. Inventory ko har branch ke liye kholne ke liye
        yahan rakha gaya hai. */
-export const ALWAYS_ON_MODULES = ['inventory', 'school_compliance'];
+export const ALWAYS_ON_MODULES = ['inventory'];
 
 /* ─── Default activation state — every module enabled. */
 export const DEFAULT_MODULE_STATE = Object.fromEntries(
@@ -97,6 +96,7 @@ export const API_FIELD_TO_MODULE_MAP = {
   settings:          'settings',
   userPermissions:   'user_permissions',
   approvals:         'approvals',
+  schoolCompliance:  'school_compliance',
   /* Sub-feature flag — JAAN BOOJH kar MODULE_REGISTRY se bahar (sidebar nav
      nahi banta). Fee ke 1Link / PSID payment controls isi par chhupte/dikhte
      hain: Fee.jsx → useModules().isActive('one_link_integration').
