@@ -974,6 +974,10 @@ select.settings-input {
 }
 [data-theme="dark"] .settings-upload { background: rgba(255,255,255,.02); }
 .settings-upload:hover { border-color: #1E40AF; background: #EFF6FF; }
+.settings-upload.has-error,
+.settings-upload.has-error:hover { border-color: #DC2626; background: #FEF2F2; }
+[data-theme="dark"] .settings-upload.has-error,
+[data-theme="dark"] .settings-upload.has-error:hover { border-color: #F87171; background: rgba(220,38,38,.08); }
 .settings-upload-ic {
   width: 44px; height: 44px;
   border-radius: 12px;

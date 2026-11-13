@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import SessionFormModal from './SessionFormModal';
@@ -17,8 +17,11 @@ import {
 export default function SessionManagement({ toast }) {
   const {
     sessions, currentSession, sessionsLoading,
-    setAsCurrent, upsertSession, deleteSession, toggleSessionLock,
+    setAsCurrent, upsertSession, deleteSession, toggleSessionLock, ensureSessions,
   } = useSettings();
+
+  /* Sessions list sirf yahan (Settings khulne par) load hoti hai. */
+  useEffect(() => { ensureSessions(); }, [ensureSessions]);
 
   const { can } = usePermissions();
   const canCreate  = can('Settings', 'Academic Sessions', 'Create');

@@ -1,5 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { buildUrl, resolveMediaUrl, storeCurrentSession, refreshActiveAcademicSession } from '../../../utils/apiConfig';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  buildUrl, resolveMediaUrl, storeCurrentSession, refreshActiveAcademicSession,
+  loadActiveAcademicSessionOnce, readStoredActiveSession, SESSION_CHANGE_EVENT,
+} from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS STORE — sessions + signatures + global current session
@@ -92,6 +95,21 @@ function sessionFromApi(row) {
     updatedAt: String(row.ModifiedAt || '').slice(0, 10),
     isActive:  row.IsActive,
   };
+}
+
+/* Login-time active-session row (get-academic-active-sessions-by-branch, stored in
+   sessionStorage) → internal session shape. Returns null when the row can't
+   safely stand in for the full list's "current" session (no module flags, or a
+   non-current status) — the provider then falls back to the full sessions GET. */
+const truthyFlag = (v) => v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
+function sessionFromActiveRow(row) {
+  if (!row || (row.ID == null && row.id == null)) return null;
+  if (!MODULE_API_MAP.some(m => m.readKey in row)) return null;
+  const status = String(row.Status ?? row.status ?? 'current').toLowerCase();
+  if (status !== 'current') return null;
+  const s = sessionFromApi({ ...row, ID: row.ID ?? row.id, Status: 'current' });
+  s.modules = MODULE_API_MAP.filter(m => truthyFlag(row[m.readKey])).map(m => m.id);
+  return s;
 }
 
 /* internal session shape → save payload (camelCase + per-module booleans). */
@@ -222,6 +240,15 @@ function signatureAuthHeaders() {
   return { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
+/* Backend base64 image ko DB me save karta hai aur GET par uske aage apna host
+   jod deta hai → "http://host.aidata:image/png;base64,..." (toota hua URL).
+   Agar string me "data:image" ho to wahin se aage ka hissa lo. */
+function cleanSignatureImage(raw) {
+  const s = String(raw || '');
+  const i = s.indexOf('data:image');
+  return i > 0 ? s.slice(i) : s;
+}
+
 /* API row (PascalCase) → internal signature shape. */
 function signatureFromApi(row) {
   return {
@@ -231,7 +258,7 @@ function signatureFromApi(row) {
     designation:  row.DesignationName || '',
     department:   row.DepartmentName || '',
     title:        row.SignatureTitle || '',
-    imageDataUrl: row.SignatureImage || '',        // already a full URL
+    imageDataUrl: cleanSignatureImage(row.SignatureImage), // full URL ya base64
     status:       String(row.Status || '').toLowerCase() === 'active' ? 'active' : 'inactive',
     documents:    SIGNATURE_DOC_MAP.filter(d => row[d.key]).map(d => d.id),
     createdAt:    String(row.CreatedAt || '').slice(0, 10),
@@ -253,7 +280,33 @@ export async function apiGetSignatures() {
 /* POST insert (id:0) or update (id>0) as multipart/form-data.
    `sig.imageFile` (a File) is sent only when the user picked a new image;
    otherwise the existing image URL is preserved via `SignatureImage`. */
+/* Backend image ko `SignatureImage` ki base64 string se save karta hai. Edit /
+   status-toggle par nayi file nahi hoti aur hamare paas sirf server ka URL hota
+   hai — wo URL bhejne se image toot jati thi. Is liye existing URL ko wapas
+   base64 me badal kar bhejte hain (naye upload wala hi raasta). Fetch fail ho
+   to purana behaviour (URL as-is). */
+async function imageUrlToDataUrl(url) {
+  if (!url || /^(data|blob):/i.test(url)) return url || '';
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return url;
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return url;
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => resolve(url);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return url;
+  }
+}
+
 export async function apiSaveSignature(sig) {
+  if (!(sig.imageFile instanceof File)) {
+    sig = { ...sig, imageDataUrl: await imageUrlToDataUrl(sig.imageDataUrl) };
+  }
   const docSet = new Set(sig.documents || []);
   const fd = new FormData();
   fd.append('ID', String(sig.id || 0));
@@ -304,9 +357,20 @@ export function SettingsProvider({ children }) {
   const [signatures, setSignatures] = useState([]);
   const [signaturesLoading, setSignaturesLoading] = useState(true);
 
+  /* ── Lazy loading ──
+     The provider wraps the whole ERP, so it must NOT hit Settings APIs on
+     every screen. The full sessions list and signatures are fetched only when
+     a screen that needs them calls ensureSessions() / ensureSignatures().
+     Everywhere else, currentSession comes from the active-session row already
+     fetched once at login (sessionStorage), so no extra request is made. */
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const sessionsRequested   = useRef(false);
+  const signaturesRequested = useRef(false);
+  const [activeSeed, setActiveSeed] = useState(() => sessionFromActiveRow(readStoredActiveSession()));
+
   const currentSession = useMemo(
-    () => sessions.find(s => s.status === 'current') || null,
-    [sessions],
+    () => (sessionsLoaded ? sessions.find(s => s.status === 'current') || null : activeSeed),
+    [sessionsLoaded, sessions, activeSeed],
   );
 
   /* Publish the current session to the shared store as soon as it is known.
@@ -325,21 +389,60 @@ export function SettingsProvider({ children }) {
 
   /* Load sessions from the API for the active branch. Empty response → empty list. */
   const loadSessions = useCallback(async () => {
+    sessionsRequested.current = true;
     setSessionsLoading(true);
     try {
       setSessions(await apiGetSessions());
+      setSessionsLoaded(true);
     } catch (err) {
       console.error('Could not load academic sessions:', err);
       setSessions([]);
+      setSessionsLoaded(true);
     } finally {
       setSessionsLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadSessions(); }, [loadSessions]);
+  /* Fetch the full list once, on demand (Settings › Sessions, Branch-Class
+     Mapping, Annual Leave report). Later calls are no-ops; mutations reload. */
+  const ensureSessions = useCallback(() => {
+    if (!sessionsRequested.current) loadSessions();
+  }, [loadSessions]);
+
+  /* Resolve currentSession from the login snapshot (shared, deduped request —
+     no call at all when it's already in sessionStorage). Only if that row
+     can't be used do we fall back to the full sessions GET. */
+  useEffect(() => {
+    let alive = true;
+    loadActiveAcademicSessionOnce()
+      .then((row) => {
+        if (!alive) return;
+        const seed = sessionFromActiveRow(row);
+        if (seed) setActiveSeed(seed);
+        else ensureSessions();
+      })
+      .catch(() => { if (alive) ensureSessions(); });
+    return () => { alive = false; };
+  }, [ensureSessions]);
+
+  /* Keep the seed in sync when the stored active session changes (login
+     refresh, or a session save/delete calling refreshActiveAcademicSession). */
+  useEffect(() => {
+    let lastRaw = JSON.stringify(readStoredActiveSession());
+    const onChange = () => {
+      const row = readStoredActiveSession();
+      const raw = JSON.stringify(row);
+      if (raw === lastRaw) return;
+      lastRaw = raw;
+      setActiveSeed(sessionFromActiveRow(row));
+    };
+    window.addEventListener(SESSION_CHANGE_EVENT, onChange);
+    return () => window.removeEventListener(SESSION_CHANGE_EVENT, onChange);
+  }, []);
 
   /* Load signatures from the API for the active branch. Empty response → empty list. */
   const loadSignatures = useCallback(async () => {
+    signaturesRequested.current = true;
     setSignaturesLoading(true);
     try {
       setSignatures(await apiGetSignatures());
@@ -351,7 +454,10 @@ export function SettingsProvider({ children }) {
     }
   }, []);
 
-  useEffect(() => { loadSignatures(); }, [loadSignatures]);
+  /* Signatures are only used by Settings › Signatures — fetched on first open. */
+  const ensureSignatures = useCallback(() => {
+    if (!signaturesRequested.current) loadSignatures();
+  }, [loadSignatures]);
 
   /* Promote `id` to current, demote the existing current. The old current
      becomes 'past' if its end date has elapsed, or 'upcoming' otherwise.
@@ -433,11 +539,11 @@ export function SettingsProvider({ children }) {
   }, [signatures, loadSignatures]);
 
   const value = useMemo(() => ({
-    sessions, setSessions, currentSession, sessionsLoading, reloadSessions: loadSessions,
+    sessions, setSessions, currentSession, sessionsLoading, reloadSessions: loadSessions, ensureSessions,
     setAsCurrent, upsertSession, deleteSession, toggleSessionLock,
-    signatures, setSignatures, signaturesLoading, reloadSignatures: loadSignatures,
+    signatures, setSignatures, signaturesLoading, reloadSignatures: loadSignatures, ensureSignatures,
     upsertSignature, deleteSignature, toggleSignatureStatus,
-  }), [sessions, signatures, currentSession, sessionsLoading, loadSessions, signaturesLoading, loadSignatures, setAsCurrent, upsertSession, deleteSession, toggleSessionLock, upsertSignature, deleteSignature, toggleSignatureStatus]);
+  }), [sessions, signatures, currentSession, sessionsLoading, loadSessions, ensureSessions, signaturesLoading, loadSignatures, ensureSignatures, setAsCurrent, upsertSession, deleteSession, toggleSessionLock, upsertSignature, deleteSignature, toggleSignatureStatus]);
 
   return (
     <SettingsContext.Provider value={value}>
@@ -515,8 +621,8 @@ export function useSettings() {
      components don't blow up. */
   return ctx || {
     sessions: [], signatures: [], currentSession: null,
-    sessionsLoading: false, reloadSessions: () => {},
-    signaturesLoading: false, reloadSignatures: () => {},
+    sessionsLoading: false, reloadSessions: () => {}, ensureSessions: () => {},
+    signaturesLoading: false, reloadSignatures: () => {}, ensureSignatures: () => {},
     setAsCurrent: () => {},
     upsertSession: () => {}, deleteSession: () => {}, toggleSessionLock: () => {},
     upsertSignature: () => {}, deleteSignature: () => {}, toggleSignatureStatus: () => {},

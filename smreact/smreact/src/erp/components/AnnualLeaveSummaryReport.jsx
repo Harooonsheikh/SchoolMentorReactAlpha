@@ -624,8 +624,10 @@ function IndividualStatementTab({ ctx, employees, sessionStart, sessionEnd, empI
 
 /* ─── Root ─── */
 export default function AnnualLeaveSummaryReport({ emps, depts, desigs, getDeptName, getDesigName, toast, onBack, branchId = 1 }) {
-  const { sessions, currentSession } = useSettings();
+  const { sessions, currentSession, ensureSessions } = useSettings();
   const [sessionId, setSessionId] = useState(currentSession?.id || null);
+  /* Session dropdown ke liye list sirf is report ke khulne par load hoti hai. */
+  useEffect(() => { ensureSessions(); }, [ensureSessions]);
   const [tab, setTab] = useState("summary");
   const [empId, setEmpId] = useState(null);
 

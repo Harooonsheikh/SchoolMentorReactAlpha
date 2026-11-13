@@ -72,8 +72,9 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
     const e = {};
     if (!staffId)      e.staffId = 'Staff member is required';
     if (!title.trim()) e.title   = 'Signature title is required';
+    if (!imageDataUrl) e.image   = 'Signature image is required';
     return e;
-  }, [staffId, title]);
+  }, [staffId, title, imageDataUrl]);
 
   const hasErrors = Object.keys(errors).length > 0;
 
@@ -211,7 +212,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
 
             {/* Upload zone */}
             <div className="settings-field span2">
-              <label>Signature Image</label>
+              <label>Signature Image <span className="settings-field-req">*</span></label>
               <span className="settings-field-helper">Transparent PNG recommended · Max 2 MB</span>
               <input
                 ref={fileRef}
@@ -243,7 +244,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
                 <Tooltip text="Click to upload or drag & drop a signature image (PNG · Max 2 MB)">
                   <button
                     type="button"
-                    className="settings-upload"
+                    className={`settings-upload${touched && errors.image ? ' has-error' : ''}`}
                     onClick={() => fileRef.current?.click()}
                     onDragOver={(e) => { e.preventDefault(); }}
                     onDrop={(e) => {
@@ -259,6 +260,11 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
                     <div className="settings-upload-sub">Transparent PNG recommended · Max 2 MB</div>
                   </button>
                 </Tooltip>
+              )}
+              {touched && errors.image && (
+                <span className="settings-field-err">
+                  <i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {errors.image}
+                </span>
               )}
             </div>
 

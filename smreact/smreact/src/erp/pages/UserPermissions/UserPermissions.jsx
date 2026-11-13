@@ -39,7 +39,8 @@ const TABS = [
   { id: 'users',  icon: 'fa-users',           label: 'Users'             },
   { id: 'roles',  icon: 'fa-id-badge',        label: 'Roles'             },
  /* { id: 'groups', icon: 'fa-layer-group',     label: 'Permission Groups' },*/
-  { id: 'audit',  icon: 'fa-clipboard-list',  label: 'Audit Logs'        },
+  /* Audit Logs tab hidden (team lead request) — un-comment to restore. */
+  /* { id: 'audit',  icon: 'fa-clipboard-list',  label: 'Audit Logs'        }, */
 ];
 
 /* get-employees-by-branch ki employee row ko Users-tab wali user shape me map karo.
@@ -606,8 +607,9 @@ export default function UserPermissions({ toast = () => {} }) {
               sub="Available role definitions" />
         <Stat tone="green"  icon="fa-layer-group"     label="Permission Groups"  value={stats.permGroups}
               sub="Reusable access bundles" />
+        {/* Audit Events card hidden along with the Audit Logs tab.
         <Stat tone="amber"  icon="fa-clipboard-list"  label="Audit Events"       value={stats.auditEvents}
-              sub={auditRange.from === auditRange.to ? 'Selected day' : 'Selected date range'} />
+              sub={auditRange.from === auditRange.to ? 'Selected day' : 'Selected date range'} /> */}
       </div>
 
       {/* Tab bar */}
@@ -715,7 +717,7 @@ const UP_CSS = `
 /* ─── Stat strip ─── */
 .up-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-bottom: 14px;
 }

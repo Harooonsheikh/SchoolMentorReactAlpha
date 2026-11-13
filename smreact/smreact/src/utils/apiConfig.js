@@ -349,6 +349,19 @@ export function hasStoredActiveSessionCheck() {
   catch (e) { return false; }
 }
 
+/* Login snapshot ko ek hi baar load karo. Agar pehle se stored hai to API call
+   nahi hoti; agar App.js aur SettingsProvider ek saath maangein to dono ek hi
+   in-flight request share karte hain (duplicate call nahi jati). */
+let activeSessionInflight = null;
+export function loadActiveAcademicSessionOnce() {
+  if (hasStoredActiveSessionCheck()) return Promise.resolve(readStoredActiveSession());
+  if (!activeSessionInflight) {
+    activeSessionInflight = refreshActiveAcademicSession()
+      .finally(() => { activeSessionInflight = null; });
+  }
+  return activeSessionInflight;
+}
+
 /* GET /api/Setting/get-academic-active-sessions-by-branch — once per login,
    and again only when an academic session is saved. Writes the same
    sessionStorage keys every tab already reads. */

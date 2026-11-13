@@ -17,7 +17,7 @@ import { AppProvider } from './context/AppContext';
 import LoginScreen from './Pages/auth/LoginScreen';
 import SignupFlow from './Pages/auth/SignupFlow';
 import { isErpUnlocked } from './utils/erp';
-import { hasStoredActiveSessionCheck, refreshActiveAcademicSession } from './utils/apiConfig';
+import { hasStoredActiveSessionCheck, loadActiveAcademicSessionOnce } from './utils/apiConfig';
 import ErpApp from './erp/App';
 import ViewOnlyGuard, { VIEW_ONLY_TIP, useViewOnly } from './erp/shared/ViewOnlyGuard';
 import { PermissionsProvider } from './erp/context/PermissionsContext';
@@ -431,7 +431,7 @@ function AuthGate() {
     if (screen !== 'erp' && screen !== 'app') return;
     if (hasStoredActiveSessionCheck()) return;
     if (!sessionStorage.getItem('token') || !sessionStorage.getItem('branchID')) return;
-    refreshActiveAcademicSession().catch((e) => console.error('Could not load active academic session', e));
+    loadActiveAcademicSessionOnce().catch((e) => console.error('Could not load active academic session', e));
   }, [screen]);
 
   function handleLogin(userData) {

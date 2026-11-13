@@ -35,9 +35,19 @@ import * as branchClassMappingService from '../../services/branchClassMappingSer
    mounts — no new stylesheet either way.
    ═══════════════════════════════════════════════════════════════════ */
 export default function BranchClassMapping({ toast = () => {} }) {
-  const { sessions, currentSession } = useSettings();
+  const { sessions, currentSession, ensureSessions } = useSettings();
 
   const [sessionId, setSessionId] = useState(currentSession?.id || sessions[0]?.id || null);
+
+  /* Sessions dropdown ke liye list on-demand load karo; agar pehle sessionId
+     nahi mila tha to list aane par default set kar do. */
+  useEffect(() => { ensureSessions(); }, [ensureSessions]);
+  useEffect(() => {
+    if (sessionId == null) {
+      const fallback = currentSession?.id || sessions[0]?.id || null;
+      if (fallback != null) setSessionId(fallback);
+    }
+  }, [sessionId, currentSession, sessions]);
   const [centralClasses, setCentralClasses] = useState([]);   // the network's classes
   const [networkId, setNetworkId] = useState(null);           // null = resolving, 0 = not in a network
   const [netLoading, setNetLoading] = useState(true);

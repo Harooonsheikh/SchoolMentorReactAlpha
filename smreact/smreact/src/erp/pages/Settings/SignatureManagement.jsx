@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import SignatureFormModal from './SignatureFormModal';
@@ -13,7 +13,10 @@ import {
    SIGNATURE MANAGEMENT — info banner, filter bar, table, modals
    ═══════════════════════════════════════════════════════════════════ */
 export default function SignatureManagement({ toast }) {
-  const { signatures, signaturesLoading, upsertSignature, deleteSignature, toggleSignatureStatus } = useSettings();
+  const { signatures, signaturesLoading, upsertSignature, deleteSignature, toggleSignatureStatus, ensureSignatures } = useSettings();
+
+  /* Signatures sirf is tab ke khulne par load hoti hain. */
+  useEffect(() => { ensureSignatures(); }, [ensureSignatures]);
 
   const { can } = usePermissions();
   const canCreate  = can('Settings', 'Signature Management', 'Create');
