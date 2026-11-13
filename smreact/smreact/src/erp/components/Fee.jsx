@@ -7664,13 +7664,41 @@ function FeeReminderModal({ cfg, onClose, toast }) {
    ═══════════════════════════════════════════════════════════════════ */
 function ReceiptDownloadButton({ payments, onPick, label = 'Download receipt slip' }) {
   const [open, setOpen] = useState(false);
+  /* Menu body par (portal) fixed position se — table ka overflow wrapper aakhri row ka
+     menu kaat deta tha (options nazar nahi aate the). Neeche jagah kam ho to upar khulta hai. */
+  const [pos, setPos] = useState(null);
   const ref = useRef(null);
+  const menuRef = useRef(null);
+  const place = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const menuW = 280;
+    const menuH = Math.min(240, 44 * ((payments?.length || 0) + 1) + 14);
+    const below = window.innerHeight - r.bottom;
+    const up = below < menuH + 12 && r.top > below;
+    const left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8));
+    setPos(up ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
+  }, [payments]);
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    place();
+    const onDown = e => {
+      if (ref.current && ref.current.contains(e.target)) return;
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    /* Scroll / resize par menu button ke saath rahe. */
+    const onMove = () => place();
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
+    };
+  }, [open, place]);
 
   if (!payments || payments.length === 0) return null;
 
@@ -7691,8 +7719,12 @@ function ReceiptDownloadButton({ payments, onPick, label = 'Download receipt sli
           <i className="fa-solid fa-download"></i>
         </button>
       </Tooltip>
-      {open && (
-        <div className="fee-ms-menu" style={{ left: 'auto', right: 0, minWidth: 260 }}>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          className="fee-ms-menu"
+          style={{ position: 'fixed', top: 'auto', bottom: 'auto', right: 'auto', width: 280, minWidth: 260, zIndex: 3000, ...pos }}
+        >
           {payments.map((p, i) => (
             <button key={p.id || i} type="button" className="fee-ms-opt" onClick={() => { onPick(p, false); setOpen(false); }}>
               <span className="fee-ms-name">
@@ -7703,7 +7735,8 @@ function ReceiptDownloadButton({ payments, onPick, label = 'Download receipt sli
           <button type="button" className="fee-ms-opt" onClick={() => { onPick(null, true); setOpen(false); }}>
             <span className="fee-ms-name"><b>Combined Receipt</b> <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>(all installments)</span></span>
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -7724,6 +7757,19 @@ function ReceiptDownloadButton({ payments, onPick, label = 'Download receipt sli
      Received  = is installment me wasool
      Remaining = Std − Discount − Received (MINUS = advance)
    Sirf wo heads jin par is installment me kuch hua. Challan na ho to null (purana fallback). */
+/* Slip ka per-head previous. Branch 1/15 par advance (minus previousPendingorAdv) receiving
+   modal me "—" hai aur sirf "Adjust From Advance" se istemal hota hai — slips (instant,
+   installment, combined) me bhi na Previous me aaye na Std me ghate, warna har slip alag
+   number dikhati thi (Std 6,000 vs 8,000). Baaki branches: pehle jaisa (signed). */
+/* Challan ki saari heads ka kul received — naya receipt server par aa gaya ya nahi, pehchaan. */
+function slipSumRecv(ch) {
+  return (ch?.detailRows || []).reduce((a, r) => a + (Number(r.receivedAmount) || 0), 0);
+}
+function slipHeadPrev(r) {
+  const v = feeHeadPrev(r) || 0;
+  return isAdvanceAdjustBranch() ? Math.max(0, v) : v;
+}
+
 function installmentSlipRows(challan, payments, payment) {
   const rows = challan && Array.isArray(challan.detailRows) ? challan.detailRows : null;
   if (!rows || !payment) return null;
@@ -7743,14 +7789,14 @@ function installmentSlipRows(challan, payments, payment) {
     const recv = pick(payment.perHead, name);
     const disc = Math.max(0, pick(payment.giveDisc, name));
     const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
-    let before = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0);
+    let before = (+r.challanAmount || 0) - mgr + (slipHeadPrev(r) || 0);
     let earlierPaid = 0;
     earlier.forEach(p => { earlierPaid += pick(p.perHead, name) + Math.max(0, pick(p.giveDisc, name)); });
     before -= earlierPaid;
     /* Is payment me kuch na liya ho magar baqaya ho to bhi head dikhe (Received "—",
        Remaining = baqaya). Poora ada shuda aur ab bhi kuch nahi → chhod do. */
     /* Manfi stored previous (backend ka galat −2,000) baqaya chhupa na de. */
-    if (!recv && !disc && Math.round(before - Math.min(0, feeHeadPrev(r) || 0)) <= 0) return;
+    if (!recv && !disc && Math.round(before - Math.min(0, slipHeadPrev(r) || 0)) <= 0) return;
     /* _mgr / _first: slip (toggle ON) is head ki PEHLI receiving par manager discount bhi
        dikhaye — Std gross, Discount = manager + give.
        Previous alag column me: is installment se pehle ka previous baqaya. Old-dues head
@@ -7799,10 +7845,10 @@ function latestReceivingSlipRows(challan) {
       else if (t < latest) before += recv + give;
     });
     const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
-    const std = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0) - before;
+    const std = (+r.challanAmount || 0) - mgr + (slipHeadPrev(r) || 0) - before;
     /* Is receiving me kuch na liya magar baqaya ho to bhi head dikhe (Received "—"). */
     /* Manfi stored previous (backend ka galat −2,000) baqaya chhupa na de. */
-    if (!recvNow && !discNow && Math.round(std - Math.min(0, feeHeadPrev(r) || 0)) <= 0) return;
+    if (!recvNow && !discNow && Math.round(std - Math.min(0, slipHeadPrev(r) || 0)) <= 0) return;
     const headName = r.subHead || r.head || '';
     const prevNow = isPreviousDuesHead(headName)
       ? Math.max(0, Math.round(std) - Math.max(0, Math.round((+r.challanAmount || 0) - mgr - before)))
@@ -7856,12 +7902,51 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const chRows = cfg.challan && Array.isArray(cfg.challan.detailRows) ? cfg.challan.detailRows : null;
   /* Combined slip: har head ka Previous / Std / Discount / Received (total) / Remaining — challan ke detailRows se,
      single installment slip wale columns jaisa. */
-  const combinedBreakup = combined ? headWiseNames.map(name => {
-    const cr = (chRows || []).find(r => String(r.subHead || r.head || '').trim().toLowerCase() === String(name).trim().toLowerCase());
-    const prev = cr ? (feeHeadPrev(cr) || 0) : 0;
+  /* Heads = challan ki saari heads (jin par abhi wasooli nahi hui wo bhi — warna Stationary
+     jaisi unpaid head combined slip se gayab ho jaati thi) + installments ki perHead heads.
+     Advance-consumption (minus carry) rows aur bina bill/wasooli wali fine row chhod do. */
+  const cbNorm = (s) => String(s || '').trim().toLowerCase();
+  /* Per-head previous = pichhle mahino ka running-ledger (cfg.prevByHead) — wahi jo list ka
+     "Previous" aur single slip dikhate hain. Challan ki rows me sirf us mahine ke heads hote
+     hain (Previous Due 15,000 jaisi baqaya head row me hoti hi nahi) → combined slip se
+     gayab ho jaati thi aur Tuition ka previous bhi purana (2,000 vs 6,000) aata tha.
+     Branch 1/15: advance (minus) previous nahi dikhate (slipHeadPrev jaisa). */
+  const cbSnap = (combined && cfg.prevByHead && typeof cfg.prevByHead === 'object' && Object.keys(cfg.prevByHead).length)
+    ? Object.fromEntries(Object.entries(cfg.prevByHead).map(([k, v]) => [k, isAdvanceAdjustBranch() ? Math.max(0, Number(v) || 0) : (Number(v) || 0)]))
+    : null;
+  const cbSnapOf = (name) => {
+    if (!cbSnap) return null;
+    const k = Object.keys(cbSnap).find(x => cbNorm(x) === cbNorm(name));
+    return k != null ? Math.round(cbSnap[k]) : null;
+  };
+  const combinedNames = combined ? (() => {
+    const out = [];
+    const seen = new Set();
+    const add = (n) => { const k = cbNorm(n); if (n && !seen.has(k)) { seen.add(k); out.push(n); } };
+    (chRows || []).forEach(r => {
+      if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return;
+      const name = r.subHead || r.head || '';
+      const paidAny = combinedRows.some(p => Object.keys(p.perHead || {}).some(k => cbNorm(k) === cbNorm(name) && (+p.perHead[k] || 0) !== 0));
+      if (feeService.isLateFineRow(r) && !(+r.challanAmount || 0) && !paidAny) return;
+      add(name);
+    });
+    headWiseNames.forEach(add);
+    /* Sirf-previous heads (challan me row nahi, magar baqaya hai). */
+    Object.keys(cbSnap || {}).forEach(k => { if (Math.round(cbSnap[k]) !== 0) add(k); });
+    return out;
+  })() : [];
+  const combinedBreakup = combined ? combinedNames.map(name => {
+    const cr = (chRows || []).find(r => cbNorm(r.subHead || r.head) === cbNorm(name));
+    const pickPH = (obj) => { const k = Object.keys(obj || {}).find(x => cbNorm(x) === cbNorm(name)); return k != null ? (+obj[k] || 0) : 0; };
+    const snapPrev = cbSnapOf(name);
+    const prev = snapPrev != null ? snapPrev : (cr ? (slipHeadPrev(cr) || 0) : 0);
     const std = cr ? (+cr.challanAmount || 0) : 0;
-    const disc = cr ? (+cr.discount || 0) : 0;
-    const total = combinedRows.reduce((a, p) => a + (+(p.perHead?.[name]) || 0), 0);
+    /* Discount = Discount Manager (challan) + har installment ki Give Discount. */
+    const give = combinedRows.reduce((a, p) => a + Math.max(0, pickPH(p.giveDisc)), 0);
+    /* Manager discount — installmentSlipRows jaisa (Give fold ho chuki ho to nikaal ke). */
+    const mgr = cr ? Math.max(0, cr._mgrDisc != null ? +cr._mgrDisc : (+cr.discount || 0) - (cr._recvFolded ? (+cr.recvDiscount || 0) : 0)) : 0;
+    const disc = mgr + give;
+    const total = combinedRows.reduce((a, p) => a + pickPH(p.perHead), 0);
     return { name, prev: Math.round(prev), std: Math.round(std), disc: Math.round(disc), total: Math.round(total), remaining: Math.round(std + prev - disc - total) };
   }) : [];
   /* Stored "Previous Pending" GENERATION-time snapshot hai — pichhle mahine ki receiving
@@ -7872,9 +7957,16 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   /* Receiving ke WAQT ka per-head previous snapshot (model.heads se, running-ledger par bana).
      Ye slip ka SABSE sahi source hai — receiving screen bhi yahi value head-wise dikhata hai.
      Fresh receive par payment.prevByHead me hamesha aata hai; warna cfg.prevByHead (as-of ledger). */
-  const snapByHead = (payment && payment.prevByHead && typeof payment.prevByHead === 'object' && Object.keys(payment.prevByHead).length)
+  const snapByHeadRaw = (payment && payment.prevByHead && typeof payment.prevByHead === 'object' && Object.keys(payment.prevByHead).length)
     ? payment.prevByHead
     : ((cfg.prevByHead && typeof cfg.prevByHead === 'object' && Object.keys(cfg.prevByHead).length) ? cfg.prevByHead : null);
+  /* Branch 1/15: advance (minus previous) receiving modal me "—" hai (sirf "Adjust From
+     Advance" se aata hai) — slip ke Previous column me bhi na aaye. Warna Pay Now ke turant
+     baad wali slip Previous −2,500 / Remaining −1,000 dikhati thi jabke Download wali slip
+     "—" / 1,500. Key rakhte hain (0) taake Std me fold hua previous phir bhi nikle. */
+  const snapByHead = (snapByHeadRaw && isAdvanceAdjustBranch())
+    ? Object.fromEntries(Object.entries(snapByHeadRaw).map(([k, v]) => [k, Math.max(0, Number(v) || 0)]))
+    : snapByHeadRaw;
   /* Per-head previous (previousPendingorAdv) available ho to slip HEAD-WISE: aggregate
      "Previous Pending" row hata kar har head ka previous "Pending" me jodte hain (challan jaisa).
      BUG FIX: pehle yahan sirf challan ki NON-ZERO previousPendingorAdv dekhi jaati thi. Pehli
@@ -7902,7 +7994,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
         if (isPrev && prevStdOverride != null) std = prevStdOverride;
         const disc = Math.round(+r.discount || 0);
         const recv = Math.round(+r.receivedAmount || 0);
-        const prev = hasHeadPrev ? Math.round(+(feeHeadPrev(r)) || 0) : 0;
+        const prev = hasHeadPrev ? Math.round(+(slipHeadPrev(r)) || 0) : 0;
         return { name: r.subHead || r.head || '—', std, disc, recv, prev };
       })
     : Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, std: Math.round(+amt || 0), disc: 0, recv: Math.round(+amt || 0), prev: 0 }));
@@ -7925,7 +8017,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
        server (pendingorAdv) se 500 kam aata tha. Ab jo fold hua tha wahi poora wapis nikaalo. */
     const folded = {};   // head → challan ka feeHeadPrev (jo Std me shaamil tha)
     (Array.isArray(chRows) ? chRows : []).forEach(r => {
-      if (!isPrevLabel(r)) folded[norm(r.subHead || r.head || '')] = Math.round(+(feeHeadPrev(r)) || 0);
+      if (!isPrevLabel(r)) folded[norm(r.subHead || r.head || '')] = Math.round(+(slipHeadPrev(r)) || 0);
     });
     const used = new Set();
     baseRows.forEach(r => {
@@ -8312,7 +8404,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
                         <td>{r.prev ? r.prev.toLocaleString('en-PK') : '—'}</td>
                         <td>{r.std.toLocaleString('en-PK')}</td>
                         <td>{r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>
-                        <td>{r.total.toLocaleString('en-PK')}</td>
+                        <td>{r.total ? r.total.toLocaleString('en-PK') : '—'}</td>
                         <td><b>{r.remaining === 0 ? '—' : r.remaining.toLocaleString('en-PK')}</b></td>
                       </tr>
                     ))}
@@ -9453,6 +9545,9 @@ function FeeReceivingIndividual({ toast }) {
       setSlipCtx({
         classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`,
         combined: true, allPayments: payments, payment: null,
+        /* Challan bhi — warna combined slip ka Std 0 aur unpaid heads gayab. */
+        challan: challanMap[keyOf(c.key, s.reg)] || null,
+        prevByHead: prevByHeadOf(s.studentID),
         defaultSize: settings.printSize || 'a4', school: branchHeader,
       });
       return;
@@ -9463,6 +9558,8 @@ function FeeReceivingIndividual({ toast }) {
       payment, defaultSize: settings.printSize || 'a4', school: branchHeader,
       /* Std = is installment se pehle ka baqaya, Discount = is installment ki give. */
       instRows: installmentSlipRows(challanMap[keyOf(c.key, s.reg)], payments, payment),
+      /* Challan + per-head previous (running-ledger) bhi — warna installment slip sirf usi head ko dikhati jis par wasooli hui; baqaya heads (Previous Due 15,000) gayab. Seedha Download wali slip jaisa. */
+      challan: challanMap[keyOf(c.key, s.reg)] || null, prevByHead: prevByHeadOf(s.studentID),
     });
   };
 
@@ -9559,6 +9656,11 @@ function FeeReceivingIndividual({ toast }) {
     /* Save ke baad server se taaza (isi challan ka) record + pichhle mahine ki li gayi fine —
        slip receiving modal jaisi sahi bane. */
     let freshRec = null;
+    /* true = server ke record me is receiving ki raqam aa chuki (slip usi saved record se). */
+    let freshSaved = false;
+    /* Background refresh ke liye (slip khulne ke baad) — challan ki pehchaan + expected wasooli. */
+    let slipPoll = null;
+    const slipToken = `slip-${Date.now()}-${Math.random()}`;
     let carriedFinePaid = 0;
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
@@ -9737,17 +9839,28 @@ function FeeReceivingIndividual({ toast }) {
       if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: slipChallan }));
       /* Slip ko SERVER ka saved record chahiye (receiving modal jaisa sahi) — sirf isi challan
          ko taaza lao (~0.5s), wahi data jis se 3-4 sec baad khulne wali slip sahi banti thi.
-         List me bhi yahi rakho taake turant dobara kholne par bhi sahi aaye. Fail → purana. */
+         List me bhi yahi rakho taake turant dobara kholne par bhi sahi aaye. Fail → purana.
+         Bina loader: ek dafa taaza record. Agar naya receipt abhi us me na ho to slip foran
+         khulti hai aur neeche (slip khulne ke baad) background me record dobara la kar slip ke
+         numbers SAVED record (Download wali slip jaise) se badal diye jaate hain. */
+      slipPoll = {
+        studentID: rec.studentID, id: rec.id,
+        month: Number(rec.startMonth || rec.month), year: Number(rec.startYear || rec.year),
+        before: slipSumRecv(rec),
+        expectDelta: Object.values(payload.perHead || {}).reduce((a, v) => a + (Number(v) || 0), 0),
+      };
       try {
-        const rows = await feeService.getStudentChallans(rec.studentID,
-          Number(rec.startMonth || rec.month), Number(rec.startYear || rec.year));
+        const rows = await feeService.getStudentChallans(slipPoll.studentID, slipPoll.month, slipPoll.year);
         const hit = (rows || []).find(r => Number(r.id) === Number(rec.id));
         if (hit) {
           freshRec = feeService.withPersistedGiveDisc(hit);
-          slipChallan = freshRec;
-          if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: freshRec }));
+          if (slipPoll.expectDelta <= 0 || slipSumRecv(hit) >= slipPoll.before + slipPoll.expectDelta) freshSaved = true;
         }
       } catch (e) { /* purana (optimistic) slip */ }
+      if (freshRec) {
+        slipChallan = freshRec;
+        if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: freshRec }));
+      }
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -9770,7 +9883,16 @@ function FeeReceivingIndividual({ toast }) {
     const instantRows = freshRec ? installmentSlipRows(freshRec, receiveCtx.payments || [], {
       id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
     }) : null;
-    if (instantRows && instantRows.length) {
+    /* Server ne is receiving ko save kar ke dikha diya → bilkul Download wali slip jaisa
+       (latestReceivingSlipRows, saved installments se) — dono slips ke numbers same. */
+    const useSavedSlip = !!(freshSaved && freshRows && freshRows.length);
+    if (useSavedSlip) {
+      pendingSlipRows = [...freshRows];
+      if (carriedFinePaid > 0) {
+        pendingSlipRows.push({ name: feeService.LATE_FINE_HEAD, std: 0, disc: 0, recv: carriedFinePaid, prev: carriedFinePaid, _mgr: 0, _first: true });
+      }
+      pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0);
+    } else if (instantRows && instantRows.length) {
       pendingSlipRows = instantRows;
       pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0);
     } else if (freshRows) {
@@ -9801,7 +9923,10 @@ function FeeReceivingIndividual({ toast }) {
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: pendingSlipTotal != null ? pendingSlipTotal : payload.amount,
-          perHead: payload.perHead, fine: freshRows ? 0 : (payload.fine || 0), prevByHead: payload.prevByHead,
+          perHead: payload.perHead, fine: freshRows ? 0 : (payload.fine || 0),
+          /* Saved-record slip par modal ka snapshot NAHI (Download wali slip bhi nahi deti) —
+             warna advance (−2,500) Previous me aa kar Remaining ghalat (−1,000) banata tha. */
+          prevByHead: useSavedSlip ? undefined : payload.prevByHead,
           giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
         challan: slipChallan,
@@ -9809,7 +9934,40 @@ function FeeReceivingIndividual({ toast }) {
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
         instRows: pendingSlipRows || undefined,
+        _slipToken: slipToken,
       });
+      /* Server ne abhi naya receipt nahi dikhaya → slip khuli rehne do, background me
+         (max ~6s) saved record la kar slip ke numbers Download wali slip jaise kar do.
+         User ne slip band / doosri khol li ho (token badal gaya) to kuch mat chhedo. */
+      if (!freshSaved && slipPoll) {
+        const poll = slipPoll;
+        (async () => {
+          for (let attempt = 0; attempt < 8; attempt++) {
+            await new Promise(res => setTimeout(res, 800));
+            try {
+              const rows = await feeService.getStudentChallans(poll.studentID, poll.month, poll.year);
+              const hit = (rows || []).find(r => Number(r.id) === Number(poll.id));
+              if (!hit || (poll.expectDelta > 0 && slipSumRecv(hit) < poll.before + poll.expectDelta)) continue;
+              const fresh = feeService.withPersistedGiveDisc(hit);
+              const savedRows = latestReceivingSlipRows(fresh);
+              if (!savedRows || !savedRows.length) return;
+              if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: fresh }));
+              setSlipCtx(prev => (prev && prev._slipToken === slipToken ? {
+                ...prev,
+                challan: fresh,
+                instRows: savedRows,
+                payment: {
+                  ...prev.payment,
+                  amount: savedRows.reduce((a, r) => a + (r.recv || 0), 0),
+                  fine: 0,
+                  prevByHead: undefined,
+                },
+              } : prev));
+              return;
+            } catch (e) { /* agli koshish */ }
+          }
+        })();
+      }
     }
   };
 
@@ -10912,6 +11070,9 @@ function FamilyTreeReceiving({ toast }) {
       setSlipCtx({
         classMeta, student: ch, period: `${appliedMonth} ${appliedYear}`,
         combined: true, allPayments: payments, payment: null,
+        /* Challan bhi — warna combined slip ka Std 0 aur unpaid heads gayab. */
+        challan: ledgerRecRef.current[`${f.key}|${ch.reg}`] || ch._challan || challanByStudent[String(ch.studentID)] || challanByStudent[String(ch.applicantsID)] || null,
+        prevByHead: prevByHeadOf(ch),
         defaultSize: settings.printSize || 'a4', school: branchHeader,
       });
       return;
@@ -10927,6 +11088,8 @@ function FamilyTreeReceiving({ toast }) {
       payment, defaultSize: settings.printSize || 'a4', school: branchHeader,
       /* Std = is installment se pehle ka baqaya, Discount = is installment ki give. */
       instRows: installmentSlipRows(rec, payments, payment),
+      /* Challan + per-head previous (running-ledger) bhi — warna installment slip sirf usi head ko dikhati jis par wasooli hui; baqaya heads (Previous Due 15,000) gayab. Seedha Download wali slip jaisa. */
+      challan: rec, prevByHead: prevByHeadOf(ch),
     });
   };
 
