@@ -552,6 +552,26 @@ function rcGetGrade(obt, tot) {
   }
   return RC_GRADE_SETUP.find(g => pct >= g.min) || RC_GRADE_SETUP[RC_GRADE_SETUP.length - 1];
 }
+/* Combined Assessment — getcastudentexamresult ka convertedObtained ghalat aata hai
+   (e.g. 96.50/140 @20 → API 6.21, sahi 13.79). Is liye har sub exam ka converted
+   khud nikalo: originalObtained × weightage ÷ originalTotal, phir usi se Grand,
+   % aur Grade. originalTotal na ho to API wala conv hi rehne do. */
+function cbrRecalc(st) {
+  const subsIn = st.subs || [];
+  if (!subsIn.length && !st.mainObt) return st;
+  const r2 = n => Math.round(n * 100) / 100;
+  const subs = subsIn.map(s => ({
+    ...s,
+    conv: s.origT > 0 ? r2((s.subObt * s.weight) / s.origT) : (Number(s.conv) || 0),
+  }));
+  const grandObt = r2((Number(st.mainObt) || 0) + subs.reduce((a, s) => a + s.conv, 0));
+  const grandTotal = Number(st.grandTotal) > 0
+    ? Number(st.grandTotal)
+    : (Number(st.mainTotal) || 0) + subs.reduce((a, s) => a + (Number(s.weight) || 0), 0);
+  const pct = grandTotal > 0 ? r2((grandObt / grandTotal) * 100) : 0;
+  const g = rcGetGrade(grandObt, grandTotal);
+  return { ...st, subs, grandObt, grandTotal, pct, grade: g ? g.grade : (st.grade ?? '—') };
+}
 /* Grade from the branch's configured scale (Result Setup → Grade) by percentage.
    rsGrades rows: { grade, pct, cond, comment }. Falls back to null if unset. */
 function rcGradeByScale(pct, grades) {
@@ -1317,7 +1337,8 @@ export default function Examination({ toast = () => { } }) {
         const nm = nameMap[sid] || {};
         const main = c.mainExam ?? c.MainExam ?? {};
         const subArr = c.subExams ?? c.SubExams ?? [];
-        return {
+        // cbrRecalc: API ka convertedObtained ghalat hai — conv/grand/%/grade khud nikalo.
+        return cbrRecalc({
           studentID: c.studentID ?? c.StudentID,
           // name/father/rollNo student-list API (nameMap) se lo — CA cards mein ye empty aate
           // hain, is liye kuch students ke naam ghaayab the. nameMap na ho to c par fallback.
@@ -1338,7 +1359,7 @@ export default function Examination({ toast = () => { } }) {
           pct: num(c.percentage ?? c.Percentage),
           grade: c.grade ?? c.Grade ?? '—',
           rank: String(c.ranking ?? c.Ranking ?? '—'),
-        };
+        });
       });
       /* Combined Pos. = COMBINED grand-obtained par rank. Backend `ranking` sirf MAIN exam
          ke marks ka rank hota hai (updaterankings table) — is liye combined total me aage
@@ -15311,7 +15332,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
           const sid = c.studentID ?? c.StudentID;
           const main = c.mainExam ?? c.MainExam ?? {};
           const subArr = c.subExams ?? c.SubExams ?? [];
-          return {
+          return cbrRecalc({
             studentID: sid,
             rollNo: info.rollNo || c.registrationNumber || c.RegistrationNumber || sid,
             name: info.name || c.studentName || c.StudentName || '—',
@@ -15329,7 +15350,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
             grandTotal: num(c.grandTotal ?? c.GrandTotal),
             pct: num(c.percentage ?? c.Percentage),
             rank: String(c.ranking ?? c.Ranking ?? ''),
-          };
+          });
         };
 
         if (!cancelled) setProgress({ done: 0, total: people.length });
