@@ -1,6 +1,9 @@
-import React, { useRef, useState } from 'react';
-import { UM_MENUS, INITIAL_USERS, userInitials, pageButtons } from './userMgmtData';
+import React, { useEffect, useState } from 'react';
+import { userInitials, pageButtons } from './userMgmtData';
 import { INITIAL_LAUNCH, INITIAL_ERP } from './statusData';
+import { authApi, schoolProgressApi, moduleAccessApi } from './api';
+import { MODULE_ACCESS_FIELDS } from './api/services/userModuleAccess';
+
 
 /* ═══════════════════════════════════════════════════════════════════
    USER MANAGEMENT — Super Admin module (frontend only)
@@ -18,15 +21,23 @@ const TABS = [
   { id: 'perm',   name: 'User Permission',   icon: 'fa-shield-halved' },
 ];
 
-export default function UserManagement({ toast, users, setUsers, perms, setPerms }) {
+export default function UserManagement({ toast, users, setUsers, reloadUsers, setPerms, onPermsSaved }) {
   const [tab, setTab] = useState('reg');
-  const [assignments, setAssignments] = useState({});   // userId → [schoolId]
   const [modal, setModal] = useState(null);
-  const seq = useRef(Math.max(...INITIAL_USERS.map((u) => u.id), 0));
 
-  const addUser = (form) => {
-    setUsers((prev) => [...prev, { id: ++seq.current, ...form, pic: '' }]);
+  /* Add User → POST /api/Auth/signup, phir list GET /api/Auth/get-all-users se taza.
+     true lautata hai jab user ban gaya (form tab hi saaf hota hai). */
+  const addUser = async (form) => {
+    const { firstName, lastName } = form;
+    try {
+      await authApi.signup({ firstName, lastName, userName: form.userName, password: form.password, isAdmin: true });
+    } catch (err) {
+      toast?.(err?.message || 'Could not create user', 'error');
+      return false;
+    }
     toast?.(`${form.fullName} added successfully`, 'success');
+    await reloadUsers?.();
+    return true;
   };
   const saveUser = (id, patch) => {
     setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...patch } : u));
@@ -58,8 +69,8 @@ export default function UserManagement({ toast, users, setUsers, perms, setPerms
           onEdit={(u) => setModal({ type: 'edit', user: u })}
           onDelete={(u) => setModal({ type: 'del', user: u })} toast={toast} />
       )}
-      {tab === 'assign' && <AssignTab users={users} assignments={assignments} setAssignments={setAssignments} toast={toast} />}
-      {tab === 'perm' && <PermissionTab users={users} perms={perms} setPerms={setPerms} toast={toast} />}
+      {tab === 'assign' && <AssignTab users={users} toast={toast} />}
+      {tab === 'perm' && <PermissionTab users={users} setPerms={setPerms} toast={toast} onPermsSaved={onPermsSaved} />}
 
       {modal?.type === 'edit' && <EditUserModal user={modal.user} onClose={() => setModal(null)} onSave={saveUser} toast={toast} />}
       {modal?.type === 'del' && <DeleteUserModal user={modal.user} onClose={() => setModal(null)} onConfirm={() => deleteUser(modal.user.id)} />}
@@ -69,33 +80,42 @@ export default function UserManagement({ toast, users, setUsers, perms, setPerms
 
 /* ═══════════════════════ REGISTRATION TAB ═══════════════════════ */
 function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
-  const [form, setForm] = useState({ fullName: '', userName: '', phone: '', address: '', password: '', active: true });
+  const EMPTY = { firstName: '', lastName: '', phone: '', password: '', active: true };
+  const [form, setForm] = useState(EMPTY);
   const [showPw, setShowPw] = useState(false);
-  const [pic, setPic] = useState('');
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [perPage, setPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  const submit = () => {
-    if (!form.fullName.trim()) { toast?.('Please enter full name', 'warn'); return; }
-    if (!form.userName.trim()) { toast?.('Please enter user name', 'warn'); return; }
+  /* Address + Display Picture + User Name hide hain. Phone No. hi login id hai —
+     signup me user_Name = phone jata hai. */
+  const submit = async () => {
+    if (saving) return;
+    /* Backend: "FirstName and LastName are required." — dono lazmi. */
+    if (!form.firstName.trim()) { toast?.('Please enter first name', 'warn'); return; }
+    if (!form.lastName.trim()) { toast?.('Please enter last name', 'warn'); return; }
     if (!form.phone.trim()) { toast?.('Please enter phone number', 'warn'); return; }
     if (!form.password.trim()) { toast?.('Please enter password', 'warn'); return; }
-    onAdd({ fullName: form.fullName.trim(), userName: form.userName.trim(), phone: form.phone.trim(), address: form.address.trim(), password: form.password.trim(), active: form.active });
-    setForm({ fullName: '', userName: '', phone: '', address: '', password: '', active: true }); setPic('');
+    setSaving(true);
+    const phone = form.phone.trim();
+    const firstName = form.firstName.trim();
+    const lastName = form.lastName.trim();
+    const ok = await onAdd({ firstName, lastName, fullName: `${firstName} ${lastName}`, userName: phone, phone, password: form.password.trim(), active: form.active });
+    setSaving(false);
+    if (ok) setForm(EMPTY);
   };
 
+  const q = search.toLowerCase();
   const filtered = users.filter((u) =>
-    u.fullName.toLowerCase().includes(search.toLowerCase()) || u.phone.includes(search) || (u.address || '').toLowerCase().includes(search.toLowerCase()));
+    (u.fullName || '').toLowerCase().includes(q) || (u.userName || '').toLowerCase().includes(q) || (u.phone || '').includes(search));
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const cur = Math.min(page, totalPages);
   const slice = filtered.slice((cur - 1) * perPage, cur * perPage);
   const start = total ? (cur - 1) * perPage + 1 : 0;
   const end = Math.min(cur * perPage, total);
-
-  const onPic = (e) => { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = (ev) => setPic(ev.target.result); r.readAsDataURL(file); };
 
   return (
     <div className="um-panel">
@@ -104,22 +124,15 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
         <div className="card-header"><div className="card-title"><i className="fa-solid fa-user-plus" /> Add User</div></div>
         <div style={{ padding: 20 }}>
           <div className="um-form-grid">
-            <div className="um-field"><label className="um-label">Full Name</label><input className="um-input" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} placeholder="Enter Full Name" /></div>
-            <div className="um-field"><label className="um-label">User Name</label><input className="um-input" value={form.userName} onChange={(e) => set('userName', e.target.value)} placeholder="Enter User Name" /></div>
+            <div className="um-field"><label className="um-label">First Name</label><input className="um-input" value={form.firstName} onChange={(e) => set('firstName', e.target.value)} placeholder="Enter First Name" /></div>
+            <div className="um-field"><label className="um-label">Last Name</label><input className="um-input" value={form.lastName} onChange={(e) => set('lastName', e.target.value)} placeholder="Enter Last Name" /></div>
             <div className="um-field"><label className="um-label">Phone No.</label><input className="um-input" value={form.phone} onChange={(e) => set('phone', e.target.value)} placeholder="Enter Phone No." /></div>
-            <div className="um-field"><label className="um-label">Address</label><input className="um-input" value={form.address} onChange={(e) => set('address', e.target.value)} placeholder="Enter Address" /></div>
             <div className="um-field"><label className="um-label">Password</label>
               <div className="um-pw-wrap"><input className="um-input" type={showPw ? 'text' : 'password'} value={form.password} onChange={(e) => set('password', e.target.value)} placeholder="Enter Password" /><button className="um-pw-eye" type="button" data-tip="Show password" onClick={() => setShowPw((s) => !s)}><i className={`fa-regular ${showPw ? 'fa-eye-slash' : 'fa-eye'}`} /></button></div>
             </div>
-            <div className="um-field"><label className="um-label">Display Picture</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <input className="um-input" type="file" accept="image/*" style={{ height: 'auto', padding: '6px 10px', fontSize: 12 }} onChange={onPic} />
-                <div className="um-img-preview">{pic ? <img src={pic} alt="" /> : <i className="fa-solid fa-image" />}</div>
-              </div>
-            </div>
           </div>
           <div className="um-checkbox-row"><input type="checkbox" id="um-active" checked={form.active} onChange={(e) => set('active', e.target.checked)} /><label htmlFor="um-active">Active</label></div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn-primary" onClick={submit}><i className="fa-solid fa-user-plus" /> Add User</button></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn-primary" onClick={submit} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-user-plus'}`} /> {saving ? 'Adding…' : 'Add User'}</button></div>
         </div>
       </div>
 
@@ -137,17 +150,17 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
         </div>
         <div className="tbl-wrap">
           <table className="um-table">
-            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 130 }}>Phone</th><th>Address</th><th style={{ width: 70, textAlign: 'center' }}>Status</th><th style={{ width: 130, textAlign: 'center' }}>Action</th></tr></thead>
+            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 130 }}>Phone</th><th style={{ width: 70, textAlign: 'center' }}>Status</th><th style={{ width: 130, textAlign: 'center' }}>Action</th></tr></thead>
             <tbody>
-              {slice.length === 0 ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}><i className="fa-solid fa-users" style={{ fontSize: 26, opacity: 0.2, display: 'block', marginBottom: 8 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>No users found</div></td></tr> : slice.map((u, i) => (
+              {slice.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}><i className="fa-solid fa-users" style={{ fontSize: 26, opacity: 0.2, display: 'block', marginBottom: 8 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>No users found</div></td></tr> : slice.map((u, i) => (
                 <tr key={u.id}>
                   <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{(cur - 1) * perPage + i + 1}</td>
                   <td><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                     <div className="um-avatar">{u.pic ? <img src={u.pic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : userInitials(u.fullName)}</div>
-                    <div><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>@{u.userName}</div></div>
+                    <div style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</div>
                   </div></td>
-                  <td>{u.phone}</td>
-                  <td style={{ fontSize: 12 }}>{u.address || '—'}</td>
+                  {/* user_Name hi phone number hai */}
+                  <td>{u.phone || u.userName || '—'}</td>
                   <td style={{ textAlign: 'center' }}><span className={`badge ${u.active ? 'b-green' : 'b-gray'}`}>{u.active ? 'Active' : 'Inactive'}</span></td>
                   <td style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
@@ -167,19 +180,60 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
 }
 
 /* ═══════════════════════ ASSIGN SCHOOL TAB ═══════════════════════ */
-function AssignTab({ users, assignments, setAssignments, toast }) {
+function AssignTab({ users, toast }) {
   const [userId, setUserId] = useState('');
   const [schoolType, setSchoolType] = useState('launch');
   const [search, setSearch] = useState('');
   const [perPage, setPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const [draft, setDraft] = useState(null);   // working copy of assigned ids for selected user
+  const [saving, setSaving] = useState(false);
 
-  const assignedForUser = userId ? (assignments[userId] || []) : [];
+  /* Asli assignments — manage_assignedUser (action GET): branchId → { id, userId }.
+     Ek branch ka ek hi user hota hai (UPSERT branchID par chalta hai). */
+  const [assignMap, setAssignMap] = useState({});
+  const loadAssignments = async () => {
+    try {
+      const rows = await schoolProgressApi.listAssignedUsers();
+      const m = {};
+      rows.forEach((r) => { m[r.branchId] = { id: r.id, userId: r.userId }; });
+      setAssignMap(m);
+      return m;
+    } catch (err) {
+      toast?.(err?.message || 'Could not load assignments', 'warn');
+      return null;
+    }
+  };
+  useEffect(() => { loadAssignments(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const idsForUser = (uid, m = assignMap) => Object.entries(m)
+    .filter(([, v]) => String(v.userId) === String(uid)).map(([bid]) => Number(bid));
+  const assignedForUser = userId ? idsForUser(userId) : [];
   const selected = draft != null ? draft : assignedForUser;
 
-  const onUser = (id) => { setUserId(id); setDraft(id ? (assignments[id] || []) : []); setPage(1); };
-  const schools = schoolType === 'launch' ? INITIAL_LAUNCH : INITIAL_ERP;
+  /* Schools — wahi lists jo Schools Progress ke Launch Setup / ERP tabs me hain
+     (branch-report API: launchSetup=0 / 1). API na chale to demo list. */
+  const [lists, setLists] = useState({ launch: [], erp: [] });
+  const [loadingSchools, setLoadingSchools] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    schoolProgressApi.listSchoolProgress()
+      .then(({ launch, erp }) => {
+        if (!alive) return;
+        if ((launch || []).length || (erp || []).length) setLists({ launch: launch || [], erp: erp || [] });
+        else { setLists({ launch: INITIAL_LAUNCH, erp: INITIAL_ERP }); toast?.('No schools returned — showing sample data', 'warn'); }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setLists({ launch: INITIAL_LAUNCH, erp: INITIAL_ERP });
+        toast?.(err?.message || 'Could not load schools — showing sample data', 'warn');
+      })
+      .finally(() => { if (alive) setLoadingSchools(false); });
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onUser = (id) => { setUserId(id); setDraft(null); setPage(1); };
+  const schools = schoolType === 'launch' ? lists.launch : lists.erp;
   const filtered = schools.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
@@ -195,10 +249,39 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
     return checked ? Array.from(new Set([...base, ...pageIds])) : base.filter((x) => !pageIds.includes(x));
   });
 
-  const save = () => {
+  /* Save Assignment → POST /api/AHM_School_Progress/manage_assignedUser
+       • naya check hua school  → UPSERT { branchID, userID, launchSetup }
+       • uncheck hua school     → DELETE (soft) us branch ki row
+     launchSetup: ERP list ka school 1, Launch Setup ka 0. */
+  const save = async () => {
+    if (saving) return;
     if (!userId) { toast?.('Please select a user first', 'warn'); return; }
-    setAssignments((prev) => ({ ...prev, [userId]: draft || [] }));
-    toast?.('School assignment saved', 'success');
+    const want = new Set((draft || assignedForUser).map(Number));
+    const had = new Set(assignedForUser.map(Number));
+    const toAdd = [...want].filter((b) => !had.has(b));
+    const toRemove = [...had].filter((b) => !want.has(b));
+    if (!toAdd.length && !toRemove.length) { toast?.('No changes to save', 'info'); return; }
+
+    const erpIds = new Set(lists.erp.map((s) => Number(s.id)));
+    const ls = (bid) => (erpIds.has(bid) ? 1 : 0);
+    setSaving(true);
+    const results = await Promise.allSettled([
+      ...toAdd.map((bid) => schoolProgressApi.saveAssignedUser({
+        id: assignMap[bid]?.id || 0, branchId: bid, userId: Number(userId), launchSetup: ls(bid),
+      })),
+      ...toRemove.map((bid) => schoolProgressApi.clearAssignedUser({
+        id: assignMap[bid]?.id || 0, branchId: bid, launchSetup: ls(bid),
+      })),
+    ]);
+    const failed = results.filter((r) => r.status === 'rejected');
+    await loadAssignments();
+    setDraft(null);
+    setSaving(false);
+    if (failed.length) {
+      toast?.(`${results.length - failed.length} saved, ${failed.length} failed: ${failed[0].reason?.message || 'error'}`, 'error');
+    } else {
+      toast?.(`School assignment saved (${toAdd.length} assigned, ${toRemove.length} removed)`, 'success');
+    }
   };
 
   return (
@@ -212,8 +295,8 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
           </div>
 
           <div className="um-school-tabs">
-            <button className={`um-stab${schoolType === 'launch' ? ' active' : ''}`} onClick={() => { setSchoolType('launch'); setPage(1); }}><i className="fa-solid fa-rocket" /> Launch Setup ({INITIAL_LAUNCH.length})</button>
-            <button className={`um-stab${schoolType === 'erp' ? ' active' : ''}`} onClick={() => { setSchoolType('erp'); setPage(1); }}><i className="fa-solid fa-server" /> ERP ({INITIAL_ERP.length})</button>
+            <button className={`um-stab${schoolType === 'launch' ? ' active' : ''}`} onClick={() => { setSchoolType('launch'); setPage(1); }}><i className="fa-solid fa-rocket" /> Launch Setup ({lists.launch.length})</button>
+            <button className={`um-stab${schoolType === 'erp' ? ' active' : ''}`} onClick={() => { setSchoolType('erp'); setPage(1); }}><i className="fa-solid fa-server" /> ERP ({lists.erp.length})</button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
@@ -225,18 +308,29 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
             <table className="um-assign-table">
               <thead><tr><th style={{ width: 60 }}>Sr #</th><th style={{ width: 50 }}><input type="checkbox" checked={allOnPage} onChange={(e) => toggleAll(e.target.checked)} style={{ width: 15, height: 15, accentColor: '#fff', cursor: 'pointer' }} /></th><th>School Name</th></tr></thead>
               <tbody>
-                {slice.length === 0 ? <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No schools found</td></tr> : slice.map((s, i) => (
+                {loadingSchools ? <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</td></tr>
+                  : slice.length === 0 ? <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No schools found</td></tr> : slice.map((s, i) => (
                   <tr key={s.id}>
                     <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{(cur - 1) * perPage + i + 1}</td>
                     <td><input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} style={{ width: 15, height: 15, accentColor: 'var(--brand)', cursor: 'pointer' }} /></td>
-                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{s.name}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>
+                      {s.name}
+                      {(() => {
+                        const a = assignMap[s.id];
+                        if (!a || !a.userId || String(a.userId) === String(userId)) return null;
+                        const who = users.find((u) => String(u.id) === String(a.userId));
+                        return <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: 'var(--tm)' }}>
+                          (Assigned to {who ? who.fullName : `User #${a.userId}`}{selected.includes(s.id) ? ' — will be reassigned' : ''})
+                        </span>;
+                      })()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           {total > perPage && <Pagination cur={cur} totalPages={totalPages} start={start} end={end} total={total} onGo={setPage} />}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Assignment</button></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button className="btn-primary" onClick={save} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Assignment'}</button></div>
         </div>
       </div>
     </div>
@@ -244,15 +338,50 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
 }
 
 /* ═══════════════════════ PERMISSION TAB ═══════════════════════ */
-function PermissionTab({ users, perms, setPerms, toast }) {
+/* Menu list + save/load — POST /api/UserModuleAccess/manage (get / save).
+   draft = checked field keys (MODULE_ACCESS_FIELDS). Record na ho to sab checked
+   dikhte hain (sidebar bhi tab sab dikhata hai — full access by default). */
+const ALL_KEYS = MODULE_ACCESS_FIELDS.map((f) => f.key);
+function PermissionTab({ users, setPerms, toast, onPermsSaved }) {
   const [userId, setUserId] = useState('');
   const [draft, setDraft] = useState([]);
+  const [recId, setRecId] = useState(0);
+  const [hasRecord, setHasRecord] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const onUser = (id) => { setUserId(id); setDraft(id ? (perms[id] || []) : []); };
-  const toggle = (menu) => setDraft((prev) => prev.includes(menu) ? prev.filter((m) => m !== menu) : [...prev, menu]);
-  const allChecked = UM_MENUS.every((m) => draft.includes(m));
-  const toggleAll = (checked) => setDraft(checked ? [...UM_MENUS] : []);
-  const save = () => { if (!userId) { toast?.('Please select a user first', 'warn'); return; } setPerms((prev) => ({ ...prev, [userId]: draft })); toast?.('Permissions updated', 'success'); };
+  const onUser = async (id) => {
+    setUserId(id); setDraft([]); setRecId(0); setHasRecord(false);
+    if (!id) return;
+    setLoading(true);
+    try {
+      const rec = await moduleAccessApi.getModuleAccess(id);
+      if (rec) { setRecId(rec.id); setHasRecord(true); setDraft(ALL_KEYS.filter((k) => rec.flags[k])); }
+      else setDraft([...ALL_KEYS]);
+    } catch (err) {
+      toast?.(err?.message || 'Could not load permissions', 'error');
+    } finally { setLoading(false); }
+  };
+  const toggle = (k) => setDraft((prev) => prev.includes(k) ? prev.filter((m) => m !== k) : [...prev, k]);
+  const allChecked = ALL_KEYS.every((k) => draft.includes(k));
+  const toggleAll = (checked) => setDraft(checked ? [...ALL_KEYS] : []);
+  const save = async () => {
+    if (saving) return;
+    if (!userId) { toast?.('Please select a user first', 'warn'); return; }
+    const flags = {}; ALL_KEYS.forEach((k) => { flags[k] = draft.includes(k); });
+    setSaving(true);
+    try {
+      const { id } = await moduleAccessApi.saveModuleAccess({ userId, id: recId, flags });
+      /* Dobara get — asal saved id/flags (agli save update bane, insert nahi). */
+      const rec = await moduleAccessApi.getModuleAccess(userId).catch(() => null);
+      setRecId(rec?.id || id || recId); setHasRecord(true);
+      setPerms?.((prev) => ({ ...prev, [userId]: moduleAccessApi.flagsToLegacyMenus(flags) }));
+      onPermsSaved?.(Number(userId));
+      toast?.('Permissions updated', 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not save permissions', 'error');
+    } finally { setSaving(false); }
+  };
 
   return (
     <div className="um-panel">
@@ -265,19 +394,26 @@ function PermissionTab({ users, perms, setPerms, toast }) {
           </div>
           <div className="tbl-wrap">
             <table className="um-perm-table">
-              <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Menu</th><th style={{ width: 140 }}><label className="um-select-all-th"><input type="checkbox" checked={allChecked} onChange={(e) => toggleAll(e.target.checked)} /> Select All</label></th></tr></thead>
+              <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Menu</th><th style={{ width: 140 }}><label className="um-select-all-th"><input type="checkbox" disabled={!userId} checked={!!userId && allChecked} onChange={(e) => toggleAll(e.target.checked)} /> Select All</label></th></tr></thead>
               <tbody>
-                {UM_MENUS.map((menu, i) => (
-                  <tr key={menu}>
+                {loading ? (
+                  <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading permissions…</td></tr>
+                ) : MODULE_ACCESS_FIELDS.map((m, i) => (
+                  <tr key={m.key}>
                     <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{menu}</td>
-                    <td><input type="checkbox" checked={draft.includes(menu)} onChange={() => toggle(menu)} style={{ width: 16, height: 16, accentColor: 'var(--brand)', cursor: 'pointer' }} /></td>
+                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{m.label}</td>
+                    <td><input type="checkbox" disabled={!userId} checked={draft.includes(m.key)} onChange={() => toggle(m.key)} style={{ width: 16, height: 16, accentColor: 'var(--brand)', cursor: 'pointer' }} /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Update Status</button></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, gap: 10 }}>
+            <div style={{ fontSize: 12, color: 'var(--tm)' }}>
+              {userId && !loading && !hasRecord ? 'No saved permissions yet — this user currently has full access.' : ''}
+            </div>
+            <button className="btn-primary" onClick={save} disabled={saving || loading}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Update Status'}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -301,12 +437,24 @@ function Pagination({ cur, totalPages, start, end, total, onGo }) {
 }
 
 function EditUserModal({ user, onClose, onSave, toast }) {
-  const [f, setF] = useState({ fullName: user.fullName, userName: user.userName, phone: user.phone, address: user.address || '', password: '', active: user.active });
+  /* Phone No. = user_Name (login id) — alag User Name field nahi. */
+  /* First / Last Name alag — API ke firstName / lastName. Purane (demo) users
+     ke liye fullName ko pehle space par tod kar bhar do. */
+  const parts = String(user.fullName || '').trim().split(/\s+/).filter(Boolean);
+  const [f, setF] = useState({
+    firstName: user.firstName ?? parts[0] ?? '',
+    lastName:  user.lastName ?? parts.slice(1).join(' '),
+    phone: user.phone || user.userName || '', password: '', active: user.active,
+  });
   const [showPw, setShowPw] = useState(false);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const save = () => {
-    if (!f.fullName.trim() || !f.phone.trim()) { toast?.('Name and phone required', 'warn'); return; }
-    const patch = { fullName: f.fullName.trim(), userName: f.userName.trim(), phone: f.phone.trim(), address: f.address.trim(), active: f.active };
+    if (!f.firstName.trim()) { toast?.('First name is required', 'warn'); return; }
+    if (!f.lastName.trim()) { toast?.('Last name is required', 'warn'); return; }
+    if (!f.phone.trim()) { toast?.('Phone number is required', 'warn'); return; }
+    const firstName = f.firstName.trim();
+    const lastName = f.lastName.trim();
+    const patch = { firstName, lastName, fullName: `${firstName} ${lastName}`, userName: f.phone.trim(), phone: f.phone.trim(), active: f.active };
     if (f.password.trim()) patch.password = f.password.trim();
     onSave(user.id, patch);
   };
@@ -320,10 +468,9 @@ function EditUserModal({ user, onClose, onSave, toast }) {
         </div>
         <div style={{ padding: 22 }}>
           <div className="um-form-grid-2">
-            <div className="um-field"><label className="um-label">Full Name</label><input className="um-input" value={f.fullName} onChange={(e) => set('fullName', e.target.value)} /></div>
-            <div className="um-field"><label className="um-label">User Name</label><input className="um-input" value={f.userName} onChange={(e) => set('userName', e.target.value)} /></div>
+            <div className="um-field"><label className="um-label">First Name</label><input className="um-input" value={f.firstName} onChange={(e) => set('firstName', e.target.value)} placeholder="Enter First Name" /></div>
+            <div className="um-field"><label className="um-label">Last Name</label><input className="um-input" value={f.lastName} onChange={(e) => set('lastName', e.target.value)} placeholder="Enter Last Name" /></div>
             <div className="um-field"><label className="um-label">Phone No.</label><input className="um-input" value={f.phone} onChange={(e) => set('phone', e.target.value)} /></div>
-            <div className="um-field"><label className="um-label">Address</label><input className="um-input" value={f.address} onChange={(e) => set('address', e.target.value)} /></div>
           </div>
           <div className="um-field" style={{ marginBottom: 14 }}><label className="um-label">New Password <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(leave blank to keep current)</span></label>
             <div className="um-pw-wrap"><input className="um-input" type={showPw ? 'text' : 'password'} value={f.password} onChange={(e) => set('password', e.target.value)} placeholder="Enter new password" /><button className="um-pw-eye" type="button" data-tip="Show password" onClick={() => setShowPw((s) => !s)}><i className={`fa-regular ${showPw ? 'fa-eye-slash' : 'fa-eye'}`} /></button></div>

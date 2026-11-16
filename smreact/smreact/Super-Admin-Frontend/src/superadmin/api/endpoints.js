@@ -47,6 +47,10 @@ export const EP = {
        Screens ke "Assigned To" / "Select User" dropdowns isi se bharte hain,
        aur jahan API ko userId chahiye wahi `id` jata hai. */
     allUsers: () => `${SA_ROOT}/api/Auth/get-all-users`,
+    /* POST — naya Super Admin user (User Management ▸ Add User):
+         body: { firstName, lastName, user_Name, password, isAdmin }
+         (schema: MdlAHM_SuperAdmin_Signup) */
+    signup: () => `${SA_ROOT}/api/Auth/signup`,
   },
 
   /* ── Dashboard ── */

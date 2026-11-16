@@ -168,6 +168,43 @@ export function userRowToUi(r) {
 }
 
 /**
+ * POST /api/Auth/signup — naya Super Admin user banao.
+ * body: { firstName, lastName, user_Name, password, isAdmin }
+ * @throws {ApiError} server ka apna message (e.g. username already exists)
+ */
+export async function signup({ firstName, lastName, userName, password, isAdmin = true }) {
+  const token = getSuperAdminToken();
+  let res;
+  let raw;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.auth.signup()}`, {
+      method: 'POST',
+      headers: {
+        Accept: '*/*', 'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        firstName: String(firstName || '').trim(),
+        lastName:  String(lastName || '').trim(),
+        user_Name: String(userName || '').trim(),
+        password,
+        isAdmin:   Boolean(isAdmin),
+      }),
+    });
+    raw = await res.text();
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { /* plain-text jawab */ }
+  /* HTTP 200 par bhi backend { success:false, message } bhej sakta hai. */
+  if (!res.ok || data?.success === false) {
+    throw new ApiError(messageFrom(data, raw, 'Could not create user'), res.status);
+  }
+  return data;
+}
+
+/**
  * Saare Super Admin users.
  * @returns {Promise<Array<{id:number,name:string,userName:string}>>}
  */

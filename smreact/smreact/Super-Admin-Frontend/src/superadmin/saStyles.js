@@ -1434,7 +1434,7 @@ export const SA_CSS = `
 .sa-root .um-input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(30,58,138,.09)}
 .sa-root .um-pw-wrap{position:relative}
 .sa-root .um-pw-wrap .um-input{padding-right:38px}
-.sa-root .um-pw-eye{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--tm);font-size:14px;padding:0}
+.sa-root .um-pw-wrap .um-pw-eye{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--tm);font-size:14px;padding:0}
 .sa-root .um-img-preview{width:80px;height:80px;border-radius:var(--r-md);border:2px dashed var(--bl);background:var(--muted);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--tm);overflow:hidden;flex-shrink:0}
 .sa-root .um-img-preview img{width:100%;height:100%;object-fit:cover}
 .sa-root .um-checkbox-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
