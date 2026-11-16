@@ -8542,11 +8542,28 @@ const REGEN_BTN_STYLE = { color: '#A16207', background: '#FEF3C7', borderColor: 
 function challanHasReceiving(rec) {
   /* Rs. 0 receive (full Discount Manager discount) bhi receiving hai —
      challan delete band, voucher khud delete nahi hota. */
-  if (feeService.hasZeroReceiveMark(rec?.id)) return true;
+  if (feeService.hasZeroReceiveMark(rec?.id) || zeroSettledChallan(rec)) return true;   // doosre browser me mark nahi hota
   return (rec?.detailRows || []).some(r =>
     Math.abs(Number(r.receivedAmount) || 0) > 0 || Math.max(0, Number(r.recvDiscount) || 0) > 0);
 }
-const DEL_LOCKED_TIP = 'Delete disabled — this challan already has a receiving against it (partial or full). Delete the receiving in Fee Receiving first, then you can delete this challan.';
+/* Challan Rs 0 par settle hua (koi naqad wasooli nahi): cashier ne poore Discount Manager
+   discount par 0 receive kiya (zero-receive mark) ya receiving modal ki Give Discount
+   (recvDiscount) se poora settle kiya. Download slip isi par khulti hai. */
+function zeroSettledChallan(rec) {
+  if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return false;
+  if (feeService.hasZeroReceiveMark(rec.id)) return true;
+  if (rec.detailRows.some(r => Math.max(0, Number(r.recvDiscount) || 0) > 0
+    || (r.installments || []).some(i => Math.max(0, Number(i.recvDiscount) || 0) > 0))) return true;
+  /* Doosre browser / PC par zero-receive mark (localStorage) nahi hota — backend receive par
+     challan ki receivedDate bhar deta hai (unreceived challan par khaali). receivedDate ho aur
+     poora bill Discount Manager ke discount me chala gaya ho (net 0) → Rs 0 receive hua. */
+  const net = rec.detailRows.reduce((a, r) => {
+    if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return a;
+    return a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0);
+  }, 0);
+  return !!String(rec.receivedDate || '').trim() && net <= 0;
+}
+const DEL_LOCKED_TIP ='Delete disabled — this challan already has a receiving against it (partial or full). Delete the receiving in Fee Receiving first, then you can delete this challan.';
 
 /* Challan Type dropdown — 1 se 12 mahine. */
 const CHALLAN_TYPE_LABELS = [
@@ -8887,12 +8904,19 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
   /* Branch 1/15 par unclamped (previous advance ko clamp se nahi kaatna); baaqi branches purana formula. */
   const remaining = (isAdvanceAdjustBranch() ? (prev + thisMonth - disc - advance + billedFine) : payable) - paid;   /* MINUS = advance (total se zyada wasool) */
  let status = 'none';
+/* Receiving modal se di gayi Give Discount (recvDiscount) bhi receiving hai — poori head /
+   poora challan Give Discount se settle ho (naqad 0) to bhi row "Fully Received" ho, aur
+   Download slip + Delete receipt dikhein. (Sirf Discount Manager ka discount receiving NAHI —
+   wo recvDiscount me nahi aata.) challanHasReceiving() bhi yahi maanta hai. */
 const hasRecvActivity = (challan && Array.isArray(challan.detailRows))
-  ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0)
+  ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0
+      || Math.max(0, Number(r.recvDiscount) || 0) > 0
+      || (r.installments || []).some(i => Math.max(0, Number(i.recvDiscount) || 0) > 0))
   : (paidFromPayments !== 0);
 /* Full Discount Manager discount apne aap Fully Received NAHI banata — cashier
    receive modal me 0 likh kar receive kare. Us ke baad hi (zero-receive mark). */
-const zeroReceived = !!(challan?.id && feeService.hasZeroReceiveMark(challan.id));
+/* Mark (localStorage) sirf usi browser me — zeroSettledChallan backend ki receivedDate se bhi pehchanta hai. */
+const zeroReceived = !!(challan?.id && (feeService.hasZeroReceiveMark(challan.id) || zeroSettledChallan(challan)));
 if (generated && (paid > 0 || hasRecvActivity || zeroReceived)) {
   status = remaining <= 0 ? 'full' : 'partial';
 }
@@ -9522,7 +9546,10 @@ function FeeReceivingIndividual({ toast }) {
     const rec = challanMap[keyOf(c.key, s.reg)];
     const rows = rec && Array.isArray(rec.detailRows) ? rec.detailRows : [];
     const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-    if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
+    /* Rs 0 par settle hua challan (Discount Manager ka poora discount → cashier ne 0 receive
+       kiya, ya receiving modal ki Give Discount) bhi slip deta hai — Received 0, Remaining 0.
+       Pehle refresh ke baad Download par "No payment recorded" aata tha jabke row Fully Received thi. */
+    if (received <= 0 && !zeroSettledChallan(rec)) { toast('No payment recorded for this student yet', 'info'); return; }
     const perHead = {};
     rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
     setSlipCtx({
@@ -11023,7 +11050,10 @@ function FamilyTreeReceiving({ toast }) {
     const rec = ch._challan || challanByStudent[String(ch.applicantsID)];
     const rows = rec && Array.isArray(rec.detailRows) ? rec.detailRows : [];
     const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-    if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
+    /* Rs 0 par settle hua challan (Discount Manager ka poora discount → cashier ne 0 receive
+       kiya, ya receiving modal ki Give Discount) bhi slip deta hai — Received 0, Remaining 0.
+       Pehle refresh ke baad Download par "No payment recorded" aata tha jabke row Fully Received thi. */
+    if (received <= 0 && !zeroSettledChallan(rec)) { toast('No payment recorded for this student yet', 'info'); return; }
     const perHead = {};
     rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
     //   setSlipCtx({
@@ -15068,7 +15098,7 @@ const FEE_REPORT_CATS = [
   { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists',
     info: 'Every row here comes directly from a real payment installment recorded in Fee Receiving, not from the challan amount. Daily Collections filters those installments to the selected date, Monthly Collections lists every installment in the selected month with its voucher, receiving method and amount, and Paid Student List shows students whose challan for the month is fully cleared.' },
   { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis',
-    info: 'Each student\'s total remaining balance is split into Current, 1 to 30, 31 to 60 and 61 plus day buckets using a proportional estimate based on this month\'s fee, since individual installment due dates are not tracked per day. Treat these buckets as a general sense of how overdue balances are distributed across the school, not as an exact day count for any one student.' },
+    info: 'Each student\'s unpaid balance (as of the selected date) is placed in a bucket by how many days have passed since the due date of the challan it belongs to: Current (not yet due), 1 to 30, 31 to 60 and 61 plus days. A balance carried forward from an older challan is aged from that older challan\'s due date. Advances and receivings made after the as-of date are not counted.' },
   { id: 'summary',    ic: 'fa-chart-pie',           name: 'Collection vs Expected',   desc: 'Realisation %, payment-mode breakdown',
     info: 'Expected Revenue is the sum of every student\'s payable amount across the school. Collected is the sum of everything actually received. Realisation percent is Collected divided by Expected. The payment mode breakdown adds up every recorded receipt by its payment method, such as Cash, Online, Bank Transfer or Cheque.' },
 ];
@@ -15416,7 +15446,12 @@ function pickReceivableChallan(priorList, pendList) {
        advance wale student par jhooti "previous fine"): P ki Due Date se IS challan ke banne
        ki tareekh tak ka fine (wahan freeze) + P me carry hua purana fine (recursive).
    Same "Fine" line me receiving popup isay is challan ke apne late fine ke saath jodta hai. */
+/* Pichhle mahine ki baqaya fine BACKEND carry karta hai (agle challan me "Late Fee Fine" row).
+   true → frontend apna carried / previous fine NAHI jorta (warna fine do dafa ginta). */
+const FINE_CARRY_BY_BACKEND = true;
+
 function carriedFineInto(rec, priorList, settings, depth = 0) {
+  if (FINE_CARRY_BY_BACKEND) return 0;
   if (!rec || !settings?.fineEnabled || depth > 24) return 0;
   if (!challanCarriesPrev(rec)) return 0;
   const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
@@ -15510,6 +15545,7 @@ async function payCarriedFine(plan, { paymentMethod, receivedDate, modifiedBy, w
    alag "Previous Fine" row ke taur par chhapta hai. Agar fine row pehle se bill ho chuki
    hai to wo prevOut ke dues me already shamil hai, is liye 0 (dobara na jorein). */
 function unpaidFineOf(latest, settings) {
+  if (FINE_CARRY_BY_BACKEND) return 0;   // backend "Late Fee Fine" row bana deta hai
   if (!latest || !settings?.fineEnabled) return 0;
   if ((latest.detailRows || []).some(feeService.isLateFineRow)) return 0;
   const remain = (latest.detailRows || []).reduce((a, r) =>
@@ -17244,7 +17280,8 @@ function ReportPanelAging({ toast }) {
                       <td className="fee-right">{money(x.a.cur)}</td>
                       <td className="fee-right" style={{ color: '#D97706', fontWeight: 700 }}>{money(x.a.d30)}</td>
                       <td className="fee-right" style={{ color: '#D97706', fontWeight: 700 }}>{money(x.a.d60)}</td>
-                      <td className="fee-right fee-neg">{money(x.a.d90)}</td>
+                      {/* fee-stbl me td.fee-neg GREEN (advance) hota hai — 61–90+ legend/bar jaisa LAAL. */}
+                      <td className="fee-right" style={{ color: '#DC2626', fontWeight: 700 }}>{money(x.a.d90)}</td>
                       <td className="fee-right"><b>{money(x.m.remaining)}</b></td>
                       <td>
                         <div className="age-bar">
@@ -17307,7 +17344,12 @@ function ReportPanelSummary({ toast }) {
   const selY = Number(selYear) || new Date().getFullYear();
   const periods = useMemo(() => {
     const back = new Date(selY, selM - 13, 1);
-    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), selM, selY);
+    /* Agle 3 mahine ke challans bhi — is mahine me AGLE mahine ka challan (advance) receive
+       ho to wo receipt bhi is mahine ki "Collected" / Payment Mode me aaye (warna table
+       Dashboard ke Collected card se kam dikhati thi: 83,933 vs 91,193). Expected sirf isi
+       mahine ke challans, Outstanding sirf isi mahine tak — un par asar nahi. */
+    const ahead = new Date(selY, selM - 1 + 3, 1);
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), ahead.getMonth() + 1, ahead.getFullYear());
   }, [selM, selY]);
   const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
   const data = useMemo(() => {
@@ -17321,7 +17363,9 @@ function ReportPanelSummary({ toast }) {
     allStudents.forEach(({ c, s, m }) => {
       const recs = m.recs || [];
       if (!recs.length) return;
-      n += 1;
+      /* Student count pehle jaisa — sirf jin ka is mahine tak koi challan ho (agle mahine
+         ke challans sirf receipts ke liye load hue hain). */
+      if (recs.some(rec => startOf(rec) <= monthKey)) n += 1;
       let e = 0, r = 0;
       recs.forEach(rec => {
         if (startOf(rec) === monthKey) {

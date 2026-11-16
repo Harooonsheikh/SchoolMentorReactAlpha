@@ -1528,13 +1528,13 @@ export function daysLate(dueDate, receivingDate) {
   return Math.max(0, Math.floor((rec - due) / dayMs));
 }
 
-/* false → frontend fine calculation band (computeFine hamesha 0). */
-const FINE_CALC_ENABLED = false;
+/* true → IS (current) challan par due date ke baad receiving par late fine banti hai
+   (receiving modal ki "Fine" line). false → computeFine hamesha 0.
+   Pichhle mahine ki baqaya fine frontend carry NAHI karta — backend agle challan me
+   "Late Fee Fine" row bana deta hai (FINE_CARRY_BY_BACKEND, Fee.jsx). */
+const FINE_CALC_ENABLED = true;
 
-/* Is challan par is receiving date tak banti kul fine.
-   DISABLED: receive ke waqt frontend fine calculate nahi karta. Fine sirf API ki
-   Late Fine rows se aati hai (billed/received wahan se). Purana calculation wapas
-   chahiye to ye guard hata dein. */
+/* Is challan par is receiving date tak banti kul fine. */
 export function computeFine({ dueDate, receivingDate, settings } = {}) {
   if (!FINE_CALC_ENABLED) return 0;
   if (!settings?.fineEnabled) return 0;
