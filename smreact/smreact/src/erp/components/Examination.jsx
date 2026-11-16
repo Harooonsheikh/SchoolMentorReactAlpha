@@ -1370,7 +1370,7 @@ export default function Examination({ toast = () => { } }) {
       const ordered = students.filter(s => s.grandObt > 0).sort((a, b) => b.grandObt - a.grandObt);
       let prevObt = null, curRank = 0;
       ordered.forEach((s, i) => {
-        if (prevObt === null || s.grandObt !== prevObt) { curRank = i + 1; prevObt = s.grandObt; }
+        if (prevObt === null || s.grandObt !== prevObt) { curRank += 1; prevObt = s.grandObt; }   // dense: tie ke baad agla rank skip nahi hota
         s.rank = `${curRank}${sfx(curRank)}`;
       });
       students.forEach(s => { if (!(s.grandObt > 0)) s.rank = '—'; });
@@ -8564,7 +8564,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         let posNum = 0;
         let curRank = 0, prevObt = null;
         for (let i = 0; i < ranked.length; i++) {
-          if (prevObt === null || ranked[i].obt !== prevObt) { curRank = i + 1; prevObt = ranked[i].obt; }
+          if (prevObt === null || ranked[i].obt !== prevObt) { curRank += 1; prevObt = ranked[i].obt; }   // dense: tie ke baad agla rank skip nahi hota
           if (String(ranked[i].id) === String(stu.id)) { posNum = curRank; break; }
         }
         // Ordinal format jaisa baaqi code (1st/2nd/3rd/Nth). Rank na mile → '—'.
@@ -13714,7 +13714,14 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
 
   const ranked = [...students].filter(r => !r.st.absent).sort((a, b) => b.obt - a.obt);
   const rankMap = new Map();
-  ranked.forEach((r, i) => { rankMap.set(r.st.id, i + 1); });
+  // Dense ranking (card jaisi): barabar marks → same rank, tie ke baad agla rank skip nahi hota.
+  let denseRank = 0, prevRankObt = null;
+  ranked.forEach((r) => {
+    if (prevRankObt === null || r.obt !== prevRankObt) { denseRank += 1; prevRankObt = r.obt; }
+    rankMap.set(r.st.id, denseRank);
+  });
+  // Rows rank ke order me (tie par roster ka order), absent students aakhir me.
+  const rowOrder = [...ranked, ...students.filter(r => r.st.absent)];
 
   const totalSum = students.reduce((a, r) => a + r.tot, 0);
   const obtSum = students.reduce((a, r) => a + r.obt, 0);
@@ -13738,10 +13745,9 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
                 : '#475569';
   };
 
-  const rowsHtml = students.map((r, i) => {
+  const rowsHtml = rowOrder.map((r, i) => {
     const rank = rankMap.get(r.st.id);
-    const rankSfx = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
-    const rankStr = r.st.absent ? '—' : (rank ? `${rank}${rankSfx}` : '—');
+    const rankStr = r.st.absent ? '—' : (rank ? rcOrdinal(rank) : '—');
     const bg = i % 2 === 0 ? '#fff' : rowEv;
     const grCol = gradeColor(r.grade);
 const tdBase = `padding:7px 9px;border-bottom:1px solid ${aBdr};font-size:12.5px;color:#0F172A`;
@@ -15069,7 +15075,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
         const rankOf = {};
         let cur = 0, prev = null;
         ranked.forEach((c, i) => {
-          if (prev === null || c._obt !== prev) { cur = i + 1; prev = c._obt; }
+          if (prev === null || c._obt !== prev) { cur += 1; prev = c._obt; }   // dense: tie ke baad agla rank skip nahi hota
           rankOf[String(c.student.id)] = rcOrdinal(cur);
         });
         const cardsOut = built.map(c => ({
@@ -15431,7 +15437,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
             .sort((a, b) => (b.obt - a.obt) || String(a.name).localeCompare(String(b.name)));
           let cur = 0, prev = null;
           order.forEach((x, idx) => {
-            if (prev === null || x.obt !== prev) { cur = idx + 1; prev = x.obt; }
+            if (prev === null || x.obt !== prev) { cur += 1; prev = x.obt; }   // dense: tie ke baad agla rank skip nahi hota
             if (!built[x.i].student._combined.rank) {
               const label = rcOrdinal(cur);
               built[x.i].student._combined.rank = cur;
