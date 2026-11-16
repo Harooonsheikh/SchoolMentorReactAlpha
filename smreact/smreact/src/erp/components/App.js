@@ -15,13 +15,14 @@ import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
 import {
   chatUserId, chatEmployeeId, chatBranchId, fetchUnseenCount,
-  fetchChatContacts, getOpenChatId, chatDisplayName,
+  getOpenChatId, chatDisplayName,
 } from '../services/chatService';
+import { startChatContactsSchedule, stopChatContactsSchedule, subscribeChatContacts } from '../services/chatContactsSchedule';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import { loadAcademicsContentPermissions } from '../services/academicsContentPermissions';
 import { preloadFeeData } from '../services/feeService';
 import { loadExaminationContentPermissions } from '../services/examinationContentPermissions';
-import { startChatLoginWindow, pingChat, nudgeChatOnFocus, chatActive } from '../services/chatActivity';
+import { nudgeChatOnFocus } from '../services/chatActivity';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
 import feeReferenceAlignment from './feeReferenceAlignment';
@@ -280,7 +281,6 @@ export default function App() {
          • jab user chat khole/dekhe (onChatUnreadChange) ya gated notification
            poll koi naya message pakde (notify → refreshChatUnreadRef)
        par chalta hai. Is liye poore ERP me ye "hamesha" nahi chalta. */
-    startChatLoginWindow();
     const tick = async () => {
       if (document.hidden) return;
       const n = await fetchUnseenCount(branchId, me);
@@ -313,8 +313,9 @@ export default function App() {
     const branchId = chatBranchId();
     if (!me || !branchId) return undefined;
     let alive = true;
-    let prev = null;
-    let busy = false;
+    /* get-chat-contacts ka schedule: login par 1 dafa, har 2 min, naye message
+       par foran, aur aakhri message ke 30s baad (chatContactsSchedule.js). */
+    startChatContactsSchedule(branchId, me);
 
     const beep = () => {
       try {
@@ -346,32 +347,19 @@ export default function App() {
       beep();
     };
 
-    const check = async () => {
-      /* Window band ho to kuch na karo — koi API call nahi. */
-      if (busy || document.hidden || !chatActive()) return;
-      busy = true;
-      try {
-        const list = await fetchChatContacts(branchId, me);
-        const now = new Map(list.map(c => [c.userId, Number(c.unread) || 0]));
-        if (prev && alive) {
-          const open = activeModuleRef.current === 'chat' && !document.hidden && document.hasFocus() ? getOpenChatId() : null;
-          list.forEach(c => {
-            const added = (now.get(c.userId) || 0) - (prev.get(c.userId) || 0);
-            if (added > 0) {
-              /* Doosri taraf se jawab aaya → poll ko 2 min aur chalne do. */
-              pingChat();
-              if (c.userId !== open) notify(c, added);
-            }
-          });
-        }
-        prev = now;
-      } catch (_) { /* agli dafa */ } finally {
-        busy = false;
-      }
+    /* Schedule ka har jawab: jis contact ka unread barha wo naya message hai. */
+    const unsubscribe = subscribeChatContacts((_rows, { added }) => {
+      if (!alive) return;
+      const open = activeModuleRef.current === 'chat' && !document.hidden && document.hasFocus() ? getOpenChatId() : null;
+      added.forEach(({ contact, added: n }) => {
+        if (contact.userId !== open) notify(contact, n);
+      });
+    });
+    return () => {
+      alive = false;
+      unsubscribe();
+      stopChatContactsSchedule();
     };
-    check();
-    const id = setInterval(check, 5000);
-    return () => { alive = false; clearInterval(id); };
   }, []);
   /* Har ERP module par time-spend: screenName = module ka naam, type = "erp". */
   useUserTimeSpend(NAV_LABELS[active] || active);

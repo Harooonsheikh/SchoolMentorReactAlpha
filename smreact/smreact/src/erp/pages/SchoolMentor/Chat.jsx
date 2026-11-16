@@ -24,6 +24,7 @@ import {
 } from '../../services/chatService';
 import { encodeMp3 } from '../../services/mp3Encode';
 import { pingChat, nudgeChatOnFocus } from '../../services/chatActivity';
+import { subscribeChatContacts, noteChatActivity } from '../../services/chatContactsSchedule';
 
 /* ═══════════════════════════════════════════════════════════════════
    CHAT — school messaging (parents · students · teachers), live API.
@@ -52,7 +53,6 @@ import { pingChat, nudgeChatOnFocus } from '../../services/chatActivity';
    logged in hai ya nahi" hai (FCM token), aur wahi New Chat me bhi.
    ═══════════════════════════════════════════════════════════════════ */
 
-const POLL_MS = 5000;
 /* Har itne polls baad directory se chhooti hui staff chats dhoondo (~1 min). */
 const DISCOVER_EVERY = 12;
 /* Har DISCOVER_EVERY tick par sirf pehle se mili (discovered) staff chats
@@ -322,7 +322,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
      khuli chat me naya message aaya ya nahi. */
   const rawUnreadRef = useRef(new Map());
 
-  const loadContacts = useCallback(async ({ silent = false } = {}) => {
+  const loadContacts = useCallback(async ({ silent = false, rows: preRows = null } = {}) => {
     if (!me || !branchId) {
       setLoadError('Your session has no user or branch — please log in again.');
       setLoading(false);
@@ -330,7 +330,9 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     }
     if (!silent) setLoading(true);
     try {
-      const rawRows = await fetchChatContacts(branchId, me);
+      /* preRows: get-chat-contacts ka schedule (chatContactsSchedule.js) pehle se
+         la chuka — dobara API call nahi. */
+      const rawRows = preRows || await fetchChatContacts(branchId, me);
       rawUnreadRef.current = new Map(rawRows.map(r => [r.userId, Number(r.unread) || 0]));
       const tick = discoverTick.current++;
       const scan = !silent || tick % DISCOVER_EVERY === 0;
@@ -478,11 +480,10 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   useEffect(() => {
     if (!me || !branchId) return undefined;
     let tick = 0;
-    const id = setInterval(() => {
+    /* Har schedule run (login / 2 min / naya message / message ke 30s baad)
+       par chalta hai — get-chat-contacts ka jawab ye khud lata hai (preRows). */
+    const onContacts = (rows) => {
       if (document.hidden) return;
-      /* Page khula + focus → poll zinda rakho (global badge/notification poll
-         bhi isi window par chalte hain). */
-      pingChat();
       const n = ++tick;
       /* App install / logout badalta rehta hai — ~har minute taza FCM status. */
       if (n % 12 === 0) refreshAppUsers();
@@ -507,7 +508,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
            • kuch nahi badla → koi call nahi.
          Pehle har 5 s par conversation + receipt + mark-seen + unseen-count
          (4 calls) jati thin, chahe kuch naya ho ya na ho. */
-      loadContacts({ silent: true }).then(() => {
+      loadContacts({ silent: true, rows }).then(() => {
         if (!open || getOpenChatId() !== open || !mountedRef.current) return;
         const c = contactsRef.current.find(x => x.userId === open);
         const incoming = rawUnreadRef.current.get(open) || 0;
@@ -517,7 +518,8 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
           refreshReceipt(open);
         }
       });
-    }, POLL_MS);
+    };
+    const unsubscribe = subscribeChatContacts(onContacts);
     /* Window par wapas aaye → khuli chat ab dekhi ja rahi hai: naye messages
        lao aur seen karo. */
     const onFocus = () => {
@@ -526,7 +528,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       if (open) { pingChat(); loadConversation(open).then(() => markMessagesSeen(branchId, open, me)).then(refreshApiUnseen); }
     };
     window.addEventListener('focus', onFocus);
-    return () => { clearInterval(id); window.removeEventListener('focus', onFocus); };
+    return () => { unsubscribe(); window.removeEventListener('focus', onFocus); };
   }, [me, branchId, loadContacts, loadConversation, refreshAppUsers, refreshApiUnseen, refreshReceipt]);
 
   /* ── derived ─────────────────────────────────────────────────── */
@@ -649,6 +651,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   /* Sirf selection — messages laana aur "seen" karna neeche wale effect ka kaam
      hai, taake pehli chat (jo khud-ba-khud khulti hai) bhi usi rasty se guzray. */
   const openConv = useCallback((userId) => {
+    noteChatActivity();   // chat khuli → get-chat-contacts foran + 30s baad
     setActiveId(userId);
     setConvSearchOpen(false);
     setConvQ('');
@@ -669,6 +672,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     sendingRef.current = true;
     /* User ne message bheja → poll 2 min ke liye zinda (chat module). */
     pingChat();
+    noteChatActivity();   // bheja → get-chat-contacts foran + aakhri activity ke 30s baad
     setSending(true);
     /* Bubble foran dikha do (single grey tick ke saath) — server ka jawab aane
        par poori conversation dobara aa kar isay replace kar deti hai. */

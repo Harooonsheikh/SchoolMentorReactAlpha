@@ -13,6 +13,8 @@ import TeacherTrainings from './TeacherTrainings';
 import UserManagement from './UserManagement';
 import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
+import TechModule from './TechModule';
+import { PermissionsProvider } from './adminPermissions/AdminPermissionsContext';
 import { INITIAL_USERS, INITIAL_PERMS } from './userMgmtData';
 import { installSessionGuard, setSessionGuardActive } from './api/sessionGuard';
 import SupportBackgroundListener from '../support/SupportBackgroundListener';
@@ -44,6 +46,7 @@ const NAV = [
     { id: 'sops',        name: 'Policy Manuals',     icon: 'fa-book-open' },
     { id: 'mentorAI',    name: 'Mentor AI',          icon: 'fa-robot', sub: 'Active module' },
     { id: 'support',     name: 'Support',            icon: 'fa-headset' },
+    { id: 'techModule',  name: 'Tech Module',        icon: 'fa-list-check', sub: 'Bugs & new development' },
     { id: 'trainings',   name: 'Teachers Training',  icon: 'fa-chalkboard-user' },
     { id: 'quiz',        name: 'Quiz Content',       icon: 'fa-circle-question' },
     { id: 'notifications', name: 'Notifications',    icon: 'fa-bell' },
@@ -70,6 +73,7 @@ const CRUMB = {
   trainings:     'Teacher Trainings',
   notifications: 'Notifications',
   users:         'User Management',
+  techModule:    'Tech Module',
 };
 
 const TOAST_ICON = { success: 'fa-circle-check', info: 'fa-circle-info', warn: 'fa-triangle-exclamation', error: 'fa-circle-xmark' };
@@ -152,7 +156,8 @@ const onNav = (id) => {
     id === 'quiz' ||
     id === 'trainings' ||
     id === 'notifications' ||
-    id === 'users'
+    id === 'users' ||
+    id === 'techModule'
   ) {
     setActive(id);
   } else {
@@ -167,6 +172,7 @@ const onNav = (id) => {
 };
 
   return (
+    <PermissionsProvider>
     <div className="sa-root" data-theme={theme === 'dark' ? 'dark' : undefined}>
       <SupportBackgroundListener
   enabled={true}
@@ -298,6 +304,8 @@ const onNav = (id) => {
 
           {active === 'users' && <UserManagement toast={toast} users={users} setUsers={setUsers} perms={perms} setPerms={setPerms} />}
 
+          {active === 'techModule' && <TechModule toast={toast} users={users} />}
+
           {active === 'support' && (
             <div className="page-content">
               <div className="page-header">
@@ -338,5 +346,6 @@ const onNav = (id) => {
         ))}
       </div>
     </div>
+    </PermissionsProvider>
   );
 }

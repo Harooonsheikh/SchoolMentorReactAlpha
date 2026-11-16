@@ -33,10 +33,11 @@ export function buildQuery(params = {}) {
   return q ? `?${q}` : '';
 }
 
-/** Core JSON request. `query` is an optional params object appended to path. */
-export async function request(path, { method = 'GET', body, query, signal } = {}) {
+/** Core JSON request. `query` is an optional params object appended to path.
+ *  `base` picks the host (default SA_API_BASE; modules on the admin backend pass SA_ADMIN_API_BASE). */
+export async function request(path, { method = 'GET', body, query, signal, base = SA_API_BASE } = {}) {
   const token = getSuperAdminToken();
-  const url = `${SA_API_BASE}${path}${query ? buildQuery(query) : ''}`;
+  const url = `${base}${path}${query ? buildQuery(query) : ''}`;
 
   let res;
   try {

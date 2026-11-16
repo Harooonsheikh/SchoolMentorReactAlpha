@@ -1,0 +1,7224 @@
+  import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+  import { createPortal } from "react-dom";
+  import Tooltip from "./Tooltip";
+  import TutorialModal from "./TutorialModal";
+  import * as attendanceService from "../services/attendanceService";
+  import * as profileService from "../services/profileService";
+  import { useModuleReadOnly, validateSessionDateFromStorage } from "../pages/Settings/settingsStore";
+  import { usePermissions } from "../context/PermissionsContext";
+import { rankedMatches } from "../utils/studentSearch";
+import {
+  DEFAULT_ATTENDANCE_SETUP, validateAttendanceSetup, isGeofenceConfigured, describeAttendanceRules,
+  calculateAttendanceResult, timeToMinutes,
+} from "../utils/attendanceRules";
+import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
+import StudentAbsenteeismReport from './StudentAbsenteeismReport';
+import { buildStandardReportHtml, downloadReportAsWord, downloadReportHtmlAsExcel, reportFileName, StandardReportPicker, reportAcademicYear } from '../reports/reportKit';
+  /* ============================================================================
+    SchoolMentor ERP — Attendance Module (React / JSX)
+    ----------------------------------------------------------------------------
+    Faithful React port of the original vanilla-JS Attendance screen.
+    - Vanilla DOM manipulation (getElementById / innerHTML / onclick) has been
+      replaced with React state (useState) and real event handlers.
+    - Four tabs: Attendance Setup · Student Attendance · Staff Attendance · Reports
+    - Inline styles + CSS variables, matching the original blue-gradient design.
+
+    Drop-in usage:
+        import Attendance from "./Attendance";
+        <Attendance onToast={(msg, type) => ...} />
+
+    The optional `onToast(message, type)` prop lets a parent shell show toasts.
+    ========================================================================== */
+
+  /* ─── Design tokens (scoped, mirrors :root from the original) ─────────────── */
+  /* Design tokens — wired to global CSS variables so dark mode just works.
+    The fallback after each `var(...)` keeps storybook / isolated previews
+    readable when the global stylesheet is not loaded. */
+  const T = {
+    brandPrimary:  "var(--brand-primary, #1E3A8A)",
+    brandDark:     "var(--brand-dark, #1E40AF)",
+    brandMid:      "var(--brand-mid, #2563EB)",
+    brandLight:    "var(--brand-light, #DBEAFE)",
+    bgBase:        "var(--bg-base, #F0F4FF)",
+    bgCard:        "var(--bg-card, #FFFFFF)",
+    bgMuted:       "var(--bg-muted, #EFF6FF)",
+    textPrimary:   "var(--text-primary, #0F172A)",
+    textSecondary: "var(--text-secondary, #1E3A5F)",
+    textMuted:     "var(--text-muted, #64748B)",
+    success:       "var(--success, #16A34A)",
+    warning:       "var(--warning, #D97706)",
+    error:         "var(--error, #DC2626)",
+    borderLight:   "var(--border-light, #BFDBFE)",
+    borderMed:     "var(--border-med, #93C5FD)",
+    radiusMd:      "var(--radius-md, 10px)",
+    radiusLg:      "var(--radius-lg, 14px)",
+    radiusFull:    "var(--radius-full, 9999px)",
+    shadowXs:      "var(--shadow-xs, 0 1px 2px rgba(0,0,0,.06))",
+    shadowSm:      "var(--shadow-sm, 0 2px 6px rgba(30,58,138,.18), 0 1px 2px rgba(0,0,0,.05))",
+    font:          "var(--font-body, 'Plus Jakarta Sans', system-ui, sans-serif)",
+    tr:            "var(--tr, all .2s cubic-bezier(.4,0,.2,1))",
+  };
+
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const DAYS_S = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const DAYS_F = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const DAY_ICONS = ["📅", "📆", "📅", "📆", "📅", "🏖️", "🏡"];
+
+  /* ─── Seed data (ported from the original ATT object) ─────────────────────── */
+  /* Holidays, student & staff attendance now load via attendanceService
+    (src/services/attendanceService.js). Local mutations stay in-memory
+    until backend wires the matching endpoints. */
+
+  const REPORT_GROUPS = [
+    {
+      title: "Student Attendance Report",
+      sub: "Daily, monthly and class-wise student reports",
+      icon: "fa-user-graduate",
+      gradient: "linear-gradient(135deg,#1E3A8A,#2563EB)",
+      accent: "#1E40AF",
+      reports: [
+        { key:"studentDaily",     label:"Daily Attendance",   icon:"fa-calendar-day",  filters:[{ k:"Select Date",  field:"date",  type:"date"  }] },
+        { key:"studentMonthly",   label:"Monthly Attendance", icon:"fa-calendar-days", filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"studentClasswise", label:"Class-wise Report",  icon:"fa-layer-group",   filters:[{ k:"Class",     field:"class", type:"class" }, { k:"From Date", field:"from", type:"date" }, { k:"To Date", field:"to", type:"date" }] },
+        { key:"studentSummary",   label:"Summary Report",     icon:"fa-chart-pie",     filters:[{ k:"From Date", field:"from", type:"date" }, { k:"To Date", field:"to", type:"date" }] },
+        { key:"studentLateArrivals", label:"Late Arrivals",   icon:"fa-user-clock",    filters:[{ k:"Select Month", field:"month", type:"month" }] },
+      ],
+    },
+    {
+      title: "Staff Attendance Report",
+      sub: "Daily, monthly and summary staff reports",
+      icon: "fa-users",
+      gradient: "linear-gradient(135deg,#065f46,#059669)",
+      accent: "#059669",
+      reports: [
+        { key:"staffDaily",   label:"Daily Attendance",       icon:"fa-calendar-day",  filters:[{ k:"Select Date",  field:"date",  type:"date"  }] },
+        { key:"staffMonthly", label:"Monthly Attendance",     icon:"fa-calendar-days", filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffSummary", label:"Attendance Summary",     icon:"fa-chart-pie",     filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffSheet",   label:"Staff Attendance Sheet", icon:"fa-table-cells",   filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffLateArrivals", label:"Late Arrivals",    icon:"fa-user-clock",    filters:[{ k:"Select Date", field:"date", type:"date" }] },
+        { key:"staffShortLeavers", label:"Short Leavers",    icon:"fa-person-walking-arrow-right", filters:[{ k:"Select Date", field:"date", type:"date" }] },
+      ],
+    },
+    {
+      title: "Monthly Class Reports",
+      sub: "Class overview, comparison and alert reports",
+      icon: "fa-chalkboard-user",
+      gradient: "linear-gradient(135deg,#7c3aed,#8b5cf6)",
+      accent: "#7c3aed",
+      reports: [
+        { key:"classOverview",   label:"Class Overview",        icon:"fa-chart-bar",            filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"classComparison", label:"Class Comparison",      icon:"fa-code-compare",         filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"lowAttendance",   label:"Low Attendance Alert",  icon:"fa-triangle-exclamation", filters:[{ k:"Select Month", field:"month", type:"month" }], altGradient:"linear-gradient(135deg,#b45309,#d97706)", altAccent:"#D97706" },
+      ],
+    },
+    {
+      title: "Holidays Report",
+      sub: "Yearly and monthly holiday summaries",
+      icon: "fa-calendar-xmark",
+      gradient: "linear-gradient(135deg,#be123c,#e11d48)",
+      accent: "#be123c",
+      reports: [
+        { key:"holidayYearly",  label:"Yearly Holidays",  icon:"fa-calendar-xmark", filters:[{ k:"Academic Year", field:"year",  type:"year"  }] },
+        { key:"holidayMonthly", label:"Monthly Holidays", icon:"fa-calendar-minus", filters:[{ k:"Select Month",  field:"month", type:"month" }] },
+      ],
+    },
+  ];
+
+  const CLASS_OPTIONS = ["All Classes", "Class I", "Class II", "Class III", "Class IV", "Class V"];
+  // Month options span several years (not just 2026) → har saal ke months.
+  const genMonthYearOptions = (back = 3, fwd = 3) => {
+    const y = new Date().getFullYear();
+    const out = [];
+    for (let yr = y - back; yr <= y + fwd; yr++) MONTHS.forEach((m) => out.push(`${m} ${yr}`));
+    return out;
+  };
+  const MONTH_OPTIONS = genMonthYearOptions();
+  const CURRENT_MONTH_LABEL = `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`;
+  /* Session dropdowns are fed by the branch's real sessions (loaded in ReportsTab).
+     There is deliberately NO hardcoded year list any more: falling back to a
+     literal like "2025-2026" made the report filters claim a session the school
+     is not in, which is the whole "wrong session" complaint. Until the sessions
+     load, the select shows a single "—" placeholder. */
+  const NO_SESSION_OPT = "—";
+
+  /* "July 2026" → { year: 2026, monthIdx0: 6 } for month-range attendance fetch. */
+  const parseMonthLabel = (label) => {
+    const [mName, yr] = String(label || "").trim().split(/\s+/);
+    const monthIdx0 = MONTHS.indexOf(mName);
+    return {
+      year: Number(yr) || new Date().getFullYear(),
+      monthIdx0: monthIdx0 < 0 ? new Date().getMonth() : monthIdx0,
+    };
+  };
+
+  /* Individual Reports rosters */
+  const RPT_STUDENTS_BY_CLASS = [
+    { cls:"Class I",   sec:"Red",   total:38, teacher:"Ms. Ayesha Raza", students:[
+      { name:"Ali Hassan",   fn:"Hassan Ali",   roll:"2024-001", adm:"2024-001" },
+      { name:"Bilal Ahmed",  fn:"Ahmed Bilal",  roll:"2024-002", adm:"2024-002" },
+    ]},
+    { cls:"Class I",   sec:"Blue",  total:36, teacher:"Ms. Ayesha Raza", students:[
+      { name:"Sara Khan",    fn:"Khan Sara",    roll:"2024-003", adm:"2024-003" },
+      { name:"Fatima Malik", fn:"Malik Fatima", roll:"2024-004", adm:"2024-004" },
+    ]},
+    { cls:"Class II",  sec:"Blue",  total:35, teacher:"Mr. Bilal Ahmed", students:[
+      { name:"Umar Sheikh",  fn:"Sheikh Umar",  roll:"2024-005", adm:"2024-005" },
+      { name:"Ayesha Raza",  fn:"Raza Ayesha",  roll:"2024-006", adm:"2024-006" },
+    ]},
+    { cls:"Class III", sec:"White", total:42, teacher:"Ms. Sana Tariq",  students:[
+      { name:"Hira Butt",    fn:"Butt Hira",    roll:"2024-008", adm:"2024-008" },
+      { name:"Omar Farooq",  fn:"Farooq Omar",  roll:"2024-009", adm:"2024-009" },
+    ]},
+    { cls:"Class IV",  sec:"Green", total:39, teacher:"Ms. Sana Tariq",  students:[
+      { name:"Zain Qureshi", fn:"Qureshi Zain", roll:"2024-007", adm:"2024-007" },
+      { name:"Nadia Shah",   fn:"Shah Nadia",   roll:"2024-010", adm:"2024-010" },
+    ]},
+  ];
+
+  /* ─── Helpers ─────────────────────────────────────────────────────────────── */
+  // API se time value object ({}), null, number ya string — kuch bhi aa sakti hai.
+  // Isay hamesha safe string mein badlo (object/null → "" taake "—" dikhe).
+  const timeVal = (v) => (v == null || typeof v === "object") ? "" : String(v);
+  const fmtTime = (t) => {
+    if (t == null || t === "" || typeof t === "object") return "—";
+    const str = String(t);                       // number/Date/string — kuch bhi ho, safe
+    // ISO datetime (e.g. "2026-07-03T09:05:00") → time hissa nikaal lo.
+    const timePart = str.includes("T") ? str.split("T")[1] : str;
+    if (!timePart || !timePart.includes(":")) return str || "—";
+    const [h, m] = timePart.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return str;
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 || 12;
+    return `${h12}:${m < 10 ? "0" + m : m} ${ampm}`;
+  };
+  const platIcon = (p) => (p === "ERP" ? "💻" : p === "Mobile App" ? "📱" : p === "Biometric" ? "🖐️" : "—");
+
+  /* Resolve a ClassID+SectionID to a readable "Class - Section" label using
+    the branch class list (from getClassesForBranch). Falls back to raw IDs. */
+  const labelForClass = (classList, classID, sectionID) => {
+    const found = (classList || []).find(
+      (c) => String(c.classID) === String(classID) && String(c.sectionID) === String(sectionID)
+    );
+    return found ? found.label : `Class ${classID} - Sec ${sectionID}`;
+  };
+
+  /* The /api/attendance-monthly-setup "get" response is FLAT — one row per
+    holiday × class × section. Group by holiday ID so each holiday appears
+    ONCE with all its class+section pairs collected under selectedClasses. */
+  function groupHolidayRows(rows, classList) {
+    const byId = new Map();
+    (rows || []).forEach((r) => {
+      const id = r.ID ?? r.id;
+      if (id == null) return;
+      if (!byId.has(id)) {
+        const from = String(r.DateFrom ?? r.dateFrom ?? "").slice(0, 10);
+        const to   = String(r.DateTo ?? r.dateTo ?? "").slice(0, 10);
+        const monthNum = r.Month ?? r.month;
+        const month = monthNum != null && monthNum !== ""
+          ? Number(monthNum) - 1                       // API month is 1-based
+          : (from ? new Date(from).getMonth() : 0);
+        byId.set(id, {
+          id,
+          title: r.HolidayTitle ?? r.holidayTitle ?? "",
+          desc: r.Description ?? r.description ?? "",
+          from, to, month,
+          selectedClasses: [],
+        });
+      }
+      const classID   = r.ClassID ?? r.classID;
+      const sectionID = r.SectionID ?? r.sectionID;
+      if (classID != null && sectionID != null) {
+        const h = byId.get(id);
+        const dup = h.selectedClasses.some(
+          (c) => String(c.classID) === String(classID) && String(c.sectionID) === String(sectionID)
+        );
+        if (!dup) h.selectedClasses.push({ classID, sectionID, label: labelForClass(classList, classID, sectionID) });
+      }
+    });
+    const list = [...byId.values()];
+    list.forEach((h) => { h.classes = h.selectedClasses.map((c) => c.label); });
+    return list;
+  }
+
+  /* Section removed — Tab 1/2/3/4 use att-section directly. */
+
+  // InfoBar/ReportBtn/StatusBadge removed — superseded by att-* CSS classes.
+
+  /* ─── Working Hours & Attendance Rules ──────────────────────────────────────
+     The centralized configuration that src/utils/attendanceRules.js turns
+     into Present/Late/Short Leave/Full Day. Lives inside Attendance Setup
+     (formerly Holidays Setup) because it is now the broader attendance
+     configuration section, not just holidays. */
+  /* Simple two-option pill toggle, reused by both the Staff and Student
+     Working Hours sections for their own Time Tracking Mode — plain
+     inline styling (no new att-seg-* CSS) since .att-radio-btn's active
+     colors are hard-wired to the P/A/L/H letter classes. */
+  function TrackingModeToggle({ value, onChange }) {
+    const opt = (v, label, icon) => (
+      <button
+        type="button"
+        className="att-radio-btn"
+        style={value === v
+          ? { borderColor: "var(--brand-solid, #1E40AF)", background: "rgba(var(--brand-primary-rgb), .1)", color: "var(--brand-solid, #1E40AF)", fontWeight: 700 }
+          : undefined}
+        onClick={() => onChange(v)}
+      >
+        <i className={`fa-solid ${icon}`} style={{ marginRight: 5 }}></i>{label}
+      </button>
+    );
+    return (
+      <div className="att-radio-group">
+        {opt("in_out", "Time In & Time Out", "fa-right-left")}
+        {opt("in_only", "Time In Only", "fa-right-to-bracket")}
+      </div>
+    );
+  }
+
+  function WorkingHoursSection({ setup, onSave, saving }) {
+    const [draft, setDraft] = useState(setup);
+    useEffect(() => { setDraft(setup); }, [setup]);
+
+    const trackTimeOut = draft.staffTrackingMode !== "in_only";
+    /* Geofence is a separate card — don't let its fields colour the staff
+       time-rule error state. */
+    const errors  = useMemo(() => validateAttendanceSetup({ ...draft, geofenceEnabled: false }), [draft]);
+    const summary = useMemo(() => describeAttendanceRules({ ...draft, trackTimeOut }), [draft, trackTimeOut]);
+
+    const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    /* Staff rules are always on now (the enable/disable toggle is hidden) —
+       isEnabled is forced true on save so automatic status calculation always
+       applies. */
+    const save = () => onSave({ ...draft, isEnabled: true });
+
+    const chipClass = (label) => (
+      label === "Present" ? "present" :
+      label === "Late" ? "late" :
+      label === "Short Leave" ? "short-leave" :
+      label === "Full Day" ? "full-day" : "neutral"
+    );
+
+    const Field = ({ field, label, help }) => (
+      <div>
+        <label className="att-label">{label} *</label>
+        <input
+          type="time"
+          className={`att-input${errors[field] ? " error" : ""}`}
+          value={draft[field] || ""}
+          onChange={(e) => set(field, e.target.value)}
+        />
+        {errors[field]
+          ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors[field]}</div>
+          : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>{help}</div>}
+      </div>
+    );
+
+    return (
+      <div className="att-section">
+        <div className="att-section-header">
+          <div className="att-section-title">
+            <div className="att-section-icon"><i className="fa-solid fa-business-time"></i></div>
+            <div>
+              <div className="att-section-name">Working Hours &amp; Attendance Rules — Staff</div>
+              <div className="att-section-sub">Configure staff working hours and automatically determine attendance status from time in and time out.</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Tooltip text="Save working hours and attendance rules">
+              <button className="att-btn-save-small" disabled={saving} onClick={save}>
+                <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+        <div className="att-section-body">
+          <div className="att-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>These rules are evaluated after holidays, weekly off days and approved leave — a non-working day is never reclassified as Present or Late.</span>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-left"></i> Time Tracking</div>
+            <TrackingModeToggle value={draft.staffTrackingMode || "in_out"} onChange={(v) => set("staffTrackingMode", v)} />
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 7 }}>
+              {trackTimeOut
+                ? "Staff Time Out is tracked — it stays visible on the marking screen, the staff list, and every staff report."
+                : "Time In only. Staff Time Out is hidden everywhere — the marking screen, the staff list, and every staff report."}
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-school"></i> Working Hours</div>
+            <div className="att-field-row">
+              <Field field="schoolStartTime" label="School Start Time" help="The official start time of the school day." />
+              <Field field="schoolEndTime" label="School End Time" help="The official end time of the school day." />
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-to-bracket"></i> Time In Rules</div>
+            <div className="att-field-row cols-3">
+              <Field field="attendanceStartTime" label="Attendance Start Time" help="Earliest time a check-in counts toward today's attendance." />
+              <Field field="normalTimeInUntil" label="Normal Time-In Until" help="Attendance marked on or before this time will be considered Present." />
+              <Field field="lateAfter" label="Late After" help="Attendance marked after this time will automatically be considered Late." />
+            </div>
+          </div>
+
+          {trackTimeOut && (
+            <div className="att-subsection">
+              <div className="att-subsection-title"><i className="fa-solid fa-right-from-bracket"></i> Time Out Rules</div>
+              <div className="att-field-row">
+                <Field field="shortLeaveFrom" label="Short Leave Before" help="Teachers checking out before this time will be marked as Short Leave." />
+                <Field field="fullDayTimeOut" label="Full Day Time-Out" help="Teachers checking out at or after this time will complete the normal full working day." />
+              </div>
+            </div>
+          )}
+
+          <div className="att-rule-summary">
+            <div className="att-rule-summary-title"><i className="fa-solid fa-wand-magic-sparkles"></i> Attendance Rules Summary</div>
+            <div className="att-rule-group">
+              <div className="att-rule-group-label">Time In</div>
+              {summary.timeIn.map((row) => (
+                <div className="att-rule-row" key={`in-${row.key || row.label}`}>
+                  <span className="att-rule-range">{row.range}</span>
+                  <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                  <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                </div>
+              ))}
+            </div>
+            {trackTimeOut && (
+              <div className="att-rule-group">
+                <div className="att-rule-group-label">Time Out</div>
+                {summary.timeOut.map((row) => (
+                  <div className="att-rule-row" key={`out-${row.label}`}>
+                    <span className="att-rule-range">{row.range}</span>
+                    <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                    <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="att-info" style={{ marginBottom: 0, marginTop: 14 }}>
+            <i className="fa-solid fa-circle-info"></i>
+            <span>
+              {trackTimeOut
+                ? "Attendance status is calculated automatically using your school's configured timings. Time In determines whether a teacher is Present or Late, while Time Out determines whether the teacher qualifies for Short Leave or completes the full working day."
+                : "Attendance status is calculated automatically using your school's configured timings. Time In determines whether a teacher is Present or Late — this school only tracks Time In, so Short Leave and Full Day do not apply."}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Working Hours & Attendance Rules — Students ───────────────────────────
+     Same shape and engine as the Staff section above, but entirely its own
+     fields (student*-prefixed) and its own enable switch — a school's class
+     timings are usually different from staff timings, so this is independent,
+     not a copy that has to match. Validates locally (it reuses
+     validateAttendanceSetup/describeAttendanceRules on a reshaped slice of
+     just the student* fields) rather than relying on the parent save gate,
+     which only ever checked the staff field names.
+
+     What this configures vs. what Student Attendance's own marking screen
+     does: Mark Attendance stays a teacher's direct judgment call (Present /
+     Late / Absent / Leave) — there's no per-student check-in timestamp in this
+     app to run through a rule engine. These rules are the school's official
+     policy: a reference for admins, and what a future automatic source (the
+     mobile app, a biometric gate) would apply once one exists. */
+  function StudentWorkingHoursSection({ setup, onSave, saving, toast }) {
+    const [draft, setDraft] = useState(setup);
+    useEffect(() => { setDraft(setup); }, [setup]);
+
+    const trackTimeOut = draft.studentTrackingMode !== "in_only";
+    const slice = useMemo(() => ({
+      isEnabled: draft.studentRulesEnabled,
+      schoolStartTime: draft.studentSchoolStartTime,
+      schoolEndTime: draft.studentSchoolEndTime,
+      attendanceStartTime: draft.studentAttendanceStartTime,
+      normalTimeInUntil: draft.studentNormalTimeInUntil,
+      lateAfter: draft.studentLateAfter,
+      shortLeaveFrom: draft.studentShortLeaveFrom,
+      fullDayTimeOut: draft.studentFullDayTimeOut,
+      trackTimeOut,
+    }), [draft, trackTimeOut]);
+
+    const errors  = useMemo(() => validateAttendanceSetup(slice), [slice]);
+    const summary = useMemo(() => describeAttendanceRules(slice), [slice]);
+
+    const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    /* Student rules are always on now (enable/disable toggle hidden) —
+       studentRulesEnabled is forced true on save. */
+    const save = () => {
+      if (Object.keys(errors).length) { toast("Fix the highlighted fields before saving.", "error"); return; }
+      onSave({ ...draft, studentRulesEnabled: true });
+    };
+
+    const chipClass = (label) => (
+      label === "Present" ? "present" :
+      label === "Late" ? "late" :
+      label === "Short Leave" ? "short-leave" :
+      label === "Full Day" ? "full-day" : "neutral"
+    );
+
+    const Field = ({ field, draftField, label, help }) => (
+      <div>
+        <label className="att-label">{label} *</label>
+        <input
+          type="time"
+          className={`att-input${errors[field] ? " error" : ""}`}
+          value={draft[draftField] || ""}
+          onChange={(e) => set(draftField, e.target.value)}
+        />
+        {errors[field]
+          ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors[field]}</div>
+          : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>{help}</div>}
+      </div>
+    );
+
+    return (
+      <div className="att-section">
+        <div className="att-section-header">
+          <div className="att-section-title">
+            <div className="att-section-icon"><i className="fa-solid fa-user-graduate"></i></div>
+            <div>
+              <div className="att-section-name">Working Hours &amp; Attendance Rules — Students</div>
+              <div className="att-section-sub">Configure class timings and the school's policy for when a student is considered late.</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Tooltip text="Save student working hours and attendance rules">
+              <button className="att-btn-save-small" disabled={saving} onClick={save}>
+                <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+        <div className="att-section-body">
+          <div className="att-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Student Attendance is marked directly by the teacher (Present / Late / Absent / Leave) — these timings don't auto-mark anyone. They're the school's official policy: a clear reference for staff, and what a future automatic source (the mobile app, a biometric gate) would apply.</span>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-left"></i> Time Tracking</div>
+            <TrackingModeToggle value={draft.studentTrackingMode || "in_out"} onChange={(v) => set("studentTrackingMode", v)} />
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 7 }}>
+              {trackTimeOut
+                ? "Student Time Out (class dismissal time) is tracked."
+                : "Time In only. Student Time Out is hidden everywhere it would otherwise appear."}
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-school"></i> Class Hours</div>
+            <div className="att-field-row">
+              <Field field="schoolStartTime" draftField="studentSchoolStartTime" label="School Start Time" help="The official start time of the school day for students." />
+              <Field field="schoolEndTime" draftField="studentSchoolEndTime" label="School End Time" help="The official end time of the school day for students." />
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-right-to-bracket"></i> Time In Rules</div>
+            <div className="att-field-row cols-3">
+              <Field field="attendanceStartTime" draftField="studentAttendanceStartTime" label="Attendance Start Time" help="Earliest time counted toward today's attendance." />
+              <Field field="normalTimeInUntil" draftField="studentNormalTimeInUntil" label="Normal Time-In Until" help="A student arriving on or before this time is Present." />
+              <Field field="lateAfter" draftField="studentLateAfter" label="Late After" help="A student arriving after this time is Late." />
+            </div>
+          </div>
+
+          {trackTimeOut && (
+            <div className="att-subsection">
+              <div className="att-subsection-title"><i className="fa-solid fa-right-from-bracket"></i> Time Out Rules</div>
+              <div className="att-field-row">
+                <Field field="shortLeaveFrom" draftField="studentShortLeaveFrom" label="Short Leave Before" help="A student leaving before this time is a Short Leave." />
+                <Field field="fullDayTimeOut" draftField="studentFullDayTimeOut" label="Full Day Time-Out" help="A student leaving at or after this time completes the normal full day." />
+              </div>
+            </div>
+          )}
+
+          <div className="att-rule-summary">
+            <div className="att-rule-summary-title"><i className="fa-solid fa-wand-magic-sparkles"></i> Attendance Rules Summary</div>
+            <div className="att-rule-group">
+              <div className="att-rule-group-label">Time In</div>
+              {summary.timeIn.map((row) => (
+                <div className="att-rule-row" key={`in-${row.key || row.label}`}>
+                  <span className="att-rule-range">{row.range}</span>
+                  <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                  <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                </div>
+              ))}
+            </div>
+            {trackTimeOut && (
+              <div className="att-rule-group">
+                <div className="att-rule-group-label">Time Out</div>
+                {summary.timeOut.map((row) => (
+                  <div className="att-rule-row" key={`out-${row.label}`}>
+                    <span className="att-rule-range">{row.range}</span>
+                    <i className="fa-solid fa-arrow-right att-rule-arrow"></i>
+                    <span className={`att-rule-chip ${chipClass(row.label)}`}>{row.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Geo-Fenced Attendance ──────────────────────────────────────────────────
+     Lets a school enter its own location once, and turn on/off letting Admin
+     and Teacher staff mark their OWN attendance (Time In / Time Out) from the
+     mobile app, restricted to being physically within the radius below of that
+     location. This screen only configures the location + radius that the
+     mobile app's own geofence check reads — it doesn't do the checking itself
+     (that happens on the staff member's device, and again, authoritatively,
+     on the server, every time they mark attendance). Disabled by default, same
+     "nothing changes until a school turns it on" convention as every other
+     setting in this tab. Field names (latitude/longitude/geofenceRadiusMeters/
+     maxAccuracyMeters) match what the real backend's school-location API is
+     expected to return, so this isn't just a mock shape — it's the same one a
+     real API can be wired into later with no restructuring. */
+  function GeofenceSection({ setup, onSave, saving, toast, loadProfile }) {
+    const [draft, setDraft] = useState(setup);
+    useEffect(() => { setDraft(setup); }, [setup]);
+    const [locating, setLocating] = useState(false);
+
+    /* School / Campus Name is never typed here — it's the same school
+       name already used everywhere else in this ERP (profileService),
+       so staff on the mobile app see the one real school name, never a
+       second, independently-typed copy that could drift out of sync.
+       loadProfile is the module's cached loader → the profile API runs once
+       per module visit, not again every time this tab is re-opened. */
+    const [profile, setProfile] = useState(null);
+    useEffect(() => {
+      let alive = true;
+      (loadProfile ? loadProfile() : profileService.getProfile())
+        .then((p) => { if (alive) setProfile(p); })
+        .catch(() => { /* getProfile already falls back to session data */ });
+      return () => { alive = false; };
+    }, [loadProfile]);
+    const schoolDisplayName = profile?.campus || profile?.name || "";
+
+    /* Geo-fence is always on now (enable/disable toggle hidden) — validate and
+       save as enabled, so the school's location/radius is always required and
+       stored. */
+    const errors = useMemo(() => validateAttendanceSetup({ ...draft, geofenceEnabled: true }), [draft]);
+    const configured = isGeofenceConfigured(draft);
+
+    const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+    const save = () => onSave({ ...draft, geofenceEnabled: true, schoolLocationName: schoolDisplayName });
+
+    const useMyLocation = () => {
+      if (!navigator.geolocation) { toast("This browser/device does not support location.", "error"); return; }
+      setLocating(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          set("latitude", Number(pos.coords.latitude.toFixed(6)));
+          set("longitude", Number(pos.coords.longitude.toFixed(6)));
+          setLocating(false);
+          toast("Location captured from this device.", "success");
+        },
+        () => {
+          setLocating(false);
+          toast("Could not get this device's location. Please allow location access and try again.", "error");
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    };
+
+    return (
+      <div className="att-section">
+        <div className="att-section-header">
+          <div className="att-section-title">
+            <div className="att-section-icon"><i className="fa-solid fa-location-dot"></i></div>
+            <div>
+              <div className="att-section-name">Geo-Fenced Attendance</div>
+              <div className="att-section-sub">Let Admin and Teacher staff mark their own attendance from the mobile app, only when they are physically inside the school's boundary.</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Tooltip text="Save the school location and geofence settings">
+              <button className="att-btn-save-small" disabled={saving} onClick={save}>
+                <i className={`fa-solid ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"}`}></i> {saving ? "Saving…" : "Save & Update"}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="att-section-body">
+          {!configured && (
+            <div className="att-setup-disabled-note">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <span>The school's location isn't set yet. Enter it below, or use "Use This Device's Location" while standing at the school, then save.</span>
+            </div>
+          )}
+          <div className="att-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Once enabled, a staff member must be within the radius below of this location to mark Time In / Time Out from the mobile app. The device checks this first for quick feedback; the server checks it again and is always the final authority — this screen only sets where "the school" is and how wide that boundary is.</span>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-school"></i> School Location</div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">School / Campus Name</label>
+                <input
+                  type="text"
+                  className="att-input"
+                  value={schoolDisplayName}
+                  disabled
+                  readOnly
+                  style={{ background: "var(--bg-muted, #F1F5F9)", color: "var(--text-secondary, #475569)", cursor: "not-allowed" }}
+                />
+                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>Your school's name, same as the rest of School Mentor. Shown to staff on the mobile app so they know which location they're being checked against.</div>
+              </div>
+              <div>
+                <label className="att-label">&nbsp;</label>
+                <Tooltip text="Fill in Latitude and Longitude from this device's current location">
+                  <button type="button" className="att-btn-secondary" disabled={locating} onClick={useMyLocation} style={{ height: 42, width: "100%", justifyContent: "center" }}>
+                    <i className={`fa-solid ${locating ? "fa-spinner fa-spin" : "fa-location-crosshairs"}`}></i> {locating ? "Locating…" : "Use This Device's Location"}
+                  </button>
+                </Tooltip>
+                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>Easiest way to set this: open this page on a phone or laptop while standing at the school, then tap this.</div>
+              </div>
+            </div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">Latitude *</label>
+                <input
+                  type="number" step="0.000001"
+                  className={`att-input${errors.latitude ? " error" : ""}`}
+                  value={draft.latitude ?? ""}
+                  onChange={(e) => set("latitude", e.target.value === "" ? null : Number(e.target.value))}
+                  placeholder="e.g. 31.520400"
+                />
+                {errors.latitude && <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.latitude}</div>}
+              </div>
+              <div>
+                <label className="att-label">Longitude *</label>
+                <input
+                  type="number" step="0.000001"
+                  className={`att-input${errors.longitude ? " error" : ""}`}
+                  value={draft.longitude ?? ""}
+                  onChange={(e) => set("longitude", e.target.value === "" ? null : Number(e.target.value))}
+                  placeholder="e.g. 74.358700"
+                />
+                {errors.longitude && <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.longitude}</div>}
+              </div>
+            </div>
+          </div>
+
+          <div className="att-subsection">
+            <div className="att-subsection-title"><i className="fa-solid fa-draw-polygon"></i> Geofence Boundary</div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">Geofence Radius (metres) *</label>
+                <input
+                  type="number" min="10" max="5000" step="10"
+                  className={`att-input${errors.geofenceRadiusMeters ? " error" : ""}`}
+                  value={draft.geofenceRadiusMeters ?? ""}
+                  onChange={(e) => set("geofenceRadiusMeters", e.target.value === "" ? "" : Number(e.target.value))}
+                />
+                {errors.geofenceRadiusMeters
+                  ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.geofenceRadiusMeters}</div>
+                  : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>How far from the location above a staff member is still allowed to mark attendance. A typical school campus uses 150–300 metres.</div>}
+              </div>
+              <div>
+                <label className="att-label">Maximum GPS Accuracy (metres)</label>
+                <input
+                  type="number" min="10" max="1000" step="10"
+                  className={`att-input${errors.maxAccuracyMeters ? " error" : ""}`}
+                  value={draft.maxAccuracyMeters ?? ""}
+                  onChange={(e) => set("maxAccuracyMeters", e.target.value === "" ? "" : Number(e.target.value))}
+                />
+                {errors.maxAccuracyMeters
+                  ? <div className="att-field-error"><i className="fa-solid fa-circle-exclamation"></i> {errors.maxAccuracyMeters}</div>
+                  : <div style={{ fontSize: 11, color: T.textMuted, marginTop: 5 }}>Rejects a check-in from a device whose GPS signal is too weak to trust, even if it looks close enough.</div>}
+              </div>
+            </div>
+          </div>
+
+          <div className="att-info">
+            <i className={`fa-solid ${configured ? "fa-circle-check" : "fa-circle-xmark"}`} style={{ color: configured ? "#16A34A" : "#DC2626" }}></i>
+            <span>{configured ? "School location is configured." : "School location is not configured yet."} Student and Staff Attendance in the ERP keep working exactly as before either way — this setting only controls whether Admin/Teacher can additionally self-mark their own attendance from the mobile app.</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+
+  /* ─── Tab 1: Attendance Setup ─────────────────────────────────────────────────
+    Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
+
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays, weeklyOffLoading = false, sessionName = "", holidaysLoading = false, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onSaveStaffRules, onSaveStudentRules, onSaveGeofence, savingSetup = false, loadProfile }) {
+    const { can } = usePermissions();
+    const canHolCreate  = can("Attendance", "Attendance Setup", "Create");
+    const canHolEdit     = can("Attendance", "Attendance Setup", "Edit");
+    const canHolDelete   = can("Attendance", "Attendance Setup", "Delete");
+    const canHolDownload = can("Attendance", "Attendance Setup", "Download");
+    const [openMonth, setOpenMonth] = useState(null);
+      const holYear = sessionName;
+
+    return (
+      <>
+        {/* Weekly Off Days */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-calendar-week"></i></div>
+              <div>
+                <div className="att-section-name">Weekly Off Days</div>
+                <div className="att-section-sub">Select regular weekly off days for this school</div>
+              </div>
+            </div>
+            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Save the selected weekly off days"}>
+            <button
+    className="att-btn-save-small"
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
+    onClick={() => {
+    // YEH LINE HATADO: toast("Weekly off days saved", "success");
+    onSaveWeeklyOff(); // SIRF YEH RAHE
+  }}
+  >
+    <i className="fa-solid fa-floppy-disk"></i>
+    Save & Update
+  </button>
+            </Tooltip>
+          </div>
+          <div className="att-section-body">
+            <div className="att-info">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>Weekly off days will automatically appear as holidays in all attendance calendars.</span>
+            </div>
+                     {weeklyOffLoading && (
+              <div className="att-empty">
+                <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+                <div className="att-empty-title">Loading weekly off days…</div>
+              </div>
+            )}
+            <div className="att-days-grid" style={weeklyOffLoading ? { display: "none" } : undefined}>
+              {DAYS_F.map((day, i) => {
+                const off = weeklyOff.includes(i);
+                return (
+                  <Tooltip key={day} text={isOtherSession ? "Editing is only allowed for the current session" : (off ? `Mark ${day} as a working day` : `Mark ${day} as a weekly off`)}>
+                    <div
+                      className={`att-day-card${off ? " selected" : ""}`}
+                      onClick={() => requestToggleDay(i)}
+                      style={isOtherSession ? { opacity: .5, cursor: "not-allowed" } : undefined}
+                    >
+                      <div className="att-day-icon">{DAY_ICONS[i]}</div>
+                      <div className="att-day-name">{day.slice(0, 3)}</div>
+                      <div className="att-day-off">{off ? "OFF ✓" : "Working"}</div>
+                    </div>
+                  </Tooltip>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Previous Days Attendance */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-clock-rotate-left"></i></div>
+              <div>
+                <div className="att-section-name">Previous Days Attendance</div>
+                <div className="att-section-sub">Allow marking/editing attendance for past dates. When off, only today's attendance can be marked.</div>
+              </div>
+            </div>
+            {canHolEdit && (
+            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (prevDaysAttendance ? "Disable marking attendance for past dates" : "Enable marking attendance for past dates")}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={prevDaysAttendance}
+                aria-label="Toggle previous days attendance"
+                disabled={isOtherSession}
+                onClick={() => { if (!isOtherSession) onTogglePrevDays?.(); }}
+                style={{
+                  position: "relative", width: 52, height: 28, flexShrink: 0,
+                  borderRadius: T.radiusFull, border: "none", padding: 0,
+                  cursor: isOtherSession ? "not-allowed" : "pointer",
+                  background: prevDaysAttendance ? T.success : "#CBD5E1",
+                  opacity: isOtherSession ? .45 : 1, transition: T.tr,
+                }}
+              >
+                <span
+                  style={{
+                    position: "absolute", top: 3, left: prevDaysAttendance ? 27 : 3,
+                    width: 22, height: 22, borderRadius: "50%", background: "#FFFFFF",
+                    boxShadow: T.shadowXs, transition: T.tr,
+                  }}
+                />
+              </button>
+            </Tooltip>
+            )}
+          </div>
+          <div className="att-section-body">
+            <div className="att-info">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>
+                {prevDaysAttendance
+                  ? "Past dates within the active session can now be marked or edited from the Student & Staff calendars. Future dates stay blocked."
+                  : "Only today's attendance can be marked. Turn this on to mark or edit attendance for earlier dates."}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Special Holidays */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-star"></i></div>
+              <div>
+                <div className="att-section-name">Special Holidays</div>
+                <div className="att-section-sub">National, religious &amp; school-specific holidays by month</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              {/* Current academic session — fixed, non-changeable (active session only). */}
+              <Tooltip text="Current academic session">
+                <div className="att-select" style={{ minWidth: 130, display: "inline-flex", alignItems: "center", gap: 6, cursor: "default" }}>
+                  <i className="fa-solid fa-calendar-days" style={{ opacity: .6 }}></i>
+                  {holYear || "Loading…"}
+                </div>
+              </Tooltip>
+              {canHolDownload && (
+              <Tooltip text="Download a PDF of all holidays for the selected year">
+                <button
+                  className="att-btn-report"
+                  onClick={() => openReportPicker({ title: "Yearly Holiday Report", context: "holidayYearly", defaultYear: holYear })}
+                >
+                  <i className="fa-solid fa-file-pdf"></i> Yearly Report
+                </button>
+              </Tooltip>
+              )}
+            </div>
+          </div>
+          <div className="att-section-body">
+            <div className="att-info">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>Special holidays will apply only to selected classes. Tap a month to expand.</span>
+            </div>
+                  {holidaysLoading && (
+              <div className="att-empty">
+                <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+                <div className="att-empty-title">Loading session &amp; holidays…</div>
+              </div>
+            )}
+            <div className="att-months-grid" style={holidaysLoading ? { display: "none" } : undefined}>
+              {MONTHS.map((m, i) => {
+                const hols = holidays.filter((h) => h.month === i);
+                const isOpen = openMonth === i;
+                return (
+                  <div key={m} className="att-month-card">
+                    <div className="att-month-header" onClick={() => { const next = isOpen ? null : i; setOpenMonth(next); if (next !== null) onExpandMonth?.(i); }}>
+                      <div className="att-month-left">
+                        <div className="att-month-dot" style={{ background: hols.length ? "linear-gradient(135deg,#1E3A8A,#1E40AF)" : "#94A3B8" }} />
+                        <div>
+                          <div className="att-month-name">{m}</div>
+                          <div className="att-month-count">{hols.length} holiday{hols.length !== 1 ? "s" : ""}</div>
+                        </div>
+                      </div>
+                      <div className="att-month-actions">
+                        {canHolCreate && (
+                        <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : `Add a new holiday in ${m}`}>
+                          <button
+                                              className="att-add-holiday-btn"
+                            disabled={isOtherSession || holidaysLoading}
+                            style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
+                            onClick={(e) => { e.stopPropagation(); openHolModal(null, i); }}
+                          >
+                            <i className="fa-solid fa-plus"></i> Add Holiday
+                          </button>
+                        </Tooltip>
+                        )}
+                        <Tooltip text={isOpen ? "Collapse month" : "Expand month"}>
+                          <button className={`att-chevron-btn${isOpen ? " open" : ""}`} aria-label="Toggle">
+                            <i className="fa-solid fa-chevron-down"></i>
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                    <div className={`att-holiday-list${isOpen ? " open" : ""}`}>
+                      {loadingMonth === i ? (
+                        <div style={{ padding: "12px 6px", fontSize: 12.5, color: T.textMuted, fontStyle: "italic" }}>
+                          <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+                          Loading holidays…
+                        </div>
+                      ) : hols.length === 0 ? (
+                        <div style={{ padding: "12px 6px", fontSize: 12.5, color: T.textMuted, fontStyle: "italic" }}>
+                          No holidays added for this month.
+                        </div>
+                      ) : (
+                        hols.map((h) => (
+                          <div key={h.id} className="att-holiday-row">
+                            <div>
+                              <div className="att-holiday-title">{h.title}</div>
+                              <div className="att-holiday-desc">{h.desc}</div>
+                            </div>
+                            <div className="att-holiday-date">{h.from}</div>
+                            <div className="att-holiday-date">{h.to}</div>
+                            <div>
+                              {h.classes.map((c) => (
+                                <span key={c} className="att-holiday-class-pill" style={{ marginRight: 4 }}>{c}</span>
+                              ))}
+                            </div>
+                            {canHolEdit && (
+                            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Edit holiday"}>
+                              <button className="att-icon-btn" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => openHolModal(h.id)}>
+                                <i className="fa-solid fa-pen"></i>
+                              </button>
+                            </Tooltip>
+                            )}
+                            {canHolDelete && (
+                            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Delete holiday"}>
+                              <button className="att-icon-btn del" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => requestDeleteHoliday(h.id)}>
+                                <i className="fa-solid fa-trash-can"></i>
+                              </button>
+                            </Tooltip>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        {/* Working Hours & Attendance Rules — centralized via src/utils/attendanceRules.js.
+            Each card saves only its OWN endpoint (staff / student / geofence). */}
+        <WorkingHoursSection setup={attendanceSetup} onSave={onSaveStaffRules} saving={savingSetup} />
+        <StudentWorkingHoursSection setup={attendanceSetup} onSave={onSaveStudentRules} saving={savingSetup} toast={toast} />
+
+        {/* Geo-Fenced Attendance — school location + radius for mobile self-attendance */}
+        <GeofenceSection setup={attendanceSetup} onSave={onSaveGeofence} saving={savingSetup} toast={toast} loadProfile={loadProfile} />
+      </>
+    );
+  }
+
+  /* ─── Holiday Add/Edit modal ─────────────────────────────────────────────── */
+  // Special sentinel: selecting this applies the holiday to every class+section.
+  const WHOLE_SCHOOL_OPT = { classID: -1, sectionID: -1, label: "Whole School", whole: true };
+
+  function HolidayModal({ initial, defaultMonth, onClose, onSave, loadClasses }) {
+    const isEdit = !!initial;
+    const [title, setTitle] = useState(initial?.title || "");
+    const [desc, setDesc]   = useState(initial?.desc  || "");
+    const [from, setFrom]   = useState(initial?.from  || "");
+    const [to, setTo]       = useState(initial?.to    || "");
+    // Selected classes are stored as objects: { classID, sectionID, label }
+    const [classes, setClasses] = useState(initial?.selectedClasses || []);
+    // Class+section options fetched from the API when the modal opens.
+    const [classOpts, setClassOpts]       = useState([]);
+    const [classLoading, setClassLoading] = useState(true);
+    const [saving, setSaving]             = useState(false);
+
+    const optKey = (c) => `${c.classID}-${c.sectionID}`;
+
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === "Escape") onClose(); };
+      document.addEventListener("keydown", onKey);
+      return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    // Add Holiday par click hote hi classes laao — module ka cached loader
+    // (loadClasses) use hota hai, to har dafa modal kholne par API dobara nahi chalti.
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        try {
+          setClassLoading(true);
+          const opts = await (loadClasses ? loadClasses() : attendanceService.getClassesForBranch());
+          if (alive) setClassOpts(opts);
+        } catch (err) {
+          console.error("Could not load classes", err);
+          if (alive) setClassOpts([]);
+        } finally {
+          if (alive) setClassLoading(false);
+        }
+      })();
+      return () => { alive = false; };
+    }, [loadClasses]);
+
+    const removeChip =(c) => setClasses((prev) => prev.filter((x) => optKey(x) !== optKey(c)));
+    const addChip = (c) => {
+      setClasses((prev) => {
+        // Whole School clears individual selections; picking a class clears Whole School.
+        if (c.whole) return [WHOLE_SCHOOL_OPT];
+        if (prev.some((x) => optKey(x) === optKey(c))) return prev;
+        return [...prev.filter((x) => !x.whole), c];
+      });
+    };
+
+    const save = async () => {
+      if (!title.trim()) return;
+      if (!from || !to) return;
+      if (from > to) return;
+      if (saving) return;
+      // New holiday → month = jis month CARD par "Add Holiday" click hua (defaultMonth).
+      // Edit → Date From se derive (taake date badalne par month update ho jaye).
+      const monthIdx = (!isEdit && defaultMonth != null)
+        ? defaultMonth
+        : (from ? new Date(from).getMonth() : (initial?.month ?? defaultMonth ?? 0));
+      // Whole School → expand to EVERY class+section pair for the API + display.
+      const finalClasses = classes.some((c) => c.whole)
+        ? classOpts.map((c) => ({ classID: c.classID, sectionID: c.sectionID, label: c.label }))
+        : classes;
+      setSaving(true);
+      try {
+        await onSave({
+          id: initial?.id,
+          title: title.trim(),
+          desc: desc.trim(),
+          from, to,
+          month: monthIdx,
+          selectedClasses: finalClasses,
+        });
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    return createPortal(
+      <div className="att-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="att-modal">
+          <div className="att-modal-header">
+            <div className="att-modal-header-left">
+              <div className="att-modal-header-icon"><i className="fa-solid fa-star"></i></div>
+              <div>
+                <div className="att-modal-title">{isEdit ? "Edit Holiday" : "Add Holiday"}</div>
+                <div className="att-modal-sub">{isEdit ? "Update this special holiday" : "Add a special holiday for selected classes"}</div>
+              </div>
+            </div>
+            <Tooltip text="Close"><button className="att-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+          </div>
+          <div className="att-modal-body">
+            <div className="att-info" style={{ marginBottom: 14 }}>
+              <i className="fa-solid fa-circle-info"></i>
+              <span>Special holidays will only apply to the selected classes. Use "Whole School" to apply to all.</span>
+            </div>
+            <div className="att-field-row full">
+              <div>
+                <label className="att-label">Holiday Title *</label>
+                <input className="att-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Eid ul Fitr Holiday" />
+              </div>
+            </div>
+            <div className="att-field-row full">
+              <div>
+                <label className="att-label">Description</label>
+                <textarea className="att-textarea" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Optional description..." />
+              </div>
+            </div>
+            <div className="att-field-row">
+              <div>
+                <label className="att-label">Date From *</label>
+                <input className="att-input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              </div>
+              <div>
+                <label className="att-label">Date To *</label>
+                <input className="att-input" type="date" min={from || undefined} value={to} onChange={(e) => setTo(e.target.value)} />
+              </div>
+            </div>
+            <div className="att-field-row full">
+              <div>
+                <label className="att-label">Apply to Classes</label>
+                <div className="att-class-select-wrap" style={{ minHeight: 46 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", width: "100%" }}>
+                    {classes.length === 0 && (
+                      <span style={{ fontSize: 12, color: T.textMuted }}>Select one or more classes below</span>
+                    )}
+                    {classes.map((c) => (
+                      <span key={optKey(c)} className="att-class-chip">
+                        {c.label}
+                        <span className="att-class-chip-x" onClick={() => removeChip(c)}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {classLoading ? (
+                    <span style={{ fontSize: 12, color: T.textMuted }}>
+                      <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+                      Loading classes…
+                    </span>
+                  ) : classOpts.length === 0 ? (
+                    <span style={{ fontSize: 12, color: T.textMuted }}>No classes found.</span>
+                  ) : (
+                    <>
+                      {(() => {
+                        const active = classes.some((x) => x.whole);
+                        return (
+                          <button
+                            className={`att-radio-btn${active ? " p active" : ""}`}
+                            onClick={() => active ? removeChip(WHOLE_SCHOOL_OPT) : addChip(WHOLE_SCHOOL_OPT)}
+                          >
+                            <i className="fa-solid fa-school" style={{ marginRight: 5 }}></i>
+                            Whole School
+                          </button>
+                        );
+                      })()}
+                      {classOpts.map((c) => {
+                        const active = classes.some((x) => optKey(x) === optKey(c));
+                        return (
+                          <button
+                            key={optKey(c)}
+                            className={`att-radio-btn${active ? " p active" : ""}`}
+                            onClick={() => active ? removeChip(c) : addChip(c)}
+                          >
+                            {c.label}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>
+                  Tip: Selecting "Whole School" applies the holiday to every class &amp; section.
+                </div>
+                {defaultMonth != null && !isEdit && (
+                  <div style={{ fontSize: 11, color: T.brandPrimary, marginTop: 4 }}>
+                    <i className="fa-solid fa-circle-info" style={{ marginRight: 4 }}></i>
+                    This holiday will be added to {MONTHS[defaultMonth]}.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="att-modal-footer">
+            <Tooltip text="Discard changes and close">
+              <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
+            </Tooltip>
+            <Tooltip text={isEdit ? 'Save changes to this holiday' : 'Add this holiday to the calendar'}>
+              <button className="att-btn-primary" onClick={save} disabled={saving}>
+                {saving
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>
+                  : <><i className="fa-solid fa-floppy-disk"></i> {isEdit ? "Update Holiday" : "Save Holiday"}</>}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
+  /* ─── Confirm dialogs (delete + day toggle) ──────────────────────────────── */
+  function ConfirmDialog({
+    iconClass = "fa-solid fa-trash-can",
+    iconBg = "rgba(220,38,38,.1)",
+    iconColor = "#DC2626",
+    title,
+    message,
+    hintIcon = "fa-solid fa-triangle-exclamation",
+    hintBg = "rgba(220,38,38,.06)",
+    hintBorder = "rgba(220,38,38,.2)",
+    hintColor = "#DC2626",
+    hint,
+    confirmLabel,
+    confirmIcon = "fa-solid fa-check",
+    confirmBg,
+    onClose,
+    onConfirm,
+  }) {
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === "Escape") onClose(); };
+      document.addEventListener("keydown", onKey);
+      return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    return createPortal(
+      <div className="att-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="att-confirm">
+          <div className="att-confirm-icon" style={{ background: iconBg, color: iconColor }}>
+            <i className={iconClass}></i>
+          </div>
+          <div className="att-confirm-title">{title}</div>
+          <div className="att-confirm-msg">{message}</div>
+          {hint && (
+            <div className="att-confirm-hint" style={{ background: hintBg, borderColor: hintBorder, color: hintColor }}>
+              <i className={hintIcon}></i>
+              <span>{hint}</span>
+            </div>
+          )}
+          <div className="att-confirm-btns">
+            <Tooltip text="Cancel and close">
+              <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
+            </Tooltip>
+            <Tooltip text={`Confirm: ${confirmLabel}`}>
+              <button
+                className="att-btn-primary"
+                onClick={onConfirm}
+                style={confirmBg ? { background: confirmBg } : undefined}
+              >
+                <i className={confirmIcon}></i> {confirmLabel}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
+  /* ─── Report Picker modal — Step 1 (type) · Step 2 (filters) · Step 3 (style)
+    Faithful port of the HTML reference. ─────────────────────────────────── */
+  const RPT_CLASS_OPTS   = ["All Classes", "Class I", "Class II", "Class III", "Class IV", "Class V"];
+  const RPT_SECTION_OPTS = ["All Sections", "Red", "Blue", "Green", "White"];
+  const RPT_MONTH_OPTS   = genMonthYearOptions();
+  const RPT_DEPT_OPTS    = ["All Departments", "Primary", "Secondary", "Administration", "Support Staff"];
+
+  function ReportPickerModal({ open, title, context, defaultYear, defaultMonth, defaultDate, forClass, forStaff, onClose, onGenerate, sessionOpts = [], holidayClassOpts = [], studentClassOpts = [], studentSectionOpts = [], staffDeptOpts = [] }) {
+    /* Compact picker — only filters relevant to the current report context. */
+    const todayStr = new Date().toISOString().split("T")[0];
+    const currMonth = CURRENT_MONTH_LABEL;
+
+    /* The school's own session, never a guessed year: the caller's default,
+       else the first real session option, else '' (rendered as "—"). */
+    const [fYear, setFYear]   = useState(defaultYear  || sessionOpts[0] || "");
+    const [fMonth, setFMonth] = useState(defaultMonth || currMonth);
+    const [fDate, setFDate]   = useState(defaultDate  || todayStr);
+    const [fClass, setFClass] = useState(forClass ? forClass.cls : "All Classes");
+    const [fSection, setFSection] = useState(forClass ? forClass.sec : "All Sections");
+    const [fDept, setFDept]   = useState(forStaff ? forStaff.dept : "All Departments");
+    const [generating, setGenerating] = useState(false);
+
+    /* Reset filter selections each time the modal re-opens */
+    useEffect(() => {
+      if (!open) return;
+      setFYear(defaultYear  || sessionOpts[0] || "");
+      setFMonth(defaultMonth || currMonth);
+      setFDate(defaultDate  || todayStr);
+      setFClass(forClass ? forClass.cls : "All Classes");
+      setFSection(forClass ? forClass.sec : "All Sections");
+      setFDept(forStaff ? forStaff.dept : "All Departments");
+      /* sessionOpts is intentionally NOT a dep — the call site rebuilds that
+         array every render, and depending on it would reset the user's filter
+         choices on each one. Re-opening the modal is what re-seeds them. */
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, defaultYear, defaultMonth, defaultDate, forClass, forStaff]);
+
+    if (!open) return null;
+
+    const ctx = context || "holidayYearly";
+    const isHolYearly = ctx === "holidayYearly";
+    const isStDaily   = ctx === "studentDaily" || ctx === "studentDailyClass";
+    const isStMonthly = ctx === "studentMonthly" || ctx === "studentMonthlyClass";
+    const isSfDaily   = ctx === "staffDaily"   || ctx === "staffDailyOne";
+    const isSfMonthly = ctx === "staffMonthly" || ctx === "staffMonthlyOne";
+    const lockedClass = !!forClass;
+    const lockedStaff = !!forStaff;
+
+    const submit = async (style, format) => {
+      if (generating) return;
+      try {
+        setGenerating(true);
+        await onGenerate({
+          effective: ctx,
+          style,
+          format,
+          filters: { year: fYear, month: fMonth, date: fDate, class: fClass, section: fSection, dept: fDept },
+        });
+      } finally {
+        setGenerating(false);
+      }
+    };
+
+    return (
+      <StandardReportPicker
+        open={open}
+        title={title || "Download Report"}
+        subtitle="Choose filters, style and format, then generate."
+        formats={["pdf", "word", "excel"]}
+        onClose={onClose}
+        onGenerate={submit}
+        generateDisabled={generating}
+        filters={
+          <>
+            <div className="att-rpt-section-lbl">Filters</div>
+            {/* Student (Date/Month + Class + Section) — teeno ek hi line me, taake
+                modal ki height Staff wale (2 filters) jitni rahe. */}
+            <div className={`att-rpt-filter-row${(isStDaily || isStMonthly) && !lockedClass ? " att-rpt-filter-row--one" : ""}`}>
+              {isHolYearly && (
+                <>
+                  <FilterSelect label="Session" value={fYear}  onChange={setFYear}  opts={sessionOpts.length ? sessionOpts : [NO_SESSION_OPT]} />
+                  <FilterSelect label="Class"   value={fClass} onChange={setFClass} opts={holidayClassOpts.length ? holidayClassOpts : RPT_CLASS_OPTS} />
+                </>
+              )}
+              {isStDaily && (
+                <>
+                  <FilterInput label="Date" value={fDate} onChange={setFDate} type="date" />
+                  {!lockedClass && (
+                    <>
+                      <FilterSelect label="Class"   value={fClass}   onChange={setFClass}   opts={studentClassOpts.length ? studentClassOpts : RPT_CLASS_OPTS} />
+                      <FilterSelect label="Section" value={fSection} onChange={setFSection} opts={studentSectionOpts.length ? studentSectionOpts : RPT_SECTION_OPTS} />
+                    </>
+                  )}
+                </>
+              )}
+              {isStMonthly && (
+                <>
+                  <FilterSelect label="Month" value={fMonth} onChange={setFMonth} opts={RPT_MONTH_OPTS} />
+                  {!lockedClass && (
+                    <>
+                      <FilterSelect label="Class"   value={fClass}   onChange={setFClass}   opts={studentClassOpts.length ? studentClassOpts : RPT_CLASS_OPTS} />
+                      <FilterSelect label="Section" value={fSection} onChange={setFSection} opts={studentSectionOpts.length ? studentSectionOpts : RPT_SECTION_OPTS} />
+                    </>
+                  )}
+                </>
+              )}
+              {isSfDaily && (
+                <>
+                  <FilterInput label="Date" value={fDate} onChange={setFDate} type="date" />
+                  {!lockedStaff && (
+                    <FilterSelect label="Department" value={fDept} onChange={setFDept} opts={staffDeptOpts.length ? staffDeptOpts : RPT_DEPT_OPTS} />
+                  )}
+                </>
+              )}
+              {isSfMonthly && (
+                <>
+                  <FilterSelect label="Month" value={fMonth} onChange={setFMonth} opts={RPT_MONTH_OPTS} />
+                  {!lockedStaff && (
+                    <FilterSelect label="Department" value={fDept} onChange={setFDept} opts={staffDeptOpts.length ? staffDeptOpts : RPT_DEPT_OPTS} />
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        }
+      />
+    );
+  }
+
+  function FilterInput({ label, value, onChange, type = "text" }) {
+    return (
+      <div className="att-rpt-filter-field">
+        <div className="att-rpt-filter-lbl">{label}</div>
+        <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className="att-input" style={{ height: 38, fontSize: 12.5, width: "100%" }} />
+      </div>
+    );
+  }
+
+  function FilterSelect({ label, value, onChange, opts }) {
+    return (
+      <div className="att-rpt-filter-field">
+        <div className="att-rpt-filter-lbl">{label}</div>
+        <div style={{ position: "relative" }}>
+          <select className="att-select" value={value} onChange={(e) => onChange(e.target.value)} style={{ height: 38, fontSize: 12.5, width: "100%" }}>
+            {opts.map((o) => <option key={o}>{o}</option>)}
+          </select>
+          <i className="fa-solid fa-chevron-down att-select-arrow"></i>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Report Preview overlay (iframe + Print/Close) ─────────────────────── */
+  function ReportPreviewOverlay({ open, title, html, onClose }) {
+    const frameRef = React.useRef(null);
+
+    useEffect(() => {
+      if (!open) return;
+      const onKey = (e) => { if (e.key === "Escape") onClose(); };
+      document.addEventListener("keydown", onKey);
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.removeEventListener("keydown", onKey);
+        document.body.style.overflow = "";
+      };
+    }, [open, onClose]);
+
+    const doPrint = () => {
+      const fr = frameRef.current;
+      if (fr && fr.contentWindow) {
+        try { fr.contentWindow.focus(); fr.contentWindow.print(); }
+        catch {
+          const blob = new Blob([html], { type: "text/html" });
+          const url = URL.createObjectURL(blob);
+          window.open(url, "_blank");
+          setTimeout(() => URL.revokeObjectURL(url), 5000);
+        }
+      }
+    };
+
+    const doExportWord = () => {
+      downloadReportAsWord(html, `${reportFileName(title || "Attendance-Report")}.doc`);
+    };
+
+    if (!open) return null;
+
+    return createPortal(
+      <div
+        style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,.7)", backdropFilter: "blur(4px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", padding: 16 }}
+        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      >
+        <div style={{ width: "100%", maxWidth: 960, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#1E3A8A,#2563EB)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 16 }}>
+              <i className="fa-solid fa-file-lines"></i>
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{title}</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,.6)" }}>Preview — Click Print to print or save as PDF</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Tooltip text="Print the report or save it as PDF">
+              <button
+                onClick={doPrint}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "linear-gradient(135deg,#1E3A8A,#2563EB)", color: "#fff", border: "none", borderRadius: 8, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="fa-solid fa-print"></i> Print / Save PDF
+              </button>
+            </Tooltip>
+            <Tooltip text="Download this report as an editable Word document">
+              <button
+                onClick={doExportWord}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "rgba(255,255,255,.12)", color: "#fff", border: "1.5px solid rgba(255,255,255,.2)", borderRadius: 8, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="fa-brands fa-microsoft"></i> Export Word
+              </button>
+            </Tooltip>
+            <Tooltip text="Close report preview">
+              <button
+                onClick={onClose}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "rgba(255,255,255,.12)", color: "#fff", border: "1.5px solid rgba(255,255,255,.2)", borderRadius: 8, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="fa-solid fa-xmark"></i> Close
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+        <iframe
+          ref={frameRef}
+          title="Attendance Report Preview"
+          srcDoc={html}
+          style={{ width: "100%", maxWidth: 960, flex: 1, border: "none", borderRadius: 12, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,.4)", minHeight: 0 }}
+        />
+      </div>,
+      document.body
+    );
+  }
+
+  /* ─── Report HTML builders ─────────────────────────────────────────────────
+     Every Attendance report renders its own body content below (tables, info
+     grids, stat strips — unchanged), then wraps it in the shared ERP-wide
+     header/footer chrome from src/erp/reports/reportKit.js instead of a
+     bespoke header. `includeToolbar:false` keeps ReportPreviewOverlay (above)
+     as the single Print/Close control. School name stays live (branch header
+     from the API); the period moves into the kit subtitle line. */
+ /* Wide tables (staff monthly has 12–13 columns) overflowed the A4 page and
+    the overflow-x wrapper clipped the right side. Compact cell padding/font,
+    let headers wrap, never clip, and let print use the printable width
+    (210mm page + 15mm @page margins would otherwise cut the edge). */
+ const RPT_FIT_CSS = `<style>
+  .page table{width:100%!important;font-size:10.5px!important}
+  .page th{padding:7px 5px!important;font-size:8.5px!important;letter-spacing:.2px!important;white-space:normal!important;word-break:normal!important}
+  .page td{padding:6px 5px!important;overflow-wrap:anywhere}
+  .page td span{white-space:nowrap;padding-left:6px!important;padding-right:6px!important}
+  .page div[style*="overflow-x"]{overflow:visible!important}
+  @media print{.page{width:auto!important}}
+</style>`;
+ function rptPageWrap({ rptLabel, period, isColor, content, school }) {
+  const yearLine = reportAcademicYear() || school?.session || "";
+  return buildStandardReportHtml({
+    title: rptLabel,
+    format: "pdf",
+    isColor,
+    bodyHtml: RPT_FIT_CSS + content,
+    subtitleLine: `${yearLine ? yearLine + " · " : ""}${isColor ? "Colorful" : "Colorless"} Report${period ? " · " + period : ""}`,
+    schoolName: school?.name || undefined,
+    includeToolbar: false,
+  });
+}
+
+  function buildYearlyHolidayReportHTML({ holidays, weeklyOff, year, classFilter, isColor, branchSchool }) {
+    const bdr = isColor ? "#BFDBFE" : "#D1D5DB";
+    const RED = isColor ? "#DC2626" : "#374151";
+    /* Colorless: white table head with dark text + thin border — no gray fill */
+    const thBg = isColor ? "background:#EFF6FF;color:#1E3A8A" : "background:#FFFFFF;color:#111111;border-bottom:1.5px solid #0F172A";
+    const th = (t, align = "left") =>
+      `<th style="padding:9px 11px;text-align:${align};font-weight:700;font-size:10px;letter-spacing:.5px;text-transform:uppercase;border:1px solid ${bdr};${thBg}">${t}</th>`;
+    const td = (v, opts = "") =>
+      `<td style="padding:8px 11px;border:1px solid ${bdr};${opts}">${v == null || v === "" ? "—" : v}</td>`;
+    const weeklyOffDays = weeklyOff.map((i) => DAYS_F[i]).join(", ") || "—";
+
+    const sorted = [...holidays].sort((a, b) => (a.from || "").localeCompare(b.from || ""));
+    const holRows = sorted.map((h, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+      ${td(i + 1, "text-align:center;color:#94A3B8")}
+      ${td(`<strong>${h.title}</strong>`)}
+      ${td(h.desc || "—", "font-size:11px;color:#64748B")}
+      ${td(h.from, "font-weight:600")}${td(h.to, "font-weight:600")}
+      ${td((h.classes || []).join(", "), "font-size:11px")}
+      ${td(MONTHS[h.month] || "—", "font-size:11px")}
+    </tr>`).join("");
+
+    const infoGrid = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
+      ${[
+        ["Academic Year", year || "—"],
+        ["Total Holidays", String(holidays.length)],
+        ["Weekly Off", weeklyOffDays],
+        ["Class Filter", classFilter || "All Classes"],
+      ].map(([l, v]) => `<div style="border:1.5px solid ${bdr};border-radius:10px;padding:11px 13px">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748B;margin-bottom:4px">${l}</div>
+        <div style="font-size:12.5px;font-weight:700;color:#0F172A;line-height:1.3">${v}</div>
+      </div>`).join("")}
+    </div>`;
+
+    const tableBlock = holidays.length === 0
+      ? `<div style="text-align:center;padding:40px;color:#94A3B8;font-size:13.5px"><i>No holidays found for this academic year.</i></div>`
+      : `<div style="margin-bottom:14px;font-size:12px;font-weight:600;color:#1E3A5F">Weekly Off Days: <strong>${weeklyOffDays}</strong></div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr>${[th("#", "center"), th("Holiday Name"), th("Description"), th("From"), th("To"), th("Applies To"), th("Month")].join("")}</tr></thead>
+          <tbody>${holRows}</tbody>
+        </table></div>`;
+
+    return rptPageWrap({
+      rptLabel: "Yearly Holiday Report",
+      period: year || NO_SESSION_OPT,
+      isColor,
+      school: branchSchool,
+      content: infoGrid + tableBlock + (holidays.length > 0 ? `<div style="margin-top:18px;font-size:11.5px;color:#64748B"><strong style="color:${RED}">Note:</strong> Holidays apply to the listed classes only. "Whole School" entries apply to all classes.</div>` : ""),
+    });
+  }
+
+  /* ─── Shared report-table helpers ───────────────────────────────────────── */
+  /* Used by every Attendance report — fixing the colorless palette here makes
+    ALL reports (daily/monthly student & staff, class overview, comparison,
+    low-attendance, holidays, individual) print as a true low-ink layout
+    in one shot. Colorless: thin gray borders, white th bg with dark text,
+    bordered text-only status badges (no colored fill). */
+  function rptTableHelpers(isColor) {
+    const bdr = isColor ? "#BFDBFE" : "#D1D5DB";
+    const GREEN = isColor ? "#16A34A" : "#111111";
+    const RED   = isColor ? "#DC2626" : "#111111";
+    const AMB   = isColor ? "#D97706" : "#4B5563";
+    const thBg  = isColor ? "background:#EFF6FF;color:#1E3A8A" : "background:#FFFFFF;color:#111111";
+    const th = (t, align = "left") =>
+      `<th style="padding:9px 11px;text-align:${align};font-weight:700;font-size:10px;letter-spacing:.5px;text-transform:uppercase;border:1px solid ${bdr};${thBg}">${t}</th>`;
+    const td = (v, opts = "") =>
+      `<td style="padding:8px 11px;border:1px solid ${bdr};${opts}">${v == null || v === "" ? "—" : v}</td>`;
+    const badge = (t, c) =>
+      `<span style="padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:700;background:${isColor ? c + "18" : "transparent"};color:${isColor ? c : "#111111"};border:1px solid ${isColor ? c + "33" : "#9CA3AF"}">${t}</span>`;
+    return { bdr, GREEN, RED, AMB, th, td, badge };
+  }
+
+  function rptInfoGrid(pairs, bdr) {
+    return `<div style="display:grid;grid-template-columns:repeat(${Math.min(pairs.length, 4)},1fr);gap:10px;margin-bottom:20px">
+      ${pairs.map(([l, v]) => `<div style="border:1.5px solid ${bdr};border-radius:10px;padding:11px 13px">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748B;margin-bottom:4px">${l}</div>
+        <div style="font-size:12.5px;font-weight:700;color:#0F172A;line-height:1.3">${v}</div>
+      </div>`).join("")}
+    </div>`;
+  }
+
+  function rptStatsRow(items, bdr, isColor) {
+    return `<div style="display:grid;grid-template-columns:repeat(${items.length},1fr);gap:10px;margin-bottom:22px">
+      ${items.map(([l, v, c]) => `<div style="border-radius:12px;border:1.5px solid ${bdr};padding:14px;text-align:center${isColor ? `;background:${c}08` : ""}">
+        <div style="font-size:26px;font-weight:900;color:${isColor ? c : "#333"}">${v}</div>
+        <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748B;margin-top:4px">${l}</div>
+      </div>`).join("")}
+    </div>`;
+  }
+
+  /* Late / Short Leave / Holiday ke rang — B/W print me sab gehra slate. */
+  function rptExtraColors(isColor) {
+    return {
+      LATE: isColor ? "#7C3AED" : "#374151",
+      SL:   isColor ? "#0891B2" : "#374151",
+      HOL:  isColor ? "#2563EB" : "#4B5563",
+    };
+  }
+
+  /* ─── Daily Student Attendance Report ─────────────────────────────────────
+    `rows` = REAL per class+section aggregates for the SELECTED date, fetched
+    from /api/student-attendance (action:"get"). Header = branch (branchSchool). */
+  /* trackOut = false ("Time In Only") → Out Time column aur SL ginti report me nahi. */
+  function buildDailyStudentReportHTML({ rows, date, classFilter, sectionFilter, forClass, isColor, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const ST_COLOR = { present: GREEN, absent: RED, leave: AMB, late: LATE, short_leave: SL, holiday: HOL };
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+      : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+    const filtered = (rows || []).filter((r) => {
+      if (forClass) return r.cls === forClass.cls && r.sec === forClass.sec;
+      const cMatch = !classFilter || classFilter === "All Classes" || r.cls === classFilter;
+      const sMatch = !sectionFilter || sectionFilter === "All Sections" || r.sec === sectionFilter;
+      return cMatch && sMatch;
+    });
+
+    const totalStudentCount = filtered.reduce((n, r) => n + (r.students || []).length, 0);
+
+    // Class-wise blocks — pehle ek class ka heading (uski present/absent/leave
+    // summary ke sath), phir usi class ke saare students ki table; phir agli
+    // class. Har filtered row = ek class+section.
+    const classBlocks = filtered.map((r) => {
+      const students = r.students || [];
+      const rowsHtml = students.map((s, i) => {
+        const st = s.status; // present | absent | leave | late | short_leave | holiday | ""
+        const stCell = st
+          ? badge(ST_LABEL[st] || st, ST_COLOR[st] || AMB)
+          : badge("Not Marked", "#94A3B8");
+        /* In/Out jo bhi save hua ho — pehle sirf "present" par dikhta tha, is liye
+           Late / Short Leave wale students ka time report me nahi aata tha. */
+        return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(s.name ? `<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}` : "—")}
+          ${td(stCell, "text-align:center")}
+          ${td(s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
+          ${trackOut ? td(s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px") : ""}
+          ${td(s.platform || (st ? "ERP" : "—"), "font-size:11px")}
+        </tr>`;
+      }).join("");
+
+      const cTitle = `${r.cls}${r.sec ? ` (${r.sec})` : ""}`;
+      const cSummary = r.marked
+        ? `Strength ${r.total} &nbsp;·&nbsp; <span style="color:${GREEN}">Present ${r.present}</span> &nbsp;·&nbsp; <span style="color:${RED}">Absent ${r.absent}</span> &nbsp;·&nbsp; <span style="color:${AMB}">Leave ${r.leave}</span> &nbsp;·&nbsp; <span style="color:${LATE}">Late ${r.late || 0}</span>${trackOut ? ` &nbsp;·&nbsp; <span style="color:${SL}">SL ${r.shortLeave || 0}</span>` : ""}`
+        : `Strength ${r.total} &nbsp;·&nbsp; <span style="color:#94A3B8">Not marked</span>`;
+
+      const heading = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:22px 0 9px;padding:10px 14px;border-radius:10px;border:1.5px solid ${bdr}${isColor ? ";background:#EFF6FF" : ""}">
+        <div style="font-size:13.5px;font-weight:800;color:#0F172A">${cTitle}</div>
+        <div style="font-size:10.5px;font-weight:700;color:#64748B">${cSummary}</div>
+      </div>`;
+
+      const table = students.length === 0
+        ? `<div style="text-align:center;padding:16px;color:#94A3B8;font-size:12px"><i>No students in this class.</i></div>`
+        : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+            <thead><tr>${[th("#", "center"), th("Student"), th("Status", "center"), th("In Time", "center"), ...(trackOut ? [th("Out Time", "center")] : []), th("Marked From")].join("")}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table></div>`;
+
+      return heading + table;
+    }).join("");
+
+    const pres = filtered.filter((r) => r.marked).reduce((s, r) => s + r.present, 0);
+    const abs  = filtered.filter((r) => r.marked).reduce((s, r) => s + r.absent, 0);
+    const lv   = filtered.filter((r) => r.marked).reduce((s, r) => s + r.leave, 0);
+    const lt   = filtered.filter((r) => r.marked).reduce((s, r) => s + (r.late || 0), 0);
+    const sl   = filtered.filter((r) => r.marked).reduce((s, r) => s + (r.shortLeave || 0), 0);
+    const tot  = filtered.reduce((s, r) => s + r.total, 0);
+
+    const content = rptInfoGrid([
+      ["Date", dateLabel],
+      ["Classes", forClass ? `${forClass.cls} (${forClass.sec})` : String(filtered.length)],
+      ["Total Students", String(tot)],
+    ], bdr) +
+    rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB], ["Late", lt, LATE], ...(trackOut ? [["Short Leave", sl, SL]] : [])], bdr, isColor) +
+    (totalStudentCount === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance found for the selected date and filters.</i></div>`
+      : classBlocks);
+
+    return rptPageWrap({ rptLabel: "Daily Student Attendance Report", period: dateLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Monthly Student Attendance Report ──────────────────────────────────── */
+  function buildMonthlyStudentReportHTML({ studentData, month, classFilter, sectionFilter, forClass, isColor }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+
+    const rows = (studentData || []).filter((r) => {
+      if (forClass) return r.cls === forClass.cls && r.sec === forClass.sec;
+      const cMatch = !classFilter || classFilter === "All Classes" || r.cls === classFilter;
+      const sMatch = !sectionFilter || sectionFilter === "All Sections" || r.sec === sectionFilter;
+      return cMatch && sMatch;
+    });
+
+    /* Monthly aggregates — synthesize 22 working days per class. */
+    const tableRows = rows.map((r, i) => {
+      const workingDays = 22;
+      const totalSessions = r.total * workingDays;
+      const present = r.marked ? Math.round((r.present / r.total) * totalSessions) : 0;
+      const absent  = r.marked ? Math.round((r.absent  / r.total) * totalSessions) : 0;
+      const leave   = r.marked ? Math.round((r.leave   / r.total) * totalSessions) : 0;
+      const pc = totalSessions > 0 ? Math.round((present / totalSessions) * 100) : 0;
+      return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+        ${td(i + 1, "text-align:center;color:#94A3B8")}
+        ${td(`<strong>${r.cls}</strong>`)}${td(r.sec)}
+        ${td(r.total, "text-align:center;font-weight:700")}
+        ${td(workingDays, "text-align:center")}
+        ${td(`<strong style="color:${GREEN}">${present}</strong>`, "text-align:center")}
+        ${td(`<strong style="color:${RED}">${absent}</strong>`,    "text-align:center")}
+        ${td(`<strong style="color:${AMB}">${leave}</strong>`,     "text-align:center")}
+        ${td(badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED), "text-align:center")}
+      </tr>`;
+    }).join("");
+
+    const totStudents = rows.reduce((s, r) => s + r.total, 0);
+    const content = rptInfoGrid([
+      ["Month", monthLabel],
+      ["Class", forClass ? forClass.cls : (classFilter || "All Classes")],
+      ["Section", forClass ? forClass.sec : (sectionFilter || "All Sections")],
+      ["Total Students", String(totStudents)],
+    ], bdr) + (rows.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No classes match the selected filters.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Strength", "center"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Attend %", "center")].join("")}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Monthly Student Attendance Report", period: monthLabel, isColor, content });
+  }
+
+  /* ─── Monthly Student Attendance — REAL class-wise summary ────────────────
+    Har class+section: Strength, Working Days (jitne din us month attendance mark
+    hui), Present/Absent/Leave (month ka total), aur Present %. Header = branch. */
+  function buildStudentMonthlySummaryHTML({ rows, monthLabel, sessionName, branchSchool, isColor, classFilter, sectionFilter, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL } = rptExtraColors(isColor);
+    const filtered = (rows || []).filter((r) => {
+      const cMatch = !classFilter || classFilter === "All Classes" || r.cls === classFilter;
+      const sMatch = !sectionFilter || sectionFilter === "All Sections" || r.sec === sectionFilter;
+      return cMatch && sMatch;
+    });
+
+    const tableRows = filtered.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+      ${td(i + 1, "text-align:center;color:#94A3B8")}
+      ${td(`<strong>${r.cls}</strong>`)}${td(r.sec)}
+      ${td(r.strength, "text-align:center;font-weight:700")}
+      ${td(r.workingDays, "text-align:center")}
+      ${td(`<strong style="color:${GREEN}">${r.present}</strong>`, "text-align:center")}
+      ${td(`<strong style="color:${RED}">${r.absent}</strong>`,    "text-align:center")}
+      ${td(`<strong style="color:${AMB}">${r.leave}</strong>`,     "text-align:center")}
+      ${td(`<strong style="color:${LATE}">${r.late || 0}</strong>`, "text-align:center")}
+      ${trackOut ? td(`<strong style="color:${SL}">${r.shortLeave || 0}</strong>`, "text-align:center") : ""}
+      ${td(badge(r.pct + "%", r.pct >= 90 ? GREEN : r.pct >= 75 ? AMB : RED), "text-align:center")}
+    </tr>`).join("");
+
+    const totStrength = filtered.reduce((s, r) => s + (r.strength || 0), 0);
+    const content = rptInfoGrid([
+      ["Session", sessionName || "—"],
+      ["Month", monthLabel],
+      ["Classes", String(filtered.length)],
+      ["Total Students", String(totStrength)],
+    ], bdr) + (filtered.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Strength", "center"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Late", "center"), ...(trackOut ? [th("SL", "center")] : []), th("Present %", "center")].join("")}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table></div>`);
+
+    return rptPageWrap({
+      rptLabel: "Monthly Student Attendance Report",
+      period: `${sessionName ? sessionName + " · " : ""}${monthLabel}`,
+      isColor, school: branchSchool, content,
+    });
+  }
+
+  /* ─── Daily Staff Attendance Report ─────────────────────────────────────── */
+  function buildDailyStaffReportHTML({ staffData, date, deptFilter, forStaff, isColor, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+      : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+    const list = (staffData || []).filter((s) => {
+      if (forStaff) return s.empId === forStaff.empId;
+      return !deptFilter || deptFilter === "All Departments" || s.dept === deptFilter;
+    });
+
+    const statusBadge = (s) => {
+      if (!s.marked) return badge("Not Marked", "#94A3B8");
+      if (s.status === "present") return badge("Present", GREEN);
+      if (s.status === "absent")  return badge("Absent",  RED);
+      if (s.status === "leave")   return badge("Leave",   AMB);
+      if (s.status === "late")        return badge("Late",        LATE);
+      if (s.status === "short_leave") return badge("Short Leave", SL);
+      if (s.status === "holiday")     return badge("Holiday",     HOL);
+      return badge("Pending", "#94A3B8");
+    };
+
+    const tableRows = list.map((s, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+      ${td(i + 1, "text-align:center;color:#94A3B8")}
+      ${td(`<strong>${s.name}</strong><div style="font-size:10.5px;color:#64748B">${s.empId}</div>`)}
+      ${td(s.desig)}
+      ${td(s.dept)}
+      ${td(statusBadge(s), "text-align:center")}
+      ${td(s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-weight:600")}
+      ${trackOut ? td(s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-weight:600") : ""}
+      ${td(s.from || "—", "font-size:11px")}
+    </tr>`).join("");
+
+    const { present, absent, leave, late, shortLeave, holiday } = countList(list, (s) => s.marked);
+    const notMarked = list.filter((s) => !s.marked).length;
+
+    const content = rptInfoGrid([
+      ["Date",       dateLabel],
+      ["Department", forStaff ? forStaff.dept : (deptFilter || "All Departments")],
+      ["Total Staff", String(list.length)],
+      ["Generated",  new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    rptStatsRow([["Total", list.length, "#374151"], ["Present", present, GREEN], ["Absent", absent, RED], ["Leave", leave, AMB], ["Late", late, LATE], ...(trackOut ? [["Short Leave", shortLeave, SL]] : []), ["Holiday", holiday, HOL], ["Not Marked", notMarked, "#94A3B8"]], bdr, isColor) +
+    (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff match the selected filters.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr>${[th("#", "center"), th("Staff Name"), th("Designation"), th("Department"), th("Status", "center"), th("In Time", "center"), ...(trackOut ? [th("Out Time", "center")] : []), th("Marked From")].join("")}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Daily Staff Attendance Report", period: dateLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Monthly Staff Attendance Report ─────────────────────────────────────
+    `staffData` = REAL per-staff month aggregates (present/absent/leave, working
+    days, present %) fetched from /api/staff-attendance across the month's dates.
+    Header = branch (branchSchool). */
+  function buildMonthlyStaffReportHTML({ staffData, month, deptFilter, forStaff, isColor, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+
+    const list = (staffData || []).filter((s) => {
+      if (forStaff) return s.empId === forStaff.empId;
+      return !deptFilter || deptFilter === "All Departments" || s.dept === deptFilter;
+    });
+
+    const tableRows = list.map((s, i) => {
+      const workingDays = s.workingDays || 0;
+      const present = s.present || 0, absent = s.absent || 0, leave = s.leave || 0;
+      const pc = s.pct || 0;
+      return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+        ${td(i + 1, "text-align:center;color:#94A3B8")}
+        ${td(`<strong>${s.name}</strong>`)}
+        ${td(s.desig)}
+        ${td(s.dept)}
+        ${td(workingDays, "text-align:center")}
+        ${td(`<strong style="color:${GREEN}">${present}</strong>`, "text-align:center")}
+        ${td(`<strong style="color:${RED}">${absent}</strong>`,    "text-align:center")}
+        ${td(`<strong style="color:${AMB}">${leave}</strong>`,     "text-align:center")}
+        ${td(`<strong style="color:${LATE}">${s.late || 0}</strong>`, "text-align:center")}
+        ${trackOut ? td(`<strong style="color:${SL}">${s.shortLeave || 0}</strong>`, "text-align:center") : ""}
+        ${td(`<strong style="color:${HOL}">${s.holiday || 0}</strong>`, "text-align:center")}
+        ${td(badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED), "text-align:center")}
+      </tr>`;
+    }).join("");
+
+    const content = rptInfoGrid([
+      ["Month",       monthLabel],
+      ["Department",  forStaff ? forStaff.dept : (deptFilter || "All Departments")],
+      ["Total Staff", String(list.length)],
+      ["Generated",   new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) + (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff match the selected filters.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr>${[th("#", "center"), th("Staff Name"), th("Designation"), th("Department"), th("Working Days", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Late", "center"), ...(trackOut ? [th("SL", "center")] : []), th("Holiday", "center"), th("Attend %", "center")].join("")}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Monthly Staff Attendance Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Staff Attendance Sheet (monthly day-by-day grid) ──────────────────────
+     Ek row per staff, ek column per calendar day (1-31): P present, A absent,
+     H holiday/weekly-off, "." abhi tak un-marked (sirf current month me aage ke
+     din), aur mahine ki asal length se aage (jaise Feb me 29-31) ke liye dim
+     cell. Day statuses staff index + day number se deterministic derive hote
+     hain (Math.random() nahi) taake dobara generate karne par sheet stable
+     rahe. Port from School-Mentor-Front-end. */
+  function buildStaffAttendanceSheetHTML({ staffData, month, weeklyOff, holidays, isColor, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td } = rptTableHelpers(isColor);
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+    const [monName, yearStr] = monthLabel.split(" ");
+    const monIdx = Math.max(0, MONTHS.indexOf(monName));
+    const year = parseInt(yearStr, 10) || new Date().getFullYear();
+    const daysInMonth = new Date(year, monIdx + 1, 0).getDate();
+
+    const today = new Date();
+    const isPastMonth = year < today.getFullYear() || (year === today.getFullYear() && monIdx < today.getMonth());
+    const isCurrentMonth = year === today.getFullYear() && monIdx === today.getMonth();
+    const lastMarkedDay = isPastMonth ? daysInMonth : (isCurrentMonth ? today.getDate() : 0);
+
+    /* Is mahine ke kaunse din declared holiday range me aate hain. */
+    const holidaySet = new Set();
+    (holidays || []).forEach((h) => {
+      if (!h.from) return;
+      const from = new Date(h.from);
+      const to = h.to ? new Date(h.to) : from;
+      for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+        if (d.getFullYear() === year && d.getMonth() === monIdx) holidaySet.add(d.getDate());
+      }
+    });
+
+    const list = staffData || [];
+    const dayNums = Array.from({ length: 31 }, (_, i) => i + 1);
+
+  // NAYA — real dayMarks se lookup
+const markOf = (staffIdx, day) => {
+  if (day > daysInMonth) return "na";
+  const dow = (new Date(year, monIdx, day).getDay() + 6) % 7;
+  if ((weeklyOff || []).includes(dow) || holidaySet.has(day)) return "H";
+  if (day > lastMarkedDay) return ".";
+  const status = list[staffIdx]?.dayMarks?.[day];
+  if (status === "present")     return "P";
+  if (status === "absent")      return "A";
+  if (status === "leave")       return "L";
+  if (status === "late")        return "LT";
+  if (status === "short_leave") return "SL";
+  if (status === "holiday")     return "H";
+  return "."; // us din mark hi nahi hui
+};
+    const MARK_COLOR = { P: GREEN, A: RED, L: AMB, LT: LATE, SL, H: HOL };
+
+    const dayTh = (d) => {
+      const thBg = isColor ? "background:#EFF6FF;color:#1E3A8A" : "background:#FFFFFF;color:#111111";
+      return `<th style="padding:9px 1px;text-align:center;font-weight:700;font-size:9px;border:1px solid ${bdr};${thBg}">${d}</th>`;
+    };
+
+    const markCell = (mark) => {
+      if (mark === "na") return `<td style="padding:3px 1px;border:1px solid ${bdr};background:#F1F5F9"></td>`;
+      if (mark === ".") return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:9px;color:#CBD5E1">·</td>`;
+      const color = MARK_COLOR[mark] || HOL;
+      return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:${mark.length > 1 ? 7.5 : 9}px;font-weight:800;color:${color}">${mark}</td>`;
+    };
+
+    /* Aakhri columns: har mark ki ginti (H me weekly-off bhi). */
+    const TALLY = trackOut ? ["P", "A", "L", "LT", "SL", "H"] : ["P", "A", "L", "LT", "H"];
+    const rows = list.map((s, i) => {
+      const tally = { P: 0, A: 0, L: 0, LT: 0, SL: 0, H: 0 };
+      const cells = dayNums.map((day) => {
+        const mark = markOf(i, day);
+        if (tally[mark] != null) tally[mark]++;
+        return markCell(mark);
+      }).join("");
+      return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+        ${td(i + 1, "text-align:center;color:#94A3B8;font-size:10px")}
+        ${td(`<span style="font-size:10px">${s.empId}</span>`)}
+        ${td(`<strong style="font-size:10.5px">${s.name}</strong>`)}
+        ${td(s.desig, "font-size:10px")}
+        ${cells}
+        ${TALLY.map((k) => td(`<strong style="color:${MARK_COLOR[k]}">${tally[k]}</strong>`, "text-align:center;font-size:10px")).join("")}
+      </tr>`;
+    }).join("");
+
+    const legend = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:10.5px;color:#475569">
+      <span><strong style="color:${GREEN}">P</strong> = Present</span>
+      <span><strong style="color:${RED}">A</strong> = Absent</span>
+      <span><strong style="color:${AMB}">L</strong> = Leave</span>
+      <span><strong style="color:${LATE}">LT</strong> = Late</span>
+      ${trackOut ? `<span><strong style="color:${SL}">SL</strong> = Short Leave</span>` : ""}
+      <span><strong style="color:${HOL}">H</strong> = Holiday / Weekly Off</span>
+      <span><strong style="color:#94A3B8">·</strong> = Not Marked Yet</span>
+    </div>`;
+
+    const content = rptInfoGrid([
+      ["Month",       monthLabel],
+      ["Total Staff", String(list.length)],
+      ["Days Marked", String(lastMarkedDay)],
+      ["Generated",   new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) + legend + (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff to display.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;table-layout:fixed">
+          <colgroup>
+            <col style="width:2.5%"><col style="width:5%"><col style="width:11%"><col style="width:7%">
+            ${dayNums.map(() => '<col style="width:1.85%">').join("")}
+            ${TALLY.map(() => '<col style="width:2.6%">').join("")}
+          </colgroup>
+          <thead><tr>
+            ${[th("#", "center"), th("ID"), th("Name"), th("Designation")].join("")}
+            ${dayNums.map((d) => dayTh(d)).join("")}
+            ${TALLY.map((k) => th(k, "center")).join("")}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Staff Attendance Sheet", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Class Overview (Monthly) Report ─────────────────────────────────────
+    `rows` = REAL per class+section month aggregates (fetchMonthlyReportRows). */
+  function buildClassOverviewHTML({ rows, month, isColor, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const { LATE, SL } = rptExtraColors(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+    const list = rows || [];
+    const workingDays = list[0]?.workingDays ?? 0;
+
+    const tableRows = list.map((r, i) => {
+      const pc = r.pct || 0;
+      return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+        ${td(i + 1, "text-align:center;color:#94A3B8")}
+        ${td(`<strong>${r.cls}</strong>`)}${td(r.sec)}
+        ${td(r.teacher || "—", "font-size:11px")}
+        ${td(r.strength, "text-align:center;font-weight:700")}
+        ${td(`<strong style="color:${GREEN}">${r.present}</strong>`, "text-align:center")}
+        ${td(`<strong style="color:${RED}">${r.absent}</strong>`,    "text-align:center")}
+        ${td(`<strong style="color:${AMB}">${r.leave}</strong>`,     "text-align:center")}
+        ${td(`<strong style="color:${LATE}">${r.late || 0}</strong>`, "text-align:center")}
+        ${trackOut ? td(`<strong style="color:${SL}">${r.shortLeave || 0}</strong>`, "text-align:center") : ""}
+        ${td(badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED), "text-align:center")}
+      </tr>`;
+    }).join("");
+
+    const content = rptInfoGrid([
+      ["Month", monthLabel],
+      ["Total Classes", String(list.length)],
+      ["Working Days", String(workingDays)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Teacher"), th("Strength", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Late", "center"), ...(trackOut ? [th("SL", "center")] : []), th("Attend %", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Monthly Class Overview Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Class Comparison Report ───────────────────────────────────────────── */
+  function buildClassComparisonHTML({ rows, month, isColor, branchSchool }) {
+    const { bdr, GREEN, RED, AMB, th, td } = rptTableHelpers(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+
+    const list = (rows || []).map((r) => ({ ...r, pc: r.pct || 0 })).sort((a, b) => b.pc - a.pc);
+
+    const tableRows = list.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+      ${td(i + 1, "text-align:center;color:#94A3B8")}
+      ${td(`<strong>${r.cls}</strong> · ${r.sec}`)}
+      ${td(r.teacher || "—", "font-size:11px")}
+      ${td(`<div style="background:#e2e8f0;height:10px;border-radius:5px;overflow:hidden"><div style="height:100%;width:${r.pc}%;background:${r.pc >= 90 ? GREEN : r.pc >= 75 ? AMB : RED}"></div></div>`, "min-width:160px")}
+      ${td(`<strong style="color:${r.pc >= 90 ? GREEN : r.pc >= 75 ? AMB : RED}">${r.pc}%</strong>`, "text-align:center")}
+    </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Month", monthLabel],
+      ["Classes Compared", String(list.length)],
+      ["Top Class", list[0] ? `${list[0].cls} · ${list[0].sec} (${list[0].pc}%)` : "—"],
+      ["Lowest Class", list[list.length - 1] ? `${list[list.length - 1].cls} · ${list[list.length - 1].sec} (${list[list.length - 1].pc}%)` : "—"],
+    ], bdr) +
+    (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Class / Section"), th("Teacher"), th("Attendance"), th("%", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Class Comparison Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Low Attendance Alert Report ───────────────────────────────────────── */
+  function buildLowAttendanceHTML({ rows, month, isColor, branchSchool }) {
+    const { bdr, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+    const threshold = 75;
+
+    const list = (rows || []).map((r) => ({ ...r, pc: r.pct || 0 }))
+      .filter((r) => r.pc < threshold).sort((a, b) => a.pc - b.pc);
+
+    const tableRows = list.length === 0
+      ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">All classes are above the ${threshold}% threshold.</td></tr>`
+      : list.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${r.cls}</strong> · ${r.sec}`)}
+          ${td(r.teacher || "—", "font-size:11px")}
+          ${td(r.strength, "text-align:center;font-weight:700")}
+          ${td(`<strong style="color:${RED}">${r.absent}</strong>`, "text-align:center")}
+          ${td(badge(r.pc + "%", r.pc >= 60 ? AMB : RED), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Month", monthLabel],
+      ["Threshold", `< ${threshold}%`],
+      ["Classes Flagged", String(list.length)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:${RED};display:flex;align-items:center;gap:8px"><strong>Action required:</strong> Classes listed below have monthly attendance under ${threshold}%. Investigate causes and schedule remedial steps.</div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Class / Section"), th("Teacher"), th("Strength", "center"), th("Absent (Mo)", "center"), th("Attend %", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Low Attendance Alert Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Late Arrivals Report — Students ───────────────────────────────────
+     Built from the real `late` count each class was marked with — not derived
+     from a time engine, since there's no per-student check-in timestamp
+     in this app. A late student is still counted within Present, same
+     convention as the rest of the module. */
+  function buildStudentLateArrivalsHTML({ rows, month, isColor, branchSchool }) {
+    const { bdr, th, td, badge } = rptTableHelpers(isColor);
+    const PURPLE = isColor ? "#7C3AED" : "#374151";
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+
+    const list = (rows || []).filter((r) => (r.late || 0) > 0).sort((a, b) => b.late - a.late);
+    const totalLate = list.reduce((s, r) => s + (r.late || 0), 0);
+
+    const tableRows = list.length === 0
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No late arrivals recorded.</td></tr>`
+      : list.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${r.cls}</strong> · ${r.sec}`)}
+          ${td(r.teacher || "—", "font-size:11px")}
+          ${td(r.present, "text-align:center;font-weight:700")}
+          ${td(badge(`${r.late} Late`, PURPLE), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Month", monthLabel],
+      ["Classes With Late Arrivals", String(list.length)],
+      ["Total Late Arrivals", String(totalLate)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Class / Section"), th("Teacher"), th("Present", "center"), th("Late Arrivals", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Student Late Arrivals Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Late Arrivals Report — Staff ───────────────────────────────────────
+     Derived from the real rule engine (attendanceRules.js) against each
+     staff member's Time In for the selected date. */
+  function buildStaffLateArrivalsHTML({ staffData, date, attendanceSetup, isColor, branchSchool }) {
+    const { bdr, th, td, badge } = rptTableHelpers(isColor);
+    const PURPLE = isColor ? "#7C3AED" : "#374151";
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+      : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+    const lateAfterMin = timeToMinutes(attendanceSetup?.lateAfter);
+    const list = (staffData || []).filter((s) => s.marked && (s.status === "present" || s.status === "late" || s.status === "short_leave") && s.inTime).map((s) => {
+      const result = calculateAttendanceResult({ timeIn: s.inTime, timeOut: s.outTime, calendarStatus: null, isOnApprovedLeave: false, setup: attendanceSetup });
+      const inMin = timeToMinutes(s.inTime);
+      const minutesLate = lateAfterMin != null && inMin != null ? Math.max(0, inMin - lateAfterMin) : null;
+      return { ...s, result, minutesLate };
+    }).filter((s) => s.result.timeInStatus === "late");
+
+    const tableRows = !attendanceSetup?.isEnabled
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">Working Hours &amp; Attendance Rules (Staff) is off — turn it on in Attendance Setup to detect late arrivals.</td></tr>`
+      : list.length === 0
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No late arrivals for this date.</td></tr>`
+      : list.map((s, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${s.name}</strong><div style="font-size:10.5px;color:#64748B">${s.empId}</div>`)}
+          ${td(s.dept)}
+          ${td(fmtTime(s.inTime), "text-align:center;font-weight:600")}
+          ${td(badge(s.minutesLate != null ? `${s.minutesLate} min late` : "Late", PURPLE), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Date", dateLabel],
+      ["Late After", attendanceSetup?.lateAfter ? fmtTime(attendanceSetup.lateAfter) : "—"],
+      ["Staff Late", String(list.length)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Staff Name"), th("Department"), th("In Time", "center"), th("Late By", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Staff Late Arrivals Report", period: dateLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Short Leavers Report — Staff ───────────────────────────────────────
+     Same rule engine, filtered to Short Leave ("checked out before Short
+     Leave Before"). Needs Time Out — Time In Only schools get an explanation. */
+  function buildStaffShortLeaversHTML({ staffData, date, attendanceSetup, isColor, branchSchool }) {
+    const { bdr, th, td, badge } = rptTableHelpers(isColor);
+    const AMB = isColor ? "#D97706" : "#374151";
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
+      : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+    const trackOut = attendanceSetup?.staffTrackingMode !== "in_only";
+    const list = (staffData || []).filter((s) => s.marked && (s.status === "present" || s.status === "late" || s.status === "short_leave") && s.outTime).map((s) => {
+      const result = calculateAttendanceResult({ timeIn: s.inTime, timeOut: s.outTime, calendarStatus: null, isOnApprovedLeave: false, setup: { ...attendanceSetup, trackTimeOut: trackOut } });
+      return { ...s, result };
+    }).filter((s) => s.result.timeOutStatus === "short_leave");
+
+    const tableRows = !trackOut
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">This school only tracks Time In for staff — Short Leave needs a Time Out to detect.</td></tr>`
+      : !attendanceSetup?.isEnabled
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">Working Hours &amp; Attendance Rules (Staff) is off — turn it on in Attendance Setup to detect short leavers.</td></tr>`
+      : list.length === 0
+      ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No short leavers for this date.</td></tr>`
+      : list.map((s, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${s.name}</strong><div style="font-size:10.5px;color:#64748B">${s.empId}</div>`)}
+          ${td(s.dept)}
+          ${td(fmtTime(s.outTime), "text-align:center;font-weight:600")}
+          ${td(badge("Short Leave", AMB), "text-align:center")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Date", dateLabel],
+      ["Short Leave Before", attendanceSetup?.shortLeaveFrom ? fmtTime(attendanceSetup.shortLeaveFrom) : "—"],
+      ["Staff on Short Leave", String(list.length)],
+      ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Staff Name"), th("Department"), th("Out Time", "center"), th("Status", "center")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Staff Short Leavers Report", period: dateLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Monthly Holiday Report ───────────────────────────────────────────── */
+  function buildMonthlyHolidayReportHTML({ holidays, weeklyOff, month, isColor, branchSchool }) {
+    const { bdr, th, td } = rptTableHelpers(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+    const monthIdx = MONTHS.indexOf(monthLabel.split(" ")[0]);
+    const list = (holidays || []).filter((h) => h.month === monthIdx);
+    const weeklyOffDays = weeklyOff.map((i) => DAYS_F[i]).join(", ") || "—";
+
+    const tableRows = list.length === 0
+      ? `<tr><td colspan="7" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">No special holidays scheduled for this month.</td></tr>`
+      : list.map((h, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(`<strong>${h.title}</strong>`)}
+          ${td(h.desc || "—", "font-size:11px;color:#64748B")}
+          ${td(h.from, "font-weight:600")}${td(h.to, "font-weight:600")}
+          ${td((h.classes || []).join(", "), "font-size:11px")}
+          ${td(MONTHS[h.month] || "—", "font-size:11px")}
+        </tr>`).join("");
+
+    const content = rptInfoGrid([
+      ["Month",         monthLabel],
+      ["Holidays",      String(list.length)],
+      ["Weekly Off",    weeklyOffDays],
+      ["Generated",     new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[th("#", "center"), th("Holiday Name"), th("Description"), th("From"), th("To"), th("Applies To"), th("Month")].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: "Monthly Holiday Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Individual (Student/Staff) Date-Range Report ──────────────────────── */
+  function buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool, trackOut = true }) {
+    const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
+    const titleType = target.type === "student" ? "Student" : "Staff";
+    const dateLabel = `${fromDate} → ${toDate}`;
+    const recs = records || {};
+
+    /* Generate the date sequence */
+    const start = new Date(`${fromDate}T00:00:00`);
+    const end   = new Date(`${toDate}T00:00:00`);
+    const dates = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(new Date(d));
+    }
+
+    const { LATE, SL, HOL } = rptExtraColors(isColor);
+    const ST_COLOR = { present: GREEN, absent: RED, leave: AMB, late: LATE, short_leave: SL, holiday: HOL };
+    const WDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+    const counts = emptyCounts();
+    let wDays = 0, wOff = 0, hols = 0;
+    const tableRows = dates.map((d, i) => {
+      const dow = (d.getDay() + 6) % 7;
+      const isOff = weeklyOff.includes(dow);
+      const hol = (holidays || []).find((h) => {
+        const f = new Date(`${h.from}T00:00:00`), t2 = new Date(`${h.to}T00:00:00`);
+        return d >= f && d <= t2;
+      });
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const rec = recs[key]; // { status, platform, inTime, outTime } | undefined
+      const dStr = `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
+      const dowName = WDAYS[d.getDay()];
+      let dType = "Working Day", dColor = isColor ? "#16A34A" : "#333";
+      if (isOff)      { dType = "Weekly Off"; dColor = "#94A3B8"; wOff++; }
+      else if (hol)   { dType = "Holiday";    dColor = isColor ? "#3B82F6" : "#555"; hols++; }
+      else            { wDays++; }
+
+      // Real status: weekly-off/holiday → "—"; warna record se; record na ho → "Not Marked".
+      const stKey = rec ? rec.status : "";
+      const st = (isOff || hol) ? "—" : (ST_LABEL[stKey] || (rec ? "Marked" : "Not Marked"));
+      const pl = (isOff || hol) ? "—" : (rec?.platform || "—");
+      // In/Out time — ab student aur staff dono ke liye (present days par API se aata hai).
+      const inT  = rec?.inTime  ? fmtTime(rec.inTime)  : "—";
+      const outT = rec?.outTime ? fmtTime(rec.outTime) : "—";
+
+      if (!isOff && !hol && rec) countStatus(counts, stKey);
+      const sc = ST_COLOR[stKey] || "#94A3B8";
+      const bg = isOff ? "#f8fafc" : i % 2 === 0 ? "#fff" : "#f9fafb";
+
+      return `<tr style="background:${bg}">
+        ${td(i + 1, "text-align:center;color:#94A3B8")}
+        ${td(dStr, "font-weight:600")}
+        ${td(dowName, "font-size:11px;color:#64748B")}
+        ${td(`<span style="color:${dColor};font-weight:700">${dType}</span>${hol ? `<div style="font-size:10px;color:#64748B;margin-top:2px">${hol.title}</div>` : ""}`)}
+        ${td(st === "—" ? "—" : badge(st, sc), "text-align:center")}
+        ${td(inT, "text-align:center;font-size:11px")}
+        ${trackOut ? td(outT, "text-align:center;font-size:11px") : ""}
+        ${td(pl, "font-size:11px")}
+      </tr>`;
+    }).join("");
+
+    const totalDays = dates.length;
+    // Late / Short Leave bhi haazir ginay jate hain (aaye the).
+    const pc = wDays > 0 ? Math.round((attendedOf(counts) / wDays) * 100) : 0;
+
+    const content = rptInfoGrid([
+      [titleType + " Name", target.name],
+      ["Detail",            target.detail],
+      ["ID",                target.id],
+      ["Period",            dateLabel],
+    ], bdr) +
+    rptStatsRow([
+      ["Total Days",   totalDays, "#374151"],
+      ["Working",      wDays,     "#1E40AF"],
+      ["Weekly Off",   wOff,      "#94A3B8"],
+      ["Holidays",     hols,      "#3B82F6"],
+      ["Attend %",     pc + "%",  pc >= 90 ? GREEN : pc >= 75 ? AMB : RED],
+    ], bdr, isColor) +
+    rptStatsRow([
+      ["Present",     counts.present,    GREEN],
+      ["Absent",      counts.absent,     RED],
+      ["Leave",       counts.leave,      AMB],
+      ["Late",        counts.late,       LATE],
+      ...(trackOut ? [["Short Leave", counts.shortLeave, SL]] : []),
+      ...(titleType === "Staff" ? [["Holiday", counts.holiday, HOL]] : []),
+    ], bdr, isColor) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${[
+        th("#", "center"),
+        th("Date"),
+        th("Day"),
+        th("Type"),
+        th("Status", "center"),
+        th("In Time", "center"), ...(trackOut ? [th("Out Time", "center")] : []),
+        th("Platform"),
+      ].join("")}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+
+    return rptPageWrap({ rptLabel: `Individual ${titleType} Attendance Report`, period: dateLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Shared month-calendar grid (student + staff) ────────────────────────── */
+  function CalendarGrid({ type, month, weeklyOff, holidays, selected, onSelect, onFutureError }) {
+    const cells = useMemo(() => {
+      const [monName, yrStr] = month.split(" ");
+      const monthIdx = MONTHS.indexOf(monName);
+      const year = parseInt(yrStr) || 2026;
+      const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+      const firstDow = (new Date(year, monthIdx, 1).getDay() + 6) % 7; // 0 = Mon
+      const today = new Date();
+      const tY = today.getFullYear(), tM = today.getMonth(), tD = today.getDate();
+      const out = [];
+      for (let b = 0; b < firstDow; b++) out.push({ blank: true, key: `b${b}` });
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(year, monthIdx, d);
+        const dow = (date.getDay() + 6) % 7;
+        const isOff = weeklyOff.includes(dow);
+        const isToday = year === tY && monthIdx === tM && d === tD;
+        const isFuture = year > tY || (year === tY && monthIdx > tM) || (year === tY && monthIdx === tM && d > tD);
+        const isPast = year < tY || (year === tY && monthIdx < tM) || (year === tY && monthIdx === tM && d < tD);
+        const holMatch = holidays.find((h) => { const f = new Date(h.from), t = new Date(h.to); return date >= f && date <= t; });
+        const isHol = !!holMatch;
+        const isMarked = !isOff && !isHol && isPast;
+        const isPending = !isOff && !isHol && isFuture;
+        out.push({ key: `d${d}`, d, dow, year, monthIdx, isOff, isToday, isFuture, isPast, isHol, isMarked, isPending, tip: holMatch ? holMatch.title : "" });
+      }
+      return out;
+    }, [month, weeklyOff, holidays]);
+
+    const cellBg = (c) => {
+      if (c.isOff) return { bg: T.bgMuted, border: T.borderLight, dot: "#94A3B8", op: 0.85 };
+      if (c.isHol) return { bg: "rgba(59,130,246,.08)", border: T.borderMed, dot: T.brandMid, op: 1 };
+      if (c.isToday) return { bg: "rgba(139,92,246,.1)", border: "#8B5CF6", dot: "#8B5CF6", op: 1 };
+      if (c.isMarked) return { bg: "rgba(22,163,74,.07)", border: "rgba(22,163,74,.3)", dot: T.success, op: 1 };
+      if (c.isPending) return { bg: T.bgCard, border: T.borderLight, dot: T.error, op: 1 };
+      return { bg: T.bgCard, border: T.borderLight, dot: "transparent", op: 1 };
+    };
+
+    return (
+      <div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6, marginBottom: 6 }}>
+          {DAYS_S.map((d) => (
+            <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".5px", padding: "4px 0" }}>{d}</div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6 }}>
+          {cells.map((c) => {
+            if (c.blank) return <div key={c.key} style={{ opacity: 0.2 }} />;
+            const st = cellBg(c);
+            const isSel = selected && selected.day === c.d;
+            const clickable = (!c.isOff && !c.isFuture) || c.isToday;
+            return (
+              <Tooltip key={c.key} text={c.tip || ''}>
+                <div
+                  onClick={() => { if (clickable) onSelect({ year: c.year, monthIdx: c.monthIdx, day: c.d, isToday: c.isToday, isPast: c.isPast }); else if (c.isFuture) onFutureError(); }}
+                  style={{
+                    position: "relative", textAlign: "center", padding: "8px 2px 7px", borderRadius: T.radiusMd,
+                    border: `1.5px solid ${isSel ? T.brandPrimary : st.border}`, background: isSel ? T.brandLight : st.bg,
+                    opacity: st.op, cursor: clickable ? "pointer" : c.isFuture ? "not-allowed" : "default", transition: T.tr,
+                    boxShadow: isSel ? `0 0 0 2px ${T.brandPrimary}33` : "none",
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 800, color: c.isToday ? "#8B5CF6" : T.textPrimary }}>{c.d}</div>
+                  <div style={{ fontSize: 9, color: T.textMuted, textTransform: "uppercase" }}>{DAYS_S[c.dow]}</div>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot, margin: "4px auto 0" }} />
+                </div>
+              </Tooltip>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const LEGEND = [
+    ["#16A34A", "Marked"], ["#DC2626", "Pending"], ["#94A3B8", "Weekly Off"], ["#3B82F6", "Holiday"], ["#8B5CF6", "Today"],
+  ];
+  function CalLegend() {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+        {LEGEND.map(([c, l]) => (
+          <div key={l} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.textSecondary, fontWeight: 600 }}>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: c }} />{l}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  /* ─── Selected-date detail panel (student) ────────────────────────────────── */
+  /* ─── Sample roster used for the mark-attendance modal + expanded class detail
+    (matches the HTML reference's ST_NAMES / ST_STATUSES seed) ─────────────── */
+  const ST_NAMES = [
+    ["Ali Hassan", "Hassan Ali"],
+    ["Bilal Ahmed", "Ahmed Bilal"],
+    ["Sara Khan", "Khan Sara"],
+    ["Umar Sheikh", "Sheikh Umar"],
+    ["Ayesha Raza", "Raza Ayesha"],
+    ["Fatima Malik", "Malik Fatima"],
+    ["Zain Qureshi", "Qureshi Zain"],
+    ["Hira Butt", "Butt Hira"],
+  ];
+
+  /* Attendance status ↔ API numeric code: P=1, A=2, L=3, Late=4, Holiday=5,
+     Short Leave=6. (Staff saves the status string directly; students send the
+     code.) short_leave = came in but left before "Short Leave Before". */
+  const ST_STATUS_TO_CODE = { present: 1, absent: 2, leave: 3, late: 4, holiday: 5, short_leave: 6 };
+  const ST_CODE_TO_STATUS = { "1": "present", "2": "absent", "3": "leave", "4": "late", "5": "holiday", "6": "short_leave" };
+
+  /* Ek hi ginti har jagah (tables, date panels, reports): P = waqt par present,
+     Late aur SL (Short Leave) ALAG — P me nahi gine jate, taake
+     P + A + L + Late + SL (+ Holiday) = marked. "Attended" = P + Late + SL. */
+  const ST_LABEL = { present: "Present", absent: "Absent", leave: "Leave", late: "Late", short_leave: "Short Leave", holiday: "Holiday" };
+  const emptyCounts = () => ({ present: 0, absent: 0, leave: 0, late: 0, shortLeave: 0, holiday: 0 });
+  /** Status ko counter me jodo; pehchana na jaye to false. */
+  function countStatus(c, st) {
+    if (st === "present") c.present++;
+    else if (st === "absent") c.absent++;
+    else if (st === "leave") c.leave++;
+    else if (st === "late") c.late++;
+    else if (st === "short_leave") c.shortLeave++;
+    else if (st === "holiday") c.holiday++;
+    else return false;
+    return true;
+  }
+  /** Students/staff ki list → counts (status field se). */
+  const countList = (list, isMarked = () => true) => list.reduce((c, s) => {
+    if (isMarked(s)) countStatus(c, s.status);
+    return c;
+  }, emptyCounts());
+  const attendedOf = (c) => (c.present || 0) + (c.late || 0) + (c.shortLeave || 0);
+  /** Attendance % = attended / (attended + absent + leave) — holiday ginti me nahi. */
+  const attendPct = (c) => {
+    const marks = attendedOf(c) + (c.absent || 0) + (c.leave || 0);
+    return marks > 0 ? Math.round((attendedOf(c) / marks) * 100) : 0;
+  };
+
+  function rosterForClass(row) {
+    // Real roster from the API (get-class-section-studentlist-by-branch).
+    if (Array.isArray(row?.students) && row.students.length) return row.students;
+    // Fallback sample roster (demo/mock rows without a real student list).
+    const n = Math.min(row?.total || 0, 8);
+    return Array.from({ length: n }, (_, j) => {
+      const [name, father] = ST_NAMES[j % ST_NAMES.length];
+      return { idx: j + 1, reg: `2024-${String(j + 1).padStart(3, "0")}`, name, father };
+    });
+  }
+
+  /* ─── Month navigator (prev/next arrows) — like the Academics activity calendar.
+    Works with the "Month Year" string format the calendar already uses, and lets
+    the user reach ANY year's month (not just 2026). ─────────────────────────── */
+  function MonthNav({ month, onChange }) {
+    const [monName, yrStr] = month.split(" ");
+    const idx = MONTHS.indexOf(monName);
+    const year = parseInt(yrStr) || new Date().getFullYear();
+    const shift = (delta) => {
+      let m = idx + delta, y = year;
+      if (m < 0) { m = 11; y -= 1; }
+      if (m > 11) { m = 0; y += 1; }
+      onChange(`${MONTHS[m]} ${y}`);
+    };
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Tooltip text="Previous month">
+          <button className="att-chevron-btn" onClick={() => shift(-1)} aria-label="Previous month">
+            <i className="fa-solid fa-chevron-left"></i>
+          </button>
+        </Tooltip>
+        <div style={{ minWidth: 140, textAlign: "center", fontSize: 14, fontWeight: 800, color: T.textPrimary }}>
+          {monName} {year}
+        </div>
+        <Tooltip text="Next month">
+          <button className="att-chevron-btn" onClick={() => shift(1)} aria-label="Next month">
+            <i className="fa-solid fa-chevron-right"></i>
+          </button>
+        </Tooltip>
+      </div>
+    );
+  }
+
+  /* ─── Tab 2: Student Attendance ─────────────────────────────────────────────
+    HTML-faithful: att-section, att-st-row table, expandable detail panels,
+    per-class Mark/Update Attendance button, calendar with date detail. */
+  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false, prevDaysAttendance = false, studentLoading = false, trackOut = true }) {
+    const { can } = usePermissions();
+    const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
+    const canStDownload = can("Attendance", "Student Attendance", "Download");
+    const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
+    const [selected, setSelected] = useState(null);
+    const [openClassIdx, setOpenClassIdx] = useState(null);
+    // Selected-date per-class roster for the dropdown detail: { [classIdx]: { studentID: {status,inTime,outTime} } }
+    const [detailByDate, setDetailByDate] = useState({});
+
+    // Selected calendar date → the class-wise table follows THIS date.
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const selKey = selected ? `${selected.year}-${pad2(selected.monthIdx + 1)}-${pad2(selected.day)}` : null;
+    // "Today mode" = nothing selected, or the selected day is today. In this mode the
+    // table + marking stay byte-identical to the original today-only behavior.
+    const isTodaySel = !selected || selected.isToday;
+    // Following a PAST selected date only happens when the Previous-Days toggle is ON.
+    // When OFF → today-only table + marking (byte-identical to original).
+    const followDate = !isTodaySel && selected.isPast && prevDaysAttendance;
+    // Date passed to openMarkSt: real string only when following a past date; else null (→ today path).
+    const markDate = followDate ? selKey : null;
+    const dateReady = followDate && dateAttendance && dateAttendance.key === selKey && !dateAttendance.loading;
+    // Match a per-date row (from dateAttendance.rows) to a class row (studentData).
+    const dateRowFor = (r) => {
+      if (!dateReady) return null;
+      return (dateAttendance.rows || []).find((d) =>
+        (d.classID != null && d.sectionID != null &&
+          String(d.classID) === String(r.classID) && String(d.sectionID) === String(r.sectionID)) ||
+        (String(d.cls) === String(r.cls) && String(d.sec) === String(r.sec))
+      ) || null;
+    };
+    // Rows to render: when following a past date, overlay that date's P/A/L + marked
+    // (keep roster/total/teacher from studentData); otherwise studentData exactly.
+    const displayData = followDate
+      ? studentData.map((r) => {
+          const d = dateRowFor(r);
+          return d
+            ? { ...r, ...emptyCounts(), marked: !!d.marked, present: d.present || 0, absent: d.absent || 0, leave: d.leave || 0, late: d.late || 0, shortLeave: d.shortLeave || 0, holiday: d.holiday || 0 }
+            : { ...r, ...emptyCounts(), marked: false }; // still loading / no record
+        })
+      : studentData;
+    // Roster for a class's detail table — selected date's per-student status when following it.
+    const rosterFor = (r, i) => {
+      const base = rosterForClass(r);
+      if (!followDate) return base;
+      const map = detailByDate[i] || {};
+      return base.map((s) => {
+        const rec = map[s.id];
+        return { ...s, status: rec?.status || null, inTime: rec?.inTime || "", outTime: rec?.outTime || "", platform: rec?.platform || "" };      });
+    };
+
+    return (
+      <>
+        {/* Filter bar */}
+        <div className="att-section">
+          <div className="att-section-body" style={{ padding: "14px 18px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); setOpenClassIdx(null); setDetailByDate({}); }} />
+              {canStDownload && (
+              <Tooltip text="Download monthly student attendance as PDF">
+                <button
+                  className="att-btn-report"
+                  style={{ marginLeft: "auto" }}
+                  onClick={() => openReportPicker({
+                    title: "Monthly Student Attendance Report",
+                    context: "studentMonthly",
+                    defaultMonth: month,
+                  })}
+                >
+                  <i className="fa-solid fa-file-pdf"></i> PDF Report
+                </button>
+              </Tooltip>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Calendar */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-calendar-days"></i></div>
+              <div>
+                <div className="att-section-name">{month} — Calendar</div>
+                <div className="att-section-sub">Tap any date to view or mark attendance</div>
+              </div>
+            </div>
+          </div>
+          <div className="att-section-body" style={{ padding: "16px 18px 18px" }}>
+            <CalLegend />
+            <CalendarGrid
+              type="student"
+              month={month}
+              weeklyOff={weeklyOff}
+              holidays={holidays}
+              selected={selected}
+                onSelect={(s) => {
+                  setSelected(s);
+                  setOpenClassIdx(null);
+                  setDetailByDate({});
+                  const dateStr = `${s.year}-${String(s.monthIdx + 1).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`;
+                  onSelectDate?.(dateStr);
+                }}
+              onFutureError={() => toast("Attendance cannot be marked for upcoming dates.", "error")}
+            />
+            {selected && (
+              <StudentDatePanel
+                sel={selected}
+                dateAttendance={dateAttendance}
+                openMarkSt={openMarkSt}
+                openReportPicker={openReportPicker}
+                isOtherSession={isOtherSession}
+                prevDaysAttendance={prevDaysAttendance}
+                trackOut={trackOut}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Class-wise Attendance */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
+              <div>
+                <div className="att-section-name">Class-wise Attendance</div>
+                <div className="att-section-sub">Mark and view daily attendance for each class / section</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Table header */}
+          <div className={`att-table-head att-st-row${trackOut ? "" : " att-st-row--noout"}`}>
+            <div className="att-th att-td-num">#</div>
+            <div className="att-th att-td-name">Class / Section</div>
+            <div className="att-th att-td-teacher">Class Teacher</div>
+            <div className="att-th att-td-total">Total</div>
+            <div className="att-th att-td-status">Status</div>
+            <div className="att-th att-td-present">P</div>
+            <div className="att-th att-td-absent">A</div>
+            <div className="att-th att-td-leave">L</div>
+            <div className="att-th att-td-late">Late</div>
+            {trackOut && <div className="att-th att-td-sl">SL</div>}
+            <div className="att-th att-td-action">Action</div>
+            <div className="att-th att-td-chev"></div>
+          </div>
+
+          {/* Rows — follow the calendar-selected date (studentData when in today mode). */}
+                   {studentLoading && (
+            <div className="att-empty">
+              <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+              <div className="att-empty-title">Loading classes…</div>
+            </div>
+          )}
+          {!studentLoading && displayData.map((r, i) => {
+            const isOpen = openClassIdx === i;
+            const isMarked = r.marked;
+            return (
+              <div key={(r.classID ?? r.cls) + "-" + (r.sectionID ?? r.sec)} className="att-row-wrap">
+                <div className={`att-row att-st-row${trackOut ? "" : " att-st-row--noout"}`}>
+                  <div className="att-td att-td-num">{i + 1}</div>
+                  <div className="att-td att-td-name">
+                    <div className="att-row-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: T.textPrimary }}>{r.cls}</div>
+                      <div style={{ fontSize: 11, color: T.textMuted, fontWeight: 600, marginTop: 1 }}>
+                        <i className="fa-solid fa-layer-group" style={{ fontSize: 9, marginRight: 3 }}></i>{r.sec}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="att-td att-td-teacher">
+                    <div style={{ fontSize: 12, fontWeight: 700, color: T.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || (r.teacher && r.teacher !== "—" ? r.teacher : "—")}
+                    </div>
+                  </div>
+                  <div className="att-td att-td-total">
+                    <span style={{ fontSize: 15, fontWeight: 800, color: T.textPrimary }}>{r.total}</span>
+                    <span style={{ fontSize: 10, color: T.textMuted, marginLeft: 3 }}>students</span>
+                  </div>
+                  <div className="att-td att-td-status">
+                    <span className={`att-status-badge ${isMarked ? "marked" : "pending"}`}>
+                      {isMarked ? <><i className="fa-solid fa-check" style={{ fontSize: 8, marginRight: 4 }}></i>Marked</>
+                                : <><i className="fa-regular fa-clock" style={{ fontSize: 9, marginRight: 4 }}></i>Pending</>}
+                    </span>
+                  </div>
+                  <div className="att-td att-td-present"><span style={{ color: "#16A34A", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.present : "—"}</span></div>
+                  <div className="att-td att-td-absent"><span style={{ color: "#DC2626", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.absent : "—"}</span></div>
+                  <div className="att-td att-td-leave"><span style={{ color: "#D97706", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.leave : "—"}</span></div>
+                  <div className="att-td att-td-late"><span style={{ color: "#7C3AED", fontWeight: 800, fontSize: 14 }}>{isMarked ? (r.late || 0) : "—"}</span></div>
+                  {trackOut && <div className="att-td att-td-sl"><span style={{ color: "#0891B2", fontWeight: 800, fontSize: 14 }}>{isMarked ? (r.shortLeave || 0) : "—"}</span></div>}
+                  <div className="att-td att-td-action">
+                    {/* markDate = null in today mode (→ mark today, byte-identical),
+                        or the selected past date when following it (toggle ON). A past
+                        date with the toggle OFF is never followed → table stays today. */}
+                    <Tooltip text={!canStMark ? "You do not have permission to mark attendance" : (isOtherSession ? "Editing is only allowed for the current session" : (isMarked ? `Update attendance for ${r.cls} (${r.sec})` : `Mark attendance for ${r.cls} (${r.sec})`))}>
+                      <button
+                        className={`att-mark-btn-primary${isMarked ? " update-mode" : ""}`}
+                        onClick={() => openMarkSt(i, markDate)}
+                        disabled={isOtherSession || !canStMark}
+                        style={(isOtherSession || !canStMark) ? { opacity: .45, cursor: "not-allowed" } : undefined}
+                      >
+                        <i className={`fa-solid ${isMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
+                        {isMarked ? "Update Attendance" : "Mark Attendance"}
+                      </button>
+                    </Tooltip>
+                  </div>
+                  <div className="att-td att-td-chev">
+                    <Tooltip text={isOpen ? "Hide student details" : "Show student details"}>
+                      <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenClassIdx(next); if (next !== null) { const p = onExpandClass?.(next, markDate); if (followDate && p && typeof p.then === "function") { p.then((map) => setDetailByDate((prev) => ({ ...prev, [next]: map || {} }))); } } }} aria-label="Toggle detail">
+                        <i className="fa-solid fa-chevron-down"></i>
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+
+                <div className={`att-detail${isOpen ? " open" : ""}`}>
+                  <div className="att-detail-inner">
+                    <div style={{ fontSize: 12, fontWeight: 700, color: T.textSecondary, marginBottom: 10 }}>
+                      <i className="fa-solid fa-list-check" style={{ color: T.brandPrimary, marginRight: 6 }}></i>
+                      Attendance Detail — {r.cls} ({r.sec})
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table className="att-student-table" style={{ minWidth: 620 }}>
+                        <thead>
+                          <tr>
+                            <th>#</th><th>Reg. No.</th><th>Student Name</th><th>Father Name</th><th>Status</th><th>In Time</th>{trackOut && <th>Out Time</th>}<th>Marked From</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rosterFor(r, i).map((s, j) => {
+                            const st = s.status || null; // saved status for the selected date (get API)
+                            return (
+                              <tr key={s.id ?? s.idx}>
+                                <td>{s.idx}</td>
+                                <td>{s.reg}</td>
+                                <td>{s.name}</td>
+                                <td>{s.father}</td>
+                                <td>
+                                  {st
+                                    ? <span className={`att-${st}-badge`}>{ST_LABEL[st] || st}</span>
+                                    : <span style={{ color: T.textMuted, fontSize: 11.5 }}>Not Marked</span>}
+                                </td>
+                                <td style={{ fontWeight: 600 }}>{s.inTime  ? fmtTime(s.inTime)  : "—"}</td>
+                                {trackOut && <td style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</td>}
+                                <td style={{ fontSize: 11.5, color: T.textMuted }}>{st ? (s.platform || "ERP") : ""}</td>                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {canStDownload && (
+                    <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <Tooltip text={`Download today's attendance for ${r.cls} (${r.sec}) as PDF`}>
+                        <button
+                          className="att-btn-report"
+                          onClick={() => openReportPicker({
+                            title: `Daily Class Attendance — ${r.cls} (${r.sec})`,
+                            context: "studentDailyClass",
+                            forClass: r,
+                          })}
+                        >
+                          <i className="fa-solid fa-file-pdf"></i> Daily Report
+                        </button>
+                      </Tooltip>
+                      <Tooltip text={`Download monthly attendance for ${r.cls} (${r.sec}) as PDF`}>
+                        <button
+                          className="att-btn-report"
+                          onClick={() => openReportPicker({
+                            title: `Monthly Class Attendance — ${r.cls} (${r.sec})`,
+                            context: "studentMonthlyClass",
+                            forClass: r,
+                            defaultMonth: month,
+                          })}
+                        >
+                          <i className="fa-solid fa-calendar-days"></i> Monthly Report
+                        </button>
+                      </Tooltip>
+                    </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  /* ─── Selected-date panel under the Student calendar ────────────────────── */
+  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false, prevDaysAttendance = false, trackOut = true }) {
+    const { can } = usePermissions();
+    const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
+    const canStDownload = can("Attendance", "Student Attendance", "Download");
+    const dowName  = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(sel.year, sel.monthIdx, sel.day).getDay()];
+    const dateStr  = `${sel.day} ${MONTHS[sel.monthIdx]} ${sel.year}`;
+    const selKey   = `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`;
+    // Selected date ki attendance (API se, per-class). Jab tak load ho → spinner.
+    const ready    = dateAttendance && dateAttendance.key === selKey && !dateAttendance.loading;
+    const loading  = !dateAttendance || dateAttendance.key !== selKey || dateAttendance.loading;
+    const rows     = ready ? dateAttendance.rows : [];
+    const hasMark  = rows.some((r) => r.marked);
+    const total    = rows.reduce((s, r) => s + (r.total   || 0), 0);
+    const present  = rows.reduce((s, r) => s + (r.present || 0), 0);
+    const absent   = rows.reduce((s, r) => s + (r.absent  || 0), 0);
+    const leave    = rows.reduce((s, r) => s + (r.leave   || 0), 0);
+    const late     = rows.reduce((s, r) => s + (r.late    || 0), 0);
+    const shortLv  = rows.reduce((s, r) => s + (r.shortLeave || 0), 0);
+    const allMarked = rows.length > 0 && rows.every((r) => r.marked);
+
+    return (
+      <div style={{ marginTop: 16, border: `1.5px solid ${T.borderLight}`, borderRadius: T.radiusLg, padding: 16, background: "linear-gradient(135deg,rgba(30,58,138,.02),transparent)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: T.textPrimary }}>
+              <i className="fa-solid fa-calendar-day" style={{ color: T.brandPrimary, marginRight: 6 }}></i>{dowName}, {dateStr}
+            </div>
+            <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 3 }}>
+              {sel.isToday
+                ? "Today — attendance can be marked/updated"
+                : (prevDaysAttendance ? "Past date — editing enabled" : "Past date — showing saved record")}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {canStDownload && (
+            <Tooltip text="Download a PDF of student attendance for this date">
+              <button
+                className="att-btn-report"
+                onClick={() => openReportPicker({
+                  title: "Daily Student Attendance Report",
+                  context: "studentDaily",
+                  defaultDate: `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`,
+                })}
+              >
+                <i className="fa-solid fa-file-pdf"></i> Daily Report
+              </button>
+            </Tooltip>
+            )}
+            {(sel.isToday || (prevDaysAttendance && sel.isPast)) && canStMark && (
+              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (allMarked ? (sel.isToday ? "Update today's student attendance for all classes" : "Update student attendance for this date") : (sel.isToday ? "Mark today's student attendance for all classes" : "Mark student attendance for this date"))}>
+                <button
+                  className={`att-mark-btn-primary${allMarked ? " update-mode" : ""}`}
+                  onClick={() => openMarkSt(0, selKey)}
+                  disabled={isOtherSession}
+                  style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
+                >
+                  <i className={`fa-solid ${allMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
+                  {allMarked ? "Update Attendance" : "Mark Attendance"}
+                </button>
+              </Tooltip>
+            )}
+          </div>
+        </div>
+        <div className="att-stat-row" style={{ marginBottom: 12 }}>
+          {[
+            ["Total Students", loading ? "…" : total,                 T.textPrimary],
+            ["Present",        loading ? "…" : (hasMark ? present : "—"), T.success],
+            ["Absent",         loading ? "…" : (hasMark ? absent  : "—"), T.error],
+            ["Leave",          loading ? "…" : (hasMark ? leave   : "—"), T.warning],
+            ["Late",           loading ? "…" : (hasMark ? late    : "—"), "#7C3AED"],
+            ...(trackOut ? [["Short Leave", loading ? "…" : (hasMark ? shortLv : "—"), "#0891B2"]] : []),
+          ].map(([l, v, c]) => (
+            <div key={l} className="att-stat-card">
+              <div className="att-stat-num" style={{ color: c }}>{v}</div>
+              <div className="att-stat-lbl">{l}</div>
+            </div>
+          ))}
+        </div>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 20, color: T.textMuted, fontSize: 13 }}>
+            <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+            Loading attendance for this date…
+          </div>
+        ) : rows.length ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 10 }}>
+            {/* Saari classes dikhao; jis class ka is date record hai uske P/A/L bhare,
+                warna khali (—). */}
+            {rows.map((r) => (
+              <div key={r.cls + r.sec} style={{ background: T.bgCard, border: `1.5px solid ${T.borderLight}`, borderRadius: T.radiusMd, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: T.textPrimary }}>
+                    {r.cls} <span style={{ color: T.textMuted, fontWeight: 600, fontSize: 11.5 }}>({r.sec})</span>
+                  </div>
+                  <span className={`att-status-badge ${r.marked ? "marked" : "pending"}`}>
+                    {r.marked ? <><i className="fa-solid fa-check" style={{ fontSize: 8, marginRight: 3 }}></i>Marked</>
+                              : <><i className="fa-regular fa-clock" style={{ fontSize: 9, marginRight: 3 }}></i>Not Marked</>}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700, marginBottom: 10 }}>
+                  <span style={{ color: T.success }}>P: {r.marked ? (r.present || 0) : "—"}</span>
+                  <span style={{ color: T.error   }}>A: {r.marked ? (r.absent  || 0) : "—"}</span>
+                  <span style={{ color: T.warning }}>L: {r.marked ? (r.leave   || 0) : "—"}</span>
+                  <span style={{ color: "#7C3AED" }}>Late: {r.marked ? (r.late || 0) : "—"}</span>
+                  {trackOut && <span style={{ color: "#0891B2" }}>SL: {r.marked ? (r.shortLeave || 0) : "—"}</span>}
+                </div>
+                <div style={{ borderTop: `1px solid ${T.borderLight}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <MetaRow label="Marked By"      value={r.markedBy || "—"} />
+                  <MetaRow label="Marked Through" value={r.marked && r.markedFrom ? `${platIcon(r.markedFrom)} ${r.markedFrom}` : "—"} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", padding: 20, color: T.textMuted, fontSize: 13 }}>
+            <i className="fa-regular fa-clock" style={{ marginRight: 6, opacity: .6 }}></i>
+            No classes found.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function MetaRow({ label, value }) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: T.textMuted, width: 62, flexShrink: 0 }}>{label}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: T.textSecondary }}>{value}</span>
+      </div>
+    );
+  }
+
+  /* ─── Mark Student Attendance modal ─────────────────────────────────────── */
+  function MarkStudentModal({ classIdx, markDate, studentData, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, onClose, onSaveMarks, onLoadMarks }) {
+    const row = studentData[classIdx];
+    /* Rule-engine setup for STUDENTS — the student* fields reshaped into the
+       canonical names calculateAttendanceResult reads, so entering a Time In
+       auto-decides Present vs Late from the school's configured student rules. */
+    const stuSetup = {
+      isEnabled: attendanceSetup.studentRulesEnabled,
+      schoolStartTime: attendanceSetup.studentSchoolStartTime,
+      schoolEndTime: attendanceSetup.studentSchoolEndTime,
+      attendanceStartTime: attendanceSetup.studentAttendanceStartTime,
+      normalTimeInUntil: attendanceSetup.studentNormalTimeInUntil,
+      lateAfter: attendanceSetup.studentLateAfter,
+      shortLeaveFrom: attendanceSetup.studentShortLeaveFrom,
+      fullDayTimeOut: attendanceSetup.studentFullDayTimeOut,
+      trackTimeOut: attendanceSetup.studentTrackingMode !== "in_only",
+    };
+    /* "Time In Only" → Out Time column aur SL button nahi (SL Time Out se hi banta hai). */
+    const trackOut = stuSetup.trackTimeOut;
+    /* Times → status per the rules: Time In decides Present vs Late, and a
+       Time Out before "Short Leave Before" turns it into Short Leave. Null
+       (rules off, or a time before Attendance Start) keeps the previous
+       attended status, defaulting to Present. */
+    const autoStatus = (inTime, outTime, prev) => {
+      const r = calculateAttendanceResult({ timeIn: inTime, timeOut: outTime, calendarStatus: null, isOnApprovedLeave: false, setup: stuSetup });
+      // finalStatus: present | late | short_leave (out before "Short Leave Before") | null.
+      return r.finalStatus || (["present", "late", "short_leave"].includes(prev) ? prev : "present");
+    };
+    // Header date: selected past date if marking a previous day, else today.
+    const today = (markDate ? new Date(`${markDate}T00:00:00`) : new Date())
+      .toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    const [rows, setRows] = useState(() =>
+      (row ? rosterForClass(row) : []).map((s) => ({ ...s, status: s.status || "present", inTime: s.inTime || "", outTime: s.outTime || "" }))
+    );
+    const [loading, setLoading]   = useState(true);
+    const [saving, setSaving]     = useState(false);
+    const [hasSaved, setHasSaved] = useState(!!row?.marked);
+
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === "Escape") onClose(); };
+      document.addEventListener("keydown", onKey);
+      return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    // Modal open → GET saved attendance (action:"get") → prefill statuses.
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        setLoading(true);
+        const map = await onLoadMarks(classIdx);
+        if (!alive) return;
+          setRows((prev) => prev.map((s) => {
+          const m = map[s.id];
+          return m
+            ? { ...s, status: m.status || s.status || "present", inTime: m.inTime || "", outTime: m.outTime || "" }
+            : { ...s, status: s.status || "present" };
+        }));
+        // "Update" mode only if a student in THIS class actually has a status.
+        setHasSaved((row.students || []).some((s) => map[s.id]));
+        setLoading(false);
+      })();
+      return () => { alive = false; };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    if (!row) return null;
+    const isUpdate = hasSaved;
+
+    const setField = (j, patch) => setRows((prev) => prev.map((r, i) => i === j ? { ...r, ...patch } : r));
+    // Attended statuses (present/late/short leave) → in/out time editable; Absent/Leave → clear times.
+    const attended = (st) => st === "present" || st === "late" || st === "short_leave";
+    const setStatus = (j, st) => setField(j, attended(st) ? { status: st } : { status: st, inTime: "", outTime: "" });
+
+    const save = async () => {
+      if (saving) return;
+      setSaving(true);
+      try {
+        // Time In Only → koi purana Out Time save na ho.
+        await onSaveMarks(classIdx, trackOut ? rows : rows.map((r) => ({ ...r, outTime: "" }))); // action:"insert" per student
+        onClose();
+      } catch {
+        /* API failed — keep modal open so the user can retry */
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    return createPortal(
+      <div className="att-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="att-modal att-modal-lg">
+          <div className="att-modal-header">
+            <div className="att-modal-header-left">
+              <div className="att-modal-header-icon"><i className="fa-solid fa-user-check"></i></div>
+              <div>
+                <div className="att-modal-title">{isUpdate ? "Update" : "Mark"} Attendance — {row.cls} ({row.sec})</div>
+                <div className="att-modal-sub">Date: {today}</div>
+              </div>
+            </div>
+            <Tooltip text="Close"><button className="att-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+          </div>
+          <div className="att-modal-body" style={{ padding: "16px 20px" }}>
+            {isUpdate && (
+              <div className="att-update-notice">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                <div><strong>Attendance has already been marked for this date.</strong> You can update the attendance status before the date changes.</div>
+              </div>
+            )}
+            {loading && (
+              <div style={{ padding: "8px 2px 12px", fontSize: 12.5, color: T.textMuted }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+                Loading saved attendance…
+              </div>
+            )}
+            <div style={{ overflowX: "auto" }}>
+              <table className="att-mark-table" style={{ minWidth: 720 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 44 }}>#</th>
+                    <th>Reg. No.</th>
+                    <th>Student Name</th>
+                    <th>Father Name</th>
+                    <th>Status</th>
+                    <th>In Time</th>
+                    {trackOut && <th>Out Time</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s, j) => (
+                    <tr key={s.id ?? s.idx}>
+                      <td>{s.idx}</td>
+                      <td>{s.reg}</td>
+                      <td><strong>{s.name}</strong></td>
+                      <td>{s.father}</td>
+                      <td>
+                        <div className="att-radio-group">
+                          <Tooltip text="Mark Present">
+                            <button className={`att-radio-btn p${s.status === "present" ? " active" : ""}`} onClick={() => setStatus(j, "present")}>P</button>
+                          </Tooltip>
+                          <Tooltip text="Mark Absent (clears in/out times)">
+                            <button className={`att-radio-btn a${s.status === "absent"  ? " active" : ""}`} onClick={() => setStatus(j, "absent")}>A</button>
+                          </Tooltip>
+                          <Tooltip text="Mark on Leave (clears in/out times)">
+                            <button className={`att-radio-btn l${s.status === "leave"   ? " active" : ""}`} onClick={() => setStatus(j, "leave")}>L</button>
+                          </Tooltip>
+                          <Tooltip text="Mark Late (keeps Time In)">
+                            <button className={`att-radio-btn late${s.status === "late" ? " active" : ""}`} onClick={() => setStatus(j, "late")}>Late</button>
+                          </Tooltip>
+                          {trackOut && (
+                          <Tooltip text="Mark Short Leave (left before Short Leave Before)">
+                            <button className={`att-radio-btn sl${s.status === "short_leave" ? " active" : ""}`} onClick={() => setStatus(j, "short_leave")}>SL</button>
+                          </Tooltip>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <input
+                          className="att-input"
+                          type="time"
+                          value={s.inTime || ""}
+                          disabled={!attended(s.status)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            // Time In → auto Present/Late/Short-Leave per student rules; keep Out Time in sync.
+                            const out = (s.outTime && v && s.outTime < v) ? "" : s.outTime;
+                            setField(j, { inTime: v, outTime: out, status: autoStatus(v, out, s.status) });
+                          }}
+                          style={{ width: 108, height: 34, fontSize: 12.5 }}
+                        />
+                      </td>
+                      {trackOut && (
+                      <td>
+                        <input
+                          className="att-input"
+                          type="time"
+                          value={s.outTime || ""}
+                          min={s.inTime || undefined}
+                          disabled={!attended(s.status)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            // Time Out before "Short Leave Before" → Short Leave.
+                            setField(j, { outTime: v, status: autoStatus(s.inTime, v, s.status) });
+                          }}
+                          style={{ width: 108, height: 34, fontSize: 12.5 }}
+                        />
+                      </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="att-modal-footer">
+            <Tooltip text="Discard changes and close">
+              <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
+            </Tooltip>
+            <Tooltip text={isUpdate ? 'Save updated attendance' : 'Save attendance'}>
+              <button className="att-btn-primary" onClick={save} disabled={saving || loading}>
+                {saving
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>
+                  : <><i className="fa-solid fa-floppy-disk"></i> {isUpdate ? "Update" : "Save"} Attendance</>}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
+  /* ─── Tab 3: Staff Attendance ─────────────────────────────────────────────
+    HTML-faithful: filter bar, calendar with date-detail (top mark CTA),
+    staff list table with expandable per-staff detail rows. */
+  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false, prevDaysAttendance = false, staffLoading = false, trackOut = true }) {
+    const { can } = usePermissions();
+    const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
+    const canSfDownload = can("Attendance", "Staff Attendance", "Download");
+    const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
+    const [selected, setSelected] = useState(null);
+    const [openIdx, setOpenIdx] = useState(null);
+
+    // Selected calendar date → the staff-wise table follows THIS date.
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const selKey = selected ? `${selected.year}-${pad2(selected.monthIdx + 1)}-${pad2(selected.day)}` : null;
+    const isTodaySel = !selected || selected.isToday;
+    // Following a PAST date only when the Previous-Days toggle is ON; else today-only.
+    const followDate = !isTodaySel && selected.isPast && prevDaysAttendance;
+    const markDate = followDate ? selKey : null; // null → today path (byte-identical)
+    const dateReady = followDate && staffDateAttendance && staffDateAttendance.key === selKey && !staffDateAttendance.loading;
+    // Rows to render: overlay the selected date's status/in-out/marked (keep name/desig/dept)
+    // when following a past date; otherwise staffData exactly.
+    const displayStaff = followDate
+      ? staffData.map((s) => {
+          const d = dateReady ? (staffDateAttendance.rows || []).find((x) => String(x.empId) === String(s.empId)) : null;
+          return d
+            ? { ...s, marked: !!d.marked, status: d.status || "", inTime: d.inTime || "", outTime: d.outTime || "", from: d.from || "", markedBy: d.markedBy || "" }
+            : { ...s, marked: false, status: "", inTime: "", outTime: "", from: "", markedBy: "" };
+        })
+      : staffData;
+    // Marked flag for the header button: today → global flag; past → this date's record.
+    const selMarked = followDate ? displayStaff.some((s) => s.marked) : staffTodayMarked;
+
+    return (
+      <>
+        {/* Filter bar */}
+        <div className="att-section">
+          <div className="att-section-body" style={{ padding: "14px 18px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); setOpenIdx(null); }} />
+              {canSfDownload && (
+              <Tooltip text="Download monthly staff attendance as PDF">
+                <button
+                  className="att-btn-report"
+                  style={{ marginLeft: "auto" }}
+                  onClick={() => openReportPicker({
+                    title: "Monthly Staff Attendance Report",
+                    context: "staffMonthly",
+                    defaultMonth: month,
+                  })}
+                >
+                  <i className="fa-solid fa-file-pdf"></i> PDF Report
+                </button>
+              </Tooltip>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Calendar */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-calendar-days"></i></div>
+              <div>
+                <div className="att-section-name">{month} — Staff Calendar</div>
+                <div className="att-section-sub">Tap any date to view or mark staff attendance</div>
+              </div>
+            </div>
+          </div>
+          <div className="att-section-body" style={{ padding: "16px 18px 18px" }}>
+            <CalLegend />
+            <CalendarGrid
+              type="staff"
+              month={month}
+              weeklyOff={weeklyOff}
+              holidays={holidays}
+              selected={selected}
+              onSelect={(s) => {
+                setSelected(s);
+                setOpenIdx(null);
+                onSelectDate?.(`${s.year}-${String(s.monthIdx + 1).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`);
+              }}
+              onFutureError={() => toast("Attendance cannot be marked for upcoming dates.", "error")}
+            />
+            {selected && (
+              <StaffDatePanel
+                sel={selected}
+                staffDateAttendance={staffDateAttendance}
+                staffTodayMarked={staffTodayMarked}
+                openMarkSf={openMarkSf}
+                openReportPicker={openReportPicker}
+                isOtherSession={isOtherSession}
+                prevDaysAttendance={prevDaysAttendance}
+                trackOut={trackOut}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Staff List */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-id-badge"></i></div>
+              <div>
+                <div className="att-section-name">Staff Attendance</div>
+                <div className="att-section-sub">Track daily {trackOut ? "in/out times" : "time in"} and attendance status for all staff</div>
+              </div>
+            </div>
+
+<Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (followDate ? (selMarked ? "Update staff attendance for this date" : "Mark staff attendance for this date") : (selMarked ? "Update today's staff attendance" : "Mark today's staff attendance"))}>
+  <button className={`att-mark-btn-primary${selMarked ? " update-mode" : ""}`} onClick={() => openMarkSf(markDate)} disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}>
+    <i className={`fa-solid ${selMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
+    {selMarked ? "Update Attendance" : "Mark Attendance"}
+  </button>
+</Tooltip>
+          </div>
+
+          {/* Table header */}
+          <div className={`att-table-head att-sf-row${trackOut ? "" : " att-sf-row--noout"}`}>
+            <div className="att-th att-sf-num">#</div>
+            <div className="att-th att-sf-name">Staff Name</div>
+            <div className="att-th att-sf-desig">Designation</div>
+            <div className="att-th att-sf-dept">Department</div>
+            <div className="att-th att-sf-status">Status</div>
+            <div className="att-th att-sf-in">In Time</div>
+            {trackOut && <div className="att-th att-sf-out">Out Time</div>}
+            <div className="att-th att-sf-chev"></div>
+          </div>
+
+                    {staffLoading && (
+            <div className="att-empty">
+              <div className="att-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+              <div className="att-empty-title">Loading staff…</div>
+            </div>
+          )}
+          {!staffLoading && displayStaff.map((s, i) => {
+            const isOpen = openIdx === i;
+            const stClass  = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : s.status === "late" ? "late" : s.status === "short_leave" ? "sl" : s.status === "holiday" ? "holiday" : "off") : "pending";
+            const stLabel  = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "On Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending") : "Not Marked";
+            return (
+              <div key={s.empId} className="att-row-wrap">
+                <div className={`att-row att-sf-row${trackOut ? "" : " att-sf-row--noout"}`}>
+                  <div className="att-td att-sf-num">{i + 1}</div>
+                  <div className="att-td att-sf-name">
+                    <div className="att-row-icon"><i className="fa-solid fa-user-tie"></i></div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: T.textPrimary }}>{s.name}</div>
+                      <div style={{ fontSize: 11, color: T.textMuted, fontWeight: 600, marginTop: 1 }}>{s.empId}</div>
+                    </div>
+                  </div>
+                  <div className="att-td att-sf-desig">{s.desig}</div>
+                  <div className="att-td att-sf-dept">{s.dept}</div>
+                  <div className="att-td att-sf-status">
+                    <span className={`att-status-badge ${stClass}`}>{stLabel}</span>
+                  </div>
+                  <div className="att-td att-sf-in" style={{ fontWeight: 600 }}>{s.inTime ? fmtTime(s.inTime) : "—"}</div>
+                  {trackOut && <div className="att-td att-sf-out" style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</div>}
+                  <div className="att-td att-sf-chev">
+                    <Tooltip text={isOpen ? "Hide staff details" : "Show staff details"}>
+                      <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenIdx(next); if (next !== null && !followDate) onExpandStaff?.(); }} aria-label="Toggle detail">
+                        <i className="fa-solid fa-chevron-down"></i>
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+
+                <div className={`att-detail${isOpen ? " open" : ""}`}>
+                  <div className="att-detail-inner">
+                    <div style={{ fontSize: 12, fontWeight: 700, color: T.textSecondary, marginBottom: 10 }}>
+                      <i className="fa-solid fa-id-badge" style={{ color: T.brandPrimary, marginRight: 6 }}></i>
+                      {s.name} — Attendance Detail
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                      {[
+                        ["Status",      s.marked ? (stLabel) : "Not Marked"],
+                        ["In Time",     s.inTime  ? fmtTime(s.inTime)  : "—"],
+                        ...(trackOut ? [["Out Time", s.outTime ? fmtTime(s.outTime) : "—"]] : []),
+                        ["Department",  s.dept  || "—"],
+                        ["Marked From", s.from   ? `${platIcon(s.from)} ${s.from}` : "—"],
+                        ["Designation", s.desig || "—"],
+                      ].map(([lbl, val]) => (
+                        <div key={lbl} style={{ background: T.bgMuted, borderRadius: T.radiusMd, padding: "10px 12px" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 4 }}>{lbl}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: T.textPrimary }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {canSfDownload && (
+                    <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <Tooltip text={`Download today's attendance for ${s.name} as PDF`}>
+                        <button
+                          className="att-btn-report"
+                          onClick={() => openReportPicker({
+                            title: `Daily Staff Attendance — ${s.name}`,
+                            context: "staffDailyOne",
+                            forStaff: s,
+                          })}
+                        >
+                          <i className="fa-solid fa-file-pdf"></i> Daily Report
+                        </button>
+                      </Tooltip>
+                      <Tooltip text={`Download monthly attendance for ${s.name} as PDF`}>
+                        <button
+                          className="att-btn-report"
+                          onClick={() => openReportPicker({
+                            title: `Monthly Staff Attendance — ${s.name}`,
+                            context: "staffMonthlyOne",
+                            forStaff: s,
+                            defaultMonth: month,
+                          })}
+                        >
+                          <i className="fa-solid fa-calendar-days"></i> Monthly Report
+                        </button>
+                      </Tooltip>
+                    </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  /* ─── Selected-date panel under the Staff calendar ──────────────────────── */
+  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false, prevDaysAttendance = false, trackOut = true }) {
+    const { can } = usePermissions();
+    const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
+    const canSfDownload = can("Attendance", "Staff Attendance", "Download");
+    const dowName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(sel.year, sel.monthIdx, sel.day).getDay()];
+    const dateStr = `${sel.day} ${MONTHS[sel.monthIdx]} ${sel.year}`;
+    const selKey  = `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`;
+    // Selected date ki staff attendance (API se). Jab tak load ho → spinner.
+    const ready   = staffDateAttendance && staffDateAttendance.key === selKey && !staffDateAttendance.loading;
+    const loading = !staffDateAttendance || staffDateAttendance.key !== selKey || staffDateAttendance.loading;
+    const rows    = ready ? staffDateAttendance.rows : [];
+    const markedRows = rows.filter((s) => s.marked);
+    const hasMark = markedRows.length > 0;
+    // P / A / L / Late / SL / Holiday — har ek alag (countList).
+    const { present, absent, leave, late, shortLeave, holiday } = countList(rows, (s) => s.marked);
+
+    return (
+      <div style={{ marginTop: 16, border: `1.5px solid ${T.borderLight}`, borderRadius: T.radiusLg, padding: 16, background: "linear-gradient(135deg,rgba(30,58,138,.02),transparent)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: T.textPrimary }}>
+              <i className="fa-solid fa-calendar-day" style={{ color: T.brandPrimary, marginRight: 6 }}></i>{dowName}, {dateStr}
+            </div>
+            <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 3 }}>
+              {sel.isToday
+                ? "Today — attendance can be marked/updated"
+                : (prevDaysAttendance ? "Past date — editing enabled" : "Past date — showing saved record")}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {canSfDownload && (
+            <Tooltip text="Download a PDF of staff attendance for this date">
+              <button
+                className="att-btn-report"
+                onClick={() => openReportPicker({
+                  title: "Daily Staff Attendance Report",
+                  context: "staffDaily",
+                  defaultDate: `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`,
+                })}
+              >
+                <i className="fa-solid fa-file-pdf"></i> Daily Report
+              </button>
+            </Tooltip>
+            )}
+            {(sel.isToday || (prevDaysAttendance && sel.isPast)) && canSfMark && (() => {
+              // For today use the global flag; for a past date use this date's own record.
+              const marked = sel.isToday ? staffTodayMarked : hasMark;
+              return (
+              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (marked ? (sel.isToday ? "Update today's staff attendance" : "Update staff attendance for this date") : (sel.isToday ? "Mark today's staff attendance" : "Mark staff attendance for this date"))}>
+                <button
+                  className={`att-mark-btn-primary${marked ? " update-mode" : ""}`}
+                  onClick={() => openMarkSf(selKey)}
+                  disabled={isOtherSession}
+                  style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
+                >
+                  <i className={`fa-solid ${marked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
+                  {marked ? "Update Attendance" : "Mark Attendance"}
+                </button>
+              </Tooltip>
+              );
+            })()}
+          </div>
+        </div>
+        <div className="att-stat-row" style={{ marginBottom: 12 }}>
+          {[
+            ["Total Staff", loading ? "…" : rows.length,             T.textPrimary],
+            ["Present",     loading ? "…" : (hasMark ? present : "—"), T.success],
+            ["Absent",      loading ? "…" : (hasMark ? absent  : "—"), T.error],
+            ["Leave",       loading ? "…" : (hasMark ? leave   : "—"), T.warning],
+            ["Late",        loading ? "…" : (hasMark ? late    : "—"), "#7C3AED"],
+            ...(trackOut ? [["Short Leave", loading ? "…" : (hasMark ? shortLeave : "—"), "#0891B2"]] : []),
+            ["Holiday",     loading ? "…" : (hasMark ? holiday : "—"), "#2563EB"],
+          ].map(([l, v, c]) => (
+            <div key={l} className="att-stat-card">
+              <div className="att-stat-num" style={{ color: c }}>{v}</div>
+              <div className="att-stat-lbl">{l}</div>
+            </div>
+          ))}
+        </div>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 20, color: T.textMuted, fontSize: 13 }}>
+            <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+            Loading staff attendance for this date…
+          </div>
+        ) : rows.length ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 10 }}>
+            {rows.map((s) => {
+              const stClass = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : s.status === "late" ? "late" : s.status === "short_leave" ? "sl" : s.status === "holiday" ? "holiday" : "off") : "pending";
+              const stLabel = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending") : "Not Marked";
+              return (
+                <div key={s.empId} style={{ background: T.bgCard, border: `1.5px solid ${T.borderLight}`, borderRadius: T.radiusMd, padding: "12px 14px" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 9 }}>
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: T.textPrimary, lineHeight: 1.2 }}>{s.name}</div>
+                      <div style={{ fontSize: 10.5, color: T.textMuted, marginTop: 2 }}>{s.desig}</div>
+                    </div>
+                    <span className={`att-status-badge ${stClass}`} style={{ fontSize: 9.5, padding: "2px 9px", flexShrink: 0 }}>{stLabel}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: trackOut ? "1fr 1fr" : "1fr", gap: 6, marginBottom: 9 }}>
+                    <div style={{ background: T.bgMuted, borderRadius: 7, padding: "6px 9px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 2 }}>Time In</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: s.inTime ? "#16A34A" : T.textMuted }}>{s.inTime ? fmtTime(s.inTime) : "—"}</div>
+                    </div>
+                    {trackOut && <div style={{ background: T.bgMuted, borderRadius: 7, padding: "6px 9px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 2 }}>Time Out</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: s.outTime ? T.brandPrimary : T.textMuted }}>{s.outTime ? fmtTime(s.outTime) : "—"}</div>
+                    </div>}
+                  </div>
+                  <div style={{ borderTop: `1px solid ${T.borderLight}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <MetaRow label="Marked By"  value={s.markedBy || "—"} />
+                    <MetaRow label="Marked Via" value={s.from ? `${platIcon(s.from)} ${s.from}` : "—"} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", padding: 20, color: T.textMuted, fontSize: 13 }}>
+            <i className="fa-regular fa-clock" style={{ marginRight: 6, opacity: .6 }}></i>
+            {sel.isToday ? "Attendance not yet marked for today" : "No attendance record found for this date"}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ─── Mark Staff Attendance modal — all staff at once ───────────────────── */
+  function MarkStaffModal({ staffData, markDate, attendanceSetup = DEFAULT_ATTENDANCE_SETUP, isUpdate, onClose, onSave }) {
+    // Header date: selected past date if marking a previous day, else today.
+    const today = (markDate ? new Date(`${markDate}T00:00:00`) : new Date())
+      .toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    /* Staff rule-engine setup — the staff fields are already in the canonical
+       shape, so entering a Time In auto-decides Present vs Late. */
+    const sfSetup = { ...attendanceSetup, trackTimeOut: attendanceSetup.staffTrackingMode !== "in_only" };
+    /* "Time In Only" → Out Time column aur SL button nahi. */
+    const trackOut = sfSetup.trackTimeOut;
+    const attended = (st) => st === "present" || st === "late" || st === "short_leave";
+    /* Time In decides Present vs Late; a Time Out before "Short Leave Before"
+       turns it into Short Leave. */
+    const autoStatus = (inTime, outTime, prev) => {
+      const r = calculateAttendanceResult({ timeIn: inTime, timeOut: outTime, calendarStatus: null, isOnApprovedLeave: false, setup: sfSetup });
+      return r.finalStatus || (attended(prev) ? prev : "present");
+    };
+// MarkStaffModal component mein (already working)
+const [rows, setRows] = useState(() => staffData.map((s) => ({
+  empId:   s.empId,
+  status:  s.status || "present",  // ab by default Present active
+  inTime:  s.inTime  || "",        // Saved inTime pre-filled
+  outTime: s.outTime || "",        // Saved outTime pre-filled
+  from:    s.from    || "ERP",     // Saved platform pre-filled
+})));
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === "Escape") onClose(); };
+      document.addEventListener("keydown", onKey);
+      return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    const setField = (j, patch) => setRows((prev) => prev.map((r, i) => i === j ? { ...r, ...patch } : r));
+
+    // Time In Only → koi purana Out Time save na ho.
+    const save = () => onSave(trackOut ? rows : rows.map((r) => ({ ...r, outTime: "" })));
+
+    return createPortal(
+      <div className="att-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="att-modal att-modal-lg">
+          <div className="att-modal-header">
+            <div className="att-modal-header-left">
+              <div className="att-modal-header-icon"><i className="fa-solid fa-user-tie"></i></div>
+              <div>
+                <div className="att-modal-title">{isUpdate ? "Update" : "Mark"} Staff Attendance — {today}</div>
+                <div className="att-modal-sub">Mark present / absent / leave with {trackOut ? "in/out time" : "time in"} for all staff</div>
+              </div>
+            </div>
+            <Tooltip text="Close"><button className="att-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+          </div>
+          <div className="att-modal-body" style={{ padding: "16px 20px" }}>
+            {isUpdate && (
+              <div className="att-update-notice">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                <div><strong>Attendance has already been marked for this date.</strong> You can update the attendance status before the date changes.</div>
+              </div>
+            )}
+            <div style={{ overflowX: "auto" }}>
+              <table className="att-mark-table" style={{ minWidth: 720 }}>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Staff Name</th>
+                    <th>Department</th>
+                    <th>Status</th>
+                    <th>In Time</th>
+                    {trackOut && <th>Out Time</th>}
+                    <th>Marked From</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffData.map((s, j) => {
+                    const r = rows[j];
+                    return (
+                      <tr key={s.empId}>
+                        <td>{j + 1}</td>
+                        <td>
+                          <strong>{s.name}</strong>
+                          <div style={{ fontSize: 10.5, color: T.textMuted }}>{s.desig}</div>
+                        </td>
+                        <td style={{ fontSize: 12 }}>{s.dept}</td>
+                        <td>
+                          <div className="att-radio-group">
+                            <Tooltip text="Mark Present">
+                              <button className={`att-radio-btn p${r.status === "present" ? " active" : ""}`} onClick={() => setField(j, { status: "present" })}>P</button>
+                            </Tooltip>
+                            <Tooltip text="Mark Absent (clears in/out times)">
+                              <button className={`att-radio-btn a${r.status === "absent"  ? " active" : ""}`} onClick={() => setField(j, { status: "absent",  inTime: "", outTime: "" })}>A</button>
+                            </Tooltip>
+                            <Tooltip text="Mark on Leave (clears in/out times)">
+                              <button className={`att-radio-btn l${r.status === "leave"   ? " active" : ""}`} onClick={() => setField(j, { status: "leave",   inTime: "", outTime: "" })}>L</button>
+                            </Tooltip>
+                            <Tooltip text="Mark Late (keeps Time In)">
+                              <button className={`att-radio-btn late${r.status === "late" ? " active" : ""}`} onClick={() => setField(j, { status: "late" })}>Late</button>
+                            </Tooltip>
+                            {trackOut && (
+                            <Tooltip text="Mark Short Leave (left before Short Leave Before)">
+                              <button className={`att-radio-btn sl${r.status === "short_leave" ? " active" : ""}`} onClick={() => setField(j, { status: "short_leave" })}>SL</button>
+                            </Tooltip>
+                            )}
+                            <Tooltip text="Mark Holiday (clears in/out times)">
+                              <button className={`att-radio-btn h${r.status === "holiday" ? " active" : ""}`} onClick={() => setField(j, { status: "holiday", inTime: "", outTime: "" })}>H</button>
+                            </Tooltip>
+                          </div>
+                        </td>
+                        <td>
+                          <input
+                            className="att-input"
+                            type="time"
+                            value={r.inTime}
+                            disabled={!attended(r.status)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // Time In → auto Present/Late/Short-Leave per staff rules; keep Out Time in sync.
+                              const out = (r.outTime && v && r.outTime < v) ? "" : r.outTime;
+                              setField(j, { inTime: v, outTime: out, status: autoStatus(v, out, r.status) });
+                            }}
+                            style={{ width: 108, height: 34, fontSize: 12.5 }}
+                          />
+                        </td>
+                        {trackOut && (
+                        <td>
+                          <input
+                            className="att-input"
+                            type="time"
+                            value={r.outTime}
+                            min={r.inTime || undefined}
+                            disabled={!attended(r.status)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // Time Out before "Short Leave Before" → Short Leave.
+                              setField(j, { outTime: v, status: autoStatus(r.inTime, v, r.status) });
+                            }}
+                            style={{ width: 108, height: 34, fontSize: 12.5 }}
+                          />
+                        </td>
+                        )}
+                        <td>
+                          <select
+                            className="att-select"
+                            value={r.from}
+                            onChange={(e) => setField(j, { from: e.target.value })}
+                            style={{ minWidth: 130, height: 34, fontSize: 12 }}
+                          >
+                                          <option>ERP</option>
+                            <option>Mobile App</option>
+                            <option>Biometric</option>
+                            <option>SmartAttendance</option>
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="att-modal-footer">
+            <Tooltip text="Discard changes and close">
+              <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
+            </Tooltip>
+            <Tooltip text={isUpdate ? 'Save updated attendance' : 'Save attendance'}>
+              <button className="att-btn-primary" onClick={save}>
+                <i className="fa-solid fa-floppy-disk"></i> {isUpdate ? "Update" : "Save"} Attendance
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
+  /* Autocomplete combobox — used in Individual Reports.
+    - User types → dropdown shows matching items
+    - Clicking a suggestion runs `onPick(item)` (which can open a class / scroll to row)
+    - Clearing the input closes the dropdown */
+  /* getIds — identifier fields (GR/reg no, admission no, employee id). They are
+     ranked ahead of the free-text haystack so a short id (a 1- or 2-digit GR)
+     lands at the top of the 12-row dropdown instead of being cut off by every
+     row that merely contains that digit somewhere. */
+  function SearchCombobox({ placeholder, items, renderItem, getKey, getSearchText, getIds, onPick }) {
+    const [value, setValue] = useState("");
+    const [open, setOpen] = useState(false);
+    const wrapRef = React.useRef(null);
+
+    /* Close on outside click */
+    useEffect(() => {
+      const onDoc = (e) => {
+        if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      };
+      document.addEventListener("mousedown", onDoc);
+      return () => document.removeEventListener("mousedown", onDoc);
+    }, []);
+
+    const q = value.trim().toLowerCase();
+    const matches = rankedMatches(q, items, (it) => ({
+      ids:  getIds ? getIds(it) : [],
+      text: getSearchText(it),
+    }), 12);
+
+    return (
+      <div ref={wrapRef} className="att-search-wrap">
+        <i className="fa-solid fa-magnifying-glass att-search-icon"></i>
+        <input
+          type="text"
+          className="att-search-input"
+          value={value}
+          onChange={(e) => { setValue(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder={placeholder}
+        />
+        {value && (
+          <Tooltip text="Clear search">
+            <button className="att-search-clear" onClick={() => { setValue(""); setOpen(false); }} aria-label="Clear search">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        )}
+        {open && q && (
+          <div className="att-search-dropdown">
+            {matches.length === 0 ? (
+              <div className="att-search-empty">
+                <i className="fa-regular fa-folder-open" style={{ marginRight: 6, opacity: .5 }}></i>
+                No matches for "<strong>{value}</strong>"
+              </div>
+            ) : (
+              matches.map((it) => (
+                <button
+                  key={getKey(it)}
+                  className="att-search-item"
+                  onClick={() => { onPick(it); setValue(""); setOpen(false); }}
+                >
+                  {renderItem(it)}
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ─── Tab 4: Reports ─────────────────────────────────────────────────────
+    HTML-faithful: 2 sub-tabs (General / Individual). General = 4 grp-card
+    accordions, each with embedded report rows + inline filters + Generate.
+    Individual = expandable student class rows + flat staff list. */
+  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [], sessionName = "", staffTrackOut = true, onIndividualOpen }) {
+    /* Staff "Time In Only" → Short Leavers report ka koi matlab nahi (SL Time Out se banta hai). */
+    const reportGroups = REPORT_GROUPS.map((g) => ({
+      ...g,
+      reports: g.reports.filter((r) => staffTrackOut || r.key !== "staffShortLeavers"),
+    }));
+    const [subTab, setSubTab] = useState("general");
+    const [openCardIdx, setOpenCardIdx] = useState(0);
+    const [openClassIdx, setOpenClassIdx] = useState(null);
+    const [highlightStudent, setHighlightStudent] = useState(null); // student id of highlighted row
+    const [highlightStaff, setHighlightStaff]     = useState(null); // empId of highlighted row
+
+    /* Today's per-class % and per-staff status are shown ONLY in the Individual
+       sub-tab — tell the parent when it opens so those APIs run on demand
+       (General Reports never needs them). */
+    useEffect(() => {
+      if (subTab === "individual") onIndividualOpen?.();
+    }, [subTab, onIndividualOpen]);
+
+    /* Flat student list with class info (for the search dropdown) — REAL data. */
+    const allStudents = (studentData || []).flatMap((cl, ci) =>
+      (cl.students || []).map((s) => ({
+        id: s.id, name: s.name, fn: s.father, roll: s.reg, adm: s.reg,
+        cls: cl.cls, sec: cl.sec, classIdx: ci,
+      }))
+    );
+
+    /* Pick handlers — open the right class, highlight the row, scroll into view.
+       Highlight Fee module jaisa hara hai aur rehta hai (pehle 2s me gayab ho
+       jata tha) — agla student chunne par wahi row badalti hai. */
+    const pickStudent = (s) => {
+      setOpenClassIdx(s.classIdx);
+      setHighlightStudent(s.id);
+      /* Wait one frame so the accordion has opened, then scroll into view */
+      setTimeout(() => {
+        const el = document.getElementById(`rpt-student-${s.id}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 280);
+    };
+
+    const pickStaff = (s) => {
+      setHighlightStaff(s.empId);
+      setTimeout(() => {
+        const el = document.getElementById(`rpt-staff-${s.empId}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 50);
+    };
+
+    return (
+      <>
+        <div className="res-sub-tabs">
+          <Tooltip text="Show class-wide and staff-wide reports">
+            <button className={`res-sub-tab${subTab === "general"    ? " active" : ""}`} onClick={() => setSubTab("general")}>General Reports</button>
+          </Tooltip>
+          <Tooltip text="Generate a report for a single student or staff member">
+            <button className={`res-sub-tab${subTab === "individual" ? " active" : ""}`} onClick={() => setSubTab("individual")}>Individual Reports</button>
+          </Tooltip>
+        </div>
+
+        {subTab === "general" && (
+          <div className="rpt-grp-grid">
+            {reportGroups.map((g, gi) => {
+              const isOpen = openCardIdx === gi;
+              return (
+                <div key={g.title} className="grp-card">
+                  <div className="grp-card-header">
+                    <div className="grp-card-icon" style={{ background: g.gradient }}>
+                      <i className={`fa-solid ${g.icon}`}></i>
+                    </div>
+                    <div className="grp-card-info">
+                      <div className="grp-card-title">{g.title}</div>
+                      <div className="grp-card-sub">{g.sub}</div>
+                    </div>
+                    <div className="grp-card-meta">
+                      <span className="grp-card-count">{g.reports.length} Reports</span>
+                      <Tooltip text={isOpen ? 'Hide the list of report types' : 'Show available report types'}>
+                        <button
+                          className={`grp-view-btn${isOpen ? " open" : ""}`}
+                          onClick={() => setOpenCardIdx(isOpen ? -1 : gi)}
+                        >
+                          {isOpen ? "Hide Details" : "View Details"}
+                          <i className="fa-solid fa-chevron-down grp-chev"></i>
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                  <div className={`grp-card-body${isOpen ? " open" : ""}`}>
+                    <div className="grp-card-body-inner">
+                      {g.reports.map((rpt) => (
+                        <ReportRow
+                          key={rpt.key}
+                          rpt={rpt}
+                          accent={rpt.altAccent || g.accent}
+                          gradient={rpt.altGradient || g.gradient}
+                          classOpts={classOpts}
+                          sessionName={sessionName}
+                          onGenerate={(filters) => runGeneralReport(rpt, filters, toast)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <StudentAbsenteeismReport studentData={studentData} toast={toast} />
+          </div>
+        )}
+
+        {subTab === "individual" && (
+          <>
+            {/* Individual Student Report */}
+            <div className="att-section" style={{ marginBottom: 16 }}>
+              <div className="att-section-header" style={{ padding: "14px 18px" }}>
+                <div className="att-section-title">
+                  <div className="att-section-icon" style={{ background: "linear-gradient(135deg,#b45309,#d97706)" }}>
+                    <i className="fa-solid fa-id-card"></i>
+                  </div>
+                  <div>
+                    <div className="att-section-name">Individual Student Report</div>
+                    <div className="att-section-sub">Click any class to expand students — then click Report to generate attendance report</div>
+                  </div>
+                </div>
+                <SearchCombobox
+                  placeholder="Search student name, father, reg no, class…"
+                  items={allStudents}
+                  getKey={(s) => s.id}
+                  getSearchText={(s) => `${s.name} ${s.fn} ${s.cls} ${s.sec}`}
+                  getIds={(s) => [s.roll, s.adm]}
+                  onPick={pickStudent}
+                  renderItem={(s) => (
+                    <>
+                      <div className="att-search-item-icon" style={{ background: "linear-gradient(135deg,#b45309,#d97706)" }}>
+                        <i className="fa-solid fa-user-graduate"></i>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="att-search-item-name">{s.name}</div>
+                        <div className="att-search-item-sub">
+                          <i className="fa-solid fa-chalkboard-user" style={{ fontSize: 9, marginRight: 4 }}></i>
+                          {s.cls} · {s.sec} &nbsp;·&nbsp; Roll {s.roll}
+                        </div>
+                      </div>
+                      <i className="fa-solid fa-arrow-right att-search-item-arrow"></i>
+                    </>
+                  )}
+                />
+              </div>
+              <div className="att-table-head att-rpt-cls-row">
+                <div className="att-th att-rpt-cls-num">#</div>
+                <div className="att-th att-rpt-cls-name">Class / Section</div>
+                <div className="att-th att-rpt-cls-teacher">Class Teacher</div>
+                <div className="att-th att-rpt-cls-total">Total Students</div>
+                <div className="att-th att-rpt-cls-pct">Attendance</div>
+                <div className="att-th att-rpt-cls-chev" style={{ textAlign: "center" }}>Details</div>
+              </div>
+              {(studentData || []).length === 0 ? (
+                <div className="att-row" style={{ padding: 20, color: T.textMuted, fontStyle: "italic" }}>No classes found.</div>
+              ) : (studentData || []).map((cl, i) => {
+                const isOpen = openClassIdx === i;
+                const teacher = teacherMap[`${cl.classID}-${cl.sectionID}`] || teacherMap[`${cl.classID}`] || cl.teacher || "—";
+                const students = cl.students || [];
+                // Real attendance % — aaj ki mark hui attendance ke against (present/total).
+                const pct = cl.marked && cl.total > 0 ? Math.round((cl.present / cl.total) * 100) : null;
+                const pctColor = pct == null ? T.textMuted : pct >= 90 ? "#16A34A" : pct >= 75 ? "#D97706" : "#DC2626";
+                return (
+                  <div key={`${cl.classID}-${cl.sectionID}`} className="att-row-wrap">
+                    <div className="att-row att-rpt-cls-row">
+                      <div className="att-td att-rpt-cls-num">{i + 1}</div>
+                      <div className="att-td att-rpt-cls-name">
+                        <div className="att-row-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: T.textPrimary }}>{cl.cls}</div>
+                          <div style={{ fontSize: 11, color: T.textMuted, marginTop: 1 }}>
+                            <i className="fa-solid fa-layer-group" style={{ fontSize: 9, marginRight: 3 }}></i>{cl.sec}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="att-td att-rpt-cls-teacher">{teacher}</div>
+                      <div className="att-td att-rpt-cls-total">
+                        <span style={{ fontSize: 15, fontWeight: 800 }}>{cl.total}</span>
+                        <span style={{ fontSize: 10, color: T.textMuted, marginLeft: 3 }}>students</span>
+                      </div>
+                      <div className="att-td att-rpt-cls-pct">
+                        <span style={{ fontSize: 13, fontWeight: 800, color: pctColor }}>{pct == null ? "—" : `${pct}%`}</span>
+                      </div>
+                      <div className="att-td att-rpt-cls-chev" style={{ justifyContent: "center" }}>
+                        <Tooltip text={isOpen ? 'Hide student list' : 'Show student list'}>
+                          <button
+                            className={`att-chevron-btn${isOpen ? " open" : ""}`}
+                            onClick={() => setOpenClassIdx(isOpen ? null : i)}
+                            style={{ width: 32, height: 32 }}
+                          >
+                            <i className="fa-solid fa-chevron-down"></i>
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                    <div className={`att-detail${isOpen ? " open" : ""}`}>
+                      <div className="att-detail-inner" style={{ padding: "12px 16px", overflowX: "auto" }}>
+                        <table className="att-student-table" style={{ minWidth: 480 }}>
+                          <thead>
+                            <tr>
+                              <th>#</th><th>Student Name</th><th>Father Name</th><th>Reg No.</th>
+                              <th style={{ textAlign: "center" }}>Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {students.length === 0 ? (
+                              <tr><td colSpan={5} style={{ textAlign: "center", color: T.textMuted, padding: 14, fontStyle: "italic" }}>No student records found.</td></tr>
+                            ) : students.map((s, j) => (
+                              <tr key={s.id} id={`rpt-student-${s.id}`} className={highlightStudent === s.id ? "att-row-highlight" : ""}>
+                                <td>{j + 1}</td>
+                                <td><strong>{s.name}</strong></td>
+                                <td>{s.father}</td>
+                                <td>{s.reg}</td>
+                                <td style={{ textAlign: "center" }}>
+                                  <Tooltip text={`Generate attendance report for ${s.name}`}>
+                                    <button
+                                      className="att-btn-primary"
+                                      style={{ padding: "5px 14px", fontSize: 11.5, minWidth: 0 }}
+                                      onClick={() => openIndivReport({
+                                        type: "student",
+                                        name: s.name,
+                                        detail: `${cl.cls} (${cl.sec})`,
+                                        id: s.reg,
+                                        sid: s.id,
+                                        classID: cl.classID,
+                                        sectionID: cl.sectionID,
+                                      })}
+                                    >
+                                      <i className="fa-solid fa-file-lines"></i> Report
+                                    </button>
+                                  </Tooltip>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Individual Staff Report */}
+            <div className="att-section">
+              <div className="att-section-header" style={{ padding: "14px 18px" }}>
+                <div className="att-section-title">
+                  <div className="att-section-icon" style={{ background: "linear-gradient(135deg,#0369a1,#0284c7)" }}>
+                    <i className="fa-solid fa-person-chalkboard"></i>
+                  </div>
+                  <div>
+                    <div className="att-section-name">Individual Staff Report</div>
+                    <div className="att-section-sub">Click Report next to any staff member to generate their attendance report</div>
+                  </div>
+                </div>
+                <SearchCombobox
+                  placeholder="Search staff name, designation, department, employee ID…"
+                  items={staffData}
+                  getKey={(s) => s.empId}
+                  getSearchText={(s) => `${s.name} ${s.desig || ""} ${s.dept || ""}`}
+                  getIds={(s) => [s.empId]}
+                  onPick={pickStaff}
+                  renderItem={(s) => (
+                    <>
+                      <div className="att-search-item-icon" style={{ background: "linear-gradient(135deg,#0369a1,#0284c7)" }}>
+                        <i className="fa-solid fa-user-tie"></i>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="att-search-item-name">{s.name}</div>
+                        <div className="att-search-item-sub">
+                          <i className="fa-solid fa-id-badge" style={{ fontSize: 9, marginRight: 4 }}></i>
+                          {s.desig} &nbsp;·&nbsp; {s.dept} &nbsp;·&nbsp; {s.empId}
+                        </div>
+                      </div>
+                      <i className="fa-solid fa-arrow-right att-search-item-arrow"></i>
+                    </>
+                  )}
+                />
+              </div>
+              <div className="att-table-head att-rpt-sf-row">
+                <div className="att-th att-rpt-sf-num">#</div>
+                <div className="att-th att-rpt-sf-name">Staff Name</div>
+                <div className="att-th att-rpt-sf-desig">Designation</div>
+                <div className="att-th att-rpt-sf-dept">Department</div>
+                <div className="att-th att-rpt-sf-status">Status</div>
+                <div className="att-th att-rpt-sf-action">Action</div>
+              </div>
+              {staffData.map((s, i) => {
+                const stClass = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : s.status === "late" ? "late" : s.status === "short_leave" ? "sl" : s.status === "holiday" ? "holiday" : "off") : "pending";
+                const stLabel = s.marked
+                  ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "Leave" : s.status === "late" ? "Late" : s.status === "short_leave" ? "Short Leave" : s.status === "holiday" ? "Holiday" : "Pending")
+                  : "Not Marked";
+                return (
+                  <div key={s.empId} id={`rpt-staff-${s.empId}`} className={`att-row-wrap${highlightStaff === s.empId ? " att-row-highlight" : ""}`}>
+                    <div className="att-row att-rpt-sf-row">
+                      <div className="att-td att-rpt-sf-num">{i + 1}</div>
+                      <div className="att-td att-rpt-sf-name">
+                        <div className="att-row-icon"><i className="fa-solid fa-user-tie"></i></div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: T.textPrimary }}>{s.name}</div>
+                        </div>
+                      </div>
+                      <div className="att-td att-rpt-sf-desig">{s.desig}</div>
+                      <div className="att-td att-rpt-sf-dept">{s.dept}</div>
+                      <div className="att-td att-rpt-sf-status">
+                        <span className={`att-status-badge ${stClass}`} style={{ fontSize: 10.5 }}>{stLabel}</span>
+                      </div>
+                      <div className="att-td att-rpt-sf-action">
+                        <Tooltip text={`Generate attendance report for ${s.name}`}>
+                          <button
+                            className="att-btn-primary"
+                            style={{ padding: "5px 14px", fontSize: 11.5, minWidth: 0 }}
+                            onClick={() => openIndivReport({
+                              type: "staff",
+                              name: s.name,
+                              detail: s.desig,
+                              id: s.empId,
+                              sid: s.id,
+                            })}
+                          >
+                            <i className="fa-solid fa-file-lines"></i> Report
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+
+  /* ─── ReportRow — inline filter editor + Generate ──────────────────────── */
+  function ReportRow({ rpt, accent, gradient, onGenerate, classOpts = [], sessionName = "" }) {
+    const { can: canRR } = usePermissions();
+    const canRRDownload = canRR("Attendance", "Reports", "Download");
+    const today    = new Date().toISOString().split("T")[0];
+    const currMon  = CURRENT_MONTH_LABEL;
+    const [vals, setVals] = useState(() => {
+      const init = {};
+      rpt.filters.forEach((f) => {
+        if (f.type === "date")  init[f.field] = today;
+        if (f.type === "month") init[f.field] = currMon;
+        if (f.type === "year")  init[f.field] = sessionName || "";
+        if (f.type === "class") init[f.field] = "All Classes";
+      });
+      return init;
+    });
+
+    // Active session name async aata hai — aane par year/Academic Year fields update karo.
+    useEffect(() => {
+      if (!sessionName) return;
+      setVals((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        rpt.filters.forEach((f) => {
+          if (f.type === "year" && next[f.field] !== sessionName) { next[f.field] = sessionName; changed = true; }
+        });
+        return changed ? next : prev;
+      });
+    }, [sessionName, rpt.filters]);
+
+    const setVal = (field, v) => setVals((p) => ({ ...p, [field]: v }));
+
+    const [generating, setGenerating] = useState(false);
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const submit = () => {
+      if (generating) return;
+      /* Validate that all required filters are filled */
+      for (const f of rpt.filters) {
+        if ((f.type === "date" || f.type === "month") && !vals[f.field]) {
+          onGenerate({ __error: "Please select all required filters before generating." });
+          return;
+        }
+      }
+      setPickerOpen(true);
+    };
+
+    /* Style/format chosen in the shared StandardReportPicker modal */
+    const runPicked = async (style, format) => {
+      if (generating) return;
+      setPickerOpen(false);
+      try {
+        setGenerating(true);
+        await onGenerate({ ...vals, __style: style, __format: format });
+      } finally {
+        setGenerating(false);
+      }
+    };
+
+    return (
+      <div className="grp-rpt-row">
+        <div className="grp-rpt-row-top">
+          <div className="grp-rpt-row-label">
+            <i className={`fa-solid ${rpt.icon}`} style={{ color: accent }}></i>{rpt.label}
+          </div>
+          {canRRDownload && (
+          <Tooltip text={`Generate ${rpt.label}`}>
+            <button className="grp-gen-btn" style={{ background: gradient, ...(generating ? { opacity: .7, cursor: "wait" } : {}) }} onClick={submit} disabled={generating}>
+              {generating
+                ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
+                : <><i className="fa-solid fa-file-lines"></i> Generate</>}
+            </button>
+          </Tooltip>
+          )}
+        </div>
+        {pickerOpen && (
+          <StandardReportPicker
+            open
+            title={rpt.label}
+            subtitle="Choose style and format, then generate."
+            formats={["pdf", "word", "excel"]}
+            onClose={() => setPickerOpen(false)}
+            onGenerate={runPicked}
+          />
+        )}
+        {rpt.filters.length > 0 && (
+          <div className="grp-rpt-row-filters">
+            {rpt.filters.map((f) => (
+              <div key={f.field} className="grp-rpt-field">
+                <span className="grp-rpt-field-lbl">{f.k}</span>
+                {f.type === "date" && (
+                  <input type="date" className="att-input" min={f.field === "to" ? (vals.from || undefined) : undefined} value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)} />
+                )}
+                {f.type === "month" && (
+                  <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
+                    {MONTH_OPTIONS.map((m) => <option key={m}>{m}</option>)}
+                  </select>
+                )}
+                {f.type === "year" && (
+                  <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
+                    {(sessionName ? [sessionName] : [NO_SESSION_OPT]).map((y) => <option key={y}>{y}</option>)}
+                  </select>
+                )}
+                {f.type === "class" && (
+                  <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
+                    {(classOpts.length ? classOpts : CLASS_OPTIONS).map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ─── Individual Report date-picker modal ────────────────────────────── */
+  function IndividualReportModal({ target, onClose, onGenerate }) {
+    const { can: canIR } = usePermissions();
+    const canIRDownload = canIR("Attendance", "Reports", "Download");
+    const today    = new Date();
+    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+    const todayStr     = today.toISOString().split("T")[0];
+
+    const [fromDate, setFromDate] = useState(firstOfMonth);
+    const [toDate, setToDate]     = useState(todayStr);
+    const [generating, setGenerating] = useState(false);
+
+    if (!target) return null;
+
+    const submit = async (style, format) => {
+      if (!fromDate || !toDate) return onGenerate({ __error: "Please select both From and To dates" });
+      if (fromDate > toDate)    return onGenerate({ __error: "From Date cannot be after To Date" });
+      if (generating) return;
+      try {
+        setGenerating(true);
+        await onGenerate({ fromDate, toDate, isColor: style === "color", format });
+      } finally {
+        setGenerating(false);
+      }
+    };
+
+    const titlePrefix = target.type === "student" ? "Student" : "Staff";
+
+    return (
+      <StandardReportPicker
+        open={!!target}
+        title={`${titlePrefix} Attendance Report`}
+        subtitle={`${target.name} — ${target.detail}`}
+        formats={["pdf", "word", "excel"]}
+        onClose={onClose}
+        onGenerate={submit}
+        generateDisabled={!canIRDownload || generating}
+        filters={
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>From Date</div>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>To Date</div>
+              <input type="date" min={fromDate || undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
+            </div>
+          </div>
+        }
+      />
+    );
+  }
+
+  /* ─── Toast host (used when no parent onToast is supplied) ─────────────────── */
+  function useToasts(external) {
+    const [toasts, setToasts] = useState([]);
+    /* The parent's onToast is a fresh function on every App render; keep it in
+       a ref so `toast` stays referentially stable. Otherwise every callback /
+       effect that lists `toast` as a dep is rebuilt (and re-run) on each
+       parent render. */
+    const externalRef = useRef(external);
+    useEffect(() => { externalRef.current = external; }, [external]);
+    const toast = useCallback((message, type = "info") => {
+      const ext = externalRef.current;
+      if (ext) { ext(message, type); return; }
+      const id = Date.now() + Math.random();
+      setToasts((t) => [...t, { id, message, type }]);
+      setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
+    }, []);
+    return { toasts, toast };
+  }
+
+  function ToastStack({ toasts }) {
+    const colors = { success: T.success, error: T.error, info: T.brandMid };
+    return (
+      <div style={{ position: "fixed", top: 18, right: 18, display: "flex", flexDirection: "column", gap: 8, zIndex: 9999 }}>
+        {toasts.map((t) => (
+          <div key={t.id} style={{ background: T.bgCard, border: `1.5px solid ${colors[t.type]}55`, borderLeft: `4px solid ${colors[t.type]}`, borderRadius: T.radiusMd, padding: "12px 16px", fontSize: 13, fontWeight: 600, color: T.textPrimary, boxShadow: T.shadowSm, maxWidth: 320, fontFamily: T.font }}>
+            {t.message}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  /* ─── Main component ──────────────────────────────────────────────────────── */
+  export default function Attendance({ onToast }) {
+    const ALL_TABS = [
+      { id: "holidays", label: "Attendance Setup",     icon: "fa-umbrella-beach" },
+      { id: "student",  label: "Student Attendance", icon: "fa-user-graduate" },
+      { id: "staff",    label: "Staff Attendance",   icon: "fa-users" },
+      { id: "reports",  label: "Reports",            icon: "fa-chart-bar" },
+    ];
+    /* Screen (tab) View permission — jis screen ka View nahi wo tab hide. */
+    const { can } = usePermissions();
+    const TABS = ALL_TABS.filter((t) => can("Attendance", t.label, "View"));
+    const [tab, setTab] = useState("holidays");
+    /* The tab actually on screen. Data loaders key off THIS (not `tab`) so a
+       user without Attendance Setup permission never fires that tab's APIs in
+       the one render before the snap below moves them to their first tab. */
+    const visibleTab = TABS.some((t) => t.id === tab) ? tab : (TABS[0]?.id || null);
+
+    /* Active tab hide ho jaye to pehle visible par snap. */
+    useEffect(() => {
+      if (TABS.some((t) => t.id === tab)) return;
+      if (TABS[0]) setTab(TABS[0].id);
+    }, [TABS, tab]);
+
+    /* ── On-demand loader cache ───────────────────────────────────────────────
+       once(key, fn) runs fn the FIRST time a key is asked for and hands every
+       later / concurrent caller the same promise — so a section's API fires
+       only when that section is opened, never twice (StrictMode double effects,
+       re-renders, re-opening a tab). A failed load forgets its key so the next
+       open retries once — no automatic retry loop. Lives in a ref → per module
+       visit (leaving & re-entering Attendance starts fresh). */
+    const onceRef = useRef({});
+    const once = useCallback((key, fn) => {
+      const store = onceRef.current;
+      if (!store[key]) {
+        store[key] = Promise.resolve().then(fn).catch((err) => { delete store[key]; throw err; });
+      }
+      return store[key];
+    }, []);
+    const [tutorialOpen, setTutorialOpen] = useState(false);
+    // Holidays load per-month from the API when a month is expanded.
+    const [holidays, setHolidays]         = useState([]);
+    const [loadingMonth, setLoadingMonth] = useState(null); // month idx currently fetching
+    const [holidaysLoading, setHolidaysLoading] = useState(false);
+    // const [activeSessionID, setActiveSessionID] = useState(0);
+    const [classList, setClassList] = useState([]); // branch class+section list (for name lookup)
+    const { toasts, toast } = useToasts(onToast);
+
+    /* ── Active session: SAB APIs se pehle. Jab tak load na ho → loader. ── */
+    const [activeSessionID, setActiveSessionID]     = useState(0);
+    const [activeSessionName, setActiveSessionName] = useState("");
+    const [sessionLoading, setSessionLoading]       = useState(true);
+    const sessionPromiseRef = React.useRef(null);
+
+    // Ek hi promise share hota hai — session API do dafa hit nahi hogi.
+    const loadActiveSession = useCallback(() => {
+      if (!sessionPromiseRef.current) {
+        sessionPromiseRef.current = (async () => {
+          const [active, sidRaw] = await Promise.all([
+            attendanceService.getActiveSession().catch(() => null),
+            attendanceService.getActiveSessionID().catch(() => 0),
+          ]);
+          const sid  = Number(sidRaw) || Number(active?.ID ?? active?.SessionID ?? active?.id) || 0;
+          const name = active?.SessionName || "";
+          if (!sid) sessionPromiseRef.current = null; // fail → agli dafa retry
+          return { sid, name };
+        })();
+      }
+      return sessionPromiseRef.current;
+    }, []);
+
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        setSessionLoading(true);
+        const { sid, name } = await loadActiveSession();
+        if (!alive) return;
+        setActiveSessionID(sid);
+        setActiveSessionName(name);
+        setSessionLoading(false);
+        if (!sid) toast("Could not load active session.", "error");
+      })();
+      return () => { alive = false; };
+    }, [loadActiveSession, toast]);
+    /* ── Session gating (same as Paper Generator) ─────────────────────────────
+       Attendance module ka checkbox current session mein OFF ho, ya session
+       "Current" na ho, ya aaj ki date session ki StartDate–EndDate range se
+       bahar ho → poora module view-only ho jata hai (koi mark/save/add/edit/
+       delete allowed nahi). Read-only signal Settings ke current session se
+       aata hai (Attendance flag). */
+    const attModuleReadOnly = useModuleReadOnly("att");
+    const isOtherSession = attModuleReadOnly || (() => {
+      // Session status "Current" na ho to lock.
+      const sessionStatus = sessionStorage.getItem("sessionStatus") || "";
+      // if (sessionStatus && sessionStatus !== "Current") return true;
+      if (sessionStatus && sessionStatus.toLowerCase() !== "current") return true;
+      // Aaj ki date session ki date-range se bahar ho to lock.
+      const startRaw = sessionStorage.getItem("sessionStartDate");
+      const endRaw   = sessionStorage.getItem("sessionEndDate");
+      if (startRaw && endRaw) {
+        const now = new Date();
+        if (now < new Date(startRaw) || now > new Date(endRaw)) return true;
+      }
+      return false;
+    })();
+    // Mutating action se pehle guard: read-only session mein block + toast.
+    const blockIfReadOnly = useCallback(() => {
+      if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.","error"); return true; }
+      return false;
+    }, [isOtherSession, toast]);
+
+    /* Modal state for Tab 1 */
+    const [holModal, setHolModal]         = useState(null); // { id?, monthIdx? } | null
+    const [delHolId, setDelHolId]         = useState(null); // holiday id pending delete
+    const [dayToggleIdx, setDayToggleIdx] = useState(null); // weekly day index pending toggle
+
+    /* Modal state for Tab 2 (Student) */
+    const [markStIdx, setMarkStIdx]       = useState(null); // class index pending mark/update
+    const [markStDate, setMarkStDate]     = useState(null); // selected date for student mark modal (null → today)
+    /* Class → section → student roster. Needed only by Student Attendance and
+       Reports → loaded on demand when one of them opens (see tab loader). */
+    const [studentData, setStudentData]   = useState([]);
+    const [studentLoading, setStudentLoading] = useState(true);
+    const ensureStudentData = useCallback(() => once("roster", async () => {
+      setStudentLoading(true);
+      try {
+        const rows = await attendanceService.getClassStudentList();
+        setStudentData(rows || []);
+        return rows;
+      } finally {
+        setStudentLoading(false);
+      }
+    }).catch((err) => { console.error("Could not load class roster:", err); }), [once]);
+
+    /* Modal state for Tab 3 (Staff) */
+    const [markSfOpen, setMarkSfOpen]     = useState(false);
+    const [markSfDate, setMarkSfDate]     = useState(null); // selected date for staff mark modal (null → today)
+
+    /* Previous Days Attendance toggle — persisted in DB per branch via
+       /api/settings-approvals-previous-days-attendance (action get on mount,
+       action save on toggle). OFF (default) → only today's attendance can be
+       marked. ON → past dates (within the active session) can be marked/edited.
+       Future dates stay blocked regardless. */
+    const [prevDaysAttendance, setPrevDaysAttendance] = useState(false);
+    /* Read by Attendance Setup (the toggle) and the Student / Staff calendars
+       (past-date marking) → fetched once, when the first of those opens. */
+    const ensurePrevDays = useCallback(() => once("prevDays", async () => {
+      const v = await attendanceService.getPreviousDaysAttendance();
+      setPrevDaysAttendance(!!v);
+      return v;
+    }).catch(() => { /* API fail → stays OFF (safe default) */ }), [once]);
+    const togglePrevDaysAttendance = useCallback(() => {
+      if (blockIfReadOnly()) return;
+      const next = !prevDaysAttendance;
+      setPrevDaysAttendance(next); // optimistic
+      attendanceService.savePreviousDaysAttendance(next)
+        .then(() => toast(next ? "Previous days attendance enabled" : "Previous days attendance disabled", "success"))
+        .catch((err) => {
+          setPrevDaysAttendance(!next); // revert on failure
+          toast(err?.message || "Could not update previous-days attendance setting", "error");
+        });
+    }, [blockIfReadOnly, toast, prevDaysAttendance]);
+    const [employees, setEmployees]       = useState([]); // real employees (with assignments)
+    const [staffData, setStaffData]       = useState([]); // derived staff-attendance rows
+    const [staffTodayMarked, setStaffTodayMarked] = useState(true);
+    const [staffLoading, setStaffLoading] = useState(true);
+
+    // Student/Staff Attendance + Reports → real employees from the branch.
+    // Loaded on demand (once) when one of those tabs opens — not on module mount.
+    const ensureEmployees = useCallback(() => once("employees", async () => {
+      setStaffLoading(true);
+      try {
+        const emps = await attendanceService.getEmployeesByBranch();
+        setEmployees(emps);
+        setStaffData(emps.map((e) => ({
+          id:    e.id,
+          name:  `${e.firstName || ""} ${e.lastName || ""}`.trim() || "—",
+          empId: `EMP-${e.id}`,
+          desig: e.designationName || "—",
+          dept:  e.departmentName || "—",
+          email: e.email || "",
+          phone: e.phone || "",
+          status: "", inTime: "", outTime: "", from: "", marked: false,
+        })));
+        return emps;
+      } finally {
+        setStaffLoading(false);
+      }
+    }).catch((err) => { console.error("Could not load employees:", err); }), [once]);
+
+    // class+section (gradeId-sectionId) → class teacher name.
+    // Prefer Class-attendance assignees (HR "Class Teacher — Attendance Marking"),
+    // then subject-assigned teachers. Skip Principal/Head so their name never
+    // blankets every Class Teacher cell. Grade-level fallback when section has
+    // no exact match.
+    const teacherMap = useMemo(() => {
+      const map = {};
+      const put = (e, rows) => {
+        const tName = `${e.firstName || ""} ${e.lastName || ""}`.trim();
+        if (!tName) return;
+        (rows || []).forEach((a) => {
+          const gradeId   = a.gradeId   ?? a.gradeID;
+          const sectionId = a.sectionId ?? a.sectionID;
+          if (gradeId == null) return;
+          const secKey   = `${gradeId}-${sectionId}`;
+          const gradeKey = `${gradeId}`;
+          if (!map[secKey])   map[secKey]   = tName;
+          if (!map[gradeKey]) map[gradeKey] = tName;
+        });
+      };
+      // Pass 1: attendance-marking assignments from non-Head staff (true class teachers).
+      employees.forEach((e) => {
+        if (e.isPrinciple === true) return;
+        const att = e.classSectionAttendanceAssignments || e.attendanceAssignments || [];
+        if (att.length) put(e, att);
+      });
+      // Pass 2: fill gaps from subject assignments of teachers only.
+      employees.forEach((e) => {
+        if (e.isPrinciple === true) return;
+        if (e.isTeacher === false) return;
+        put(e, e.assignments || []);
+      });
+      return map;
+    }, [employees]);
+
+    /* Report picker + preview state */
+    const [reportPicker,   setReportPicker]   = useState(null); // { title, context, ... }
+    const [reportPreview,  setReportPreview]  = useState(null); // { title, html }
+    const [indivTarget,    setIndivTarget]    = useState(null); // { type, name, detail, id } | null
+    const [reportSessions, setReportSessions] = useState([]);   // [{ ID, SessionName }] for report filters
+    // const [activeSessionName, setActiveSessionName] = useState(""); // active session ka SessionName (e.g. "2026-2027")
+
+    // Report header (branch info: name / logo / address / session) — needed only
+    // when a report is GENERATED, so it is fetched lazily (once) at that moment
+    // instead of on module mount. Report builders receive the resolved value.
+    const ensureBranchSchool = useCallback(() => once("reportHeader",
+      () => attendanceService.getReportHeader()
+    ).catch((err) => { console.error("Could not load report header:", err); return null; }), [once]);
+    // Branch session list — only a fallback for the Yearly Holiday report when
+    // the active session's name is unknown / a different year is chosen.
+    const ensureReportSessions = useCallback(() => once("reportSessions", async () => {
+      const list = await attendanceService.getSessionsForBranch();
+      setReportSessions(list);
+      return list;
+    }).catch((err) => { console.error("Could not load sessions:", err); return []; }), [once]);
+
+// Attendance Setup rules (staff / student / geofence). Every tab reads them
+// (trackOut columns, mark modals, setup cards) → loaded once per module visit.
+const [attendanceSetup, setAttendanceSetup] = useState(DEFAULT_ATTENDANCE_SETUP);
+const ensureAttendanceSetup = useCallback(() => once("setup", async () => {
+  const s = await attendanceService.getAttendanceSetup();
+  if (s) setAttendanceSetup(s);
+  return s;
+}).catch((err) => { console.error("Could not load attendance setup:", err); }), [once]);
+const [savingSetup, setSavingSetup] = useState(false);
+const [weeklyOff, setWeeklyOff] = useState([]);
+const [weeklyOffLoading, setWeeklyOffLoading] = useState(true);
+// Latest weekly-off selection, readable from async report code without
+// waiting for a re-render; and the server row IDs from the last GET (used by
+// Save & Update so it doesn't need a second GET just to learn the IDs).
+const weeklyOffRef    = useRef([]);
+const weeklyOffIdsRef = useRef(null); // { dayIdx: ID } | null (unknown → Save does a GET)
+useEffect(() => { weeklyOffRef.current = weeklyOff; }, [weeklyOff]);
+
+/* weekly-off GET response → { days: [dayIdx], ids: { dayIdx: ID } } */
+const parseWeeklyOff = (response) => {
+  const data = Array.isArray(response?.data) ? response.data : [];
+  const days = [];
+  const ids = {};
+  data.forEach((item) => {
+    const index = DAYS_F.indexOf(item.WeekDay); // ✅ Capital W (WeekDay)
+    if (index !== -1) { days.push(index); ids[index] = item.ID; }
+  });
+  return { days, ids };
+};
+
+// GET weekly off data — on demand (once) when a tab that shows it opens:
+// Attendance Setup (day cards) and the Student / Staff calendars.
+const ensureWeeklyOff = useCallback(() => once("weeklyOff", async () => {
+  setWeeklyOffLoading(true);
+  try {
+    const response = await attendanceService.getWeeklyOffSetup();
+    const { days, ids } = parseWeeklyOff(response);
+    weeklyOffRef.current = days;
+    weeklyOffIdsRef.current = ids;
+    setWeeklyOff(days);
+    return days;
+  } finally {
+    setWeeklyOffLoading(false);
+  }
+}).catch((error) => {
+  console.error("Error fetching weekly off:", error);
+  setWeeklyOff([]);
+  return [];
+}), [once]);
+
+// Reports: weekly-off days for working-day maths. Uses what's already loaded
+// (incl. unsaved local toggles, same as before); fetches only if never loaded.
+const reportWeeklyOff = useCallback(async () => {
+  await ensureWeeklyOff();
+  return weeklyOffRef.current;
+}, [ensureWeeklyOff]);
+
+// Profile (school name for the Geo-fence card) — once per module visit.
+const loadProfile = useCallback(() => once("profile", () => profileService.getProfile()), [once]);
+    const openReportPicker = useCallback((cfg) => setReportPicker(cfg), []);
+    const openMarkSt = useCallback((idx, dateStr) => {
+      if (blockIfReadOnly()) return;
+      // dateStr passed only from a past-date panel; today-table calls omit it.
+      setMarkStDate(typeof dateStr === "string" ? dateStr : null);
+      setMarkStIdx(idx);
+    }, [blockIfReadOnly]);
+
+    const openIndivReport = useCallback((target) => setIndivTarget(target), []);
+
+    // Ek person (student/staff) ki real attendance range ke andar → date → { status, platform, in/out }.
+    const fetchIndividualAttendance = useCallback(async (target, fromDate, toDate) => {
+      if (!target || !fromDate || !toDate) return {};
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const sid = String(target.sid ?? "");
+      const isStudent = target.type === "student";
+      const dates = [];
+      const end = new Date(`${toDate}T00:00:00`);
+      for (let d = new Date(`${fromDate}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+      const map = {};
+      await Promise.all(dates.map(async (dateStr) => {
+        try {
+          let recs = [];
+          if (isStudent) {
+            const res = await attendanceService.studentAttendance({
+              id: 0, branchID, studentID: 0, sessionID,
+              classID: target.classID || 0, sectionID: target.sectionID || 0,
+              attendanceDate: dateStr, status: "", platform: "ERP",
+              isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+            });
+            recs = (res?.data || []).filter((r) =>
+              String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr &&
+              String(r.StudentID ?? r.studentID ?? r.studentId) === sid);
+          } else {
+            const res = await attendanceService.staffAttendance({
+              id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+              checkInTime: "", checkOutTime: "", status: "", platform: "",
+              isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+            });
+            recs = (res?.data || []).filter((r) =>
+              String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr &&
+              String(r.StaffID ?? r.staffID) === sid);
+          }
+          if (recs.length) {
+            const rec = recs[recs.length - 1]; // us din ka aakhri mark
+            const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+            map[dateStr] = {
+              status: ST_CODE_TO_STATUS[raw] || raw,
+              platform: rec.Platform ?? rec.platform ?? "",
+              inTime: timeVal(rec.CheckInTime ?? rec.checkInTime),
+              outTime: timeVal(rec.CheckOutTime ?? rec.checkOutTime),
+            };
+          }
+        } catch (err) { console.error("Individual attendance fetch error:", err); }
+      }));
+      return map;
+      // ensureSessionID is defined later; referenced via closure at call time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    /* PDF → in-app preview overlay; Word / Excel → direct download (same HTML). */
+    const deliverAttReport = useCallback((title, html, format) => {
+      if (format === "word") {
+        downloadReportAsWord(html, `${reportFileName(title)}.doc`);
+        toast("Word document downloaded", "success");
+        return;
+      }
+      if (format === "excel") {
+        downloadReportHtmlAsExcel(html, `${reportFileName(title)}.xls`);
+        toast("Excel report downloaded", "success");
+        return;
+      }
+      setReportPreview({ title, html });
+    }, [toast]);
+
+    const runIndivReport = useCallback(async ({ fromDate, toDate, isColor, format = "pdf", __error }) => {
+      if (__error) { toast(__error, "error"); return; }
+      const target = indivTarget;
+      // Modal ko generation ke baad band karo taake button par spinner dikhe.
+      // Header + weekly-off are fetched lazily (cached) only now, at generation.
+      const [records, branchSchool, weeklyOff] = await Promise.all([
+        fetchIndividualAttendance(target, fromDate, toDate),
+        ensureBranchSchool(),
+        reportWeeklyOff(),
+      ]);
+      const trackOut = target.type === "student"
+        ? attendanceSetup.studentTrackingMode !== "in_only"
+        : attendanceSetup.staffTrackingMode !== "in_only";
+      const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool, trackOut });
+      setIndivTarget(null);
+      deliverAttReport(`${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html, format);
+    }, [indivTarget, holidays, toast, fetchIndividualAttendance, ensureBranchSchool, reportWeeklyOff, deliverAttReport, attendanceSetup]);
+
+    const openMarkSf = useCallback(async (dateStr) => {
+      if (blockIfReadOnly()) return;
+      // dateStr is a real string only from a past-date panel; onClick={openMarkSf}
+      // passes the event object → treated as "today".
+      const d = typeof dateStr === "string" ? dateStr : null;
+      setMarkSfDate(d);
+      // Past date → load that date's marks into staffData so the modal prefills
+      // the existing record (edit) instead of today's.
+      if (d) { try { await loadStaffAttendance(d); } catch { /* ignore */ } }
+      setMarkSfOpen(true);
+      // loadStaffAttendance is defined later in this component; referenced via closure.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blockIfReadOnly]);
+  // Attendance component ke andar (around line 2100)
+
+ // Attendance component ke andar - saveMarkSf ko replace karo
+
+// Attendance component mein - saveMarkSf function
+
+const saveMarkSf = useCallback(async (rows, dateOverride) => {
+  if (blockIfReadOnly()) return;
+  // Validation: Out Time, In Time se pehle na ho (Present staff ke liye).
+  const badTime = rows.find((r) => (r.status === "present" || r.status === "late" || r.status === "short_leave") && r.inTime && r.outTime && r.outTime < r.inTime);
+  if (badTime) {
+    toast("Out Time Must Be Greater Than In Time", "error");
+    return;
+  }
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  // Past-date marking passes the selected date; otherwise → today (unchanged).
+  const attendanceDate = dateOverride || todayStr;
+  // Session-date guard: attendance date current session ki UTC window ke andar ho.
+  const sfDateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
+  if (!sfDateChk.ok) { toast(sfDateChk.message, "error"); return; }
+
+  try {
+    // Sirf UNHI staff ko save karo jinhein mark kiya (status set hai). Har staff
+    // ke liye: pehle se record hai (attendanceID>0) → "update"; warna "insert".
+    const toSave = rows
+      .map((row, index) => ({ row, staff: staffData[index] }))
+      .filter(({ row }) => row.status);
+    if (toSave.length === 0) {
+      toast("Please mark at least one staff member.", "error");
+      return;
+    }
+    const promises = toSave.map(({ row, staff }) => {
+      const existingId = staff.attendanceID || 0;
+      const payload = {
+        id: existingId,
+        staffID: staff.id || 0,
+        branchID: branchID,
+        attendanceDate: attendanceDate,
+        checkInTime: row.inTime || "",
+        checkOutTime: row.outTime || "",
+        status: row.status,
+        platform: row.from || "ERP", // Marked From wali selected value
+        isNotificationGen: false,
+        action: existingId > 0 ? "update" : "insert",
+        createdBy: employeeID,
+        modifiedBy: employeeID,
+      };
+      return attendanceService.staffAttendance(payload);
+    });
+
+    await Promise.all(promises);
+
+    if (attendanceDate === todayStr) {
+      // Today → fresh GET restores the staff list (new attendanceID + status).
+      await loadStaffAttendance(attendanceDate);
+      setStaffTodayMarked(true);
+    } else {
+      // Past date → refresh that date's panel, then restore the staff list to
+      // today so the main list keeps showing today's state.
+      await loadStaffDateAttendance(attendanceDate);
+      await loadStaffAttendance(todayStr);
+    }
+    setMarkSfDate(null);
+    setMarkSfOpen(false);
+    toast("Staff attendance saved successfully", "success");
+  } catch (error) {
+    console.error("Error saving staff attendance:", error);
+    toast("Failed to save staff attendance. Please try again.", "error");
+  }
+  // loadStaffAttendance / loadStaffDateAttendance closure se resolve hote hain (baad mein defined).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [staffData, toast, blockIfReadOnly]);
+    const generateReport = useCallback(async ({ effective, style, format = "pdf", filters }) => {
+      const isColor = style === "color";
+      // "Time In Only" → reports me Out Time aur SL nahi (student / staff alag setting).
+      const stuOut = attendanceSetup.studentTrackingMode !== "in_only";
+      const sfOut  = attendanceSetup.staffTrackingMode !== "in_only";
+      // Branch header + weekly-off — fetched lazily (cached) only when a report is
+      // generated. These locals intentionally shadow the state of the same name.
+      const [branchSchool, weeklyOff] = await Promise.all([ensureBranchSchool(), reportWeeklyOff()]);
+      let html, title;
+      if (effective === "holidayYearly") {
+        // Chosen session (name → ID) → fetch that session's holidays from the API.
+        const yearName = filters.year || activeSessionName;
+        // Active session → its ID is already known (ensureSessionID below); the
+        // branch session list is fetched only for a DIFFERENT year.
+        const sess = yearName && yearName !== activeSessionName
+          ? (await ensureReportSessions()).find((s) => s.SessionName === yearName)
+          : null;
+        const sessionID = sess?.ID || reportPicker?.sessionID || await ensureSessionID();
+        const branchID  = Number(sessionStorage.getItem("branchID"));
+        const classes   = await ensureClasses();
+        const results = await Promise.all(
+          MONTHS.map((_, i) =>
+            attendanceService.monthlySetup({
+              id: 0, branchID, sessionID,
+              holidayTitle: "", description: "", dateFrom: "", dateTo: "",
+              month: i + 1, action: "get", createdBy: 0, modifiedBy: 0, classIDs: [],
+            }).then((r) => r?.data || []).catch(() => [])
+          )
+        );
+        // Sirf chosen session ke rows (backend session ignore kare to bhi safe).
+        const rows = results.flat().filter(
+          (r) => String(r.SessionID ?? r.sessionID) === String(sessionID)
+        );
+        let hols = groupHolidayRows(rows, classes);
+        if (filters.class && filters.class !== "All Classes") {
+          hols = hols.filter((h) => (h.selectedClasses || []).some((c) => c.label === filters.class));
+        }
+        html  = buildYearlyHolidayReportHTML({ holidays: hols, weeklyOff, year: yearName, classFilter: filters.class, isColor, branchSchool });
+        title = "Yearly Holiday Report";
+        setReportPicker(null);
+        deliverAttReport(title, html, format);
+        return;
+      } else if (effective === "studentDaily" || effective === "studentDailyClass") {
+        const date = filters.date || reportPicker?.defaultDate || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyReportRows(date);
+        html  = buildDailyStudentReportHTML({
+          rows,
+          date,
+          classFilter: filters.class,
+          sectionFilter: filters.section,
+          forClass: reportPicker?.forClass,
+          isColor,
+          branchSchool,
+          trackOut: stuOut,
+        });
+        title = reportPicker?.title || "Daily Student Attendance Report";
+      } else if (effective === "studentMonthly" || effective === "studentMonthlyClass") {
+        const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildStudentMonthlySummaryHTML({
+          rows,
+          monthLabel,
+          sessionName: activeSessionName || branchSchool?.session,
+          branchSchool,
+          isColor,
+          classFilter: filters.class,
+          sectionFilter: filters.section,
+          trackOut: stuOut,
+        });
+        title = reportPicker?.title || "Monthly Student Attendance Report";
+      } else if (effective === "staffDaily" || effective === "staffDailyOne") {
+        const date = filters.date || reportPicker?.defaultDate || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyStaffReportRows(date);
+        html  = buildDailyStaffReportHTML({
+          staffData: rows,
+          date,
+          deptFilter: filters.dept,
+          forStaff: reportPicker?.forStaff,
+          isColor,
+          branchSchool,
+          trackOut: sfOut,
+        });
+        title = reportPicker?.title || "Daily Staff Attendance Report";
+      } else if (effective === "staffMonthly" || effective === "staffMonthlyOne") {
+        const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
+        html  = buildMonthlyStaffReportHTML({
+          staffData: rows,
+          month: monthLabel,
+          deptFilter: filters.dept,
+          forStaff: reportPicker?.forStaff,
+          isColor,
+          branchSchool,
+          trackOut: sfOut,
+        });
+        title = reportPicker?.title || "Monthly Staff Attendance Report";
+      } else if (effective === "staffSummary") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
+        html  = buildMonthlyStaffReportHTML({ staffData: rows, month: monthLabel, isColor, branchSchool, trackOut: sfOut });
+        title = "Staff Attendance Summary";
+      } else if (effective === "staffSheet") {
+        const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
+        html  = buildStaffAttendanceSheetHTML({ staffData: rows, month: monthLabel, weeklyOff, holidays, isColor, branchSchool, trackOut: sfOut });
+        title = "Staff Attendance Sheet";
+      } else if (effective === "studentClasswise") {
+        const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
+        const rows = await fetchRangeReportRows(filters.from, filters.to);
+        html  = buildStudentMonthlySummaryHTML({
+          rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
+          branchSchool, isColor, classFilter: filters.class, trackOut: stuOut,
+        });
+        title = "Class-wise Student Attendance Report";
+      } else if (effective === "studentSummary") {
+        const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
+        const rows = await fetchRangeReportRows(filters.from, filters.to);
+        html  = buildStudentMonthlySummaryHTML({
+          rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
+          branchSchool, isColor, trackOut: stuOut,
+        });
+        title = "Student Attendance Summary";
+      } else if (effective === "classOverview") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildClassOverviewHTML({ rows, month: monthLabel, isColor, branchSchool, trackOut: stuOut });
+        title = "Class Overview Report";
+      } else if (effective === "classComparison") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildClassComparisonHTML({ rows, month: monthLabel, isColor, branchSchool });
+        title = "Class Comparison Report";
+      } else if (effective === "lowAttendance") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildLowAttendanceHTML({ rows, month: monthLabel, isColor, branchSchool });
+        title = "Low Attendance Alert Report";
+      } else if (effective === "studentLateArrivals") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildStudentLateArrivalsHTML({ rows, month: monthLabel, isColor, branchSchool });
+        title = "Student Late Arrivals Report";
+      } else if (effective === "staffLateArrivals") {
+        const date = filters.date || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyStaffReportRows(date);
+        html  = buildStaffLateArrivalsHTML({ staffData: rows, date, attendanceSetup, isColor, branchSchool });
+        title = "Staff Late Arrivals Report";
+      } else if (effective === "staffShortLeavers") {
+        const date = filters.date || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyStaffReportRows(date);
+        html  = buildStaffShortLeaversHTML({ staffData: rows, date, attendanceSetup, isColor, branchSchool });
+        title = "Staff Short Leavers Report";
+      } else if (effective === "holidayMonthly") {
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { monthIdx0 } = parseMonthLabel(monthLabel);
+        const monthHolidays = await fetchMonthHolidaysList(monthIdx0);
+        html  = buildMonthlyHolidayReportHTML({ holidays: monthHolidays, weeklyOff, month: monthLabel, isColor, branchSchool });
+        title = "Monthly Holiday Report";
+      } else {
+        html = rptPageWrap({
+          rptLabel: "Report Preview",
+          period: filters.month || filters.year || filters.date || "",
+          isColor,
+          content: `<div style="text-align:center;padding:60px 20px;color:#64748B"><i class="fa-solid fa-circle-info" style="font-size:36px;opacity:.4;display:block;margin-bottom:14px"></i><div style="font-size:14px;font-weight:700;color:#0F172A;margin-bottom:6px">This report type will be available soon.</div><div style="font-size:12.5px">Selected type: <strong>${effective}</strong> · Style: <strong>${isColor ? "Color" : "B&amp;W"}</strong></div></div>`,
+        });
+        title = "Report Preview";
+      }
+      setReportPicker(null);
+      deliverAttReport(title, html, format);
+      // ensureClasses/ensureSessionID are defined later; referenced via closure at call time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [holidays, studentData, staffData, reportPicker, ensureReportSessions, ensureBranchSchool, reportWeeklyOff, activeSessionName, deliverAttReport, attendanceSetup]);
+
+    /* General Reports tab → trigger generateReport with the style/format chosen
+      in the shared StandardReportPicker modal (see ReportRow). */
+    const runGeneralReport = useCallback((rpt, filters) => {
+      if (filters.__error) { toast(filters.__error, "error"); return; }
+      const { __style, __format, ...rest } = filters;
+      // Promise return karo taake Generate button spinner report banne tak chale.
+      return generateReport({ effective: rpt.key, style: __style || "color", format: __format || "pdf", filters: rest });
+    }, [generateReport, toast]);
+
+  const requestToggleDay = useCallback((i) => {
+    if (blockIfReadOnly()) return;
+    setDayToggleIdx(i);
+  }, [blockIfReadOnly]);
+
+  const confirmToggleDay = useCallback(() => {
+    if (blockIfReadOnly()) { setDayToggleIdx(null); return; }
+    if (dayToggleIdx == null) return;
+    // isOff pehle nikaal lo; toast updater ke BAHAR (warna StrictMode double-invoke se
+    // toast 2 dafa chalta hai). Updater sirf pure state transform kare.
+    const isOff = weeklyOff.includes(dayToggleIdx);
+    setWeeklyOff((prev) => (prev.includes(dayToggleIdx)
+      ? prev.filter((x) => x !== dayToggleIdx)
+      : [...prev, dayToggleIdx]));
+    toast(isOff ? `${DAYS_F[dayToggleIdx]} marked as Working Day` : `${DAYS_F[dayToggleIdx]} marked as Weekly Off`, "success");
+    setDayToggleIdx(null);
+  }, [dayToggleIdx, weeklyOff, toast, setWeeklyOff, blockIfReadOnly]);
+       // Har API isi se sessionID leti hai — session API complete hone ka intezar karti hai.
+    const ensureSessionID = useCallback(async () => {
+      if (activeSessionID) return activeSessionID;
+      const { sid } = await loadActiveSession();
+      return sid;
+    }, [activeSessionID, loadActiveSession]);
+
+    // employee id → full name (resolve CreatedBy on attendance records → Class Teacher).
+    const employeeNameById = useMemo(() => {
+      const map = {};
+      employees.forEach((e) => {
+        const n = `${e.firstName || ""} ${e.lastName || ""}`.trim();
+        if (e.id != null && n) map[String(e.id)] = n;
+      });
+      return map;
+    }, [employees]);
+
+    // GET saved attendance for a class/section (today) → prefill statuses + counts.
+    // Resolves { map, ok } — ok=false when the GET failed (so caches can retry).
+    const fetchStudentMarks = useCallback(async (idx, dateOverride) => {
+      const row = studentData[idx];
+      if (!row) return { map: {}, ok: false };
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // Past-date marking passes the selected date; otherwise → today (unchanged).
+      const attendanceDate = dateOverride || todayStr;
+      const map = {};
+      let markerId = null; // CreatedBy of first marked record → who marked attendance
+      let ok = false;
+      try {
+        const res = await attendanceService.studentAttendance({
+          id: 0, branchID, studentID: 0, sessionID,
+          classID: row.classID, sectionID: row.sectionID,
+          attendanceDate, status: "", platform: "ERP",
+          isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+        });
+        ok = true;
+        (res?.data || [])
+          .filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === attendanceDate &&
+            String(rec.ClassID ?? rec.classID) === String(row.classID) &&
+            String(rec.SectionID ?? rec.sectionID) === String(row.sectionID)
+          )
+          .forEach((rec) => {
+            const sid = rec.studentID ?? rec.StudentID ?? rec.studentId;
+            const raw = rec.status ?? rec.Status;
+            // Status numeric code ("1") ya word ("present") — dono handle karo.
+            const status = ST_CODE_TO_STATUS[String(raw)]
+              || (typeof raw === "string" ? raw.toLowerCase() : undefined);
+            // In/Out time (staff jaise CheckInTime/CheckOutTime) — object/null → "".
+            const inTime  = timeVal(rec.CheckInTime  ?? rec.checkInTime);
+            const outTime = timeVal(rec.CheckOutTime ?? rec.checkOutTime);
+            if (sid != null && status) {
+              map[sid] = { status, inTime, outTime, platform: String(rec.Platform ?? rec.platform ?? "") };
+              if (markerId == null) {
+                markerId = rec.CreatedBy ?? rec.createdBy ?? rec.ModifiedBy ?? rec.modifiedBy ?? null;
+              }
+            }
+          });
+      } catch (err) {
+        console.error("Error loading student attendance:", err);
+      }
+      // Past date is loaded only to prefill the mark modal — do NOT overwrite the
+      // today-oriented class table with a past date's counts.
+      if (attendanceDate !== todayStr) return { map, ok };
+      // Reflect saved statuses + times into the class row (detail table + counts).
+      // Class Teacher: HR assignment first; if missing, who marked (CreatedBy).
+      const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
+      const markerName = markerId != null ? (employeeNameById[String(markerId)] || "") : "";
+      setStudentData((prev) => prev.map((r, i) => {
+        if (i !== idx) return r;
+        const students = (r.students || []).map((s) => ({ ...s, status: map[s.id]?.status, inTime: map[s.id]?.inTime || "", outTime: map[s.id]?.outTime || "", platform: map[s.id]?.platform || "" }));        // Marked only if at least one student in THIS class has a status.
+        const anyMarked = students.some((s) => s.status);
+        const teacher = assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—";
+        return {
+          ...r, students, marked: anyMarked, teacher,
+          ...countList(students),
+        };
+      }));
+      return { map, ok };
+    }, [studentData, ensureSessionID, setStudentData, teacherMap, employeeNameById]);
+
+    // Same as before for existing callers (mark modal prefill, past-date expand):
+    // a FRESH GET each time, returns the status map. Identical calls that overlap
+    // (e.g. the Mark modal's mount effect run twice by StrictMode) share the one
+    // in-flight request instead of sending it twice.
+    const marksInflightRef = useRef(new Map()); // "idx|date" → Promise<map>
+    const loadStudentMarks = useCallback((idx, dateOverride) => {
+      const key = `${idx}|${dateOverride || ""}`;
+      const inflight = marksInflightRef.current;
+      if (!inflight.has(key)) {
+        const p = fetchStudentMarks(idx, dateOverride)
+          .then((r) => r.map)
+          .finally(() => { if (inflight.get(key) === p) inflight.delete(key); });
+        inflight.set(key, p);
+      }
+      return inflight.get(key);
+    }, [fetchStudentMarks]);
+
+    /* Today's marks per class, cached per day: the Student tab's on-open load,
+       re-opening the tab and expanding a class all share ONE request per class.
+       (Opening the Mark modal still does its own fresh GET before editing.) */
+    const todayMarksRef = useRef(new Map()); // "YYYY-MM-DD|classID-sectionID" → Promise<map>
+    const ensureTodayMarks = useCallback((idx) => {
+      const r = studentData[idx];
+      if (!r) return Promise.resolve({});
+      const key = `${new Date().toISOString().slice(0, 10)}|${r.classID}-${r.sectionID}`;
+      const cache = todayMarksRef.current;
+      if (!cache.has(key)) {
+        cache.set(key, fetchStudentMarks(idx).then(({ map, ok }) => {
+          if (!ok) cache.delete(key); // failed → next open retries
+          return map;
+        }));
+      }
+      return cache.get(key);
+    }, [studentData, fetchStudentMarks]);
+
+    // Save Attendance → action:"insert" for EACH student.
+    const saveStudentMarks = useCallback(async (idx, studentRows, dateOverride) => {
+      if (blockIfReadOnly()) throw new Error("read-only");
+      // Validation: Out Time, In Time se pehle na ho (Present students ke liye).
+      const badTime = studentRows.find((s) => (s.status === "present" || s.status === "late" || s.status === "short_leave") && s.inTime && s.outTime && s.outTime < s.inTime);
+      if (badTime) {
+        toast("Out Time must be greater than In Time.", "error");
+        throw new Error("bad-time"); // modal khula rahe taake user theek kar sake
+      }
+      const row = studentData[idx];
+      if (!row) return;
+      const branchID   = Number(sessionStorage.getItem("branchID"));
+      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const sessionID  = await ensureSessionID();
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // Past-date marking passes the selected date; otherwise → today (unchanged).
+      const attendanceDate = dateOverride || todayStr;
+      // Session-date guard: attendance date current session ki UTC window ke andar ho.
+        if (!sessionID) { toast("Session load nahi hua, dobara try karein.", "error"); throw new Error("no-session"); }
+      const dateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
+      if (!dateChk.ok) { toast(dateChk.message, "error"); throw new Error("out-of-session"); }
+      // Only students that were actually marked (blank = untouched → skip).
+      const marked = studentRows.filter((s) => s.status && ST_STATUS_TO_CODE[s.status]);
+      if (marked.length === 0) {
+        toast("Please mark at least one student.", "error");
+        throw new Error("no-status");
+      }
+      try {
+        await Promise.all(marked.map((s) => attendanceService.studentAttendance({
+          id: 0, branchID, studentID: s.id, sessionID,
+          classID: row.classID, sectionID: row.sectionID,
+          attendanceDate, status: String(ST_STATUS_TO_CODE[s.status]), platform: "ERP",
+          // In/Out time Present ya Late ke liye bhejo; Absent/Leave par khali.
+          checkInTime:  (s.status === "present" || s.status === "late" || s.status === "short_leave") ? (s.inTime  || "") : "",
+          checkOutTime: (s.status === "present" || s.status === "late" || s.status === "short_leave") ? (s.outTime || "") : "",
+          isNotificationGen: false, action: "insert",
+          createdBy: employeeID, modifiedBy: employeeID,
+        })));
+      } catch (err) {
+        console.error("Error saving student attendance:", err);
+        toast("Failed to save attendance. Please try again.", "error");
+        throw err; // keep modal open
+      }
+      if (attendanceDate !== todayStr) {
+        // Past date → refresh that date's panel; leave the today-oriented class
+        // table untouched.
+        try { await loadDateAttendance(attendanceDate); } catch { /* ignore */ }
+        setMarkStIdx(null);
+        setMarkStDate(null);
+        toast("Attendance saved successfully", "success");
+        return;
+      }
+      const counts = countList(studentRows);
+      const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
+      const markerName = employeeNameById[String(employeeID)] || "";
+      setStudentData((prev) => prev.map((r, i) => i === idx ? {
+        ...r, marked: true, ...counts,
+        teacher: assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—",
+        students: (r.students || []).map((st) => {
+          const m = studentRows.find((x) => x.id === st.id);
+          return m ? { ...st, status: m.status, platform: "ERP", inTime: (m.status === "present" || m.status === "late" || m.status === "short_leave") ? (m.inTime || "") : "", outTime: (m.status === "present" || m.status === "late" || m.status === "short_leave") ? (m.outTime || "") : "" } : st;        }),
+        markedFrom: "ERP",
+        markedTime: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+      } : r));
+      setMarkStIdx(null);
+      setMarkStDate(null);
+      toast("Attendance saved successfully", "success");
+      // loadDateAttendance closure se resolve hota hai (baad mein defined).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [studentData, ensureSessionID, toast, setStudentData, blockIfReadOnly, teacherMap, employeeNameById]);
+
+    // Student tab active → GET saved attendance for EVERY class (so the table
+    // shows P/A/L counts without needing to expand each class).
+    // Already-loaded classes come from the per-day cache (no request).
+    const loadAllStudentMarks = useCallback(async () => {
+      await Promise.all(studentData.map((_, idx) => ensureTodayMarks(idx)));
+    }, [studentData, ensureTodayMarks]);
+
+    // Calendar par koi date select → us date ki per-class attendance (P/A/L,
+    // status, Platform, class teacher) laao → StudentDatePanel bhare.
+    // A newer date click ABORTS the previous date's still-running requests, and a
+    // superseded response can never overwrite the newer date's panel.
+    const [dateAttendance, setDateAttendance] = useState(null); // { key, rows, loading }
+    const dateAbortRef = useRef(null);
+    const loadDateAttendance = useCallback(async (dateStr) => {
+      dateAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      dateAbortRef.current = ctrl;
+      setDateAttendance({ key: dateStr, rows: [], loading: true });
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const rows = await Promise.all((studentData || []).map(async (r) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: r.classID, sectionID: r.sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          }, { signal: ctrl.signal });
+          // Backend saare classes/dates de deta hai → sirf IS class+section ke,
+          // aur SELECTED date ke records rakho (warna har class mein same data aa jata).
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr &&
+            String(rec.ClassID ?? rec.classID) === String(r.classID) &&
+            String(rec.SectionID ?? rec.sectionID) === String(r.sectionID)
+          );
+        } catch (err) {
+          if (err?.name !== "AbortError") console.error("Error loading date attendance:", err);
+        }
+        const counts = emptyCounts();
+        let platform = "";
+        recs.forEach((rec) => {
+          // Status numeric code ("1") ya word ("present") — dono handle karo.
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          countStatus(counts, ST_CODE_TO_STATUS[raw] || raw);
+          platform = rec.Platform ?? rec.platform ?? platform;
+        });
+        return {
+          classID: r.classID, sectionID: r.sectionID,
+          cls: r.cls, sec: r.sec, total: r.total,
+          ...counts,
+          marked: recs.length > 0,
+          markedFrom: platform || (recs.length ? "ERP" : ""),
+          markedBy: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
+        };
+      }));
+      if (ctrl.signal.aborted) return; // a newer date was selected meanwhile
+      setDateAttendance({ key: dateStr, rows, loading: false });
+    }, [studentData, ensureSessionID, teacherMap]);
+
+    /* Working days = month ke total din − (weekly-off din ∪ holiday din).
+      OVERALL — poore month ke liye EK hi number, sab classes + staff ke liye same.
+      • Weekly-off: `weeklyOff` state (attendance-weekly-setup API se) — DAYS_F index
+        (Monday=0 … Sunday=6). Month ki har date ka weekday check karke off dates banate hain.
+      • Holidays: /api/attendance-monthly-setup (get) — wahi jo Holidays module use karta hai.
+        Har row ki DateFrom→DateTo range ko target month ke andar expand karte hain.
+      Weekly-off aur holiday ka overlap Set union se automatically dedupe hota hai. */
+    const fetchMonthHolidayInfo = useCallback(async (year, monthIdx0) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate();
+      const offDates = new Set(); // weekly-off + holiday dates (union → no double count)
+      const weeklyOff = await reportWeeklyOff(); // loaded on demand (cached)
+
+      // 1) Weekly-off dates — har date jiska weekday `weeklyOff` me hai.
+      //    JS getDay(): Sunday=0…Saturday=6 → DAYS_F index (Monday=0…Sunday=6) = (getDay()+6)%7.
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dowMon0 = (new Date(year, monthIdx0, day).getDay() + 6) % 7;
+        if (weeklyOff.includes(dowMon0)) {
+          offDates.add(`${year}-${String(monthIdx0 + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+        }
+      }
+
+      // 2) Holiday dates — is month ki (whole month, sab classes ke liye common).
+      try {
+        const res = await attendanceService.monthlySetup({
+          id: 0, branchID, sessionID, holidayTitle: "", description: "",
+          dateFrom: "", dateTo: "", month: monthIdx0 + 1, action: "get",
+          createdBy: 0, modifiedBy: 0, classIDs: [],
+        });
+        (res?.data || []).forEach((h) => {
+          const from = String(h.DateFrom ?? h.dateFrom ?? "").slice(0, 10);
+          const to   = String(h.DateTo ?? h.dateTo ?? "").slice(0, 10);
+          if (!from || !to) return;
+          // Range ko din-ba-din expand karo; sirf target month/year ki dates lo.
+          // (Local date components — toISOString TZ shift se bachne ke liye.)
+          const end = new Date(`${to}T00:00:00`);
+          for (let d = new Date(`${from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+            if (d.getFullYear() === year && d.getMonth() === monthIdx0) {
+              offDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+            }
+          }
+        });
+      } catch (err) { console.error("Holiday info fetch error:", err); }
+
+      // 3) Working days = daysInMonth − off dates (weekly-off ∪ holidays).
+      const workingDays = Math.max(0, daysInMonth - offDates.size);
+      return { daysInMonth, workingDays };
+    }, [ensureSessionID, reportWeeklyOff]);
+
+    // Monthly Holiday report ke liye — us month ke holidays (grouped) laao,
+    // taake Reports tab se bhi bina Holidays tab visit kiye report ban jaye.
+    const fetchMonthHolidaysList = useCallback(async (monthIdx0) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes   = await ensureClasses();
+      try {
+        const res = await attendanceService.monthlySetup({
+          id: 0, branchID, sessionID, holidayTitle: "", description: "",
+          dateFrom: "", dateTo: "", month: monthIdx0 + 1, action: "get",
+          createdBy: 0, modifiedBy: 0, classIDs: [],
+        });
+        return groupHolidayRows(res?.data || [], classes);
+      } catch (err) { console.error("Monthly holiday list fetch error:", err); return []; }
+      // ensureClasses is defined later; referenced via closure at call time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ensureSessionID]);
+
+    /* ─── Report data fetchers ───────────────────────────────────────────────
+      Real per class+section attendance from /api/student-attendance (get).
+      Backend returns the whole class roster's records → we filter locally to
+      the class+section and the target date (daily) or month (monthly). */
+
+    // studentID → class index (roster se). Ek record ko sahi class me daalne ke liye —
+    // taake report har class ke against uska APNA P/A/L dikhaye (sab combined nahi).
+    // studentID na mile to ClassID/SectionID se fallback.
+    const makeRecordClassResolver = useCallback((classes) => {
+      const studentClassIdx = new Map();
+      classes.forEach((r, idx) => (r.students || []).forEach((st) =>
+        studentClassIdx.set(String(st.id), idx)));
+      return (rec) => {
+        const sid = String(rec.StudentID ?? rec.studentID ?? rec.studentId ?? "");
+        let idx = studentClassIdx.get(sid);
+        if (idx == null) {
+          idx = classes.findIndex((r) =>
+            String(rec.ClassID ?? rec.classID) === String(r.classID) &&
+            String(rec.SectionID ?? rec.sectionID) === String(r.sectionID));
+        }
+        return (idx == null || idx < 0) ? -1 : idx;
+      };
+    }, []);
+
+    // Daily report: ek call → us date ke SAARE records; phir studentID/class se
+    // har record ko uski class me daal kar per-class P/A/L nikalte hain.
+    const fetchDailyReportRows = useCallback(async (dateStr) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes = studentData || [];
+      if (!classes.length) return [];
+
+      // Har class+section ke against alag call — taake "All Classes" report me
+      // sab classes/sections ke records aayen (sirf pehli class par bharosa nahi).
+      return Promise.all(classes.map(async (r) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: r.classID, sectionID: r.sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          });
+          // Sirf IS class+section aur SELECTED date ke records (backend sab de
+          // deta hai to bhi cross-class data mix na ho).
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr &&
+            String(rec.ClassID ?? rec.classID) === String(r.classID) &&
+            String(rec.SectionID ?? rec.sectionID) === String(r.sectionID)
+          );
+        } catch (err) { console.error("Daily report fetch error:", err); }
+
+        // Per-student record map (studentID → status + in/out + platform) — daily
+        // report mein har student ki row + In/Out Time dikhane ke liye.
+        const byStudent = {};
+        const counts = emptyCounts();
+        let marked = false, platform = "";
+        recs.forEach((rec) => {
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          const st = ST_CODE_TO_STATUS[raw] || raw;
+          const sid = rec.StudentID ?? rec.studentID ?? rec.studentId;
+          if (sid != null && st) {
+            byStudent[sid] = {
+              status: st,
+              inTime:  timeVal(rec.CheckInTime  ?? rec.checkInTime),
+              outTime: timeVal(rec.CheckOutTime ?? rec.checkOutTime),
+              platform: String(rec.Platform ?? rec.platform ?? ""),
+            };
+          }
+          // Late / Short Leave / Holiday bhi gine jate hain (pehle chhoot jate the).
+          if (!countStatus(counts, st)) return;
+          marked = true;
+          // "Marked By" column me platform (ERP / Mobile App / Biometric …).
+          platform = String(rec.Platform ?? rec.platform ?? "") || platform;
+        });
+
+        return {
+          cls: r.cls, sec: r.sec, total: r.total,
+          ...counts, marked,
+          markedBy: platform || "—",
+          // Per-student detail (status + in/out) — report table per-student rows banata hai.
+          students: (r.students || []).map((s) => {
+            const m = byStudent[s.id];
+            return {
+              reg: s.reg, name: s.name, father: s.father,
+              status: m?.status || "", inTime: m?.inTime || "", outTime: m?.outTime || "",
+              platform: m?.platform || "",
+            };
+          }),
+        };
+      }));
+    }, [studentData, ensureSessionID]);
+
+    // Monthly report: backend har call mein sirf passed date ka data deta hai,
+    // isliye month ki har date (start→end) par API chalate hain — har class+section
+    // ke against P/A/L aggregate, distinct working-day count aur present %.
+    const fetchMonthlyReportRows = useCallback(async (year, monthIdx0) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes = studentData || [];
+      if (!classes.length) return [];
+      const mm = String(monthIdx0 + 1).padStart(2, "0");
+      const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate(); // month ki last date
+      const dates = Array.from({ length: daysInMonth }, (_, d) =>
+        `${year}-${mm}-${String(d + 1).padStart(2, "0")}`); // "2026-07-01" … "2026-07-31"
+      const resolveIdx = makeRecordClassResolver(classes);
+
+      // Working days holidays+weekly-off API se (overall — sab classes ke liye same).
+      const holidayInfo = await fetchMonthHolidayInfo(year, monthIdx0);
+
+      // Har date par ek call → us date ke saare records → studentID/class se
+      // har record ko uski class ke counter me daalte hain.
+      const agg = classes.map(() => emptyCounts());
+      await Promise.all(dates.map(async (dateStr) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: classes[0].classID, sectionID: classes[0].sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          });
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr);
+        } catch (err) { console.error("Monthly report fetch error:", err); }
+        recs.forEach((rec) => {
+          const idx = resolveIdx(rec);
+          if (idx < 0) return;
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          countStatus(agg[idx], ST_CODE_TO_STATUS[raw] || raw);
+        });
+      }));
+
+      return classes.map((r, idx) => ({
+        cls: r.cls, sec: r.sec, strength: r.total,
+        teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
+        workingDays: holidayInfo.workingDays,
+        ...agg[idx],
+        pct: attendPct(agg[idx]),
+      }));
+    }, [studentData, ensureSessionID, fetchMonthHolidayInfo, makeRecordClassResolver, teacherMap]);
+
+    // Date-range report (Class-wise / Summary): From→To ke beech har date par ek call,
+    // studentID/class se bucket → per class present/absent/leave aur present %.
+    // Working days = range me jitni dates par attendance mark hui (distinct).
+    const fetchRangeReportRows = useCallback(async (fromDate, toDate) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes = studentData || [];
+      if (!classes.length || !fromDate || !toDate) return [];
+      const resolveIdx = makeRecordClassResolver(classes);
+
+      const dates = [];
+      const end = new Date(`${toDate}T00:00:00`);
+      for (let d = new Date(`${fromDate}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+
+      const agg = classes.map(() => emptyCounts());
+      const markedDates = new Set();
+      await Promise.all(dates.map(async (dateStr) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: classes[0].classID, sectionID: classes[0].sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          });
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr);
+        } catch (err) { console.error("Range report fetch error:", err); }
+        if (recs.length) markedDates.add(dateStr);
+        recs.forEach((rec) => {
+          const idx = resolveIdx(rec);
+          if (idx < 0) return;
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          countStatus(agg[idx], ST_CODE_TO_STATUS[raw] || raw);
+        });
+      }));
+
+      return classes.map((r, idx) => ({
+        cls: r.cls, sec: r.sec, strength: r.total,
+        teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
+        workingDays: markedDates.size,
+        ...agg[idx],
+        pct: attendPct(agg[idx]),
+      }));
+    }, [studentData, ensureSessionID, makeRecordClassResolver, teacherMap]);
+
+    // Branch class+section list — cached; used to turn ClassID/SectionID into names.
+    // One shared request: holidays load, the Add/Edit Holiday modal and the
+    // Yearly report all reuse it (concurrent callers get the same promise).
+    const ensureClasses = useCallback(() => once("classes", async () => {
+      const list = await attendanceService.getClassesForBranch();
+      setClassList(list);
+      return list;
+    }).catch((err) => {
+      console.error("Could not load classes:", err);
+      return [];
+    }), [once]);
+
+    // Months whose holidays are already loaded this visit (by the tab's
+    // initial load or an expand) → expanding them again needs no request.
+    const holidayMonthsLoadedRef = useRef(new Set());
+
+    // Month expand → fetch that month's holidays via action:"get" — only if that
+    // month isn't loaded yet. `force` (after an insert) always refetches it.
+    const loadMonthHolidays = useCallback(async (monthIdx, { force = false } = {}) => {
+      const branchID   = Number(sessionStorage.getItem("branchID"));
+      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const sessionID  = await ensureSessionID();
+         if (!sessionID) return;
+      if (!force) {
+        // Initial all-months load still running → wait for it instead of
+        // firing a duplicate GET for the same month.
+        const pending = onceRef.current[`holidays:${sessionID}`];
+        if (pending) { try { await pending; } catch { /* fall through to own GET */ } }
+        if (holidayMonthsLoadedRef.current.has(monthIdx)) return;
+      }
+      const classes    = await ensureClasses();
+      setLoadingMonth(monthIdx);
+      try {
+        const res = await attendanceService.monthlySetup({
+          id: 0,
+          branchID,
+          sessionID,
+          holidayTitle: "",
+          description: "",
+          dateFrom: "",
+          dateTo: "",
+          month: monthIdx + 1, // 1-based month
+          action: "get",
+          createdBy: employeeID,
+          modifiedBy: employeeID,
+          classIDs: [],
+        });
+        const grouped = groupHolidayRows(res?.data || [], classes).filter((h) => h.month === monthIdx);
+        setHolidays((prev) => [...prev.filter((h) => h.month !== monthIdx), ...grouped]);
+        holidayMonthsLoadedRef.current.add(monthIdx);
+      } catch (err) {
+        console.error("Error loading holidays:", err);
+        toast("Failed to load holidays for this month.", "error");
+      } finally {
+        setLoadingMonth(null);
+      }
+    }, [ensureSessionID, ensureClasses, toast]);
+
+    // Attendance Setup tab active hote hi saara data API se laao (action:"get").
+    // UI kahi change nahi — bas har month ka data fetch karke populate hota hai.
+    // ONCE per module visit (per session): switching tabs and coming back reuses
+    // what is loaded — add / edit / delete keep the list in sync locally.
+    const loadAllHolidays = useCallback(async () => {
+      const sessionID  = await ensureSessionID();
+      if (!sessionID) return; // session nahi → monthly-setup API hit nahi
+      return once(`holidays:${sessionID}`, async () => {
+        const branchID   = Number(sessionStorage.getItem("branchID"));
+        const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+        setHolidaysLoading(true);
+        const classes    = await ensureClasses();
+        try {
+          const results = await Promise.all(
+            MONTHS.map((_, i) =>
+              attendanceService.monthlySetup({
+                id: 0, branchID, sessionID,
+                holidayTitle: "", description: "", dateFrom: "", dateTo: "",
+                month: i + 1, action: "get",
+                createdBy: employeeID, modifiedBy: employeeID, classIDs: [],
+              }).then((res) => { holidayMonthsLoadedRef.current.add(i); return res?.data || []; })
+                .catch(() => []) // failed month stays "not loaded" → its expand retries
+            )
+          );
+          // Flat rows → grouped by holiday ID (each holiday once, all classes inside).
+               setHolidays(groupHolidayRows(results.flat(), classes));
+        } catch (err) {
+          console.error("Error loading holidays:", err);
+        } finally {
+          setHolidaysLoading(false);
+        }
+      }).catch(() => {});
+    }, [ensureSessionID, ensureClasses, once]);
+// Attendance component mein loadStaffAttendance function add karo
+// Attendance component mein - loadStaffAttendance ko replace karo
+
+// Attendance component mein - loadStaffAttendance function
+
+const loadStaffAttendance = useCallback(async (dateStr) => {
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  const attendanceDate = dateStr || new Date().toISOString().slice(0, 10);
+
+  try {
+    const payload = {
+      id: 0,
+      staffID: 0,
+      branchID: branchID,
+      attendanceDate: attendanceDate,
+      checkInTime: "",
+      checkOutTime: "",
+      status: "",
+      platform: "",
+      isNotificationGen: false,
+      action: "get",
+      createdBy: 0,
+      modifiedBy: 0,
+    };
+
+    const response = await attendanceService.staffAttendance(payload);
+    const data = response?.data || [];
+
+    console.log("Staff attendance fetched:", data);
+
+    // Update staffData with fetched attendance. API PascalCase deta hai
+    // (StaffID/Status/CheckInTime…) → dono casings tolerate karo.
+    setStaffData((prev) => prev.map((s) => {
+      const found = data.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+      if (found) {
+        return {
+          ...s,
+          // status:  (found.Status ?? found.status) || "present",
+                    status:  (() => { const raw = String((found.Status ?? found.status) || "present").trim().toLowerCase(); return ST_CODE_TO_STATUS[raw] || raw; })(),
+          inTime:  timeVal(found.CheckInTime ?? found.checkInTime),
+          outTime: timeVal(found.CheckOutTime ?? found.checkOutTime),
+          from:    (found.Platform ?? found.platform) || "ERP",
+          marked: true,
+          markedBy: "Admin",
+          markedTime: (found.AttendanceDate ?? found.attendanceDate) || "",
+          attendanceID: (found.ID ?? found.id) || 0, // update ke liye ID
+        };
+      }
+      return { ...s, marked: false, status: "", inTime: "", outTime: "", from: "", attendanceID: 0 };
+    }));
+
+    // ✅ Check if today is marked
+    if (dateStr === new Date().toISOString().slice(0, 10)) {
+      setStaffTodayMarked(data.length > 0);
+    }
+
+    return data;
+  } catch (error) {
+    console.error("Error loading staff attendance:", error);
+    return null; // failed (callers ignore the value; the today-cache retries)
+  }
+}, []);
+
+/* Today's staff attendance, cached per day: opening the Staff tab, re-opening
+   it, expanding a staff row and the Reports → Individual list share ONE GET.
+   Saving / past-date edits still refresh it explicitly via loadStaffAttendance. */
+const staffTodayRef = useRef(null); // { date, promise }
+const ensureTodayStaff = useCallback(() => {
+  const today = new Date().toISOString().slice(0, 10);
+  const c = staffTodayRef.current;
+  if (c && c.date === today) return c.promise;
+  const promise = loadStaffAttendance(today).then((data) => {
+    if (data == null && staffTodayRef.current?.promise === promise) staffTodayRef.current = null;
+    return data;
+  });
+  staffTodayRef.current = { date: today, promise };
+  return promise;
+}, [loadStaffAttendance]);
+
+// Staff calendar par koi date select → us date ki staff attendance (view-only,
+// global staffData ko touch kiye bagair — marking hamesha "today" par safe rahe).
+// A newer date click aborts the previous one; a stale response is discarded.
+const [staffDateAttendance, setStaffDateAttendance] = useState(null); // { key, rows, loading }
+const staffDateAbortRef = useRef(null);
+const loadStaffDateAttendance = useCallback(async (dateStr) => {
+  staffDateAbortRef.current?.abort();
+  const ctrl = new AbortController();
+  staffDateAbortRef.current = ctrl;
+  setStaffDateAttendance({ key: dateStr, rows: [], loading: true });
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  let recs = [];
+  try {
+    const res = await attendanceService.staffAttendance({
+      id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+      checkInTime: "", checkOutTime: "", status: "", platform: "",
+      isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+    }, { signal: ctrl.signal });
+    recs = res?.data || [];
+  } catch (err) {
+    if (err?.name !== "AbortError") console.error("Error loading staff date attendance:", err);
+  }
+  if (ctrl.signal.aborted) return; // superseded by a newer date selection
+  const rows = staffData.map((s) => {
+    const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+    return {
+      name: s.name, empId: s.empId, desig: s.desig,
+      marked: !!found,
+      // status:  found ? ((found.Status ?? found.status) || "") : "",
+            status:  found ? (() => { const raw = String((found.Status ?? found.status) || "").trim().toLowerCase(); return ST_CODE_TO_STATUS[raw] || raw; })() : "",
+      inTime:  found ? timeVal(found.CheckInTime ?? found.checkInTime) : "",
+      outTime: found ? timeVal(found.CheckOutTime ?? found.checkOutTime) : "",
+      from:    found ? ((found.Platform ?? found.platform) || "") : "",
+      markedBy: found ? "Admin" : "",
+    };
+  });
+  setStaffDateAttendance({ key: dateStr, rows, loading: false });
+}, [staffData]);
+
+/* ─── Staff report data fetchers ───────────────────────────────────────────
+  Ek staff-attendance (get) call ek date ke SAARE staff ka record deta hai
+  (staffID:0). Daily = us date ke against, Monthly = month ki har date par. */
+
+// Daily: selected date ke against har employee ki status/in-out.
+const fetchDailyStaffReportRows = useCallback(async (dateStr) => {
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  let recs = [];
+  try {
+    const res = await attendanceService.staffAttendance({
+      id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+      checkInTime: "", checkOutTime: "", status: "", platform: "",
+      isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+    });
+    recs = (res?.data || []).filter((r) =>
+      String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr);
+  } catch (err) { console.error("Daily staff report fetch error:", err); }
+  return (staffData || []).map((s) => {
+    const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+    return {
+      empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
+      marked: !!found,
+      // status:  found ? String((found.Status ?? found.status) || "").toLowerCase() : "",
+            status:  found ? (() => { const raw = String((found.Status ?? found.status) || "").trim().toLowerCase(); return ST_CODE_TO_STATUS[raw] || raw; })() : "",
+      inTime:  found ? timeVal(found.CheckInTime ?? found.checkInTime) : "",
+      outTime: found ? timeVal(found.CheckOutTime ?? found.checkOutTime) : "",
+      from:    found ? ((found.Platform ?? found.platform) || "") : "",
+    };
+  });
+}, [staffData]);
+
+// Monthly: month ki har date (start→end) par call → per-employee aggregate
+// (present/absent/leave, distinct working days, present %).
+const fetchMonthlyStaffReportRows = useCallback(async (year, monthIdx0) => {
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  const mm = String(monthIdx0 + 1).padStart(2, "0");
+  const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, d) =>
+    `${year}-${mm}-${String(d + 1).padStart(2, "0")}`);
+
+  // Working days = month ke din − (weekly-off ∪ saare holidays). Overall — sab ke liye same.
+  const holidayInfo = await fetchMonthHolidayInfo(year, monthIdx0);
+  const workingDays = holidayInfo.workingDays;
+
+  // Har date par ek call → us date ke saare staff records.
+  const perDate = await Promise.all(dates.map(async (dateStr) => {
+    try {
+      const res = await attendanceService.staffAttendance({
+        id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+        checkInTime: "", checkOutTime: "", status: "", platform: "",
+        isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+      });
+      return { dateStr, recs: (res?.data || []).filter((r) =>
+        String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr) };
+    } catch (err) { console.error("Monthly staff report fetch error:", err); return { dateStr, recs: [] }; }
+  }));
+
+ // NAYA — dayMarks add karo
+return (staffData || []).map((s) => {
+  const counts = emptyCounts();
+  const dayMarks = {}; // day number → present | absent | leave | late | short_leave | holiday
+  perDate.forEach(({ dateStr, recs }) => {
+    const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+    if (!found) return;
+    const raw = String((found.Status ?? found.status) || "").toLowerCase();
+    const st = ST_CODE_TO_STATUS[raw] || raw;
+    if (countStatus(counts, st)) dayMarks[Number(dateStr.split("-")[2])] = st;
+  });
+  return {
+    empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
+    workingDays, ...counts, dayMarks,
+    pct: attendPct(counts),
+  };
+});
+}, [staffData, fetchMonthHolidayInfo]);
+/* ── Tab-scoped, on-demand loading ──────────────────────────────────────────
+   Each tab fetches ONLY what it shows, the first time it is opened; the once()
+   cache makes re-opening a tab (or StrictMode's double effect) free.
+     every tab        → attendance setup rules (trackOut columns, mark modals)
+     Attendance Setup → weekly off, previous-days flag, holidays (+ profile, in its card)
+     Student          → roster, employees (class teacher), weekly off, previous-days, today's marks
+     Staff            → employees, weekly off, previous-days, today's staff attendance
+     Reports          → roster + employees (filters / search); today's marks &
+                        staff status only when the Individual sub-tab is opened;
+                        header / weekly-off / sessions only when a report is generated */
+useEffect(() => {
+  if (!visibleTab) return;
+  ensureAttendanceSetup();
+  if (visibleTab === "holidays" || visibleTab === "student" || visibleTab === "staff") {
+    ensureWeeklyOff();
+    ensurePrevDays();
+  }
+  if (visibleTab === "student" || visibleTab === "reports") ensureStudentData();
+  if (visibleTab === "student" || visibleTab === "staff" || visibleTab === "reports") ensureEmployees();
+}, [visibleTab, ensureAttendanceSetup, ensureWeeklyOff, ensurePrevDays, ensureStudentData, ensureEmployees]);
+
+// Reports → Individual sub-tab opened (it shows today's class % + staff status).
+const [rptIndividualOpen, setRptIndividualOpen] = useState(false);
+const onIndividualOpen = useCallback(() => setRptIndividualOpen(true), []);
+const needTodayStaff = visibleTab === "staff"   || (visibleTab === "reports" && rptIndividualOpen);
+const needTodayMarks = visibleTab === "student" || (visibleTab === "reports" && rptIndividualOpen);
+
+useEffect(() => {
+  // Staff tab (or Reports → Individual) + employees loaded → today's attendance (cached per day).
+  if (needTodayStaff && staffData.length) ensureTodayStaff();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [needTodayStaff, staffData.length]);
+    useEffect(() => {
+        if (visibleTab === "holidays" && activeSessionID) loadAllHolidays();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visibleTab, activeSessionID]);
+    // Student tab (or Reports → Individual) open (aur data ready) → har class ki
+    // aaj ki attendance — already-loaded classes cache se, dobara GET nahi.
+    useEffect(() => {
+       if (needTodayMarks && studentData.length && activeSessionID) loadAllStudentMarks();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [needTodayMarks, studentData.length, activeSessionID]);
+
+    // Leaving the module → abort any still-running calendar-date requests.
+    useEffect(() => () => {
+      dateAbortRef.current?.abort();
+      staffDateAbortRef.current?.abort();
+    }, []);
+
+    // Yearly Holiday report picker open → classes list ready karo (class filter ke liye).
+    // Session list only as a fallback when the active session's name is unknown
+    // (the picker then lists the branch sessions instead).
+    useEffect(() => {
+      if (reportPicker?.context === "holidayYearly") {
+        ensureClasses();
+        if (!activeSessionName) ensureReportSessions();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reportPicker]);
+
+    const requestDeleteHoliday = useCallback((id) => { if (blockIfReadOnly()) return; setDelHolId(id); }, [blockIfReadOnly]);
+    const confirmDeleteHoliday = useCallback(async () => {
+      if (blockIfReadOnly()) { setDelHolId(null); return; }
+      const h = holidays.find((x) => x.id === delHolId);
+      const branchID   = Number(sessionStorage.getItem("branchID"));
+      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const sessionID  = await ensureSessionID();
+      try {
+        await attendanceService.monthlySetup({
+          id: delHolId || 0,
+          branchID,
+          sessionID,
+          holidayTitle: h?.title || "",
+          description: h?.desc || "",
+          dateFrom: h?.from || "",
+          dateTo: h?.to || "",
+          month: (h?.month ?? 0) + 1,
+          action: "delete",
+          createdBy: employeeID,
+          modifiedBy: employeeID,
+          classIDs: (h?.selectedClasses || []).map((c) => ({ classID: c.classID, sectionID: c.sectionID })),
+        });
+      } catch (err) {
+        console.error("Error deleting holiday:", err);
+        toast("Failed to delete holiday. Please try again.", "error");
+        setDelHolId(null);
+        return;
+      }
+      setHolidays((prev) => prev.filter((x) => x.id !== delHolId));
+      setDelHolId(null);
+      toast("Holiday deleted", "success");
+    }, [delHolId, holidays, ensureSessionID, toast, blockIfReadOnly]);
+
+    const openHolModal = useCallback((id, monthIdx) => {
+      if (blockIfReadOnly()) return;
+      setHolModal({ id, monthIdx });
+    }, [blockIfReadOnly]);
+    // YEH CODE Attendance component ke ANDAR add karo (around line 2530)
+// Attendance component mein onSaveWeeklyOff ko update karo
+/* Attendance Setup — each card has its own Save & Update button and persists
+   ONLY its own backend endpoint (staff rules / student rules / geofence), so
+   saving one never rewrites the other two. Each handler validates just its own
+   fields, then merges the saved draft back into the shared setup so the screen
+   and the reports stay in sync. All three are always-on (their enable/disable
+   toggles were removed); the section forces the enabled flag in the draft. */
+const onSaveStaffRules = useCallback(async (draft) => {
+  if (blockIfReadOnly()) return {};
+  /* Only the staff time-rule fields gate this — geofence is a separate card. */
+  const errors = validateAttendanceSetup({ ...draft, geofenceEnabled: false });
+  if (Object.keys(errors).length) { toast("Fix the highlighted fields before saving.", "error"); return errors; }
+  setSavingSetup(true);
+  try {
+    await attendanceService.saveStaffAttendanceRules(draft);
+    setAttendanceSetup((prev) => ({ ...prev, ...draft }));
+    toast("Staff attendance rules saved", "success");
+  } catch {
+    toast("Could not save staff attendance rules. Please try again.", "error");
+  } finally {
+    setSavingSetup(false);
+  }
+  return {};
+}, [blockIfReadOnly, toast, setAttendanceSetup]);
+
+const onSaveStudentRules = useCallback(async (draft) => {
+  if (blockIfReadOnly()) return {};
+  /* The Students card validates its own (student*-prefixed) slice before
+     calling this, so there is nothing extra to re-check here. */
+  setSavingSetup(true);
+  try {
+    await attendanceService.saveStudentAttendanceRules(draft);
+    setAttendanceSetup((prev) => ({ ...prev, ...draft }));
+    toast("Student attendance rules saved", "success");
+  } catch {
+    toast("Could not save student attendance rules. Please try again.", "error");
+  } finally {
+    setSavingSetup(false);
+  }
+  return {};
+}, [blockIfReadOnly, toast, setAttendanceSetup]);
+
+const onSaveGeofence = useCallback(async (draft) => {
+  if (blockIfReadOnly()) return {};
+  /* Geo-fence is always on now — a usable location + radius is required. Only
+     the geofence fields block this save, not the staff/student time rules. */
+  const errors = validateAttendanceSetup({ ...draft, geofenceEnabled: true });
+  const GEO_KEYS = ["latitude", "longitude", "geofenceRadiusMeters", "maxAccuracyMeters"];
+  const geoErrors = Object.fromEntries(Object.entries(errors).filter(([k]) => GEO_KEYS.includes(k)));
+  if (Object.keys(geoErrors).length) { toast("Fix the highlighted fields before saving.", "error"); return geoErrors; }
+  setSavingSetup(true);
+  try {
+    await attendanceService.saveGeofenceAttendance(draft);
+    setAttendanceSetup((prev) => ({ ...prev, ...draft }));
+    toast("Geo-fence settings saved", "success");
+  } catch {
+    toast("Could not save geo-fence settings. Please try again.", "error");
+  } finally {
+    setSavingSetup(false);
+  }
+  return {};
+}, [blockIfReadOnly, toast, setAttendanceSetup]);
+
+const onSaveWeeklyOff = useCallback(async () => {
+  if (blockIfReadOnly()) return;
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  const employeeID = Number(sessionStorage.getItem("employee_ID"));
+
+  console.log("Weekly Off Days to save:", weeklyOff);
+
+  // Saved days + their IDs: reuse the IDs from the last weekly-off GET (tab load
+  // or the refresh after the previous save) — no extra GET on every click. Only
+  // when they're unknown (that GET failed) fetch them now. Agar ye GET fail ho
+  // (500 etc.) to bhi SAVE ko mat roko — savedDaysMap khali maan kar save kar do.
+  let savedDaysMap = weeklyOffIdsRef.current ? { ...weeklyOffIdsRef.current } : null;
+  if (!savedDaysMap) {
+    try {
+      const currentResponse = await attendanceService.getWeeklyOffSetup();
+      savedDaysMap = parseWeeklyOff(currentResponse).ids;
+    } catch (getErr) {
+      console.warn("getWeeklyOffSetup (initial) failed — empty saved state se aage barhte hain:", getErr);
+      savedDaysMap = {};
+    }
+  }
+
+  try {
+
+    console.log("Saved days map:", savedDaysMap);
+    console.log("Selected days (weeklyOff):", weeklyOff);
+
+    const savePromises = [];
+
+    // 1. For days that are SELECTED but NOT in savedDaysMap → SAVE (create)
+    for (const dayIndex of weeklyOff) {
+      if (!savedDaysMap[dayIndex]) {
+        const weekDayName = DAYS_F[dayIndex];
+        const payload = {
+          id: 0,
+          weekDay: weekDayName,
+          branchID: branchID,
+          holiday: true,
+          action: "save",
+          createdBy: employeeID,
+          createdAt: new Date().toISOString(),
+          modifiedBy: employeeID,
+          modifiedAt: new Date().toISOString(),
+        };
+        console.log(`SAVING new day: ${weekDayName}`, payload);
+        savePromises.push(attendanceService.saveWeeklyOff(payload));
+      }
+    }
+
+    // 2. For days that are NOT SELECTED but in savedDaysMap → DELETE
+    for (const [dayIndex, id] of Object.entries(savedDaysMap)) {
+      const dayIdx = parseInt(dayIndex);
+      if (!weeklyOff.includes(dayIdx)) {
+        const weekDayName = DAYS_F[dayIdx];
+        const payload = {
+          id: id, // ✅ USE THE ID FROM API RESPONSE
+          weekDay: weekDayName,
+          branchID: branchID,
+          holiday: false,
+          action: "delete",
+          createdBy: employeeID,
+          createdAt: new Date().toISOString(),
+          modifiedBy: employeeID,
+          modifiedAt: new Date().toISOString(),
+        };
+        console.log(`DELETING day: ${weekDayName} (ID: ${id})`, payload);
+        savePromises.push(attendanceService.saveWeeklyOff(payload));
+      }
+    }
+
+    if (savePromises.length === 0) {
+      toast("No changes to save", "info");
+      return;
+    }
+
+    // Server rows changed → the cached IDs are stale until the refresh succeeds.
+    weeklyOffIdsRef.current = null;
+    const results = await Promise.all(savePromises);
+    console.log("All operations completed:", results);
+
+    // Refresh — agar ye GET fail ho to bhi save successful hi maana jaye (local state rahe).
+    // It also stores the new row IDs for the next Save & Update.
+    try {
+      const refreshedResponse = await attendanceService.getWeeklyOffSetup();
+      const { days, ids } = parseWeeklyOff(refreshedResponse);
+      weeklyOffIdsRef.current = ids;
+      weeklyOffRef.current = days;
+      setWeeklyOff(days);
+    } catch (refreshErr) {
+      console.warn("getWeeklyOffSetup (refresh) failed — local state rakhte hain:", refreshErr);
+    }
+
+    toast(`Weekly off days updated successfully`, "success");
+  } catch (err) {
+    console.error("Error saving weekly off days:", err);
+    toast("Failed to save weekly off days. Please try again.", "error");
+  }
+}, [weeklyOff, toast, setWeeklyOff, blockIfReadOnly]);
+const saveHoliday = useCallback(async (payload) => {
+      if (blockIfReadOnly()) return;
+      const branchID   = Number(sessionStorage.getItem("branchID"));
+      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const selected   = payload.selectedClasses || [];
+      // Active session ID — same active-session API examination uses.
+      const sessionID  = await ensureSessionID();
+
+      const apiPayload = {
+        id: payload.id || 0,
+        branchID,
+        sessionID,
+        holidayTitle: payload.title,
+        description: payload.desc,
+        dateFrom: payload.from,
+        dateTo: payload.to,
+        month: payload.month + 1, // API expects 1-based month (Jan = 1)
+        action: payload.id ? "update" : "insert",
+        createdBy: employeeID,
+        modifiedBy: employeeID,
+        classIDs: selected.map((c) => ({ classID: c.classID, sectionID: c.sectionID })),
+      };
+
+      try {
+        await attendanceService.monthlySetup(apiPayload);
+      } catch (err) {
+        console.error("Error saving holiday:", err);
+        toast("Failed to save holiday. Please try again.", "error");
+        return;
+      }
+
+      // Local display copy — keep labels for the pills + selection for re-edit.
+      const display = {
+        title: payload.title,
+        desc: payload.desc,
+        from: payload.from,
+        to: payload.to,
+        month: payload.month, // internal list is 0-based
+        classes: selected.map((c) => c.label),
+        selectedClasses: selected,
+      };
+
+      setHolidays((prev) => {
+        if (payload.id) return prev.map((h) => h.id === payload.id ? { ...h, ...display } : h);
+        const nextId = (prev.reduce((m, h) => Math.max(m, h.id), 0) || 0) + 1;
+        return [...prev, { ...display, id: nextId }];
+      });
+      toast(payload.id ? "Holiday updated" : "Holiday added", "success");
+      setHolModal(null);
+      // New holiday → re-read ONLY its month so the row carries the real server ID
+      // (edit / delete need it). Previously a later month expand re-fetched it.
+      if (!payload.id) loadMonthHolidays(payload.month, { force: true });
+    }, [toast, setHolidays, ensureSessionID, blockIfReadOnly, loadMonthHolidays]);
+
+    const editingHoliday  = holModal?.id != null ? holidays.find((h) => h.id === holModal.id) : null;
+    const deletingHoliday = delHolId    != null ? holidays.find((h) => h.id === delHolId)    : null;
+    const dayPendingOff   = dayToggleIdx != null ? !weeklyOff.includes(dayToggleIdx) : false;
+
+    return (
+      <div style={{ fontFamily: T.font, color: T.textPrimary, background: T.bgBase, minHeight: "100%", padding: "20px 18px" }}>
+        <style>{ATT_CSS}</style>
+        <ToastStack toasts={toasts} />
+
+        {/* Page header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 46, height: 46, borderRadius: 13, background: `linear-gradient(135deg,${T.brandPrimary},${T.brandMid})`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, boxShadow: T.shadowSm }}>
+              <i className="fa-solid fa-calendar-check"></i>
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>Attendance</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>Manage holidays, student &amp; staff attendance, and generate reports</div>
+            </div>
+          </div>
+          <Tooltip text="Play a short tutorial for the Attendance module">
+            <button
+              className="tutorial-btn page-tutorial-btn"
+              onClick={() => setTutorialOpen(true)}
+            >
+              <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
+              <span className="tutorial-label">Tutorial</span>
+            </button>
+          </Tooltip>
+        </div>
+
+        {/* View-only banner — Attendance module OFF / non-current session */}
+        {isOtherSession && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", marginBottom: 16, borderRadius: T.radiusMd, background: "rgba(217,119,6,.08)", border: "1.5px solid rgba(217,119,6,.35)", color: "#92400E", fontSize: 13, fontWeight: 600 }}>
+            <i className="fa-solid fa-lock" style={{ fontSize: 14 }}></i>
+            <span>This module is view-only for the selected session. Marking, saving, and edits are disabled.</span>
+          </div>
+        )}
+
+        {/* Tab bar */}
+        <div className="att-tabs-row">
+          {TABS.map((tb) => (
+            <button
+              key={tb.id}
+              className={`att-tab${tab === tb.id ? " active" : ""}`}
+              onClick={() => setTab(tb.id)}
+            >
+              <i className={`fa-solid ${tb.icon}`}></i> {tb.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab panels */}
+        {tab === "holidays" && (
+          <HolidaysTab
+            weeklyOff={weeklyOff}
+            requestToggleDay={requestToggleDay}
+            holidays={holidays}
+            openHolModal={openHolModal}
+            requestDeleteHoliday={requestDeleteHoliday}
+            openReportPicker={openReportPicker}
+            toast={toast}
+                          onSaveWeeklyOff={onSaveWeeklyOff}
+            weeklyOffLoading={weeklyOffLoading}
+            sessionName={activeSessionName}
+            holidaysLoading={sessionLoading || holidaysLoading}
+            onExpandMonth={loadMonthHolidays}
+            loadingMonth={loadingMonth}
+            isOtherSession={isOtherSession}
+            prevDaysAttendance={prevDaysAttendance}
+            onTogglePrevDays={togglePrevDaysAttendance}
+            attendanceSetup={attendanceSetup}
+            onSaveStaffRules={onSaveStaffRules}
+            onSaveStudentRules={onSaveStudentRules}
+            onSaveGeofence={onSaveGeofence}
+            savingSetup={savingSetup}
+            loadProfile={loadProfile}
+          />
+        )}
+        {tab === "student" && (
+          <StudentTab
+            weeklyOff={weeklyOff}
+            holidays={holidays}
+            studentData={studentData}
+            openMarkSt={openMarkSt}
+            openReportPicker={openReportPicker}
+            toast={toast}
+            onExpandClass={(idx, date) => (date ? loadStudentMarks(idx, date) : ensureTodayMarks(idx))}
+            teacherMap={teacherMap}
+                onSelectDate={loadDateAttendance}
+            dateAttendance={dateAttendance}
+             studentLoading={studentLoading || sessionLoading}
+            isOtherSession={isOtherSession}
+            prevDaysAttendance={prevDaysAttendance}
+            trackOut={attendanceSetup.studentTrackingMode !== "in_only"}
+          />
+        )}
+        {tab === "staff" && (
+          <StaffTab
+            weeklyOff={weeklyOff}
+            holidays={holidays}
+            staffData={staffData}
+            staffTodayMarked={staffTodayMarked}
+            openMarkSf={openMarkSf}
+            openReportPicker={openReportPicker}
+            toast={toast}
+            onExpandStaff={ensureTodayStaff}
+                 onSelectDate={loadStaffDateAttendance}
+            staffDateAttendance={staffDateAttendance}
+            staffLoading={staffLoading}
+            isOtherSession={isOtherSession}
+            prevDaysAttendance={prevDaysAttendance}
+            trackOut={attendanceSetup.staffTrackingMode !== "in_only"}
+          />
+        )}
+        {tab === "reports" && (
+          <ReportsTab
+            staffData={staffData}
+            studentData={studentData}
+            teacherMap={teacherMap}
+            runGeneralReport={runGeneralReport}
+            openIndivReport={openIndivReport}
+            toast={toast}
+            classOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
+            sessionName={activeSessionName}
+            staffTrackOut={attendanceSetup.staffTrackingMode !== "in_only"}
+            onIndividualOpen={onIndividualOpen}
+          />
+        )}
+
+        {/* Modals (Tab 1) */}
+        {holModal && (
+          <HolidayModal
+            initial={editingHoliday}
+            defaultMonth={holModal.monthIdx}
+            onClose={() => setHolModal(null)}
+            onSave={saveHoliday}
+            loadClasses={ensureClasses}
+          />
+        )}
+        {deletingHoliday && (
+          <ConfirmDialog
+            title="Delete Holiday?"
+            message={<>Are you sure you want to delete <strong>"{deletingHoliday.title}"</strong>? This action cannot be undone.</>}
+            hint="This will remove the holiday from all attendance calendars."
+            confirmLabel="Delete"
+            confirmIcon="fa-solid fa-trash-can"
+            confirmBg="linear-gradient(135deg,#DC2626,#B91C1C)"
+            onClose={() => setDelHolId(null)}
+            onConfirm={confirmDeleteHoliday}
+          />
+        )}
+        {dayToggleIdx != null && (
+          <ConfirmDialog
+            iconClass={dayPendingOff ? "fa-solid fa-calendar-xmark" : "fa-solid fa-calendar-check"}
+            iconBg={dayPendingOff ? "rgba(148,163,184,.15)" : "rgba(22,163,74,.1)"}
+            iconColor={dayPendingOff ? "#64748B" : "#16A34A"}
+            title={dayPendingOff ? "Mark as Weekly Off?" : "Mark as Working Day?"}
+            message={<>Are you sure you want to mark <strong>{DAYS_F[dayToggleIdx]}</strong> as a {dayPendingOff ? "weekly off day" : "working day"}?</>}
+            hintIcon="fa-solid fa-circle-info"
+            hintBg="rgba(30,64,175,.06)"
+            hintBorder="rgba(30,64,175,.2)"
+            hintColor="#1E40AF"
+            hint={dayPendingOff
+              ? "This day will appear as Off in every attendance calendar."
+              : "Attendance will be required for this day in every calendar."}
+            confirmLabel="Confirm"
+            onClose={() => setDayToggleIdx(null)}
+            onConfirm={confirmToggleDay}
+          />
+        )}
+
+        {/* Mark Student Attendance modal */}
+        {markStIdx != null && (
+          <MarkStudentModal
+            classIdx={markStIdx}
+            markDate={markStDate}
+            studentData={studentData}
+            attendanceSetup={attendanceSetup}
+            onClose={() => { setMarkStIdx(null); setMarkStDate(null); }}
+            onSaveMarks={(i, rows) => saveStudentMarks(i, rows, markStDate)}
+            onLoadMarks={(i) => loadStudentMarks(i, markStDate)}
+          />
+        )}
+
+        {/* Mark Staff Attendance modal */}
+        {markSfOpen && (
+          <MarkStaffModal
+            staffData={staffData}
+            markDate={markSfDate}
+            attendanceSetup={attendanceSetup}
+            isUpdate={markSfDate ? staffData.some((s) => s.marked) : staffTodayMarked}
+            onClose={() => {
+              setMarkSfOpen(false);
+              // Restore the staff list to today after editing a past date.
+              if (markSfDate) { const t = new Date().toISOString().slice(0, 10); loadStaffAttendance(t); }
+              setMarkSfDate(null);
+            }}
+            onSave={(rows) => saveMarkSf(rows, markSfDate)}
+          />
+        )}
+
+        {/* Individual Report date-picker modal */}
+        {indivTarget && (
+          <IndividualReportModal
+            target={indivTarget}
+            onClose={() => setIndivTarget(null)}
+            onGenerate={runIndivReport}
+          />
+        )}
+
+        {/* Report picker modal */}
+        <ReportPickerModal
+          open={!!reportPicker}
+          title={reportPicker?.title}
+          context={reportPicker?.context}
+          defaultYear={reportPicker?.defaultYear || activeSessionName}
+          defaultMonth={reportPicker?.defaultMonth}
+          defaultDate={reportPicker?.defaultDate}
+          forClass={reportPicker?.forClass}
+          forStaff={reportPicker?.forStaff}
+          sessionOpts={activeSessionName ? [activeSessionName] : reportSessions.map((s) => s.SessionName)}
+          holidayClassOpts={["All Classes", ...classList.map((c) => c.label)]}
+          studentClassOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
+          studentSectionOpts={["All Sections", ...Array.from(new Set(studentData.map((r) => r.sec)))]}
+          staffDeptOpts={["All Departments", ...Array.from(new Set(staffData.map((s) => s.dept).filter((d) => d && d !== "—")))]}
+          onClose={() => setReportPicker(null)}
+          onGenerate={generateReport}
+        />
+
+        {/* Report preview overlay */}
+        <ReportPreviewOverlay
+          open={!!reportPreview}
+          title={reportPreview?.title || ""}
+          html={reportPreview?.html || ""}
+          onClose={() => setReportPreview(null)}
+        />
+
+        <TutorialModal
+          open={tutorialOpen}
+          moduleKey="attendance"
+          onClose={() => setTutorialOpen(false)}
+          toast={toast}
+        />
+      </div>
+    );
+  }
+
+  /* (inline style helpers removed — Reports tab now uses att-* CSS classes.) */
+
+  /* ─── Attendance module CSS (ported from HTML reference) ─────────────────── */
+  const ATT_CSS = `
+  .att-empty { display:flex; flex-direction:column; align-items:center; text-align:center; padding:42px 20px; gap:12px; }
+  .att-empty-ic { width:60px; height:60px; border-radius:16px; background:linear-gradient(135deg, rgba(30,58,138,.08), rgba(124,58,237,.08)); border:1.5px dashed rgba(30,58,138,.32); color:#1E3A8A; display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .att-empty-title { font-size:15px; font-weight:800; color:#0F172A; }
+  [data-theme="dark"] .att-empty-ic { background:linear-gradient(135deg, rgba(59,130,246,.10), rgba(167,139,250,.10)); border-color:rgba(59,130,246,.40); color:#93C5FD; }
+  [data-theme="dark"] .att-empty-title { color:var(--text-primary); }
+  .att-tabs-row { display:flex;gap:4px; background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:5px; margin-bottom:20px; box-shadow:0 2px 6px rgba(30,58,138,.18),0 1px 2px rgba(0,0,0,.05); overflow-x:auto; flex-wrap:nowrap; }
+  .att-tab { display:flex; align-items:center; justify-content:center; gap:7px; padding:11px 18px; border-radius:10px; border:none; background:transparent; font-family:inherit; font-size:13px; font-weight:600; color:#64748B; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); white-space:nowrap; flex:1; }
+  .att-tab:hover:not(.active) { background:#EFF6FF; color:#0F172A; }
+  .att-tab.active { background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%); color:#fff; box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2); }
+  .att-tab i { font-size:12px; }
+
+  .att-section { background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; box-shadow:0 2px 6px rgba(30,58,138,.18),0 1px 2px rgba(0,0,0,.05); overflow:hidden; margin-bottom:16px; }
+  .att-section-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid #BFDBFE; background:linear-gradient(135deg,rgba(30,58,138,.03),transparent); gap:12px; flex-wrap:wrap; }
+  .att-section-title { display:flex; align-items:center; gap:10px; }
+  .att-section-icon { width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; font-size:14px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .att-section-name { font-size:14px; font-weight:800; color:#0F172A; letter-spacing:-.01em; }
+  .att-section-sub { font-size:11.5px; color:#64748B; margin-top:1px; }
+  .att-section-body { padding:20px; }
+
+  .att-info { display:flex; align-items:flex-start; gap:9px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:12px; color:#1E3A5F; line-height:1.55; }
+  .att-info i { color:#1E3A8A; flex-shrink:0; margin-top:1px; }
+
+  .att-days-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:10px; margin-bottom:0; }
+  .att-day-card { border:2px solid #BFDBFE; border-radius:14px; background:#fff; padding:14px 8px; text-align:center; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); user-select:none; }
+  .att-day-card:hover { border-color:#93C5FD; background:#EFF6FF; }
+  .att-day-card.selected { border-color:#1E40AF; background:linear-gradient(135deg,#EFF6FF,#DBEAFE); box-shadow:0 3px 12px rgba(30,58,138,.15); }
+  .att-day-icon { font-size:20px; margin-bottom:6px; }
+  .att-day-name { font-size:12px; font-weight:700; color:#0F172A; }
+  .att-day-off { font-size:10px; color:#64748B; margin-top:3px; font-weight:600; }
+  .att-day-card.selected .att-day-off { color:#1E40AF; }
+
+  .att-select { height:40px; border:1.5px solid #BFDBFE; border-radius:10px; padding:0 36px 0 12px; font-family:inherit; font-size:13px; font-weight:600; color:#0F172A; background:#fff; outline:none; cursor:pointer; transition:all .2s; appearance:none; -webkit-appearance:none; min-width:160px; }
+  .att-select:focus { border-color:#1E3A8A; box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+  .att-select-wrap { position:relative; }
+  .att-select-arrow { position:absolute; right:11px; top:50%; transform:translateY(-50%); color:#64748B; pointer-events:none; font-size:11px; }
+
+  .att-months-grid { display:flex; flex-direction:column; gap:10px; }
+  .att-month-card { border:1.5px solid #BFDBFE; border-radius:14px; background:#fff; overflow:hidden; transition:all .2s; }
+  .att-month-card:hover { border-color:#93C5FD; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .att-month-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; cursor:pointer; gap:12px; }
+  .att-month-left { display:flex; align-items:center; gap:12px; }
+  .att-month-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .att-month-name { font-size:14px; font-weight:700; color:#0F172A; }
+  .att-month-count { font-size:11.5px; color:#64748B; margin-top:1px; }
+  .att-month-actions { display:flex; align-items:center; gap:8px; }
+  .att-add-holiday-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:9999px; border:1.5px solid rgba(30,64,175,.25); background:rgba(30,64,175,.06); color:#1E40AF; font-family:inherit; font-size:12px; font-weight:700; cursor:pointer; transition:all .2s; white-space:nowrap; }
+  .att-add-holiday-btn:hover { background:rgba(30,64,175,.12); border-color:#1E40AF; }
+  .att-chevron-btn { width:30px; height:30px; border-radius:8px; border:1.5px solid #BFDBFE; background:#fff; color:#64748B; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; transition:transform .2s,border-color .2s,color .2s; }
+  .att-chevron-btn:hover { border-color:#1E40AF; color:#1E40AF; }
+  .att-chevron-btn.open { transform:rotate(180deg); border-color:#1E40AF; color:#1E40AF; }
+
+  .att-holiday-list { border-top:1px solid #BFDBFE; background:#EFF6FF; padding:8px 18px 12px; display:none; }
+  .att-holiday-list.open { display:block; }
+  .att-holiday-row { display:grid; grid-template-columns:1fr 110px 110px minmax(150px,1fr) 36px 36px; gap:10px; align-items:center; padding:10px 12px; background:#fff; border:1px solid #BFDBFE; border-radius:10px; margin-bottom:8px; transition:all .2s; }
+  .att-holiday-row:last-child { margin-bottom:0; }
+  .att-holiday-row:hover { border-color:#93C5FD; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .att-holiday-title { font-size:13px; font-weight:700; color:#0F172A; }
+  .att-holiday-desc { font-size:11px; color:#64748B; margin-top:2px; }
+  .att-holiday-date { font-size:12px; color:#1E3A5F; font-weight:600; }
+  .att-holiday-class-pill { display:inline-flex; align-items:center; gap:4px; padding:2px 9px; border-radius:9999px; background:#DBEAFE; color:#1E3A8A; font-size:10.5px; font-weight:600; border:1px solid #93C5FD; }
+
+  .att-icon-btn { width:30px; height:30px; border-radius:8px; border:1.5px solid #BFDBFE; background:#fff; color:#64748B; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; transition:all .2s; }
+  .att-icon-btn:hover { border-color:#1E40AF; color:#1E40AF; background:rgba(30,64,175,.05); }
+  .att-icon-btn.del:hover { border-color:#DC2626; color:#DC2626; background:rgba(220,38,38,.05); }
+
+  .att-btn-save-small { display:inline-flex; align-items:center; gap:5px; padding:8px 20px; border-radius:9999px; border:none; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer; transition:all .2s; }
+  .att-btn-save-small:hover { transform:translateY(-1px); box-shadow:0 6px 16px rgba(30,58,138,.3); }
+  .att-btn-report { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:9999px; border:1.5px solid rgba(220,38,38,.25); background:rgba(220,38,38,.06); color:#DC2626; font-family:inherit; font-size:12px; font-weight:700; cursor:pointer; transition:all .2s; white-space:nowrap; }
+  .att-btn-report:hover { background:rgba(220,38,38,.12); border-color:#DC2626; }
+  .att-btn-primary { display:inline-flex; align-items:center; gap:7px; padding:10px 24px; border-radius:9999px; border:none; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; font-family:inherit; font-size:13.5px; font-weight:700; cursor:pointer; transition:all .2s; box-shadow:0 4px 14px rgba(30,58,138,.28); }
+  .att-btn-primary:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(30,58,138,.38); }
+  .att-btn-secondary { display:inline-flex; align-items:center; gap:7px; padding:10px 20px; border-radius:9999px; border:1.5px solid #BFDBFE; background:#fff; color:#1E3A5F; font-family:inherit; font-size:13.5px; font-weight:600; cursor:pointer; transition:all .2s; }
+  .att-btn-secondary:hover { border-color:#93C5FD; color:#0F172A; }
+
+  /* Overlays + modals */
+  .att-overlay { position:fixed; inset:0; background:rgba(10,22,40,.55); backdrop-filter:blur(5px); z-index:1000; display:none; align-items:center; justify-content:center; padding:16px; }
+  .att-overlay.open { display:flex; }
+  .att-modal { background:#fff; border-radius:16px; width:100%; max-width:640px; max-height:90vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,.22),0 8px 24px rgba(0,0,0,.1); border:1px solid #BFDBFE; animation:attModalIn .28s cubic-bezier(.34,1.26,.64,1) both; }
+  .att-modal-lg { max-width:1160px; }
+  @keyframes attModalIn { from { opacity:0; transform:scale(.92) translateY(20px); } to { opacity:1; transform:none; } }
+  .att-modal-header { display:flex; align-items:flex-start; justify-content:space-between; padding:20px 24px 16px; border-bottom:1px solid #BFDBFE; background:linear-gradient(135deg,rgba(30,58,138,.04),transparent); }
+  .att-modal-header-left { display:flex; align-items:center; gap:12px; }
+  .att-modal-header-icon { width:40px; height:40px; border-radius:11px; background:linear-gradient(135deg,rgba(30,58,138,.15),rgba(30,58,138,.25)); color:#1E40AF; font-size:17px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .att-modal-title { font-size:16px; font-weight:800; color:#1E40AF; letter-spacing:-.02em; }
+  .att-modal-sub { font-size:12px; color:#64748B; margin-top:2px; }
+  .att-modal-close { width:30px; height:30px; border-radius:8px; border:none; background:#EFF6FF; color:#64748B; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:13px; transition:all .2s; flex-shrink:0; }
+  .att-modal-close:hover { background:rgba(220,38,38,.1); color:#DC2626; }
+  .att-modal-body { padding:20px 24px; }
+  .att-modal-footer { display:flex; gap:9px; justify-content:flex-end; padding:14px 24px; border-top:1px solid #BFDBFE; }
+
+  .att-field-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+  .att-field-row.full { grid-template-columns:1fr; }
+  .att-label { font-size:12px; font-weight:700; color:#1E3A5F; letter-spacing:.15px; display:block; margin-bottom:6px; }
+  .att-input { width:100%; height:42px; border:1.5px solid #BFDBFE; border-radius:10px; padding:0 12px; font-family:inherit; font-size:13.5px; color:#0F172A; background:#fff; outline:none; transition:all .2s; box-sizing:border-box; }
+  .att-input:focus { border-color:#1E3A8A; box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+  .att-textarea { width:100%; min-height:72px; resize:vertical; border:1.5px solid #BFDBFE; border-radius:10px; padding:10px 12px; font-family:inherit; font-size:13.5px; color:#0F172A; background:#fff; outline:none; transition:all .2s; box-sizing:border-box; }
+  .att-textarea:focus { border-color:#1E3A8A; box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+
+  .att-class-select-wrap { border:1.5px solid #BFDBFE; border-radius:10px; background:#fff; min-height:42px; padding:5px 8px; display:flex; flex-wrap:wrap; gap:5px; cursor:text; transition:all .2s; }
+  .att-class-select-wrap:focus-within { border-color:#1E3A8A; box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+  .att-class-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:9999px; background:#DBEAFE; color:#1E3A8A; font-size:11.5px; font-weight:600; border:1px solid #93C5FD; }
+  .att-class-chip-x { cursor:pointer; font-size:13px; line-height:1; }
+  .att-class-chip-x:hover { color:#DC2626; }
+  .att-radio-btn { padding:5px 12px; border-radius:9999px; border:1.5px solid #BFDBFE; background:#fff; font-family:inherit; font-size:11.5px; font-weight:600; color:#64748B; cursor:pointer; transition:all .2s; }
+  .att-radio-btn:hover { border-color:#93C5FD; }
+  .att-radio-btn.p.active { border-color:#16A34A; background:rgba(22,163,74,.1); color:#16A34A; }
+  .att-radio-btn.a.active { border-color:#DC2626; background:rgba(220,38,38,.1); color:#DC2626; }
+  .att-radio-btn.l.active { border-color:#D97706; background:rgba(217,119,6,.1); color:#D97706; }
+  .att-radio-btn.late.active { border-color:#7C3AED; background:rgba(124,58,237,.1); color:#7C3AED; }
+  .att-radio-btn.sl.active { border-color:#EA580C; background:rgba(234,88,12,.1); color:#EA580C; }
+  .att-radio-btn.h.active { border-color:#2563EB; background:rgba(37,99,235,.1); color:#2563EB; }
+
+  .att-confirm { background:#fff; border-radius:16px; width:100%; max-width:420px; box-shadow:0 30px 80px rgba(0,0,0,.22),0 8px 24px rgba(0,0,0,.1); border:1px solid #BFDBFE; padding:28px; animation:attModalIn .25s cubic-bezier(.34,1.26,.64,1) both; text-align:center; }
+  .att-confirm-icon { width:52px; height:52px; border-radius:50%; font-size:22px; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; }
+  .att-confirm-title { font-size:18px; font-weight:800; color:#0F172A; margin-bottom:8px; }
+  .att-confirm-msg { font-size:13.5px; color:#64748B; margin-bottom:20px; line-height:1.55; }
+  .att-confirm-hint { border-radius:10px; padding:10px 14px; margin-bottom:20px; font-size:12px; display:flex; align-items:center; gap:8px; text-align:left; border:1px solid; }
+  .att-confirm-btns { display:flex; gap:10px; justify-content:center; }
+
+  /* Student attendance — class table */
+  .att-table-head { display:grid; background:#EFF6FF; border-bottom:1px solid #BFDBFE; padding:0 18px; }
+  .att-th { padding:10px 8px; font-size:10.5px; font-weight:700; color:#64748B; letter-spacing:.6px; text-transform:uppercase; }
+  .att-st-row { grid-template-columns:48px 1fr 150px 100px 110px 52px 52px 52px 52px 52px 180px 46px; }
+  /* Student "Time In Only" — SL column nahi (11 cols). */
+  .att-st-row.att-st-row--noout { grid-template-columns:48px 1fr 150px 100px 110px 52px 52px 52px 52px 180px 46px; }
+  .att-sf-row { grid-template-columns:48px 1fr 150px 130px 110px 110px 110px 46px; }
+  /* Staff "Time In Only" — Out Time column nahi (7 cols). */
+  .att-sf-row.att-sf-row--noout { grid-template-columns:48px 1fr 150px 130px 110px 110px 46px; }
+  .att-row-wrap { border-bottom:1px solid #BFDBFE; }
+  .att-row-wrap:last-child { border-bottom:none; }
+  .att-row { display:grid; align-items:center; min-height:54px; padding:0 18px; transition:background .2s; }
+  .att-row:hover { background:rgba(30,58,138,.03); }
+  .att-td { padding:10px 8px; font-size:13px; color:#1E3A5F; display:flex; align-items:center; }
+  .att-td.att-td-name { font-weight:700; color:#0F172A; gap:8px; }
+  .att-row-icon { width:28px; height:28px; border-radius:8px; background:linear-gradient(135deg,rgba(30,58,138,.1),rgba(30,58,138,.18)); color:#1E40AF; display:flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0; }
+
+  .att-status-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; }
+  .att-status-badge.marked  { background:rgba(22,163,74,.1);  color:#16A34A; border:1px solid rgba(22,163,74,.25); }
+  .att-status-badge.pending { background:rgba(220,38,38,.08); color:#DC2626; border:1px solid rgba(220,38,38,.2); }
+  .att-status-badge.off     { background:rgba(100,116,139,.1);color:#64748B; border:1px solid rgba(100,116,139,.2); }
+  .att-status-badge.late    { background:rgba(124,58,237,.1); color:#7C3AED; border:1px solid rgba(124,58,237,.25); }
+  .att-status-badge.sl      { background:rgba(234,88,12,.1);  color:#EA580C; border:1px solid rgba(234,88,12,.25); }
+  .att-status-badge.holiday { background:rgba(37,99,235,.1);  color:#2563EB; border:1px solid rgba(37,99,235,.25); }
+
+  .att-mark-btn-primary { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:9999px; border:none; background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 50%,#2563EB 100%); color:#fff; font-family:inherit; font-size:11.5px; font-weight:700; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); white-space:nowrap; box-shadow:0 2px 10px rgba(37,99,235,.3); position:relative; overflow:hidden; }
+  .att-mark-btn-primary::after { content:""; position:absolute; top:-50%; left:-60%; width:40%; height:200%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent); transform:skewX(-20deg); transition:left .5s ease; }
+  .att-mark-btn-primary:hover::after { left:120%; }
+  .att-mark-btn-primary:hover { box-shadow:0 4px 18px rgba(37,99,235,.45); transform:translateY(-2px) scale(1.02); }
+  .att-mark-btn-primary.update-mode { background:linear-gradient(135deg,#065f46 0%,#059669 50%,#047857 100%); box-shadow:0 2px 10px rgba(5,150,105,.3); }
+  .att-mark-btn-primary.update-mode:hover { box-shadow:0 4px 18px rgba(5,150,105,.45); }
+
+  /* Expandable detail panel */
+  .att-detail { background:#EFF6FF; border-top:1px solid #BFDBFE; max-height:0; overflow:hidden; transition:max-height .35s cubic-bezier(.4,0,.2,1); }
+  .att-detail.open { max-height:700px; overflow-y:auto; }
+  .att-detail-inner { padding:14px 20px 16px; }
+  .att-student-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .att-student-table th { padding:9px 10px; text-align:left; font-size:10px; font-weight:700; color:#64748B; letter-spacing:.5px; text-transform:uppercase; border-bottom:1.5px solid #BFDBFE; background:#EFF6FF; }
+  .att-student-table td { padding:10px 10px; border-bottom:1px solid #BFDBFE; color:#0F172A; font-size:12.5px; vertical-align:middle; }
+  .att-student-table tr:last-child td { border-bottom:none; }
+  .att-student-table tr:hover td { background:rgba(30,58,138,.02); }
+  .att-present-badge { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(22,163,74,.1);  color:#16A34A; border:1px solid rgba(22,163,74,.25); }
+  .att-absent-badge  { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(220,38,38,.1); color:#DC2626; border:1px solid rgba(220,38,38,.25); }
+  .att-leave-badge   { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(217,119,6,.1); color:#D97706; border:1px solid rgba(217,119,6,.25); }
+  .att-late-badge    { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(124,58,237,.1); color:#7C3AED; border:1px solid rgba(124,58,237,.25); }
+  .att-short_leave-badge { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(8,145,178,.1); color:#0891B2; border:1px solid rgba(8,145,178,.25); }
+  .att-holiday-badge { display:inline-block; padding:2px 9px; border-radius:9999px; font-size:10.5px; font-weight:700; background:rgba(37,99,235,.1); color:#2563EB; border:1px solid rgba(37,99,235,.25); }
+
+  /* Mark Attendance modal table */
+  .att-mark-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .att-mark-table th { padding:9px 10px; text-align:left; font-size:10px; font-weight:700; color:#64748B; letter-spacing:.5px; text-transform:uppercase; border-bottom:1.5px solid #BFDBFE; background:#EFF6FF; }
+  .att-mark-table td { padding:8px 10px; border-bottom:1px solid #BFDBFE; vertical-align:middle; }
+  .att-mark-table tr:last-child td { border-bottom:none; }
+  .att-mark-table tr:hover td { background:rgba(30,58,138,.02); }
+  .att-radio-group { display:flex; gap:4px; }
+  .att-update-notice { background:rgba(217,119,6,.08); border:1.5px solid rgba(217,119,6,.25); color:#92400E; border-radius:10px; padding:11px 14px; margin-bottom:14px; display:flex; align-items:flex-start; gap:10px; font-size:12.5px; line-height:1.5; }
+  .att-update-notice i { color:#D97706; font-size:15px; flex-shrink:0; margin-top:1px; }
+
+  /* Calendar (used by student + staff tabs) */
+  .att-cal-outer { display:grid; gap:6px; }
+  .att-cal-legend { display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+  .att-legend-item { display:flex; align-items:center; gap:5px; font-size:11.5px; color:#64748B; font-weight:600; }
+  .att-legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+
+  /* Stat row inside selected-date panel */
+  .att-stat-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:12px; }
+  .att-stat-card { background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:14px 16px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .att-stat-num { font-size:24px; font-weight:800; letter-spacing:-.02em; }
+  .att-stat-lbl { font-size:10.5px; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:.5px; margin-top:4px; }
+
+  /* Search combobox (Individual Reports) */
+  .att-search-wrap { position:relative; flex:0 1 360px; min-width:240px; }
+  .att-search-icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#64748B; font-size:12px; pointer-events:none; z-index:2; }
+  .att-search-input { width:100%; height:38px; padding:0 32px 0 34px; border:1.5px solid #BFDBFE; border-radius:9999px; font-family:inherit; font-size:12.5px; color:#0F172A; background:#fff; outline:none; transition:all .2s; box-sizing:border-box; }
+  .att-search-input:focus { border-color:#1E3A8A; box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+  .att-search-input::placeholder { color:#94A3B8; }
+  .att-search-clear { position:absolute; right:6px; top:50%; transform:translateY(-50%); width:24px; height:24px; border-radius:50%; border:none; background:#EFF6FF; color:#64748B; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:10px; transition:all .15s; z-index:2; }
+  .att-search-clear:hover { background:rgba(220,38,38,.1); color:#DC2626; }
+
+  /* Dropdown */
+  .att-search-dropdown {
+    position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:20;
+    background:#fff; border:1.5px solid #BFDBFE; border-radius:12px;
+    box-shadow:0 12px 32px rgba(15,23,42,.12), 0 4px 12px rgba(0,0,0,.06);
+    max-height:340px; overflow-y:auto;
+    animation:attDropdownIn .18s cubic-bezier(.34,1.26,.64,1) both;
+    padding:6px;
+  }
+  @keyframes attDropdownIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+  .att-search-item {
+    display:flex; align-items:center; gap:10px; width:100%;
+    padding:8px 10px; border:none; border-radius:8px;
+    background:transparent; cursor:pointer; text-align:left;
+    font-family:inherit; transition:background .12s;
+  }
+  .att-search-item + .att-search-item { margin-top:2px; }
+  .att-search-item:hover, .att-search-item:focus { background:#EFF6FF; outline:none; }
+  .att-search-item-icon { width:30px; height:30px; border-radius:8px; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+  .att-search-item-name { font-size:13px; font-weight:700; color:#0F172A; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .att-search-item-sub  { font-size:10.5px; color:#64748B; font-weight:600; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .att-search-item-arrow { color:#94A3B8; font-size:11px; transition:transform .15s,color .15s; flex-shrink:0; }
+  .att-search-item:hover .att-search-item-arrow { color:#1E40AF; transform:translateX(2px); }
+  .att-search-empty { padding:14px 12px; font-size:12.5px; color:#64748B; text-align:center; font-style:italic; }
+
+  /* Row highlight after picking from dropdown — Fee module jaisa hara (.fee-st-highlight) */
+  .att-row-wrap.att-row-highlight > .att-row,
+  tr.att-row-highlight td { background:rgba(34,197,94,.15) !important; }
+  tr.att-row-highlight td strong,
+  .att-row-wrap.att-row-highlight .att-rpt-sf-name { color:#16A34A; }
+  [data-theme="dark"] .att-row-wrap.att-row-highlight > .att-row,
+  [data-theme="dark"] tr.att-row-highlight td { background:rgba(34,197,94,.22) !important; }
+  [data-theme="dark"] tr.att-row-highlight td strong,
+  [data-theme="dark"] .att-row-wrap.att-row-highlight .att-rpt-sf-name { color:#86EFAC; }
+
+  @media (max-width:600px) {
+    .att-search-wrap { flex:1 1 100%; }
+  }
+
+  /* Reports tab — sub-tab pills */
+  .res-sub-tabs { display:flex; gap:4px; background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:5px; margin-bottom:20px; box-shadow:0 2px 6px rgba(30,58,138,.18),0 1px 2px rgba(0,0,0,.05); overflow-x:auto; flex-wrap:nowrap; }
+  .res-sub-tab { display:flex; flex:1; align-items:center; justify-content:center; padding:11px 18px; border-radius:10px; border:none; background:transparent; font-family:inherit; font-size:13px; font-weight:700; color:#64748B; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); white-space:nowrap; }
+  .res-sub-tab:hover:not(.active) { background:#EFF6FF; color:#0F172A; }
+  .res-sub-tab.active { background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%); color:#fff; box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2); }
+
+  /* Reports tab — General Reports grid */
+  .rpt-grp-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+  @media (max-width:768px) { .rpt-grp-grid { grid-template-columns:1fr; } }
+
+  .grp-card { background:#fff; border:1.5px solid #BFDBFE; border-radius:14px; padding:0; transition:all .2s; box-shadow:0 1px 2px rgba(0,0,0,.06); overflow:hidden; }
+  .grp-card:hover { border-color:#93C5FD; box-shadow:0 2px 6px rgba(30,58,138,.18); }
+  .grp-card-header { display:flex; align-items:center; gap:14px; padding:16px 18px; }
+  .grp-card-icon { width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; flex-shrink:0; }
+  .grp-card-info { flex:1; min-width:0; }
+  .grp-card-title { font-size:14px; font-weight:800; color:#0F172A; margin-bottom:2px; }
+  .grp-card-sub { font-size:11.5px; color:#64748B; font-weight:500; line-height:1.4; }
+  .grp-card-meta { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .grp-card-count { font-size:11px; font-weight:700; color:#64748B; background:#EFF6FF; border:1.5px solid #BFDBFE; border-radius:9999px; padding:2px 10px; white-space:nowrap; }
+  .grp-view-btn { display:flex; align-items:center; gap:6px; padding:7px 14px; border-radius:10px; border:1.5px solid #BFDBFE; background:#EFF6FF; color:#1E3A5F; font-family:inherit; font-size:12px; font-weight:700; cursor:pointer; transition:all .2s; white-space:nowrap; }
+  .grp-view-btn:hover { background:#fff; border-color:#93C5FD; color:#0F172A; }
+  .grp-view-btn .grp-chev { transition:transform .3s cubic-bezier(.4,0,.2,1); }
+  .grp-view-btn.open .grp-chev { transform:rotate(180deg); }
+
+  .grp-card-body { max-height:0; overflow:hidden; transition:max-height .38s cubic-bezier(.4,0,.2,1); }
+  .grp-card-body.open { max-height:1200px; }
+  .grp-card-body-inner { padding:0 18px 18px; display:flex; flex-direction:column; gap:10px; border-top:1.5px solid #BFDBFE; padding-top:14px; }
+  .grp-rpt-row { display:flex; flex-direction:column; gap:8px; padding:11px 13px; background:#EFF6FF; border:1.5px solid #BFDBFE; border-radius:10px; }
+  .grp-rpt-row-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .grp-rpt-row-label { display:flex; align-items:center; gap:7px; font-size:12px; font-weight:800; color:#0F172A; }
+  .grp-rpt-row-filters { display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; }
+  .grp-rpt-field { display:flex; flex-direction:column; gap:3px; flex:1; min-width:120px; }
+  .grp-rpt-field-lbl { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#64748B; }
+  .grp-rpt-field .att-input, .grp-rpt-field .att-select { height:34px; font-size:12px; width:100%; }
+  .grp-gen-btn { display:flex; align-items:center; gap:6px; padding:0 14px; height:34px; border-radius:10px; border:none; color:#fff; font-family:inherit; font-size:12px; font-weight:700; cursor:pointer; transition:all .2s; white-space:nowrap; flex-shrink:0; align-self:flex-end; }
+  .grp-gen-btn:hover { opacity:.88; transform:translateY(-1px); }
+
+  /* Individual report row grids */
+  .att-rpt-cls-row { grid-template-columns:48px 1fr 160px 130px 110px 70px; }
+  .att-rpt-sf-row  { grid-template-columns:48px 1fr 150px 130px 130px 100px; }
+  .att-rpt-cls-name { gap:8px; }
+  .att-rpt-sf-name  { gap:8px; }
+  .att-rpt-cls-chev .att-chevron-btn { width:32px; height:32px; }
+
+  @media (max-width:768px) {
+    .att-rpt-cls-row { grid-template-columns:40px 1fr 100px 80px 80px 46px; }
+    .att-rpt-sf-row  { grid-template-columns:40px 1fr 110px 90px 110px 80px; }
+  }
+  @media (max-width:600px) {
+    .att-rpt-cls-row,
+    .att-rpt-sf-row  { grid-template-columns:1fr !important; }
+    .res-sub-tab { font-size:12px; padding:9px 12px; }
+  }
+
+  /* Report Picker modal */
+  .att-rpt-picker { background:#fff; border-radius:16px; width:100%; max-width:480px; box-shadow:0 30px 80px rgba(0,0,0,.22),0 8px 24px rgba(0,0,0,.1); border:1px solid #BFDBFE; overflow:hidden; animation:attModalIn .28s cubic-bezier(.34,1.26,.64,1) both; }
+  .att-rpt-header { display:flex; align-items:center; justify-content:space-between; padding:20px 22px 16px; border-bottom:1px solid #BFDBFE; background:linear-gradient(135deg,rgba(30,58,138,.04),transparent); position:sticky; top:0; z-index:2; }
+  .att-rpt-title { font-size:17px; font-weight:800; color:#0F172A; }
+  .att-rpt-sub { font-size:12px; color:#64748B; margin-top:2px; }
+  .att-rpt-close { width:30px; height:30px; border-radius:8px; border:none; background:#EFF6FF; color:#64748B; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:13px; transition:all .2s; }
+  .att-rpt-close:hover { background:rgba(220,38,38,.1); color:#DC2626; }
+  .att-rpt-body { padding:18px 22px; }
+  .att-rpt-section-lbl { font-size:10.5px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; color:#64748B; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+  .att-rpt-section-lbl::after { content:''; flex:1; height:1.5px; background:#BFDBFE; }
+  .att-rpt-type-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .att-rpt-fmt { display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:12px; border:2px solid #BFDBFE; background:#EFF6FF; cursor:pointer; transition:all .2s; }
+  .att-rpt-fmt:hover { border-color:#93C5FD; }
+  .att-rpt-fmt.selected { border-color:#1E40AF; background:rgba(30,64,175,.06); }
+  .att-rpt-fmt-icon { font-size:18px; width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .att-rpt-fmt-name { font-size:13px; font-weight:700; color:#0F172A; }
+  .att-rpt-fmt-desc { font-size:11px; color:#64748B; }
+  .att-rpt-filter-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
+  .att-rpt-filter-field { position:relative; flex:1; min-width:140px; }
+  .att-rpt-filter-row--one { flex-wrap:nowrap; }
+  .att-rpt-filter-row--one .att-rpt-filter-field { min-width:0; }
+  .att-rpt-filter-lbl { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#64748B; margin-bottom:5px; }
+  .att-rpt-filter-field .att-select-arrow { right:10px; top:auto; bottom:13px; transform:none; }
+  .att-rpt-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px; }
+  .att-rpt-card { border:2px solid #BFDBFE; border-radius:14px; overflow:hidden; cursor:pointer; transition:all .2s; background:#fff; }
+  .att-rpt-card:hover { border-color:#93C5FD; transform:translateY(-2px); box-shadow:0 6px 18px rgba(30,64,175,.1); }
+  .att-rpt-card.selected { border-color:#1E40AF; box-shadow:0 0 0 3px rgba(30,64,175,.1); }
+  .att-rpt-preview-color { height:90px; background:linear-gradient(145deg,#1E3A8A,#1E40AF,#2563EB); display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:6px; padding:14px; }
+  /* Colorless preview tile — paper-white look matches the low-ink printed output. */
+  .att-rpt-preview-bw { height:90px; background:#FFFFFF; border-bottom:1px solid #E5E7EB; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:6px; padding:14px; }
+  .att-rpt-mock-line { height:5px; border-radius:3px; background:rgba(255,255,255,.85); }
+  .att-rpt-mock-line2 { height:4px; border-radius:3px; background:rgba(255,255,255,.45); }
+  .att-rpt-preview-bw .att-rpt-mock-line { background:#1F2937; }
+  .att-rpt-preview-bw .att-rpt-mock-line2 { background:#9CA3AF; }
+  [data-theme="dark"] .att-rpt-preview-bw { background:#F8FAFC; border-bottom-color:#CBD5E1; }
+  [data-theme="dark"] .att-rpt-preview-bw .att-rpt-mock-line { background:#1F2937; }
+  [data-theme="dark"] .att-rpt-preview-bw .att-rpt-mock-line2 { background:#94A3B8; }
+  /* Keyboard focus ring on radio-style report cards */
+  .att-rpt-card:focus-visible { outline:none; border-color:#1E40AF; box-shadow:0 0 0 3px rgba(30,64,175,.22); }
+  [data-theme="dark"] .att-rpt-card:focus-visible { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.32); }
+  .att-rpt-card-text { padding:10px 14px 12px; }
+  .att-rpt-card-name { font-size:13.5px; font-weight:800; color:#0F172A; margin-bottom:3px; }
+  .att-rpt-card-desc { font-size:11px; color:#64748B; line-height:1.4; }
+  .att-rpt-footer { display:flex; gap:8px; justify-content:flex-end; padding:14px 22px; border-top:1px solid #BFDBFE; position:sticky; bottom:0; background:#fff; }
+
+  @media (max-width:768px) {
+    .att-tabs-row { overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; }
+    .att-tab { font-size:12px; padding:9px 12px; flex-shrink:0; flex:unset; }
+    .att-holiday-row { grid-template-columns:1fr 90px 90px 100px 32px 32px; gap:6px; }
+    .att-rpt-type-grid { grid-template-columns:1fr; }
+    /* Class/Staff roster rows — drop low-priority cols (P/A/L tallies + chev)
+      so the 10/8-col grid doesn't burst on tablets. */
+    .att-st-row { grid-template-columns:40px 1fr 110px 80px 150px !important; }
+    .att-sf-row { grid-template-columns:40px 1fr 100px 110px 60px !important; }
+    .att-st-row > :nth-child(3),
+    .att-st-row > :nth-child(6),
+    .att-st-row > :nth-child(7),
+    .att-st-row > :nth-child(8),
+    .att-st-row > :nth-child(9),
+    .att-st-row > :nth-child(10),
+    .att-st-row > :nth-child(12) { display:none; }
+    /* Time In Only (SL column nahi) — 10 = Action, 11 = chevron. */
+    .att-st-row.att-st-row--noout > :nth-child(10) { display:flex; }
+    .att-st-row.att-st-row--noout > :nth-child(11) { display:none; }
+    .att-sf-row > :nth-child(4),
+    .att-sf-row > :nth-child(6),
+    .att-sf-row > :nth-child(7) { display:none; }
+    /* Time In Only — 7 = chevron, wo dikhta rahe. */
+    .att-sf-row.att-sf-row--noout > :nth-child(7) { display:flex; }
+  }
+  @media (max-width:600px) {
+    .att-days-grid { grid-template-columns:repeat(4,1fr); }
+    .att-holiday-row { grid-template-columns:1fr; }
+    .att-rpt-grid { grid-template-columns:1fr; }
+    /* Phone: reduce to 4 visible cols on roster rows */
+    .att-st-row { grid-template-columns:34px 1fr 70px 110px !important; }
+    .att-st-row > :nth-child(4) { display:none; }
+    /* Staff Attendance row — keep [#] [name+icon+empId] left, chevron pinned far right.
+      Drop the leftover middle column so the chev doesn't land mid-row. */
+    .att-sf-row {
+      grid-template-columns: 34px 1fr auto !important;
+      column-gap: 8px !important;
+    }
+    .att-sf-row > :nth-child(3),
+    .att-sf-row > :nth-child(5) { display:none; }
+    .att-sf-row > .att-sf-chev { justify-self: end !important; }
+    /* Modals/report-picker get a bit more room on phones */
+    .att-overlay { padding:8px; }
+    .att-modal, .att-modal-lg, .att-rpt-picker { max-width:96vw !important; max-height:95dvh !important; }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+    MOBILE — Individual Reports class row (≤ 600px)
+    Replace the 1fr-stacks-everything rule with a compact 2-line card:
+      Row 1 :  [#]  [icon] Class · Section                          [⌄]
+      Row 2 :  Class Teacher · 32 students · 82%
+    All six fields stay visible, no horizontal scroll, no overflow.
+    Table header is hidden on mobile (card-style layout doesn't need it).
+    ═══════════════════════════════════════════════════════════════════ */
+  @media (max-width: 600px) {
+    /* Header row not meaningful in card layout */
+    .att-table-head.att-rpt-cls-row { display: none !important; }
+
+    /* Switch from grid to flex-wrap; cancel the earlier 1fr rule */
+    .att-row.att-rpt-cls-row {
+      display: flex !important;
+      flex-wrap: wrap !important;
+      align-items: center !important;
+      column-gap: 8px !important;
+      row-gap: 4px !important;
+      padding: 10px 12px !important;
+      min-height: 0 !important;
+      grid-template-columns: none !important;
+    }
+
+    /* Row 1 — # · class+section · chev */
+    .att-row.att-rpt-cls-row > .att-rpt-cls-num {
+      flex: 0 0 auto !important;
+      order: 1 !important;
+      font-size: 12px !important;
+      font-weight: 700 !important;
+    }
+    .att-row.att-rpt-cls-row > .att-rpt-cls-name {
+      flex: 1 1 auto !important;
+      order: 2 !important;
+      min-width: 0 !important;
+    }
+    .att-row.att-rpt-cls-row > .att-rpt-cls-chev {
+      flex: 0 0 auto !important;
+      order: 3 !important;
+      margin-left: auto !important;
+      justify-self: end !important;
+      text-align: right !important;
+    }
+
+    /* Force a wrap break after Row 1 (orders 1–3) so meta items land on Row 2 */
+    .att-row.att-rpt-cls-row::after {
+      content: "";
+      flex: 1 1 100%;
+      height: 0;
+      order: 3.5;
+    }
+
+    /* Row 2 — meta line: teacher · students · % */
+    .att-row.att-rpt-cls-row > .att-rpt-cls-teacher {
+      flex: 1 1 0 !important;
+      order: 4 !important;
+      font-size: 11.5px !important;
+      line-height: 1.35 !important;
+      color: var(--text-muted, #64748B) !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      min-width: 0 !important;
+      padding-right: 6px !important;
+    }
+    .att-row.att-rpt-cls-row > .att-rpt-cls-total {
+      flex: 0 0 auto !important;
+      order: 5 !important;
+      font-size: 11.5px !important;
+      color: var(--text-muted, #64748B) !important;
+      white-space: nowrap !important;
+    }
+    .att-row.att-rpt-cls-row > .att-rpt-cls-total::before {
+      content: "·";
+      margin-right: 6px;
+      color: var(--text-muted, #94A3B8);
+    }
+    .att-row.att-rpt-cls-row > .att-rpt-cls-pct {
+      flex: 0 0 auto !important;
+      order: 6 !important;
+      font-size: 12.5px !important;
+      margin-left: auto !important;
+      white-space: nowrap !important;
+    }
+
+    /* Class+Section block tightens — icon + name + section in one tidy stack */
+    .att-row.att-rpt-cls-row > .att-rpt-cls-name { gap: 8px !important; }
+
+    /* Empty divs from removed text wrappers should never reserve space */
+    .att-row.att-rpt-cls-row > div:empty { display: none !important; }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+    DARK MODE — overrides for every att-* surface that hardcodes light
+    colours in the rules above. We keep the brand-gradient elements
+    (sidebar tab active state, mark CTAs, modal headers) intact so the
+    visual identity stays consistent across themes.
+    ═══════════════════════════════════════════════════════════════════ */
+
+  /* Tab bar */
+  [data-theme="dark"] .att-tabs-row { background:var(--bg-card); border-color:var(--border-light); box-shadow:var(--shadow-sm); }
+  [data-theme="dark"] .att-tab { color:var(--text-muted); }
+  [data-theme="dark"] .att-tab:hover:not(.active) { background:var(--bg-muted); color:var(--text-primary); }
+
+  /* Sections */
+  [data-theme="dark"] .att-section { background:var(--bg-card); border-color:var(--border-light); box-shadow:var(--shadow-sm); }
+  [data-theme="dark"] .att-section-header { border-bottom-color:var(--border-light); background:linear-gradient(135deg,rgba(59,130,246,.06),transparent); }
+  [data-theme="dark"] .att-section-name { color:var(--text-primary); }
+  [data-theme="dark"] .att-section-sub { color:var(--text-muted); }
+
+  /* Info banner */
+  [data-theme="dark"] .att-info { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-secondary); }
+  [data-theme="dark"] .att-info i { color:#93C5FD; }
+
+  /* Weekly off day cards */
+  [data-theme="dark"] .att-day-card { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .att-day-card:hover { border-color:var(--border-med); background:var(--bg-muted); }
+  [data-theme="dark"] .att-day-card.selected { background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(37,99,235,.10)); border-color:#3B82F6; }
+  [data-theme="dark"] .att-day-name { color:var(--text-primary); }
+  [data-theme="dark"] .att-day-off { color:var(--text-muted); }
+  [data-theme="dark"] .att-day-card.selected .att-day-off { color:#93C5FD; }
+
+  /* Selects */
+  [data-theme="dark"] .att-select { background:var(--input-bg, var(--bg-card)); border-color:var(--border-light); color:var(--text-primary); }
+  [data-theme="dark"] .att-select:focus { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+  [data-theme="dark"] .att-select-arrow { color:var(--text-muted); }
+
+  /* Month cards */
+  [data-theme="dark"] .att-month-card { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .att-month-card:hover { border-color:var(--border-med); }
+  [data-theme="dark"] .att-month-name { color:var(--text-primary); }
+  [data-theme="dark"] .att-month-count { color:var(--text-muted); }
+
+  /* Holiday rows */
+  [data-theme="dark"] .att-holiday-list { background:var(--bg-muted); border-top-color:var(--border-light); }
+  [data-theme="dark"] .att-holiday-row { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .att-holiday-title { color:var(--text-primary); }
+  [data-theme="dark"] .att-holiday-desc { color:var(--text-muted); }
+  [data-theme="dark"] .att-holiday-date { color:var(--text-secondary); }
+  [data-theme="dark"] .att-holiday-class-pill { background:rgba(59,130,246,.12); color:#93C5FD; border-color:rgba(59,130,246,.2); }
+
+  /* Icon buttons */
+  [data-theme="dark"] .att-icon-btn { background:var(--bg-card); border-color:var(--border-light); color:var(--text-muted); }
+  [data-theme="dark"] .att-icon-btn:hover { border-color:#3B82F6; color:#93C5FD; background:rgba(59,130,246,.08); }
+  [data-theme="dark"] .att-icon-btn.del:hover { border-color:var(--error); color:#FCA5A5; background:rgba(220,38,38,.1); }
+
+  /* Chevron buttons */
+  [data-theme="dark"] .att-chevron-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+  [data-theme="dark"] .att-chevron-btn:hover { background:var(--bg-card); color:var(--text-primary); }
+
+  /* Tables (student + staff) */
+  [data-theme="dark"] .att-table-head { background:var(--bg-muted); border-bottom-color:var(--border-light); }
+  [data-theme="dark"] .att-th { color:var(--text-muted); }
+  [data-theme="dark"] .att-row { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .att-row:hover { background:var(--bg-muted); }
+  [data-theme="dark"] .att-td { color:var(--text-primary); }
+  [data-theme="dark"] .att-detail { background:var(--bg-muted); border-top-color:var(--border-light); }
+  [data-theme="dark"] .att-detail-inner { color:var(--text-primary); }
+  [data-theme="dark"] .att-student-table th { background:var(--bg-muted); color:var(--text-muted); border-bottom-color:var(--border-light); }
+  [data-theme="dark"] .att-student-table td { border-bottom-color:var(--border-light); color:var(--text-primary); }
+
+  /* Status badges */
+  [data-theme="dark"] .att-status-badge.marked { background:rgba(34,197,94,.15); color:#86EFAC; border-color:rgba(34,197,94,.3); }
+  [data-theme="dark"] .att-status-badge.pending { background:rgba(217,119,6,.15); color:#FCD34D; border-color:rgba(217,119,6,.3); }
+  [data-theme="dark"] .att-status-badge.off { background:rgba(124,58,237,.15); color:#C4B5FD; border-color:rgba(124,58,237,.3); }
+  [data-theme="dark"] .att-status-badge.late { background:rgba(124,58,237,.18); color:#C4B5FD; border-color:rgba(124,58,237,.35); }
+  [data-theme="dark"] .att-status-badge.sl { background:rgba(234,88,12,.18); color:#FDBA74; border-color:rgba(234,88,12,.35); }
+  [data-theme="dark"] .att-status-badge.holiday { background:rgba(37,99,235,.18); color:#93C5FD; border-color:rgba(37,99,235,.35); }
+  [data-theme="dark"] .att-present-badge { background:rgba(22,163,74,.15); color:#86EFAC; }
+  [data-theme="dark"] .att-absent-badge  { background:rgba(220,38,38,.15); color:#FCA5A5; }
+  [data-theme="dark"] .att-leave-badge   { background:rgba(217,119,6,.15); color:#FCD34D; }
+  [data-theme="dark"] .att-late-badge    { background:rgba(124,58,237,.15); color:#C4B5FD; }
+  [data-theme="dark"] .att-short_leave-badge { background:rgba(8,145,178,.15); color:#67E8F9; }
+  [data-theme="dark"] .att-holiday-badge { background:rgba(37,99,235,.15); color:#93C5FD; }
+
+  /* Calendar */
+  [data-theme="dark"] .att-cal-outer { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .att-cal-legend { background:var(--bg-muted); border-color:var(--border-light); }
+  [data-theme="dark"] .att-legend-item { color:var(--text-secondary); }
+
+  /* Buttons */
+  [data-theme="dark"] .att-btn-secondary { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
+  [data-theme="dark"] .att-btn-secondary:hover { border-color:var(--border-med); color:var(--text-primary); background:var(--bg-muted); }
+  [data-theme="dark"] .att-btn-report { background:rgba(220,38,38,.12); color:#FCA5A5; border-color:rgba(220,38,38,.3); }
+  [data-theme="dark"] .att-btn-report:hover { background:rgba(220,38,38,.18); border-color:var(--error); }
+  [data-theme="dark"] .att-add-holiday-btn { background:rgba(59,130,246,.12); color:#93C5FD; border-color:rgba(59,130,246,.3); }
+  [data-theme="dark"] .att-add-holiday-btn:hover { background:rgba(59,130,246,.2); border-color:#3B82F6; }
+  [data-theme="dark"] .att-btn-save-small { /* keep brand gradient — already dark-friendly */ }
+
+  /* Modals */
+  [data-theme="dark"] .att-overlay { background:rgba(0,0,0,.6); }
+  [data-theme="dark"] .att-modal,
+  [data-theme="dark"] .att-modal-lg { background:var(--bg-card); box-shadow:var(--shadow-xl); }
+  [data-theme="dark"] .att-modal-header { border-bottom-color:var(--border-light); background:linear-gradient(135deg,rgba(59,130,246,.06),transparent); }
+  [data-theme="dark"] .att-modal-title { color:var(--text-primary); }
+  [data-theme="dark"] .att-modal-sub { color:var(--text-muted); }
+  [data-theme="dark"] .att-modal-body { background:var(--bg-card); color:var(--text-primary); }
+  [data-theme="dark"] .att-modal-footer { background:var(--bg-muted); border-top-color:var(--border-light); }
+  [data-theme="dark"] .att-modal-close { background:var(--bg-muted); color:var(--text-muted); }
+  [data-theme="dark"] .att-modal-close:hover { background:rgba(220,38,38,.18); color:#FCA5A5; }
+
+  /* Form fields */
+  [data-theme="dark"] .att-input { background:var(--input-bg, var(--bg-card)); border-color:var(--border-light); color:var(--text-primary); }
+  [data-theme="dark"] .att-input:focus { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+  [data-theme="dark"] .att-input::placeholder { color:var(--text-muted); }
+  [data-theme="dark"] .att-label { color:var(--text-secondary); }
+  [data-theme="dark"] .att-field-row { color:var(--text-primary); }
+
+  /* Class chips inside holiday modal */
+  [data-theme="dark"] .att-class-chip { background:rgba(59,130,246,.12); color:#93C5FD; border-color:rgba(59,130,246,.3); }
+  [data-theme="dark"] .att-class-chip-x:hover { background:rgba(220,38,38,.2); color:#FCA5A5; }
+  [data-theme="dark"] .att-class-select-wrap { background:var(--bg-card); border-color:var(--border-light); }
+
+  /* Confirm dialog */
+  [data-theme="dark"] .att-confirm { background:var(--bg-card); }
+  [data-theme="dark"] .att-confirm-title { color:var(--text-primary); }
+  [data-theme="dark"] .att-confirm-msg { color:var(--text-secondary); }
+
+  /* Mark attendance table (radios + inputs) */
+  [data-theme="dark"] .att-mark-table th { background:var(--bg-muted); color:var(--text-muted); border-bottom-color:var(--border-light); }
+  [data-theme="dark"] .att-mark-table td { border-bottom-color:var(--border-light); color:var(--text-primary); }
+  [data-theme="dark"] .att-radio-btn { background:var(--bg-card); border-color:var(--border-light); color:var(--text-muted); }
+  [data-theme="dark"] .att-radio-btn.p.active { background:var(--success); border-color:var(--success); color:#fff; }
+  [data-theme="dark"] .att-radio-btn.a.active { background:var(--error); border-color:var(--error); color:#fff; }
+  [data-theme="dark"] .att-radio-btn.l.active { background:var(--warning); border-color:var(--warning); color:#fff; }
+  [data-theme="dark"] .att-radio-btn.late.active { background:#7C3AED; border-color:#7C3AED; color:#fff; }
+  [data-theme="dark"] .att-radio-btn.sl.active { background:#EA580C; border-color:#EA580C; color:#fff; }
+  [data-theme="dark"] .att-radio-btn.h.active { background:#2563EB; border-color:#2563EB; color:#fff; }
+  [data-theme="dark"] .att-radio-group { background:transparent; }
+
+  /* Report picker / preview */
+  [data-theme="dark"] .att-rpt-picker { background:var(--bg-card); box-shadow:var(--shadow-xl); }
+  [data-theme="dark"] .att-rpt-header { border-bottom-color:var(--border-light); background:linear-gradient(135deg,rgba(59,130,246,.06),transparent); }
+  [data-theme="dark"] .att-rpt-title { color:var(--text-primary); }
+  [data-theme="dark"] .att-rpt-sub { color:var(--text-muted); }
+  [data-theme="dark"] .att-rpt-close { background:var(--bg-muted); color:var(--text-muted); }
+  [data-theme="dark"] .att-rpt-close:hover { background:rgba(220,38,38,.18); color:#FCA5A5; }
+  [data-theme="dark"] .att-rpt-footer { background:var(--bg-card); border-top-color:var(--border-light); }
+  [data-theme="dark"] .att-rpt-section-label { color:var(--text-secondary); }
+  [data-theme="dark"] .att-rpt-type-card { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-primary); }
+  [data-theme="dark"] .att-rpt-type-card:hover { border-color:var(--border-med); }
+  [data-theme="dark"] .att-rpt-type-card.active { background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(37,99,235,.10)); border-color:#3B82F6; }
+
+  /* Reports sub-tabs + group cards */
+  [data-theme="dark"] .res-sub-tabs { background:var(--bg-muted); border-color:var(--border-light); }
+  [data-theme="dark"] .res-sub-tab { color:var(--text-muted); }
+  [data-theme="dark"] .res-sub-tab.active { background:var(--bg-card); color:var(--text-primary); }
+  [data-theme="dark"] .rpt-grp-grid .grp-card,
+  [data-theme="dark"] .grp-card { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .grp-card-title { color:var(--text-primary); }
+  [data-theme="dark"] .grp-card-sub { color:var(--text-muted); }
+  [data-theme="dark"] .grp-card-count { background:var(--bg-muted); color:var(--text-secondary); }
+  [data-theme="dark"] .grp-view-btn { background:var(--bg-muted); color:var(--text-secondary); border-color:var(--border-light); }
+  [data-theme="dark"] .grp-view-btn:hover { background:var(--bg-card); color:var(--text-primary); }
+  [data-theme="dark"] .grp-card-body-inner { background:var(--bg-muted); border-top-color:var(--border-light); }
+  [data-theme="dark"] .grp-rpt-row { background:var(--bg-card); border-color:var(--border-light); }
+  [data-theme="dark"] .grp-rpt-row-label { color:var(--text-primary); }
+
+  /* Search */
+  [data-theme="dark"] .att-search-input { background:var(--input-bg, var(--bg-card)); border-color:var(--border-light); color:var(--text-primary); }
+  [data-theme="dark"] .att-search-input::placeholder { color:var(--text-muted); }
+  [data-theme="dark"] .att-search-input:focus { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+  [data-theme="dark"] .att-search-clear { background:var(--bg-muted); color:var(--text-muted); }
+  [data-theme="dark"] .att-search-dropdown { background:var(--bg-card); border-color:var(--border-light); box-shadow:var(--shadow-lg); }
+  [data-theme="dark"] .att-search-dropdown div:hover { background:var(--bg-muted); }
+
+  /* ───────────────────────── MOBILE (≤600px) ─────────────────────────
+    Real internal screen responsiveness — stacks section headers, makes
+    class roster tables scroll horizontally with sticky student-name col,
+    collapses date picker rows, scrolls weekly off day-toggles. */
+  @media (max-width:600px) {
+    /* Tab strip already scrolls — bump on phones */
+    .att-tabs-row { padding:4px; margin-bottom:14px; gap:3px; }
+    .att-tab { padding:9px 12px; font-size:11.5px; gap:5px; }
+    .att-tab i { font-size:11px; }
+
+    /* Section header — stack title + actions */
+    .att-section { border-radius:12px; margin-bottom:12px; }
+    .att-section-header { flex-direction:column; align-items:stretch; padding:12px 14px; gap:10px; }
+    .att-section-title { gap:9px; }
+    .att-section-icon { width:32px; height:32px; font-size:12px; border-radius:9px; }
+    .att-section-name { font-size:13px; }
+    .att-section-sub { font-size:11px; }
+    .att-section-body { padding:14px 14px; }
+    .att-info { font-size:11.5px; padding:9px 11px; gap:7px; }
+    .att-section-header > div:last-child { width:100%; display:flex; flex-wrap:wrap; gap:8px; }
+    .att-section-header .att-select-wrap { flex:1 1 auto; }
+    .att-section-header .att-select { min-width:0; width:100%; }
+    .att-section-header .att-btn-save-small,
+    .att-section-header .att-btn-report,
+    .att-section-header .att-btn-primary,
+    .att-section-header .att-btn-secondary { flex:1 1 auto; justify-content:center; }
+
+    /* Weekly off day-toggle bar — horizontal scroll keeps 7 visible */
+    .att-days-grid { display:flex; grid-template-columns:none; overflow-x:auto; flex-wrap:nowrap; gap:8px; scrollbar-width:none; padding-bottom:4px; }
+    .att-days-grid::-webkit-scrollbar { display:none; }
+    .att-day-card { flex:0 0 72px; padding:11px 6px; border-radius:11px; }
+    .att-day-icon { font-size:18px; margin-bottom:4px; }
+    .att-day-name { font-size:11px; }
+    .att-day-off { font-size:9.5px; margin-top:2px; }
+
+    /* Months/holiday cards — stack header */
+    .att-month-card { border-radius:11px; }
+    .att-month-header { flex-direction:column; align-items:stretch; padding:12px 14px; gap:10px; }
+    .att-month-left { gap:10px; }
+    .att-month-name { font-size:13px; }
+    .att-month-count { font-size:11px; }
+    .att-month-actions { flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+    .att-add-holiday-btn { padding:6px 12px; font-size:11.5px; }
+    .att-chevron-btn { width:28px; height:28px; font-size:10px; }
+
+    /* Holiday-row — already 1-col at 600, tighten */
+    .att-holiday-list { padding:8px 12px 10px; }
+    .att-holiday-row { padding:10px 11px; gap:7px; }
+    .att-holiday-title { font-size:12.5px; }
+    .att-holiday-desc { font-size:10.5px; }
+    .att-holiday-date { font-size:11.5px; }
+
+    /* Student/Staff attendance grid — horizontal scroll with sticky name col */
+    .att-section-body { overflow-x:visible; }
+    .att-table-head { padding:0 12px; }
+    .att-row { padding:0 12px; min-height:48px; }
+    .att-th, .att-td { padding:9px 5px; font-size:11.5px; }
+    .att-td.att-td-name { gap:6px; font-size:12px; }
+    .att-row-icon { width:24px; height:24px; font-size:10px; border-radius:7px; }
+    .att-status-badge { font-size:10px; padding:2px 7px; }
+    .att-mark-btn-primary { padding:6px 11px; font-size:10.5px; gap:5px; }
+
+    /* Expandable detail (per-student) — horizontal-scroll inner table */
+    .att-detail-inner { padding:12px 12px 14px; overflow-x:auto; }
+    .att-student-table { font-size:11.5px; min-width:520px; }
+    .att-student-table th { padding:7px 7px; font-size:9.5px; }
+    .att-student-table td { padding:8px 7px; font-size:11.5px; }
+    .att-present-badge, .att-absent-badge, .att-leave-badge { font-size:10px; padding:2px 7px; }
+
+    /* Calendar legend wraps */
+    .att-cal-legend { gap:10px; margin-bottom:12px; }
+    .att-legend-item { font-size:10.5px; }
+
+    /* Stat strip — 2 cols on phone */
+    .att-stat-row { grid-template-columns:1fr 1fr; gap:8px; }
+    .att-stat-card { padding:11px 12px; border-radius:11px; }
+    .att-stat-num { font-size:20px; }
+    .att-stat-lbl { font-size:10px; }
+
+    /* Search row — full width */
+    .att-search-wrap { flex:1 1 100%; min-width:0; }
+    .att-search-input { font-size:12px; height:36px; }
+
+    /* Mark Attendance modal table — horizontal scroll */
+    .att-modal { border-radius:14px; }
+    .att-modal-header { padding:14px 14px 12px; flex-direction:column; align-items:flex-start; gap:8px; }
+    .att-modal-header-left { gap:10px; }
+    .att-modal-header-icon { width:34px; height:34px; font-size:14px; border-radius:9px; }
+    .att-modal-title { font-size:14px; }
+    .att-modal-sub { font-size:11px; }
+    .att-modal-close { align-self:flex-end; margin-top:-40px; }
+    .att-modal-body { padding:14px 14px; overflow-x:auto; }
+    .att-modal-footer { flex-direction:column; gap:8px; padding:12px 14px; }
+    .att-modal-footer .att-btn-primary,
+    .att-modal-footer .att-btn-secondary { width:100%; justify-content:center; }
+    .att-mark-table { font-size:11.5px; min-width:480px; }
+    .att-mark-table th { padding:7px 7px; font-size:9.5px; }
+    .att-mark-table td { padding:7px 7px; }
+    .att-radio-group { flex-wrap:wrap; gap:3px; }
+    .att-radio-btn { padding:4px 9px; font-size:10.5px; }
+    .att-field-row { grid-template-columns:1fr; gap:10px; margin-bottom:10px; }
+    .att-input, .att-textarea { font-size:12.5px; }
+
+    /* Reports sub-tabs scroll */
+    .res-sub-tabs { padding:4px; margin-bottom:14px; gap:3px; }
+    .res-sub-tab { padding:9px 12px; font-size:11.5px; }
+
+    /* General reports group card */
+    .grp-card-header { flex-direction:column; align-items:stretch; padding:12px 14px; gap:10px; }
+    .grp-card-icon { width:36px; height:36px; font-size:15px; border-radius:9px; }
+    .grp-card-info { width:100%; }
+    .grp-card-title { font-size:13px; }
+    .grp-card-sub { font-size:11px; }
+    .grp-card-meta { width:100%; justify-content:space-between; }
+    .grp-card-body-inner { padding:0 14px 14px; padding-top:11px; }
+    .grp-rpt-row-top { flex-direction:column; align-items:stretch; gap:6px; }
+    .grp-rpt-row-filters { flex-direction:column; align-items:stretch; gap:8px; }
+    .grp-rpt-field { min-width:0; }
+    .grp-gen-btn { width:100%; justify-content:center; align-self:stretch; }
+
+    /* Individual reports rows already 1-col — tighten */
+    .att-rpt-cls-row, .att-rpt-sf-row { gap:6px; padding:10px 12px; }
+
+    /* Report-picker modal — already capped at 96vw, tighten contents */
+    .att-rpt-picker { border-radius:14px; }
+    .att-rpt-header { padding:14px 14px 10px; }
+    .att-rpt-title { font-size:15px; }
+    .att-rpt-sub { font-size:11px; }
+    .att-rpt-body { padding:14px 14px; }
+    .att-rpt-footer { flex-direction:column; gap:8px; padding:12px 14px; }
+    .att-rpt-footer .att-btn-primary,
+    .att-rpt-footer .att-btn-secondary { width:100%; justify-content:center; }
+    .att-rpt-filter-row { flex-direction:column; gap:8px; margin-bottom:14px; }
+    .att-rpt-filter-field { min-width:0; }
+
+    /* Confirm dialog */
+    .att-confirm { padding:20px 18px; border-radius:14px; }
+    .att-confirm-icon { width:44px; height:44px; font-size:18px; margin-bottom:12px; }
+    .att-confirm-title { font-size:16px; }
+    .att-confirm-msg { font-size:12.5px; margin-bottom:14px; }
+    .att-confirm-btns { flex-direction:column; gap:8px; }
+    .att-confirm-btns > * { width:100%; }
+  }
+  .att-field-error { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:#DC2626; margin-top:5px; }
+  
+  /* Working Hours & Attendance Rules */
+  .att-subsection { margin-bottom:18px; }
+  .att-subsection-title { display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:800; color:#1E3A8A; letter-spacing:.3px; text-transform:uppercase; margin-bottom:12px; }
+  .att-subsection-title i { font-size:11px; color:#2563EB; }
+  .att-toggle-row { display:flex; align-items:center; gap:10px; }
+  .att-toggle-label { font-size:12.5px; font-weight:700; color:#1E3A5F; }
+  .att-toggle { position:relative; width:42px; height:24px; border-radius:9999px; border:none; background:#CBD5E1; cursor:pointer; transition:all .2s; flex-shrink:0; padding:0; }
+  .att-toggle.on { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); }
+  .att-toggle-knob { position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:all .2s; }
+  .att-toggle.on .att-toggle-knob { left:21px; }
+  .att-setup-disabled-note { display:flex; align-items:flex-start; gap:9px; background:#FFF7ED; border:1px solid #FDE4B8; border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:12px; color:#92400E; line-height:1.55; }
+  .att-setup-disabled-note i { color:#D97706; flex-shrink:0; margin-top:1px; }
+  .att-rule-summary { background:#F8FAFF; border:1px solid #BFDBFE; border-radius:12px; padding:14px 16px; }
+  .att-rule-summary-title { font-size:12px; font-weight:800; color:#1E3A8A; margin-bottom:10px; display:flex; align-items:center; gap:7px; }
+  .att-rule-group { margin-bottom:12px; }
+  .att-rule-group:last-child { margin-bottom:0; }
+  .att-rule-group-label { font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:.3px; margin-bottom:7px; }
+  .att-rule-row { display:flex; align-items:center; gap:10px; padding:7px 0; font-size:12.5px; }
+  .att-rule-range { color:#1E3A5F; font-weight:600; flex:1; }
+  .att-rule-arrow { color:#94A3B8; }
+  .att-rule-chip { display:inline-flex; align-items:center; padding:3px 11px; border-radius:9999px; font-size:11px; font-weight:800; white-space:nowrap; }
+  .att-rule-chip.present { background:#DCFCE7; color:#16A34A; }
+  .att-rule-chip.late { background:#FEF3C7; color:#B45309; }
+  .att-rule-chip.short-leave { background:#EDE9FE; color:#6D28D9; }
+  .att-rule-chip.full-day { background:#DBEAFE; color:#1E40AF; }
+  .att-rule-chip.neutral { background:#F1F5F9; color:#64748B; }
+  `;

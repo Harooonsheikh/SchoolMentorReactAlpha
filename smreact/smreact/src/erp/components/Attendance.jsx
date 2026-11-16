@@ -4780,7 +4780,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
     return;
   }
   const branchID = Number(sessionStorage.getItem("branchID"));
-  const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+  const userID = Number(sessionStorage.getItem("UserID")) || 0;
   const todayStr = new Date().toISOString().slice(0, 10);
   // Past-date marking passes the selected date; otherwise → today (unchanged).
   const attendanceDate = dateOverride || todayStr;
@@ -4811,13 +4811,23 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
         platform: row.from || "ERP", // Marked From wali selected value
         isNotificationGen: false,
         action: existingId > 0 ? "update" : "insert",
-        createdBy: employeeID,
-        modifiedBy: employeeID,
+        createdBy: userID,
+        modifiedBy: userID,
       };
       return attendanceService.staffAttendance(payload);
     });
 
     await Promise.all(promises);
+
+    // Poore staff batch ke baad ek summary audit row (30 staff = 1 row).
+    attendanceService.attendanceAuditLog({
+      type: "Staff",
+      action: "Insert",
+      branchID,
+      attendanceDate,
+      count: toSave.length,
+      userId: userID,
+    });
 
     if (attendanceDate === todayStr) {
       // Today → fresh GET restores the staff list (new attendanceID + status).
@@ -5176,7 +5186,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const row = studentData[idx];
       if (!row) return;
       const branchID   = Number(sessionStorage.getItem("branchID"));
-      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const userID = Number(sessionStorage.getItem("UserID")) || 0;
       const sessionID  = await ensureSessionID();
       const todayStr = new Date().toISOString().slice(0, 10);
       // Past-date marking passes the selected date; otherwise → today (unchanged).
@@ -5200,8 +5210,21 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           checkInTime:  (s.status === "present" || s.status === "late" || s.status === "short_leave") ? (s.inTime  || "") : "",
           checkOutTime: (s.status === "present" || s.status === "late" || s.status === "short_leave") ? (s.outTime || "") : "",
           isNotificationGen: false, action: "insert",
-          createdBy: employeeID, modifiedBy: employeeID,
+          createdBy: userID, modifiedBy: userID,
         })));
+
+        // Poori class ki attendance ho gayi → ek summary audit row (40 students = 1 row).
+        attendanceService.attendanceAuditLog({
+          type: "Student",
+          action: "Insert",
+          branchID,
+          classID: row.classID,
+          sectionID: row.sectionID,
+          className: row.label || "",
+          attendanceDate,
+          count: marked.length,
+          userId: userID,
+        });
       } catch (err) {
         console.error("Error saving student attendance:", err);
         toast("Failed to save attendance. Please try again.", "error");
@@ -5218,7 +5241,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       }
       const counts = countList(studentRows);
       const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
-      const markerName = employeeNameById[String(employeeID)] || "";
+      const markerName = employeeNameById[String(Number(sessionStorage.getItem("employee_ID")) || 0)] || "";
       setStudentData((prev) => prev.map((r, i) => i === idx ? {
         ...r, marked: true, ...counts,
         teacher: assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—",
@@ -5573,7 +5596,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
     // month isn't loaded yet. `force` (after an insert) always refetches it.
     const loadMonthHolidays = useCallback(async (monthIdx, { force = false } = {}) => {
       const branchID   = Number(sessionStorage.getItem("branchID"));
-      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const userID = Number(sessionStorage.getItem("UserID")) || 0;
       const sessionID  = await ensureSessionID();
          if (!sessionID) return;
       if (!force) {
@@ -5596,8 +5619,8 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
           dateTo: "",
           month: monthIdx + 1, // 1-based month
           action: "get",
-          createdBy: employeeID,
-          modifiedBy: employeeID,
+          createdBy: userID,
+          modifiedBy: userID,
           classIDs: [],
         });
         const grouped = groupHolidayRows(res?.data || [], classes).filter((h) => h.month === monthIdx);
@@ -5620,7 +5643,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       if (!sessionID) return; // session nahi → monthly-setup API hit nahi
       return once(`holidays:${sessionID}`, async () => {
         const branchID   = Number(sessionStorage.getItem("branchID"));
-        const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+        const userID = Number(sessionStorage.getItem("UserID")) || 0;
         setHolidaysLoading(true);
         const classes    = await ensureClasses();
         try {
@@ -5630,7 +5653,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
                 id: 0, branchID, sessionID,
                 holidayTitle: "", description: "", dateFrom: "", dateTo: "",
                 month: i + 1, action: "get",
-                createdBy: employeeID, modifiedBy: employeeID, classIDs: [],
+                createdBy: userID, modifiedBy: userID, classIDs: [],
               }).then((res) => { holidayMonthsLoadedRef.current.add(i); return res?.data || []; })
                 .catch(() => []) // failed month stays "not loaded" → its expand retries
             )
@@ -5902,7 +5925,7 @@ useEffect(() => {
       if (blockIfReadOnly()) { setDelHolId(null); return; }
       const h = holidays.find((x) => x.id === delHolId);
       const branchID   = Number(sessionStorage.getItem("branchID"));
-      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const userID = Number(sessionStorage.getItem("UserID")) || 0;
       const sessionID  = await ensureSessionID();
       try {
         await attendanceService.monthlySetup({
@@ -5915,8 +5938,8 @@ useEffect(() => {
           dateTo: h?.to || "",
           month: (h?.month ?? 0) + 1,
           action: "delete",
-          createdBy: employeeID,
-          modifiedBy: employeeID,
+          createdBy: userID,
+          modifiedBy: userID,
           classIDs: (h?.selectedClasses || []).map((c) => ({ classID: c.classID, sectionID: c.sectionID })),
         });
       } catch (err) {
@@ -6001,7 +6024,7 @@ const onSaveGeofence = useCallback(async (draft) => {
 const onSaveWeeklyOff = useCallback(async () => {
   if (blockIfReadOnly()) return;
   const branchID = Number(sessionStorage.getItem("branchID"));
-  const employeeID = Number(sessionStorage.getItem("employee_ID"));
+  const userID = Number(sessionStorage.getItem("UserID")) || 0;
 
   console.log("Weekly Off Days to save:", weeklyOff);
 
@@ -6037,9 +6060,9 @@ const onSaveWeeklyOff = useCallback(async () => {
           branchID: branchID,
           holiday: true,
           action: "save",
-          createdBy: employeeID,
+          createdBy: userID,
           createdAt: new Date().toISOString(),
-          modifiedBy: employeeID,
+          modifiedBy: userID,
           modifiedAt: new Date().toISOString(),
         };
         console.log(`SAVING new day: ${weekDayName}`, payload);
@@ -6058,9 +6081,9 @@ const onSaveWeeklyOff = useCallback(async () => {
           branchID: branchID,
           holiday: false,
           action: "delete",
-          createdBy: employeeID,
+          createdBy: userID,
           createdAt: new Date().toISOString(),
-          modifiedBy: employeeID,
+          modifiedBy: userID,
           modifiedAt: new Date().toISOString(),
         };
         console.log(`DELETING day: ${weekDayName} (ID: ${id})`, payload);
@@ -6099,7 +6122,7 @@ const onSaveWeeklyOff = useCallback(async () => {
 const saveHoliday = useCallback(async (payload) => {
       if (blockIfReadOnly()) return;
       const branchID   = Number(sessionStorage.getItem("branchID"));
-      const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
+      const userID = Number(sessionStorage.getItem("UserID")) || 0;
       const selected   = payload.selectedClasses || [];
       // Active session ID — same active-session API examination uses.
       const sessionID  = await ensureSessionID();
@@ -6114,8 +6137,8 @@ const saveHoliday = useCallback(async (payload) => {
         dateTo: payload.to,
         month: payload.month + 1, // API expects 1-based month (Jan = 1)
         action: payload.id ? "update" : "insert",
-        createdBy: employeeID,
-        modifiedBy: employeeID,
+        createdBy: userID,
+        modifiedBy: userID,
         classIDs: selected.map((c) => ({ classID: c.classID, sectionID: c.sectionID })),
       };
 

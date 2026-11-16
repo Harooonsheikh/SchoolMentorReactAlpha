@@ -43,10 +43,15 @@ const cleanApiMessage = (raw, fallback) => {
 /* network-schools/manage — add / update / delete / getbybranch / getbynetwork.
    (Swagger ka sample "insert" likhta hai, magar API sirf "add" leta hai.) */
 const manageNetworkSchool = async (payload) => {
+  // Write actions (add/update/delete) ke sath logged-in UserID bhejo — audit log me "kisne kiya".
+  const act = String(payload?.action || '').toLowerCase();
+  const body = (act === 'add' || act === 'update' || act === 'delete')
+    ? { ...payload, userId: Number(sessionStorage.getItem('UserID')) || 0 }
+    : payload;
   const res  = await fetch(buildChainApiUrl('/api/Network_Setup/network-schools/manage'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.success === false) {
@@ -280,7 +285,8 @@ export default function Networks({ toast = () => {}, embedded = false }) {
     setConfirmRow(null);
     setBusyId(row.id);
     try {
-      await manageNetworkSchool({ action: 'delete', id: row.id });
+      // await manageNetworkSchool({ action: 'delete', id: row.id });
+      await manageNetworkSchool({ action: 'delete', id: row.id, branchID: branchId });
       writePending(readPending().filter((p) => String(p.id) !== String(row.id)));
       await loadRequests();
       toast('Request removed', 'success');

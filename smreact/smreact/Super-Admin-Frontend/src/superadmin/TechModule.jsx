@@ -1,0 +1,185 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import * as techTicketsApi from './api/services/techTickets';
+import * as techNotificationsApi from './api/services/techNotifications';
+import { TM_CSS } from './techModule/techModuleStyles';
+import BugsNewDevTab from './techModule/BugsNewDevTab';
+import InProgressTab from './techModule/InProgressTab';
+import QaReviewTab from './techModule/QaReviewTab';
+import ReadyForReleaseTab from './techModule/ReadyForReleaseTab';
+import TicketDetailModal from './techModule/TicketDetailModal';
+import AnalyticsCards from './techModule/AnalyticsCards';
+import { usePermissionsStore } from './adminPermissions/AdminPermissionsContext';
+import { findRole } from './adminPermissions/adminPermissionsData';
+
+/* ═══════════════════════════════════════════════════════════════════
+   TECH MODULE — 5-tab bug/new-development lifecycle: Bugs, New
+   Development (both share stage 'bugs_new_dev', split by type), In
+   Progress, Review & Testing (QA), Ready for Release.
+
+   Data flows entirely through api/services/techTickets.js's resolve()
+   pattern, same as the module it replaces — see SUPERADMIN_API_GUIDE.md.
+   Permission gating (Assign/Approve/Release) reads from the new RBAC
+   system (adminPermissions/) via usePermissionsStore(); until a real
+   login/session exists, gating uses the "Viewing as" preview (defaults
+   to full Super Admin access), the same convention Dashboard.jsx's own
+   legacy preview already established.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const TAB_DEFS = [
+  { id: 'bugs',              label: 'Bugs',                   icon: 'fa-bug',               filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'bug') },
+  { id: 'new_dev',           label: 'New Development',        icon: 'fa-code-branch',       filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'improvement') },
+  { id: 'in_progress',       label: 'In Progress',            icon: 'fa-spinner',           filter: (ts) => ts.filter((t) => t.stage === 'in_progress') },
+  { id: 'qa_review',         label: 'Review & Testing (QA)',  icon: 'fa-vial-circle-check', filter: (ts) => ts.filter((t) => t.stage === 'qa_review') },
+  { id: 'ready_for_release', label: 'Ready for Release',      icon: 'fa-box-open',          filter: (ts) => ts.filter((t) => t.stage === 'ready_for_release' || t.stage === 'released') },
+];
+
+/* Legacy status deep-links (Dashboard's byStatus cards) → tab id. */
+const STATUS_TO_TAB = { reported: 'bugs', assigned: 'bugs', in_progress: 'in_progress', fixed: 'qa_review', communicated: 'ready_for_release', closed: 'ready_for_release' };
+/* Legacy stage deep-links → tab id (bugs_new_dev has no single answer — defaults to Bugs). */
+const STAGE_TO_TAB = { bugs_new_dev: 'bugs', in_progress: 'in_progress', qa_review: 'qa_review', ready_for_release: 'ready_for_release', released: 'ready_for_release' };
+
+export default function TechModule({ toast, users = [], initialFilter, onConsumedInitialFilter, onOpenSupportSession }) {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('bugs');
+  const [detailId, setDetailId] = useState(null);
+  const { roles, roleAssignments, permsForUser, viewingAsUserId, setViewingAsUserId } = usePermissionsStore();
+
+  const load = useCallback(() => {
+    setLoading(true);
+    techTicketsApi.getTickets().then((t) => { setTickets(t); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  /* Deep-link from Dashboard/Support: jump to a tab or open a specific
+     ticket's detail. Dashboard's {type:'bug'|'improvement'} deep-links
+     now select the Bugs/New Development tab directly. */
+  useEffect(() => {
+    if (!initialFilter) return;
+    if (initialFilter.openTicketId) setDetailId(initialFilter.openTicketId);
+    else if (initialFilter.type === 'bug') setTab('bugs');
+    else if (initialFilter.type === 'improvement') setTab('new_dev');
+    else if (initialFilter.stage && STAGE_TO_TAB[initialFilter.stage]) setTab(STAGE_TO_TAB[initialFilter.stage]);
+    else if (initialFilter.status && STATUS_TO_TAB[initialFilter.status]) setTab(STATUS_TO_TAB[initialFilter.status]);
+    onConsumedInitialFilter?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFilter]);
+
+  /* Permission gate — currentUser is a stand-in until real auth exists;
+     no viewingAs override = full Super Admin access (matches
+     Dashboard.jsx's own existing "Viewing as" convention). */
+  const perms = useMemo(() => {
+    if (!viewingAsUserId) return null; // null = unrestricted (Super Admin default)
+    return permsForUser({ id: viewingAsUserId });
+  }, [viewingAsUserId, permsForUser]);
+  const can = (screenId, action) => !perms || !!perms[`${screenId}.${action}`];
+
+  const counts = useMemo(() => {
+    const c = {};
+    TAB_DEFS.forEach((d) => { c[d.id] = d.filter(tickets).length; });
+    return c;
+  }, [tickets]);
+
+  const createTicket = (payload) => {
+    techTicketsApi.createTicketFromReport(payload).then(() => { load(); toast?.('Ticket created', 'success'); });
+  };
+  const assignTicket = (id, developerId) => {
+    techTicketsApi.assignTicket(id, developerId).then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); });
+  };
+  /* Submitting the Developer Testing Report and sending the ticket for
+     QA Testing are now one action (In Progress tab's single "Send for
+     QA Testing" button opens the report modal directly) — save the
+     report, then immediately send for QA, in one chained call. */
+  const submitReportAndSendForQa = (id, report) => {
+    Promise.resolve(techTicketsApi.submitDeveloperTestingReport(id, report))
+      .then(() => techTicketsApi.sendForQaTesting(id))
+      .then(() => { load(); toast?.('Developer Testing Report submitted — sent for QA Testing', 'success'); })
+      .catch((e) => { load(); toast?.(e?.message || 'Could not send for QA Testing', 'warn'); });
+  };
+  const submitReview = (id, decision, comments, attachments) => {
+    techTicketsApi.submitQaReview(id, { decision, comments, attachments, reviewedBy: 'QA Team' }).then(load);
+  };
+  const release = (id, payload) => {
+    techTicketsApi.releaseTicket(id, { ...payload, releasedBy: 'Super Admin' }).then((t) => {
+      const message = `Your reported issue has been resolved. Issue: ${t.title}. Resolution: ${t.releaseInfo?.releaseNotes || t.releaseInfo?.testingComments || 'Fixed and verified by QA.'} Development time: ${t.releaseInfo?.devTimeDays} day${t.releaseInfo?.devTimeDays === 1 ? '' : 's'}. Please check and confirm.`;
+      techNotificationsApi.pushNotification({
+        audience: 'support', type: 'ticket_released', ticketId: t.id, ticketNumber: t.ticketNumber,
+        title: 'New Update Released', message, meta: { school: t.school.name, supportConversationId: t.supportConversationId },
+      }).then(() => load());
+    });
+  };
+
+  const detailTicket = detailId ? tickets.find((t) => t.id === detailId || t.ticketNumber === detailId) : null;
+  const openDetails = (idOrNumber) => setDetailId(idOrNumber);
+
+  return (
+    <div className="page-content">
+      <style>{TM_CSS}</style>
+      <div className="page-header">
+        <div className="page-title-row">
+          <div className="page-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}><i className="fa-solid fa-list-check" /></div>
+          <div>
+            <div className="page-title">Tech Module</div>
+            <div className="page-sub">Bug &amp; development lifecycle — triage, develop, QA, and release.</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tm)' }}>Viewing as</label>
+          <select className="um-input" style={{ height: 34, width: 220 }} value={viewingAsUserId || ''} onChange={(e) => setViewingAsUserId(e.target.value || null)}>
+            <option value="">Super Admin (full access)</option>
+            {users.map((u) => {
+              const role = findRole(roles, roleAssignments[u.id]?.role);
+              return <option key={u.id} value={u.id}>{u.fullName}{role ? ` — ${role.name}` : ' — No role'}</option>;
+            })}
+          </select>
+        </div>
+      </div>
+
+      {!loading && <AnalyticsCards tickets={tickets} />}
+
+      <div className="app-tabs">
+        {TAB_DEFS.map((d) => (
+          <button key={d.id} className={`app-tab${tab === d.id ? ' active' : ''}`} onClick={() => setTab(d.id)}>
+            <i className={`fa-solid ${d.icon}`} /> {d.label} <span className="tab-count">{counts[d.id] || 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="tm-empty"><i className="fa-solid fa-spinner fa-spin" /><div>Loading…</div></div>
+      ) : (
+        <>
+          {tab === 'bugs' && (
+            <BugsNewDevTab kind="bug" tickets={TAB_DEFS[0].filter(tickets)} onCreate={createTicket} onAssign={assignTicket} onViewDetails={openDetails} toast={toast}
+              canCreate={can('techmodule.bugs_new_dev', 'create')} canAssign={can('techmodule.bugs_new_dev', 'assign')} />
+          )}
+          {tab === 'new_dev' && (
+            <BugsNewDevTab kind="improvement" tickets={TAB_DEFS[1].filter(tickets)} onCreate={createTicket} onAssign={assignTicket} onViewDetails={openDetails} toast={toast}
+              canCreate={can('techmodule.bugs_new_dev', 'create')} canAssign={can('techmodule.bugs_new_dev', 'assign')} />
+          )}
+          {tab === 'in_progress' && (
+            <InProgressTab tickets={TAB_DEFS[2].filter(tickets)} onSubmitAndSendForQa={submitReportAndSendForQa} onViewDetails={openDetails} toast={toast}
+              canEdit={can('techmodule.in_progress', 'edit')} />
+          )}
+          {tab === 'qa_review' && (
+            <QaReviewTab tickets={TAB_DEFS[3].filter(tickets)} onReview={submitReview} onViewDetails={openDetails} toast={toast}
+              canApprove={can('techmodule.qa_review', 'approve')} />
+          )}
+          {tab === 'ready_for_release' && (
+            <ReadyForReleaseTab tickets={TAB_DEFS[4].filter(tickets)} onRelease={release} onViewDetails={openDetails} toast={toast}
+              canRelease={can('techmodule.ready_for_release', 'approve')} />
+          )}
+        </>
+      )}
+
+      {detailTicket && (
+        <TicketDetailModal
+          ticket={detailTicket}
+          onClose={() => setDetailId(null)}
+          onOpenSupportSession={onOpenSupportSession}
+          onOpenRelated={(ticketNumber) => setDetailId(ticketNumber)}
+        />
+      )}
+    </div>
+  );
+}

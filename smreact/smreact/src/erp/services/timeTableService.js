@@ -241,7 +241,8 @@ function ttPost(body, { signal } = {}) {
       id: 0, branchId: Number(branchID()) || 1,
       classID: 0, sectionId: 0, classOrder: 0, dayOrder: 0,
       day: '', startTime: '', endTime: '', period: 0, teacher: 0,
-      action: 'get', createdBy: 0, modifiedBy: 0,
+      // createdBy/modifiedBy = logged-in UserID (save + delete dono); get log nahi hota.
+      action: 'get', createdBy: Number(ss('UserID')) || 0, modifiedBy: Number(ss('UserID')) || 0,
       ...body,
     }),
   }).then((r) => r.json().catch(() => ({})));
@@ -385,6 +386,8 @@ export async function saveTimeTablePeriod({ dayIndex, classID, sectionID, classO
     subjectName: brk ? 'Break' : (period.subject || ''),
     subjectID: periodVal,
     action: period.id ? 'update' : 'insert',
+    createdBy: Number(ss('UserID')) || 0,
+    modifiedBy: Number(ss('UserID')) || 0,
   };
   const resp = await ttPost(payload);
   if (resp && (resp.success === false || resp.Success === false)) {

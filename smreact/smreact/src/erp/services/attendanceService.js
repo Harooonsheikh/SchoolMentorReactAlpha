@@ -215,6 +215,27 @@ export async function staffAttendance(payload, opts = {}) {
   return await response.json();
 }
 
+/* Batch attendance audit — poori class/staff attendance save hone ke BAAD ek dafa
+   call karo, taake 40 students = sirf 1 audit row bane (class + section detail). */
+export async function attendanceAuditLog(payload) {
+  try {
+    const token = sessionStorage.getItem("token");
+    const response = await fetch(buildUrl("/api/attendance-audit-log"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    return await response.json().catch(() => ({}));
+  } catch {
+    // Audit optional — fail ho to attendance save par koi asar nahi.
+    return {};
+  }
+}
+
 /* ── Previous Days Attendance setting ──
    POST /api/settings-approvals-previous-days-attendance
    action "save" → persist { branchID, previousDaysAttendance } in DB.
