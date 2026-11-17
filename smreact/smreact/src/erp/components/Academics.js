@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import LessonPlans from './LessonPlans';
+import AcademicsReportsTab from './AcademicsReports';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
 import { fetchReportHeader, resolveAcademicSession, formatAcademicYearLabel } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
@@ -40,7 +41,7 @@ const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const DAYS_SHORT   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 const STATUS_META = {
-  upcoming:  { bg: 'rgba(30,58,138,.08)',  color: '#1E40AF', label: 'Upcoming',  icon: 'fa-clock' },
+  upcoming:  { bg: 'rgba(var(--brand-primary-rgb, 30,58,138), .08)',  color: 'var(--brand-solid, #1E40AF)', label: 'Upcoming',  icon: 'fa-clock' },
   ongoing:   { bg: 'rgba(217,119,6,.08)',  color: '#D97706', label: 'Ongoing',   icon: 'fa-spinner' },
   completed: { bg: 'rgba(22,163,74,.08)',  color: '#16A34A', label: 'Completed', icon: 'fa-circle-check' },
 };
@@ -53,6 +54,9 @@ const parseEventDate = str => {
 
 /* Classes cache survives leaving the tab so a return visit is not empty. */
 let acadClassesCache = [];
+
+/* Academics › Reports L1 tab. Set to true to show it again. */
+const ACADEMICS_REPORTS_TAB_VISIBLE = false;
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN ACADEMICS SHELL
@@ -81,14 +85,17 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
      khul jata. */
   // const showRl        = acadView('Resource Library');
   const showRl        = false;
+  /* Reports L1 tab (AcademicsReports.js) — "Academics > Reports" View permission.
+     Hidden for now (ACADEMICS_REPORTS_TAB_VISIBLE = false). */
+  const showReports   = ACADEMICS_REPORTS_TAB_VISIBLE && acadView('Reports');
 
   /* Agar active tab ka View nahi to pehle visible tab par snap karo (L1/L2/L3). */
   useEffect(() => {
-    const vis = { sos: showSos, lp: showLp, rl: showRl };
+    const vis = { sos: showSos, lp: showLp, rl: showRl, reports: showReports };
     if (vis[l1]) return;
-    const first = ['sos', 'lp', 'rl'].find((k) => vis[k]);
+    const first = ['sos', 'lp', 'rl', 'reports'].find((k) => vis[k]);
     if (first && first !== l1) setL1(first);
-  }, [showSos, showLp, showRl, l1, setL1]);
+  }, [showSos, showLp, showRl, showReports, l1, setL1]);
   useEffect(() => {
     if (l1 !== 'sos') return;
     const vis = { tb: showTextbooks, terms: showTerms, cal: showCal };
@@ -301,6 +308,8 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
   if (l3 === 'act') {
     setMonthApiEnabled(false);
     loadActivities();
+    /* "Who is this for?" picker + class filter ko live class list chahiye. */
+    if (!acadClassesCache.length) getClassesData();
     
   }
 }, [l3]);
@@ -319,7 +328,7 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
 
 if (!hasSession) {
   return (
-    <div>
+    <div className="acad-root">
       <style>{ACADEMICS_CSS}</style>
       <div className="page-header">
         <div className="page-title-row">
@@ -370,7 +379,7 @@ if (!hasSession) {
 }
 
 return (
-  <div>
+  <div className="acad-root">
     <style>{ACADEMICS_CSS}</style>
     <div className="page-header">
       <div className="page-title-row">
@@ -405,23 +414,26 @@ return (
     </button>
     )}
 
-    {/* ─── LEVEL 1 TABS ─── (View permission ke hisaab se) */}
-    <div className="l1-tabs">
+    {/* ─── LEVEL 1 TABS ─── (View permission ke hisaab se)
+        Shared tab system: L1 = .ds-tabs, L2 = .ds-switcher, L3 = .ds-underline.
+        Rules ACADEMICS_CSS me .acad-root ke neeche scoped hain, taake
+        Examination waghera par asar na pade. */}
+    <div className="ds-tabs" role="tablist">
       {showSos && (
       <button
-        className={`l1-tab${l1 === 'sos' ? ' active' : ''}`}
+        className={`ds-tab${l1 === 'sos' ? ' active' : ''}`}
         onClick={() => setL1('sos')}
       >
-        <div className="l1-tab-icon"><i className="fa-solid fa-book"></i></div>
+        <i className="fa-solid fa-book"></i>
         Scheme of Studies
       </button>
       )}
       {showLp && (
       <button
-        className={`l1-tab${l1 === 'lp' ? ' active' : ''}`}
+        className={`ds-tab${l1 === 'lp' ? ' active' : ''}`}
         onClick={() => setL1('lp')}
       >
-        <div className="l1-tab-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
+        <i className="fa-solid fa-chalkboard-user"></i>
         Lesson Plans
       </button>
       )}
@@ -430,48 +442,55 @@ return (
           karein aur upar `showRl` wali asli line bhi bahal karein. ──
       {showRl && (
       <button
-        className={`l1-tab${l1 === 'rl' ? ' active' : ''}`}
+        className={`ds-tab${l1 === 'rl' ? ' active' : ''}`}
         onClick={() => setL1('rl')}
       >
-        <div className="l1-tab-icon"><i className="fa-solid fa-folder-open"></i></div>
+        <i className="fa-solid fa-folder-open"></i>
         Resource Library
       </button>
       )}
       */}
+      {showReports && (
+      <button
+        className={`ds-tab${l1 === 'reports' ? ' active' : ''}`}
+        onClick={() => setL1('reports')}
+      >
+        <i className="fa-solid fa-chart-column"></i>
+        Reports
+      </button>
+      )}
     </div>
 
     {l1 === 'sos' ? (
       <>
         {/* ─── LEVEL 2 TABS ─── (View permission ke hisaab se) */}
-        <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+        <div className="ds-switcher">
+          <div className="ds-switcher-group">
           {showTextbooks && (
           <button
-            className={`l2-tab${l2 === "tb" ? " active" : ""}`}
+            className={`ds-switcher-tab${l2 === "tb" ? " active" : ""}`}
             onClick={() => { setL2("tb"); getClassesData(); }}
           >
-            <div className="l2-tab-dot"></div>
-            <i className="fa-solid fa-book-bookmark" style={{ fontSize: 13 }}></i>
-            Textbooks
+            <i className="fa-solid fa-book-bookmark"></i> Textbooks
           </button>
           )}
           {showTerms && (
           <button
-            className={`l2-tab${l2 === 'terms' ? ' active' : ''}`}
+            className={`ds-switcher-tab${l2 === 'terms' ? ' active' : ''}`}
             onClick={() => setL2('terms')}
           >
-            <div className="l2-tab-dot"></div>
-            <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
+            <i className="fa-solid fa-list-ol"></i> Terms Setting
           </button>
           )}
           {showCal && (
           <button
-            className={`l2-tab${l2 === 'cal' ? ' active' : ''}`}
+            className={`ds-switcher-tab${l2 === 'cal' ? ' active' : ''}`}
             onClick={() => setL2('cal')}
           >
-            <div className="l2-tab-dot"></div>
-            <i className="fa-solid fa-calendar-days" style={{ fontSize: 13 }}></i> Calendar
+            <i className="fa-solid fa-calendar-days"></i> Calendar
           </button>
           )}
+          </div>
         </div>
 
         {l2 === 'tb' && (
@@ -490,29 +509,23 @@ return (
         {l2 === 'cal' && (
           <>
             {/* ─── LEVEL 3 TABS ─── (View permission ke hisaab se) */}
-            <div className="l3-tabs">
+            <div className="ds-underline">
               {showAcadCal && (
               <button
-                className={`l3-tab${l3 === 'ac' ? ' active' : ''}`}
+                className={`ds-underline-tab${l3 === 'ac' ? ' active' : ''}`}
                 onClick={() => setL3('ac')}
+                title="Key dates & term schedule"
               >
-                <div className="l3-tab-icon"><i className="fa-solid fa-calendar-check"></i></div>
-                <div className="l3-tab-text">
-                  <div className="l3-tab-name">Academic Calendar</div>
-                  <div className="l3-tab-desc">Key dates &amp; term schedule</div>
-                </div>
+                <i className="fa-solid fa-calendar-check"></i> Academic Calendar
               </button>
               )}
               {showActCal && (
               <button
-                className={`l3-tab${l3 === 'act' ? ' active' : ''}`}
+                className={`ds-underline-tab${l3 === 'act' ? ' active' : ''}`}
                 onClick={() => setL3('act')}
+                title="Events & school activities"
               >
-                <div className="l3-tab-icon"><i className="fa-solid fa-calendar-plus"></i></div>
-                <div className="l3-tab-text">
-                  <div className="l3-tab-name">Activity Calendar</div>
-                  <div className="l3-tab-desc">Events &amp; school activities</div>
-                </div>
+                <i className="fa-solid fa-calendar-plus"></i> Activity Calendar
               </button>
               )}
             </div>
@@ -541,13 +554,16 @@ return (
                 toast={toast}
                 isOtherSession={isOtherSession}
                 reloadKey={activityReload}
+                classOptions={activityClassOptions(classesData)}
               />
             )}
           </>
         )}
       </>
     ) : l1 === 'lp' ? (
-      <LessonPlans toast={toast} openConfirm={openConfirm} />
+      <LessonPlans variant="academics" toast={toast} openConfirm={openConfirm} />
+    ) : l1 === 'reports' ? (
+      <AcademicsReportsTab />
     ) : (
       <ResourceLibrary toast={toast} openConfirm={openConfirm} classesData={classesData} />
     )}
@@ -590,6 +606,7 @@ return (
       open={activityModal.open}
       editing={activityModal.editing}
       toast={toast}
+      classOptions={activityClassOptions(classesData)}
       onClose={() => setActivityModal({ open: false, editing: null })}
       onSave={async ev => {
         if (acp.denyWrite('activity', activityModal.editing ? 'edit' : 'add', toast)) return;
@@ -705,7 +722,7 @@ function ConfirmDialog({ cfg, onClose }) {
       <div className="confirm-dialog">
         <div className="confirm-glow" style={confirmStyle === 'danger'
           ? { background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }
-          : { background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+          : { background: 'var(--brand-gradient, linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A))' }} />
         <div className="confirm-hero">
           <div className="confirm-ring">
             <div className="confirm-icon-wrap" style={{ background: iconBg, color: iconColor }}>
@@ -974,7 +991,7 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
         </div>
         <div className="modal-body">
           <div style={{
-            background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff',
+            background: 'var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF))', color: '#fff',
             borderRadius: 'var(--radius-md)', padding: '11px 16px', textAlign: 'center',
             fontSize: 14, fontWeight: 700, marginBottom: 20, letterSpacing: '.01em',
           }}>
@@ -1053,7 +1070,53 @@ function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
 /* ═══════════════════════════════════════════════════════════════════
    ACTIVITY MODAL — add / edit a single activity
    ═══════════════════════════════════════════════════════════════════ */
-function ActivityModal({ open, editing, onClose, onSave, toast }) {
+/* ═══════════════════════════════════════════════════════════════════
+   ACTIVITY AUDIENCE — an activity is either for the whole school
+   (`classes` empty/absent) or for a chosen set of classes
+   (`classes: ['Class VI', 'Class VII', ...]`, names from the branch's live
+   class list — classesData / getClassesData).
+   Backend: /api/activitycalendarcrud par `classes` bheja jata hai aur
+   get-endpoints se `classes` padha jata hai. Jab tak backend ise save/return
+   na kare, is branch ke liye aakhri chuni hui classes localStorage me
+   (ACT_AUD_KEY) id ke hisaab se rakhi jati hain, taake UI chalti rahe.
+   ═══════════════════════════════════════════════════════════════════ */
+const activityClasses = ev => (ev && Array.isArray(ev.classes) ? ev.classes : []);
+const isWholeSchool = ev => activityClasses(ev).length === 0;
+/* Does this activity apply to `cls`? ('' = no class filter) */
+const activityForClass = (ev, cls) => !cls || isWholeSchool(ev) || activityClasses(ev).includes(cls);
+function audienceText(ev, max = 2) {
+  const c = activityClasses(ev);
+  if (!c.length) return 'Whole school';
+  if (c.length <= max) return c.join(', ');
+  return `${c.slice(0, max).join(', ')} +${c.length - max} more`;
+}
+function AudienceChip({ ev }) {
+  const whole = isWholeSchool(ev);
+  return (
+    <span className={`act-aud-chip${whole ? ' whole' : ''}`} title={whole ? 'Whole school' : activityClasses(ev).join(', ')}>
+      <i className={`fa-solid ${whole ? 'fa-school' : 'fa-users'}`}></i>{audienceText(ev)}
+    </span>
+  );
+}
+/* Unique class names from the live class list (getClassesData → classesData). */
+const activityClassOptions = (classesData = []) =>
+  Array.from(new Set((classesData || []).map(c => (c && (c.name || c.className || c.gradeName)) || '').filter(Boolean)));
+/* API `classes` → string[] (accepts string[], object[] or a comma string). */
+const parseApiClasses = v => {
+  if (Array.isArray(v)) {
+    return v.map(c => (typeof c === 'string' ? c : (c && (c.className || c.name || c.gradeName)) || '')).map(s => String(s).trim()).filter(Boolean);
+  }
+  if (typeof v === 'string') return v.split(',').map(s => s.trim()).filter(Boolean);
+  return null; // not sent by the API
+};
+const ACT_AUD_KEY = () => `sm_activity_classes_${sessionStorage.getItem('branchID') || '0'}`;
+const actAudLoad = () => { try { const m = JSON.parse(localStorage.getItem(ACT_AUD_KEY())); return m && typeof m === 'object' ? m : {}; } catch { return {}; } };
+const actAudRemember = (id, classes) => {
+  if (id == null) return;
+  try { const m = actAudLoad(); m[String(id)] = classes || []; localStorage.setItem(ACT_AUD_KEY(), JSON.stringify(m)); } catch { /* ignore */ }
+};
+
+function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [] }) {
   const [name, setName] = useState('');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
@@ -1061,9 +1124,23 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
   const [development, setDevelopment] = useState('');
   const [resource, setResource] = useState('');
    const [saving, setSaving] = useState(false); // for save new activity
+  /* Audience: 'school' = everyone, 'classes' = only the picked classes. */
+  const [audience, setAudience] = useState('school');
+  const [classes, setClasses] = useState([]);
+  const [audErr, setAudErr] = useState(false);
+  /* Picker list = live classes + any saved class that is no longer in the list. */
+  const pickList = useMemo(() => {
+    const extra = classes.filter(c => !classOptions.includes(c));
+    return [...classOptions, ...extra];
+  }, [classOptions, classes]);
+  const allPicked = pickList.length > 0 && pickList.every(c => classes.includes(c));
+  const toggleClass = c => { setAudErr(false); setClasses(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]); };
 
   useEffect(() => {
   if (!open) return;
+  setClasses(activityClasses(editing));
+  setAudience(isWholeSchool(editing) ? 'school' : 'classes');
+  setAudErr(false);
 
   const toInputDate = (value) => {
     if (!value) return '';
@@ -1085,7 +1162,11 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
 
   const submit = async () => {
   if (!name.trim()) return;
+  if (audience === 'classes' && !classes.length) { setAudErr(true); return; }
   if (!start || !end) return;
+
+  /* Keep the live class-list order so lists/reports read naturally. */
+  const pickedClasses = audience === 'school' ? [] : pickList.filter(c => classes.includes(c));
 
   const startDate = new Date(start);
   const endDate = new Date(end);
@@ -1131,6 +1212,8 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
       resourseMaterial: resource || 'string',
       startAt: startIso,
       endAt: endIso,
+      /* Audience — empty = whole school. */
+      classes: pickedClasses,
       createdDate: new Date().toISOString(),
       action: editing ? 'update' : 'insert',
     };
@@ -1156,8 +1239,11 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
       throw new Error(msg);
     }
 
+    const savedId = editId || json?.id || json?.data?.id || Date.now();
+    actAudRemember(savedId, pickedClasses);
     onSave({
-      id: editId || json?.id || json?.data?.id || Date.now(),
+      id: savedId,
+      classes: pickedClasses,
       name: name.trim(),
       start: fmt(start),
       end: fmt(end),
@@ -1195,6 +1281,42 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
           <div className="form-group">
             <label className="form-label">Name <span className="req-star">*</span></label>
             <input className="form-input" value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Who is this for? <span className="req-star">*</span></label>
+            <div className="act-aud-seg" role="radiogroup" aria-label="Activity audience">
+              <button type="button" role="radio" aria-checked={audience === 'school'}
+                className={`act-aud-opt${audience === 'school' ? ' active' : ''}`} onClick={() => { setAudience('school'); setAudErr(false); }}>
+                <i className="fa-solid fa-school"></i> Whole school
+              </button>
+              <button type="button" role="radio" aria-checked={audience === 'classes'}
+                className={`act-aud-opt${audience === 'classes' ? ' active' : ''}`} onClick={() => setAudience('classes')}>
+                <i className="fa-solid fa-users"></i> Specific classes
+              </button>
+            </div>
+            {audience === 'classes' && (
+              <div className="act-aud-picker">
+                <div className="act-aud-picker-head">
+                  <span>{classes.length ? `${classes.length} class${classes.length !== 1 ? 'es' : ''} selected` : 'Select one or more classes'}</span>
+                  {pickList.length > 0 && (
+                    <button type="button" className="act-aud-link" onClick={() => { setAudErr(false); setClasses(allPicked ? [] : [...pickList]); }}>
+                      {allPicked ? 'Clear all' : 'Select all'}
+                    </button>
+                  )}
+                </div>
+                <div className="act-aud-grid">
+                  {pickList.length === 0 ? (
+                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>No classes found for this branch.</span>
+                  ) : pickList.map(c => (
+                    <button type="button" key={c} aria-pressed={classes.includes(c)}
+                      className={`act-aud-class${classes.includes(c) ? ' on' : ''}`} onClick={() => toggleClass(c)}>
+                      {classes.includes(c) && <i className="fa-solid fa-check"></i>}{c}
+                    </button>
+                  ))}
+                </div>
+                {audErr && <div className="act-aud-err">Select at least one class, or choose Whole school.</div>}
+              </div>
+            )}
           </div>
           <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div className="form-group">
@@ -1294,6 +1416,7 @@ function academicsReportBody(name, ctx, isColor, textbookSubjects) {
       <thead><tr style="background:${p.tableHeadBg}">
         <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">#</th>
         <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Activity</th>
+        <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">For</th>
         <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Start</th>
         <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">End</th>
         <th style="padding:9px 12px;border:1px solid ${p.border};text-align:left;color:${p.tableHeadFg}">Status</th>
@@ -1302,6 +1425,7 @@ function academicsReportBody(name, ctx, isColor, textbookSubjects) {
         <tr style="background:${i % 2 === 0 ? p.rowBaseBg : p.rowAltBg}">
           <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${i + 1}</td>
           <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textD};font-weight:600">${ev.name}</td>
+          <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${audienceText(ev, 99)}</td>
           <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.start}</td>
           <td style="padding:9px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.end}</td>
           <td style="padding:9px 12px;border:1px solid ${p.border}">${reportStatusPill(ev.status, ev.status === 'completed' ? 'green' : ev.status === 'ongoing' ? 'amber' : 'blue', p)}</td>
@@ -1317,7 +1441,8 @@ function academicsReportBody(name, ctx, isColor, textbookSubjects) {
     <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
       <tr><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD};width:35%">Start Date</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.start}</td></tr>
       <tr style="background:${p.rowAltBg}"><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD}">End Date</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.end}</td></tr>
-      <tr><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD}">Status</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.status}</td></tr>
+      <tr><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD}">For</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${audienceText(ev, 99)}</td></tr>
+      <tr style="background:${p.rowAltBg}"><td style="padding:10px 12px;border:1px solid ${p.border};font-weight:700;color:${p.textD}">Status</td><td style="padding:10px 12px;border:1px solid ${p.border};color:${p.textM}">${ev.status}</td></tr>
     </table>
     ${ev.purpose ? `<h3 style="font-size:13px;font-weight:700;color:${p.textD};margin:0 0 8px">Purpose</h3><p style="font-size:13px;color:${p.textM};line-height:1.7;margin:0 0 16px">${ev.purpose}</p>` : ''}
     ${ev.development ? `<h3 style="font-size:13px;font-weight:700;color:${p.textD};margin:0 0 8px">Development</h3><p style="font-size:13px;color:${p.textM};line-height:1.7;margin:0 0 16px">${ev.development}</p>` : ''}
@@ -1343,8 +1468,8 @@ function academicsReportRows(name, ctx, textbookSubjects) {
   }
   if (name === 'Activity Calendar') {
     return {
-      columns: [{ key: 'i', label: '#', align: 'center' }, { key: 'name', label: 'Activity' }, { key: 'start', label: 'Start' }, { key: 'end', label: 'End' }, { key: 'status', label: 'Status' }],
-      rows: ctx.events.map((ev, i) => ({ i: i + 1, name: ev.name, start: ev.start, end: ev.end, status: ev.status })),
+      columns: [{ key: 'i', label: '#', align: 'center' }, { key: 'name', label: 'Activity' }, { key: 'for', label: 'For' }, { key: 'start', label: 'Start' }, { key: 'end', label: 'End' }, { key: 'status', label: 'Status' }],
+      rows: ctx.events.map((ev, i) => ({ i: i + 1, name: ev.name, for: audienceText(ev, 99), start: ev.start, end: ev.end, status: ev.status })),
     };
   }
   const ev = ctx.events.find(e => e.name === name);
@@ -1353,6 +1478,7 @@ function academicsReportRows(name, ctx, textbookSubjects) {
       columns: [{ key: 'field', label: 'Field' }, { key: 'value', label: 'Value' }],
       rows: [
         { field: 'Activity', value: ev.name }, { field: 'Start Date', value: ev.start }, { field: 'End Date', value: ev.end },
+        { field: 'For', value: audienceText(ev, 99) },
         { field: 'Status', value: ev.status },
         ev.purpose && { field: 'Purpose', value: ev.purpose },
         ev.development && { field: 'Development', value: ev.development },
@@ -1419,7 +1545,18 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
 /* ═══════════════════════════════════════════════════════════════════
    ACTIVITY CALENDAR PANEL — stats, calendar views, events panel
    ═══════════════════════════════════════════════════════════════════ */
-function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession, reloadKey }) {
+function ActivityCalendar({ events: allEvents, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession, reloadKey, classOptions = [] }) {
+  /* Class filter: '' shows everything; a class shows whole-school
+     activities plus the ones planned for that class. Everything below
+     (stats, calendar views, list, reports) works on the filtered `events`. */
+  const [classFilter, setClassFilter] = useState('');
+  const events = useMemo(() => allEvents.filter(ev => activityForClass(ev, classFilter)), [allEvents, classFilter]);
+  /* Filter list = live classes + any class already used by an activity. */
+  const filterClassList = useMemo(() => {
+    const used = [];
+    allEvents.forEach(ev => activityClasses(ev).forEach(c => { if (!classOptions.includes(c) && !used.includes(c)) used.push(c); }));
+    return [...classOptions, ...used];
+  }, [allEvents, classOptions]);
   const { can } = usePermissions();
   const acp = useAcademicsContentPerms();
   const hoAdd = acp.can('activity', 'add');
@@ -1440,7 +1577,7 @@ const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
   const [monthEvents, setMonthEvents] = useState([]);
  const displayEvents = monthApiEnabled
-  ? [...monthEvents, ...events.filter(ev =>
+  ? [...monthEvents.filter(ev => activityForClass(ev, classFilter)), ...events.filter(ev =>
       !monthEvents.some(me => me.id === ev.id)
     )]
   : events;
@@ -1563,7 +1700,7 @@ const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
     const q = search.toLowerCase();
     return events.filter(ev => {
       const mf = filter === 'all' || ev.status === filter;
-      const ms = !q || ev.name.toLowerCase().includes(q) || ev.start.toLowerCase().includes(q);
+      const ms = !q || ev.name.toLowerCase().includes(q) || ev.start.toLowerCase().includes(q) || audienceText(ev, 99).toLowerCase().includes(q);
       return mf && ms;
     });
     //for showing activity name on calender
@@ -1727,7 +1864,7 @@ const nextMonth = () => {
       {/* ─── Stats ─── */}
       <div className="act-stats-strip">
         <div className="act-stat-card" style={{ '--accent': '#1E40AF' }}>
-          <div className="act-stat-icon" style={{ background: 'rgba(30,64,175,.1)', color: '#1E40AF' }}>
+          <div className="act-stat-icon" style={{ background: 'rgba(var(--brand-dark-rgb, 30,64,175), .1)', color: 'var(--brand-solid, #1E40AF)' }}>
             <i className="fa-solid fa-calendar-days"></i>
           </div>
           <div>
@@ -1784,6 +1921,15 @@ const nextMonth = () => {
               </div>
             </div>
             <div className="act-cal-header-right">
+              <Tooltip text="Show activities for one class (whole-school activities always show)">
+                <div className={`act-class-filter${classFilter ? ' on' : ''}`}>
+                  <i className="fa-solid fa-users"></i>
+                  <select value={classFilter} onChange={e => setClassFilter(e.target.value)} aria-label="Filter by class">
+                    <option value="">All classes</option>
+                    {filterClassList.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </Tooltip>
               <div className="act-view-pills">
                 {['Month','Week','Day','List','Year'].map(v => (
                   <Tooltip key={v} text={`Switch to ${v} view`}>
@@ -1832,7 +1978,7 @@ const nextMonth = () => {
                     && c.m === today.getMonth()
                     && c.day === today.getDate();
                   const hasEvs = evs.length > 0;
-                  const MAX = 1;
+                  const MAX = 2;
                   const extra = evs.length - MAX;
                   const cellBg = hasEvs && !c.other ? `${evs[0].color}11` : undefined;
                   return (
@@ -1849,7 +1995,7 @@ const nextMonth = () => {
                             key={j}
                             className="cal-event-chip"
                             style={{ background: ev.color + '28', borderLeft: `2.5px solid ${ev.color}`, color: ev.color }}
-                            title={`${ev.name}: ${ev.start} — ${ev.end}`}
+                            title={`${ev.name}: ${ev.start} — ${ev.end} · ${audienceText(ev, 99)}`}
                             onClick={e => { e.stopPropagation(); toast(ev.name, 'info'); }}
                           >
                             {ev.name || 'Activity'}
@@ -1862,7 +2008,7 @@ const nextMonth = () => {
                 })}
               </div>
               <div className="act-legend">
-                <div className="act-legend-item"><div className="act-legend-dot" style={{ background: '#1E40AF' }}></div>Scheduled</div>
+                <div className="act-legend-item"><div className="act-legend-dot" style={{ background: 'var(--brand-solid, #1E40AF)' }}></div>Scheduled</div>
                 <div className="act-legend-item"><div className="act-legend-dot" style={{ background: '#16A34A' }}></div>Completed</div>
                 <div className="act-legend-item"><div className="act-legend-dot" style={{ background: '#D97706' }}></div>Ongoing</div>
                 <div className="act-legend-item"><div className="act-legend-dot today-dot"></div>Today</div>
@@ -1943,6 +2089,7 @@ const nextMonth = () => {
                     <div className="act-event-dates">
                       <i className="fa-solid fa-calendar"></i>{ev.start} — {ev.end}
                     </div>
+                    <div style={{ marginTop: 5 }}><AudienceChip ev={ev} /></div>
                     <div className="act-event-badge" style={{ background: st.bg, color: st.color }}>
                       <i className={`fa-solid ${st.icon}`} style={{ fontSize: 9 }}></i> {st.label}
                     </div>
@@ -2091,12 +2238,12 @@ if (dayOfWeek === 0) {
             <div key={d} style={{
               border: `1.5px solid ${isToday ? 'var(--brand-primary)' : 'var(--border-light)'}`,
               borderRadius: 12, overflow: 'hidden',
-              background: isToday ? 'rgba(30,58,138,.04)' : isCurrentMonth ? 'var(--bg-card)' : 'var(--bg-muted)',
+              background: isToday ? 'rgba(var(--brand-primary-rgb, 30,58,138), .04)' : isCurrentMonth ? 'var(--bg-card)' : 'var(--bg-muted)',
               opacity: isCurrentMonth ? 1 : 0.5,
             }}>
               <div style={{
                 padding: '7px 8px', textAlign: 'center',
-                background: isToday ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'var(--bg-muted)',
+                background: isToday ? 'var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF))' : 'var(--bg-muted)',
                 borderBottom: `1px solid ${isToday ? 'transparent' : 'var(--border-light)'}`,
               }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.8px', textTransform: 'uppercase', color: isToday ? 'rgba(255,255,255,.8)' : 'var(--text-muted)' }}>
@@ -2141,7 +2288,7 @@ function DayView({ events }) {
   return (
     <div style={{ padding: '14px 16px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}></div>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF))' }}></div>
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{todayLabel}</div>
       </div>
       {todayEvs.length > 0 ? (
@@ -2227,7 +2374,8 @@ function ListView({ events, onReport, onEdit, onDelete, isOtherSession, toast })
                 <i className="fa-solid fa-calendar" style={{ fontSize: 9 }}></i>
                 <span>{ev.start} — {ev.end}</span>
               </div>
-              <div style={{ marginTop: 5 }}>
+              <div style={{ marginTop: 5, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <AudienceChip ev={ev} />
                 <span style={{
                   background: st.bg, color: st.color, padding: '2px 8px', borderRadius: 99,
                   fontSize: 10.5, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -2354,7 +2502,7 @@ function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
             >
               <div style={{
                 padding: '8px 10px',
-                background: isNow ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)'
+                background: isNow ? 'var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF))'
                   : evs.length ? topColor + '20' : 'var(--bg-muted)',
                 borderBottom: `1px solid ${isNow ? 'transparent' : evs.length ? topColor + '30' : 'var(--border-light)'}`,
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -2374,7 +2522,7 @@ function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
                     width: 18, height: 18, borderRadius: 3,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 8.5, fontWeight: c.isT ? 800 : 500,
-                    background: c.isT ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)'
+                    background: c.isT ? 'var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF))'
                       : c.hasE ? c.evColor + '20' : 'transparent',
                     color: c.isT ? '#fff' : c.hasE ? c.evColor : 'var(--text-secondary)',
                   }}>{c.d}</div>
@@ -2587,8 +2735,15 @@ const mapActivity = (a, i) => {
     rawStart;
     console.log('Mapping activity:', a, '→ rawStart:', rawStart, 'rawEnd:', rawEnd);
 
+  const id = a.id ?? a.ID ?? a.Id ?? a.activityID ?? a.activityId ?? a.activityCalendarID ?? a.activityCalendarId ?? (Date.now() + i);
+  /* Audience: API `classes` (empty/missing = whole school). Agar API ne
+     field bheji hi nahi, to is branch ka local yaad rakha hua audience. */
+  const apiClasses = parseApiClasses(a.classes ?? a.Classes);
+  const classes = apiClasses !== null ? apiClasses : (actAudLoad()[String(id)] || []);
+
   return {
-    id: a.id ?? a.ID ?? a.Id ?? a.activityID ?? a.activityId ?? a.activityCalendarID ?? a.activityCalendarId ?? (Date.now() + i),
+    id,
+    classes,
     name: a.name || a.activityName || a.title || 'Activity',
     start: actFmtDate(rawStart),
     end: actFmtDate(rawEnd),
@@ -2851,14 +3006,14 @@ const deleteTerm = id => {
       {/* Stat strip */}
       <div className="ts-stat-strip">
         <div className="ts-stat">
-          <div className="ts-stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF' }}>
+          <div className="ts-stat-icon" style={{ background: 'rgba(var(--brand-primary-rgb, 30,58,138), .1)', color: 'var(--brand-solid, #1E40AF)' }}>
             <i className="fa-solid fa-layer-group"></i>
           </div>
           <div>
             <div className="ts-stat-val">{termData.length}</div>
             <div className="ts-stat-lbl">Total Terms</div>
           </div>
-          <div className="ts-stat-bar" style={{ background: 'linear-gradient(90deg,#1E40AF,#1E3A8A)' }}></div>
+          <div className="ts-stat-bar" style={{ background: 'var(--brand-gradient, linear-gradient(90deg,#1E40AF,#1E3A8A))' }}></div>
         </div>
         <div className="ts-stat">
           <div className="ts-stat-icon" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}>
@@ -3016,7 +3171,7 @@ const deleteTerm = id => {
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 20px', textAlign: 'center' }}>
                   <div style={{
                     width: 64, height: 64, borderRadius: 18,
-                    background: 'linear-gradient(135deg,rgba(30,58,138,.08),rgba(30,64,175,.05))',
+                    background: 'linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .08),rgba(var(--brand-dark-rgb, 30,64,175), .05))',
                     color: 'var(--brand-primary)', fontSize: 26,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14,
                   }}>
@@ -3251,7 +3406,7 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
 
       <div className="rl-stats">
         <div className="rl-stat" style={{ '--accent': '#1E3A8A' }}>
-          <div className="rl-stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }}><i className="fa-solid fa-folder-open"></i></div>
+          <div className="rl-stat-icon" style={{ background: 'rgba(var(--brand-primary-rgb, 30,58,138), .1)', color: 'var(--brand-solid, #1E3A8A)' }}><i className="fa-solid fa-folder-open"></i></div>
           <div><div className="rl-stat-val">{counts.total}</div><div className="rl-stat-lbl">Total Resources</div></div>
         </div>
         {RL_CATEGORIES.map(cat => (
@@ -3642,7 +3797,7 @@ function TextBooks({ onReport, toast, classesData }) {
               </div>
               <div className="td">
                 {item.sectionName ? (
-                  <span className="section-pill" style={{ background: 'rgba(30,58,138,.1)', padding: '4px 10px', borderRadius: '20px', fontSize: '12px' }}>
+                  <span className="section-pill" style={{ background: 'rgba(var(--brand-primary-rgb, 30,58,138), .1)', padding: '4px 10px', borderRadius: '20px', fontSize: '12px' }}>
                     {item.sectionName}
                   </span>
                 ) : (
@@ -3815,6 +3970,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       start: act.from ? new Date(act.from).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD',
       end: act.to ? new Date(act.to).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD',
       color: '#1E40AF', status: act.status || 'upcoming',
+      classes: [],   // Head Office releases default to whole school
       purpose: act.purpose, development: act.development, resource: act.resource,
     });
     record({ headOfficeReleaseId: rel.id, headOfficeItemId: act.id, itemType: 'ACTIVITY', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'ACTIVITY_CALENDAR', localClassId: null, localSubjectId: null, localCategory: null });
@@ -3861,7 +4017,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       localSubjectId: subjectName, localCategory: null,
     });
     pushToPortal(RELEASE_TYPE.notebook, nb, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId });
-    toast('Notebook plan saved to your portal.', 'success');
+    toast('Question Bank plan saved to your portal.', 'success');
   };
 
   const saveResource = (rel, res, classId, subjectName, category, extra = {}) => {
@@ -3966,7 +4122,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
                   <div className="ho-rel-chips">
                     <span><i className="fa-solid fa-calendar-week"></i> {s.activities} Activities</span>
                     <span><i className="fa-solid fa-list-ul"></i> {s.lessons} Lesson Plans</span>
-                    <span><i className="fa-solid fa-book-open"></i> {s.notebooks} Notebook Plans</span>
+                    <span><i className="fa-solid fa-book-open"></i> {s.notebooks} Question Bank</span>
                     <span><i className="fa-solid fa-folder-open"></i> {s.resources} Resource Files</span>
                     <span><i className="fa-solid fa-table-list"></i> {s.termBreakups} Term Breakups</span>
                   </div>
@@ -4019,7 +4175,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
   const TABS = [
     { key: 'activities', label: 'Activities', icon: 'fa-calendar-week', n: s.activities },
     { key: 'lessons', label: 'Lesson Plans', icon: 'fa-list-ul', n: r.lessonPlans.length },
-    { key: 'notebooks', label: 'Notebook Plans', icon: 'fa-book-open', n: r.notebookPlans.length },
+    { key: 'notebooks', label: 'Question Bank', icon: 'fa-book-open', n: r.notebookPlans.length },
     { key: 'resources', label: 'Resource Library', icon: 'fa-folder-open', n: s.resources },
     { key: 'termbreakup', label: 'Term Breakup', icon: 'fa-table-list', n: s.termBreakups },
   ];
@@ -4039,7 +4195,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
           <div className="ho-sum-grid">
             <div className="ho-sum" style={{ '--accent': '#1E40AF' }}><i className="fa-solid fa-calendar-week"></i><div><div className="ho-sum-v">{s.activities}</div><div className="ho-sum-l">Activities</div></div></div>
             <div className="ho-sum" style={{ '--accent': '#16A34A' }}><i className="fa-solid fa-list-ul"></i><div><div className="ho-sum-v">{s.lessons}</div><div className="ho-sum-l">Lesson Plans</div></div></div>
-            <div className="ho-sum" style={{ '--accent': '#7C3AED' }}><i className="fa-solid fa-book-open"></i><div><div className="ho-sum-v">{s.notebooks}</div><div className="ho-sum-l">Notebook Plans</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#7C3AED' }}><i className="fa-solid fa-book-open"></i><div><div className="ho-sum-v">{s.notebooks}</div><div className="ho-sum-l">Question Bank</div></div></div>
             <div className="ho-sum" style={{ '--accent': '#D97706' }}><i className="fa-solid fa-folder-open"></i><div><div className="ho-sum-v">{s.resources}</div><div className="ho-sum-l">Resource Files</div></div></div>
             <div className="ho-sum" style={{ '--accent': '#0E7490' }}><i className="fa-solid fa-table-list"></i><div><div className="ho-sum-v">{s.termBreakups}</div><div className="ho-sum-l">Term Breakups</div></div></div>
           </div>
@@ -4303,8 +4459,8 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
     return () => { alive = false; };
   }, [classId, sectionId]);
 
-  const title = kind === 'lesson' ? 'Save Lesson Plan to Portal' : kind === 'notebook' ? 'Save Notebook Plan to Portal' : kind === 'termbreakup' ? 'Save Term Breakup to Portal' : 'Save Resource to Portal';
-  const btn = kind === 'lesson' ? 'Save Lesson Plan' : kind === 'notebook' ? 'Save Notebook Plan' : kind === 'termbreakup' ? 'Save Term Breakup' : 'Save Resource';
+  const title = kind === 'lesson' ? 'Save Lesson Plan to Portal' : kind === 'notebook' ? 'Save Question Bank Plan to Portal' : kind === 'termbreakup' ? 'Save Term Breakup to Portal' : 'Save Resource to Portal';
+  const btn = kind === 'lesson' ? 'Save Lesson Plan' : kind === 'notebook' ? 'Save Question Bank Plan' : kind === 'termbreakup' ? 'Save Term Breakup' : 'Save Resource';
 
   const pickClass = (id) => {
     setClassId(id);
@@ -4457,38 +4613,39 @@ const ACADEMICS_CSS = `
 .page-tutorial-btn { flex-shrink: 0; }
 
 /* ── L1 TABS ── */
-/* Teenon tabs (Scheme of Studies · Lesson Plans · Resource Library) aik hi
-   row me, barabar chaurai ke. grid-template-columns fix nahi kiya jata: har
-   tab View permission ke hisaab se dikhta hai (showSos/showLp/showRl), is
-   liye 1, 2 ya 3 — jitne bhi render hon, auto-flow unhe khud barabar baant
-   deta hai. Pehle yahan do columns fix the, is liye teesra tab (Resource
-   Library) toot kar dusri line par chala jata tha.
+/* Saare L1 tabs (Scheme of Studies · Lesson Plans · Resource Library ·
+   Reports) aik hi row me, barabar chaurai ke. grid-template-columns fix
+   nahi kiya jata: har tab View permission ke hisaab se dikhta hai
+   (showSos/showLp/showRl/showReports), is liye jitne bhi render hon,
+   auto-flow unhe khud barabar baant deta hai. Fix columns par chhupa hua
+   tab row tod deta tha.
    NOTE: ye poora CSS aik template literal ke andar hai — yahan comments me
    backtick mat likhna, wo literal ko wahin khatam kar deta hai. */
 .l1-tabs {
   display:grid; grid-auto-flow:column; grid-auto-columns:1fr;
-  background:var(--bg-card);
+  background:var(--bg-muted);
   border:1.5px solid var(--border-light);
   border-radius:var(--radius-lg);
-  padding:5px; margin-bottom:20px;
+  padding:4px; margin-bottom:20px;
   box-shadow:var(--shadow-sm); gap:4px;
 }
 .l1-tab {
-  padding:11px 18px; text-align:center; cursor:pointer;
-  font-size:13px; font-weight:600; transition:var(--tr);
+  padding:10px 18px; text-align:center; cursor:pointer;
+  font-size:13px; font-weight:700; transition:all .25s cubic-bezier(.4,0,.2,1);
   background:transparent; color:var(--text-muted);
   border:none; font-family:var(--font-body);
   border-radius:var(--radius-md);
-  display:flex; align-items:center; justify-content:center; gap:7px;
+  display:flex; align-items:center; justify-content:center; gap:8px;
   position:relative; overflow:hidden;
 }
 .l1-tab:hover:not(.active) {
-  background:var(--bg-muted); color:var(--text-primary);
+  background:var(--bg-card); color:var(--brand-primary);
+  box-shadow:var(--shadow-xs);
 }
 .l1-tab.active {
-  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%));
   color:#fff;
-  box-shadow:0 6px 20px rgba(30,58,138,.4), inset 0 1px 0 rgba(255,255,255,.2);
+  box-shadow: var(--shadow-flatten, 0 6px 20px rgba(var(--brand-primary-rgb, 30,58,138), .4), inset 0 1px 0 rgba(255,255,255,.2));
 }
 .l1-tab-icon {
   width:22px; height:22px; border-radius:6px;
@@ -4496,7 +4653,7 @@ const ACADEMICS_CSS = `
   font-size:11px; transition:all .25s ease; flex-shrink:0;
 }
 .l1-tab.active .l1-tab-icon { background:rgba(255,255,255,.18); color:#fff; }
-.l1-tab:hover:not(.active) .l1-tab-icon { background:rgba(30,58,138,.08); color:var(--brand-primary); }
+.l1-tab:hover:not(.active) .l1-tab-icon { background:rgba(var(--brand-primary-rgb, 30,58,138), .08); color:var(--brand-primary); }
 .l1-tab:not(.active):not(:hover) .l1-tab-icon { background:rgba(0,0,0,.05); color:var(--text-muted); }
 
 /* ── L2 TABS ── */
@@ -4521,10 +4678,10 @@ const ACADEMICS_CSS = `
   transform:scaleX(0); transition:transform .25s cubic-bezier(.4,0,.2,1);
 }
 .l2-tab:not(:last-child) { border-right:1.5px solid var(--border-light); }
-.l2-tab:hover:not(.active) { background:var(--bg-muted); color:var(--text-primary); }
+.l2-tab:hover:not(.active) { background:var(--bg-muted); color:var(--brand-primary); }
 .l2-tab.active {
-  color:var(--brand-primary); font-weight:700;
-  background:linear-gradient(180deg,transparent,rgba(30,58,138,.04));
+  color:var(--brand-primary); font-weight:800;
+  background:linear-gradient(180deg,transparent,rgba(var(--brand-primary-rgb, 30,58,138), .04));
 }
 .l2-tab.active::after { transform:scaleX(1); }
 .l2-tab-dot {
@@ -4538,22 +4695,24 @@ const ACADEMICS_CSS = `
 /* ── L3 TABS ── */
 .l3-tabs { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
 .l3-tab {
-  padding:12px 18px; cursor:pointer;
+  padding:14px 20px; cursor:pointer;
   font-size:13px; font-weight:600; transition:all .22s cubic-bezier(.4,0,.2,1);
   background:var(--bg-card); color:var(--text-muted);
-  border:1.5px solid var(--border-light); font-family:var(--font-body);
+  border:2px solid var(--border-light); font-family:var(--font-body);
   border-radius:var(--radius-lg);
   display:flex; align-items:center; gap:12px;
   box-shadow:var(--shadow-xs); text-align:left;
 }
 .l3-tab:hover:not(.active) {
   border-color:var(--border-med); background:var(--bg-muted);
-  color:var(--text-primary);
+  color:var(--brand-primary); transform:translateY(-1px);
+  box-shadow:var(--shadow-sm);
 }
 .l3-tab.active {
-  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF));
   border-color:transparent; color:#fff;
-  box-shadow:0 6px 20px rgba(30,58,138,.4), inset 0 1px 0 rgba(255,255,255,.2);
+  box-shadow: var(--shadow-flatten, 0 6px 20px rgba(var(--brand-primary-rgb, 30,58,138), .35), inset 0 1px 0 rgba(255,255,255,.15));
+  transform:translateY(-1px);
 }
 .l3-tab-icon {
   width:36px; height:36px; border-radius:10px;
@@ -4561,7 +4720,7 @@ const ACADEMICS_CSS = `
   font-size:15px; flex-shrink:0; transition:all .22s ease;
 }
 .l3-tab.active .l3-tab-icon { background:rgba(255,255,255,.18); color:#fff; }
-.l3-tab:hover:not(.active) .l3-tab-icon { background:rgba(30,58,138,.08); color:var(--brand-primary); }
+.l3-tab:hover:not(.active) .l3-tab-icon { background:rgba(var(--brand-primary-rgb, 30,58,138), .08); color:var(--brand-primary); }
 .l3-tab:not(.active):not(:hover) .l3-tab-icon { background:var(--bg-muted); color:var(--text-muted); }
 .l3-tab-text { text-align:left; }
 .l3-tab-name { font-size:13px; font-weight:700; line-height:1.2; }
@@ -4578,7 +4737,7 @@ const ACADEMICS_CSS = `
 
 /* ── Classes table (Text Books) ── */
 .table-head {
-  display:grid; 
+  display:grid;
   grid-template-columns: 80px 1.2fr 1fr 220px 80px;
   background:var(--bg-muted); border-bottom:1px solid var(--border-light);
   padding:0 20px;
@@ -4595,13 +4754,13 @@ const ACADEMICS_CSS = `
   padding:0 20px; cursor:pointer; align-items:center;
   transition:var(--tr); min-height:60px;
 }
-.class-row:hover { background:rgba(30,58,138,.04); }
+.class-row:hover { background:rgba(var(--brand-primary-rgb, 30,58,138), .04); }
 .class-row.open  { background:var(--bg-muted); }
 .td { padding:12px 10px; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; }
 .td.sno { color:var(--text-muted); font-weight:600; gap:4px; }
 .sno-hash { color:var(--brand-primary); font-size:10px; opacity:.5; }
 .td.cls-name { font-weight:700; color:var(--text-primary); gap:8px; }
-.cls-icon { width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#DBEAFE,#BFDBFE);color:#1E40AF;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0; }
+.cls-icon { width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#DBEAFE,#BFDBFE);color: var(--brand-solid, #1E40AF);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0; }
 .expand-btn {
   width:30px;height:30px;border-radius:8px;
   border:1.5px solid var(--border-light);
@@ -4610,10 +4769,10 @@ const ACADEMICS_CSS = `
   cursor:pointer;font-size:11px;transition:var(--tr);margin-left:auto;
 }
 .expand-btn:hover { border-color:var(--brand-primary);color:var(--brand-primary); }
-.expand-btn.open { transform:rotate(180deg);border-color:var(--brand-primary);color:var(--brand-primary);background:rgba(30,58,138,.05); }
+.expand-btn.open { transform:rotate(180deg);border-color:var(--brand-primary);color:var(--brand-primary);background:rgba(var(--brand-primary-rgb, 30,58,138), .05); }
 
 .class-detail {
-  background:linear-gradient(135deg,rgba(30,58,138,.02),rgba(30,58,138,.04));
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .02),rgba(var(--brand-primary-rgb, 30,58,138), .04));
   border-top:1px solid var(--border-light);
   max-height:0; overflow:hidden;
   transition:max-height .4s cubic-bezier(.4,0,.2,1), padding .3s ease;
@@ -4629,7 +4788,7 @@ const ACADEMICS_CSS = `
   cursor:pointer; border:none; transition:var(--tr); white-space:nowrap;
 }
 .export-btn.pdf  { background:linear-gradient(135deg,#EF4444,#DC2626);color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.3); }
-.export-btn.word { background:linear-gradient(135deg,#2563EB,#1E40AF);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.3); }
+.export-btn.word { background:var(--brand-gradient, linear-gradient(135deg,#2563EB,#1E40AF));color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.3); }
 .export-btn:hover { transform:translateY(-1px); filter:brightness(1.08); }
 .export-btn:active { transform:scale(.96); }
 
@@ -4644,8 +4803,8 @@ const ACADEMICS_CSS = `
 .subj-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0; }
 .subj-name { font-size:13px;font-weight:700;color:var(--text-primary); }
 .subj-book { font-size:11px;color:var(--text-muted);margin-top:2px; }
-.subj-blue   { background:rgba(30,58,138,.08);color:#1E40AF; }
-.subj-teal   { background:rgba(37,99,235,.1);color:#1E40AF; }
+.subj-blue   { background:rgba(var(--brand-primary-rgb, 30,58,138), .08);color: var(--brand-solid, #1E40AF); }
+.subj-teal   { background:rgba(37,99,235,.1);color: var(--brand-solid, #1E40AF); }
 .subj-green  { background:rgba(22,163,74,.1);color:#16A34A; }
 .subj-amber  { background:rgba(245,158,11,.1);color:#D97706; }
 .subj-purple { background:rgba(124,58,237,.1);color:#7C3AED; }
@@ -4688,16 +4847,16 @@ const ACADEMICS_CSS = `
 .ts-card-header {
   display:flex; align-items:center; justify-content:space-between;
   padding:20px 24px 18px; border-bottom:1px solid var(--border-light);
-  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .03),transparent);
   flex-wrap:wrap; gap:14px;
 }
 .ts-card-header-left { display:flex; align-items:center; gap:14px; }
 .ts-header-icon {
   width:44px; height:44px; border-radius:13px; flex-shrink:0;
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF));
   color:#fff; font-size:18px;
   display:flex; align-items:center; justify-content:center;
-  box-shadow:0 6px 18px rgba(30,58,138,.3);
+  box-shadow: var(--shadow-flatten, 0 6px 18px rgba(var(--brand-primary-rgb, 30,58,138), .3));
 }
 .ts-card-title { font-size:16px; font-weight:800; color:var(--text-primary); letter-spacing:-.01em; }
 .ts-card-sub   { font-size:11.5px; color:var(--text-muted); margin-top:2px; max-width:400px; }
@@ -4717,8 +4876,8 @@ const ACADEMICS_CSS = `
 }
 .ts-subtab:hover:not(.active) { background:var(--bg-card); color:var(--text-primary); }
 .ts-subtab.active {
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
-  color:#fff; box-shadow:0 3px 10px rgba(30,58,138,.3);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF));
+  color:#fff; box-shadow: var(--shadow-flatten, 0 3px 10px rgba(var(--brand-primary-rgb, 30,58,138), .3));
 }
 .ts-subtab i { font-size:11px; }
 
@@ -4726,7 +4885,7 @@ const ACADEMICS_CSS = `
 .ts-info-strip {
   display:flex; align-items:flex-start; gap:10px;
   padding:12px 14px; border-radius:var(--radius-md);
-  background:rgba(30,58,138,.05); border:1px solid rgba(30,58,138,.15);
+  background:rgba(var(--brand-primary-rgb, 30,58,138), .05); border:1px solid rgba(var(--brand-primary-rgb, 30,58,138), .15);
   font-size:12.5px; color:#334155; line-height:1.7;
   font-weight:500; word-break:break-word; overflow-wrap:break-word;
 }
@@ -4751,20 +4910,20 @@ const ACADEMICS_CSS = `
   font-family:var(--font-body); font-size:13px; color:var(--text-primary);
   background:var(--input-bg); outline:none; transition:var(--tr);
 }
-.ts-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
+.ts-input:focus { border-color:var(--brand-primary); box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138), .09)); }
 .ts-select { cursor:pointer; appearance:none; }
 .ts-hint { font-size:10.5px; color:var(--text-muted); display:flex; align-items:center; gap:5px; }
-.ts-   i { font-size:10px; color:var(--info); }
+.ts-hint i { font-size:10px; color:var(--info); }
 
 .ts-btn-primary {
   display:inline-flex; align-items:center; gap:8px;
   padding:0 22px; height:42px; border-radius:var(--radius-md);
   border:none; cursor:pointer; font-family:var(--font-body);
   font-size:13px; font-weight:700; transition:var(--tr);
-  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
-  color:#fff; box-shadow:0 4px 14px rgba(30,58,138,.28);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E40AF,#1E3A8A));
+  color:#fff; box-shadow: var(--shadow-flatten, 0 4px 14px rgba(var(--brand-primary-rgb, 30,58,138), .28));
 }
-.ts-btn-primary:hover { transform:translateY(-1px); box-shadow:0 8px 20px rgba(30,58,138,.38); }
+.ts-btn-primary:hover { transform:translateY(-1px); box-shadow: var(--shadow-flatten, 0 8px 20px rgba(var(--brand-primary-rgb, 30,58,138), .38)); }
 .ts-btn-ghost {
   display:inline-flex; align-items:center; gap:8px;
   padding:0 18px; height:42px; border-radius:var(--radius-md);
@@ -4792,7 +4951,7 @@ const ACADEMICS_CSS = `
   min-width:0;
 }
 .ts-row:last-child { border-bottom:none; }
-.ts-row:hover { background:rgba(30,58,138,.018); }
+.ts-row:hover { background:rgba(var(--brand-primary-rgb, 30,58,138), .018); }
 .ts-num { width:52px; flex-shrink:0; display:flex; align-items:center; }
 .ts-num-badge {
   width:34px; height:34px; border-radius:10px;
@@ -4814,9 +4973,9 @@ const ACADEMICS_CSS = `
   outline:none; transition:var(--tr); min-width:0;
 }
 .ts-term-input:hover { border-color:var(--border-med); }
-.ts-term-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+.ts-term-input:focus { border-color:var(--brand-primary); box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138), .08)); }
 .ts-term-input[type="date"] { cursor:pointer; font-size:13px; padding:0 10px; }
-.ts-term-input.new { border-color:rgba(30,58,138,.3); background:rgba(30,58,138,.03); }
+.ts-term-input.new { border-color:rgba(var(--brand-primary-rgb, 30,58,138), .3); background:rgba(var(--brand-primary-rgb, 30,58,138), .03); }
 
 .ts-actions { display:flex; gap:7px; align-items:center; flex-shrink:0; justify-content:center; }
 .ts-act-btn {
@@ -4843,13 +5002,13 @@ const ACADEMICS_CSS = `
   background:transparent; cursor:pointer; transition:var(--tr);
   font-family:var(--font-body);
 }
-.ts-add-row-btn:hover { border-color:var(--brand-primary); background:rgba(30,58,138,.03); border-style:solid; }
+.ts-add-row-btn:hover { border-color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .03); border-style:solid; }
 .ts-add-icon {
   width:36px; height:36px; border-radius:10px; flex-shrink:0;
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF));
   color:#fff; font-size:14px;
   display:flex; align-items:center; justify-content:center;
-  box-shadow:0 3px 10px rgba(30,58,138,.3);
+  box-shadow: var(--shadow-flatten, 0 3px 10px rgba(var(--brand-primary-rgb, 30,58,138), .3));
   transition:transform .2s ease;
 }
 .ts-add-row-btn:hover .ts-add-icon { transform:rotate(90deg); }
@@ -4910,7 +5069,7 @@ const ACADEMICS_CSS = `
   transition:var(--tr); cursor:pointer;
 }
 .key-date-card:hover { border-color:var(--border-med); box-shadow:var(--shadow-sm); }
-.kd-icon { width:30px; height:30px; border-radius:8px; background:rgba(30,58,138,.08); color:var(--brand-primary); display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+.kd-icon { width:30px; height:30px; border-radius:8px; background:rgba(var(--brand-primary-rgb, 30,58,138), .08); color:var(--brand-primary); display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
 .kd-heading { font-size:12.5px; font-weight:700; color:var(--text-primary); }
 .kd-date { font-size:11px; color:var(--text-muted); margin-top:2px; }
 .no-data { text-align:center; padding:14px; font-size:12px; color:var(--text-muted); opacity:.6; }
@@ -4931,7 +5090,7 @@ const ACADEMICS_CSS = `
   color:var(--text-primary); background:var(--input-bg); outline:none;
   transition:var(--tr); width:100%;
 }
-.cal-entry-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
+.cal-entry-input:focus { border-color:var(--brand-primary); box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138), .09)); }
 .remove-btn {
   display:flex; align-items:center; gap:4px;
   padding:5px 10px; border-radius:var(--radius-sm);
@@ -4993,7 +5152,7 @@ const ACADEMICS_CSS = `
 .act-cal-header {
   display:flex; align-items:center; justify-content:space-between;
   padding:18px 20px 14px; border-bottom:1px solid var(--border-light);
-  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .03),transparent);
   gap:12px; flex-wrap:wrap;
 }
 .act-cal-header-left { display:flex; align-items:center; }
@@ -5010,6 +5169,51 @@ const ACADEMICS_CSS = `
 .act-cal-month { font-size:17px; font-weight:800; color:var(--text-primary); letter-spacing:-.02em; }
 .act-cal-month-sub { font-size:10px; color:var(--text-muted); margin-top:1px; }
 
+/* ── Activity audience (Who is this for? / class filter / chip) ── */
+.act-class-filter {
+  display:flex; align-items:center; gap:7px; height:32px; padding:0 10px;
+  border:1.5px solid var(--border-light); border-radius:var(--radius-full); background:var(--bg-muted);
+  color:var(--text-muted); transition:var(--tr);
+}
+.act-class-filter i { font-size:11px; }
+.act-class-filter select {
+  border:none; background:transparent; outline:none; cursor:pointer; max-width:140px;
+  font-family:var(--font-body); font-size:11.5px; font-weight:600; color:var(--text-primary);
+}
+.act-class-filter.on { border-color:var(--brand-primary); color:var(--brand-primary); }
+.act-aud-chip {
+  display:inline-flex; align-items:center; gap:5px; max-width:100%;
+  padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;
+  color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .08);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.act-aud-chip.whole { color:var(--text-muted); background:var(--bg-muted); }
+.act-aud-chip i { font-size:9px; }
+.act-aud-seg {
+  display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px;
+  background:var(--bg-muted); border:1px solid var(--border-light); border-radius:12px;
+}
+.act-aud-opt {
+  display:flex; align-items:center; justify-content:center; gap:7px; height:36px;
+  border:none; border-radius:9px; background:transparent; cursor:pointer;
+  font-family:var(--font-body); font-size:12.5px; font-weight:600; color:var(--text-muted); transition:var(--tr);
+}
+.act-aud-opt:hover:not(.active) { color:var(--text-primary); }
+.act-aud-opt.active { background:var(--bg-card); color:var(--brand-primary); box-shadow:0 1px 4px rgba(15,23,42,.08); }
+.act-aud-picker { margin-top:10px; border:1px solid var(--border-light); border-radius:12px; padding:10px 12px; }
+.act-aud-picker-head { display:flex; align-items:center; justify-content:space-between; font-size:11.5px; font-weight:600; color:var(--text-muted); margin-bottom:8px; }
+.act-aud-link { border:none; background:none; padding:0; cursor:pointer; font-family:var(--font-body); font-size:11.5px; font-weight:700; color:var(--brand-primary); }
+.act-aud-grid { display:flex; flex-wrap:wrap; gap:6px; max-height:150px; overflow-y:auto; }
+.act-aud-class {
+  display:inline-flex; align-items:center; gap:5px; height:28px; padding:0 11px;
+  border:1.5px solid var(--border-light); border-radius:99px; background:var(--bg-card); cursor:pointer;
+  font-family:var(--font-body); font-size:11.5px; font-weight:600; color:var(--text-primary); transition:var(--tr);
+}
+.act-aud-class:hover { border-color:var(--brand-primary); }
+.act-aud-class.on { border-color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .08); color:var(--brand-primary); }
+.act-aud-class i { font-size:9.5px; }
+.act-aud-err { margin-top:8px; font-size:11.5px; font-weight:600; color:#DC2626; }
+
 .act-view-pills {
   display:flex; gap:2px; background:var(--bg-muted);
   border:1px solid var(--border-light); border-radius:var(--radius-full); padding:3px;
@@ -5021,7 +5225,7 @@ const ACADEMICS_CSS = `
   color:var(--text-muted); cursor:pointer; transition:var(--tr);
 }
 .act-view-pill:hover:not(.active) { color:var(--text-primary); }
-.act-view-pill.active { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; box-shadow:0 2px 8px rgba(30,58,138,.3); }
+.act-view-pill.active { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); color:#fff; box-shadow: var(--shadow-flatten, 0 2px 8px rgba(var(--brand-primary-rgb, 30,58,138), .3)); }
 
 .act-icon-btn {
   width:32px; height:32px; border-radius:9px;
@@ -5032,8 +5236,8 @@ const ACADEMICS_CSS = `
 .act-icon-btn:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
 .act-icon-btn--pdf  { background:rgba(220,38,38,.07); border-color:rgba(220,38,38,.25); color:#DC2626; }
 .act-icon-btn--pdf:hover { background:rgba(220,38,38,.14); border-color:#DC2626; color:#DC2626; }
-.act-icon-btn--word { background:rgba(30,64,175,.07); border-color:rgba(30,64,175,.25); color:#1E40AF; }
-.act-icon-btn--word:hover { background:rgba(30,64,175,.14); border-color:#1E40AF; color:#1E40AF; }
+.act-icon-btn--word { background:rgba(var(--brand-dark-rgb, 30,64,175), .07); border-color:rgba(var(--brand-dark-rgb, 30,64,175), .25); color: var(--brand-solid, #1E40AF); }
+.act-icon-btn--word:hover { background:rgba(var(--brand-dark-rgb, 30,64,175), .14); border-color: var(--brand-solid, #1E40AF); color: var(--brand-solid, #1E40AF); }
 
 .act-dow-row { display:grid; grid-template-columns:repeat(7,1fr); padding:10px 10px 6px; gap:2px; }
 .act-dow { text-align:center; font-size:10px; font-weight:800; color:var(--text-muted); letter-spacing:.8px; text-transform:uppercase; padding:6px 0; }
@@ -5047,7 +5251,7 @@ const ACADEMICS_CSS = `
 }
 .act-day-full:hover:not(.other-month) { background:var(--bg-muted); border-color:var(--border-light); }
 .act-day-full.other-month { opacity:.35; cursor:default; }
-.act-day-full.today { background:rgba(30,58,138,.04); border-color:var(--brand-primary); }
+.act-day-full.today { background:rgba(var(--brand-primary-rgb, 30,58,138), .04); border-color:var(--brand-primary); }
 .act-day-num {
   font-size:12.5px; font-weight:600; color:var(--text-secondary);
   width:26px; height:26px; border-radius:50%;
@@ -5056,8 +5260,8 @@ const ACADEMICS_CSS = `
 }
 .act-day-full.other-month .act-day-num { color:var(--text-muted); }
 .act-day-num.today-num {
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
-  color:#fff; font-weight:800; box-shadow:0 3px 10px rgba(30,58,138,.4);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF));
+  color:#fff; font-weight:800; box-shadow: var(--shadow-flatten, 0 3px 10px rgba(var(--brand-primary-rgb, 30,58,138), .4));
 }
 .cal-day-events { display:flex; flex-direction:column; gap:2px; flex:1; margin-top:4px; }
 .cal-event-chip {
@@ -5072,7 +5276,7 @@ const ACADEMICS_CSS = `
   color:var(--text-muted); background:var(--bg-muted);
   padding:1px 5px; border-radius:3px; border:none;
 }
-.act-day-full.has-acts { border-color:rgba(30,58,138,.12); }
+.act-day-full.has-acts { border-color:rgba(var(--brand-primary-rgb, 30,58,138), .12); }
 .act-day-full.has-acts:hover { border-color:var(--border-med); filter:brightness(.97); }
 
 .act-legend {
@@ -5081,7 +5285,7 @@ const ACADEMICS_CSS = `
 }
 .act-legend-item { display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--text-muted); font-weight:600; }
 .act-legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-.today-dot { background:linear-gradient(135deg,#1E3A8A,#1E40AF); box-shadow:0 1px 4px rgba(30,58,138,.4); }
+.today-dot { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); box-shadow: var(--shadow-flatten, 0 1px 4px rgba(var(--brand-primary-rgb, 30,58,138), .4)); }
 
 .act-events-panel {
   background:var(--bg-card); border-radius:var(--radius-xl);
@@ -5092,19 +5296,19 @@ const ACADEMICS_CSS = `
   padding:16px 16px 12px; border-bottom:1px solid var(--border-light);
   display:flex; align-items:flex-start; justify-content:space-between;
   gap:10px; flex-shrink:0;
-  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .03),transparent);
 }
 .act-events-title { font-size:14px; font-weight:800; color:var(--text-primary); }
 .act-events-sub { font-size:11px; color:var(--text-muted); margin-top:2px; }
 .act-add-btn {
   display:flex; align-items:center; gap:6px;
   padding:8px 14px; border-radius:var(--radius-full);
-  border:none; background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  border:none; background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF));
   color:#fff; font-family:var(--font-body); font-size:12px; font-weight:700;
-  cursor:pointer; box-shadow:0 3px 10px rgba(30,58,138,.3);
+  cursor:pointer; box-shadow: var(--shadow-flatten, 0 3px 10px rgba(var(--brand-primary-rgb, 30,58,138), .3));
   transition:var(--tr); white-space:nowrap; flex-shrink:0;
 }
-.act-add-btn:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(30,58,138,.4); }
+.act-add-btn:hover { transform:translateY(-1px); box-shadow: var(--shadow-flatten, 0 6px 18px rgba(var(--brand-primary-rgb, 30,58,138), .4)); }
 
 .act-search-row { display:flex; gap:8px; padding:12px 14px 8px; flex-shrink:0; border-bottom:1px solid var(--border-light); }
 .act-search-box {
@@ -5112,7 +5316,7 @@ const ACADEMICS_CSS = `
   border:1.5px solid var(--border-light); border-radius:var(--radius-full);
   padding:0 12px; height:34px; background:var(--bg-muted); transition:var(--tr);
 }
-.act-search-box:focus-within { border-color:var(--brand-primary); background:var(--input-bg); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
+.act-search-box:focus-within { border-color:var(--brand-primary); background:var(--input-bg); box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138), .09)); }
 .act-search-box i { color:var(--text-muted); font-size:11px; flex-shrink:0; }
 .act-search-box input {
   border:none; background:transparent; outline:none;
@@ -5155,7 +5359,7 @@ const ACADEMICS_CSS = `
 .act-empty { display:flex; flex-direction:column; align-items:center; padding:40px 20px; text-align:center; }
 .act-empty-icon {
   width:60px; height:60px; border-radius:16px;
-  background:linear-gradient(135deg,rgba(30,58,138,.08),rgba(14,165,233,.08));
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .08),rgba(14,165,233,.08));
   display:flex; align-items:center; justify-content:center;
   font-size:24px; color:var(--brand-primary); margin-bottom:12px;
 }
@@ -5189,14 +5393,14 @@ const ACADEMICS_CSS = `
 [data-theme="dark"] .act-view-pills { background:var(--bg-muted); border-color:var(--border-light); }
 [data-theme="dark"] .act-view-pill { color:var(--text-muted); }
 [data-theme="dark"] .act-view-pill:hover:not(.active) { color:#93C5FD; }
-[data-theme="dark"] .act-view-pill.active { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; }
+[data-theme="dark"] .act-view-pill.active { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); color:#fff; }
 [data-theme="dark"] .act-icon-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
 [data-theme="dark"] .act-icon-btn:hover { background:rgba(59,130,246,.15); color:#3B82F6; border-color:#3B82F6; }
 [data-theme="dark"] .act-icon-btn--pdf  { background:rgba(220,38,38,.1); border-color:rgba(220,38,38,.25); color:#F87171; }
 [data-theme="dark"] .act-icon-btn--word { background:rgba(59,130,246,.1); border-color:rgba(59,130,246,.25); color:#60A5FA; }
 [data-theme="dark"] .act-dow { color:#4A6080; }
 [data-theme="dark"] .act-day-full:hover:not(.other-month) { background:rgba(59,130,246,.08); }
-[data-theme="dark"] .act-day-full.today { background:linear-gradient(135deg,#1E3A8A,#1E40AF); box-shadow:0 4px 14px rgba(30,58,138,.5); }
+[data-theme="dark"] .act-day-full.today { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); box-shadow: var(--shadow-flatten, 0 4px 14px rgba(var(--brand-primary-rgb, 30,58,138), .5)); }
 [data-theme="dark"] .act-day-num { color:#B8C8E8; }
 [data-theme="dark"] .act-day-full.other-month .act-day-num { color:#2A3E60; }
 [data-theme="dark"] .act-legend { border-color:var(--border-light); }
@@ -5288,10 +5492,10 @@ const ACADEMICS_CSS = `
 }
 .confirm-btn--confirm:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(220,38,38,.5); }
 .confirm-btn--confirm.primary-style {
-  background:linear-gradient(135deg,#1D4ED8,#1E3A8A);
-  box-shadow:0 4px 14px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.2);
+  background:var(--brand-gradient, linear-gradient(135deg,#1D4ED8,#1E3A8A));
+  box-shadow: var(--shadow-flatten, 0 4px 14px rgba(var(--brand-primary-rgb, 30,58,138), .35), inset 0 1px 0 rgba(255,255,255,.2));
 }
-.confirm-btn--confirm.primary-style:hover { box-shadow:0 8px 24px rgba(30,58,138,.5); }
+.confirm-btn--confirm.primary-style:hover { box-shadow: var(--shadow-flatten, 0 8px 24px rgba(var(--brand-primary-rgb, 30,58,138), .5)); }
 .confirm-btn:active { transform:scale(.97) translateY(0)!important; }
 
 [data-theme="dark"] .confirm-overlay { background:rgba(0,5,15,.72); }
@@ -5317,13 +5521,13 @@ const ACADEMICS_CSS = `
 .rp-header {
   display:flex; align-items:flex-start; justify-content:space-between;
   padding:22px 24px 18px; border-bottom:1px solid var(--border-light);
-  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .03),transparent);
 }
 .rp-header-left { display:flex; align-items:center; gap:12px; }
 .rp-header-icon {
   width:40px; height:40px; border-radius:11px;
   background:linear-gradient(135deg,#DBEAFE,#BFDBFE);
-  color:#1E40AF; font-size:17px;
+  color: var(--brand-solid, #1E40AF); font-size:17px;
   display:flex; align-items:center; justify-content:center; flex-shrink:0;
 }
 .rp-title { font-size:16px; font-weight:800; color:var(--text-primary); letter-spacing:-.01em; }
@@ -5351,16 +5555,16 @@ const ACADEMICS_CSS = `
 .rp-option:hover { border-color:var(--border-med); transform:translateY(-2px); box-shadow:var(--shadow-md); }
 .rp-option.selected {
   border-color:var(--brand-primary);
-  box-shadow:0 0 0 3px rgba(30,58,138,.12), var(--shadow-md);
+  box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138), .12), var(--shadow-md));
   transform:translateY(-2px);
 }
 .rp-check {
   position:absolute; top:10px; right:10px;
   width:22px; height:22px; border-radius:50%;
-  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
+  background:var(--brand-gradient, linear-gradient(135deg,#1E40AF,#1E3A8A));
   color:#fff; font-size:9px;
   display:none; align-items:center; justify-content:center;
-  box-shadow:0 3px 8px rgba(30,58,138,.4); z-index:2;
+  box-shadow: var(--shadow-flatten, 0 3px 8px rgba(var(--brand-primary-rgb, 30,58,138), .4)); z-index:2;
 }
 .rp-option.selected .rp-check { display:flex; }
 .rp-preview { height:110px; position:relative; overflow:hidden; }
@@ -5407,15 +5611,15 @@ const ACADEMICS_CSS = `
 }
 .rp-format-pill:hover { border-color:var(--border-med); background:var(--bg-card); }
 .rp-format-pill.selected-pdf  { border-color:#DC2626; background:rgba(220,38,38,.05); }
-.rp-format-pill.selected-word { border-color:#1E40AF; background:rgba(30,64,175,.05); }
+.rp-format-pill.selected-word { border-color: var(--brand-solid, #1E40AF); background:rgba(var(--brand-dark-rgb, 30,64,175), .05); }
 .rp-format-icon { width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
 .rp-format-pill.selected-pdf  .rp-format-icon { background:rgba(220,38,38,.1); color:#DC2626; }
-.rp-format-pill.selected-word .rp-format-icon { background:rgba(30,64,175,.1); color:#1E40AF; }
+.rp-format-pill.selected-word .rp-format-icon { background:rgba(var(--brand-dark-rgb, 30,64,175), .1); color: var(--brand-solid, #1E40AF); }
 .rp-format-pill:not(.selected-pdf):not(.selected-word) .rp-format-icon { background:var(--bg-card); color:var(--text-muted); }
 .rp-format-name { font-size:13px; font-weight:700; color:var(--text-primary); }
 .rp-format-desc { font-size:10.5px; color:var(--text-muted); margin-top:1px; }
 .rp-format-pill.selected-pdf  .rp-format-name { color:#DC2626; }
-.rp-format-pill.selected-word .rp-format-name { color:#1E40AF; }
+.rp-format-pill.selected-word .rp-format-name { color: var(--brand-solid, #1E40AF); }
 .rp-footer {
   display:grid; grid-template-columns:1fr 1.6fr; gap:10px;
   padding:16px 24px 24px; border-top:1px solid var(--border-light);
@@ -5431,10 +5635,10 @@ const ACADEMICS_CSS = `
 }
 .rp-btn.cancel:hover { background:var(--bg-card); color:var(--text-primary); }
 .rp-btn.go {
-  background:linear-gradient(135deg,#1D4ED8,#1E3A8A); color:#fff;
-  box-shadow:0 4px 14px rgba(30,58,138,.32), inset 0 1px 0 rgba(255,255,255,.2);
+  background:var(--brand-gradient, linear-gradient(135deg,#1D4ED8,#1E3A8A)); color:#fff;
+  box-shadow: var(--shadow-flatten, 0 4px 14px rgba(var(--brand-primary-rgb, 30,58,138), .32), inset 0 1px 0 rgba(255,255,255,.2));
 }
-.rp-btn.go:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(30,58,138,.45); }
+.rp-btn.go:hover { transform:translateY(-1px); box-shadow: var(--shadow-flatten, 0 8px 22px rgba(var(--brand-primary-rgb, 30,58,138), .45)); }
 .rp-btn.go:active { transform:scale(.97); }
 
 [data-theme="dark"] .report-picker-overlay { background:rgba(0,5,15,.72); }
@@ -5458,7 +5662,7 @@ const ACADEMICS_CSS = `
 /* Focus ring for keyboard nav on radio-style options */
 .rp-option:focus-visible {
   outline:none;
-  box-shadow:0 0 0 3px rgba(30,58,138,.18), var(--shadow-md);
+  box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138), .18), var(--shadow-md));
   border-color:var(--brand-primary);
 }
 [data-theme="dark"] .rp-option:focus-visible {
@@ -5605,7 +5809,7 @@ const ACADEMICS_CSS = `
 /* Activity Calendar — right panel (events list) */
 [data-theme="dark"] .act-events-panel .act-events-list { background:transparent; }
 [data-theme="dark"] .act-events-list { color:var(--text-primary); }
-[data-theme="dark"] .act-add-btn { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .act-add-btn { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); color:#fff; }
 [data-theme="dark"] .act-add-btn:hover { background:linear-gradient(135deg,#1E40AF,#3B82F6); }
 [data-theme="dark"] .act-search-row { background:transparent; border-color:var(--border-light); }
 [data-theme="dark"] .act-search-box { background:var(--bg-muted); border-color:var(--border-light); }
@@ -5642,7 +5846,7 @@ const ACADEMICS_CSS = `
 [data-theme="dark"] .rp-header,
 [data-theme="dark"] .modal-header { border-bottom-color:var(--border-light); background:linear-gradient(135deg,rgba(59,130,246,.06),transparent); }
 [data-theme="dark"] .rp-header-left { color:var(--text-primary); }
-[data-theme="dark"] .rp-header-icon { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .rp-header-icon { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); color:#fff; }
 [data-theme="dark"] .rp-title,
 [data-theme="dark"] .modal-title { color:var(--text-primary); }
 [data-theme="dark"] .rp-sub,
@@ -5674,7 +5878,7 @@ const ACADEMICS_CSS = `
 [data-theme="dark"] .rp-preview,
 [data-theme="dark"] .rp-preview-color,
 [data-theme="dark"] .rp-preview-bw { background:var(--bg-card); border-color:var(--border-light); }
-[data-theme="dark"] .rp-mock-header { background:linear-gradient(135deg,#1E3A8A,#2563EB); }
+[data-theme="dark"] .rp-mock-header { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); }
 [data-theme="dark"] .rp-mock-header-bw { background:#1C2E50; color:#E2E8F8; }
 [data-theme="dark"] .rp-mock-line,
 [data-theme="dark"] .rp-mock-line-bw { background:var(--border-light); }
@@ -5704,7 +5908,7 @@ const ACADEMICS_CSS = `
 [data-theme="dark"] .confirm-btn--cancel { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
 [data-theme="dark"] .confirm-btn--cancel:hover { background:var(--bg-muted); border-color:var(--border-med); }
 [data-theme="dark"] .confirm-btn--confirm { color:#fff; }
-[data-theme="dark"] .confirm-btn--confirm.primary-style { background:linear-gradient(135deg,#1E3A8A,#2563EB); }
+[data-theme="dark"] .confirm-btn--confirm.primary-style { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); }
 
 /* Form inputs across all modals */
 [data-theme="dark"] .form-input,
@@ -5715,13 +5919,13 @@ const ACADEMICS_CSS = `
 [data-theme="dark"] .form-input::placeholder { color:var(--text-muted); }
 [data-theme="dark"] .form-label { color:var(--text-secondary); }
 [data-theme="dark"] .form-row { color:var(--text-primary); }
-[data-theme="dark"] .btn-primary { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .btn-primary { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); color:#fff; }
 [data-theme="dark"] .btn-primary:hover { background:linear-gradient(135deg,#1E40AF,#3B82F6); }
 [data-theme="dark"] .btn-secondary { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
 [data-theme="dark"] .btn-secondary:hover { background:var(--bg-muted); border-color:var(--border-med); }
 
 /* ─── Term Settings — remaining surfaces ─── */
-[data-theme="dark"] .ts-header-icon { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .ts-header-icon { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); color:#fff; }
 [data-theme="dark"] .ts-card-header-left { color:var(--text-primary); }
 [data-theme="dark"] .ts-section-body { background:var(--bg-card); }
 [data-theme="dark"] .ts-stat-strip { background:transparent; }
@@ -5744,7 +5948,7 @@ const ACADEMICS_CSS = `
 [data-theme="dark"] .ts-add-icon { background:rgba(59,130,246,.15); color:#93C5FD; }
 [data-theme="dark"] .ts-add-hint { color:var(--text-muted); }
 [data-theme="dark"] .ts-hint { color:var(--text-muted); }
-[data-theme="dark"] .ts-btn-primary { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .ts-btn-primary { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); color:#fff; }
 [data-theme="dark"] .ts-btn-primary:hover { background:linear-gradient(135deg,#1E40AF,#3B82F6); }
 
 /* ───────────────────────── MOBILE (≤600px) ─────────────────────────
@@ -5901,9 +6105,9 @@ const ACADEMICS_CSS = `
   .page-title { font-size: 18px; }
   .page-sub { font-size: 11.5px; }
 
-  /* ─── L1 main tabs (Scheme of Studies / Lesson Plans / Resource Library) ───
-     Yahan bhi aik hi row — teen tabs ke liye label chhota aur padding kam,
-     taake phone par bhi teenon barabar samaa jayein. */
+  /* ─── L1 main tabs — compact ───
+     Yahan bhi aik hi row — label chhota aur padding kam, taake phone par
+     bhi saare visible tabs barabar samaa jayein. */
   .l1-tabs {
     display: grid !important;
     grid-auto-flow: column;
@@ -6212,8 +6416,9 @@ const ACADEMICS_CSS = `
   margin-top:12px; padding-top:11px; border-top:1px dashed var(--border-light);
   font-size:11.5px; color:var(--text-muted);
 }
-.rl-card-fname { display:inline-flex; align-items:center; gap:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; font-weight:600; }
+.rl-card-fname { display:inline-flex; align-items:center; gap:6px; min-width:0; }
 .rl-card-fname i { color:#DC2626; }
+.rl-card-fname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; font-weight:600; }
 .rl-card-date { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
 .rl-card-actions { display:flex; gap:7px; margin-top:13px; flex-wrap:wrap; }
 .rl-act {
@@ -6222,7 +6427,7 @@ const ACADEMICS_CSS = `
   border:1.5px solid var(--border-light); border-radius:var(--radius-md);
   background:var(--bg-card); color:var(--text-secondary); cursor:pointer; transition:all .18s ease;
 }
-.rl-act:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(30,58,138,.05); }
+.rl-act:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .05); }
 .rl-act-danger:hover { border-color:#DC2626; color:#DC2626; background:rgba(220,38,38,.05); }
 
 .rl-empty { text-align:center; padding:46px 20px; }
@@ -6235,7 +6440,7 @@ const ACADEMICS_CSS = `
   border:1.5px dashed var(--border-med, var(--border-light)); border-radius:var(--radius-md);
   background:var(--bg-muted); color:var(--text-secondary); font-size:12.5px; font-weight:600; transition:all .2s ease;
 }
-.rl-upload:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(30,58,138,.04); }
+.rl-upload:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .04); }
 .rl-upload i { font-size:16px; color:var(--brand-primary); }
 .rl-upload-note { font-size:11.5px; color:var(--success); font-weight:600; margin-top:8px; display:flex; align-items:center; gap:6px; }
 .rl-err { font-size:12px; color:var(--error); font-weight:600; margin-top:12px; display:flex; align-items:center; gap:7px; }
@@ -6248,225 +6453,16 @@ const ACADEMICS_CSS = `
   .rl-grid { grid-template-columns:1fr; }
 }
 
-
-/* ═══════════════════════════════════════════════════════════════
-   ERP DESIGN SYSTEM ALIGNMENT — Academics
-   Canonical references: Fee / Attendance / Inventory
-   ═══════════════════════════════════════════════════════════════ */
-.l1-tabs,
-.l2-tabs {
-  display:flex;
-  gap:6px;
-  background:var(--bg-card);
-  border:1.5px solid var(--border-light);
-  border-radius:var(--radius-lg);
-  padding:5px;
-  margin-bottom:18px;
-  box-shadow:var(--shadow-sm);
-  overflow-x:auto;
-  flex-wrap:nowrap;
-  -webkit-overflow-scrolling:touch;
-}
-.l1-tab,
-.l2-tab {
-  flex:1;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:8px;
-  padding:11px 18px;
-  border-radius:var(--radius-md);
-  border:none;
-  background:transparent;
-  color:var(--text-muted);
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:600;
-  cursor:pointer;
-  transition:var(--tr);
-  white-space:nowrap;
-}
-.l1-tab:hover:not(.active),
-.l2-tab:hover:not(.active) {
-  background:var(--bg-muted);
-  color:var(--text-primary);
-  box-shadow:none;
-}
-.l1-tab.active,
-.l2-tab.active {
-  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
-  color:#fff;
-  font-weight:600;
-  box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2);
-}
-.l2-tab::after,
-.l2-tab.active::after,
-.l2-tab-dot { display:none; }
-
-/* Level 3 = canonical ERP segmented/pill navigation */
-.l3-tabs {
-  display:flex;
-  width:100%;
-  gap:4px;
-  background:var(--bg-card);
-  border:1.5px solid var(--border-light);
-  border-radius:var(--radius-full);
-  padding:5px;
-  margin-bottom:18px;
-  box-shadow:var(--shadow-sm);
-  overflow-x:auto;
-}
-.l3-tab {
-  flex:1;
-  min-width:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:7px;
-  padding:10px 16px;
-  border:none;
-  border-radius:var(--radius-full);
-  background:transparent;
-  color:var(--text-muted);
-  box-shadow:none;
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:700;
-  text-align:center;
-  cursor:pointer;
-  transition:var(--tr);
-  white-space:nowrap;
-}
-.l3-tab:hover:not(.active) {
-  background:var(--bg-muted);
-  color:var(--text-primary);
-  border-color:transparent;
-  box-shadow:none;
-  transform:none;
-}
-.l3-tab.active {
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
-  color:#fff;
-  border-color:transparent;
-  box-shadow:0 4px 12px rgba(30,58,138,.3);
-  transform:none;
-}
-.l3-tab-icon {
-  width:auto;
-  height:auto;
-  min-width:0;
-  border-radius:0;
-  background:transparent;
-  color:inherit;
-  font-size:12px;
-}
-.l3-tab-text { display:flex; align-items:center; }
-.l3-tab-desc { display:none; }
-
-/* In-screen subtabs use the same ERP segmented control language */
-.ts-subtab-row,
-.act-view-pills {
-  display:flex;
-  gap:4px;
-  background:var(--bg-card);
-  border:1.5px solid var(--border-light);
-  border-radius:var(--radius-full);
-  padding:5px;
-  box-shadow:var(--shadow-sm);
-  overflow-x:auto;
-}
-.ts-subtab,
-.act-view-pill {
-  flex:1;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:7px;
-  padding:9px 14px;
-  border:none;
-  border-radius:var(--radius-full);
-  background:transparent;
-  color:var(--text-muted);
-  font-family:var(--font-body);
-  font-size:12.5px;
-  font-weight:600;
-  cursor:pointer;
-  transition:var(--tr);
-  white-space:nowrap;
-}
-.ts-subtab:hover:not(.active),
-.act-view-pill:hover:not(.active) {
-  background:var(--bg-muted);
-  color:var(--text-primary);
-}
-.ts-subtab.active,
-.act-view-pill.active {
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
-  color:#fff;
-  box-shadow:0 4px 12px rgba(30,58,138,.3);
-}
-
-/* Canonical ERP action buttons */
-.ts-btn-primary,
-.act-add-btn {
-  height:40px;
-  padding:0 20px;
-  border:none;
-  border-radius:var(--radius-md);
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  gap:7px;
-  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
-  color:#fff;
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:600;
-  cursor:pointer;
-  transition:var(--tr);
-  box-shadow:0 4px 14px rgba(30,58,138,.28);
-}
-.ts-btn-primary:hover,
-.act-add-btn:hover {
-  transform:translateY(-1px);
-  box-shadow:0 8px 20px rgba(30,58,138,.38);
-}
-.ts-btn-ghost {
-  height:40px;
-  padding:0 20px;
-  border:1.5px solid var(--border-light);
-  border-radius:var(--radius-md);
-  background:var(--bg-card);
-  color:var(--text-secondary);
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:600;
-}
-.ts-btn-ghost:hover {
-  background:var(--bg-muted);
-  border-color:var(--border-med);
-  color:var(--text-primary);
-}
-
-@media (max-width:768px) {
-  .l1-tabs,.l2-tabs { padding:4px; gap:3px; margin-bottom:14px; }
-  .l1-tab,.l2-tab { flex:0 0 auto; padding:9px 12px; font-size:11.5px; gap:5px; }
-  .l3-tabs { padding:4px; gap:3px; border-radius:14px; }
-  .l3-tab { flex:0 0 auto; padding:8px 12px; font-size:11.5px; }
-  .ts-subtab-row,.act-view-pills { padding:4px; }
-  .ts-subtab,.act-view-pill { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
-}
-
 /* ══════════ RELEASES FROM HEAD OFFICE ══════════ */
 .ho-banner {
   display:flex; align-items:center; gap:14px; width:100%; text-align:left; cursor:pointer;
-  background:linear-gradient(135deg,rgba(30,58,138,.06),rgba(37,99,235,.03));
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .06),rgba(37,99,235,.03));
   border:1.5px solid var(--border-light); border-left:4px solid var(--brand-primary);
   border-radius:var(--radius-lg); padding:14px 18px; margin-bottom:18px;
   box-shadow:var(--shadow-sm); font-family:var(--font-body); transition:all .2s ease;
 }
 .ho-banner:hover { box-shadow:var(--shadow-md); transform:translateY(-1px); border-left-color:#2563EB; }
-.ho-banner-icon { width:44px; height:44px; border-radius:12px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; background:linear-gradient(135deg,#1E3A8A,#2563EB); }
+.ho-banner-icon { width:44px; height:44px; border-radius:12px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); }
 .ho-banner-text { flex:1; min-width:0; }
 .ho-banner-title { font-size:14.5px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:8px; }
 .ho-banner-arrow { font-size:11px; color:var(--brand-primary); transition:transform .2s ease; }
@@ -6478,7 +6474,7 @@ const ACADEMICS_CSS = `
 .ho-screen { position:fixed; inset:0; z-index:10000; background:var(--bg-page, #F1F5F9); display:flex; flex-direction:column; animation:hoFade .2s ease; }
 [data-theme="dark"] .ho-screen { background:var(--bg-page, #0F172A); }
 @keyframes hoFade { from{opacity:0} to{opacity:1} }
-.ho-screen-head { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:18px 26px; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; flex-shrink:0; box-shadow:0 4px 16px rgba(30,58,138,.25); }
+.ho-screen-head { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:18px 26px; background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); color:#fff; flex-shrink:0; box-shadow: var(--shadow-flatten, 0 4px 16px rgba(var(--brand-primary-rgb, 30,58,138), .25)); }
 .ho-screen-head-left { display:flex; align-items:center; gap:14px; min-width:0; }
 .ho-screen-icon { width:46px; height:46px; border-radius:13px; background:rgba(255,255,255,.16); display:flex; align-items:center; justify-content:center; font-size:19px; flex-shrink:0; }
 .ho-screen-title { font-size:18px; font-weight:800; }
@@ -6490,12 +6486,12 @@ const ACADEMICS_CSS = `
 .ho-rel-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:18px; max-width:1200px; margin:0 auto; }
 .ho-rel-card { background:var(--bg-card); border:1.5px solid var(--border-light); border-radius:var(--radius-xl); padding:18px 19px; box-shadow:var(--shadow-sm); display:flex; flex-direction:column; transition:transform .2s ease, box-shadow .2s ease; }
 .ho-rel-card:hover { transform:translateY(-3px); box-shadow:var(--shadow-lg); }
-.ho-rel-card.master { border-top:3px solid #1E40AF; }
+.ho-rel-card.master { border-top: 3px solid var(--brand-solid, #1E40AF); }
 .ho-rel-card.sub { border-top:3px solid #7C3AED; }
 .ho-rel-card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:12px; }
 .ho-rel-card-name { font-size:17px; font-weight:800; color:var(--text-primary); margin-bottom:7px; }
 .ho-type-badge { display:inline-flex; align-items:center; gap:6px; font-size:10.5px; font-weight:800; padding:3px 9px; border-radius:var(--radius-full); }
-.ho-type-badge.master { background:rgba(30,64,175,.1); color:#1E40AF; }
+.ho-type-badge.master { background:rgba(var(--brand-dark-rgb, 30,64,175), .1); color: var(--brand-solid, #1E40AF); }
 .ho-type-badge.sub { background:rgba(124,58,237,.1); color:#7C3AED; }
 .ho-live-badge { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:800; color:#16A34A; background:rgba(22,163,74,.12); padding:4px 9px; border-radius:var(--radius-full); flex-shrink:0; }
 .ho-rel-by { font-size:11.5px; color:var(--text-muted); font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:12px; }
@@ -6522,7 +6518,7 @@ const ACADEMICS_CSS = `
 .ho-sec-tabs { display:flex; gap:7px; flex-wrap:wrap; border-bottom:1.5px solid var(--border-light); padding-bottom:12px; margin-bottom:14px; }
 .ho-sec-tab { display:inline-flex; align-items:center; gap:7px; height:36px; padding:0 13px; font-size:12.5px; font-weight:700; font-family:var(--font-body); border:1.5px solid var(--border-light); border-radius:var(--radius-md); background:var(--bg-card); color:var(--text-secondary); cursor:pointer; transition:all .18s ease; }
 .ho-sec-tab:hover { border-color:var(--brand-primary); color:var(--brand-primary); }
-.ho-sec-tab.active { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; border-color:transparent; box-shadow:0 4px 12px rgba(30,58,138,.3); }
+.ho-sec-tab.active { background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); color:#fff; border-color:transparent; box-shadow: var(--shadow-flatten, 0 4px 12px rgba(var(--brand-primary-rgb, 30,58,138), .3)); }
 .ho-sec-n { font-size:10.5px; font-weight:800; background:rgba(0,0,0,.08); padding:1px 7px; border-radius:var(--radius-full); }
 .ho-sec-tab.active .ho-sec-n { background:rgba(255,255,255,.25); }
 .ho-sec { display:flex; flex-direction:column; gap:10px; }
@@ -6536,7 +6532,7 @@ const ACADEMICS_CSS = `
 .ho-item-sub { font-size:12.5px; color:var(--text-secondary); margin-top:3px; }
 .ho-item-meta { display:flex; flex-wrap:wrap; gap:12px; font-size:11.5px; color:var(--text-muted); font-weight:600; margin-top:8px; }
 .ho-item-meta i { margin-right:4px; opacity:.85; }
-.ho-item-tag { background:rgba(30,64,175,.1); color:#1E40AF; padding:1px 8px; border-radius:var(--radius-full); font-size:10.5px; font-weight:800; text-transform:capitalize; }
+.ho-item-tag { background:rgba(var(--brand-dark-rgb, 30,64,175), .1); color: var(--brand-solid, #1E40AF); padding:1px 8px; border-radius:var(--radius-full); font-size:10.5px; font-weight:800; text-transform:capitalize; }
 .ho-item-line { font-size:12px; color:var(--text-secondary); margin-top:6px; line-height:1.45; }
 .ho-item-line b { color:var(--text-primary); font-weight:700; }
 .ho-item-actions { display:flex; flex-direction:column; gap:8px; align-items:flex-end; flex-shrink:0; }
@@ -6555,5 +6551,303 @@ const ACADEMICS_CSS = `
   .ho-sum-grid { grid-template-columns:repeat(2,1fr); }
   .ho-rel-grid { grid-template-columns:1fr; }
   .ho-item-actions { flex-direction:row; align-items:center; width:100%; flex-wrap:wrap; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACADEMICS REPORTS TAB (AcademicsReports.js) — tile selector, filter
+   fields and KPI strip. Reuses .section-card / .btn / .form-input,
+   defined above / in App.js's global sheet, for everything else.
+   ═══════════════════════════════════════════════════════════════════ */
+.aca-rep-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px; margin-bottom:20px; }
+.aca-rep-tile {
+  display:flex; align-items:flex-start; gap:10px; text-align:left;
+  padding:14px; border-radius:var(--radius-lg);
+  border:1.5px solid var(--border-light); background:var(--bg-card);
+  cursor:pointer; transition:all .2s ease;
+}
+.aca-rep-tile:hover { border-color:var(--brand-primary); transform:translateY(-1px); }
+.aca-rep-tile.active { border-color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138),.06); box-shadow:var(--shadow-sm); }
+.aca-rep-tile-icon {
+  width:36px; height:36px; border-radius:10px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(var(--brand-primary-rgb, 30,58,138),.1); color:var(--brand-solid,#1E3A8A); font-size:14px;
+}
+.aca-rep-tile.active .aca-rep-tile-icon { background:var(--brand-solid,#1E3A8A); color:#fff; }
+.aca-rep-tile-name { font-size:13px; font-weight:800; color:var(--text-primary); margin-bottom:2px; }
+.aca-rep-tile-desc { font-size:11px; color:var(--text-muted); line-height:1.4; }
+
+.aca-rep-panel { padding:20px; }
+.aca-rep-panel-h { margin-bottom:16px; }
+.aca-rep-panel-t { font-size:16px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:9px; margin-bottom:4px; }
+.aca-rep-panel-t i { color:var(--brand-solid,#1E3A8A); }
+.aca-rep-panel-d { font-size:12.5px; color:var(--text-muted); line-height:1.5; }
+
+.aca-rep-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+.aca-rep-kpi { border:1.5px solid var(--border-light); border-radius:var(--radius-md); padding:12px 14px; background:var(--bg-muted); }
+.aca-rep-kpi-val { font-size:22px; font-weight:800; color:var(--kc, var(--text-primary)); }
+.aca-rep-kpi-lbl { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.3px; margin-top:2px; }
+
+.aca-rep-filters {
+  display:grid; grid-template-columns:repeat(2,1fr); gap:16px 20px;
+  padding:16px; border:1.5px solid var(--border-light); border-radius:var(--radius-lg);
+  background:var(--bg-muted); margin-bottom:16px;
+}
+.aca-rep-field { display:flex; flex-direction:column; gap:7px; }
+.aca-rep-flabel { font-size:11.5px; font-weight:700; color:var(--text-secondary); display:flex; align-items:center; gap:6px; }
+.aca-rep-flabel i { font-size:11px; color:var(--brand-solid,#1E3A8A); }
+
+.aca-rep-chiprow { display:flex; flex-wrap:wrap; gap:7px; }
+.aca-rep-chip {
+  padding:6px 12px; border-radius:99px; font-size:11.5px; font-weight:700;
+  border:1.5px solid var(--border-light); background:var(--bg-card); color:var(--text-secondary);
+  cursor:pointer; transition:all .15s ease; display:inline-flex; align-items:center; gap:5px;
+}
+.aca-rep-chip:hover { border-color:var(--brand-primary); }
+.aca-rep-chip.active { background:var(--brand-solid,#1E3A8A); border-color:var(--brand-solid,#1E3A8A); color:#fff; }
+.aca-rep-chip i { font-size:9px; }
+
+.aca-rep-coltoggles { display:flex; flex-wrap:wrap; gap:10px 16px; }
+.aca-rep-coltoggle {
+  display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;
+  color:var(--text-secondary); cursor:pointer;
+}
+.aca-rep-coltoggle.active { color:var(--text-primary); }
+.aca-rep-coltoggle input { accent-color:var(--brand-solid,#1E3A8A); cursor:pointer; }
+
+.aca-rep-seg { display:inline-flex; border:1.5px solid var(--border-light); border-radius:var(--radius-md); overflow:hidden; width:fit-content; }
+.aca-rep-seg-btn {
+  padding:7px 14px; font-size:12px; font-weight:700; color:var(--text-secondary);
+  background:var(--bg-card); border:none; cursor:pointer; border-right:1.5px solid var(--border-light);
+}
+.aca-rep-seg-btn:last-child { border-right:none; }
+.aca-rep-seg-btn.active { background:var(--brand-solid,#1E3A8A); color:#fff; }
+
+.aca-rep-daterow { display:flex; align-items:center; gap:8px; }
+.aca-rep-daterow input { flex:1; }
+.aca-rep-daterow span { font-size:11.5px; color:var(--text-muted); font-weight:600; }
+
+.aca-rep-actions { display:flex; gap:10px; flex-wrap:wrap; }
+
+@media (max-width:1024px) {
+  .aca-rep-tiles { grid-template-columns:repeat(3,1fr); }
+  .aca-rep-kpis { grid-template-columns:repeat(2,1fr); }
+}
+@media (max-width:760px) {
+  .aca-rep-tiles { grid-template-columns:1fr 1fr; }
+  .aca-rep-filters { grid-template-columns:1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TEACHER PERFORMANCE & ACTIVITY REPORT (AcademicsTeacherPerformanceReport.js)
+   Teacher card grid + search clones the Examination module's Result
+   History card pattern under its own "tp-" prefix (no cross-file CSS
+   dependency on Examination.jsx). Detail-view sections reuse
+   .section-card / .aca-rep-kpis-style chrome via their own ".tp-kpi*"
+   (same values, own names, so this file never relies on
+   AcademicsReports.js's CSS having been defined first or last).
+   ═══════════════════════════════════════════════════════════════════ */
+.tp-panel { padding:20px; margin-bottom:16px; }
+.tp-sec-h { margin-bottom:14px; }
+.tp-sec-title { font-size:15px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:9px; margin-bottom:4px; }
+.tp-sec-title i { color:var(--brand-solid,#1E3A8A); }
+.tp-sec-sub { font-size:12px; color:var(--text-muted); line-height:1.5; }
+.tp-mini-h { font-size:12px; font-weight:800; color:var(--text-secondary); margin:14px 0 8px; text-transform:uppercase; letter-spacing:.3px; }
+
+.tp-search-wrap { position:relative; margin-bottom:16px; }
+.tp-search-wrap i { position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:13px; }
+.tp-search-wrap input { padding-left:38px !important; }
+
+.tp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; }
+.tp-card {
+  display:flex; align-items:center; gap:12px; padding:14px;
+  border:1.5px solid var(--border-light); border-radius:var(--radius-lg);
+  background:var(--bg-card); cursor:pointer; transition:all .2s ease;
+}
+.tp-card:hover { border-color:var(--brand-primary); transform:translateY(-1px); box-shadow:var(--shadow-sm); }
+.tp-card-avatar {
+  width:44px; height:44px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); color:#fff; font-weight:800; font-size:14px;
+}
+.tp-card-id { flex:1; min-width:0; }
+.tp-card-name { font-size:13.5px; font-weight:800; color:var(--text-primary); }
+.tp-card-sub { font-size:11.5px; color:var(--text-secondary); }
+.tp-card-sub--muted { color:var(--text-muted); }
+.tp-card-pct { text-align:center; flex-shrink:0; }
+.tp-card-pct-val { font-size:17px; font-weight:800; color:var(--brand-solid,#1E3A8A); }
+.tp-card-pct-lbl { font-size:9.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.3px; }
+
+.tp-back-btn {
+  display:inline-flex; align-items:center; gap:8px; margin-bottom:16px;
+  padding:8px 14px; border-radius:var(--radius-md); border:1.5px solid var(--border-light);
+  background:var(--bg-card); color:var(--text-secondary); font-size:12.5px; font-weight:700; cursor:pointer;
+}
+.tp-back-btn:hover { border-color:var(--brand-primary); color:var(--brand-solid,#1E3A8A); }
+
+.tp-profile-card { padding:20px; border:1.5px solid var(--border-light); border-radius:var(--radius-lg); background:var(--bg-card); margin-bottom:16px; }
+.tp-banner { display:flex; align-items:center; gap:14px; margin-bottom:16px; }
+.tp-banner-avatar {
+  width:56px; height:56px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); color:#fff; font-weight:800; font-size:18px;
+}
+.tp-banner-name { font-size:17px; font-weight:800; color:var(--text-primary); }
+.tp-banner-sub { font-size:12.5px; color:var(--text-muted); margin-top:2px; }
+
+.tp-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:10px; margin-bottom:4px; }
+.tp-kpi { border:1.5px solid var(--border-light); border-radius:var(--radius-md); padding:10px 12px; background:var(--bg-muted); }
+.tp-kpi-val { font-size:18px; font-weight:800; color:var(--kc, var(--text-primary)); }
+.tp-kpi-lbl { font-size:10.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.3px; margin-top:2px; }
+
+.tp-two-col { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+
+.tp-notavail {
+  display:flex; align-items:flex-start; gap:9px; padding:12px 14px;
+  border-radius:var(--radius-md); background:var(--bg-muted);
+  border:1px dashed var(--border-light); color:var(--text-muted);
+  font-size:12.5px; line-height:1.5;
+}
+.tp-notavail i { color:var(--text-muted); font-size:12px; margin-top:2px; flex-shrink:0; }
+
+.tp-table-wrap { overflow-x:auto; border:1.5px solid var(--border-light); border-radius:var(--radius-md); }
+.tp-table { width:100%; border-collapse:collapse; font-size:12px; }
+.tp-table th { text-align:left; padding:9px 12px; background:var(--bg-muted); color:var(--text-secondary); font-weight:800; white-space:nowrap; border-bottom:1.5px solid var(--border-light); }
+.tp-table td { padding:8px 12px; color:var(--text-secondary); border-bottom:1px solid var(--border-light); }
+.tp-table tr:last-child td { border-bottom:none; }
+.tp-table-empty { padding:16px; text-align:center; color:var(--text-muted); font-size:12.5px; font-style:italic; }
+
+.tp-detail-top { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.tp-detail-top .tp-back-btn { margin-bottom:0; }
+.tp-report-actions { display:flex; gap:10px; }
+
+.tp-banner-tenure { font-size:12px; color:var(--text-secondary); margin-top:6px; }
+.tp-banner-tenure i { color:var(--brand-solid,#1E3A8A); margin-right:5px; }
+.tp-banner-tenure--muted { color:var(--text-muted); font-style:italic; }
+
+.tp-chip {
+  display:inline-flex; align-items:center; padding:3px 9px; border-radius:99px;
+  font-size:10.5px; font-weight:700;
+}
+.tp-chip--ok { background:rgba(22,163,74,.12); color:#16A34A; }
+.tp-chip--pending { background:rgba(220,38,38,.12); color:#DC2626; }
+.tp-chip-row { display:inline-flex; flex-wrap:wrap; gap:5px; }
+
+.tp-marks-class { margin-bottom:18px; }
+.tp-marks-class:last-child { margin-bottom:0; }
+
+@media (max-width:760px) {
+  .tp-two-col { grid-template-columns:1fr; }
+  .tp-detail-top { flex-direction:column; align-items:stretch; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SHARED TAB SYSTEM (copied from the reference src/styles/tabs.css) —
+   SCOPED under .acad-root so it only applies inside Academics. The ERP
+   has no global tabs.css, and Examination.jsx already uses the same
+   ds-* class names, so these rules must never be global.
+   ═══════════════════════════════════════════════════════════════════ */
+/* Shared tab system — three levels, each visually lighter than the one above.
+   1. .ds-tabs       section tabs: full-width segmented bar
+   2. .ds-switcher   card bar with pill tabs, optional actions on the right
+   3. .ds-underline  innermost view tabs: text + underline */
+
+/* ── 1. Section tabs ── */
+.acad-root .ds-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-lg, 14px);
+  overflow: hidden;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-sm);
+}
+.acad-root .ds-tab {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 13px 14px;
+  background: transparent; color: var(--text-muted);
+  border: none; border-right: 1.5px solid var(--border-light);
+  font-family: var(--font-body, inherit); font-size: 13px; font-weight: 700;
+  text-align: center; white-space: nowrap; cursor: pointer;
+  transition: var(--tr, all .2s ease);
+}
+.acad-root .ds-tab:last-child { border-right: none; }
+.acad-root .ds-tab i { font-size: 11.5px; }
+.acad-root .ds-tab:hover:not(.active) { background: var(--bg-muted); color: var(--brand-primary); }
+.acad-root .ds-tab.active {
+  background: var(--brand-gradient, linear-gradient(135deg, #1E3A8A, #1E40AF));
+  color: #fff;
+  box-shadow: inset 0 -3px 0 rgba(255, 255, 255, .18);
+}
+.acad-root .ds-tab:focus-visible,
+.acad-root .ds-switcher-tab:focus-visible,
+.acad-root .ds-underline-tab:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: -2px; }
+
+/* ── 2. Switcher bar ── */
+.acad-root .ds-switcher {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  padding: 4px;
+  margin-bottom: 16px;
+}
+.acad-root .ds-switcher-group { display: flex; gap: 4px; min-width: 0; }
+.acad-root .ds-switcher-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 16px;
+  background: transparent; color: var(--text-muted);
+  border: none; border-radius: 8px;
+  font-family: var(--font-body, inherit); font-size: 12.5px; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+  transition: var(--tr, all .2s ease);
+}
+.acad-root .ds-switcher-tab:hover:not(.active) { background: var(--bg-muted); color: var(--text-primary); }
+.acad-root .ds-switcher-tab.active {
+  background: var(--brand-gradient, linear-gradient(135deg, #1E3A8A, #1E40AF));
+  color: #fff;
+}
+.acad-root .ds-switcher-actions { display: flex; align-items: center; gap: 8px; padding-right: 2px; }
+.acad-root .ds-switcher-actions button { height: 36px; border-radius: 8px; }
+
+/* ── 3. Underline tabs ── */
+.acad-root .ds-underline {
+  display: flex; gap: 26px;
+  border-bottom: 1.5px solid var(--border-light);
+  margin-bottom: 18px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.acad-root .ds-underline::-webkit-scrollbar { display: none; }
+.acad-root .ds-underline-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 2px;
+  margin-bottom: -1.5px;
+  background: transparent; color: var(--text-muted);
+  border: none; border-bottom: 2.5px solid transparent;
+  font-family: var(--font-body, inherit); font-size: 13px; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+  transition: var(--tr, all .2s ease);
+}
+.acad-root .ds-underline-tab:hover:not(.active) { color: var(--text-primary); }
+.acad-root .ds-underline-tab.active { color: var(--brand-primary); border-bottom-color: var(--brand-primary); }
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .acad-root .ds-tabs { display: flex; overflow-x: auto; scrollbar-width: none; }
+  .acad-root .ds-tabs::-webkit-scrollbar { display: none; }
+  .acad-root .ds-tab { flex: 1 0 auto; min-width: 150px; font-size: 12.5px; padding: 12px 14px; }
+}
+@media (max-width: 768px) {
+  .acad-root .ds-switcher { flex-direction: column; align-items: stretch; gap: 8px; }
+  .acad-root .ds-switcher-group { overflow-x: auto; scrollbar-width: none; }
+  .acad-root .ds-switcher-group::-webkit-scrollbar { display: none; }
+  .acad-root .ds-switcher-tab { flex: 1 0 auto; justify-content: center; font-size: 12px; padding: 9px 14px; }
+  .acad-root .ds-switcher-actions { padding: 0; }
+  .acad-root .ds-switcher-actions > * { flex: 1; }
+  .acad-root .ds-switcher-actions button { width: 100%; justify-content: center; }
+  .acad-root .ds-underline { gap: 20px; }
+  .acad-root .ds-underline-tab { font-size: 12.5px; }
 }
 `;

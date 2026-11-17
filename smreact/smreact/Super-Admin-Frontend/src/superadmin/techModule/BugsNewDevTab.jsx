@@ -58,7 +58,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
                   {canAssign ? (
                     assigningId === t.id ? (
                       <>
-                        <select className="um-input" style={{ height: 32, width: 200 }} defaultValue="" onChange={(e) => { if (e.target.value) { onAssign(t.id, e.target.value); setAssigningId(null); } }}>
+                        <select className="um-input" style={{ height: 32, width: 200 }} defaultValue="" onChange={(e) => { const v = e.target.value; if (!v) return; const name = devs.find((d) => String(d.id) === String(v))?.name || 'this developer'; if (window.confirm(`Assign ${t.ticketNumber} to ${name}?`)) onAssign(t.id, v); setAssigningId(null); }}>
                           <option value="" disabled>Select developer…</option>
                           {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
@@ -80,7 +80,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
           toast={toast}
           defaultType={kind}
           onClose={() => setShowCreate(false)}
-          onCreate={(payload) => { onCreate(payload); setShowCreate(false); }}
+          onCreate={(payload) => onCreate(payload)}
         />
       )}
     </div>

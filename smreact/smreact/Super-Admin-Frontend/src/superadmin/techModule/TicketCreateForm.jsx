@@ -42,35 +42,58 @@ export default function TicketCreateForm({
 }) {
   const [f, setF] = useState(() => emptyForm(defaultType, defaultSource, initialSchoolId));
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const ALLOWED_IMG = ['image/png', 'image/jpeg'];
+  const MAX_FILES = 10;
+  const MAX_BYTES = 15 * 1024 * 1024;
   const devs = useTechDevelopers();
 
   const platform = PLATFORMS.find((p) => p.id === f.platform);
   const modules = modulesFor(f.platform, f.subPlatform);
 
   const onFiles = (e) => {
-    const files = Array.from(e.target.files || []);
+    const picked = Array.from(e.target.files || []);
+    const bad = picked.find((file) => !(ALLOWED_IMG.includes(file.type) && /.(png|jpe?g)$/i.test(file.name)));
+    const big = picked.find((file) => file.size > MAX_BYTES);
+    const room = MAX_FILES - f.attachments.length;
+    if (bad) { setError(`'${bad.name}' is not allowed. Choose PNG or JPG files only.`); e.target.value = ''; return; }
+    if (big) { setError(`'${big.name}' is larger than 15 MB.`); e.target.value = ''; return; }
+    if (picked.length > room) { setError(`You can attach up to ${MAX_FILES} files.`); e.target.value = ''; return; }
+    setError('');
+    const files = picked;
     const staged = files.map((file) => ({ id: `att-${Date.now()}-${file.name}`, name: file.name, file, type: file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'document', size: `${(file.size / 1024).toFixed(0)} KB` }));
     setF((p) => ({ ...p, attachments: [...p.attachments, ...staged] }));
   };
   const removeAttachment = (id) => setF((p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== id) }));
 
-  const submit = () => {
-    if (!f.title.trim()) { toast?.('Please enter a title', 'warn'); return; }
-    if (!f.description.trim()) { toast?.('Please enter a description', 'warn'); return; }
-    if (platform.subPlatforms.length && !f.subPlatform) { toast?.('Please select a sub-platform', 'warn'); return; }
-    if (!f.module) { toast?.('Please select a module', 'warn'); return; }
-    if (!f.schoolId) { toast?.('Please select a school', 'warn'); return; }
+  /* Stays open on any error (shown inside the modal); closes only on success. */
+  const submit = async () => {
+    if (busy) return;
+    if (!f.title.trim()) { setError('Please enter a title.'); return; }
+    if (!f.description.trim()) { setError('Please enter a description.'); return; }
+    if (platform.subPlatforms.length && !f.subPlatform) { setError('Please select a sub-platform.'); return; }
+    if (!f.module) { setError('Please select a module.'); return; }
+    if (!f.schoolId) { setError('Please select a school.'); return; }
     const school = findSchool(f.schoolId);
-    onCreate({
+    setError(''); setBusy(true);
+    try {
+      await onCreate({
       type: f.type, platform: f.platform, subPlatform: f.subPlatform || null, module: f.module, source: f.source,
       title: f.title.trim(), description: f.description.trim(),
-      expectedBehaviour: f.type === 'bug' ? f.expectedBehaviour.trim() : '',
-      actualBehaviour: f.type === 'bug' ? f.actualBehaviour.trim() : '',
+      expectedBehaviour: f.expectedBehaviour.trim(),
+      actualBehaviour: f.actualBehaviour.trim(),
       school, attachments: f.attachments,
       assignedTo: hideAssignment ? null : (f.assignedTo || null),
       reportedBy,
       supportConversationId,
-    });
+      });
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Could not create the ticket. Please try again.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -136,7 +159,7 @@ export default function TicketCreateForm({
             <textarea className="um-input" style={{ height: 'auto', padding: 10 }} rows={3} value={f.description} onChange={(e) => set('description', e.target.value)} placeholder="Full details…" />
           </div>
 
-          {f.type === 'bug' && (
+          {true && (
             <div className="tm-grid">
               <div className="um-field"><label className="um-label">Expected Behaviour</label><textarea className="um-input" style={{ height: 'auto', padding: 10 }} rows={2} value={f.expectedBehaviour} onChange={(e) => set('expectedBehaviour', e.target.value)} placeholder="What should happen…" /></div>
               <div className="um-field"><label className="um-label">Actual Behaviour</label><textarea className="um-input" style={{ height: 'auto', padding: 10 }} rows={2} value={f.actualBehaviour} onChange={(e) => set('actualBehaviour', e.target.value)} placeholder="What actually happens…" /></div>
@@ -151,7 +174,7 @@ export default function TicketCreateForm({
 
           <div className="um-field" style={{ marginBottom: 14 }}>
             <label className="um-label">Attachments</label>
-            <input type="file" multiple className="um-input" style={{ height: 'auto', padding: '6px 10px' }} onChange={onFiles} />
+            <input type="file" multiple accept=".png,.jpg,.jpeg,image/png,image/jpeg" className="um-input" style={{ height: 'auto', padding: '6px 10px' }} onChange={onFiles} />
             {f.attachments.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                 {f.attachments.map((a) => (
@@ -183,8 +206,9 @@ export default function TicketCreateForm({
           )}
         </div>
         <div className="tm-modal-ft">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={submit}><i className="fa-solid fa-plus" /> Create</button>
+          {error && <div className="tm-banner tm-banner-warn" role="alert" style={{ marginRight: 'auto' }}><i className="fa-solid fa-triangle-exclamation" /> {error}</div>}
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" onClick={submit} disabled={busy}><i className="fa-solid fa-plus" /> {busy ? 'Creating…' : 'Create Ticket'}</button>
         </div>
       </div>
     </div>

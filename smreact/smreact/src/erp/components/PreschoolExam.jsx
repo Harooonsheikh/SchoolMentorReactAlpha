@@ -2,6 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import * as preschoolService from '../services/preschoolService';
+import PreschoolClassSetup, { PreschoolTypeBadge } from './preschoolClassSetup';
+import { readPreschoolClassSetupSync } from '../services/preschoolClassSetupStore';
+import { usePermissions } from '../context/PermissionsContext';
+import { loadPreschoolAllCardsData, deliverPreschoolAllCards } from './examPreschoolDownloadAll';
 
 function CharField({ value, max, placeholder, multiline = false, onChange, toast }) {
   const warnRef = useRef(false);
@@ -53,6 +57,7 @@ export {
   PreschoolResultCardViewer,
   PreschoolTemplatePreviewModal,
   PreschoolHelpModal,
+  PreschoolTypeBadge,
 };
 
 const P_TEMPLATES = [
@@ -225,7 +230,7 @@ function PreschoolHelpModal({ onClose }) {
     { t: 'Setup', d: 'Define Learning Areas (subjects), your Assessment Criteria (the E/M/A/NY grading scale and percentage ranges) and Personal & Social Development fields — one-time, school-wide.' },
     { t: 'Create Assessment Areas', d: 'For each Learning Area, add the SLO / activity statements teachers will assess a child against — e.g. "Counts objects with one-to-one correspondence".' },
     { t: 'Create Criteria', d: 'Customize the achievement-level labels, percentage ranges and colours if needed (defaults: Exceeding / Meeting / Approaching / Not Yet Meeting Expectations).' },
-    { t: 'Mark a Class as Preschool', d: 'In Single Assessment Result, pick a Term and Exam as usual, then switch a class row\'s toggle to Preschool / Montessori — it stays in the same class list as Grade 1-12.' },
+    { t: 'Mark a Class as Preschool', d: 'In Result Setup → Preschool / Montessori → Setup Preschool Classes, switch on each Preschool class & section and pick its SLO level (Playgroup, Nursery or KG). Preschool classes stay in the same Single Assessment Result list as Grade 1-12 and are left out of Combined Assessment Result.' },
     { t: 'Enter Student Assessment', d: 'Expand the class and for each child mark E / M / A / NY against every SLO statement, plus Personal & Social Development. Attendance is fetched automatically — only remarks are typed manually.' },
     { t: 'Generate Report Card', d: 'Publish the class, then preview or download each child\'s Preschool report card — Monthly, Term or Annual.' },
   ];
@@ -620,9 +625,9 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
         )}
       </div>
       <div style={{ padding: '16px 20px' }}>
-        <div className="rs-l2-tabs" style={{ marginBottom: 14 }}>
+        <div className="ds-underline" style={{ marginBottom: 14 }}>
           {pLevels.map(lvl => (
-            <button key={lvl.id} className={`rs-l2-tab${activeLevel === lvl.id ? ' active' : ''}`} onClick={() => setPActiveLevel(lvl.id)}>{lvl.name}</button>
+            <button key={lvl.id} className={`ds-underline-tab${activeLevel === lvl.id ? ' active' : ''}`} onClick={() => setPActiveLevel(lvl.id)}>{lvl.name}</button>
           ))}
         </div>
         <div className="exam-term-chips" style={{ marginBottom: 14 }}>
@@ -672,6 +677,7 @@ function PreschoolResultSetup({
 
   const [pRcoId, setPRcoId] = useState(0);
   const [pRcoSaving, setPRcoSaving] = useState(false);
+  const [pClassCount, setPClassCount] = useState(() => Object.keys(readPreschoolClassSetupSync()).length);
 
   useEffect(() => {
     let alive = true;
@@ -707,9 +713,15 @@ function PreschoolResultSetup({
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 4 }}>
-        <div className="rs-l2-tabs">
-          <button className={`rs-l2-tab${pRsL2 === 'setup' ? ' active' : ''}`} onClick={() => setPRsL2('setup')}>Result Setup</button>
-          <button className={`rs-l2-tab${pRsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setPRsL2('cardoptions')}>Result Card Options</button>
+        <div className="ds-underline" style={{ alignItems: 'center', flex: 1, minWidth: 0 }}>
+          <button className={`ds-underline-tab${pRsL2 === 'classes' ? ' active' : ''}`} onClick={() => setPRsL2('classes')}>
+            <i className="fa-solid fa-school"></i> Setup Preschool Classes
+            {pClassCount != null && (
+              <span style={{ marginLeft: 6, minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(124,58,237,.12)', color: '#7C3AED', fontSize: 10.5, fontWeight: 800 }}>{pClassCount}</span>
+            )}
+          </button>
+          <button className={`ds-underline-tab${pRsL2 === 'setup' ? ' active' : ''}`} onClick={() => setPRsL2('setup')}><i className="fa-solid fa-ranking-star"></i> Assessment Setup</button>
+          <button className={`ds-underline-tab${pRsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setPRsL2('cardoptions')}><i className="fa-solid fa-id-card"></i> Result Card Options</button>
         </div>
         <button type="button" className="acc-link-btn" onClick={() => setPHelpOpen(true)}>
           <i className="fa-solid fa-circle-question"></i> What is Preschool Assessment?
@@ -717,12 +729,16 @@ function PreschoolResultSetup({
       </div>
       {pHelpOpen && <PreschoolHelpModal onClose={() => setPHelpOpen(false)} />}
 
+      {pRsL2 === 'classes' && (
+        <PreschoolClassSetup pLevels={pLevels} toast={toast} onCountChange={setPClassCount} />
+      )}
+
       {pRsL2 === 'setup' && (
         <>
           <div style={{ display: 'flex', gap: 10, padding: '11px 14px', background: 'rgba(30,64,175,.08)', border: '1px solid rgba(30,64,175,.2)', borderRadius: 10, marginBottom: 16 }}>
             <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', fontSize: 13, marginTop: 1, flexShrink: 0 }}></i>
             <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.65 }}>
-              How to create a Montessori Result: configure Learning Areas and the Grading Scale below, add SLO statements per area, then head to <strong>Single Assessment Result → Preschool Montessori</strong> to assign an assessment to a class and enter student performance.
+              How to create a Montessori Result: mark your Preschool classes in <strong>Setup Preschool Classes</strong>, configure Learning Areas and the Grading Scale below and add SLO statements per area, then enter student performance in <strong>Single Assessment Result</strong>.
             </div>
           </div>
 
@@ -1670,8 +1686,39 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
     </div>
   );
 }
-function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, rsSigs, previous, school, onClose, toast }) {
+function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, rsSigs, previous, school, onClose, toast, classID, sectionID }) {
   const cardRef = useRef(null);
+  /* Download All Cards — same gate as the Single Assessment downloads
+     (Examination › Single Assessment › Download). Downloads are read-only,
+     so like the other downloads it is not blocked by the session guard. */
+  const { can } = usePermissions();
+  const canDownload = can('Examination', 'Single Assessment', 'Download');
+  const [allJob, setAllJob] = useState(null); // { win, items } while building
+  const [allBusy, setAllBusy] = useState(false);
+
+  const downloadAll = async () => {
+    if (!canDownload || allBusy) return;
+    const win = window.open('', '_blank', 'width=960,height=820');
+    if (!win) { toast('Pop-up blocker prevented opening', 'error'); return; }
+    try { win.document.write('<p style="font-family:Segoe UI,Arial,sans-serif;padding:24px;color:#64748B">Preparing result cards…</p>'); } catch (e) { /* ignore */ }
+    setAllBusy(true);
+    try {
+      const { items } = await loadPreschoolAllCardsData({
+        student, classID, sectionID, learningAreas: pLearningAreas, psdFields: pPsdFields,
+      });
+      if (!items.length) {
+        try { win.close(); } catch (e) { /* ignore */ }
+        toast('No published Preschool results found for this session.', 'info');
+        setAllBusy(false);
+        return;
+      }
+      setAllJob({ win, items });
+    } catch (e) {
+      try { win.close(); } catch (er) { /* ignore */ }
+      toast(e.message || 'Could not prepare result cards', 'error');
+      setAllBusy(false);
+    }
+  };
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -1700,6 +1747,13 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            {canDownload && (
+              <Tooltip text="Progress Summary + every published Preschool card of this session, in one PDF">
+                <button type="button" onClick={downloadAll} disabled={allBusy} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, background: 'transparent', border: '1.5px solid rgba(124,58,237,.45)', color: '#7C3AED', fontSize: 12.5, fontWeight: 700, cursor: allBusy ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: allBusy ? 0.6 : 1 }}>
+                  <i className={`fa-solid ${allBusy ? 'fa-spinner fa-spin' : 'fa-layer-group'}`}></i> Download All Cards
+                </button>
+              </Tooltip>
+            )}
             <button type="button" onClick={printPdf} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
               <i className="fa-solid fa-file-pdf"></i> PDF
             </button>
@@ -1714,6 +1768,57 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
           </div>
         </div>
       </div>
+      {allJob && (
+        <PreschoolAllCardsDownloader
+          job={allJob} student={student} cls={cls} template={template} pRco={pRco}
+          pLearningAreas={pLearningAreas} pSlo={pSlo} pGradingScale={pGradingScale} pPsdFields={pPsdFields} school={school}
+          onDone={() => { setAllJob(null); setAllBusy(false); }}
+          toast={toast}
+        />
+      )}
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PreschoolAllCardsDownloader — "Download All Cards" renderer. Mounts the
+   SAME <PreschoolResultCard> the viewer shows, once per published
+   assessment (off-screen, NO signatures, dated with the exam date), then
+   hands the HTML to examPreschoolDownloadAll's bundle (Progress Summary
+   first) → one PDF.
+   ═══════════════════════════════════════════════════════════════════ */
+function PreschoolAllCardsDownloader({ job, student, cls, template, pRco, pLearningAreas, pSlo, pGradingScale, pPsdFields, school, onDone, toast }) {
+  const refs = useRef([]);
+  useEffect(() => {
+    try {
+      const cardHtmls = job.items.map((_, i) => refs.current[i]?.innerHTML || '');
+      deliverPreschoolAllCards({ win: job.win, student: { ...student, cls: cls?.cls }, items: job.items, cardHtmls, school });
+      toast(`${job.items.length} result card${job.items.length === 1 ? '' : 's'} ready`, 'success');
+    } catch (e) {
+      try { job.win.close(); } catch (er) { /* ignore */ }
+      toast(e.message || 'Could not build result cards', 'error');
+    }
+    onDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return createPortal(
+    <div style={{ position: 'fixed', left: -99999, top: 0, width: 720 }} aria-hidden="true">
+      {job.items.map((it, i) => {
+        const prev = i > 0 ? { examName: job.items[i - 1].exam.name, pct: job.items[i - 1].entry.pct } : null;
+        return (
+          <div key={`${it.exam.selectExam}_${it.exam.termID}_${i}`} ref={el => { refs.current[i] = el; }}>
+            <PreschoolResultCard
+              variant={template || pTemplateForExam(it.exam.name)}
+              pRco={pRco} sigs={[]} student={student} cls={cls} ad={it.ad}
+              la={pLearningAreas} slo={pSlo} gradingScale={pGradingScale} psdFields={pPsdFields}
+              assessment={{ name: it.exam.name, label: `${it.exam.name} · ${it.exam.dateLabel}` }}
+              previous={prev} school={school}
+            />
+          </div>
+        );
+      })}
     </div>,
     document.body
   );

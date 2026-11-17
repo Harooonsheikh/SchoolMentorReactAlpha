@@ -471,8 +471,6 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     const title = form.title.trim();
     if (!title) { showToast(`Please enter ${kind === 'bug' ? 'a bug' : 'an improvement'} title`, 'warn'); return; }
     if (!form.module.trim()) { showToast('Module is required', 'warn'); return; }
-    /* Developer bhi API par [Required] hai — khali bheja to 400. */
-    if (!form.assignee.trim()) { showToast('Please choose who to assign this to', 'warn'); return; }
     if (!requireSchool() || savingEnquiry) return;
     setSavingEnquiry(true);
     const detail = [
@@ -484,7 +482,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
       await schoolProgressApi.saveEnquiry({
         branchId: openSchoolId,
         module: form.module.trim(),
-        developer: form.assignee,
+        developer: 'Unassigned',
         bugDetail: detail,
         date: todayISO(),
         isSolved: false,
@@ -513,7 +511,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
       /* Chat me kuch nahi jorna — bug/improvement guftagu ka hissa nahi, wo
          Enquiries record hai. Pehle yahan ek rangeen card transcript me lag
          jata tha jo school ki chat me be-mauqa lagta tha. */
-      showToast(`${label} submitted to ${form.assignee}`, 'success');
+      showToast(`${label} submitted`, 'success');
       setModal(null);
       return true;
     } catch (err) {
@@ -1177,15 +1175,6 @@ function BugModal({ users, form, setForm, onSubmit, onClose }) {
             {['Low', 'Medium', 'High', 'Critical'].map(p => <option key={p}>{p}</option>)}
           </select>
         </div>
-        <div>
-          <label className="ag-lbl">Assign To</label>
-          <select className="ag-input" value={form.assignee} onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}>
-            {/* Naam API se — id nahi, naam bhejte hain kyunki Enquiries table ka
-                Developer column text hai (Schools Progress bhi wahi likhti hai). */}
-            <option value="">{users.length ? 'Select user…' : 'Loading users…'}</option>
-            {users.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
-          </select>
-        </div>
       </div>
       <div className="ag-banner ag-banner-info">
         <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
@@ -1217,15 +1206,6 @@ function ImprovModal({ users, form, setForm, onSubmit, onClose }) {
           <label className="ag-lbl">Priority</label>
           <select className="ag-input" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
             {['Low', 'Medium', 'High'].map(p => <option key={p}>{p}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="ag-lbl">Assign To</label>
-          <select className="ag-input" value={form.assignee} onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}>
-            {/* Naam API se — id nahi, naam bhejte hain kyunki Enquiries table ka
-                Developer column text hai (Schools Progress bhi wahi likhti hai). */}
-            <option value="">{users.length ? 'Select user…' : 'Loading users…'}</option>
-            {users.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
           </select>
         </div>
       </div>

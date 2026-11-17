@@ -93,7 +93,7 @@ export default function QaReviewTab({ tickets, onReview, onViewDetails, toast, c
         <ReviewModal
           ticket={reviewing.ticket} decision={reviewing.decision}
           onClose={() => setReviewing(null)}
-          onSubmit={(comments, attachments) => { onReview(reviewing.ticket.id, reviewing.decision, comments, attachments); setReviewing(null); toast?.(reviewing.decision === 'approved' ? 'Ticket approved — Ready for Release' : 'Ticket rejected — returned to In Progress', reviewing.decision === 'approved' ? 'success' : 'info'); }}
+          onSubmit={(comments, attachments) => onReview(reviewing.ticket.id, reviewing.decision, comments, attachments).then(() => setReviewing(null))}
           toast={toast}
         />
       )}
@@ -104,19 +104,36 @@ export default function QaReviewTab({ tickets, onReview, onViewDetails, toast, c
 function ReviewModal({ ticket, decision, onClose, onSubmit, toast }) {
   const [comments, setComments] = useState('');
   const [attachments, setAttachments] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const approve = decision === 'approved';
 
   const onFiles = (e) => {
-    const files = Array.from(e.target.files || []);
+    const picked = Array.from(e.target.files || []);
+    const bad = picked.find((file) => !(['image/png', 'image/jpeg'].includes(file.type) && /.(png|jpe?g)$/i.test(file.name)));
+    const big = picked.find((file) => file.size > 15 * 1024 * 1024);
+    if (bad) { setError(`'${bad.name}' is not allowed. Choose PNG or JPG files only.`); e.target.value = ''; return; }
+    if (big) { setError(`'${big.name}' is larger than 15 MB.`); e.target.value = ''; return; }
+    setError('');
+    const files = picked;
     const staged = files.map((file) => ({ id: `qa-att-${Date.now()}-${file.name}`, name: file.name, file, type: file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'document', size: `${(file.size / 1024).toFixed(0)} KB` }));
     setAttachments((p) => [...p, ...staged]);
   };
   const removeAttachment = (id) => setAttachments((p) => p.filter((a) => a.id !== id));
 
-  const submit = () => {
-    if (!comments.trim()) { toast?.('Comments are required', 'warn'); return; }
-    if (!approve && attachments.length === 0) { toast?.('A screenshot or video attachment is required when rejecting', 'warn'); return; }
-    onSubmit(comments.trim(), attachments);
+  /* Stays open on any error (shown inside the modal); closes only on success. */
+  const submit = async () => {
+    if (busy) return;
+    if (!comments.trim()) { setError('Comments are required.'); return; }
+    if (!approve && attachments.length === 0) { setError('A screenshot or video attachment is required when rejecting.'); return; }
+    setError(''); setBusy(true);
+    try {
+      await onSubmit(comments.trim(), attachments);
+    } catch (err) {
+      setError(err?.message || 'Could not save the QA review. Please try again.');
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="tm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -134,7 +151,7 @@ function ReviewModal({ ticket, decision, onClose, onSubmit, toast }) {
           <div className="um-field" style={{ marginBottom: 14 }}><label className="um-label">Comments <span className="tm-req">*</span></label><textarea className="um-input" style={{ height: 'auto', padding: 10 }} rows={4} autoFocus value={comments} onChange={(e) => setComments(e.target.value)} placeholder={approve ? 'What did you test and confirm?' : 'What needs to be fixed?'} /></div>
           <div className="um-field">
             <label className="um-label">Attachment {!approve && <span className="tm-req">*</span>}{approve && <span style={{ color: 'var(--tm)', fontWeight: 400 }}> (optional)</span>}</label>
-            <input type="file" multiple className="um-input" style={{ height: 'auto', padding: '6px 10px' }} onChange={onFiles} />
+            <input type="file" multiple accept=".png,.jpg,.jpeg,image/png,image/jpeg" className="um-input" style={{ height: 'auto', padding: '6px 10px' }} onChange={onFiles} />
             {attachments.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                 {attachments.map((a) => (
@@ -148,9 +165,10 @@ function ReviewModal({ ticket, decision, onClose, onSubmit, toast }) {
           </div>
         </div>
         <div className="tm-modal-ft">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" style={!approve ? { background: 'linear-gradient(135deg,#DC2626,#B91C1C)' } : undefined} onClick={submit}>
-            <i className={`fa-solid ${approve ? 'fa-circle-check' : 'fa-circle-xmark'}`} /> Confirm {approve ? 'Approval' : 'Rejection'}
+          {error && <div className="tm-banner tm-banner-warn" role="alert" style={{ marginRight: 'auto' }}><i className="fa-solid fa-triangle-exclamation" /> {error}</div>}
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" style={!approve ? { background: 'linear-gradient(135deg,#DC2626,#B91C1C)' } : undefined} onClick={submit} disabled={busy}>
+            <i className={`fa-solid ${approve ? 'fa-circle-check' : 'fa-circle-xmark'}`} /> {busy ? 'Saving…' : `Confirm ${approve ? 'Approval' : 'Rejection'}`}
           </button>
         </div>
       </div>

@@ -50,9 +50,26 @@ async function postTech(fields, files = []) {
 
 /* ── identity & lookups ─────────────────────────────────────────────── */
 
+/* Users come from the Super Admin user list (Auth/get-all-users). Each row has
+   firstName, lastName, user_Name, isActive, isAdmin. */
 let usersCache = null;
 async function users() {
-  if (!usersCache) usersCache = (await getTech({ action: 'users' })) || [];
+  if (!usersCache) {
+    let res;
+    try {
+      res = await fetch(`${SA_ADMIN_API_BASE}${EP.auth.allUsers()}`, { headers: { accept: '*/*', ...authHeaders() } });
+    } catch (e) {
+      throw new ApiError(e.message || 'Network error', 0);
+    }
+    const rows = (await unwrap(res)) || [];
+    usersCache = rows.map((u) => ({
+      id: u.id,
+      name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      userName: u.user_Name || '',
+      isActive: u.isActive === true,
+      isAdmin: u.isAdmin === true,
+    }));
+  }
   return usersCache;
 }
 
@@ -158,12 +175,13 @@ export function toUi(t) {
         isTestSchool: false,
       }
       : { id: null, name: '—', isTestSchool: false },
-    reportedBy: t.reportedBy?.name || '',
+    reportedBy: { id: t.reportedBy?.userId ?? null, name: t.reportedBy?.name || '' },
     reportedAt: t.reportedAt,
     assignedTo: t.assignment?.assignedTo ? { id: t.assignment.assignedTo.userId, name: t.assignment.assignedTo.name } : null,
     assignedBy: t.assignment?.assignedBy ? { id: t.assignment.assignedBy.userId, name: t.assignment.assignedBy.name } : null,
     assignedAt: t.assignment?.assignedAt || null,
     startedAt: dev.workStartedAt || null,
+    fixedAt: dev.devReportSubmittedAt || null,
     developerTestingReport: dev.devReportSubmittedAt
       ? {
         whatImplemented: dev.whatWasImplemented || '',
@@ -197,7 +215,7 @@ export function toUi(t) {
       at: e.at,
       note: e.note || undefined,
     })),
-    attachments: [],
+    attachments: ((journey.find((e) => e.action === 'created')?.attachments) || []).map(toUiAttachment),
     priorReportCount: t.priorReportCount || 0,
     isRecurring: (t.priorReportCount || 0) > 0,
     recurrenceCount: t.priorReportCount || 0,
@@ -213,6 +231,11 @@ export function toUi(t) {
 export async function getTickets(filters = {}) {
   const rows = await getTech({ action: 'list', pageSize: 1000, ...filters });
   return (rows || []).map(toUi);
+}
+
+/** GET ?action=stats → the server's numbers for the stat cards (README §6). */
+export async function getStats(from, to) {
+  return getTech({ action: 'stats', from, to });
 }
 
 /** Active server users for the developer dropdowns. */
@@ -289,10 +312,17 @@ export async function submitQaReview(id, { decision, comments, attachments }) {
 }
 
 /** POST action=release. */
+/* The release route has no fields for deployment comments or testing comments,
+   so they are added to the release notes text. Attachments go with the request. */
 export async function releaseTicket(id, payload = {}) {
+  const notes = [
+    payload.releaseNotes,
+    payload.deploymentComments ? `Deployment: ${payload.deploymentComments}` : null,
+    payload.testingComments ? `Final testing: ${payload.testingComments}` : null,
+  ].filter(Boolean).join('\n');
   return toUi(await postTech({
     action: 'release', id: Number(id), actorUserId: await actorId(),
-    releaseNotes: payload.releaseNotes || payload.testingComments,
+    releaseNotes: notes,
     supportConversationId: payload.supportConversationId,
-  }));
+  }, payload.attachments));
 }

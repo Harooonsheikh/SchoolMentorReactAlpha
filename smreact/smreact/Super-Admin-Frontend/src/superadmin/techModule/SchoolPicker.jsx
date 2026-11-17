@@ -1,13 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import * as techTicketsApi from '../api/services/techTickets';
 
 /* ═══════════════════════════════════════════════════════════════════
-   SchoolPicker — searches the SERVER's school list (README §7,
-   ?action=schools&search=). The chosen school is remembered so the form can
-   send its real branch id (schoolBranchId) with the ticket.
+   SchoolPicker — the server's school list (README §7 ?action=schools).
+   The full list is loaded ONCE (shared across the page) and filtered
+   on the page, so typing is instant. The chosen school is remembered
+   so the form can send its real branch id (schoolBranchId).
    ═══════════════════════════════════════════════════════════════════ */
 
 const picked = new Map();   // picker id → school object
+let schoolsPromise = null;  // one shared request for the whole page
+let schoolsCache = null;    // mapped picker rows once loaded
 
 /** The school object chosen earlier in the picker (or null). */
 export function findSchool(id) {
@@ -26,33 +29,47 @@ const toPick = (s) => ({
   isTestSchool: false,
 });
 
+/** Loads the whole list once. Later calls reuse the same result. */
+export function loadSchools() {
+  if (schoolsCache) return Promise.resolve(schoolsCache);
+  if (!schoolsPromise) {
+    schoolsPromise = techTicketsApi.getSchools('')
+      .then((rows) => {
+        schoolsCache = rows.map(toPick);
+        schoolsCache.forEach((s) => picked.set(s.id, s));
+        return schoolsCache;
+      })
+      .catch((err) => { schoolsPromise = null; throw err; });
+  }
+  return schoolsPromise;
+}
+
 export default function SchoolPicker({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [all, setAll] = useState(schoolsCache);
+  const [failed, setFailed] = useState(false);
 
-  /* Search the server while the list is open (debounced). */
+  /* Start loading as soon as the picker is shown, so it is ready by the time it is opened. */
   useEffect(() => {
-    if (!open) return undefined;
     let alive = true;
-    setLoading(true);
-    const t = setTimeout(() => {
-      techTicketsApi.getSchools(q.trim())
-        .then((rows) => {
-          if (!alive) return;
-          const list = rows.map(toPick);
-          list.forEach((s) => picked.set(s.id, s));
-          setResults(list);
-        })
-        .catch(() => { if (alive) setResults([]); })
-        .finally(() => { if (alive) setLoading(false); });
-    }, 300);
-    return () => { alive = false; clearTimeout(t); };
-  }, [open, q]);
+    if (!all) {
+      loadSchools()
+        .then((rows) => { if (alive) setAll(rows); })
+        .catch(() => { if (alive) setFailed(true); });
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!all) return [];
+    const s = q.trim().toLowerCase();
+    const list = s ? all.filter((sc) => sc.name.toLowerCase().includes(s)) : all;
+    return list.slice(0, 50);
+  }, [all, q]);
 
   const selected = value ? findSchool(value) : null;
-  const filtered = results;
 
   return (
     <div style={{ position: 'relative' }}>
@@ -60,7 +77,7 @@ export default function SchoolPicker({ value, onChange }) {
         <i className="fa-solid fa-school" style={{ color: 'var(--tm)' }} />
         {selected ? (
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{selected.name}{selected.isTestSchool && <span className="badge b-warn" style={{ marginLeft: 6, fontSize: 10 }}>Test School</span>}</div>
+            <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{selected.name}</div>
             {selected.loginId && <div style={{ fontSize: 11, color: 'var(--tm)' }}>Login: {selected.loginId}</div>}
           </div>
         ) : <span style={{ color: 'var(--tm)', fontSize: 13 }}>Search and select a school…</span>}
@@ -72,16 +89,19 @@ export default function SchoolPicker({ value, onChange }) {
           <div style={{ padding: 8, borderBottom: '1px solid var(--bl)', position: 'sticky', top: 0, background: 'var(--card)' }}>
             <div className="search-box"><i className="fa-solid fa-magnifying-glass" /><input className="search-input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search school name…" /></div>
           </div>
-          {filtered.length === 0 ? (
+          {!all && !failed ? (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)', fontSize: 12.5 }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</div>
+          ) : failed ? (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--err)', fontSize: 12.5 }}>Could not load schools. Close and open again.</div>
+          ) : filtered.length === 0 ? (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)', fontSize: 12.5 }}>No schools found</div>
           ) : filtered.map((s) => (
             <div key={s.id} style={{ padding: '9px 13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--bl)' }}
               onClick={() => { onChange(s.id); setOpen(false); setQ(''); }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--t1)' }}>{s.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.contact || '—'}{s.phone ? ` · ${s.phone}` : ''}</div>
+                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.branch ? `${s.branch}` : ''}</div>
               </div>
-              {s.isTestSchool && <span className="badge b-warn" style={{ fontSize: 10, flexShrink: 0 }}>Test</span>}
             </div>
           ))}
         </div>
@@ -89,4 +109,3 @@ export default function SchoolPicker({ value, onChange }) {
     </div>
   );
 }
-

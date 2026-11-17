@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as techTicketsApi from './api/services/techTickets';
 import { TM_CSS } from './techModule/techModuleStyles';
+import { loadSchools } from './techModule/SchoolPicker';
 import BugsNewDevTab from './techModule/BugsNewDevTab';
 import InProgressTab from './techModule/InProgressTab';
 import QaReviewTab from './techModule/QaReviewTab';
@@ -44,11 +45,24 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   const [detailId, setDetailId] = useState(null);
   const { roles, roleAssignments, permsForUser, viewingAsUserId, setViewingAsUserId } = usePermissionsStore();
 
+  /* Full-screen loader only on the first load. Later reloads (after a create,
+     assign, review or release) refresh in the background so the screen never blanks. */
+  const loadedRef = useRef(false);
+  const [serverStats, setServerStats] = useState(null);
+  const loadStats = useCallback(() => {
+    techTicketsApi.getStats().then(setServerStats).catch(() => {});
+  }, []);
   const load = useCallback(() => {
-    setLoading(true);
-    techTicketsApi.getTickets().then((t) => { setTickets(t); setLoading(false); }).catch(() => setLoading(false));
+    loadStats();
+    if (!loadedRef.current) setLoading(true);
+    return techTicketsApi.getTickets()
+      .then((t) => { setTickets(t); })
+      .catch(() => {})
+      .finally(() => { loadedRef.current = true; setLoading(false); });
   }, []);
   useEffect(() => { load(); }, [load]);
+  /* Warm the school list so the Create form opens with it ready. */
+  useEffect(() => { loadSchools().catch(() => {}); }, []);
 
   /* Deep-link from Dashboard/Support: jump to a tab or open a specific
      ticket's detail. Dashboard's {type:'bug'|'improvement'} deep-links
@@ -80,8 +94,7 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   }, [tickets]);
 
   const createTicket = (payload) => {
-    techTicketsApi.createTicketFromReport(payload).then(() => { load(); toast?.('Ticket created', 'success'); })
-      .catch((e) => toast?.(e?.message || 'Could not create the ticket', 'warn'));
+    return techTicketsApi.createTicketFromReport(payload).then((t) => { load(); toast?.(`Ticket ${t.ticketNumber} created`, 'success'); return t; });
   };
   const assignTicket = (id, developerId) => {
     techTicketsApi.assignTicket(id, developerId).then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); })
@@ -97,9 +110,17 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
       .then(() => { load(); toast?.('Developer Testing Report submitted — sent for QA Testing', 'success'); })
       .catch((e) => { load(); toast?.(e?.message || 'Could not send for QA Testing', 'warn'); });
   };
+  /* Resolves only on success, so the QA modal closes only when the action worked. */
   const submitReview = (id, decision, comments, attachments) => {
-    techTicketsApi.submitQaReview(id, { decision, comments, attachments, reviewedBy: 'QA Team' }).then(load)
-      .catch((e) => { load(); toast?.(e?.message || 'Could not save the QA review', 'warn'); });
+    return techTicketsApi.submitQaReview(id, { decision, comments, attachments, reviewedBy: 'QA Team' }).then((t) => {
+      load();
+      toast?.(decision === 'approved' ? 'Ticket approved — Ready for Release' : 'Ticket rejected — returned to In Progress', decision === 'approved' ? 'success' : 'info');
+      return t;
+    }).catch((err) => {
+      /* Refresh so a stale card (ticket already moved on) drops out; the modal shows the error. */
+      load();
+      throw err;
+    });
   };
   /* The server creates the Support notification on release (README §9) —
      the client only releases and reloads. */
@@ -133,7 +154,7 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
         </div>
       </div>
 
-      {!loading && <AnalyticsCards tickets={tickets} />}
+      {!loading && <AnalyticsCards tickets={tickets} server={serverStats} />}
 
       <div className="app-tabs">
         {TAB_DEFS.map((d) => (

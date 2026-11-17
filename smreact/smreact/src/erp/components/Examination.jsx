@@ -20,15 +20,24 @@ import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
 import useAsync from '../hooks/useAsync';
 import * as preschoolService from '../services/preschoolService';
+import { excludePreschoolClasses, preschoolLevelFor } from '../services/preschoolClassSetupStore';
 import {
   pProgressForStudent,
   pTemplateForExam,
   PreschoolResultSetup,
   PreschoolLevelPickModal,
+  PreschoolTypeBadge,
   PreschoolAssessmentModal,
   PreschoolResultCardViewer,
   PreschoolTemplatePreviewModal,
 } from './PreschoolExam';
+/* Reference-design port (Examination tab only) — see each file's header. */
+import { EXAM_DESIGN_CSS, EXAM_RC_PRINT_HEAD } from './examDesignCss';
+import ExamCombinedBreakdown from './examCombinedBreakdown';
+import {
+  EXAM_RS_AUTO_COMMENTS, EXAM_RS_AUTO_REMARKS, examRsIsAutoText, examRsWithAutoText, examRsValidPct, examRsDefaultText,
+} from './examGradingDefaults';
+import { downloadAllCards as examDownloadAllCards } from './examDownloadAll';
 
 /* ── Shared report-kit glue: header / footer / toolbar come from reportKit.
    School name + academic year stay LIVE — they come from the /report-header
@@ -1738,6 +1747,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
      Fee module jaisa hara highlight rehta hai, agli search type karne tak. */
   const [rhHighlightId, setRhHighlightId] = useState(null);
   const [rhCardCtx, setRhCardCtx] = useState(null); // { student, result }
+  const [rhAllBusy, setRhAllBusy] = useState(false); // Download All Cards in progress
   const [rhReportReq, setRhReportReq] = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
   const [rhExams, setRhExams] = useState([]);   // student-click par fetched exams (examName/termName)
   const [rhExamsLoading, setRhExamsLoading] = useState(false);
@@ -4723,8 +4733,11 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
   }
 
   return (
-    <>
+    /* .exam-root scopes the ported design CSS (EXAM_DESIGN_CSS) to this tab only.
+       display:contents → the wrapper adds no box, so the page layout is unchanged. */
+    <div className="exam-root" style={{ display: 'contents' }}>
       <style>{EXAM_CSS}</style>
+      <style>{EXAM_DESIGN_CSS}</style>
 
       {/* ── Page header ── */}
       <div className="page-header">
@@ -5470,19 +5483,19 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
       {tab === 'results' && (
         <>
           {/* ── Level-1 sub-tabs ── (sirf woh screens jinka View permission hai) */}
-          <div className="res-sub-tabs">
+          <div className="ds-tabs">
             {[
-              { k: 'resultsetup', l: 'Result Setup', show: examView('Result Setup') || examView('Result Card Options') },
-              { k: 'singleassessment', l: 'Single Assessment Result', show: examView('Single Assessment') },
-              { k: 'combinedassessment', l: 'Combined Assessment Result', show: examView('Combined Assessment') },
-              { k: 'resulthistory', l: 'Result History', show: examView('Result History') },
+              { k: 'resultsetup', l: 'Result Setup', icon: 'fa-sliders', show: examView('Result Setup') || examView('Result Card Options') },
+              { k: 'singleassessment', l: 'Single Assessment Result', icon: 'fa-file-lines', show: examView('Single Assessment') },
+              { k: 'combinedassessment', l: 'Combined Assessment Result', icon: 'fa-layer-group', show: examView('Combined Assessment') },
+              { k: 'resulthistory', l: 'Result History', icon: 'fa-clock-rotate-left', show: examView('Result History') },
             ].filter(it => it.show).map(it => (
               <button
                 key={it.k}
-                className={`res-sub-tab${rsTab === it.k ? ' active' : ''}`}
+                className={`ds-tab${rsTab === it.k ? ' active' : ''}`}
                 onClick={() => setRsTab(it.k)}
               >
-                {it.l}
+                <i className={`fa-solid ${it.icon}`}></i> {it.l}
               </button>
             ))}
           </div>
@@ -5491,13 +5504,15 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
           {rsTab === 'resultsetup' && (
             <>
               {isPreschoolBranch && (
-                <div className="rs-l2-tabs" style={{ marginBottom: 10 }}>
-                  <button className={`rs-l2-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
-                    <i className="fa-solid fa-graduation-cap" style={{ marginRight: 7 }}></i> Grade 1-12
-                  </button>
-                  <button className={`rs-l2-tab${pResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
-                    <i className="fa-solid fa-shapes" style={{ marginRight: 7 }}></i> Preschool / Montessori
-                  </button>
+                <div className="ds-switcher">
+                  <div className="ds-switcher-group">
+                    <button className={`ds-switcher-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
+                      <i className="fa-solid fa-graduation-cap"></i> Grade 1-12
+                    </button>
+                    <button className={`ds-switcher-tab${pResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
+                      <i className="fa-solid fa-shapes"></i> Preschool / Montessori
+                    </button>
+                  </div>
                 </div>
               )}
               {isPreschoolBranch && pResultType === 'preschool' ? (
@@ -5519,12 +5534,12 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
               ) : (
                 <>
                   {/* Level-2 inner tabs (View permission ke hisaab se) */}
-                  <div className="rs-l2-tabs">
+                  <div className="ds-underline">
                     {examView('Result Setup') && (
-                      <button className={`rs-l2-tab${rsL2 === 'setup' ? ' active' : ''}`} onClick={() => setRsL2('setup')}>Result Setup</button>
+                      <button className={`ds-underline-tab${rsL2 === 'setup' ? ' active' : ''}`} onClick={() => setRsL2('setup')}><i className="fa-solid fa-ranking-star"></i> Grading Setup</button>
                     )}
                     {examView('Result Card Options') && (
-                      <button className={`rs-l2-tab${rsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setRsL2('cardoptions')}>Result Card Options</button>
+                      <button className={`ds-underline-tab${rsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setRsL2('cardoptions')}><i className="fa-solid fa-id-card"></i> Result Card Options</button>
                     )}
                   </div>
 
@@ -5568,7 +5583,10 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                             <div className="rs-grades-col pct">
                               <span className="rs-pct-pill">{(RS_COND_MAP[g.cond] || '≥') + ' ' + g.pct}</span>
                             </div>
-                            <div className="rs-grades-col cmt">{g.comment}</div>
+                            <div className="rs-grades-col cmt">
+                              {g.comment}
+                              {g.comment && examRsIsAutoText(g.comment) && <span className="rs-at-chip" style={{ marginLeft: 8 }} title="Default wording for this percentage band">Default</span>}
+                            </div>
                           </div>
                         )) : <div className="rs-empty">No grades configured</div>}
                       </div>
@@ -5616,7 +5634,10 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                             <div className="rs-rem-col pct">
                               <span className="rs-pct-pill">{(RS_COND_MAP[r.cond] || '≥') + ' ' + r.pct}</span>
                             </div>
-                            <div className="rs-rem-col text">{r.text}</div>
+                            <div className="rs-rem-col text">
+                              {r.text}
+                              {r.text && examRsIsAutoText(r.text) && <span className="rs-at-chip" style={{ marginLeft: 8 }} title="Default wording for this percentage band">Default</span>}
+                            </div>
                           </div>
                         )) : <div className="rs-empty">No remarks configured</div>}
                       </div>
@@ -5903,7 +5924,8 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                   const levels = {};
                   classes.forEach((c, i) => {
                     const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
-                    const isPre = c.isPreSchooling === true;
+                    /* Setup Preschool Classes mapping (this device) also marks a class as Preschool. */
+                    const isPre = c.isPreSchooling === true || !!preschoolLevelFor(null, c.classID, c.sectionID);
                     types[key] = isPre ? 'preschool' : 'grade';
                     if (isPre) {
                       const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
@@ -6027,87 +6049,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                               </div>
                               <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
                               <div className="res-td" onClick={e => e.stopPropagation()}>
-                                <div className="res-type-pill">
-                                  <Tooltip text="Grade 1-12 (marks-based)">
-                                    <button type="button" className={`res-type-btn grade${!isPreschool ? ' active' : ''}`} onClick={async () => {
-                                      /* Preschool → Grade 1-12 switch: agar is class ke kisi student ki
-                                         preschool assessment record (rated SLO) mojood hai to switch mat
-                                         karne do — pehle record hatao. Local pMarkCounts se fast check,
-                                         warna authoritative API se. */
-                                      if (isPreschool) {
-                                        let hasRecords = Object.values(pMarkCounts[key] || {}).some(v => (Array.isArray(v) ? v.length : Number(v)) > 0);
-                                        if (!hasRecords) {
-                                          try {
-                                            const counts = await preschoolService.getClassPreschoolMarkCounts({
-                                              gradeId: cls.classID,
-                                              sectionId: cls.sectionID,
-                                              examId: resCurrentExam?.selectExam,
-                                              termId: resCurrentExam?.termID || selectedTermId,
-                                            });
-                                            hasRecords = Object.values(counts || {}).some(n => Number(n) > 0);
-                                          } catch { /* check fail → switch allow (block na karo) */ }
-                                        }
-                                        if (hasRecords) {
-                                          toast('This class already has preschool assessment records. Remove them before switching to Grade 1-12 (marks-based).', 'error');
-                                          return;
-                                        }
-                                        /* Grade 1-12 par wapas → server ko isPreSchooling:false
-                                           bhejo (addexam-preschooling-crud), jaise preschool par
-                                           jaate waqt true jaata hai — warna reload par class dubara
-                                           preschool dikhti thi. */
-                                        const branchID = Number(sessionStorage.getItem('branchID') || 0);
-                                        const token = sessionStorage.getItem('token');
-                                        const payload = {
-                                          id: 0,
-                                          branchID,
-                                          termID: Number(resCurrentExam?.termID ?? selectedTermId),
-                                          selectExam: String(resCurrentExam?.selectExam ?? ''),
-                                          classID: String(cls?.classID ?? cls?.gradeID ?? ''),
-                                          sectionID: String(cls?.sectionID ?? ''),
-                                          dateFrom: new Date().toISOString(),
-                                          dateTo: new Date().toISOString(),
-                                          isPreSchooling: false,
-                                          changePreSchoolingClassName: '',
-                                          action: 'save',
-                                        };
-                                        if (!payload.branchID || !payload.termID || !payload.selectExam || !payload.classID || !payload.sectionID) {
-                                          toast('Missing exam, term, class, or section details', 'error');
-                                          return;
-                                        }
-                                        try {
-                                          const response = await fetch(buildUrl('/api/addexam-preschooling-crud'), {
-                                            method: 'POST',
-                                            headers: { Authorization: `Bearer ${token}`, Accept: '*/*', 'Content-Type': 'application/json' },
-                                            body: JSON.stringify(payload),
-                                          });
-                                          const responseText = await response.text();
-                                          let result = null;
-                                          try { result = responseText ? JSON.parse(responseText) : null; } catch { /* non-JSON */ }
-                                          if (!response.ok || result?.success === false || result?.status === false) {
-                                            throw new Error(result?.message || result?.Message || responseText || 'Could not switch to Grade 1-12');
-                                          }
-                                        } catch (err) {
-                                          toast(err.message || 'Could not switch to Grade 1-12 (marks-based)', 'error');
-                                          return;
-                                        }
-                                      }
-                                      /* Local persist + SIRF isi class ka key badlo (merge) —
-                                         setPClassTypes ko poora local map mat do warna baqi
-                                         classes ki (API-detected) state wipe ho jaati hai. */
-                                      preschoolService.setClassAssessmentType(key, 'grade');
-                                      setPClassTypes(prev => ({ ...prev, [key]: 'grade' }));
-                                    }}>
-                                      <i className="fa-solid fa-graduation-cap"></i>
-                                    </button>
-                                  </Tooltip>
-                                  {isPreschoolBranch && (
-                                    <Tooltip text="Preschool / Montessori (E/M/A/NY)">
-                                      <button type="button" className={`res-type-btn preschool${isPreschool ? ' active' : ''}`} onClick={() => { if (!isPreschool) setPLevelPickCtx({ key, className, cls, exam: resCurrentExam, termID: selectedTermId }); }}>
-                                        <i className="fa-solid fa-shapes"></i>
-                                      </button>
-                                    </Tooltip>
-                                  )}
-                                </div>
+                                <PreschoolTypeBadge preschool={isPreschool} />
                               </div>
                               <div className="res-td">
                                 <span className={`res-released-badge${shownRel ? ' released' : ' pending'}`}>
@@ -7103,18 +7045,57 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                     const weakest = subjAvgs[subjAvgs.length - 1];
 
                     return (
-                      <div className="rh-two-col">
-                        {/* ── Left column ── */}
-                        <div>
+                      /* Reference layout: 3 rows of paired cards that share a height
+                         (Exam History ↔ Subject Performance, Trends ↔ Insights),
+                         then Downloads full width. Exam History list scrolls. */
+                      <div className={`rh-detail-grid${subjAvgs.length ? '' : ' rh-detail-grid--no-subj'}${strongest ? '' : ' rh-detail-grid--no-ins'}`}>
                           {/* Exam History */}
-                          <div className="rh-history-card">
+                          <div className="rh-history-card" style={{ gridArea: 'hist' }}>
                             <div className="rh-history-head">
                               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <i className="fa-solid fa-clock-rotate-left" style={{ color: '#1E40AF' }}></i> Exam History
+                                <i className="fa-solid fa-clock-rotate-left" style={{ color: 'var(--brand-solid, #1E40AF)' }}></i> Exam History
                               </div>
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{st.results.length} record{st.results.length !== 1 ? 's' : ''}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{st.results.length} record{st.results.length !== 1 ? 's' : ''}</span>
+                                {/* Download All Cards — builder lives in examDownloadAll.js (live
+                                    publish state + marks via examResultHistoryService). Rows shown
+                                    here are already the active session's exams. */}
+                                {!rhExamsLoading && st.results.length > 0 && (
+                                  <Tooltip text={`All published result cards of ${rhSessionLabel(activeSessionName()) || 'this session'} in one PDF, with a progress summary first`}>
+                                    <button
+                                      type="button"
+                                      className="rh-all-btn"
+                                      disabled={rhAllBusy}
+                                      onClick={async () => {
+                                        if (rhAllBusy) return;
+                                        setRhAllBusy(true);
+                                        try {
+                                          await examDownloadAllCards({
+                                            student: st,
+                                            results: st.results,
+                                            sessionLabel: rhSessionLabel(activeSessionName()) || activeSessionName() || '',
+                                            gradeFn: rcGetGrade,
+                                            finalRemarkFn: pct => rcRemarkByScale(pct, rsRemarks),
+                                            branch: branchSchool || undefined,
+                                            useAutoComment: rcUseAutoComment(),
+                                            onEmpty: () => toast('No published result cards found for this session.', 'info'),
+                                          });
+                                        } catch (e) {
+                                          console.error('Download All Cards failed', e);
+                                          toast('Could not build the result cards. Please try again.', 'error');
+                                        } finally {
+                                          setRhAllBusy(false);
+                                        }
+                                      }}
+                                    >
+                                      <i className={`fa-solid ${rhAllBusy ? 'fa-spinner fa-spin' : 'fa-file-zipper'}`}></i> Download All Cards
+                                      <span className="rh-all-count">{st.results.length}</span>
+                                    </button>
+                                  </Tooltip>
+                                )}
+                              </div>
                             </div>
-                            <div>
+                            <div className="rh-history-list">
                               {/* Student click par fetched exams (examName / termName / dates) */}
                               {rhExamsLoading ? (
                                 <div style={{ padding: '18px 4px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -7212,9 +7193,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                           </div>
 
                           {/* Performance Trend chart */}
-                          <div className="rh-trend-card">
+                          <div className="rh-trend-card" style={{ gridArea: 'trend' }}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <i className="fa-solid fa-chart-column" style={{ color: '#1E40AF' }}></i> Performance Trends
+                              <i className="fa-solid fa-chart-column" style={{ color: 'var(--brand-solid, #1E40AF)' }}></i> Performance Trends
                             </div>
                             <div className="rh-trend-scroll">
                               <div className="rh-trend-bars">
@@ -7234,15 +7215,13 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                               </div>
                             </div>
                           </div>
-                        </div>
 
-                        {/* ── Right column ── */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                          {/* Subject Performance */}
+                          {/* Subject Performance — paired with Exam History (same row height).
+                              When it is absent, Exam History spans both columns (rh-detail-grid--no-subj). */}
                           {subjAvgs.length > 0 && (
-                            <div className="rh-side-card">
+                            <div className="rh-side-card" style={{ gridArea: 'subj' }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <i className="fa-solid fa-book-open" style={{ color: '#1E40AF' }}></i> Subject Performance
+                                <i className="fa-solid fa-book-open" style={{ color: 'var(--brand-solid, #1E40AF)' }}></i> Subject Performance
                               </div>
                               {subjAvgs.slice(0, 6).map(s => {
                                 const w = Math.min(100, Math.round((s.avg / 20) * 100));
@@ -7260,9 +7239,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                             </div>
                           )}
 
-                          {/* Academic Insights */}
+                          {/* Academic Insights — paired with Performance Trends */}
                           {strongest && (
-                            <div className="rh-side-card">
+                            <div className="rh-side-card" style={{ gridArea: 'ins' }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <i className="fa-solid fa-lightbulb" style={{ color: '#D97706' }}></i> Academic Insights
                               </div>
@@ -7294,12 +7273,12 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                             </div>
                           )}
 
-                          {/* Downloads & Reports */}
-                          <div className="rh-side-card">
+                          {/* Downloads & Reports — full width, 4-up grid */}
+                          <div className="rh-side-card" style={{ gridArea: 'dl' }}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <i className="fa-solid fa-download" style={{ color: '#1E40AF' }}></i> Downloads &amp; Reports
+                              <i className="fa-solid fa-download" style={{ color: 'var(--brand-solid, #1E40AF)' }}></i> Downloads &amp; Reports
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <div className="rh-dl-grid">
                               {[
                                 { key: 'history', label: 'Full Academic History', icon: 'fa-file-invoice', desc: 'All exam results across classes & sessions', col: '#1E40AF', bg: 'rgba(30,64,175,.07)' },
                                 { key: 'progress', label: 'Progress Report', icon: 'fa-chart-line', desc: 'Performance trend & subject improvement', col: '#7C3AED', bg: 'rgba(124,58,237,.07)' },
@@ -7329,7 +7308,6 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                               ))}
                             </div>
                           </div>
-                        </div>
                       </div>
                     );
                   })()}
@@ -8886,7 +8864,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         onClose={() => setTutorialOpen(false)}
         toast={toast}
       />
-    </>
+    </div>
   );
 }
 
@@ -10745,7 +10723,7 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
               {/* Grand total row */}
               <tr style={{ background: accentBg }}>
                 <td colSpan={1 + (opt['Show Subject-wise Marks'] ? 1 : 0)} style={{ padding: '5px 7px', fontSize: 10.5, fontWeight: 800, color: accent, borderTop: `2px solid ${accentBdr}` }}>
-                  Grand Total
+                  {isCombined ? 'Main Exam Total' : 'Grand Total'}
                 </td>
                 {opt['Show Total Marks'] && (
                   <td style={{ padding: '5px 7px', textAlign: 'center', fontSize: 10.5, fontWeight: 800, color: accent, borderTop: `2px solid ${accentBdr}` }}>
@@ -10766,43 +10744,24 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
                 <td style={{ padding: '5px 7px', fontSize: 9.5, color: textMut, borderTop: `2px solid ${accentBdr}` }}>N/A</td>
               </tr>
 
-              {/* Sub Exam breakdown (combined only) */}
-              {isCombined && cb && (
-                <>
-                  <tr style={{ background: isColor ? 'rgba(30,64,175,.06)' : '#F3F4F6' }}>
-                    <td colSpan={7} style={{ padding: '5px 8px', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.6px', color: accent, borderTop: '1.5px solid #E2E8F0' }}>
-                      <i className="fa-solid fa-layer-group" style={{ marginRight: 4 }}></i>Sub Exam Breakdown
-                    </td>
-                  </tr>
-                  {cb.subBreakdown.map((sb, i) => {
-                    const cpct = sb.origT ? Math.round((sb.subObt / sb.origT) * 100) : 0;
-                    return (
-                      <tr key={i} style={{ background: isColor ? 'rgba(124,58,237,.05)' : '#F9FAFB' }}>
-                        <td colSpan={1 + (opt['Show Subject-wise Marks'] ? 1 : 0)} style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: isColor ? '#7C3AED' : '#374151' }}>
-                          <i className="fa-solid fa-layer-group" style={{ fontSize: 9, marginRight: 4 }}></i>
-                          {sb.name} <span style={{ fontSize: 9, fontWeight: 400, color: textMut }}>(Sub Exam)</span>
-                        </td>
-                        {opt['Show Total Marks'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10.5, color: textMut }}>{sb.origT}</td>}
-                        {opt['Show Obtained Marks'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10.5, color: textMut }}>{sb.subObt}</td>}
-                        {opt['Show Percentage'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10, color: '#7C3AED', fontWeight: 700 }}>{cpct}%</td>}
-                        {opt['Show Grade'] && <td style={{ padding: '4px 8px', textAlign: 'center', fontSize: 10, color: '#7C3AED', fontWeight: 700 }}>{sb.conv}/{sb.weight}</td>}
-                        <td style={{ padding: '4px 8px', fontSize: 9.5, color: textMut }}>Converted: {sb.conv}/{sb.weight}</td>
-                      </tr>
-                    );
-                  })}
-                  <tr style={{ background: 'rgba(22,163,74,.07)' }}>
-                    <td colSpan={1 + (opt['Show Subject-wise Marks'] ? 1 : 0)} style={{ padding: '5px 8px', fontSize: 10.5, fontWeight: 800, color: successCol, borderTop: '1.5px solid rgba(22,163,74,.15)' }}>Grand Total</td>
-                    {opt['Show Total Marks'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.grandTotal}</td>}
-                    {opt['Show Obtained Marks'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: successCol }}>{cb.grandObt}</td>}
-                    {opt['Show Percentage'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.ovPct}%</td>}
-                    {opt['Show Grade'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 900, color: successCol }}>{(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade || '—'}</td>}
-                    <td style={{ padding: '5px 8px', fontSize: 9, color: textMut }}>{cb.mainExName} + sub exams</td>
-                  </tr>
-                </>
-              )}
+              {/* Sub Exam breakdown (combined only) — moved out of the subject
+                  table into the clear "How the final score is calculated"
+                  block below (its old rows reused the Grade / % columns for
+                  converted marks, which was confusing). */}
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Combined — exam-wise breakdown of the final score (live st._combined) */}
+      {isCombined && cb && (
+        <ExamCombinedBreakdown
+          cb={cb}
+          isColor={isColor}
+          pct={cb.ovPct}
+          grade={(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade}
+          padding="10px 18px 4px"
+        />
       )}
 
       {/* Summary strip */}
@@ -11011,20 +10970,18 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         </div>
       )}
 
-      {/* Combined sub-exam strip */}
+      {/* Combined — exam-wise breakdown of the final score (live st._combined).
+          Replaces the old one-line chip strip, which only showed converted
+          marks and hid the obtained / out-of / weightage behind them. */}
       {isCombined && cb && (
-        <div style={{ padding: '6px 20px', background: 'rgba(124,58,237,.07)', borderBottom: '1px solid rgba(124,58,237,.2)', display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
-          <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: '#7C3AED', flexShrink: 0, marginRight: 4 }}>
-            <i className="fa-solid fa-layer-group" style={{ marginRight: 3 }}></i>Sub Exams
-          </span>
-          {cb.subBreakdown.map((sb, i) => (
-            <span key={i} style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'rgba(124,58,237,.1)', color: '#7C3AED', border: '1px solid rgba(124,58,237,.18)', whiteSpace: 'nowrap' }}>
-              {sb.name}: <strong>{sb.conv}/{sb.weight}</strong>
-            </span>
-          ))}
-          <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 800, color: grn, whiteSpace: 'nowrap' }}>
-            Grand: {cb.grandObt}/{cb.grandTotal} = {cb.ovPct}%
-          </span>
+        <div style={{ borderBottom: `1px solid ${accentBdr}` }}>
+          <ExamCombinedBreakdown
+            cb={cb}
+            isColor={isColor}
+            pct={cb.ovPct}
+            grade={(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade}
+            padding="10px 20px"
+          />
         </div>
       )}
 
@@ -11061,7 +11018,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 
         {/* Grand total bar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', marginTop: 4, borderTop: `1.5px solid ${accentBdr}` }}>
-          <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 800, color: accent }}>Grand Total</div>
+          <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 800, color: accent }}>{isCombined ? 'Main Exam Total' : 'Grand Total'}</div>
           <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#EFF6FF', overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${Math.max(2, Math.round(ovPct))}%`, background: accent, borderRadius: 4 }} />
           </div>
@@ -11294,8 +11251,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ padding: '16px 28px 22px', display: 'flex', alignItems: 'center', gap: 18, position: 'relative' }}>
           {(opt['Show Student Photo'] || st.photo) && (
             <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color={C.hdrText}
-              bg={C.hdrChip} border={`3px solid ${C.hdrChipBdr}`}
-              extraStyle={{ boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.25)' : 'none' }} />
+              bg={C.hdrChip} border={`1px solid ${C.hdrChipBdr}`}
+              extraStyle={{ borderRadius: 16, boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.25)' : 'none' }} />
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 22, fontWeight: 900, color: C.hdrText, letterSpacing: '-.02em', marginBottom: 6 }}>{st.name}</div>
@@ -11316,11 +11273,11 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
               <span style={{ fontSize: 10, color: C.hdrTextMut }}>{today}</span>
             </div>
           </div>
-          {/* Overall % circle */}
+          {/* Overall % — same rounded-rectangle chip as the Grade badge above (reference design) */}
           <div style={{ textAlign: 'center', flexShrink: 0 }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: C.hdrChip, border: `3px solid ${C.hdrChipBdr}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: C.hdrText, lineHeight: 1 }}>{ovPct}%</div>
-              <div style={{ fontSize: 7.5, fontWeight: 700, textTransform: 'uppercase', color: C.hdrTextMut, letterSpacing: '.3px' }}>Score</div>
+            <div style={{ minWidth: 72, padding: '9px 14px', borderRadius: 14, background: C.hdrChip, border: `1px solid ${C.hdrChipBdr}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color: C.hdrText, lineHeight: 1, whiteSpace: 'nowrap' }}>{ovPct}%</div>
+              <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', color: C.hdrTextMut, letterSpacing: '.5px' }}>Score</div>
             </div>
           </div>
         </div>
@@ -11346,6 +11303,11 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.8px', color: C.textM, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ width: 3, height: 12, borderRadius: 2, background: C.blu }} />
           SUBJECT-WISE RESULTS
+          {isCombined && cb && cb.mainExName && (
+            <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '.3px', padding: '2px 8px', borderRadius: 999, background: C.bluL, color: C.blu, border: `1px solid ${C.bluBdr}` }}>
+              MAIN EXAM · {cb.mainExName}
+            </span>
+          )}
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, border: `1px solid ${C.bluBdr}` }}>
           <thead>
@@ -11405,7 +11367,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
               );
             })}
             <tr style={{ background: C.bluL }}>
-              <td colSpan={span} style={{ padding: '6px 8px', fontSize: 10.5, fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>Grand Total</td>
+              <td colSpan={span} style={{ padding: '6px 8px', fontSize: 10.5, fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{isCombined ? 'Main Exam Total' : 'Grand Total'}</td>
               {opt['Show Total Marks'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{totalAll}</td>}
               {opt['Show Obtained Marks'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{obtAll}</td>}
               {opt['Show Percentage'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.grn, borderTop: `2px solid ${C.bluBdr}` }}>{gtPct}%</td>}
@@ -11432,6 +11394,22 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ fontSize: 9, color: C.hdrTextMut }}>{schoolName}</div>
       </div>
       <div style={{ height: 3, background: C.p1bar }} />
+
+      {/* Combined — exam-wise breakdown of the final score (reference
+          Portfolio design). Score + grade come from the live combined result
+          (st._combined: grandObt / grandTotal / ovPct, grade by the branch scale). */}
+      {isCombined && cb && (
+        <div style={{ borderBottom: `1px solid ${C.bdr}` }}>
+          <ExamCombinedBreakdown
+            cb={cb}
+            isColor={isColor}
+            pal={C}
+            pct={cb.ovPct}
+            grade={(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade}
+            padding="16px 24px 14px"
+          />
+        </div>
+      )}
 
       {/* Performance bars */}
       <div style={{ padding: '16px 24px 14px', background: '#fff', borderBottom: `1px solid ${C.bdr}` }}>
@@ -11474,7 +11452,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
           })}
           {/* Grand total bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, paddingTop: 8, borderTop: `2px solid ${C.bluBdr}` }}>
-            <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 800, color: C.blu }}>Grand Total</div>
+            <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 800, color: C.blu }}>{isCombined ? 'Main Exam Total' : 'Grand Total'}</div>
             <div style={{ flex: 1, height: 10, borderRadius: 5, background: '#EFF6FF', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${Math.max(2, Math.round(ovPct))}%`, background: `linear-gradient(90deg,${C.blu},${C.pur})`, borderRadius: 5 }} />
             </div>
@@ -11486,23 +11464,6 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
           </div>
         </div>
       </div>
-
-      {/* Combined sub-exam strip */}
-      {isCombined && cb && (
-        <div style={{ padding: '10px 24px', background: 'rgba(124,58,237,.07)', borderBottom: '1px solid rgba(124,58,237,.2)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: C.pur, flexShrink: 0, marginRight: 4 }}>
-            <i className="fa-solid fa-layer-group" style={{ marginRight: 4 }}></i>Sub Exam Breakdown:
-          </span>
-          {cb.subBreakdown.map((sb, i) => (
-            <span key={i} style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: '#fff', color: C.pur, border: '1px solid rgba(124,58,237,.2)', whiteSpace: 'nowrap' }}>
-              {sb.name}: {sb.subObt}/{sb.origT} → <strong>{sb.conv}/{sb.weight}</strong>
-            </span>
-          ))}
-          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, color: C.grn, whiteSpace: 'nowrap' }}>
-            Combined: {cb.grandObt}/{cb.grandTotal} = {cb.ovPct}%
-          </span>
-        </div>
-      )}
 
       {/* 3-col analysis */}
       {/* <div style={{ display: 'grid', gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr', borderBottom: `1px solid ${C.bdr}` }}> */}
@@ -12917,7 +12878,9 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
     setErrorMsg('');
     try {
       const examIDs = [mainSel, ...subSels];
-      const common = await cbrApi.getCommonClasses(examIDs);
+      const rawCommon = await cbrApi.getCommonClasses(examIDs);
+      /* Preschool classes are excluded from Combined Assessment Results. */
+      const common = excludePreschoolClasses(rawCommon);
       if (!common || !common.length) {
         setErrorMsg('No common classes found between main and sub exams.');
         setFetched(true); setCommonClasses([]); setClasses([]);
@@ -14695,7 +14658,7 @@ function ResultCardViewer({ student, rd, ex, template, school, grades, remarks =
     w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="UTF-8">
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+${EXAM_RC_PRINT_HEAD}
 
 <title>Result Card — ${student.name}</title>
 
@@ -15236,7 +15199,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
     if (!w) { toast?.('Pop-up blocker prevented opening', 'error'); return; }
     w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+${EXAM_RC_PRINT_HEAD}
 <title>Result Cards — ${className || ''}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -15552,7 +15515,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
     const w = window.open('', '_blank', 'width=980,height=860');
     if (!w) { toast?.('Pop-up blocker prevented opening', 'error'); return; }
     w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Combined Result Cards — ${grp?.cls || ''}</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+${EXAM_RC_PRINT_HEAD}
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
@@ -15757,9 +15720,15 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
      Add-only user usay bhar hi nahi sakta. */
   hoAdd = true, hoEdit = true, hoDelete = true }) {
   const [tab, setTab] = useState('grades');
+  /* Default wording per percentage band (examGradingDefaults): an empty or
+     still-default comment / remark is filled with the band's default; a text
+     the school wrote itself is kept as-is. Saved through the same live
+     gradingcrud / overallgradingcrud calls below. */
+  const autoGrade = g => examRsWithAutoText({ ...g }, 'comment', EXAM_RS_AUTO_COMMENTS);
+  const autoRemark = r => examRsWithAutoText({ ...r }, 'text', EXAM_RS_AUTO_REMARKS);
   const [draftGrades, setDraftGrades] = useState(() => {
     if (grades && grades.length) {
-      return grades.map(g => ({ ...g }));
+      return grades.map(autoGrade);
     }
     return [];
   });
@@ -15771,7 +15740,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   });
   const [draftRemarks, setDraftRemarks] = useState(() => {
     if (remarks && remarks.length) {
-      return remarks.map(r => ({ ...r }));
+      return remarks.map(autoRemark);
     }
     return [];
   });
@@ -15781,9 +15750,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   // Update drafts when props change
   useEffect(() => {
     if (grades && grades.length) {
-      setDraftGrades(grades.map(g => ({ ...g })));
+      setDraftGrades(grades.map(autoGrade));
     }
-  }, [grades]);
+  }, [grades]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (sigs && sigs.length) {
@@ -15793,9 +15762,9 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
 
   useEffect(() => {
     if (remarks && remarks.length) {
-      setDraftRemarks(remarks.map(r => ({ ...r })));
+      setDraftRemarks(remarks.map(autoRemark));
     }
-  }, [remarks]);
+  }, [remarks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Nayi (abhi tak save na hui) row ki id `temp_…` hoti hai. Edit permission na
      ho to sirf aisi nayi rows editable rehti hain — pehle se saved rows change
@@ -15816,9 +15785,25 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
      chalta hai, Save ka mohtaj nahi). */
   const noWritePerm = !hoAdd && !hoEdit;
 
-  const upGrade = (id, k, v) => { if (blockEdit(id)) return; setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
+  /* cond / pct edits refresh the default comment / remark for the new band —
+     unless the school has customised that text (then it is left alone). */
+  const upGrade = (id, k, v) => {
+    if (blockEdit(id)) return;
+    setDraftGrades(rows => rows.map(r => {
+      if (r.id !== id) return r;
+      const next = { ...r, [k]: v };
+      return (k === 'cond' || k === 'pct') ? examRsWithAutoText(next, 'comment', EXAM_RS_AUTO_COMMENTS) : next;
+    }));
+  };
   const upSig = (id, k, v) => { if (blockEdit(id)) return; setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
-  const upRemark = (id, k, v) => { if (blockEdit(id)) return; setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r)); };
+  const upRemark = (id, k, v) => {
+    if (blockEdit(id)) return;
+    setDraftRemarks(rows => rows.map(r => {
+      if (r.id !== id) return r;
+      const next = { ...r, [k]: v };
+      return (k === 'cond' || k === 'pct') ? examRsWithAutoText(next, 'text', EXAM_RS_AUTO_REMARKS) : next;
+    }));
+  };
 
   /* Naye (abhi tak save na huye) row ki unique id. Sirf `Date.now()` se ek hi
      millisecond me add hui do rows ko same id mil jati thi — phir ek row edit
@@ -16223,6 +16208,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
       const bad = (draftGrades || []).some(g =>
         !String(g.grade ?? '').trim() || !String(g.pct ?? '').trim() || !String(g.comment ?? '').trim());
       if (bad) { toast('Grade, percentage and comment cannot be empty.', 'error'); return; }
+      if ((draftGrades || []).some(g => !examRsValidPct(g.pct))) { toast('Percentage must be a number from 0 to 100.', 'error'); return; }
     } else if (tab === 'signatures') {
       // Signature tab: har row me name + designation + signature (image) required.
       const bad = (draftSigs || []).some(s =>
@@ -16235,6 +16221,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
       const bad = (draftRemarks || []).some(r =>
         !String(r.pct ?? '').trim() || !String(r.text ?? '').trim());
       if (bad) { toast('Final remark cannot be empty.', 'error'); return; }
+      if ((draftRemarks || []).some(r => !examRsValidPct(r.pct))) { toast('Percentage must be a number from 0 to 100.', 'error'); return; }
     }
 
     setLoading(true);
@@ -16343,7 +16330,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
           <div className="exam-modal-header-left">
             <div className="exam-modal-header-icon"><i className="fa-solid fa-pen-to-square"></i></div>
             <div>
-              <div className="exam-modal-title">Edit Result Setup</div>
+              <div className="exam-modal-title">Edit Grading Setup</div>
               <div className="exam-modal-sub">Configure grades, signatures, final remarks &amp; absent handling</div>
             </div>
           </div>
@@ -16374,20 +16361,17 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                 draftGrades.map((g, i) => (
                   <div key={g.id} className="rm-grade-row">
                     <div className="rm-sno">{i + 1}</div>
-                    <select
+                    {/* Grade name is free text (e.g. "A++", "Distinction"). Duplicates
+                        are still blocked on Save by the duplicate-grade check. */}
+                    <input
                       className="rs-input"
                       value={g.grade || ''}
+                      maxLength={12}
+                      placeholder="e.g. A++"
+                      aria-label="Grade name"
                       disabled={!rowEditable(g.id)}
                       onChange={e => upGrade(g.id, 'grade', e.target.value)}
-                    >
-                      <option value="" disabled>Grade...</option>
-                      {/* Jo grade kisi doosri row me pehle se chuni ja chuki hai wo is
-                        dropdown me na aaye — sirf apni current value + baqi baaki bachi
-                        grades dikhen (e.g. A+ add ho gaya to next me A+ hidden). */}
-                      {RS_GRADE_LIST
-                        .filter(opt => opt === g.grade || !draftGrades.some(o => o.id !== g.id && o.grade === opt))
-                        .map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                    </select>
+                    />
                     <select className="rs-input" value={g.cond || 'gte'} disabled={!rowEditable(g.id)} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
                       {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                     </select>
@@ -16406,10 +16390,11 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                         upGrade(g.id, 'pct', v);
                       }}
                     />
-                    <CharField
+                    <AutoTextField
                       value={g.comment || ''}
                       max={28}
                       placeholder="Comment (max 28 chars)"
+                      defaultText={examRsDefaultText(g.cond, g.pct, EXAM_RS_AUTO_COMMENTS)}
                       onChange={v => upGrade(g.id, 'comment', v)}
                       toast={toast}
                       disabled={!rowEditable(g.id)}
@@ -16520,11 +16505,12 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
                       </Tooltip>
                     </div>
                     <div className="rm-remark-bot">
-                      <CharField
+                      <AutoTextField
                         value={r.text || ''}
                         max={200}
                         placeholder="Final Remarks — max 200 characters"
                         multiline
+                        defaultText={examRsDefaultText(r.cond, r.pct, EXAM_RS_AUTO_REMARKS)}
                         onChange={v => upRemark(r.id, 'text', v)}
                         toast={toast}
                         disabled={!rowEditable(r.id)}
@@ -16657,7 +16643,59 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   );
 }
 
-function CharField({ value, max, placeholder, multiline = false, onChange, toast, disabled = false }) {
+/* Read-only text with an Edit (pencil) icon; pencil → editable CharField with
+   ✓ (keep) and ✕ (revert to the text before editing). Edits flow into the
+   modal draft live, so Submit always saves what's on screen. "Default" chip =
+   the band's default wording (examGradingDefaults); "Custom" = the school's own.
+   Ported from the reference Examination (AutoTextField); `disabled` keeps the
+   ERP's per-row Head Office edit permission. */
+function AutoTextField({ value, max, placeholder, multiline = false, onChange, toast, disabled = false, defaultText = '' }) {
+  const [editing, setEditing] = useState(false);
+  const [before, setBefore] = useState('');
+  const isAuto = !!value && examRsIsAutoText(value);
+
+  const start = () => { if (disabled) return; setBefore(value || ''); setEditing(true); };
+  /* Cleared text (✓ on an empty field) → the band's default comes straight back.
+     That default is what the live save path then sends (it needs non-empty text). */
+  const done = () => { onChange((value || '').trim() || defaultText || ''); setEditing(false); };
+  const cancel = () => { onChange(before); setEditing(false); };
+
+  if (editing && !disabled) {
+    return (
+      <div
+        className="rs-cf-wrap rs-at rs-at--editing"
+        onKeyDown={e => {
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+          if (e.key === 'Enter' && (!multiline || e.metaKey || e.ctrlKey)) { e.preventDefault(); done(); }
+        }}
+      >
+        <div className="rs-at-field">
+          <CharField value={value} max={max} placeholder={placeholder} multiline={multiline} onChange={onChange} toast={toast} autoFocus />
+        </div>
+        <div className="rs-at-actions">
+          <Tooltip text="Save"><button type="button" className="rs-at-btn rs-at-btn--ok" onClick={done} aria-label="Save"><i className="fa-solid fa-check"></i></button></Tooltip>
+          <Tooltip text="Cancel"><button type="button" className="rs-at-btn rs-at-btn--cancel" onClick={cancel} aria-label="Cancel"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rs-cf-wrap rs-at${multiline ? ' rs-at--multi' : ''}${disabled ? ' rs-at--disabled' : ''}`} onDoubleClick={start}>
+      <div className={`rs-at-text${value ? '' : ' rs-at-text--empty'}`}>{value || placeholder}</div>
+      {value ? (isAuto
+        ? <span className="rs-at-chip" title="Default wording for this percentage band — updates when the percentage changes">Default</span>
+        : <span className="rs-at-chip rs-at-chip--custom" title="Your own wording — kept when the percentage changes">Custom</span>) : null}
+      <Tooltip text={disabled ? EXAMINATION_VIEW_ONLY_MSG : 'Edit'}>
+        <button type="button" className="rs-at-btn rs-at-btn--edit" onClick={start} disabled={disabled} aria-label="Edit">
+          <i className="fa-solid fa-pen"></i>
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+function CharField({ value, max, placeholder, multiline = false, onChange, toast, disabled = false, autoFocus = false }) {
   const warnRef = useRef(false);
   const limitRef = useRef(false);
   const len = (value || '').length;
@@ -16694,6 +16732,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
           value={value || ''}
           onChange={e => handle(e.target.value)}
           disabled={disabled}
+          autoFocus={autoFocus}
           style={{ borderColor: bdrCol }}
         />
       ) : (
@@ -16704,6 +16743,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
           value={value || ''}
           onChange={e => handle(e.target.value)}
           disabled={disabled}
+          autoFocus={autoFocus}
           style={{ borderColor: bdrCol }}
         />
       )}

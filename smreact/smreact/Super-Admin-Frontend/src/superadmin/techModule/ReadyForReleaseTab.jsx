@@ -62,7 +62,7 @@ export default function ReadyForReleaseTab({ tickets, onRelease, onViewDetails, 
       ) : (
         <div className="tm-card-list">
           {released.map((t) => (
-            <div key={t.id} className={`tm-card tm-card-${t.type}`}>
+            <div key={t.id} className={`tm-card tm-card-${t.type}`} style={{ background: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.45)' }}>
               <div className="tm-card-top">
                 <div><div className="tm-card-num">{t.ticketNumber}</div><div className="tm-card-title">{t.title}</div></div>
                 <span className="badge tt-b-green"><i className="fa-solid fa-circle-check" /> Released</span>

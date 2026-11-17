@@ -170,9 +170,9 @@ export default function TicketDetailModal({ ticket: t, onClose, onOpenSupportSes
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {allAttachments.map((a, i) => (
                   <div key={a.id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-md)', background: 'var(--muted)' }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--brand)', flexShrink: 0 }}><i className={`fa-solid ${attIcon(a.type)}`} /></div>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--brand)', flexShrink: 0 }}>{a.type === 'image' && a.url ? <img src={a.url} alt="" style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 8 }} /> : <i className={`fa-solid ${attIcon(a.type)}`} />}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>{a.name}</a> : a.name}</div>
                       <div style={{ fontSize: 10.5, color: 'var(--tm)' }}>{a.size || ''}{a.uploadedAt ? ` · ${fmtDateTime(a.uploadedAt)}` : ''}</div>
                     </div>
                   </div>
@@ -226,7 +226,7 @@ export default function TicketDetailModal({ ticket: t, onClose, onOpenSupportSes
                     <div>
                       <div><b>{r.decision === 'approved' ? 'Approved' : 'Rejected'}</b> by {r.reviewedBy} · {fmtDateTime(r.reviewedAt)}</div>
                       <div style={{ marginTop: 3 }}>{r.comments}</div>
-                      {r.attachments?.length > 0 && <div style={{ marginTop: 4, fontSize: 11 }}>{r.attachments.map((a) => a.name).join(', ')}</div>}
+                      {r.attachments?.length > 0 && <div style={{ marginTop: 4, fontSize: 11 }}>{r.attachments.map((a) => (a.url ? <a key={a.id} href={a.url} target="_blank" rel="noopener noreferrer" style={{ marginRight: 8 }}>{a.name}</a> : <span key={a.id} style={{ marginRight: 8 }}>{a.name}</span>))}</div>}
                     </div>
                   </div>
                 ))}

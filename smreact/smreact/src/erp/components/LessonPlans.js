@@ -9,6 +9,8 @@ import { buildStandardReportHtml } from '../reports/reportKit';
 import { useModuleReadOnly, useSettings, validateSessionDate } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import { useAcademicsContentPerms } from '../services/academicsContentPermissions';
+/* Class Groups (academics variant only) — mock store, no backend yet. */
+import { getCustomSections as cgGetCustomSections, separateSection as cgSeparateSection, rejoinSection as cgRejoinSection, cgScopeKey } from '../services/lessonPlansClassGroupsService';
 import 'mathlive';   // registers the <math-field> visual math editor custom element
 import { convertLatexToMarkup } from 'mathlive';  // LaTeX → rendered HTML (editor/view/report)
 import 'mathlive/static.css';                     // static render CSS (fractions, powers …)
@@ -193,6 +195,7 @@ const NB_UR = {
   'True': 'صحیح',
   'False': 'غلط',
   'Notebook': 'نوٹ بک',
+  'Question Bank': 'سوال بینک',
   'Unit': 'یونٹ',
   'Sections': 'حصے',
   'Style': 'انداز',
@@ -238,6 +241,7 @@ const NB_UR = {
   'Loading lesson plan…': 'سبق پلان لوڈ ہو رہا ہے…',
   // Notebook submission report labels
   'Notebook Plan Report': 'نوٹ بک پلان رپورٹ',
+  'Question Bank Plan Report': 'سوال بینک پلان رپورٹ',
   'Unit Report': 'یونٹ رپورٹ',
   'Unit No': 'یونٹ نمبر',
   'Unit Name': 'یونٹ کا نام',
@@ -649,24 +653,52 @@ function distributeMins(total) {
 /* ═══════════════════════════════════════════════════════════════════
    MAIN MODULE
    ═══════════════════════════════════════════════════════════════════ */
-export default function LessonPlans({ toast, openConfirm }) {
-  const [tab, setTab] = useState('session'); // session | breakup | create | view
+/* Class Groups tab (Academics › Lesson Plans). Set to true to show it again. */
+const CLASS_GROUPS_TAB_VISIBLE = false;
+
+export default function LessonPlans({ toast, openConfirm, variant }) {
+  /* variant="academics" (passed by Academics.js) turns on the ported reference
+     design + Class Groups. Without it the original ERP path renders unchanged. */
+  const isAcad = variant === 'academics';
+  const [tab, setTab] = useState('session'); // session | groups | breakup | create | view
 
   /* Lesson Plans ke screens ka View permission (School Head → sab true). */
-  const { can } = usePermissions();
+  const { can, isSchoolHead, readOnly: permReadOnly } = usePermissions();
   const lpView = (sub) => can('Academics', sub, 'View');
   const showSessionTab = lpView('Session Settings');
   const showBreakupTab = lpView('Term Breakups');
   const showCreateTab  = lpView('Create Lesson Plans');
   const showViewTab    = lpView('Submissions');
+  /* Class Groups reuses the existing Term Breakups permission key (no new key).
+     Hidden for now (CLASS_GROUPS_TAB_VISIBLE = false). */
+  const showGroupsTab  = CLASS_GROUPS_TAB_VISIBLE && isAcad && showBreakupTab;
 
   /* Active tab hide ho jaye to pehle visible par snap. */
   useEffect(() => {
-    const vis = { session: showSessionTab, breakup: showBreakupTab, create: showCreateTab, view: showViewTab };
+    const vis = { session: showSessionTab, groups: showGroupsTab, breakup: showBreakupTab, create: showCreateTab, view: showViewTab };
     if (vis[tab]) return;
-    const first = ['session', 'breakup', 'create', 'view'].find((k) => vis[k]);
+    const first = ['session', 'groups', 'breakup', 'create', 'view'].find((k) => vis[k]);
     if (first && first !== tab) setTab(first);
-  }, [showSessionTab, showBreakupTab, showCreateTab, showViewTab, tab]);
+  }, [showSessionTab, showGroupsTab, showBreakupTab, showCreateTab, showViewTab, tab]);
+
+  /* ── Academics variant: curriculum editing rights, class groups, new modals ── */
+  const acadReadOnlyMain = useModuleReadOnly('acad');
+  const acpMain = useAcademicsContentPerms();
+  const mainChangeSessionId = sessionStorage.getItem('changeSessionId');
+  const mainLoginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+  const mainIsOtherSession = (!!mainChangeSessionId && !!mainLoginSessionId && String(mainChangeSessionId) !== String(mainLoginSessionId)) || acadReadOnlyMain;
+  /* Only Coordinator / Principal (School Head) / admins author curriculum.
+     ERP model: School Head account, or a role that holds Term Breakups → Edit.
+     Teachers without that permission are view-only. */
+  const canEditCurriculum = isAcad && !permReadOnly && !mainIsOtherSession && (isSchoolHead || can('Academics', 'Term Breakups', 'Edit'));
+  const [breakupSubtab, setBreakupSubtab] = useState('units'); // 'units' | 'breakups'
+  const [customSections, setCustomSections] = useState([]);
+  useEffect(() => { if (isAcad) cgGetCustomSections().then(setCustomSections); }, [isAcad]);
+  const [unitsTarget, setUnitsTarget] = useState(null);   // { row, initialSubject, initialSource }
+  const [copyUnitsSrc, setCopyUnitsSrc] = useState(null); // scope row
+  const [copyTbSrc, setCopyTbSrc] = useState(null);       // scope row
+  const [qbUnit, setQbUnit] = useState(null);             // notebook unit open in QbEditorModal
+  const [umRefresh, setUmRefresh] = useState(0);
 
   /* Let module-level POST wrappers surface the "no session" error via toast. */
   useEffect(() => { registerSessionToast(toast); }, [toast]);
@@ -850,9 +882,46 @@ const getClassesData = async () => {
      click — the default 'session' tab otherwise renders before any fetch. */
   useEffect(() => { getClassesData(); }, []);
 
+  /* ── Class Groups (academics variant; mock store — no backend yet) ── */
+  const separateSection = (cls, sec) => openConfirm({
+    title: `Separate ${cls.name} · Section ${sec.sectionName}?`,
+    message: `Section ${sec.sectionName} will leave the ${cls.name} group and keep its <strong>own plan</strong>: units, term breakups, lesson plans and question bank.
+      <br/><br/>After this, changes to the ${cls.name} class plan will <strong>not</strong> reach Section ${sec.sectionName}, and changes made in Section ${sec.sectionName} stay in Section ${sec.sectionName}.`,
+    hint: 'You can put it back in the group any time from Class Groups.',
+    confirmLabel: 'Separate Section',
+    confirmStyle: 'primary',
+    icon: 'fa-pen-ruler',
+    onConfirm: async () => {
+      setCustomSections(await cgSeparateSection(cls.id, sec.sectionId));
+      setUmRefresh(n => n + 1);
+      toast(`${cls.name} · Section ${sec.sectionName} now has a separate plan`, 'success');
+    },
+  });
+  const rejoinSection = (cls, sec) => openConfirm({
+    title: `Put ${cls.name} · Section ${sec.sectionName} back in the group?`,
+    message: `Section ${sec.sectionName}'s separate plan will stop being used and it will share the ${cls.name} class plan again.
+      <br/><br/>Its own units, term breakups, lesson plans and question bank are <strong>replaced by the class plan</strong> the next time the class plan is saved.`,
+    hint: 'This cannot be undone from here.',
+    confirmLabel: 'Put Back in Group',
+    icon: 'fa-rotate-left',
+    onConfirm: async () => {
+      setCustomSections(await cgRejoinSection(cls.id, sec.sectionId));
+      setUmRefresh(n => n + 1);
+      toast(`${cls.name} · Section ${sec.sectionName} is back in the ${cls.name} group`, 'success');
+    },
+  });
+  const acadScopeRows = isAcad ? cgBuildScopeRows(classesData, customSections) : null;
+  const openUnitsFromCreate = (source) => {
+    const grade = classesData.find(c => c.name === clpClass);
+    const row = grade ? cgRowFor(classesData, customSections, grade.id, clpSection) : null;
+    if (!row) { toast('Select a class and section first', 'error'); return; }
+    setUnitsTarget({ row, initialSubject: clpSubject, initialSource: source });
+  };
+
   return (
     <>
       <style>{LP_CSS}</style>
+      {isAcad && <style>{LP_ACAD_CSS}</style>}
 <style>{`
   .lp-l2-tabs {
     display: flex !important;
@@ -978,17 +1047,22 @@ const getClassesData = async () => {
           <i className="fa-solid fa-gear"></i> Session Settings
         </button>
         )}
+        {showGroupsTab && (
+        <button className={`lp-l2-tab${tab === 'groups' ? ' active' : ''}`} onClick={() => { setTab('groups'); getClassesData(); }}>
+          <i className="fa-solid fa-object-group"></i> Class Groups
+        </button>
+        )}
         {showBreakupTab && (
         <button className={`lp-l2-tab${tab === 'breakup' ? ' active' : ''}`} onClick={() => {
     setTab('breakup');
     getClassesData(); // Call the function here
   }}>
-          <i className="fa-solid fa-layer-group"></i> Term Breakups
+          <i className="fa-solid fa-layer-group"></i> {isAcad ? 'Units / Term Breakups' : 'Term Breakups'}
         </button>
         )}
         {showCreateTab && (
         <button className={`lp-l2-tab${tab === 'create' ? ' active' : ''}`} onClick={() => {setTab('create'); getClassesData();}}>
-          <i className="fa-solid fa-plus-circle"></i> Create Lesson Plans
+          <i className="fa-solid fa-plus-circle"></i> {isAcad ? 'Lesson Plan / Question Bank' : 'Create Lesson Plans'}
         </button>
         )}
         {showViewTab && (
@@ -1013,7 +1087,17 @@ const getClassesData = async () => {
         />
       )}
 
-      {tab === 'breakup' && (
+      {isAcad && tab === 'groups' && (
+        <ClassGroupsScreen
+          classesData={classesData}
+          customSections={customSections}
+          canEdit={canEditCurriculum}
+          onSeparate={separateSection}
+          onRejoin={rejoinSection}
+        />
+      )}
+
+      {tab === 'breakup' && !isAcad && (
         <TermBreakups
          classesData={classesData}
          refreshKey={tbRefreshKey}  // Pass the fetched data
@@ -1022,6 +1106,55 @@ const getClassesData = async () => {
           openConfirm={openConfirm}
           toast={toast}
         />
+      )}
+
+      {tab === 'breakup' && isAcad && (
+        <>
+          <div className="ds-switcher">
+            <div className="ds-switcher-group">
+              <Tooltip text="Manage units for each class plan">
+                <button className={`ds-switcher-tab${breakupSubtab === 'units' ? ' active' : ''}`} onClick={() => setBreakupSubtab('units')}>
+                  <i className="fa-solid fa-layer-group"></i> Manage Units
+                </button>
+              </Tooltip>
+              <Tooltip text="Switch to Term Breakups">
+                <button className={`ds-switcher-tab${breakupSubtab === 'breakups' ? ' active' : ''}`} onClick={() => setBreakupSubtab('breakups')}>
+                  <i className="fa-solid fa-table-list"></i> Term Breakups
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+          {!canEditCurriculum && (
+            <div className="perm-locked-banner">
+              <i className="fa-solid fa-lock" aria-hidden="true" />
+              <span>You have <strong>view-only</strong> access. Units and term breakups are managed by your Coordinator / Principal.</span>
+            </div>
+          )}
+          {breakupSubtab === 'units' ? (
+            <UnitsManagementScreen
+              classesData={classesData}
+              customSections={customSections}
+              canEdit={canEditCurriculum}
+              refreshKey={umRefresh}
+              onUpdate={row => setUnitsTarget({ row, initialSubject: null, initialSource: 'lesson' })}
+              onCopy={row => setCopyUnitsSrc(row)}
+              onOpenGroups={() => setTab('groups')}
+            />
+          ) : (
+            <TermBreakups
+              classesData={classesData}
+              refreshKey={tbRefreshKey}
+              scopeRows={acadScopeRows}
+              canEditCurriculum={canEditCurriculum}
+              onOpenGroups={() => setTab('groups')}
+              onCopy={row => setCopyTbSrc(row)}
+              onUpdate={c => setTbModalClass(c)}
+              onReport={openReport}
+              openConfirm={openConfirm}
+              toast={toast}
+            />
+          )}
+        </>
       )}
 
       {tab === 'create' && (
@@ -1039,7 +1172,17 @@ const getClassesData = async () => {
           units={units} setUnits={setUnits}
           nbUnits={nbUnits} setNbUnits={setNbUnits}
           setClpCtx={setClpCtx}
-          onManageUnits={src => setUnitMgrSource(src)}
+          acad={isAcad}
+          scopeRow={isAcad ? (() => { const g = classesData.find(c => c.name === clpClass); return g ? cgRowFor(classesData, customSections, g.id, clpSection) : null; })() : null}
+          canEditCurriculum={canEditCurriculum}
+          onOpenGroups={() => setTab('groups')}
+          onOpenQuestionBank={u => setQbUnit(u)}
+          onAddLesson={async (unit) => {
+            /* "Add" on a unit row → open the lesson editor for that unit with a
+               new blank lesson selected (saved via the same live topic/detail calls). */
+            setLessonEdit({ unitId: unit.id, lessonId: null, lesson: null, unit, clpClass, clpSubject, ...clpCtx, detail: null, addMode: true, acad: true });
+          }}
+          onManageUnits={src => (isAcad ? openUnitsFromCreate(src) : setUnitMgrSource(src))}
           onEditLesson={async (unitId, lessonId, lesson, unit) => {
             /* Load the lesson-plan detail for this topic so the modal opens pre-filled. */
             let detail = null;
@@ -1055,7 +1198,7 @@ const getClassesData = async () => {
                 detail = (json?.data || [])[0] || null;
               } catch (e) { console.error('Error loading lesson detail:', e); }
             }
-            setLessonEdit({ unitId, lessonId, lesson, unit, clpClass, clpSubject, ...clpCtx, detail });
+            setLessonEdit({ unitId, lessonId, lesson, unit, clpClass, clpSubject, ...clpCtx, detail, acad: isAcad });
           }}
           onAddQuestionType={unitId => setNbAddCtx({ unitId })}
           onEditQuestionType={(unitId, q) => setNbEdit({ unitId, qId: q.id, existing: q })}
@@ -1065,7 +1208,7 @@ const getClassesData = async () => {
         />
       )}
 
-      {tab === 'view' && <Submissions toast={toast}  classesData={classesData}  />}
+      {tab === 'view' && <Submissions toast={toast}  classesData={classesData} acad={isAcad} />}
 
       {/* ─── modals ─── */}
       <SessionEditModal
@@ -1104,12 +1247,77 @@ const getClassesData = async () => {
   /* Term breakup ke weeks isi hadd me rehne chahiyen — Academic Session ke
      working weeks (Session Settings card par wahi number dikhta hai). */
   sessionWeeks={session.workingWeeks}
-  onSaved={() => setTbRefreshKey(k => k + 1)}
+  acad={isAcad}
+  canEdit={isAcad ? canEditCurriculum : true}
+  onSaved={async (combo) => {
+    setTbRefreshKey(k => k + 1);
+    /* Class plan saved on its representative section → copy the same
+       term + subject to the other sections in the class group (live). */
+    if (isAcad && combo && tbModalClass?.row && !tbModalClass.row.custom && tbModalClass.row.sectionIds.length > 1) {
+      try {
+        const n = await lpTbSyncToSections({ row: tbModalClass.row, termID: combo.termID, subjectName: combo.subjectName });
+        if (n) toast(`Class plan applied to ${n} more section${n !== 1 ? 's' : ''}`, 'info');
+      } catch (e) {
+        console.error('Term breakup class-group sync failed', e);
+        if (!e.isSessionError) toast(e.serverMessage || 'Could not apply the term breakup to the other sections', 'error');
+      }
+    }
+  }}
   onClose={() => setTbModalClass(null)}
   toast={toast}
 />
 
+      {isAcad && unitsTarget && (
+        <UnitsManagementModal
+          target={unitsTarget}
+          canEdit={canEditCurriculum}
+          guard={(menu, action, t) => acpMain.denyWrite(menu, action, t)}
+          onClose={() => setUnitsTarget(null)}
+          onSaved={() => { setUmRefresh(n => n + 1); bumpClpRefresh(); }}
+          toast={toast}
+          openConfirm={openConfirm}
+        />
+      )}
+
+      {isAcad && copyUnitsSrc && (
+        <CopyUnitsConfigModal
+          source={copyUnitsSrc}
+          classesData={classesData}
+          customSections={customSections}
+          onClose={() => setCopyUnitsSrc(null)}
+          onDone={() => setUmRefresh(n => n + 1)}
+          toast={toast}
+          openConfirm={openConfirm}
+        />
+      )}
+
+      {isAcad && copyTbSrc && (
+        <CopyTermBreakupsModal
+          source={copyTbSrc}
+          classesData={classesData}
+          customSections={customSections}
+          canDelete={can('Academics', 'Term Breakups', 'Delete')}
+          onClose={() => setCopyTbSrc(null)}
+          onDone={() => setTbRefreshKey(k => k + 1)}
+          toast={toast}
+          openConfirm={openConfirm}
+        />
+      )}
+
+      {isAcad && (
+        <QbEditorModal
+          unit={qbUnit}
+          guard={(menu, action, t) => acpMain.denyWrite(menu, action, t)}
+          isOtherSession={mainIsOtherSession}
+          onSaved={bumpClpRefresh}
+          onClose={() => setQbUnit(null)}
+          toast={toast}
+          openConfirm={openConfirm}
+        />
+      )}
+
       <UnitMgrModal
+        acad={isAcad}
         open={unitMgrSource !== null}
         source={unitMgrSource}
         units={unitMgrSource === 'lesson' ? units : nbUnits}
@@ -1175,6 +1383,7 @@ const getClassesData = async () => {
             ? await loadSessionSummary()
             : null;
           await generateLessonPlanReport(reportName, style, fmt, {
+            acad: isAcad,
             units,
             nbUnits,
             session: freshSessionData?.session || session,
@@ -2220,7 +2429,11 @@ function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, on
 /* ═══════════════════════════════════════════════════════════════════
    TERM BREAKUPS — class table with expand details
    ═══════════════════════════════════════════════════════════════════ */
-function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  refreshKey }) {
+function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  refreshKey, scopeRows = null, canEditCurriculum = true, onOpenGroups, onCopy }) {
+  /* scopeRows is passed only by the academics variant (class groups): one row
+     per class plan (read from its representative section) + one per separate
+     section. Without it, the original one-row-per-section list renders. */
+  const acad = Array.isArray(scopeRows);
   /* Editing (update/delete) is only allowed on the user's own login session.
      If they've switched to view another session (changeSessionId differs from
      the login SessionID/sessionID) the action buttons are disabled. */
@@ -2326,6 +2539,15 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  re
   
   // Create a flat list of all class-section combinations
   const flattenedData = [];
+  if (acad) {
+    scopeRows.forEach(row => flattenedData.push({
+      gradeId: row.classId,
+      gradeName: row.className,
+      sectionId: row.repSectionId,
+      sectionName: row.repSectionName,
+      scopeRow: row,
+    }));
+  } else
   classesData.forEach((classItem) => {
     if (classItem.sections && classItem.sections.length > 0) {
       classItem.sections.forEach((section) => {
@@ -2716,7 +2938,7 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
         const isLoading = loadingSubjects[uniqueId];
         
         return (
-          <div key={uniqueId} className="tb-row-wrap">
+          <div key={uniqueId} className={`tb-row-wrap${acad && item.scopeRow?.custom ? ' is-custom' : ''}`}>
             <div className="tb-row">
               <div className="tb-bp-td" style={{ width: 90 }}>
                 <span className="tb-sno">{i + 1}</span>
@@ -2728,7 +2950,9 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                 </div>
               </div>
               <div className="tb-bp-td" style={{ flex: 1 }}>
-                {item.sectionName ? (
+                {acad ? (
+                  <LpScopeBadge row={item.scopeRow} />
+                ) : item.sectionName ? (
                   <span className="section-pill" style={{ 
                     background: 'rgba(30,58,138,.1)', 
                     padding: '4px 12px', 
@@ -2760,14 +2984,17 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                 </>)}
               </div>
               <div className="tb-bp-td" style={{ width: 120, justifyContent: 'center' }}>
-                <Tooltip text={!canTbEdit ? 'You do not have permission to update term breakups' : (isOtherSession ? 'Editing is only allowed for the current session' : `Update term breakup for ${className} - Section ${item.sectionName || ''}`)}>
+                <Tooltip text={!canTbEdit ? 'You do not have permission to update term breakups' : (isOtherSession ? 'Editing is only allowed for the current session' : (acad && !canEditCurriculum ? LP_ROLE_LOCKED_TIP : `Update term breakup for ${className} - Section ${item.sectionName || ''}`))}>
                   <button className="tb-update-btn"
-                    disabled={isOtherSession || !canTbEdit}
-                    style={(isOtherSession || !canTbEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    disabled={isOtherSession || !canTbEdit || (acad && (!canEditCurriculum || !item.sectionId))}
+                    style={(isOtherSession || !canTbEdit || (acad && (!canEditCurriculum || !item.sectionId))) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                     onClick={() => onUpdate({
-  name: `${className} - Section ${item.sectionName || ''}`,
+  name: acad
+    ? `${className} · ${item.scopeRow?.custom ? `Section ${item.sectionName || ''} (separate plan)` : (item.scopeRow?.allSections ? 'All sections' : `Sections ${(item.scopeRow?.sectionNames || []).join(', ')}`)}`
+    : `${className} - Section ${item.sectionName || ''}`,
   gradeId: item.gradeId,
   sectionId: item.sectionId,
+  ...(acad ? { row: item.scopeRow } : {}),
 })}>
                     <i className="fa-solid fa-pen"></i> Update
                   </button>
@@ -2910,6 +3137,17 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
     const hasNoData = !tbd || tbd.loading || tbd.noData || !tbd.units?.length;
     return (
       <>
+        {acad && onOpenGroups && <LpGroupsHint onOpenGroups={onOpenGroups} />}
+        {acad && onCopy && (
+          <Tooltip text={(!canTbEdit || !canEditCurriculum || isOtherSession) ? LP_ROLE_LOCKED_TIP : "Copy this plan's term breakup to another class"}>
+            <button className="tbm-add-units-btn"
+              disabled={!canTbEdit || !canEditCurriculum || isOtherSession}
+              style={(!canTbEdit || !canEditCurriculum || isOtherSession) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => onCopy(item.scopeRow)}>
+              <i className="fa-solid fa-copy"></i> Copy Configuration
+            </button>
+          </Tooltip>
+        )}
         {canTbDownload && (<>
         <Tooltip text={hasNoData ? 'No data to download' : `Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
           <button
@@ -2969,7 +3207,10 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
    TERM BREAKUP UPDATE MODAL — EXACT copy of HTML's .tbm-modal popup
    ═══════════════════════════════════════════════════════════════════ */
 
-function TermBreakupModal({ cls, gradeId, sectionId, sessionWeeks = 0, onSaved, onClose, toast }) {
+function TermBreakupModal({ cls, gradeId, sectionId, sessionWeeks = 0, onSaved, onClose, toast, acad = false, canEdit = true }) {
+  /* Academics variant: units from Manage Units (live lesson-plan unit master of
+     this class plan + subject) offered as a picker that fills Unit No / Name. */
+  const [catalogUnits, setCatalogUnits] = useState([]);
   const [termTab, setTermTab] = useState('');
   const [subjTab, setSubjTab] = useState('');
   const [subjects, setSubjects] = useState([]);
@@ -3072,6 +3313,18 @@ if (mapped.length > 0) {
   fetchTotalLectures();
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [cls, gradeId, sectionId, termTab, subjTab]);
+
+  useEffect(() => {
+    if (!acad || !gradeId || !sectionId || !subjTab) { setCatalogUnits([]); return; }
+    const subj = subjects.find(s => (s.subjectName || s.name || '') === subjTab);
+    const sid = subj?.subjectID || subj?.id;
+    if (!sid) { setCatalogUnits([]); return; }
+    let alive = true;
+    lpFetchLessonUnits(lpCtxFor(gradeId, sectionId, sid))
+      .then(list => { if (alive) setCatalogUnits(lpByUnitNoSort(list)); })
+      .catch(() => { if (alive) setCatalogUnits([]); });
+    return () => { alive = false; };
+  }, [acad, gradeId, sectionId, subjTab, subjects]);
 
   //  Early return BAAD mein
   const open = cls !== null && cls !== undefined;
@@ -3508,7 +3761,7 @@ const saveUnitDetails = async unit => {
     }
   toast('Unit saved', 'success');
 await loadTermBreakup();
-onSaved?.();
+onSaved?.({ termID: selectedTermID(), subjectName: subjTab });
   } catch (e) {
     console.error('Error saving unit:', e);
   if (!e.isSessionError) toast(e.message || 'Failed to save unit', 'error');
@@ -3546,7 +3799,7 @@ const saveAllDetails = async () => {
     }
    toast('Term breakup saved', 'success');
 await loadTermBreakup();
-onSaved?.();
+onSaved?.({ termID: selectedTermID(), subjectName: subjTab });
 onClose();
   } catch (e) {
     console.error('Error saving term breakup:', e);
@@ -3667,7 +3920,7 @@ const deleteDetail = async ({ unit, topic }) => {
   });
 
   toast('Deleted successfully', 'success');
-  onSaved?.();
+  onSaved?.({ termID: selectedTermID(), subjectName: subjTab });
 };
 
   return (
@@ -3756,6 +4009,25 @@ const deleteDetail = async ({ unit, topic }) => {
     </div>
   ) : units.map(u => (
               <div key={u.id} className="tbm-unit-block">
+                {acad && (
+                  <div style={{ padding: '12px 16px 0' }}>
+                    <label className="tbm-label">Unit (from Manage Units)</label>
+                    <select className="tbm-input"
+                      value={(catalogUnits.find(cu => String(cu.unitNo) === String(u.unitNum) && (cu.unitName || '') === (u.unitName || '')) || {}).id || ''}
+                      onChange={e => {
+                        const cu = catalogUnits.find(x => String(x.id) === e.target.value);
+                        if (!cu) return;
+                        if (units.some(o => o.id !== u.id && String(o.unitNum) === String(cu.unitNo) && (o.unitName || '') === (cu.unitName || ''))) {
+                          toast('That unit is already selected in another row for this term & subject', 'error');
+                          return;
+                        }
+                        setUnits(units.map(x => (x.id === u.id ? { ...x, unitNum: String(cu.unitNo ?? ''), unitName: cu.unitName || '' } : x)));
+                      }}>
+                      <option value="">{catalogUnits.length ? 'Select a unit…' : 'No units in Manage Units for this subject — type below'}</option>
+                      {catalogUnits.map(cu => <option key={cu.id} value={cu.id}>Unit {cu.unitNo} – {cu.unitName}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div className="tbm-unit-top">
                   <div>
                     <label className="tbm-label">Unit Number</label>
@@ -3910,6 +4182,2393 @@ const deleteDetail = async ({ unit, topic }) => {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   ACADEMICS VARIANT — ported from the reference branch
+   (academics-class-groups-activity-audience): Class Groups, Units
+   Management, Copy Configuration, Question Bank two-pane editor.
+   Everything below is rendered ONLY when <LessonPlans variant="academics" />.
+
+   DATA SOURCES
+     • Units / Term Breakups / Question Bank rows → the ERP's existing live
+       APIs (getulpforclassesmaster / ulpforclassmastercrud,
+       getulpfornotebookmaster / ulpfornotebookmastercrud, gettermbreakups /
+       lptermbreakupcrud / lptermbreakupdetailscrud, ulpn*crud) with the
+       exact payload shapes the ERP already sends.
+     • Class Groups (which sections share the class plan) → MOCK store
+       (services/lessonPlansClassGroupsService, localStorage). The backend
+       stores everything per real section, so the "class plan" is read from
+       the first grouped section (representative) and every class-plan write
+       to Units / Term Breakups is fanned out to the other grouped sections.
+   ═══════════════════════════════════════════════════════════════════ */
+const LP_SHARED_SCOPE = '*';
+const LP_ROLE_LOCKED_TIP = 'Only your Coordinator / Principal can edit the class curriculum.';
+
+const cgSectionsOf = cls => (cls?.sections || []).map(s => ({ sectionId: s.sectionID, sectionName: s.sectionName }));
+const cgIsCustom = (custom, classId, sectionId) => (custom || []).includes(cgScopeKey(classId, sectionId));
+
+/* One row per class plan (its grouped sections) + one row per section that
+   has a separate plan, right after its class. */
+function cgBuildScopeRows(classesData = [], custom = []) {
+  const rows = [];
+  classesData.forEach(cls => {
+    const secs = cgSectionsOf(cls);
+    const grouped = secs.filter(s => !cgIsCustom(custom, cls.id, s.sectionId));
+    if (grouped.length || !secs.length) {
+      rows.push({
+        key: `${cls.id}__*`, classId: cls.id, className: cls.name, scope: LP_SHARED_SCOPE,
+        sectionIds: grouped.map(s => s.sectionId), sectionNames: grouped.map(s => s.sectionName),
+        repSectionId: grouped[0]?.sectionId ?? null, repSectionName: grouped[0]?.sectionName ?? null,
+        allSections: grouped.length === secs.length, noSections: !secs.length,
+      });
+    }
+    secs.filter(s => cgIsCustom(custom, cls.id, s.sectionId)).forEach(s => rows.push({
+      key: `${cls.id}__${s.sectionId}`, classId: cls.id, className: cls.name, scope: s.sectionId, custom: true,
+      sectionIds: [s.sectionId], sectionNames: [s.sectionName],
+      repSectionId: s.sectionId, repSectionName: s.sectionName, allSections: false,
+    }));
+  });
+  return rows;
+}
+
+/* The scope row a real class+section reads from. */
+function cgRowFor(classesData, custom, classId, sectionId) {
+  return cgBuildScopeRows(classesData, custom).find(r => String(r.classId) === String(classId)
+    && r.sectionIds.some(s => String(s) === String(sectionId))) || null;
+}
+
+function LpScopeBadge({ row }) {
+  if (!row) return null;
+  if (row.noSections) return <span className="umn-scope-badge shared"><i className="fa-solid fa-link"></i> No sections</span>;
+  if (!row.custom) {
+    return (
+      <span className="umn-scope-badge shared">
+        <i className="fa-solid fa-link"></i>
+        {row.allSections ? 'All sections' : `Sections ${row.sectionNames.join(', ')}`}
+      </span>
+    );
+  }
+  return <span className="umn-scope-badge custom"><i className="fa-solid fa-pen-ruler"></i> Section {row.repSectionName} · Separate plan</span>;
+}
+
+function LpGroupsHint({ onOpenGroups }) {
+  /* Class Groups tab is hidden, so the "Sharing is set in Class Groups" hint is hidden too. */
+  if (!CLASS_GROUPS_TAB_VISIBLE) return null;
+  return (
+    <span className="cg-hint">
+      Sharing is set in{' '}
+      <button type="button" className="cg-hint-link" onClick={onOpenGroups}>Class Groups</button>
+    </span>
+  );
+}
+
+/* ── Live fetch helpers (same endpoints/shape as CreateLessonPlans) ── */
+const lpAuthGet = () => ({ Accept: '*/*', Authorization: `bearer ${sessionStorage.getItem('token') || ''}` });
+
+async function lpFetchLessonUnits({ branchID, classID, sectionID, subjectID }) {
+  const res = await window.fetch(
+    buildUrl(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+    { method: 'GET', headers: lpAuthGet() },
+  );
+  const json = await res.json().catch(() => ({}));
+  const byUnit = new Map();
+  (json?.data || []).forEach(r => {
+    const key = `${r.unitNo}__${r.unitName}`;
+    if (!byUnit.has(key)) byUnit.set(key, { id: key, unitNo: r.unitNo, unitName: r.unitName, medium: String(r.medium || 'english').toLowerCase(), lessons: [] });
+    const unit = byUnit.get(key);
+    unit.lessons.push({ id: r.id, num: unit.lessons.length + 1, topic: r.lessonPlanTopic, source: 'manual', record: r });
+  });
+  return Array.from(byUnit.values());
+}
+
+async function lpFetchNotebookUnits({ branchID, classID, sectionID, subjectID }) {
+  const res = await window.fetch(
+    buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+    { method: 'GET', headers: lpAuthGet() },
+  );
+  const json = await res.json().catch(() => ({}));
+  return (json?.data || []).map(r => ({
+    id: r.id, unitNo: r.unitNo, unitName: r.unitName, lessonPlanTopic: r.lessonPlanTopic || '',
+    medium: String(r.medium || 'english').toLowerCase(), questions: [], record: r,
+  }));
+}
+
+const lpFetchUnits = (source, ctx) => (source === 'notebook' ? lpFetchNotebookUnits(ctx) : lpFetchLessonUnits(ctx));
+const lpCtxFor = (classId, sectionId, subjectId) => ({
+  branchID: sessionStorage.getItem('branchID') || '',
+  classID: classId != null ? String(classId) : '',
+  sectionID: sectionId != null ? String(sectionId) : '',
+  subjectID: subjectId != null ? String(subjectId) : '',
+});
+const lpByUnitNoSort = list => [...list].sort((a, b) => (Number(a.unitNo) || 0) - (Number(b.unitNo) || 0));
+
+/* Subjects of a class+section (same endpoint Create Lesson Plans uses), de-duplicated by name. */
+async function lpSubjectsFor(classId, sectionId) {
+  if (classId == null || sectionId == null) return [];
+  try {
+    const list = await fetchClassSubjects(classId, sectionId);
+    return [...new Map(list.map(s => [String(s.subjectName).trim().toLowerCase(), s])).values()];
+  } catch (_) { return []; }
+}
+
+/* Persist a unit draft for ONE class+section+subject — the exact diff/payload
+   logic UnitMgrModal.save uses (insert new / update renamed / delete removed). */
+async function lpPersistUnitDraft({ source, units, draft, ctx }) {
+  const base = { branchID: ctx.branchID, classID: ctx.classID, sectionID: ctx.sectionID, subjectID: ctx.subjectID };
+  const med = u => (LP_MEDIUM_API_READY ? { medium: apiMedium(u.medium) } : {});
+  const origIds = new Set(units.map(u => u.id));
+  const origById = new Map(units.map(u => [u.id, u]));
+  const draftIds = new Set(draft.map(u => u.id));
+  const changed = u => {
+    const o = origById.get(u.id);
+    if (!o) return false;
+    if (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || '')) return true;
+    return LP_MEDIUM_API_READY && (o.medium || 'english') !== (u.medium || 'english');
+  };
+  const calls = [];
+  if (source === 'notebook') {
+    const rid = u => { const n = Number(u.id); return Number.isFinite(n) ? n : u.id; };
+    draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName)).forEach(u => calls.push(lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0, unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', ...med(u), action: 'insert' })));
+    draft.filter(changed).forEach(u => calls.push(lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u), unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: u.record?.lessonPlanTopic ?? u.lessonPlanTopic ?? '', ...med(u), action: 'update' })));
+    units.filter(u => !draftIds.has(u.id)).forEach(u => calls.push(lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u), unitNo: '', unitName: '', lessonPlanTopic: '', ...med(u), action: 'delete' })));
+  } else {
+    const recId = l => l?.id ?? l?.record?.id ?? l?.recordId;
+    draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName)).forEach(u => calls.push(lpPost('/api/ulpforclassmastercrud', { ...base, id: 0, unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', ...med(u), action: 'insert' })));
+    draft.filter(changed).forEach(u => (u.lessons || []).forEach(l => {
+      const id = recId(l); if (id == null) return;
+      calls.push(lpPost('/api/ulpforclassmastercrud', { ...base, id, unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: l.record?.lessonPlanTopic ?? l.topic ?? '', ...med(u), action: 'update' }));
+    }));
+    units.filter(u => !draftIds.has(u.id)).forEach(u => (u.lessons || []).forEach(l => {
+      const id = recId(l); if (id == null) return;
+      calls.push(deleteUlpMasterCascade({ id, unitNo: l.record?.unitNo ?? u.unitNo ?? '', unitName: l.record?.unitName ?? u.unitName ?? '', lessonPlanTopic: l.record?.lessonPlanTopic ?? l.topic ?? '', medium: u.medium }, base));
+    }));
+  }
+  const results = await Promise.all(calls);
+  const bad = (results || []).find(r => {
+    const d = r?.data;
+    const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
+    const s = inner ? (inner.Success ?? inner.success) : undefined;
+    return s === 0 || s === false || s === '0' || d === 0 || d === '0';
+  });
+  if (bad) {
+    const d = bad.data;
+    const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
+    throw Object.assign(new Error((inner && (inner.Message ?? inner.message)) || bad.message || 'Server could not save the unit'), { serverMessage: (inner && (inner.Message ?? inner.message)) || bad.message });
+  }
+  return calls.length;
+}
+
+/* Fan a class-plan unit edit (repOrig → draft) out to another grouped section:
+   its counterpart units are matched by the ORIGINAL unit number + name. */
+async function lpSyncUnitsToSection({ source, repOrig, draft, ctx }) {
+  const theirs = await lpFetchUnits(source, ctx);
+  const keyOf = u => `${String(u.unitNo).trim()}__${String(u.unitName || '').trim().toLowerCase()}`;
+  const theirsByKey = new Map(theirs.map(u => [keyOf(u), u]));
+  const repById = new Map(repOrig.map(u => [u.id, u]));
+  const used = new Set();
+  const next = [];
+  draft.forEach(u => {
+    const o = repById.get(u.id);
+    const counterpart = o ? theirsByKey.get(keyOf(o)) : theirsByKey.get(keyOf(u));
+    if (counterpart && !used.has(counterpart.id)) {
+      used.add(counterpart.id);
+      next.push({ ...counterpart, unitNo: u.unitNo, unitName: u.unitName, medium: u.medium });
+    } else if (!o || !counterpart) {
+      next.push({ ...u, id: `sync_${Date.now()}_${Math.random()}`, lessons: [], questions: [] });
+    }
+  });
+  /* Units the class plan deleted → drop their counterparts; units only this
+     section has (no class-plan counterpart) are kept untouched. */
+  const deletedKeys = new Set(repOrig.filter(o => !draft.some(d => d.id === o.id)).map(keyOf));
+  theirs.forEach(t => { if (!used.has(t.id) && !deletedKeys.has(keyOf(t))) next.push(t); });
+  return lpPersistUnitDraft({ source, units: theirs, draft: next, ctx });
+}
+
+/* ── Term Breakup live helpers (same payloads as TermBreakupModal) ── */
+async function lpTbSubjects(gradeId, sectionId) {
+  try {
+    const empID = sessionStorage.getItem('employee_ID');
+    const res = await fetch(buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empID}`), { method: 'GET', headers: { Accept: '*/*' } });
+    const json = await res.json().catch(() => ({}));
+    const list = (json?.success && Array.isArray(json.data)) ? json.data : (Array.isArray(json) ? json : (json?.data || []));
+    return list.map(s => ({ subjectID: s.subjectID ?? s.id, subjectName: s.subjectName || s.name || '' })).filter(s => s.subjectID != null);
+  } catch (_) { return []; }
+}
+
+async function lpTbTerms() {
+  if (!termsSessionYearID()) return [];
+  try {
+    const json = await termsCrud({ id: 0, branchID: termsBranchID(), term: 'string', sessionYearID: termsSessionYearID(), action: 'get' });
+    const list = Array.isArray(json) ? json : (json?.data || json?.Data || []);
+    return list.map(t => ({ id: t.id ?? t.ID ?? t.termID, name: t.term ?? t.Term ?? t.name ?? 'Term' })).filter(t => t.id);
+  } catch (_) { return []; }
+}
+
+/* → { termBreakupID, rows } (raw detail rows, each with its own id). */
+async function lpTbFetch({ classID, sectionID, subjectID, termID }) {
+  const params = new URLSearchParams({
+    branchID: String(termsBranchID() ?? ''), classID: String(classID ?? ''), sectionID: String(sectionID ?? ''),
+    subjectID: String(subjectID ?? ''), termID: String(termID ?? ''), sessionID: String(termsSessionYearID() ?? ''), pageNo: '1',
+  });
+  const res1 = await fetch(buildUrl(`/api/gettermbreakups?${params.toString()}`), { method: 'GET', headers: lpAuthGet() });
+  if (!res1.ok) return { termBreakupID: null, rows: [] };
+  const json1 = await res1.json().catch(() => ({}));
+  const list1 = Array.isArray(json1?.data) ? json1.data : (Array.isArray(json1) ? json1 : []);
+  const termBreakupID = list1[0]?.id ?? null;
+  if (!termBreakupID) return { termBreakupID: null, rows: [] };
+  const res2 = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
+    method: 'POST',
+    headers: { ...lpAuthGet(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: termBreakupID, termBreakupID, unitNumber: '', unitName: '', weekRequired: '', subTopic: '', periodRequired: '', type: '', action: 'get' }),
+  });
+  const json2 = await res2.json().catch(() => ({}));
+  const rows = Array.isArray(json2) ? json2 : (Array.isArray(json2?.data) ? json2.data : (Array.isArray(json2?.Data) ? json2.Data : []));
+  return { termBreakupID, rows };
+}
+
+const lpTbVal = (r, a, b, d = '') => r[a] ?? r[b] ?? d;
+
+/* Replace one class+section+subject+term breakup with `sourceRows`. */
+async function lpTbWrite({ classID, sectionID, subjectID, termID, sourceRows }) {
+  const cur = await lpTbFetch({ classID, sectionID, subjectID, termID });
+  let termBreakupID = cur.termBreakupID;
+  for (const r of cur.rows) {
+    if (r?.id == null) continue;
+    await lpPost('/api/lptermbreakupdetailscrud', {
+      termBreakupDetailsData: '', id: String(r.id), termBreakupID: String(termBreakupID ?? ''),
+      unitNumber: String(lpTbVal(r, 'unitNumber', 'UnitNumber')), unitName: String(lpTbVal(r, 'unitName', 'UnitName')),
+      weekRequired: String(lpTbVal(r, 'weekRequired', 'WeekRequired', '0')), subTopic: String(lpTbVal(r, 'subTopic', 'SubTopic')),
+      periodRequired: String(lpTbVal(r, 'periodRequired', 'PeriodRequired', '0')), type: '', action: 'delete',
+    });
+  }
+  if (!sourceRows.length) return 0;
+  if (!termBreakupID) {
+    const json = await lpPost('/api/lptermbreakupcrud', {
+      termBreakupData: '', id: '0', branchID: String(termsBranchID() ?? ''), classID: String(classID ?? ''),
+      sectionID: String(sectionID ?? ''), subjectID: String(subjectID ?? ''), termID: String(termID ?? ''),
+      sessionID: String(termsSessionYearID() ?? ''), action: 'insert',
+    });
+    termBreakupID = json?.id ?? json?.data?.id ?? json?.data?.[0]?.id ?? json?.termBreakupID ?? json?.data?.termBreakupID;
+    if (!termBreakupID) throw new Error('lptermbreakupcrud did not return id');
+  }
+  for (const r of sourceRows) {
+    await lpPost('/api/lptermbreakupdetailscrud', {
+      termBreakupDetailsData: '', id: '0', termBreakupID: String(termBreakupID),
+      unitNumber: String(lpTbVal(r, 'unitNumber', 'UnitNumber')), unitName: String(lpTbVal(r, 'unitName', 'UnitName')).trim(),
+      weekRequired: String(lpTbVal(r, 'weekRequired', 'WeekRequired', '0')), subTopic: String(lpTbVal(r, 'subTopic', 'SubTopic')).trim(),
+      periodRequired: String(lpTbVal(r, 'periodRequired', 'PeriodRequired', '0')), type: '', action: 'insert',
+    });
+  }
+  return sourceRows.length;
+}
+
+/* Class-plan term breakup saved on the representative section → copy that
+   term+subject to the other grouped sections (matched by subject name). */
+async function lpTbSyncToSections({ row, termID, subjectName }) {
+  if (!row || row.custom || !termID || !subjectName || row.sectionIds.length < 2) return 0;
+  const repSubjects = await lpTbSubjects(row.classId, row.repSectionId);
+  const repSubj = repSubjects.find(s => s.subjectName.trim().toLowerCase() === String(subjectName).trim().toLowerCase());
+  if (!repSubj) return 0;
+  const { rows } = await lpTbFetch({ classID: row.classId, sectionID: row.repSectionId, subjectID: repSubj.subjectID, termID });
+  let n = 0;
+  for (const secId of row.sectionIds) {
+    if (String(secId) === String(row.repSectionId)) continue;
+    const subs = await lpTbSubjects(row.classId, secId);
+    const hit = subs.find(s => s.subjectName.trim().toLowerCase() === repSubj.subjectName.trim().toLowerCase());
+    if (!hit) continue;
+    await lpTbWrite({ classID: row.classId, sectionID: secId, subjectID: hit.subjectID, termID, sourceRows: rows });
+    n += 1;
+  }
+  return n;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CLASS GROUPS — the ONLY place sections are grouped / separated.
+   ═══════════════════════════════════════════════════════════════════ */
+function ClassGroupsScreen({ classesData = [], customSections = [], canEdit, onSeparate, onRejoin }) {
+  const withSections = classesData.filter(c => (c.sections || []).length);
+  const totalSections = withSections.reduce((n, c) => n + c.sections.length, 0);
+  const separateCount = withSections.reduce((n, c) => n + cgSectionsOf(c).filter(s => cgIsCustom(customSections, c.id, s.sectionId)).length, 0);
+  return (
+    <>
+      <div className="clp2-scope-note" style={{ alignItems: 'flex-start' }}>
+        <i className="fa-solid fa-circle-info" style={{ color: 'var(--brand-primary)', marginTop: 3 }}></i>
+        <span>
+          Sections in a class group <strong>share one plan</strong>: Units, Term Breakups, Lesson Plans and Question Bank are made once and appear in every section of the group.
+          Take a section out only if it needs a <strong>different plan</strong>. Submissions, teachers and downloads always stay per section.
+        </span>
+      </div>
+      {!canEdit && (
+        <div className="perm-locked-banner">
+          <i className="fa-solid fa-lock" aria-hidden="true" />
+          <span>You have <strong>view-only</strong> access. Class groups are managed by your Coordinator / Principal.</span>
+        </div>
+      )}
+      <div className="section-card" style={{ overflow: 'visible' }}>
+        <div className="cg-summary">
+          <span><strong>{totalSections - separateCount}</strong> of {totalSections} sections in class groups</span>
+          {separateCount > 0 && <span className="umn-scope-badge custom"><i className="fa-solid fa-pen-ruler"></i>{separateCount} with a separate plan</span>}
+        </div>
+        <div className="tb-breakup-head">
+          <div className="tb-bp-th" style={{ width: 70 }}>S. No.</div>
+          <div className="tb-bp-th" style={{ flex: 1 }}>Class</div>
+          <div className="tb-bp-th" style={{ flex: 1.4 }}>Sections — click to take out / put back</div>
+          <div className="tb-bp-th" style={{ width: 200 }}>Status</div>
+        </div>
+        {withSections.length === 0 && (
+          <div className="umn-units-empty" style={{ padding: 16 }}>No classes with sections found for this branch.</div>
+        )}
+        {withSections.map((cls, idx) => {
+          const secs = cgSectionsOf(cls);
+          const separate = secs.filter(s => cgIsCustom(customSections, cls.id, s.sectionId));
+          const sharing = secs.length - separate.length;
+          return (
+            <div key={cls.id} className="tb-row-wrap">
+              <div className="tb-row">
+                <div className="tb-bp-td" style={{ width: 70 }}><span className="tb-sno">{idx + 1}</span></div>
+                <div className="tb-bp-td" style={{ flex: 1 }}>
+                  <div className="tb-cls-name"><div className="tb-cls-icon"><i className="fa-solid fa-object-group"></i></div>{cls.name}</div>
+                </div>
+                <div className="tb-bp-td" style={{ flex: 1.4, gap: 6, flexWrap: 'wrap' }}>
+                  {secs.map(s => {
+                    const inGroup = !cgIsCustom(customSections, cls.id, s.sectionId);
+                    return (
+                      <Tooltip key={s.sectionId} text={!canEdit ? LP_ROLE_LOCKED_TIP : (inGroup
+                        ? `Section ${s.sectionName} shares the ${cls.name} plan — click to give it a separate plan`
+                        : `Section ${s.sectionName} has a separate plan — click to put it back in the ${cls.name} group`)}>
+                        <button className={`cg-sec${inGroup ? ' in' : ' out'}`} aria-pressed={inGroup}
+                          disabled={!canEdit}
+                          style={!canEdit ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+                          onClick={() => { if (!canEdit) return; if (inGroup) onSeparate(cls, s); else onRejoin(cls, s); }}>
+                          <i className={`fa-solid ${inGroup ? 'fa-link' : 'fa-pen-ruler'}`}></i> Section {s.sectionName}
+                        </button>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+                <div className="tb-bp-td" style={{ width: 200 }}>
+                  <span className="cg-status">
+                    {separate.length === 0 ? 'All sections share one plan'
+                      : sharing === 0 ? 'Every section has its own plan'
+                        : `${sharing} sharing · ${separate.length} separate`}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* Horizontally-scrollable subject nav (reference SubjectScrollNav). */
+function SubjectScrollNav({ subjects, active, counts, onSelect }) {
+  const scrollRef = useRef(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+  const updateArrows = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  };
+  useEffect(() => { updateArrows(); }, [subjects]);
+  const scrollBy = dir => { scrollRef.current?.scrollBy({ left: dir * 160, behavior: 'smooth' }); setTimeout(updateArrows, 300); };
+  return (
+    <div className="umn-subj-nav">
+      <button type="button" className="umn-subj-arrow" style={{ visibility: canLeft ? 'visible' : 'hidden' }} onClick={() => scrollBy(-1)} aria-label="Scroll subjects left">
+        <i className="fa-solid fa-chevron-left"></i>
+      </button>
+      <div className="umn-subj-scroll" ref={scrollRef} onScroll={updateArrows}>
+        {subjects.map(s => (
+          <button key={s} type="button" className={`tbm-subj-tab${active === s ? ' active' : ''}`} onClick={() => onSelect(s)}>
+            {s} <span className="umn-subj-count">({counts[s] ?? '…'})</span>
+          </button>
+        ))}
+      </div>
+      <button type="button" className="umn-subj-arrow" style={{ visibility: canRight ? 'visible' : 'hidden' }} onClick={() => scrollBy(1)} aria-label="Scroll subjects right">
+        <i className="fa-solid fa-chevron-right"></i>
+      </button>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   UNITS MANAGEMENT — one row per class plan / separate section (live)
+   ═══════════════════════════════════════════════════════════════════ */
+function UnitsManagementScreen({ classesData = [], customSections = [], canEdit, onUpdate, onCopy, onOpenGroups, refreshKey }) {
+  const rows = cgBuildScopeRows(classesData, customSections).filter(r => r.repSectionId != null);
+  const [openKey, setOpenKey] = useState(null);
+  const [subjByRow, setSubjByRow] = useState({});   // rowKey → [{subjectId, subjectName}]
+  const [activeSubj, setActiveSubj] = useState({}); // rowKey → subjectName
+  const [counts, setCounts] = useState({});         // rowKey → { subjectName: n }
+  const [lists, setLists] = useState({});           // `${rowKey}__${subject}` → { loading, lesson:[], notebook:[] }
+
+  /* Keys already requested in this refresh cycle. Tracked in a ref (not in
+     `lists`) so the loading state update does not re-run/cancel the fetch. */
+  const requestedRef = useRef(new Set());
+
+  useEffect(() => { setLists({}); setCounts({}); requestedRef.current = new Set(); }, [refreshKey]);
+
+  const loadRow = async row => {
+    let subs = subjByRow[row.key];
+    if (!subs) {
+      subs = await lpSubjectsFor(row.classId, row.repSectionId);
+      setSubjByRow(p => ({ ...p, [row.key]: subs }));
+      if (subs.length) setActiveSubj(p => ({ ...p, [row.key]: p[row.key] || subs[0].subjectName }));
+    }
+    if (!counts[row.key]) {
+      const c = {};
+      await lpMapLimited(subs, 4, async s => {
+        try { c[s.subjectName] = (await lpFetchLessonUnits(lpCtxFor(row.classId, row.repSectionId, s.subjectId))).length; }
+        catch (_) { c[s.subjectName] = 0; }
+      });
+      setCounts(p => ({ ...p, [row.key]: c }));
+    }
+  };
+
+  const openRow = openKey ? rows.find(r => r.key === openKey) : null;
+  const curSubjName = openRow ? activeSubj[openRow.key] : null;
+  const curSubj = openRow ? (subjByRow[openRow.key] || []).find(s => s.subjectName === curSubjName) : null;
+  const listKey = openRow && curSubj ? `${openRow.key}__${curSubj.subjectName}` : null;
+
+  useEffect(() => {
+    if (!openRow || !curSubj || !listKey) return;
+    if (requestedRef.current.has(listKey)) return;
+    requestedRef.current.add(listKey);
+    setLists(p => ({ ...p, [listKey]: { loading: true, lesson: [], notebook: [] } }));
+    const ctx = lpCtxFor(openRow.classId, openRow.repSectionId, curSubj.subjectId);
+    Promise.all([lpFetchLessonUnits(ctx).catch(() => []), lpFetchNotebookUnits(ctx).catch(() => [])])
+      .then(([lesson, notebook]) => {
+        setLists(p => ({ ...p, [listKey]: { loading: false, lesson: lpByUnitNoSort(lesson), notebook: lpByUnitNoSort(notebook) } }));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listKey, refreshKey]);
+
+  const chips = (list, empty) => (list.length === 0
+    ? <div className="umn-units-empty">{empty}</div>
+    : list.map(u => (
+      <div key={u.id} className="umn-unit-chip">
+        <span className="umn-unit-no">{u.unitNo}</span>
+        <span className="umn-unit-name">{u.unitName || '(no name)'}</span>
+      </div>
+    )));
+
+  return (
+    <div className="section-card" style={{ overflow: 'visible' }}>
+      <div className="tb-breakup-head">
+        <div className="tb-bp-th" style={{ width: 70 }}>S. No.</div>
+        <div className="tb-bp-th" style={{ flex: 1 }}>Class</div>
+        <div className="tb-bp-th" style={{ width: 210, textAlign: 'center' }}>Plan</div>
+        <div className="tb-bp-th" style={{ width: 160, textAlign: 'center' }}>Add / Edit Units</div>
+        <div className="tb-bp-th" style={{ width: 60, textAlign: 'center' }}>Details</div>
+      </div>
+      {rows.length === 0 && <div className="umn-units-empty" style={{ padding: 16 }}>No classes with sections found.</div>}
+      {rows.map((row, idx) => {
+        const isOpen = openKey === row.key;
+        const subs = subjByRow[row.key] || [];
+        const subjNames = subs.map(s => s.subjectName);
+        const lst = listKey && isOpen ? lists[listKey] : null;
+        return (
+          <div key={row.key} className={`tb-row-wrap${row.custom ? ' is-custom' : ''}`}>
+            <div className="tb-row">
+              <div className="tb-bp-td" style={{ width: 70 }}><span className="tb-sno">{idx + 1}</span></div>
+              <div className="tb-bp-td" style={{ flex: 1 }}>
+                <div className="tb-cls-name"><div className="tb-cls-icon"><i className="fa-solid fa-code"></i></div>{row.className}</div>
+              </div>
+              <div className="tb-bp-td" style={{ width: 210, justifyContent: 'center' }}><LpScopeBadge row={row} /></div>
+              <div className="tb-bp-td" style={{ width: 160, justifyContent: 'center' }}>
+                <Tooltip text={canEdit ? `Add or edit units for ${row.className}` : LP_ROLE_LOCKED_TIP}>
+                  <button className="tb-update-btn" onClick={() => onUpdate(row)}>
+                    <i className={`fa-solid ${canEdit ? 'fa-pen' : 'fa-eye'}`}></i> {canEdit ? 'Add / Edit Units' : 'View Units'}
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="tb-bp-td" style={{ width: 60, justifyContent: 'center' }}>
+                <Tooltip text={isOpen ? 'Hide details' : 'Show details'}>
+                  <button className={`expand-btn${isOpen ? ' open' : ''}`} onClick={() => { if (isOpen) setOpenKey(null); else { setOpenKey(row.key); loadRow(row); } }}>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+            {isOpen && (
+              <div className="tb-detail">
+                <div className="tb-detail-inner">
+                  <div className="tb-detail-section">
+                    <div className="tb-detail-label">Subjects</div>
+                    {subs.length === 0
+                      ? <div className="umn-units-empty">Loading subjects… (or none assigned)</div>
+                      : <SubjectScrollNav subjects={subjNames} active={curSubjName} counts={counts[row.key] || {}} onSelect={s => setActiveSubj(p => ({ ...p, [row.key]: s }))} />}
+                  </div>
+                  {curSubj && (
+                    <div className="tb-detail-section">
+                      <div className="tb-detail-label">Units — {curSubj.subjectName}</div>
+                      {!lst || lst.loading ? (
+                        <div className="umn-units-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading units…</div>
+                      ) : (
+                        <div className="umn-units-list">
+                          <div className="tb-detail-label" style={{ marginTop: 2 }}>Lesson Plans</div>
+                          {chips(lst.lesson, `No lesson-plan units configured for ${curSubj.subjectName}.`)}
+                          <div className="tb-detail-label" style={{ marginTop: 6 }}>Question Bank</div>
+                          {chips(lst.notebook, `No Question Bank units configured for ${curSubj.subjectName}.`)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="tb-detail-actions">
+                    <LpGroupsHint onOpenGroups={onOpenGroups} />
+                    <Tooltip text={canEdit ? "Copy this plan's units to another class" : LP_ROLE_LOCKED_TIP}>
+                      <button className="tbm-add-units-btn" disabled={!canEdit} style={!canEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => canEdit && onCopy(row)}>
+                        <i className="fa-solid fa-copy"></i> Copy Configuration
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Units Management modal (live). target = { row, initialSubject, initialSource }.
+   Class-plan rows save to the representative section and are fanned out to
+   every other grouped section. */
+function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast, openConfirm }) {
+  const row = target?.row || null;
+  const [subjects, setSubjects] = useState([]);
+  const [subj, setSubj] = useState('');
+  const [source, setSource] = useState('lesson');
+  const [orig, setOrig] = useState([]);
+  const [draft, setDraft] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  useEffect(() => {
+    if (!row) return;
+    let alive = true;
+    setSource(target.initialSource === 'notebook' ? 'notebook' : 'lesson');
+    setSubjects([]); setOrig([]); setDraft([]); setNewName('');
+    lpSubjectsFor(row.classId, row.repSectionId).then(list => {
+      if (!alive) return;
+      setSubjects(list);
+      const want = target.initialSubject && list.find(s => s.subjectName === target.initialSubject);
+      setSubj(want ? want.subjectName : (list[0]?.subjectName || ''));
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  const curSubj = subjects.find(s => s.subjectName === subj) || null;
+  const ctx = row && curSubj ? lpCtxFor(row.classId, row.repSectionId, curSubj.subjectId) : null;
+
+  const reload = async () => {
+    if (!ctx) return;
+    setLoading(true);
+    try {
+      const list = lpByUnitNoSort(await lpFetchUnits(source, ctx));
+      setOrig(list);
+      setDraft(list.map(u => ({ ...u })));
+    } catch (e) {
+      console.error('Units load failed', e);
+      setOrig([]); setDraft([]);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => {
+    if (row && curSubj) reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.key, subj, source, subjects]);
+
+  if (!row) return null;
+
+  const dirty = JSON.stringify(draft.map(u => [u.id, u.unitNo, u.unitName, u.medium])) !== JSON.stringify(orig.map(u => [u.id, u.unitNo, u.unitName, u.medium]));
+  const ifClean = fn => {
+    if (!dirty) { fn(); return; }
+    openConfirm({ title: 'Discard unsaved changes?', message: 'You have unsaved unit changes for this subject.', hint: 'Click Save first to keep them.', confirmLabel: 'Discard', icon: 'fa-triangle-exclamation', onConfirm: fn });
+  };
+  const lockedToast = () => { toast(LP_ROLE_LOCKED_TIP, 'error'); return true; };
+  const update = (id, k, v) => setDraft(d => d.map(u => (u.id === id ? { ...u, [k]: v } : u)));
+  const moveUnit = (id, dir) => setDraft(d => {
+    const i = d.findIndex(u => u.id === id), j = i + dir;
+    if (i < 0 || j < 0 || j >= d.length) return d;
+    const next = [...d];
+    const a = next[i], b = next[j];
+    next[i] = { ...b, unitNo: a.unitNo };
+    next[j] = { ...a, unitNo: b.unitNo };
+    return next;
+  });
+  const confirmMove = (id, dir) => {
+    if (!canEdit) { lockedToast(); return; }
+    openConfirm({
+      title: 'Confirm Unit Reordering',
+      message: `You are about to change the order of units for this class plan.
+        <br/><br/>This change will be reflected in:
+        <ul style="margin:8px 0 0 18px;padding:0;"><li>Units Management</li><li>Term Breakups</li><li>Lesson Plans</li><li>Question Bank</li><li>Teacher Submissions</li></ul>`,
+      hint: 'The two units swap their unit numbers. Click Save to keep the new order.',
+      confirmLabel: 'Confirm & Update', confirmStyle: 'primary', icon: 'fa-arrow-up-wide-short',
+      onConfirm: () => moveUnit(id, dir),
+    });
+  };
+  const removeUnit = u => {
+    if (!canEdit) { lockedToast(); return; }
+    openConfirm({
+      title: 'Delete Unit?',
+      message: `Unit <strong>"${u.unitName || u.unitNo}"</strong> will be removed${source === 'lesson' ? ' together with its lesson plans' : ' together with its Question Bank'} for ${row.custom ? `Section ${row.repSectionName}` : 'every section in this class plan'}.`,
+      hint: 'Click Save to make the deletion permanent.',
+      confirmLabel: 'Yes, Delete', icon: 'fa-trash',
+      onConfirm: () => setDraft(d => d.filter(x => x.id !== u.id)),
+    });
+  };
+  const addUnit = () => {
+    if (!canEdit) { lockedToast(); return; }
+    const name = newName.trim();
+    if (!name) { toast('Please enter a unit name', 'error'); return; }
+    const nextNo = draft.reduce((m, u) => Math.max(m, Number(u.unitNo) || 0), 0) + 1;
+    setDraft(d => [...d, { id: `new_${Date.now()}`, unitNo: String(nextNo), unitName: name, medium: 'english', lessons: [], questions: [] }]);
+    setNewName('');
+  };
+
+  const save = async (andNext) => {
+    if (!canEdit) { lockedToast(); return false; }
+    if (!ctx) return false;
+    if (!dirty) {
+      if (andNext) goNext(); else toast('There are no changes to save', 'info');
+      return true;
+    }
+    const origIds = new Set(orig.map(u => u.id));
+    const hasInsert = draft.some(u => !origIds.has(u.id));
+    const hasDelete = orig.some(u => !draft.some(d => d.id === u.id));
+    const hasUpdate = draft.some(u => origIds.has(u.id));
+    if (hasInsert && guard(source, 'add', toast)) return false;
+    if (hasUpdate && guard(source, 'edit', toast)) return false;
+    if (hasDelete && guard(source, 'delete', toast)) return false;
+    setSaving(true);
+    try {
+      await lpPersistUnitDraft({ source, units: orig, draft, ctx });
+      /* class plan → fan the same change out to the other grouped sections */
+      let synced = 0;
+      if (!row.custom) {
+        for (const secId of row.sectionIds) {
+          if (String(secId) === String(row.repSectionId)) continue;
+          const subs = await lpSubjectsFor(row.classId, secId);
+          const hit = subs.find(s => s.subjectName.trim().toLowerCase() === curSubj.subjectName.trim().toLowerCase());
+          if (!hit) continue;
+          await lpSyncUnitsToSection({ source, repOrig: orig, draft, ctx: lpCtxFor(row.classId, secId, hit.subjectId) });
+          synced += 1;
+        }
+      }
+      toast(synced ? `Units saved for ${synced + 1} sections` : 'Units saved successfully!', 'success');
+      onSaved?.();
+      await reload();
+      if (andNext) goNext();
+      return true;
+    } catch (e) {
+      console.error('Error saving units:', e);
+      if (!e.isSessionError) toast(e.serverMessage || e.message || 'Could not save units', 'error');
+      return false;
+    } finally { setSaving(false); }
+  };
+  const goNext = () => {
+    const i = subjects.findIndex(s => s.subjectName === subj);
+    if (i >= 0 && i < subjects.length - 1) setSubj(subjects[i + 1].subjectName); else onClose();
+  };
+
+  return (
+    <div className="tbm-overlay open" onClick={e => { if (e.target === e.currentTarget) ifClean(onClose); }}>
+      <div className="tbm-modal">
+        <div className="tbm-header">
+          <div>
+            <div className="tbm-title"><i className="fa-solid fa-layer-group" style={{ fontSize: 14, marginRight: 8, opacity: .8 }}></i>Manage Units</div>
+            <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+              <div className="tb-cls-icon" style={{ width: 22, height: 22, borderRadius: 5, fontSize: 9, flexShrink: 0 }}><i className="fa-solid fa-code"></i></div>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>{row.className}</span>
+              <LpScopeBadge row={row} />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· {draft.length} unit{draft.length !== 1 ? 's' : ''} in {subj || '—'}</span>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="tbm-close" onClick={() => ifClean(onClose)} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="tbm-term-tabs">
+          {[['lesson', 'Lesson Plan Units'], ['notebook', 'Question Bank Units']].map(([k, lbl]) => (
+            <button key={k} className={`tbm-term-tab${source === k ? ' active' : ''}`} onClick={() => source !== k && ifClean(() => setSource(k))}>{lbl}</button>
+          ))}
+        </div>
+
+        <div className="tbm-subj-tabs-wrap">
+          <div className="tbm-subj-tabs">
+            {subjects.length === 0
+              ? <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 16px', display: 'inline-block' }}>Loading subjects…</span>
+              : subjects.map(s => (
+                <button key={s.subjectId} className={`tbm-subj-tab${subj === s.subjectName ? ' active' : ''}`} onClick={() => subj !== s.subjectName && ifClean(() => setSubj(s.subjectName))}>{s.subjectName}</button>
+              ))}
+          </div>
+        </div>
+
+        <div className="tbm-scroll-area">
+          <div className="tbm-body">
+            {!canEdit && (
+              <div className="perm-locked-banner" style={{ marginBottom: 10 }}>
+                <i className="fa-solid fa-lock" aria-hidden="true" /><span>You have <strong>view-only</strong> access. Units are managed by your Coordinator / Principal.</span>
+              </div>
+            )}
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: 13 }}><i className="fa-solid fa-spinner fa-spin"></i> Loading units…</div>
+            ) : draft.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                <i className="fa-solid fa-layer-group" style={{ fontSize: 24, opacity: .25, display: 'block', marginBottom: 8 }}></i>
+                No units configured yet for {subj || 'this subject'}.
+              </div>
+            ) : draft.map((u, i) => (
+              <div key={u.id} className="tbm-unit-block">
+                <div className="tbm-unit-top" style={{ gridTemplateColumns: '56px 1fr auto auto', alignItems: 'center' }}>
+                  <div className="tbm-unit-no">{u.unitNo || i + 1}</div>
+                  <div style={{ flex: 1 }}>
+                    <label className="tbm-label">Unit Name</label>
+                    <input className="tbm-input" value={u.unitName || ''} disabled={!canEdit} onChange={e => update(u.id, 'unitName', e.target.value)} />
+                  </div>
+                  <div className="umgr-lang-toggle">
+                    <Tooltip text="Set this unit's language to English">
+                      <button type="button" disabled={!canEdit} className={`umgr-lang-pill${(u.medium || 'english') !== 'urdu' ? ' active' : ''}`} onClick={() => update(u.id, 'medium', 'english')}>EN</button>
+                    </Tooltip>
+                    <Tooltip text="Set this unit's language to Urdu">
+                      <button type="button" disabled={!canEdit} className={`umgr-lang-pill umgr-lang-pill--ur${(u.medium || 'english') === 'urdu' ? ' active' : ''}`} onClick={() => update(u.id, 'medium', 'urdu')}>اردو</button>
+                    </Tooltip>
+                  </div>
+                  <div className="tbm-unit-top-btns">
+                    <Tooltip text="Move up"><button className="tbm-unit-save-btn" disabled={i === 0 || !canEdit} onClick={() => confirmMove(u.id, -1)}><i className="fa-solid fa-arrow-up"></i></button></Tooltip>
+                    <Tooltip text="Move down"><button className="tbm-unit-save-btn" disabled={i === draft.length - 1 || !canEdit} onClick={() => confirmMove(u.id, 1)}><i className="fa-solid fa-arrow-down"></i></button></Tooltip>
+                    <Tooltip text="Delete unit"><button className="tbm-unit-save-btn" disabled={!canEdit}
+                      style={{ borderColor: 'rgba(220,38,38,.25)', background: 'rgba(220,38,38,.07)', color: '#DC2626' }}
+                      onClick={() => removeUnit(u)}><i className="fa-solid fa-trash"></i></button></Tooltip>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {canEdit && (
+            <div className="tbm-add-card">
+              <label className="tbm-label">Add New Unit</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input className="tbm-input" style={{ flex: 1 }} placeholder="e.g. My Family and I" value={newName}
+                  onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addUnit(); } }} />
+                <Tooltip text="Add this unit"><button className="tbm-add-units-btn" onClick={addUnit}><i className="fa-solid fa-circle-plus"></i> Add Unit</button></Tooltip>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="tbm-footer">
+          <Tooltip text="Close"><button className="tbm-btn tbm-btn--cancel" onClick={() => ifClean(onClose)}>Close</button></Tooltip>
+          {canEdit && (<>
+            <Tooltip text="Save and move to the next subject"><button className="tbm-btn tbm-btn--save" disabled={saving || loading} onClick={() => save(true)}>Save &amp; Next</button></Tooltip>
+            <Tooltip text="Save units"><button className="tbm-btn tbm-btn--save" disabled={saving || loading} onClick={() => save(false)}>{saving ? 'Saving…' : 'Save'}</button></Tooltip>
+          </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Copy-with-content helpers (Copy Units Configuration) ──────────────────
+   MERGE RULE (both helpers), per target class+section+subject:
+     • Units are matched by unit number + unit name (case-insensitive name).
+     • Target has NO matching unit → the unit is added WITH all of the source
+       unit's lessons (topic + lesson-plan detail) / Question Bank items.
+     • Target HAS a matching unit → the unit is kept as is; its lessons are
+       copied in only if it has no lesson with a topic yet, and its Question
+       Bank items only if it has no questions yet. Existing target content is
+       never overwritten or deleted.
+   Endpoints are the ones the ERP already uses for these items:
+     ulpforclassmastercrud (lesson topics), getulpforclassdetailbytermsubjectandclass
+     + ulpforclassdetailcrud (lesson-plan detail), ulpfornotebookmastercrud
+     (QB unit), getulpfornotebookdetails + the ulpn*crud per-type endpoints. */
+const lpUnitKey = u => `${String(u.unitNo ?? '').trim()}__${String(u.unitName || '').trim().toLowerCase()}`;
+const lpHasTopic = l => String(l?.topic ?? l?.record?.lessonPlanTopic ?? '').trim().length > 0;
+
+async function lpFetchLessonDetail(masterId, classID, subjectID) {
+  if (!masterId) return null;
+  try {
+    const res = await window.fetch(
+      buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${masterId}&classID=${classID || ''}&subjectID=${subjectID || ''}&pageNo=1`),
+      { method: 'GET', headers: lpAuthGet() },
+    );
+    const json = await res.json().catch(() => null);
+    return (json?.data || [])[0] || null;
+  } catch (_) { return null; }
+}
+
+async function lpCopyLessonUnits({ srcUnits, srcCtx, tgtCtx, tgtClassName = '', tgtSubjectName = '' }) {
+  const base = { branchID: tgtCtx.branchID, classID: tgtCtx.classID, sectionID: tgtCtx.sectionID, subjectID: tgtCtx.subjectID };
+  const med = u => (LP_MEDIUM_API_READY ? { medium: apiMedium(u.medium) } : {});
+  const existing = await lpFetchLessonUnits(tgtCtx);
+  const tgtByKey = new Map(existing.map(u => [lpUnitKey(u), u]));
+  let units = 0;
+  const pending = []; // { key, srcLesson } — lessons whose detail must be copied after the topic rows exist
+  for (const su of srcUnits) {
+    const key = lpUnitKey(su);
+    const srcLessons = (su.lessons || []).filter(lpHasTopic);
+    const tu = tgtByKey.get(key);
+    if (!tu) {
+      /* New unit: one master row per source lesson (or one empty-topic row, as Add Unit does). */
+      if (!srcLessons.length) {
+        await lpPost('/api/ulpforclassmastercrud', { ...base, id: 0, unitNo: su.unitNo, unitName: su.unitName, lessonPlanTopic: '', ...med(su), action: 'insert' });
+      } else {
+        for (const l of srcLessons) {
+          await lpPost('/api/ulpforclassmastercrud', { ...base, id: 0, unitNo: su.unitNo, unitName: su.unitName, lessonPlanTopic: l.topic ?? l.record?.lessonPlanTopic ?? '', ...med(su), action: 'insert' });
+          pending.push({ key, srcLesson: l });
+        }
+      }
+      units += 1;
+      continue;
+    }
+    /* Existing unit: fill lessons only when it has none with a topic yet.
+       Its empty-topic placeholder rows are reused (updated) first. */
+    if ((tu.lessons || []).some(lpHasTopic) || !srcLessons.length) continue;
+    const slots = (tu.lessons || []).map(l => l.record?.id ?? l.id).filter(id => id != null);
+    for (let i = 0; i < srcLessons.length; i++) {
+      const l = srcLessons[i];
+      const slotId = slots[i];
+      await lpPost('/api/ulpforclassmastercrud', {
+        ...base, id: slotId ?? 0, unitNo: tu.unitNo, unitName: tu.unitName,
+        lessonPlanTopic: l.topic ?? l.record?.lessonPlanTopic ?? '', ...med(tu), action: slotId != null ? 'update' : 'insert',
+      });
+      pending.push({ key, srcLesson: l });
+    }
+  }
+  /* Lesson-plan detail: re-read the target topic rows to get their real ids,
+     then insert each copied lesson's detail under its new master row. */
+  let lessons = 0;
+  if (pending.length) {
+    const after = await lpFetchLessonUnits(tgtCtx);
+    const afterByKey = new Map(after.map(u => [lpUnitKey(u), u]));
+    const used = new Set();
+    for (const { key, srcLesson } of pending) {
+      const topic = String(srcLesson.topic ?? srcLesson.record?.lessonPlanTopic ?? '').trim();
+      const tu = afterByKey.get(key);
+      const target = (tu?.lessons || []).find(x => !used.has(x.id) && String(x.topic || '').trim() === topic);
+      if (!target) continue;
+      used.add(target.id);
+      lessons += 1;
+      const d = await lpFetchLessonDetail(srcLesson.record?.id ?? srcLesson.id, srcCtx.classID, srcCtx.subjectID);
+      if (!d) continue;
+      await lpPost('/api/ulpforclassdetailcrud', {
+        id: 0,
+        termID: d.termID || '', slot: d.slot || '',
+        classID: tgtCtx.classID, subjectID: tgtCtx.subjectID,
+        unitNo: tu.unitNo, unitName: tu.unitName,
+        totalLessonPlans: d.totalLessonPlans || '', timeDuration: d.timeDuration || '',
+        lessonPlanTopic: d.lessonPlanTopic ?? topic,
+        learningObjective: d.learningObjective || '', timeForLearning: d.timeForLearning || '',
+        lessonIntroduction: d.lessonIntroduction || '', timeForLesson: d.timeForLesson || '',
+        development: d.development || '', timeForDevelopment: d.timeForDevelopment || '',
+        recap: d.recap || '', timeForRecap: d.timeForRecap || '',
+        /* review data belongs to the source section — not copied */
+        rating: '', suggestion: '', suggestionDescription: '',
+        masterClassesID: target.record?.id ?? target.id,
+        className: tgtClassName, subjectName: tgtSubjectName,
+        action: 'insert',
+      });
+    }
+  }
+  return { units, lessons };
+}
+
+async function lpCopyQbUnits({ srcUnits, tgtCtx }) {
+  const base = { branchID: tgtCtx.branchID, classID: tgtCtx.classID, sectionID: tgtCtx.sectionID, subjectID: tgtCtx.subjectID };
+  const med = u => (LP_MEDIUM_API_READY ? { medium: apiMedium(u.medium) } : {});
+  const existing = await lpFetchNotebookUnits(tgtCtx);
+  const tgtByKey = new Map(existing.map(u => [lpUnitKey(u), u]));
+  let units = 0;
+  const newKeys = new Set();
+  for (const su of srcUnits) {
+    const key = lpUnitKey(su);
+    if (tgtByKey.has(key)) continue;
+    await lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0, unitNo: su.unitNo, unitName: su.unitName, lessonPlanTopic: '', ...med(su), action: 'insert' });
+    newKeys.add(key);
+    units += 1;
+  }
+  const after = newKeys.size ? await lpFetchNotebookUnits(tgtCtx) : existing;
+  const afterByKey = new Map(after.map(u => [lpUnitKey(u), u]));
+  const branchID = sessionStorage.getItem('branchID') || '';
+  let questions = 0;
+  for (const su of srcUnits) {
+    const tu = afterByKey.get(lpUnitKey(su));
+    if (!tu || tu.id == null || su.id == null) continue;
+    const srcGroups = await fetchNotebookDetail(su.id).catch(() => []);
+    if (!srcGroups.length) continue;
+    /* Existing target unit → only when it has no questions yet. */
+    if (!newKeys.has(lpUnitKey(su))) {
+      const tgtGroups = await fetchNotebookDetail(tu.id).catch(() => []);
+      if (tgtGroups.length) continue;
+    }
+    for (const g of srcGroups) {
+      const api = NB_QTYPE_API[g.typeId];
+      if (!api) continue;
+      const notebookID = api.notebookIDString ? String(tu.id) : tu.id;
+      const rows = g.rows || g.items || [];
+      for (let i = 0; i < rows.length; i++) {
+        const payload = {
+          id: 0, notebookID, branchID, mainQuestion: (g.mainQuestion || g.mainQ || '').trim(),
+          isCheck: true, action: 'insert', ...api.body(rows[i], i),
+        };
+        if (g.typeId === 'comprehension') payload.comprehensionStatement = g.statement || '';
+        await lpPost(api.endpoint, payload);
+        questions += 1;
+      }
+    }
+  }
+  return { units, questions };
+}
+
+/* Copy Units Configuration — copies a plan's units (per subject, Lesson Plan
+   and/or Question Bank) into ANOTHER class's class plan (live inserts into
+   every grouped section of the target), WITH their lesson plans and Question
+   Bank items — see the MERGE RULE above lpCopyLessonUnits. Nothing is deleted. */
+function CopyUnitsConfigModal({ source, classesData = [], customSections = [], onClose, onDone, toast, openConfirm }) {
+  const [targetClassId, setTargetClassId] = useState('');
+  const [srcSubjects, setSrcSubjects] = useState([]);
+  const [tgtSubjects, setTgtSubjects] = useState([]);
+  const [selected, setSelected] = useState([]);
+  const [lists, setLists] = useState({ lesson: true, notebook: true });
+  const [counts, setCounts] = useState({});
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!source) return;
+    setTargetClassId(''); setTgtSubjects([]); setCounts({}); setLists({ lesson: true, notebook: true });
+    lpSubjectsFor(source.classId, source.repSectionId).then(subs => {
+      setSrcSubjects(subs); setSelected(subs.map(s => s.subjectName));
+      const c = {};
+      lpMapLimited(subs, 4, async s => {
+        const ctx = lpCtxFor(source.classId, source.repSectionId, s.subjectId);
+        const [a, b] = await Promise.all([lpFetchLessonUnits(ctx).catch(() => []), lpFetchNotebookUnits(ctx).catch(() => [])]);
+        c[s.subjectName] = { lesson: a.length, notebook: b.length };
+      }).then(() => setCounts({ ...c }));
+    });
+  }, [source]);
+
+  const targetRow = targetClassId ? cgBuildScopeRows(classesData, customSections).find(r => String(r.classId) === String(targetClassId) && !r.custom) : null;
+  useEffect(() => {
+    if (!targetRow?.repSectionId) { setTgtSubjects([]); return; }
+    lpSubjectsFor(targetRow.classId, targetRow.repSectionId).then(setTgtSubjects);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetRow?.key]);
+
+  if (!source) return null;
+  const tgtNames = new Set(tgtSubjects.map(s => s.subjectName.trim().toLowerCase()));
+  const compatible = selected.filter(s => tgtNames.has(s.trim().toLowerCase()));
+  const toggle = s => setSelected(p => (p.includes(s) ? p.filter(x => x !== s) : [...p, s]));
+  const targets = classesData.filter(c => String(c.id) !== String(source.classId) && (c.sections || []).length);
+
+  const doCopy = async () => {
+    setBusy(true);
+    let inserted = 0, copiedLessons = 0, copiedQuestions = 0;
+    try {
+      for (const subjName of compatible) {
+        const src = srcSubjects.find(s => s.subjectName === subjName);
+        const srcCtx = lpCtxFor(source.classId, source.repSectionId, src.subjectId);
+        for (const kind of ['lesson', 'notebook']) {
+          if (!lists[kind]) continue;
+          const srcUnits = await lpFetchUnits(kind, srcCtx);
+          if (!srcUnits.length) continue;
+          for (const secId of targetRow.sectionIds) {
+            const subs = await lpSubjectsFor(targetRow.classId, secId);
+            const hit = subs.find(s => s.subjectName.trim().toLowerCase() === subjName.trim().toLowerCase());
+            if (!hit) continue;
+            const ctx = lpCtxFor(targetRow.classId, secId, hit.subjectId);
+            const r = kind === 'lesson'
+              ? await lpCopyLessonUnits({ srcUnits, srcCtx, tgtCtx: ctx, tgtClassName: targetRow.className, tgtSubjectName: hit.subjectName })
+              : await lpCopyQbUnits({ srcUnits, tgtCtx: ctx });
+            inserted += r.units;
+            copiedLessons += r.lessons || 0;
+            copiedQuestions += r.questions || 0;
+          }
+        }
+      }
+      const any = inserted || copiedLessons || copiedQuestions;
+      toast(any
+        ? `Configuration copied — ${inserted} unit${inserted !== 1 ? 's' : ''} added, ${copiedLessons} lesson plan${copiedLessons !== 1 ? 's' : ''} and ${copiedQuestions} question${copiedQuestions !== 1 ? 's' : ''} copied`
+        : 'Nothing new to copy — target already has these units and content', any ? 'success' : 'info');
+      onDone?.();
+      onClose();
+    } catch (e) {
+      console.error('Copy units failed', e);
+      if (!e.isSessionError) toast(e.serverMessage || e.message || 'Could not copy units', 'error');
+    } finally { setBusy(false); }
+  };
+
+  const confirmCopy = () => {
+    if (!targetRow) { toast('Select a target class', 'error'); return; }
+    if (!targetRow.sectionIds.length) { toast('The target class has no sections in its class group', 'error'); return; }
+    if (!lists.lesson && !lists.notebook) { toast('Select Lesson Plan and/or Question Bank units', 'error'); return; }
+    if (!compatible.length) { toast('Select at least one subject that the target class also has', 'error'); return; }
+    const skipped = selected.filter(s => !tgtNames.has(s.trim().toLowerCase()));
+    if (skipped.length) toast(`${skipped.join(', ')} ${skipped.length > 1 ? "aren't" : "isn't"} set up for the target class — skipped.`, 'error');
+    openConfirm({
+      title: 'Copy Units Configuration',
+      message: `You're about to copy units from <strong>${source.className}</strong> to the <strong>${targetRow.className}</strong> class plan (${targetRow.sectionNames.map(n => `Section ${n}`).join(', ')}).
+        <br/><br/>Missing units are added together with their lesson plans and Question Bank items.
+        Units the target already has (same number and name) are kept; their lesson plans / questions are filled in only where the target's are still empty.`,
+      hint: 'Existing lesson plans and questions in the target are never overwritten.',
+      confirmLabel: 'Confirm & Copy', confirmStyle: 'primary', icon: 'fa-copy',
+      onConfirm: doCopy,
+    });
+  };
+
+  return (
+    <div className="tbm-overlay open" onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <div className="tbm-modal" style={{ maxWidth: 640, height: 'auto', maxHeight: 'min(760px, calc(100vh - 48px))' }}>
+        <div className="tbm-header">
+          <div>
+            <div className="tbm-title"><i className="fa-solid fa-copy" style={{ fontSize: 14, marginRight: 8, opacity: .8 }}></i>Copy Units Configuration</div>
+            <div style={{ marginTop: 5, display: 'flex', gap: 7, alignItems: 'center', fontSize: 11, color: 'var(--text-muted)' }}>From {source.className} <LpScopeBadge row={source} /></div>
+          </div>
+          <Tooltip text="Close"><button className="tbm-close" onClick={() => !busy && onClose()} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="tbm-scroll-area">
+          <div className="tbm-body">
+            <div className="umn-copy-section">
+              <div className="tbm-label" style={{ marginBottom: 6 }}>Target Configuration</div>
+              <div className="umn-copy-grid">
+                <div>
+                  <label className="tbm-label">Target Class (class plan)</label>
+                  <select className="tbm-input" value={targetClassId} onChange={e => setTargetClassId(e.target.value)}>
+                    <option value="">Select class…</option>
+                    {targets.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="tbm-label">Units to copy</label>
+                  <div className="umn-copy-checks">
+                    <label className="umn-copy-check"><input type="checkbox" checked={lists.lesson} onChange={() => setLists(p => ({ ...p, lesson: !p.lesson }))} /> Lesson Plan units</label>
+                    <label className="umn-copy-check"><input type="checkbox" checked={lists.notebook} onChange={() => setLists(p => ({ ...p, notebook: !p.notebook }))} /> Question Bank units</label>
+                  </div>
+                </div>
+              </div>
+              {targetRow && <div style={{ marginTop: 8 }}><LpScopeBadge row={targetRow} /></div>}
+            </div>
+            <div className="umn-copy-section">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div className="tbm-label" style={{ marginBottom: 0 }}>Configuration to Copy — Subjects</div>
+                <button className="tbm-unit-save-btn" style={{ width: 'auto', padding: '0 10px', fontSize: 11 }}
+                  onClick={() => setSelected(selected.length === srcSubjects.length ? [] : srcSubjects.map(s => s.subjectName))}>
+                  {selected.length === srcSubjects.length ? 'Clear All' : 'Select All'}
+                </button>
+              </div>
+              <div className="umn-copy-checks">
+                {srcSubjects.length === 0 && <div className="umn-units-empty">Loading subjects…</div>}
+                {srcSubjects.map(s => {
+                  const ok = !targetRow || tgtNames.has(s.subjectName.trim().toLowerCase());
+                  const c = counts[s.subjectName];
+                  return (
+                    <label key={s.subjectId} className={`umn-copy-check${!ok ? ' disabled' : ''}`}>
+                      <input type="checkbox" checked={selected.includes(s.subjectName)} onChange={() => toggle(s.subjectName)} />
+                      {s.subjectName} {c ? `(${c.lesson} lesson-plan · ${c.notebook} question-bank units)` : ''}{!ok ? ' — not in target class' : ''}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="tbm-footer">
+          <Tooltip text="Close"><button className="tbm-btn tbm-btn--cancel" disabled={busy} onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Copy the selected units to the target class plan">
+            <button className="tbm-btn tbm-btn--save" disabled={busy} onClick={confirmCopy}>
+              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-copy'}`}></i> {busy ? 'Copying…' : 'Copy Configuration'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Copy Term Breakup — one plan + term → another class's class plan + term
+   (live: replaces the target's breakup for each copied subject). */
+function CopyTermBreakupsModal({ source, classesData = [], customSections = [], canDelete = true, onClose, onDone, toast, openConfirm }) {
+  const [terms, setTerms] = useState([]);
+  const [srcTerm, setSrcTerm] = useState('');
+  const [tgtTerm, setTgtTerm] = useState('');
+  const [targetClassId, setTargetClassId] = useState('');
+  const [srcSubjects, setSrcSubjects] = useState([]);
+  const [withData, setWithData] = useState(null); // [{subjectID, subjectName, rows}]
+  const [selected, setSelected] = useState([]);
+  const [tgtSubjects, setTgtSubjects] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!source) return;
+    setTargetClassId(''); setWithData(null);
+    lpTbTerms().then(ts => { setTerms(ts); setSrcTerm(ts[0]?.id ?? ''); setTgtTerm(ts[0]?.id ?? ''); });
+    lpTbSubjects(source.classId, source.repSectionId).then(setSrcSubjects);
+  }, [source]);
+
+  useEffect(() => {
+    if (!source || !srcTerm || !srcSubjects.length) return;
+    let alive = true;
+    setWithData(null);
+    const out = [];
+    lpMapLimited(srcSubjects, 4, async s => {
+      const { rows } = await lpTbFetch({ classID: source.classId, sectionID: source.repSectionId, subjectID: s.subjectID, termID: srcTerm }).catch(() => ({ rows: [] }));
+      if (rows.length) out.push({ ...s, rows });
+    }).then(() => { if (alive) { setWithData(out); setSelected(out.map(s => s.subjectName)); } });
+    return () => { alive = false; };
+  }, [source, srcTerm, srcSubjects]);
+
+  const targetRow = targetClassId ? cgBuildScopeRows(classesData, customSections).find(r => String(r.classId) === String(targetClassId) && !r.custom) : null;
+  useEffect(() => {
+    if (!targetRow?.repSectionId) { setTgtSubjects([]); return; }
+    lpTbSubjects(targetRow.classId, targetRow.repSectionId).then(setTgtSubjects);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetRow?.key]);
+
+  if (!source) return null;
+  const tgtNames = new Set(tgtSubjects.map(s => s.subjectName.trim().toLowerCase()));
+  const compatible = selected.filter(s => tgtNames.has(s.trim().toLowerCase()));
+  const termName = id => (terms.find(t => String(t.id) === String(id)) || {}).name || '—';
+  const unitCount = rows => new Set(rows.map(r => `${lpTbVal(r, 'unitNumber', 'UnitNumber')}__${lpTbVal(r, 'unitName', 'UnitName')}`)).size;
+  const sameAsSource = targetRow && String(targetRow.classId) === String(source.classId) && String(tgtTerm) === String(srcTerm) && !source.custom;
+
+  const doCopy = async () => {
+    setBusy(true);
+    let n = 0;
+    try {
+      for (const subjName of compatible) {
+        const src = withData.find(s => s.subjectName === subjName);
+        for (const secId of targetRow.sectionIds) {
+          if (String(targetRow.classId) === String(source.classId) && String(secId) === String(source.repSectionId) && String(tgtTerm) === String(srcTerm)) continue;
+          const subs = await lpTbSubjects(targetRow.classId, secId);
+          const hit = subs.find(s => s.subjectName.trim().toLowerCase() === subjName.trim().toLowerCase());
+          if (!hit) continue;
+          await lpTbWrite({ classID: targetRow.classId, sectionID: secId, subjectID: hit.subjectID, termID: tgtTerm, sourceRows: src.rows });
+          n += 1;
+        }
+      }
+      toast(n ? 'Term breakup configuration copied successfully' : 'Nothing was copied', n ? 'success' : 'info');
+      onDone?.();
+      onClose();
+    } catch (e) {
+      console.error('Copy term breakup failed', e);
+      if (!e.isSessionError) toast(e.serverMessage || e.message || 'Could not copy term breakup', 'error');
+    } finally { setBusy(false); }
+  };
+
+  const confirmCopy = async () => {
+    if (!targetRow) { toast('Select a target class', 'error'); return; }
+    if (sameAsSource) { toast('Target is the same as the source — pick a different class or term', 'error'); return; }
+    if (!compatible.length) { toast('Select at least one subject that the target class also has', 'error'); return; }
+    /* Which target subjects already have a breakup for this term (will be replaced)? */
+    const overlapping = [];
+    for (const subjName of compatible) {
+      const hit = tgtSubjects.find(s => s.subjectName.trim().toLowerCase() === subjName.trim().toLowerCase());
+      if (!hit) continue;
+      const { rows } = await lpTbFetch({ classID: targetRow.classId, sectionID: targetRow.repSectionId, subjectID: hit.subjectID, termID: tgtTerm }).catch(() => ({ rows: [] }));
+      if (rows.length) overlapping.push(`${targetRow.className} · ${termName(tgtTerm)} · ${subjName}`);
+    }
+    if (overlapping.length && !canDelete) { toast('You do not have permission to replace an existing term breakup', 'error'); return; }
+    openConfirm({
+      title: 'Copy Term Breakups',
+      message: `You're about to copy <strong>${source.className} – ${termName(srcTerm)}</strong> to the <strong>${targetRow.className}</strong> class plan – ${termName(tgtTerm)}.
+        ${overlapping.length ? `<br/><br/><strong>These will be replaced:</strong><ul style="margin:8px 0 0 18px;padding:0;">${overlapping.map(o => `<li>${o}</li>`).join('')}</ul>` : ''}
+        <br/><br/>Do you want to continue?`,
+      hint: 'This cannot be undone.',
+      confirmLabel: 'Confirm & Copy', confirmStyle: overlapping.length ? 'danger' : 'primary', icon: 'fa-copy',
+      onConfirm: doCopy,
+    });
+  };
+
+  return (
+    <div className="tbm-overlay open" onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <div className="tbm-modal" style={{ maxWidth: 640, height: 'auto', maxHeight: 'min(760px, calc(100vh - 48px))' }}>
+        <div className="tbm-header">
+          <div>
+            <div className="tbm-title"><i className="fa-solid fa-copy" style={{ fontSize: 14, marginRight: 8, opacity: .8 }}></i>Copy Term Breakups</div>
+            <div style={{ marginTop: 5, display: 'flex', gap: 7, alignItems: 'center', fontSize: 11, color: 'var(--text-muted)' }}>From {source.className} <LpScopeBadge row={source} /></div>
+          </div>
+          <Tooltip text="Close"><button className="tbm-close" onClick={() => !busy && onClose()} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="tbm-scroll-area">
+          <div className="tbm-body">
+            <div className="umn-copy-section">
+              <div className="tbm-label" style={{ marginBottom: 6 }}>Source Configuration</div>
+              <div className="umn-copy-grid">
+                <div><label className="tbm-label">Source Plan</label><input className="tbm-input" disabled value={`${source.className}${source.custom ? ` · Section ${source.repSectionName}` : ' · class plan'}`} /></div>
+                <div>
+                  <label className="tbm-label">Source Term</label>
+                  <select className="tbm-input" value={srcTerm} onChange={e => setSrcTerm(e.target.value)}>
+                    {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="umn-copy-section">
+              <div className="tbm-label" style={{ marginBottom: 6 }}>Target Configuration</div>
+              <div className="umn-copy-grid">
+                <div>
+                  <label className="tbm-label">Target Class (class plan)</label>
+                  <select className="tbm-input" value={targetClassId} onChange={e => setTargetClassId(e.target.value)}>
+                    <option value="">Select class…</option>
+                    {classesData.filter(c => (c.sections || []).length).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="tbm-label">Target Term</label>
+                  <select className="tbm-input" value={tgtTerm} onChange={e => setTgtTerm(e.target.value)}>
+                    {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              {targetRow && <div style={{ marginTop: 8 }}><LpScopeBadge row={targetRow} /></div>}
+            </div>
+            <div className="umn-copy-section">
+              <div className="tbm-label" style={{ marginBottom: 6 }}>Configuration to Copy — Subjects</div>
+              {withData === null ? (
+                <div className="umn-units-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading term breakups…</div>
+              ) : withData.length === 0 ? (
+                <div className="umn-units-empty">No term breakup configured yet for {source.className} · {termName(srcTerm)}.</div>
+              ) : (
+                <div className="umn-copy-checks">
+                  {withData.map(s => {
+                    const ok = !targetRow || tgtNames.has(s.subjectName.trim().toLowerCase());
+                    const n = unitCount(s.rows);
+                    return (
+                      <label key={s.subjectID} className={`umn-copy-check${!ok ? ' disabled' : ''}`}>
+                        <input type="checkbox" checked={selected.includes(s.subjectName)} onChange={() => setSelected(p => (p.includes(s.subjectName) ? p.filter(x => x !== s.subjectName) : [...p, s.subjectName]))} />
+                        {s.subjectName} ({n} unit{n !== 1 ? 's' : ''}){!ok ? ' — not in target class' : ''}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                Each selected subject copies its units, Weeks Required, Sub Topics and Total Period Required together.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="tbm-footer">
+          <Tooltip text="Close"><button className="tbm-btn tbm-btn--cancel" disabled={busy} onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Copy the selected configuration to the target class plan">
+            <button className="tbm-btn tbm-btn--save" disabled={busy} onClick={confirmCopy}>
+              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-copy'}`}></i> {busy ? 'Copying…' : 'Copy Configuration'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   QUESTION BANK (formerly "Notebook Plans") — helpers, read view and the
+   two-pane QbEditorModal (reference design), wired to the ERP's live
+   per-type CRUD endpoints (NB_QTYPE_API) and getulpfornotebookdetails.
+   ═══════════════════════════════════════════════════════════════════ */
+const QB_LABELS = { mcqs: 'MCQs', long_question: 'Long Questions' };
+function qbLabel(typeId) { return QB_LABELS[typeId] || AQ_CONFIG[typeId]?.title || typeId; }
+const QB_HINTS = {
+  word_opposite:   { d: 'Pair each word with its opposite.',               t: 'Write a word, then its opposite.' },
+  singular_plural: { d: 'Pair each word with its plural form.',            t: 'Write a word in singular form, then its plural.' },
+  word_synonyms:   { d: 'Pair each word with a similar-meaning word.',     t: 'Write a word, then a synonym for it.' },
+  word_sentences:  { d: 'Students use each word in a sentence.',           t: 'Give a word and a sample sentence using it.' },
+  mcqs:            { d: 'A question with four options and one correct answer.', t: 'Type the question, four options, and the correct letter (A, B, C or D).' },
+  fill_blanks:     { d: 'A sentence with a missing word to fill in.',      t: 'Write a sentence using ___ for the blank, then the answer.' },
+  true_false:      { d: 'A statement students mark True or False.',        t: 'Write a statement, then mark it True or False.' },
+  match_columns:   { d: 'Pair up items from Column A with Column B.',      t: 'Write one item for Column A and its correct match for Column B.' },
+  short_questions: { d: 'A short question with a short written answer.',   t: 'Write the question, then its answer.' },
+  circle_words:    { d: 'A sentence where students circle the correct word.', t: 'Write the sentence with word choices, then the correct word to circle.' },
+  punctuation:     { d: 'A sentence for students to punctuate correctly.', t: 'Write the sentence without punctuation, then the correctly punctuated version.' },
+  long_question:   { d: 'A question needing a longer, detailed answer.',   t: 'Write the question, then a detailed model answer.' },
+  paragraph:       { d: 'Students write a short paragraph on a topic.',    t: 'Give a title and, if you like, a model paragraph.' },
+  comprehension:   { d: 'A passage followed by questions about it.',       t: 'Write the question, then its answer, based on the passage above.' },
+  letter:          { d: 'Students write a letter on the given subject.',   t: 'Write the letter (first line is the subject).' },
+  application:     { d: 'Students write a formal application.',            t: 'Write the application (first line is the subject).' },
+  stories:         { d: 'Students write a short story.',                   t: 'Give a title and, if you like, a model story and its moral.' },
+  essays:          { d: 'Students write a full essay.',                    t: 'Give a title and, if you like, a model essay and conclusion.' },
+};
+const qbHasHtml = v => /<[a-z][\s\S]*>/i.test(String(v || ''));
+function QbTxt({ v, className }) {
+  const s = String(v == null ? '' : v);
+  return qbHasHtml(s) ? <span className={className} dangerouslySetInnerHTML={{ __html: s }} /> : <span className={className}>{s}</span>;
+}
+function qbSrcTag() { return <span className="qb-src qb-src--manual">Manual</span>; }
+/* Set #1 of a type is the type object itself; extra sets live in .groups. */
+function qbSetsOf(sec) {
+  if (!sec) return [{ mainQ: '', statement: '', rows: [] }];
+  return [{ mainQ: sec.mainQ || '', statement: sec.statement || '', rows: sec.rows || [], gid: sec.gid }]
+    .concat((sec.groups || []).map(g => ({ mainQ: g.mainQ || '', statement: g.statement || '', rows: g.rows || [], gid: g.gid })));
+}
+function qbValidate(typeId, row) {
+  const cfg = AQ_CONFIG[typeId] || {};
+  const L = cfg.layout;
+  const has = k => String(row[k] || '').replace(/<[^>]*>/g, '').trim().length > 0;
+  if (L === 'two-col') return (has(cfg.fields[0].key) && has(cfg.fields[1].key)) ? '' : `Please fill in both "${cfg.fields[0].label}" and "${cfg.fields[1].label}".`;
+  if (L === 'word-sentence') return (has('word') && has('sentence')) ? '' : 'Please enter the word and its sentence.';
+  if (L === 'match') return (has('colA') && has('colB')) ? '' : 'Please fill in both Column A and Column B.';
+  if (L === 'mcq') {
+    if (!has('question')) return 'Please type the question.';
+    if (['opt1', 'opt2', 'opt3', 'opt4'].filter(has).length < 2) return 'Please enter at least two answer options.';
+    if (!has('correct')) return 'Please enter the correct answer (A, B, C or D).';
+    return '';
+  }
+  if (L === 'true_false') return !has('question') ? 'Please type the statement.' : (!row.answer ? 'Please mark the statement as True or False.' : '');
+  if (L === 'fill-blanks') return !has('question') ? 'Please type the statement.' : (!has('answer') ? 'Please enter the answer for the blank.' : '');
+  if (L === 'circle') return !has('statement') ? 'Please type the sentence with word choices.' : (!has('answer') ? 'Please enter the correct word to circle.' : '');
+  if (L === 'punctuation') return !has('question') ? 'Please type the sentence to punctuate.' : '';
+  if (L === 'short-q' || L === 'long' || L === 'comprehension') return has('question') ? '' : 'Please type the question.';
+  const f0 = (cfg.fields || [])[0];
+  return f0 && !has(f0.key) ? `Please fill in "${f0.label}".` : '';
+}
+
+/* Read-only per-layout item view (reference QbItemView; HTML-safe for the
+   ERP's rich-text fields). */
+function QbItemView({ typeId, row }) {
+  const cfg = AQ_CONFIG[typeId] || {};
+  const L = cfg.layout || '';
+  const r = key => row[key] || '';
+  if (L === 'two-col') {
+    const f = cfg.fields;
+    return <div className="qb-pair"><QbTxt className="qb-chip-txt" v={r(f[0].key)} /><span className="qb-arrow">{cfg.arrow || '↔'}</span><QbTxt className="qb-chip-txt" v={r(f[1].key)} /></div>;
+  }
+  if (L === 'word-sentence') return <div className="qb-pair"><QbTxt className="qb-chip-txt" v={r('word')} /><span className="qb-arrow">→</span><QbTxt className="qb-pre" v={r('sentence')} /></div>;
+  if (L === 'match') return <div className="qb-pair"><QbTxt className="qb-chip-txt" v={r('colA')} /><span className="qb-arrow">↔</span><QbTxt className="qb-chip-txt" v={r('colB')} /></div>;
+  if (L === 'mcq') {
+    const opts = [['opt1', 'A'], ['opt2', 'B'], ['opt3', 'C'], ['opt4', 'D']];
+    const c = String(row.correct || '').trim();
+    const ci = /^[A-Da-d]$/.test(c) ? 'ABCD'.indexOf(c.toUpperCase()) : opts.findIndex(([k]) => c && String(row[k] || '').trim().toLowerCase() === c.toLowerCase());
+    return (
+      <>
+        <div className="qb-q"><QbTxt v={r('question')} /></div>
+        <div className="qb-opts">{opts.map(([k, l], i) => <div key={k} className={`qb-opt${i === ci ? ' ok' : ''}`}><b>{l}.</b><QbTxt v={r(k)} /></div>)}</div>
+        {c && <div className="qb-a"><span className="qb-lbl">Correct answer</span>{ci >= 0 ? <>{opts[ci][1]} — <QbTxt v={r(opts[ci][0])} /></> : c}</div>}
+      </>
+    );
+  }
+  if (L === 'true_false') {
+    const a = String(row.answer || '').toLowerCase();
+    return <div className="qb-q"><QbTxt v={r('question')} />{a && <span className={`qb-tf ${a === 'true' ? 'qb-tf--t' : 'qb-tf--f'}`}>{a === 'true' ? 'True' : 'False'}</span>}</div>;
+  }
+  if (L === 'fill-blanks') return <><div className="qb-q qb-pre"><QbTxt v={r('question')} /></div>{row.answer && <div className="qb-a"><span className="qb-lbl">Answer</span><QbTxt v={r('answer')} /></div>}</>;
+  if (L === 'circle') return <><div className="qb-q"><QbTxt v={r('statement')} /></div>{row.answer && <div className="qb-a"><span className="qb-lbl">Circle</span><QbTxt v={r('answer')} /></div>}</>;
+  if (L === 'punctuation') return <><div className="qb-q qb-pre"><QbTxt v={r('question')} /></div>{row.answer && <div className="qb-a qb-pre"><span className="qb-lbl">Correct</span><QbTxt v={r('answer')} /></div>}</>;
+  if (L === 'short-q' || L === 'long' || L === 'comprehension') {
+    const hasAns = String(row.answer || '').replace(/<[^>]*>/g, '').trim().length > 0;
+    return <><div className="qb-q"><QbTxt v={r('question')} /></div>{hasAns && <div className="qb-a"><span className="qb-lbl">Answer</span><QbTxt v={r('answer')} /></div>}</>;
+  }
+  if (cfg.fields) {
+    return <>{cfg.fields.map((f, i) => (row[f.key] ? (
+      <div key={f.key} style={{ marginBottom: 6 }}>
+        <span className="qb-lbl">{f.label}</span>
+        <div className={`qb-pre${i === 0 ? ' qb-q' : ''}`}><QbTxt v={r(f.key)} /></div>
+      </div>
+    ) : null))}</>;
+  }
+  return <>{Object.keys(row).filter(k => !['_id', 'recordId', 'marks'].includes(k)).map(k => <div key={k}><span className="qb-lbl">{k}</span>{String(row[k] || '')}</div>)}</>;
+}
+
+/* fetchNotebookDetail groups → { order, data } editor/view shape. */
+function qbFromDetail(groups = []) {
+  const order = [];
+  const data = {};
+  groups.forEach(g => {
+    const t = g.typeId;
+    if (!AQ_CONFIG[t]) return;
+    const set = {
+      mainQ: g.mainQuestion || g.mainQ || '', statement: g.statement || '', gid: g.id,
+      rows: (g.rows || []).map(r => ({ ...r, _id: r._id || `aqr_${++_aqRowCounter}` })),
+    };
+    if (!data[t]) { order.push(t); data[t] = { ...set, groups: [] }; } else data[t].groups.push(set);
+  });
+  return { order, data };
+}
+
+/* Read-only "Question Bank view" for one unit (reference NbQuestionsView). */
+function NbQuestionsView({ unit, detail, loading, canWrite, onOpenEditor, onReport, onDeleteSet }) {
+  if (loading || detail == null) {
+    return <div className="qb-view"><div className="qb-empty-big"><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, color: 'var(--brand-primary)' }}></i><div>Loading Question Bank…</div></div></div>;
+  }
+  const { order, data } = qbFromDetail(detail);
+  const total = order.reduce((a, t) => a + qbSetsOf(data[t]).reduce((b, s) => b + s.rows.length, 0), 0);
+  if (!order.length) {
+    return (
+      <div className="qb-view"><div className="qb-empty-big">
+        <i className="fa-solid fa-circle-question" style={{ fontSize: 30, color: 'var(--brand-primary)', opacity: .45 }}></i>
+        <div><strong>No questions in this unit yet.</strong><br />{canWrite ? 'Click the button below to start building the Question Bank.' : 'Nothing has been added yet.'}</div>
+        {canWrite && <button className="qb-btn qb-btn--primary" onClick={onOpenEditor}><i className="fa-solid fa-plus"></i> Add Questions</button>}
+      </div></div>
+    );
+  }
+  return (
+    <div className="qb-view">
+      <div className="qb-view-head">
+        <div>
+          <div className="qb-view-title">Unit {unit.unitNo} – Question Bank</div>
+          <div className="qb-view-sub">{unit.unitName} · {order.length} question type{order.length !== 1 ? 's' : ''} · {total} question{total !== 1 ? 's' : ''}</div>
+        </div>
+        <div className="qb-view-actions">
+          {canWrite && <button className="qb-btn qb-btn--ghost" onClick={onOpenEditor}><i className="fa-solid fa-pen-to-square"></i> Edit Questions</button>}
+          {/* Report key "Unit X — Question Bank" (academics); generateLessonPlanReport also accepts the legacy "— Notebook" form. */}
+          <button className="qb-btn qb-btn--pdf" onClick={() => onReport(`Unit ${unit.unitNo} — Question Bank`, 'pdf', 'color', { nbUnitId: unit.id })}><i className="fa-solid fa-file-pdf"></i> Download Unit {unit.unitNo} Question Bank (PDF)</button>
+        </div>
+      </div>
+      {order.map(t => {
+        const sets = qbSetsOf(data[t]);
+        const cnt = sets.reduce((x, s) => x + s.rows.length, 0);
+        const multi = sets.length > 1;
+        return (
+          <section className="qb-sec" key={t} aria-label={qbLabel(t)}>
+            <div className="qb-sec-head">
+              <span className="qb-sec-title">{qbLabel(t)}</span>
+              <span className="qb-sec-count">{cnt} item{cnt !== 1 ? 's' : ''}{multi ? ` · ${sets.length} questions` : ''}</span>
+            </div>
+            {sets.map((s, si) => (
+              <div className="qb-vset" key={s.gid || si}>
+                <div className="qb-sec-head" style={{ marginBottom: 4 }}>
+                  <div className="qb-sec-main" style={{ marginBottom: 0 }}>{multi && <b>Question {si + 1}. </b>}{s.mainQ}</div>
+                  <span style={{ display: 'inline-flex', gap: 6 }}>
+                    <Tooltip text="Download this question as PDF"><button className="clpr-icon-btn clpr-icon-btn--pdf" onClick={() => onReport(`Section ${s.gid} — ${qbLabel(t)} — Unit ${unit.unitNo}`, 'pdf', 'color', { nbUnitId: unit.id, nbQId: s.gid })}><i className="fa-solid fa-file-pdf"></i></button></Tooltip>
+                    {canWrite && <Tooltip text="Delete this question and its items"><button className="clpr-icon-btn clpr-icon-btn--del" onClick={() => onDeleteSet({ id: s.gid, typeId: t, type: qbLabel(t), mainQuestion: s.mainQ, rows: s.rows, items: s.rows })}><i className="fa-solid fa-trash-can"></i></button></Tooltip>}
+                  </span>
+                </div>
+                {t === 'comprehension' && String(s.statement || '').trim() && (
+                  <>
+                    <div className="qb-passage">
+                      <div className="qb-passage-lbl"><i className="fa-solid fa-book-open"></i> Passage — read carefully</div>
+                      <div className="qb-passage-txt"><QbTxt v={s.statement} /></div>
+                    </div>
+                    <div className="qb-passage-q">Questions &amp; answers</div>
+                  </>
+                )}
+                {s.rows.length > 0 && <div className="qb-srcsum">{s.rows.length} manual · 0 Mentor AI</div>}
+                {s.rows.length > 0 ? (
+                  <ol className="qb-items">
+                    {s.rows.map((r, i) => (
+                      <li className="qb-item" key={r._id || i}>
+                        <span className="qb-item-no">{i + 1}</span>
+                        <div className="qb-item-body"><QbItemView typeId={t} row={r} /></div>
+                        {qbSrcTag(r)}
+                      </li>
+                    ))}
+                  </ol>
+                ) : <div className="qb-empty">No items yet.</div>}
+              </div>
+            ))}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Question Bank unit row (reference NbUnitRow design; live detail). */
+function QbUnitRow({ unit, index, onReport, onDeleteUnit, onOpenEditor, onDeleteSet, reloadKey, isOtherSession, toast, guard }) {
+  const canWrite = !isOtherSession && (!guard || !guard('notebook', 'edit') || !guard('notebook', 'add'));
+  const hoDelete = !(guard && guard('notebook', 'delete'));
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => { setDetail(null); }, [reloadKey]);
+  useEffect(() => {
+    if (detail !== null || unit.id == null) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchNotebookDetail(unit.id)
+      .then(d => { if (!cancelled) setDetail(d); })
+      .catch(e => { console.error('Error loading notebook detail:', e); if (!cancelled) setDetail([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [detail, unit.id]);
+  const types = new Set((detail || []).map(q => q.typeId)).size;
+  const items = (detail || []).reduce((a, q) => a + ((q.rows || q.items || []).length), 0);
+  const openEditor = () => {
+    if (isOtherSession) { toast?.("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
+    if (guard && guard('notebook', 'edit') && guard('notebook', 'add', toast)) return;
+    onOpenEditor();
+  };
+  return (
+    <div className={`clpr-unit-card${open ? ' open' : ''}`}>
+      <div className="clpr-unit-header" onClick={() => setOpen(o => !o)}>
+        <div className="clpr-unit-left">
+          <div className="clpr-unit-icon-wrap"><i className="fa-solid fa-book-open"></i></div>
+          <div className="clpr-unit-info">
+            <div className="clpr-unit-name">{unit.unitName || '(no name)'}</div>
+            <div className="clpr-unit-sub">Unit {unit.unitNo}</div>
+          </div>
+        </div>
+        <div className="clpr-unit-stats">
+          <span className="clpr-stat clpr-stat--total"><i className="fa-solid fa-circle-question"></i> {detail == null ? '…' : types} type{types !== 1 ? 's' : ''}</span>
+          <span className="clpr-stat-sep">·</span>
+          <span className="clpr-stat clpr-stat--manual"><i className="fa-solid fa-list-ol"></i> {detail == null ? '…' : items} question{items !== 1 ? 's' : ''}</span>
+        </div>
+        <div className="clpr-unit-right" onClick={e => e.stopPropagation()}>
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : (canWrite ? 'Edit Questions' : 'This is a view only')}>
+            <button className="qb-edit-pill" disabled={!canWrite} style={!canWrite ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={openEditor} aria-label={`Edit Questions for Unit ${unit.unitNo}`}>
+              <i className="fa-solid fa-pen-to-square"></i><span>Edit Questions</span>
+            </button>
+          </Tooltip>
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : (hoDelete ? 'Delete unit' : 'This is a view only')}>
+            <button className="clpr-icon-btn clpr-icon-btn--del" disabled={isOtherSession}
+              style={(isOtherSession || !hoDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (guard && guard('notebook', 'delete', toast)) return; onDeleteUnit(); }} aria-label="Delete unit">
+              <i className="fa-solid fa-trash-can"></i>
+            </button>
+          </Tooltip>
+          <Tooltip text={open ? 'Collapse unit' : 'View Question Bank'}>
+            <button className={`clpr-icon-btn clpr-icon-btn--expand${open ? ' open' : ''}`} onClick={() => setOpen(o => !o)} aria-label={open ? 'Collapse unit' : 'View Question Bank'}>
+              <i className="fa-solid fa-chevron-down"></i>
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+      {open && (
+        <div className="clpr-lessons-panel">
+          <NbQuestionsView unit={unit} detail={detail} loading={loading} canWrite={canWrite}
+            onOpenEditor={openEditor} onReport={onReport}
+            onDeleteSet={q => { if (isOtherSession) return; onDeleteSet(q); }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Two-pane Question Bank editor (reference QbEditorModal), persisted through
+   the same per-type CRUD calls NbAQModal makes. Item / type re-ordering is not
+   offered because the API has no order field. */
+function QbEditorModal({ unit, onSaved, onClose, toast, openConfirm, guard, isOtherSession }) {
+  const [draft, setDraft] = useState(null);
+  const [orig, setOrig] = useState(null);
+  const [active, setActive] = useState(null);
+  const [spy, setSpy] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [moreOpenFor, setMoreOpenFor] = useState(null);
+  const [form, setForm] = useState(null);
+  const [formErr, setFormErr] = useState('');
+  const [hideGuide, setHideGuide] = useState(false);
+  const [closePrompt, setClosePrompt] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const freshRef = useRef(new Set());
+  const editedRef = useRef(new Set());
+  const typeRefs = useRef({});
+  const sideRefs = useRef({});
+  const paneRef = useRef(null);
+  const modalRef = useRef(null);
+  const jumpRef = useRef(null);
+  const focusMainRef = useRef(null);
+  const focusFormRef = useRef(false);
+  const spyLockRef = useRef(0);
+  const spyRef = useRef(null);
+  const orderRef = useRef([]);
+  const isUrdu = unit?.medium === 'urdu';
+  const dir = isUrdu ? 'rtl' : 'ltr';
+
+  const seed = d => {
+    const shaped = qbFromDetail(d);
+    setDraft(shaped);
+    setOrig(JSON.parse(JSON.stringify(shaped)));
+    setActive(shaped.order[0] || null);
+    setSpy(shaped.order[0] || null);
+    setPickerOpen(shaped.order.length === 0);
+    freshRef.current = new Set();
+    editedRef.current = new Set();
+  };
+
+  useEffect(() => {
+    if (!unit) { setDraft(null); setOrig(null); return; }
+    setMoreOpenFor(null); setForm(null); setFormErr(''); setHideGuide(false); setClosePrompt(false);
+    let alive = true;
+    fetchNotebookDetail(unit.id).then(d => { if (alive) seed(d); }).catch(e => { console.error('QB load failed', e); if (alive) seed([]); });
+    return () => { alive = false; };
+  }, [unit]);
+
+  const isDirty = !!draft && !!orig && JSON.stringify(draft) !== JSON.stringify(orig);
+  const sideDirty = t => !!orig && (!orig.data[t] || JSON.stringify(draft.data[t]) !== JSON.stringify(orig.data[t]));
+
+  const liveRef = useRef({});
+  liveRef.current = { isDirty, form, qbRequestClose: () => qbRequestClose() };
+  useEffect(() => {
+    if (!unit) return undefined;
+    document.body.style.overflow = 'hidden';
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); liveRef.current.qbRequestClose(); } };
+    const onBeforeUnload = e => { if (liveRef.current.isDirty || liveRef.current.form) { e.preventDefault(); e.returnValue = ''; } };
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [unit]);
+
+  useEffect(() => {
+    if (jumpRef.current) {
+      const t = jumpRef.current; jumpRef.current = null;
+      const el = typeRefs.current[t], pane = paneRef.current;
+      if (el && pane) {
+        spyLockRef.current = Date.now() + 700;
+        pane.scrollTo({ top: pane.scrollTop + el.getBoundingClientRect().top - pane.getBoundingClientRect().top - 4, behavior: 'smooth' });
+      }
+    }
+    if (focusMainRef.current) {
+      const id = focusMainRef.current; focusMainRef.current = null;
+      const el = document.getElementById(id);
+      if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(() => el.focus({ preventScroll: true }), 250); }
+    }
+    if (focusFormRef.current) {
+      focusFormRef.current = false;
+      const f = document.getElementById('qbForm');
+      if (f) f.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  });
+
+  /* Scroll-spy (reference qbSpy) */
+  useEffect(() => {
+    if (!unit) return undefined;
+    const pane = paneRef.current;
+    if (!pane) return undefined;
+    const onScroll = () => {
+      if (Date.now() < spyLockRef.current) return;
+      const blocks = orderRef.current.map(t => typeRefs.current[t]).filter(Boolean);
+      if (!blocks.length) return;
+      const line = pane.getBoundingClientRect().top + 90;
+      let cur = blocks[0];
+      for (const b of blocks) { if (b.getBoundingClientRect().top <= line) cur = b; else break; }
+      if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 4) cur = blocks[blocks.length - 1];
+      const t = cur.dataset.qbt;
+      if (t && t !== spyRef.current) { spyRef.current = t; setSpy(t); }
+    };
+    pane.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => pane.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unit, !!draft]);
+
+  useEffect(() => { if (spy) sideRefs.current[spy]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [spy]);
+
+  if (!unit) return null;
+  if (!draft) {
+    return (
+      <div className="qb-overlay"><div className="qb-modal" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}><i className="fa-solid fa-spinner fa-spin"></i> Loading Question Bank…</div>
+      </div></div>
+    );
+  }
+
+  orderRef.current = draft.order;
+  spyRef.current = spy;
+
+  const qbDraftCount = t => qbSetsOf(draft.data[t]).reduce((a, s) => a + s.rows.length, 0);
+  const totalN = draft.order.reduce((a, t) => a + qbDraftCount(t), 0);
+  const withUpdatedSet = (d, t, si, patch) => {
+    const sec = d.data[t];
+    let newSec;
+    if (si === 0) newSec = { ...sec, ...patch };
+    else { const groups = [...(sec.groups || [])]; groups[si - 1] = { ...groups[si - 1], ...patch }; newSec = { ...sec, groups }; }
+    return { ...d, data: { ...d.data, [t]: newSec } };
+  };
+  const qbSelect = t => { setActive(t); setSpy(t); jumpRef.current = t; };
+  const toggleTypePicker = t => { if (pickerOpen && active === t) setPickerOpen(false); else { setActive(t); setPickerOpen(true); } };
+  const qbAddSet = t => {
+    const cur = draft.data[t];
+    const newSi = 1 + (cur.groups || []).length;
+    setDraft({ ...draft, data: { ...draft.data, [t]: { ...cur, groups: [...(cur.groups || []), { mainQ: '', statement: '', rows: [] }] } } });
+    setActive(t); setPickerOpen(false); setMoreOpenFor(null); focusMainRef.current = `qbMain-${t}-${newSi}`;
+    toast('New question added — type what students should do, then add its items', 'success');
+  };
+  const qbAddType = t => {
+    if (draft.order.includes(t)) { setPickerOpen(false); qbAddSet(t); return; }
+    setDraft({ order: [...draft.order, t], data: { ...draft.data, [t]: { mainQ: '', statement: '', rows: [], groups: [] } } });
+    setPickerOpen(false); setActive(t); setSpy(t); jumpRef.current = t; focusMainRef.current = `qbMain-${t}-0`;
+    toast(`${qbLabel(t)} added — type what students should do, then add items`, 'success');
+  };
+  const qbDeleteType = t => {
+    setMoreOpenFor(null);
+    openConfirm({
+      title: 'Remove this question type?', message: `Remove <strong>${qbLabel(t)}</strong> and all its items?`,
+      hint: 'It is removed now but only becomes permanent when you click Save changes.', confirmLabel: 'Yes, Remove', icon: 'fa-trash-can',
+      onConfirm: () => {
+        const order = draft.order.filter(x => x !== t);
+        const data = { ...draft.data }; delete data[t];
+        setDraft({ order, data });
+        if (active === t) setActive(order[0] || null);
+        if (spy === t) setSpy(order[0] || null);
+      },
+    });
+  };
+  const qbDeleteSet = (t, si) => {
+    const sets = qbSetsOf(draft.data[t]);
+    const n = sets[si].rows.length;
+    openConfirm({
+      title: sets.length === 1 ? 'Remove this question type?' : `Remove Question ${si + 1}?`,
+      message: `Remove <strong>Question ${si + 1}</strong> of ${qbLabel(t)}${n ? ` and its <strong>${n} item${n !== 1 ? 's' : ''}</strong>` : ''}?`,
+      hint: 'It is removed now but only becomes permanent when you click Save changes.', confirmLabel: 'Yes, Remove', icon: 'fa-trash-can',
+      onConfirm: () => {
+        const arr = sets.filter((_, x) => x !== si);
+        if (!arr.length) {
+          const order = draft.order.filter(x => x !== t);
+          const data = { ...draft.data }; delete data[t];
+          setDraft({ order, data }); setActive(order[0] || null); setSpy(order[0] || null);
+        } else {
+          setDraft({ ...draft, data: { ...draft.data, [t]: { ...arr[0], groups: arr.slice(1) } } });
+        }
+      },
+    });
+  };
+  const qbGuard = () => { if (form) { toast('Please save or cancel the open question first', 'error'); return true; } return false; };
+  const qbAddItem = (t, si) => { if (qbGuard()) return; setActive(t); setMoreOpenFor(null); setForm({ typeId: t, si, index: null, row: aqEmptyRow(t) }); setFormErr(''); focusFormRef.current = true; };
+  const qbEditItem = (t, si, i) => { if (qbGuard()) return; const row = qbSetsOf(draft.data[t])[si].rows[i]; setForm({ typeId: t, si, index: i, row: JSON.parse(JSON.stringify(row)) }); setFormErr(''); focusFormRef.current = true; };
+  const qbCancelForm = () => { setForm(null); setFormErr(''); };
+  const qbCommitForm = again => {
+    if (!form) return;
+    const err = qbValidate(form.typeId, form.row);
+    if (err) { setFormErr(err); return; }
+    const row = { ...form.row };
+    Object.keys(row).forEach(k => { if (typeof row[k] === 'string') row[k] = row[k].trim(); });
+    const sets = qbSetsOf(draft.data[form.typeId]);
+    let rows;
+    if (form.index === null) { rows = [...sets[form.si].rows, row]; freshRef.current.add(row._id); }
+    else { rows = sets[form.si].rows.map((r, idx) => (idx === form.index ? row : r)); editedRef.current.add(row._id); }
+    setDraft(d => withUpdatedSet(d, form.typeId, form.si, { rows }));
+    setFormErr('');
+    if (again && form.index === null) { setForm({ typeId: form.typeId, si: form.si, index: null, row: aqEmptyRow(form.typeId) }); focusFormRef.current = true; } else setForm(null);
+    toast(form.index === null ? 'Item added. Remember to click "Save changes" when you finish.' : 'Item updated. Remember to click "Save changes".', 'info');
+  };
+  const qbDeleteItem = (t, si, i) => openConfirm({
+    title: 'Delete this item?', message: `Delete <strong>item #${i + 1}</strong> of ${qbLabel(t)}?`,
+    hint: 'It is removed now but only becomes permanent when you click Save changes.', confirmLabel: 'Yes, Delete', icon: 'fa-trash-can',
+    onConfirm: () => setDraft(d => withUpdatedSet(d, t, si, { rows: qbSetsOf(d.data[t])[si].rows.filter((_, x) => x !== i) })),
+  });
+  const qbSetField = (t, si, key, val) => setDraft(d => withUpdatedSet(d, t, si, { [key]: val }));
+
+  /* Live save — diff against the loaded snapshot, then insert / update / delete
+     through NB_QTYPE_API exactly like NbAQModal.saveAll. Stays open. */
+  const qbSave = async () => {
+    if (form) { toast('Please save or cancel the open question first', 'error'); return false; }
+    if (!isDirty) { toast('There are no changes to save', 'info'); return false; }
+    if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return false; }
+    for (const t of draft.order) {
+      const sets = qbSetsOf(draft.data[t]);
+      for (let si = 0; si < sets.length; si++) {
+        if (!sets[si].rows.length) {
+          setActive(t); setSpy(t); jumpRef.current = t;
+          toast(`${qbLabel(t)}${sets.length > 1 ? ` · Question ${si + 1}` : ''} has no items yet. Please add an item, or remove it.`, 'error');
+          return false;
+        }
+      }
+    }
+    const strip = r => { const { _id, ...rest } = r; return rest; };
+    const origMap = new Map();
+    orig.order.forEach(t => qbSetsOf(orig.data[t]).forEach(s => s.rows.forEach(r => {
+      if (r.recordId != null) origMap.set(String(r.recordId), { t, mainQ: s.mainQ, statement: s.statement, json: JSON.stringify(strip(r)) });
+    })));
+    const inserts = [], updates = [], seen = new Set();
+    draft.order.forEach(t => qbSetsOf(draft.data[t]).forEach(s => s.rows.forEach((r, i) => {
+      if (r.recordId != null) {
+        seen.add(String(r.recordId));
+        const o = origMap.get(String(r.recordId));
+        if (!o || o.mainQ !== s.mainQ || o.statement !== s.statement || o.json !== JSON.stringify(strip(r))) updates.push({ t, s, r, i });
+      } else inserts.push({ t, s, r, i });
+    })));
+    const deletes = [...origMap.entries()].filter(([id]) => !seen.has(id)).map(([id, o]) => ({ id, t: o.t, mainQ: o.mainQ }));
+    if (inserts.length && guard && guard('notebook', 'add', toast)) return false;
+    if (updates.length && guard && guard('notebook', 'edit', toast)) return false;
+    if (deletes.length && guard && guard('notebook', 'delete', toast)) return false;
+    const branchID = sessionStorage.getItem('branchID') || '';
+    const nbId = api => (api.notebookIDString ? String(unit.id) : unit.id);
+    const wrap = ({ t, s, r, i }, action) => {
+      const api = NB_QTYPE_API[t];
+      const payload = { id: action === 'insert' ? 0 : (r.recordId ?? 0), notebookID: nbId(api), branchID, mainQuestion: (s.mainQ || '').trim(), isCheck: true, action, ...api.body(r, i) };
+      if (t === 'comprehension') payload.comprehensionStatement = s.statement || '';
+      return lpPost(api.endpoint, payload);
+    };
+    const unsupported = [...inserts, ...updates].find(x => !NB_QTYPE_API[x.t]);
+    if (unsupported) { toast(`${qbLabel(unsupported.t)} is not supported yet`, 'error'); return false; }
+    setSaving(true);
+    try {
+      await Promise.all([
+        ...inserts.map(x => wrap(x, 'insert')),
+        ...updates.map(x => wrap(x, 'update')),
+        ...deletes.map(d => { const api = NB_QTYPE_API[d.t]; return api ? lpPost(api.endpoint, { id: d.id, notebookID: nbId(api), branchID, mainQuestion: d.mainQ || '', isCheck: true, action: 'delete', ...api.body({}, 0) }) : null; }),
+      ]);
+    } catch (e) {
+      console.error('Error saving Question Bank:', e);
+      if (!e.isSessionError) toast(e.serverMessage || 'Could not save questions', 'error');
+      setSaving(false);
+      return false;
+    }
+    setSaving(false);
+    const n = totalN;
+    toast(`Question Bank saved — ${n} question${n !== 1 ? 's' : ''} in ${draft.order.length} type${draft.order.length !== 1 ? 's' : ''}`, 'success');
+    onSaved?.();
+    try { seed(await fetchNotebookDetail(unit.id)); } catch (_) { /* keep draft */ }
+    return true;
+  };
+
+  function qbRequestClose() {
+    if (!liveRef.current.isDirty && !liveRef.current.form) { onClose(); return; }
+    setClosePrompt(true);
+  }
+  const qbPromptSave = async () => {
+    setClosePrompt(false);
+    if (form) { toast('Please save or cancel the open question first', 'error'); return; }
+    if (await qbSave()) onClose();
+  };
+  const itemTag = row => {
+    if (freshRef.current.has(row._id)) return <span className="qb-tag qb-tag--new">New</span>;
+    if (editedRef.current.has(row._id)) return <span className="qb-tag">Edited</span>;
+    return null;
+  };
+
+  const renderPickerMenu = () => (
+    <div className="qb-menu" role="listbox" aria-label="Question types">
+      <div className="qb-menu-h">Add a new question to…</div>
+      {AQ_TYPES.filter(x => NB_QTYPE_API[x.id]).map(x => {
+        const used = draft.order.includes(x.id);
+        const cnt = used ? qbSetsOf(draft.data[x.id]).length : 0;
+        return (
+          <button key={x.id} type="button" className="qb-menu-opt" role="option" aria-selected={used} onClick={() => qbAddType(x.id)}>
+            <span className="qb-menu-t"><b>{qbLabel(x.id)}</b><small>{(QB_HINTS[x.id] || {}).d || ''}</small></span>
+            {used ? <em className="qb-menu-has">{cnt} question{cnt !== 1 ? 's' : ''}</em> : <em className="qb-menu-new">new</em>}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const renderForm = (t, si, index) => {
+    const cfg = AQ_CONFIG[t] || {};
+    const n = index === null ? qbSetsOf(draft.data[t])[si].rows.length + 1 : index + 1;
+    return (
+      <div className="qb-form-wrap" id="qbForm" role="group">
+        <div className="qb-form-title"><i className={`fa-solid ${index === null ? 'fa-circle-plus' : 'fa-pen'}`}></i> {index === null ? `New item (#${n})` : `Editing item #${n}`}</div>
+        <div className="qb-form-tip"><i className="fa-solid fa-lightbulb"></i> {(QB_HINTS[t] || {}).t || 'Fill in the boxes below.'}</div>
+        <AqRow i={n - 1} n={n} cfg={cfg} row={form.row} typeId={t} hideActs dir={dir} isUrdu={isUrdu}
+          onChange={(k, v) => setForm(f => ({ ...f, row: { ...f.row, [k]: v } }))} />
+        {formErr && <div className="qb-form-err show" role="alert">{formErr}</div>}
+        <div className="qb-form-btns">
+          <button className="qb-btn qb-btn--ghost" onClick={qbCancelForm}>Cancel</button>
+          {index === null && <button className="qb-btn qb-btn--ghost" onClick={() => qbCommitForm(true)}><i className="fa-solid fa-plus"></i> Add and write another</button>}
+          <button className="qb-btn qb-btn--primary" onClick={() => qbCommitForm(false)}><i className="fa-solid fa-check"></i> {index === null ? 'Add this item' : 'Update item'}</button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSet = (t, si, s, setsCount, isComp) => {
+    const multi = setsCount > 1;
+    const formHere = form && form.typeId === t && form.si === si;
+    const editingIndex = formHere && form.index !== null ? form.index : null;
+    const addingNew = formHere && form.index === null;
+    return (
+      <section className="qb-set" key={si}>
+        <div className="qb-set-head">
+          <label className="qb-lbl2" htmlFor={`qbMain-${t}-${si}`}>{multi ? `Question ${si + 1}` : 'Question'} <span className="qb-lbl2-s">· what students are asked to do</span></label>
+          {multi && <button className="qb-link qb-link--del" onClick={() => qbDeleteSet(t, si)} disabled={!!form}>Remove this question</button>}
+        </div>
+        <input className="qb-in" id={`qbMain-${t}-${si}`} type="text" dir={dir} value={s.mainQ}
+          onChange={e => qbSetField(t, si, 'mainQ', e.target.value)}
+          placeholder={isComp ? 'Example: Read the passage and answer the questions.' : 'Example: Write the opposite of the following words.'} />
+        {isComp && (
+          <>
+            <label className="qb-lbl2">Passage <span className="qb-lbl2-s">· the full paragraph students read, then add its questions below</span></label>
+            <textarea className="qb-in qb-in--passage" rows={7} dir={dir} value={s.statement || ''}
+              onChange={e => qbSetField(t, si, 'statement', e.target.value)}
+              placeholder="Type or paste the full passage here. Then add its questions and answers below." />
+          </>
+        )}
+        {s.rows.length > 0 && <div className="qb-srcsum qb-srcsum--ed">Items: {s.rows.length} manual · 0 Mentor AI</div>}
+        <ol className="qb-rows">
+          {s.rows.map((r, i) => (editingIndex === i ? (
+            <React.Fragment key={r._id || i}>{renderForm(t, si, i)}</React.Fragment>
+          ) : (
+            <li className="qb-row" key={r._id || i}>
+              <span className="qb-row-no">{i + 1}</span>
+              <div className="qb-row-body"><QbItemView typeId={t} row={r} />{itemTag(r)}</div>
+              <div className="qb-row-act">
+                {qbSrcTag(r)}
+                <button className="qb-link" onClick={() => qbEditItem(t, si, i)} disabled={!!form}>Edit</button>
+                <button className="qb-link qb-link--del" onClick={() => qbDeleteItem(t, si, i)} disabled={!!form}>Delete</button>
+              </div>
+            </li>
+          )))}
+        </ol>
+        {!s.rows.length && !addingNew && <div className="qb-blank-s" style={{ padding: '14px 0' }}>No items yet. Click "+ Add item".</div>}
+        {addingNew && renderForm(t, si, null)}
+        {!addingNew && <button className="qb-addrow" onClick={() => qbAddItem(t, si)} disabled={!!form}>+ Add item{multi ? ` to Question ${si + 1}` : ''}</button>}
+      </section>
+    );
+  };
+
+  const renderTypeBlock = t => {
+    const sets = qbSetsOf(draft.data[t]);
+    const isComp = (AQ_CONFIG[t] || {}).layout === 'comprehension';
+    const isAct = t === active;
+    const total = qbDraftCount(t);
+    return (
+      <section className="qb-type" key={t} data-qbt={t} ref={el => { typeRefs.current[t] = el; }}>
+        <div className="qb-pane-top">
+          <div><h2 className="qb-h2">{qbLabel(t)}</h2><div className="qb-h2s">{sets.length} question{sets.length !== 1 ? 's' : ''} · {total} item{total !== 1 ? 's' : ''}</div></div>
+          <div className="qb-pane-tools">
+            <div className="qb-morewrap">
+              <button className="qb-btn qb-btn--quiet" onClick={() => setMoreOpenFor(o => (o === t ? null : t))} disabled={!!form} aria-label={`More options for ${qbLabel(t)}`}>•••</button>
+              {moreOpenFor === t && (
+                <div className="qb-more" role="menu">
+                  <button role="menuitem" className="del" onClick={() => qbDeleteType(t)} disabled={!!form}>Remove this type…</button>
+                </div>
+              )}
+            </div>
+            <div className="qb-addwrap">
+              <button className="qb-btn qb-btn--primary" onClick={() => toggleTypePicker(t)} disabled={!!form}>+ Add question <span className="qb-caret">▾</span></button>
+              {isAct && pickerOpen && renderPickerMenu()}
+            </div>
+          </div>
+        </div>
+        {sets.map((s, si) => renderSet(t, si, s, sets.length, isComp))}
+        <button className="qb-newq" onClick={() => qbAddSet(t)} disabled={!!form}>
+          + Add another question to {qbLabel(t)}
+          <small>A new question with its own items, for example "Write synonyms of the following words".</small>
+        </button>
+      </section>
+    );
+  };
+
+  return (
+    <div className="qb-overlay" onMouseDown={e => {
+      if (e.target === e.currentTarget) { qbRequestClose(); return; }
+      if (pickerOpen && !e.target.closest('.qb-addwrap')) setPickerOpen(false);
+      if (moreOpenFor && !e.target.closest('.qb-morewrap')) setMoreOpenFor(null);
+    }}>
+      <div className={`qb-modal${isUrdu ? ' rtl-mode' : ''}`} role="dialog" aria-modal="true" tabIndex={-1} ref={modalRef}>
+        <div className="qb-mhead">
+          <div className="qb-mhead-ic" aria-hidden="true"><i className="fa-solid fa-circle-question"></i></div>
+          <div><div className="qb-mhead-t">Unit {unit.unitNo} · {unit.unitName}</div><div className="qb-mhead-s">Question Bank{isUrdu ? ' · اردو' : ''}</div></div>
+          <div className="qb-mhead-sp"></div>
+          <span className={`qb-state ${isDirty ? 'qb-state--dirty' : 'qb-state--saved'}`} role="status"><i className="qb-dot"></i> {isDirty ? 'Unsaved changes' : 'Saved'}</span>
+          <button className="qb-iconbtn" onClick={qbRequestClose} aria-label="Close editor" title="Close">✕</button>
+        </div>
+        <div className="qb-mbody">
+          <div className="qb-split">
+            <nav className="qb-side" aria-label="Question types">
+              <div className="qb-side-h">Question types</div>
+              <div className="qb-side-list">
+                {draft.order.map(t => (
+                  <button key={t} type="button" className={`qb-side-i${t === spy ? ' on' : ''}${sideDirty(t) ? ' dirty' : ''}`} ref={el => { sideRefs.current[t] = el; }} onClick={() => qbSelect(t)}>
+                    <span className="qb-side-n">{qbLabel(t)}</span><span className="qb-side-c">{qbDraftCount(t)}</span>
+                  </button>
+                ))}
+                {!draft.order.length && <div className="qb-side-none">None yet</div>}
+              </div>
+            </nav>
+            <div className="qb-side-sel">
+              <label className="qb-sr" htmlFor="qbSel">Question type</label>
+              <select id="qbSel" value={spy || ''} onChange={e => qbSelect(e.target.value)}>
+                {draft.order.map(t => <option key={t} value={t}>{qbLabel(t)} ({qbDraftCount(t)})</option>)}
+              </select>
+            </div>
+            <div className="qb-pane" ref={paneRef}>
+              {!hideGuide && draft.order.length > 0 && (
+                <div className="qb-hint"><span>Pick a type on the left, then add or edit its questions. Click <b>Save changes</b> when you finish.</span><button onClick={() => setHideGuide(true)} aria-label="Hide hint">✕</button></div>
+              )}
+              {draft.order.length ? draft.order.map(renderTypeBlock) : (
+                <div className="qb-blank">
+                  <div className="qb-blank-t">No questions in this unit yet</div>
+                  <div className="qb-blank-s">Choose a question type to begin.</div>
+                  <div className="qb-addwrap">
+                    <button className="qb-btn qb-btn--primary" onClick={() => setPickerOpen(o => !o)}>+ Add question <span className="qb-caret">▾</span></button>
+                    {pickerOpen && renderPickerMenu()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="qb-mfoot">
+          <span className="qb-mfoot-note">
+            {isDirty
+              ? <b className="qb-warn"><i className="fa-solid fa-triangle-exclamation"></i> Your changes are not saved yet. Click "Save changes".</b>
+              : `${totalN} question${totalN !== 1 ? 's' : ''} in ${draft.order.length} type${draft.order.length !== 1 ? 's' : ''}`}
+          </span>
+          <button className="qb-btn qb-btn--ghost" onClick={qbRequestClose}>{isDirty ? 'Cancel' : 'Close'}</button>
+          <button className={`qb-btn qb-btn--primary${isDirty && !form ? ' qb-pulse' : ''}`} disabled={!isDirty || saving} onClick={qbSave}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+        {closePrompt && (
+          <div className="qb-prompt">
+            <div className="qb-prompt-box" role="alertdialog">
+              <div style={{ fontSize: 34, marginBottom: 8 }}>⚠️</div>
+              <h3>You have unsaved changes</h3>
+              <p>{form ? 'A question is still open and has not been saved. ' : ''}If you close now, your recent changes will be lost.</p>
+              <div className="qb-prompt-btns">
+                <button className="qb-btn qb-btn--primary" onClick={qbPromptSave}><i className="fa-solid fa-floppy-disk"></i> Save and close</button>
+                <button className="qb-btn qb-btn--danger" onClick={onClose}><i className="fa-solid fa-trash-can"></i> Discard changes</button>
+                <button className="qb-btn qb-btn--ghost" onClick={() => setClosePrompt(false)}>Keep editing</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Academics-variant CSS — emitted ONLY when variant === 'academics'.
+   Ported from the reference branch (umn-*, cg-*, qb-*, scope chips, sticky
+   section-header fix). --brand-*-rgb tokens carry light-theme fallbacks
+   because the ERP does not define them globally. */
+const LP_ACAD_CSS = `
+.umn-section-badge { display:inline-block; font-size:10.5px; font-weight:700; color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .08); border:1px solid var(--border-med); padding:2px 9px; border-radius:99px; }
+.umn-scope-badge { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:700; padding:3px 10px; border-radius:99px; white-space:nowrap; }
+.umn-scope-badge i { font-size:9px; }
+.umn-scope-badge.shared { color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .08); border:1px solid rgba(var(--brand-primary-rgb, 30,58,138), .22); }
+.umn-scope-badge.custom { color:#B45309; background:rgba(217,119,6,.08); border:1px solid rgba(217,119,6,.28); }
+.tb-row-wrap.is-custom .tb-row { background:rgba(217,119,6,.03); }
+.tb-row-wrap.is-custom .tb-cls-name { padding-left:18px; }
+.clp2-scope-note { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:0 0 14px; padding:10px 14px; border-radius:10px; background:rgba(var(--brand-primary-rgb, 30,58,138), .05); border:1px solid rgba(var(--brand-primary-rgb, 30,58,138), .16); font:500 12.5px/1.45 var(--font-body,'Plus Jakarta Sans',sans-serif); color:var(--text-primary); }
+.clp2-scope-note.custom { background:rgba(217,119,6,.06); border-color:rgba(217,119,6,.24); }
+.clp2-scope-note strong { font-weight:700; }
+.perm-locked-banner { display:flex; align-items:center; gap:9px; margin:0 0 14px; padding:10px 14px; border-radius:10px; background:rgba(100,116,139,.08); border:1px solid var(--border-light); font-size:12.5px; color:var(--text-secondary); }
+.perm-locked-banner i { color:var(--text-muted); }
+.cg-summary { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 16px; font-size:12.5px; color:var(--text-muted); border-bottom:1px solid var(--border-light); }
+.cg-summary strong { color:var(--text-primary); }
+.cg-sec { display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 12px; border-radius:99px; font:600 11.5px var(--font-body,'Plus Jakarta Sans',sans-serif); cursor:pointer; transition:var(--tr, all .2s ease); }
+.cg-sec i { font-size:10px; }
+.cg-sec.in  { color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .08); border:1.5px solid rgba(var(--brand-primary-rgb, 30,58,138), .25); }
+.cg-sec.out { color:#B45309; background:rgba(217,119,6,.08); border:1.5px dashed rgba(217,119,6,.45); }
+.cg-sec:hover { filter:brightness(.95); }
+.cg-status { font-size:12px; font-weight:600; color:var(--text-muted); }
+.cg-hint { font-size:11.5px; color:var(--text-muted); margin-right:auto; }
+.clp2-scope-note .cg-hint { margin-right:0; margin-left:auto; }
+.cg-hint-link { border:none; background:none; padding:0; cursor:pointer; font:700 11.5px var(--font-body,'Plus Jakarta Sans',sans-serif); color:var(--brand-primary); text-decoration:underline; text-underline-offset:2px; }
+[data-theme="dark"] .cg-sec.out { color:#FBBF6B; background:rgba(217,119,6,.14); }
+[data-theme="dark"] .umn-scope-badge.custom { color:#FBBF6B; background:rgba(217,119,6,.14); border-color:rgba(217,119,6,.35); }
+[data-theme="dark"] .clp2-scope-note.custom { background:rgba(217,119,6,.12); border-color:rgba(217,119,6,.32); }
+.umn-subj-nav { display:flex; align-items:center; gap:4px; }
+.umn-subj-arrow { flex-shrink:0; width:26px; height:26px; border-radius:50%; border:1.5px solid var(--border-light); background:var(--bg-card); color:var(--text-muted); display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; transition:var(--tr, all .2s ease); }
+.umn-subj-arrow:hover { background:var(--bg-muted); color:var(--text-primary); }
+.umn-subj-scroll { display:flex; gap:6px; overflow-x:auto; scroll-behavior:smooth; scrollbar-width:none; padding:2px 0; }
+.umn-subj-scroll::-webkit-scrollbar { display:none; }
+.umn-subj-count { opacity:.75; font-size:10.5px; margin-left:2px; }
+.umn-units-list { display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto; scrollbar-width:thin; }
+.umn-units-list::-webkit-scrollbar { width:5px; }
+.umn-units-list::-webkit-scrollbar-thumb { background:rgba(var(--brand-dark-rgb, 30,64,175), .25); border-radius:3px; }
+.umn-units-empty { font-size:12px; color:var(--text-muted); padding:8px 2px; }
+.umn-unit-chip { display:flex; align-items:center; gap:10px; padding:7px 12px; border-radius:var(--radius-md); background:var(--bg-card); border:1px solid var(--border-light); font-size:12.5px; color:var(--text-secondary); }
+.umn-unit-no { flex-shrink:0; min-width:20px; height:20px; padding:0 4px; border-radius:99px; background:rgba(var(--brand-primary-rgb, 30,58,138), .12); color:var(--brand-primary); font-size:10.5px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+.umn-unit-name { font-weight:600; }
+.umn-copy-section { padding:14px 0; border-bottom:1px solid var(--border-light); }
+.umn-copy-section:last-child { border-bottom:none; }
+.umn-copy-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.umn-copy-checks { display:flex; flex-direction:column; gap:8px; }
+.umn-copy-check { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-secondary); cursor:pointer; }
+.umn-copy-check input[type="checkbox"] { width:15px; height:15px; accent-color:var(--brand-primary); cursor:pointer; }
+.umn-copy-check.disabled { color:var(--text-muted); opacity:.6; }
+@media (max-width:600px) { .umn-copy-grid { grid-template-columns:1fr; } }
+
+/* Lesson Plan / Question Bank filter row — Fetch on the same row, responsive */
+.clp2-filter-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)) auto; gap:10px; align-items:end; }
+.clp2-filter-row > * { min-width:0; }
+@media (max-width:900px) { .clp2-filter-row { grid-template-columns:repeat(2, minmax(0, 1fr)); } .clp2-fetch-btn { width:100%; justify-content:center; } }
+@media (max-width:560px) { .clp2-filter-row { grid-template-columns:1fr; } }
+.clpr-add-btn { display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 12px; border-radius:8px; border:1.5px solid var(--brand-primary); background:transparent; color:var(--brand-primary); font-size:12px; font-weight:700; cursor:pointer; }
+.clpr-add-btn:hover:not([disabled]) { background:var(--brand-primary); color:#fff; }
+.clml-topic-save { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 10px; border-radius:7px; border:none; background:#16A34A; color:#fff; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap; }
+.clml-lesson.is-selectable { cursor:pointer; }
+
+/* ── Question Bank: pill, view panel, two-pane editor ── */
+.qb-edit-pill{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 16px;border-radius:999px;border:1.5px solid var(--brand-primary);color:var(--brand-primary);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.qb-edit-pill:hover{background:var(--brand-primary);color:#fff}
+@media (max-width:768px){ .qb-edit-pill span{display:none} .qb-edit-pill{width:36px;height:36px;padding:0;border-radius:50%;justify-content:center} }
+.qb-btn{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 16px;border-radius:10px;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+.qb-btn[disabled]{opacity:.45;cursor:default}
+.qb-btn--primary{background:#1E3A8A;color:#fff}
+.qb-btn--primary:hover:not([disabled]){filter:brightness(1.1)}
+[data-theme="dark"] .qb-btn--primary{background:#2563EB}
+.qb-btn--ghost{background:var(--bg-muted);color:var(--text-primary);border:1px solid var(--border-light)}
+.qb-btn--ghost:hover{background:var(--bg-card)}
+.qb-btn--quiet{background:transparent;color:var(--text-muted);border:1px solid var(--border-light);height:34px;padding:0 12px}
+.qb-btn--quiet:hover:not([disabled]){background:var(--bg-muted)}
+.qb-btn--danger, .qb-btn--pdf{background:#DC2626;color:#fff}
+.qb-btn--danger:hover, .qb-btn--pdf:hover{filter:brightness(1.1)}
+.qb-caret{font-size:10px}
+.qb-view{padding:4px 2px}
+.qb-empty-big{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;color:var(--text-muted);font-size:13.5px;padding:40px 16px}
+.qb-view-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:10px 6px 16px;border-bottom:1px solid var(--border-light);margin-bottom:14px}
+.qb-view-title{font-size:16px;font-weight:800;color:var(--text-primary)}
+.qb-view-sub{font-size:12.5px;color:var(--text-muted);margin-top:3px}
+.qb-view-actions{display:flex;gap:8px;flex-wrap:wrap}
+.qb-sec{margin:0 6px 20px;padding-bottom:16px;border-bottom:1px solid var(--border-light)}
+.qb-sec:last-child{border-bottom:0;margin-bottom:4px;padding-bottom:0}
+.qb-sec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.qb-sec-title{font-size:14.5px;font-weight:800;color:var(--text-primary)}
+.qb-sec-count{font-size:11.5px;color:var(--text-muted);font-weight:600}
+.qb-sec-main{font-size:13px;color:var(--text-secondary);margin-bottom:8px}
+.qb-vset + .qb-vset{margin-top:16px;padding-top:16px;border-top:1px dashed var(--border-light)}
+.qb-empty{font-size:12.5px;color:var(--text-muted);font-style:italic;padding:6px 0}
+.qb-passage{background:var(--bg-muted);border:1px solid var(--border-light);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.qb-passage-lbl{font-size:11px;font-weight:700;color:var(--brand-primary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.qb-passage-txt{font-size:13px;line-height:1.7;color:var(--text-primary);white-space:pre-line}
+.qb-passage-q{font-size:11.5px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.qb-q{font-weight:500}
+.qb-a{margin-top:3px;color:var(--text-muted);font-size:13.5px}
+.qb-lbl{font-size:12px;font-weight:600;color:var(--text-muted);margin-right:6px}
+.qb-pre{white-space:pre-line}
+.qb-pair{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.qb-pair .qb-chip-txt{font-weight:500}
+.qb-pair .qb-arrow{color:var(--text-muted)}
+.qb-opts{display:grid;grid-template-columns:1fr 1fr;gap:2px 20px;margin-top:4px}
+.qb-opt{display:flex;gap:8px;font-size:13.5px;color:var(--text-secondary)}
+.qb-opt b{color:var(--text-muted);font-weight:600}
+.qb-opt.ok, .qb-opt.ok b{color:#15803D;font-weight:600}
+.qb-tf{display:inline-block;margin-left:10px;font-size:12px;font-weight:700;padding:1px 10px;border-radius:20px}
+.qb-tf--t{background:rgba(22,163,74,.12);color:#15803D}
+.qb-tf--f{background:rgba(220,38,38,.1);color:#B91C1C}
+.qb-view .qb-pair, .qb-rows .qb-pair{display:grid;grid-template-columns:1fr 1fr;align-items:stretch;gap:0}
+.qb-view .qb-pair .qb-arrow, .qb-rows .qb-pair .qb-arrow{display:none}
+.qb-view .qb-pair>span:first-child, .qb-rows .qb-pair>span:first-child{padding-right:16px}
+.qb-view .qb-pair>span:last-child, .qb-rows .qb-pair>span:last-child{padding-left:16px;border-left:1px solid var(--border-light);color:var(--text-secondary)}
+.qb-view .qb-a, .qb-rows .qb-a{margin-top:8px;padding-top:7px;border-top:1px dashed var(--border-light)}
+.qb-view .qb-a .qb-lbl, .qb-rows .qb-a .qb-lbl{display:inline-block;min-width:58px;text-transform:uppercase;letter-spacing:.4px;font-size:11px}
+.qb-view .qb-opts, .qb-rows .qb-opts{gap:0;margin-top:8px;border:1px solid var(--border-light);border-radius:8px;overflow:hidden}
+.qb-view .qb-opt, .qb-rows .qb-opt{padding:6px 12px;border-bottom:1px solid var(--border-light)}
+.qb-view .qb-opt:nth-child(odd), .qb-rows .qb-opt:nth-child(odd){border-right:1px solid var(--border-light)}
+.qb-view .qb-opt:nth-last-child(-n+2), .qb-rows .qb-opt:nth-last-child(-n+2){border-bottom:0}
+.qb-view .qb-opt.ok, .qb-rows .qb-opt.ok{background:rgba(22,163,74,.09)}
+.qb-items{list-style:none;margin:0;padding:0}
+.qb-item{display:flex;gap:14px;padding:9px 0;align-items:flex-start}
+.qb-item-no{flex:0 0 24px;font-size:13px;font-weight:600;color:var(--text-muted);text-align:right;padding-top:1px}
+.qb-item-body{flex:1;min-width:0;font-size:14px;line-height:1.6;color:var(--text-primary);overflow-wrap:anywhere}
+.qb-view .qb-items{border:1px solid var(--border-light);border-radius:12px;overflow:hidden;background:var(--bg-card)}
+.qb-view .qb-item{gap:0;padding:0;align-items:stretch;border-bottom:1px solid var(--border-light)}
+.qb-view .qb-item:last-child{border-bottom:0}
+.qb-view .qb-item:nth-child(even){background:rgba(100,116,139,.045)}
+.qb-view .qb-item-no{flex:0 0 46px;display:flex;align-items:center;justify-content:center;padding:0;border-right:1px solid var(--border-light);background:rgba(100,116,139,.07);font-weight:700}
+.qb-view .qb-item-body{padding:12px 16px;align-self:center}
+.qb-view .qb-item>.qb-src{align-self:center;margin:0 14px 0 8px;flex-shrink:0}
+.qb-rows{list-style:none;margin:12px 0 0;padding:0;border:1px solid var(--border-light);border-radius:12px;overflow:hidden;background:var(--bg-card)}
+.qb-rows:empty{display:none}
+.qb-row{display:flex;gap:0;padding:0;align-items:stretch;border-bottom:1px solid var(--border-light)}
+.qb-rows>.qb-row:last-child{border-bottom:0}
+.qb-rows .qb-row:nth-child(even){background:rgba(100,116,139,.045)}
+.qb-row-no{flex:0 0 46px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--border-light);background:rgba(100,116,139,.07);font-size:13px;font-weight:700;color:var(--text-muted)}
+.qb-row-body{flex:1;min-width:0;font-size:14px;line-height:1.6;overflow-wrap:anywhere;padding:12px 16px;align-self:center}
+.qb-row-act{display:flex;gap:8px;align-items:center;flex-shrink:0;align-self:center;padding-right:10px}
+.qb-rows>.qb-form-wrap{margin:0;border:0;border-radius:0;border-left:3px solid var(--brand-primary)}
+@media (max-width:600px) {
+  .qb-rows .qb-row{flex-wrap:wrap}
+  .qb-row-no{flex-basis:36px}
+  .qb-row-act{flex:1 1 100%;justify-content:flex-end;padding:0 10px 8px;border-top:1px dashed var(--border-light)}
+  .qb-view .qb-opts, .qb-rows .qb-opts{grid-template-columns:1fr}
+}
+.qb-src{display:inline-block;flex-shrink:0;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap;line-height:1.5}
+.qb-src--manual{background:rgba(22,163,74,.12);color:#15803D}
+.qb-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:20px;font-size:10px;font-weight:700;background:var(--bg-muted);color:var(--text-muted)}
+.qb-tag--new{background:rgba(234,88,12,.12);color:#C2410C}
+.qb-overlay{position:fixed;inset:0;z-index:9990;background:rgba(2,6,23,.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:20px}
+.qb-modal{position:relative;background:var(--bg-card);color:var(--text-primary);width:100%;max-width:1240px;height:calc(100vh - 40px);max-height:880px;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden;font-family:inherit}
+.qb-modal :focus-visible{outline:2px solid #3B82F6;outline-offset:2px}
+.qb-mhead{display:flex;align-items:center;gap:14px;padding:18px 24px;border-bottom:1px solid var(--border-light);flex-shrink:0}
+.qb-mhead-ic{width:40px;height:40px;border-radius:12px;background:var(--bg-muted);color:var(--brand-primary);display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+.qb-mhead-t{font-size:17px;font-weight:800;color:var(--text-primary)}
+.qb-mhead-s{font-size:12px;color:var(--text-muted);margin-top:2px}
+.qb-mhead-sp{flex:1}
+.qb-state{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 12px;border-radius:999px;white-space:nowrap}
+.qb-dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.qb-state--saved{background:rgba(22,163,74,.1);color:#15803D}
+.qb-state--dirty{background:rgba(217,119,6,.12);color:#B45309}
+.qb-iconbtn{all:unset;box-sizing:border-box;width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted);font-size:14px;flex-shrink:0}
+.qb-iconbtn:hover{background:var(--bg-muted);color:var(--text-primary)}
+.qb-mbody{flex:1;min-height:0;display:flex;border-top:1px solid var(--border-light);border-bottom:1px solid var(--border-light)}
+.qb-split{display:flex;flex:1;min-width:0;min-height:0}
+.qb-side{width:270px;flex-shrink:0;border-right:1px solid var(--border-light);display:flex;flex-direction:column;min-height:0;background:var(--bg-base)}
+.qb-side-h{padding:16px 22px 8px;font-size:12px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--text-muted)}
+.qb-side-list{overflow-y:auto;padding:0 10px 12px}
+.qb-side-none{padding:10px 12px;font-size:12.5px;color:var(--text-muted);font-style:italic}
+.qb-side-sel{display:none;padding:12px 16px;border-bottom:1px solid var(--border-light)}
+.qb-side-sel select{width:100%;height:42px;border:1px solid var(--border-med);border-radius:10px;padding:0 12px;font-family:inherit;font-size:15px;background:var(--input-bg);color:var(--text-primary)}
+/* Sticky section-header gap fix: .qb-pane has NO top padding, so the stuck
+   .qb-pane-top strip's own background is what content scrolls under. */
+.qb-pane{flex:1;min-width:0;overflow-y:auto;padding:0 32px 28px;scroll-behavior:smooth;position:relative}
+@media (max-width:820px){ .qb-side{display:none} .qb-side-sel{display:block} .qb-split{flex-direction:column} }
+.qb-side-i{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:14px;color:var(--text-secondary);font-family:inherit}
+.qb-side-i:hover{background:var(--bg-muted)}
+.qb-side-i.on{background:var(--bg-card);color:var(--text-primary);font-weight:600;box-shadow:0 0 0 1px var(--border-med)}
+.qb-side-i.dirty .qb-side-n::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#F59E0B;margin-left:8px;vertical-align:middle}
+.qb-side-c{font-size:12px;color:var(--text-muted);font-weight:500}
+.qb-hint{display:flex;align-items:center;gap:10px;justify-content:space-between;background:var(--bg-muted);border:1px solid var(--border-light);border-radius:10px;padding:10px 14px;margin:22px 0 18px;font-size:12.5px;color:var(--text-secondary)}
+.qb-hint button{all:unset;cursor:pointer;color:var(--text-muted);padding:2px 6px}
+.qb-blank{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:300px;margin-top:22px;text-align:center}
+.qb-blank-t{font-size:16px;font-weight:800;color:var(--text-primary)}
+.qb-blank-s{font-size:12.5px;color:var(--text-muted);font-style:italic}
+.qb-addwrap, .qb-morewrap{position:relative}
+.qb-menu, .qb-more{position:absolute;right:0;top:calc(100% + 6px);z-index:20;background:var(--bg-card);border:1px solid var(--border-med);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.2);padding:6px}
+.qb-blank .qb-menu{right:auto;left:50%;transform:translateX(-50%)}
+.qb-menu{width:360px;max-width:calc(100vw - 48px);max-height:min(420px,55vh);overflow-y:auto;text-align:left}
+.qb-menu-h{font-size:12px;font-weight:600;color:var(--text-muted);padding:8px 10px 6px}
+.qb-menu-opt{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-family:inherit;color:var(--text-primary)}
+.qb-menu-opt:hover{background:var(--bg-muted)}
+.qb-menu-t{display:flex;flex-direction:column;flex:1;min-width:0}
+.qb-menu-t b{font-size:14px;font-weight:600}
+.qb-menu-t small{font-size:12px;color:var(--text-muted)}
+.qb-menu-has, .qb-menu-new{font-style:normal;font-size:12px;color:var(--text-muted)}
+.qb-menu-new{color:var(--brand-primary);font-weight:600}
+.qb-more{min-width:210px}
+.qb-more button{all:unset;box-sizing:border-box;display:block;width:100%;padding:9px 12px;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit;color:var(--text-primary)}
+.qb-more button:hover:not([disabled]){background:var(--bg-muted)}
+.qb-more button[disabled]{opacity:.35;cursor:default}
+.qb-more button.del{color:#DC2626}
+.qb-type{padding-bottom:30px;margin-bottom:30px;border-bottom:1px solid var(--border-light)}
+.qb-type:last-child{border-bottom:0;margin-bottom:0;padding-bottom:60px}
+.qb-pane-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+.qb-type>.qb-pane-top{position:sticky;top:0;z-index:6;background:var(--bg-card);margin:0 0 14px;padding:34px 0 12px;border-bottom:1px solid var(--border-light)}
+.qb-type>.qb-pane-top:has(.qb-menu,.qb-more){z-index:14}
+.qb-h2{margin:0;font-size:22px;font-weight:700;color:var(--text-primary)}
+.qb-h2s{font-size:13px;color:var(--text-muted);margin-top:2px}
+.qb-pane-tools{display:flex;align-items:center;gap:8px;flex-shrink:0}
+@media (max-width:720px){ .qb-type>.qb-pane-top{position:static;border-bottom:0;padding-top:22px} }
+.qb-set{padding:4px 0 22px;margin-bottom:22px;border-bottom:1px solid var(--border-light)}
+.qb-set:last-of-type{border-bottom:0}
+.qb-set-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.qb-lbl2{font-size:11.5px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin:0 0 6px}
+.qb-lbl2-s{font-weight:500;text-transform:none;letter-spacing:0}
+.qb-in{box-sizing:border-box;display:block;width:100%;height:44px;border:1.5px solid var(--border-med);border-radius:10px;padding:0 13px;font-family:inherit;font-size:14px;color:var(--text-primary);background:var(--input-bg);outline:none;margin-bottom:10px}
+.qb-in:focus{border-color:var(--brand-primary);box-shadow:0 0 0 3px rgba(var(--brand-primary-rgb, 30,58,138),.12)}
+.qb-in--passage{height:auto;min-height:120px;resize:vertical;line-height:1.6;padding:10px 13px}
+.qb-link{all:unset;cursor:pointer;color:var(--brand-primary);font-size:12.5px;font-weight:700}
+.qb-link:hover{text-decoration:underline}
+.qb-link--del{color:#DC2626}
+.qb-link[disabled]{opacity:.4;cursor:default;text-decoration:none}
+.qb-addrow{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:100%;height:38px;margin-top:10px;border-radius:9px;border:1.5px dashed var(--border-med);color:var(--brand-primary);font-size:12.5px;font-weight:700;cursor:pointer}
+.qb-addrow:hover:not([disabled]){background:var(--bg-muted)}
+.qb-addrow[disabled]{opacity:.4;cursor:default}
+.qb-newq{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:3px;width:100%;padding:14px 16px;border:1px dashed var(--brand-primary);border-radius:12px;font-size:14px;font-weight:700;color:var(--brand-primary);cursor:pointer;font-family:inherit;margin-top:4px}
+.qb-newq small{font-weight:500;font-size:12.5px;color:var(--text-muted)}
+.qb-newq:hover:not([disabled]){background:var(--bg-muted)}
+.qb-newq[disabled]{opacity:.4;cursor:not-allowed}
+.qb-form-wrap{background:#F8FAFC;border-left:3px solid var(--brand-primary);border-radius:10px;padding:16px;margin-top:12px}
+[data-theme="dark"] .qb-form-wrap{background:var(--bg-muted)}
+.qb-form-title{font-size:13.5px;font-weight:800;color:var(--text-primary);margin-bottom:6px;display:flex;align-items:center;gap:7px}
+.qb-form-tip{font-size:12px;color:var(--text-muted);margin-bottom:12px;display:flex;align-items:flex-start;gap:7px}
+.qb-form-err{display:none;margin-top:10px;padding:9px 12px;border-radius:8px;background:#FEF2F2;color:#B91C1C;font-size:13px;font-weight:600}
+.qb-form-err.show{display:block}
+.qb-form-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.qb-mfoot{display:flex;align-items:center;gap:14px;padding:14px 24px 18px;flex-shrink:0;flex-wrap:wrap}
+.qb-mfoot-note{flex:1;min-width:0;font-size:12.5px;color:var(--text-muted)}
+.qb-warn{color:#B45309;display:inline-flex;align-items:center;gap:6px}
+@keyframes qbPulse{0%,100%{box-shadow:0 0 0 0 rgba(30,58,138,.45)}50%{box-shadow:0 0 0 7px rgba(30,58,138,0)}}
+.qb-pulse{animation:qbPulse 1.6s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){ .qb-pulse{animation:none} }
+.qb-prompt{position:absolute;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:30;padding:16px;border-radius:16px}
+.qb-prompt-box{background:var(--bg-card);border-radius:16px;padding:26px 24px;width:100%;max-width:380px;text-align:center;box-shadow:0 30px 70px rgba(2,6,23,.35)}
+.qb-prompt-box h3{font-size:16px;font-weight:800;color:var(--text-primary);margin-bottom:8px}
+.qb-prompt-box p{font-size:12.5px;color:var(--text-muted);line-height:1.5}
+.qb-prompt-btns{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.qb-prompt-btns .qb-btn{width:100%;justify-content:center}
+@media print{ .qb-overlay{display:none !important} }
+@media (max-width:760px) {
+  .qb-modal{height:100vh;max-height:none;border-radius:0}
+  .qb-view-head{flex-direction:column}
+  .qb-view-actions{width:100%}
+  .qb-view-actions .qb-btn{flex:1;justify-content:center}
+  .qb-pane{padding:0 16px 16px}
+  .qb-mfoot{flex-direction:column;align-items:stretch}
+  .qb-mfoot-note{order:3;text-align:center}
+  .qb-mfoot .qb-btn{flex:1;justify-content:center}
+}
+
+/* ── Remaining reference classes (follow-up port) ── */
+.qb-srcsum{font-size:12px;color:var(--text-muted);margin:2px 0 8px}
+.qb-srcsum--ed{margin-top:-2px}
+.qb-src--ai{background:rgba(109,40,217,.12);color:#6D28D9}
+[data-theme="dark"] .qb-src--manual{color:#4ADE80}
+[data-theme="dark"] .qb-src--ai{color:#C4B5FD;background:rgba(139,92,246,.2)}
+.qb-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.qb-mini{all:unset;cursor:pointer;width:24px;height:24px;text-align:center;line-height:24px;border-radius:6px;color:var(--text-muted);font-size:13px}
+.qb-mini:hover:not([disabled]){background:var(--bg-muted);color:var(--text-primary)}
+.qb-mini[disabled]{opacity:.25;cursor:default}
+.tbm-unit-no {
+  width:40px;height:40px;border-radius:var(--radius-md);
+  background:linear-gradient(135deg,rgba(var(--brand-primary-rgb, 30,58,138), .14),rgba(var(--brand-dark-rgb, 30,64,175), .08));
+  color:var(--brand-primary);font-weight:800;font-size:15px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.tbm-add-card {
+  margin:4px 24px 20px;padding:14px 16px;
+  border:1.5px dashed var(--brand-primary);border-radius:var(--radius-lg);
+  background:rgba(var(--brand-primary-rgb, 30,58,138), .025);
+}
+.ss-units-settings-btn { width:100%; display:flex; flex-direction:column; align-items:center; gap:3px; padding:16px 20px; border:none; border-radius:16px; cursor:pointer; background:linear-gradient(135deg,#1E3A8A 0%,#2563EB 100%); color:#fff; font-family:var(--font-body); font-size:14.5px; font-weight:800; box-shadow:0 10px 28px rgba(30,58,138,.25); transition:var(--tr, .2s); }
+.ss-units-settings-btn i { margin-right:6px; }
+.ss-units-settings-btn:hover { transform:translateY(-2px); box-shadow:0 16px 36px rgba(30,58,138,.32); }
+.ss-units-settings-btn-sub { font-size:11.5px; font-weight:600; color:rgba(255,255,255,.75); }
+.clpm-rte-section-dot--pink { background:#DB2777; }
+
+/* ── SUBMISSIONS — QUESTION BANK PANEL (qs-*): per-unit accordion, inline
+   cross-type checklist, floating bulk-submit bar. ── */
+.qs-unit { border:1px solid var(--border-light); border-radius:14px; background:var(--bg-card); overflow:hidden; margin-bottom:14px; }
+.qs-unit-hdr { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:14px 18px; cursor:pointer; }
+.qs-unit-t { display:flex; align-items:baseline; gap:10px; min-width:180px; }
+.qs-unit-t b { font-size:15px; font-weight:700; color:var(--text-primary); }
+.qs-unit-t span { font-size:14px; color:var(--text-secondary); }
+.qs-unit-s { flex:1; font-size:13px; color:var(--text-muted); }
+.qs-ok { color:#15803D; font-weight:600; } .qs-pd { color:#B45309; font-weight:600; }
+[data-theme="dark"] .qs-ok { color:#4ADE80; } [data-theme="dark"] .qs-pd { color:#FBBF24; }
+.qs-unit-bar { width:110px; height:6px; border-radius:6px; background:rgba(100,116,139,.18); overflow:hidden; }
+.qs-unit-bar i { display:block; height:100%; background:#16A34A; border-radius:6px; }
+.qs-unit-pct { font-size:13px; font-weight:700; color:var(--text-secondary); min-width:38px; text-align:right; }
+.qs-pdf { height:34px; padding:0 12px; font-size:13px; }
+.qs-chev { color:var(--text-muted); font-size:13px; transition:transform .2s; }
+.qs-unit.open .qs-chev { transform:rotate(180deg); }
+.qs-unit-body { padding:4px 18px 16px; border-top:1px solid var(--border-light); }
+.qs-unit-body .qb-sec:first-child { border-top:0; }
+.qs-all { margin-left:auto; display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary); cursor:pointer; font-weight:600; }
+.qs-alldone { margin-left:auto; font-size:13px; font-weight:600; color:#15803D; }
+[data-theme="dark"] .qs-alldone { color:#4ADE80; }
+.qs-tick { appearance:none; -webkit-appearance:none; flex-shrink:0; width:22px; height:22px; margin:0; border:1.5px solid var(--border-med); border-radius:7px; background:var(--input-bg); cursor:pointer; position:relative; transition:background .15s, border-color .15s; }
+.qs-tick:hover { border-color:var(--brand-primary); }
+.qs-tick:checked, .qs-tick:indeterminate { background:var(--brand-primary); border-color:var(--brand-primary); }
+.qs-tick:checked::after { content:""; position:absolute; left:6.5px; top:2.5px; width:6px; height:11px; border:solid #fff; border-width:0 2.5px 2.5px 0; transform:rotate(45deg); }
+.qs-tick:indeterminate::after { content:""; position:absolute; left:5px; top:9px; width:10px; height:2.5px; background:#fff; border-radius:2px; }
+.qs-tick:focus-visible { outline:2px solid rgba(59,130,246,.5); outline-offset:2px; }
+.qs-item { align-items:stretch; }
+.qs-item:not(.is-done) { cursor:pointer; }
+.qs-item:not(.is-done):hover { background:rgba(59,130,246,.06); }
+.qs-item.is-selected, .qs-item.is-selected:nth-child(even) { background:rgba(59,130,246,.10); }
+.qs-state { align-self:center; flex-shrink:0; font-size:12px; font-weight:700; padding:2px 10px; border-radius:20px; margin:0 10px 0 8px; white-space:nowrap; }
+.qs-state--done { background:rgba(22,163,74,.12); color:#15803D; }
+.qs-state--pend { background:rgba(245,158,11,.14); color:#B45309; }
+[data-theme="dark"] .qs-state--done { color:#4ADE80; } [data-theme="dark"] .qs-state--pend { color:#FBBF24; }
+.qs-item > .qs-tick { align-self:center; margin:0 16px 0 4px; }
+.qs-item.is-done .qb-item-body { opacity:.8; }
+.qs-bar {
+  position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+  width:min(720px, calc(100vw - 32px)); box-sizing:border-box; z-index:900;
+  display:flex; align-items:center; gap:10px; padding:12px 16px;
+  border:1px solid var(--border-med); border-radius:14px; background:var(--bg-card);
+  box-shadow:0 10px 30px rgba(0,0,0,.18);
+}
+.qs-bar-n { font-size:14px; color:var(--text-primary); } .qs-bar-n i { color:var(--brand-primary); margin-right:4px; }
+.qs-bar-sp { flex:1; }
+@media (max-width:600px) {
+  .qs-unit-hdr { padding:12px 14px; gap:8px; }
+  .qs-unit-t { min-width:0; flex:1 1 100%; }
+  .qs-unit-s { flex:1 1 100%; }
+  .qs-unit-bar { flex:1; }
+  .qs-unit-body { padding:2px 10px 12px; }
+  .qs-all span { display:none; }
+  .qs-state { margin:0 6px; }
+  .qs-state--pend { display:none; }
+  .qs-state--done { padding:2px 6px; font-size:0; }
+  .qs-state--done i { font-size:15px; }
+  .qs-bar { flex-wrap:wrap; } .qs-bar .qb-btn { flex:1; }
+}
+`;
+
+/* ═══════════════════════════════════════════════════════════════════
    CREATE LESSON PLANS — hero filter + sub-tabs + units rows
    ═══════════════════════════════════════════════════════════════════ */
 function CreateLessonPlans({
@@ -3918,7 +6577,9 @@ function CreateLessonPlans({
   units, setUnits, nbUnits, setNbUnits, setClpCtx,
   clpSection, setClpSection, sections, setSections, subjects, setSubjects,
   onManageUnits, onEditLesson, onAddQuestionType, onEditQuestionType,
-  onReport, openConfirm, toast, classesData  // Add classesData parameter
+  onReport, openConfirm, toast, classesData,  // Add classesData parameter
+  /* academics variant only */
+  acad = false, scopeRow = null, canEditCurriculum = true, onOpenGroups, onOpenQuestionBank, onAddLesson,
 }) {
   // Extract unique class names from the API response
   const classOptions = classesData?.map(classItem => classItem.name) || [];
@@ -4183,9 +6844,9 @@ const handleSectionChange = async (e) => {
           <div className="clp2-hero-text">
             <div className="clp2-hero-title">
               <i className="fa-solid fa-book-open-reader clp2-hero-icon"></i>
-              Create Lesson Plan
+              {acad ? 'Lesson Plan / Question Bank' : 'Create Lesson Plan'}
             </div>
-            <div className="clp2-hero-sub">Select class and subject to manage units &amp; lessons</div>
+            <div className="clp2-hero-sub">{acad ? 'Select class, section and subject to manage units & lessons' : <>Select class and subject to manage units &amp; lessons</>}</div>
           </div>
           
           <div className="clp2-filter-row">
@@ -4308,7 +6969,125 @@ const handleSectionChange = async (e) => {
         </div>
       </div>
 
-      {clpFetched ? (
+      {clpFetched && acad ? (
+        <>
+          {/* Toolbar — shared ds-switcher design (academics variant) */}
+          <div className="ds-switcher">
+            <div className="ds-switcher-group">
+              {showLpTab && (
+              <Tooltip text="Switch to Lesson Plans">
+                <button className={`ds-switcher-tab${clpSubtab === 'lesson' ? ' active' : ''}`} onClick={() => setClpSubtab('lesson')}>
+                  <i className="fa-solid fa-list-ul"></i> Lesson Plans
+                </button>
+              </Tooltip>
+              )}
+              {showNbTab && (
+              <Tooltip text="Switch to Question Bank">
+                <button className={`ds-switcher-tab${clpSubtab === 'notebook' ? ' active' : ''}`} onClick={() => setClpSubtab('notebook')}>
+                  <i className="fa-solid fa-book"></i> Question Bank
+                </button>
+              </Tooltip>
+              )}
+            </div>
+            <div className="ds-switcher-actions">
+              <Tooltip text={!canEditCurriculum ? LP_ROLE_LOCKED_TIP : (!canClpCreate ? 'You do not have permission to create lesson plans' : (!hoAdd ? 'This is a view only' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Manage units (add, rename, reorder) for this class plan')))}>
+                <button className="clp2-add-btn"
+                  disabled={isOtherSession || !canClpCreate || !canEditCurriculum}
+                  style={(isOtherSession || !canClpCreate || !hoAdd || !canEditCurriculum) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                  onClick={() => {
+                    if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
+                    if (acp.denyWrite(clpMenu, 'add', toast)) return;
+                    onManageUnits(clpSubtab);
+                  }}>
+                  <i className="fa-solid fa-layer-group"></i><span>Manage Units</span>
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* Which plan this section reads (class group) */}
+          {scopeRow && (scopeRow.custom ? (
+            <div className="clp2-scope-note custom">
+              <LpScopeBadge row={scopeRow} />
+              <span>Section {scopeRow.repSectionName} has <strong>a separate plan</strong> — changes here stay in Section {scopeRow.repSectionName}.</span>
+              {onOpenGroups && <LpGroupsHint onOpenGroups={onOpenGroups} />}
+            </div>
+          ) : (
+            <div className="clp2-scope-note">
+              <LpScopeBadge row={scopeRow} />
+              <span>
+                This section is in the <strong>{clpClass} class group</strong>
+                {scopeRow.sectionNames.length > 1 ? <> — units added in Manage Units appear in Sections {scopeRow.sectionNames.join(', ')}.</> : '.'}
+              </span>
+              {onOpenGroups && <LpGroupsHint onOpenGroups={onOpenGroups} />}
+            </div>
+          ))}
+          {!canEditCurriculum && (
+            <div className="perm-locked-banner">
+              <i className="fa-solid fa-lock" aria-hidden="true" />
+              <span>You have <strong>view-only</strong> access. Units, lesson plans and the Question Bank are managed by your Coordinator / Principal.</span>
+            </div>
+          )}
+
+          <div className="clp2-table-card">
+            {clpSubtab === 'lesson' ? (
+              units.length === 0 ? (
+                <EmptyUnits label="No units configured for this class & subject yet — click 'Manage Units'" onAdd={() => {
+                  if (!canEditCurriculum) { toast(LP_ROLE_LOCKED_TIP, 'error'); return; }
+                  if (acp.denyWrite('lesson', 'add', toast)) return;
+                  onManageUnits('lesson');
+                }} />
+              ) : (
+                units.map((u, i) => (
+                  <UnitRow
+                    key={u.id}
+                    unit={u}
+                    index={i}
+                    isOtherSession={isOtherSession || !canEditCurriculum}
+                    toast={toast}
+                    guard={acp.denyWrite}
+                    onReport={onReport}
+                    onDeleteUnit={() => removeUnit(u)}
+                    onEditLesson={l => {
+                      if (acp.denyWrite('lesson', 'edit', toast)) return;
+                      onEditLesson(u.id, l.id, l, u);
+                    }}
+                    onAddLesson={() => {
+                      if (acp.denyWrite('lesson', 'add', toast)) return;
+                      onAddLesson?.(u);
+                    }}
+                    onDeleteLesson={l => removeLesson(u.id, l)}
+                  />
+                ))
+              )
+            ) : (
+              nbUnits.length === 0 ? (
+                <EmptyUnits label="No Question Bank units configured for this class & subject yet — click 'Manage Units'" onAdd={() => {
+                  if (!canEditCurriculum) { toast(LP_ROLE_LOCKED_TIP, 'error'); return; }
+                  if (acp.denyWrite('notebook', 'add', toast)) return;
+                  onManageUnits('notebook');
+                }} />
+              ) : (
+                nbUnits.map((u, i) => (
+                  <QbUnitRow
+                    key={u.id}
+                    unit={u}
+                    index={i}
+                    isOtherSession={isOtherSession || !canEditCurriculum}
+                    toast={toast}
+                    guard={acp.denyWrite}
+                    onReport={onReport}
+                    onDeleteUnit={() => removeUnit(u)}
+                    onOpenEditor={() => onOpenQuestionBank?.(u)}
+                    onDeleteSet={q => removeQuestion(u.id, q)}
+                    reloadKey={`${clpRefresh}_${nbReload}`}
+                  />
+                ))
+              )
+            )}
+          </div>
+        </>
+      ) : clpFetched ? (
         <>
           {/* Toolbar */}
           <div className="clp2-toolbar">
@@ -4321,9 +7100,9 @@ const handleSectionChange = async (e) => {
               </Tooltip>
               )}
               {showNbTab && (
-              <Tooltip text="Switch to Notebook Plans">
+              <Tooltip text={acad ? "Switch to Question Bank" : "Switch to Notebook Plans"}>
                 <button className={`clp2-subtab${clpSubtab === 'notebook' ? ' active' : ''}`} onClick={() => setClpSubtab('notebook')}>
-                  <i className="fa-solid fa-book"></i> Notebook Plans
+                  <i className="fa-solid fa-book"></i> {acad ? 'Question Bank' : 'Notebook Plans'}
                 </button>
               </Tooltip>
               )}
@@ -4405,7 +7184,7 @@ const handleSectionChange = async (e) => {
         <div className="clp2-empty-state">
           <div className="clp2-empty-icon"><i className="fa-solid fa-book-open-reader"></i></div>
           <div className="clp2-empty-title">No lesson plans loaded</div>
-          <div className="clp2-empty-sub">Select a class and subject above, then click <strong>Fetch</strong></div>
+          <div className="clp2-empty-sub">Select a class{acad ? ', section' : ''} and subject above, then click <strong>Fetch</strong></div>
         </div>
       )}
     </>
@@ -4427,7 +7206,9 @@ function EmptyUnits({ label, onAdd }) {
 }
 
 /* ─── Lesson-plans unit row (lessons) ─── */
-function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson, isOtherSession, toast, guard }) {
+function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson, isOtherSession, toast, guard, onAddLesson }) {
+  /* onAddLesson is passed only by the academics variant ("Add" on each unit row). */
+  const hoAdd = !(guard && guard('lesson', 'add'));
   const hoEdit = !(guard && guard('lesson', 'edit'));
   const hoDelete = !(guard && guard('lesson', 'delete'));
   const stopWrite = (action, fn) => () => {
@@ -4465,6 +7246,16 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
           </Tooltip>
         </div>
         <div className="clpr-unit-actions">
+          {onAddLesson && (
+            <Tooltip text={!hoAdd ? 'This is a view only' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Add a lesson plan to this unit')}>
+              <button className="clpr-add-btn"
+                disabled={isOtherSession}
+                style={(isOtherSession || !hoAdd) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                onClick={stopWrite('add', onAddLesson)}>
+                <i className="fa-solid fa-plus"></i> Add
+              </button>
+            </Tooltip>
+          )}
           <Tooltip text="Download unit lesson plan as PDF">
             <button className="export-btn pdf" onClick={() => onReport(`Unit ${unit.unitNo} — ${unit.unitName}`, 'pdf')}>
               <i className="fa-solid fa-file-pdf"></i> PDF
@@ -5064,7 +7855,8 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
 /* ═══════════════════════════════════════════════════════════════════
    SUBMISSIONS — Teacher view (verbatim layout from HTML)
    ═══════════════════════════════════════════════════════════════════ */
-function Submissions({ toast, classesData = [] }) {
+function Submissions({ toast, classesData = [], acad = false }) {
+  /* acad (academics variant) → "Notebook Plans" is shown as "Question Bank". */
   const [role, setRole] = useState('teacher');
   const [cls, setCls] = useState('');
   const [section, setSection] = useState('');
@@ -5086,6 +7878,10 @@ function Submissions({ toast, classesData = [] }) {
   const [lpUnitOpen, setLpUnitOpen] = useState({});
   const [nbUnitOpen, setNbUnitOpen] = useState({});
   const [nbQOpen, setNbQOpen] = useState({});
+  /* Academics variant: cross-type checklist selection for the qs-* Question
+     Bank panel — keys `${unitId}__${typeId}__${itemId}`. */
+  const [nbSelected, setNbSelected] = useState(() => new Set());
+  const [nbBulkBusy, setNbBulkBusy] = useState(false);
 
   const [viewerId, setViewerId] = useState(null);
   const [nbSubmitCtx, setNbSubmitCtx] = useState(null);
@@ -5420,7 +8216,7 @@ function Submissions({ toast, classesData = [] }) {
        parallel with the lesson plans below. */
     loadNbSubmissionData({ branchID, classID, sectionID, subjectID })
       .then(setNbData)
-      .catch(e => { console.error('Error loading notebook submissions:', e); toast('Could not load notebook plans', 'error'); });
+      .catch(e => { console.error('Error loading notebook submissions:', e); toast(acad ? 'Could not load Question Bank' : 'Could not load notebook plans', 'error'); });
 
     try {
       const token = sessionStorage.getItem('token') || '';
@@ -5531,9 +8327,52 @@ function Submissions({ toast, classesData = [] }) {
       return;
     }
     setNbSubmitCtx(null);
-    toast('Notebook submission updated', 'success');
+    toast(acad ? 'Question Bank submission updated' : 'Notebook submission updated', 'success');
     try { setNbData(await loadNbSubmissionData(subCtx)); }
     catch (e) { console.error('Error reloading notebook submissions:', e); }
+  };
+
+  /* Academics qs-* panel: selection helpers + bulk submit. Submitting uses the
+     same live qp-selection insert as submitNbItems (nbCheckRow), grouped per
+     unit + question type, then reloads once. */
+  const toggleNbItem = (key, on) => setNbSelected(prev => {
+    const n = new Set(prev);
+    if (on) n.add(key); else n.delete(key);
+    return n;
+  });
+  const toggleNbTypeAll = (u, qt, on) => setNbSelected(prev => {
+    const n = new Set(prev);
+    qt.items.filter(i => i.status !== 'submitted').forEach(i => {
+      const k = `${u.unitId}__${qt.typeId}__${i.id}`;
+      if (on) n.add(k); else n.delete(k);
+    });
+    return n;
+  });
+  const clearNbSelection = () => setNbSelected(new Set());
+  const submitNbSelected = async () => {
+    const keys = [...nbSelected];
+    if (!keys.length || nbBulkBusy) return;
+    setNbBulkBusy(true);
+    try {
+      await Promise.all(keys.map(k => {
+        const [unitId, typeId, itemId] = k.split('__');
+        const cat = NB_DETAIL_CATEGORIES.find(c => c.typeId === typeId);
+        return nbCheckRow({
+          action: 'insert', notebookID: unitId, recID: itemId, recTitle: cat?.recTitle || typeId,
+          branchID: subCtx.branchID, gradeID: subCtx.classID, subjectID: subCtx.subjectID,
+        });
+      }));
+    } catch (e) {
+      console.error('Error submitting Question Bank items:', e);
+      toast('Could not submit items', 'error');
+      setNbBulkBusy(false);
+      return;
+    }
+    setNbBulkBusy(false);
+    setNbSelected(new Set());
+    toast(`${keys.length} item${keys.length > 1 ? 's' : ''} submitted successfully!`, 'success');
+    try { setNbData(await loadNbSubmissionData(subCtx)); }
+    catch (e) { console.error('Error reloading Question Bank submissions:', e); }
   };
 
   /* Generate the report after style is picked */
@@ -5543,6 +8382,7 @@ function Submissions({ toast, classesData = [] }) {
     const ctx = {
       cls, section, subject,
       lpData, nbData,
+      acad,
     };
     /* Branch header (logo, name, address, session) from /report-header/{branchID}
        — same source as every other report. */
@@ -5581,7 +8421,7 @@ function Submissions({ toast, classesData = [] }) {
             <div className="sub-hero-icon-wrap"><i className="fa-solid fa-paper-plane"></i></div>
             <div>
               <div className="sub-hero-title">Submissions</div>
-              <div className="sub-hero-sub">Select class, section &amp; subject to track and submit lesson &amp; notebook plans</div>
+              <div className="sub-hero-sub">{acad ? <>Select class, section &amp; subject to track and submit lesson plans &amp; Question Bank</> : <>Select class, section &amp; subject to track and submit lesson &amp; notebook plans</>}</div>
             </div>
           </div>
           {/* Role toggle */}
@@ -5758,9 +8598,9 @@ function Submissions({ toast, classesData = [] }) {
                 <span className="sub-inner-count">{lpTotal}</span>
               </button>
             </Tooltip>
-            <Tooltip text={`Notebook Plan submissions (${nbTotal})`}>
+            <Tooltip text={`${acad ? 'Question Bank' : 'Notebook Plan'} submissions (${nbTotal})`}>
               <button className={`sub-inner-tab${inner === 'nb' ? ' active' : ''}`} onClick={() => setInner('nb')}>
-                <i className="fa-solid fa-book"></i> <span>Notebook Plans</span>
+                <i className="fa-solid fa-book"></i> <span>{acad ? 'Question Bank' : 'Notebook Plans'}</span>
                 <span className="sub-inner-count">{nbTotal}</span>
               </button>
             </Tooltip>
@@ -5846,8 +8686,118 @@ function Submissions({ toast, classesData = [] }) {
             </div>
           )}
 
+          {/* ── QUESTION BANK PANEL (academics variant — reference qs-* design) ── */}
+          {inner === 'nb' && acad && (
+            <div>
+              <div className="sub-toolbar">
+                <div className="sub-toolbar-left">
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                    <i className="fa-solid fa-layer-group" style={{ color: 'var(--brand-primary)', marginRight: 6 }}></i>Units &amp; Question Types
+                  </span>
+                </div>
+                <div className="sub-toolbar-right">
+                  <Tooltip text="Generate PDF Report"><button className="sub-pdf-btn" onClick={() => setPdfReq({ type: 'nb' })}>
+                    <i className="fa-solid fa-file-pdf"></i> PDF Report
+                  </button></Tooltip>
+                </div>
+              </div>
+
+              {nbData.map(u => {
+                const allItems = u.questionTypes.flatMap(qt => qt.items);
+                const uTotal   = allItems.length;
+                const uSub     = allItems.filter(i => i.status === 'submitted').length;
+                const uPending = uTotal - uSub;
+                const uPct     = uTotal ? Math.round((uSub / uTotal) * 100) : 0;
+                const uIsOpen  = !!nbUnitOpen[u.unitId];
+                const qCount   = u.questionTypes.length;
+                return (
+                  <div key={u.unitId} className={`qs-unit${uIsOpen ? ' open' : ''}`}>
+                    <div className="qs-unit-hdr" onClick={() => setNbUnitOpen(o => ({ ...o, [u.unitId]: !o[u.unitId] }))}>
+                      <div className="qs-unit-t"><b>Unit {u.unitNo}</b><span>{u.unitName}</span></div>
+                      <div className="qs-unit-s">{qCount} question type{qCount !== 1 ? 's' : ''} · <span className="qs-ok">{uSub} submitted</span> · <span className="qs-pd">{uPending} pending</span></div>
+                      <div className="qs-unit-bar" title={`${uPct}% submitted`}><i style={{ width: `${uPct}%` }}></i></div>
+                      <span className="qs-unit-pct">{uPct}%</span>
+                      <Tooltip text="PDF for this unit">
+                        <button className="qb-btn qb-btn--ghost qs-pdf" onClick={e => { e.stopPropagation(); setPdfReq({ type: 'nb-unit', unitId: u.unitId }); }}>
+                          <i className="fa-solid fa-file-pdf"></i> PDF
+                        </button>
+                      </Tooltip>
+                      <i className="fa-solid fa-chevron-down qs-chev"></i>
+                    </div>
+
+                    {uIsOpen && (
+                      <div className="qs-unit-body qb-view">
+                        {u.questionTypes.map(qt => {
+                          const total = qt.items.length;
+                          const sub   = qt.items.filter(i => i.status === 'submitted').length;
+                          const pendKeys = qt.items.filter(i => i.status !== 'submitted').map(i => `${u.unitId}__${qt.typeId}__${i.id}`);
+                          const selCount = pendKeys.filter(k => nbSelected.has(k)).length;
+                          const allSelected  = pendKeys.length > 0 && selCount === pendKeys.length;
+                          const someSelected = selCount > 0 && selCount < pendKeys.length;
+                          return (
+                            <section className="qb-sec qs-sec" key={qt.typeId}>
+                              <div className="qb-sec-head">
+                                <span className="qb-sec-title">{qbLabel(qt.typeId)}</span>
+                                <span className="qb-sec-count">{sub} of {total} submitted</span>
+                                {sub > 0 && (
+                                  <Tooltip text="Edit submission — add / remove submitted questions">
+                                    <button className="qb-link" onClick={e => { e.stopPropagation(); setNbSubmitCtx({ unitId: u.unitId, typeId: qt.typeId, edit: true }); }}>
+                                      <i className="fa-solid fa-pen"></i> Edit
+                                    </button>
+                                  </Tooltip>
+                                )}
+                                {pendKeys.length ? (
+                                  <label className="qs-all" onClick={e => e.stopPropagation()}>
+                                    <input type="checkbox" className="qs-tick" checked={allSelected}
+                                      ref={el => { if (el) el.indeterminate = someSelected; }}
+                                      onChange={e => toggleNbTypeAll(u, qt, e.target.checked)} />
+                                    <span>Select all pending</span>
+                                  </label>
+                                ) : (
+                                  <span className="qs-alldone"><i className="fa-solid fa-circle-check"></i> All submitted</span>
+                                )}
+                              </div>
+                              {qt.mainQ && <div className="qb-sec-main" {...lpUrduProps(qt.mainQ)}>{qt.mainQ}</div>}
+                              <ol className="qb-items">
+                                {qt.items.map((item, ii) => {
+                                  const key   = `${u.unitId}__${qt.typeId}__${item.id}`;
+                                  const isSub = item.status === 'submitted';
+                                  const isSel = nbSelected.has(key);
+                                  return (
+                                    <li key={item.id} className={`qb-item qs-item${isSub ? ' is-done' : ''}${isSel ? ' is-selected' : ''}`}
+                                      onClick={isSub ? undefined : () => toggleNbItem(key, !isSel)}>
+                                      <span className="qb-item-no">{ii + 1}</span>
+                                      <div className="qb-item-body" {...lpUrduProps(item.preview)}>
+                                        {item.data ? <QbItemView typeId={qt.typeId} row={item.data} /> : <QbTxt v={item.preview} />}
+                                      </div>
+                                      {isSub ? (
+                                        <span className="qs-state qs-state--done"><i className="fa-solid fa-circle-check"></i> Submitted</span>
+                                      ) : (
+                                        <>
+                                          <span className="qs-state qs-state--pend">Pending</span>
+                                          <input type="checkbox" className="qs-tick" checked={isSel}
+                                            onClick={e => e.stopPropagation()}
+                                            onChange={e => toggleNbItem(key, e.target.checked)}
+                                            aria-label={`Select item ${ii + 1} to submit`} />
+                                        </>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ol>
+                            </section>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* ── NOTEBOOK PLANS PANEL ── */}
-          {inner === 'nb' && (
+          {inner === 'nb' && !acad && (
             <div>
               <div className="sub-toolbar">
                 <div className="sub-toolbar-left">
@@ -5993,6 +8943,18 @@ function Submissions({ toast, classesData = [] }) {
         </div>
       )}
 
+      {/* ── FLOATING BULK-SUBMIT BAR (academics Question Bank selection) ── */}
+      {acad && inner === 'nb' && nbSelected.size > 0 && (
+        <div className="qs-bar" role="region" aria-label="Submit selected">
+          <span className="qs-bar-n"><i className="fa-solid fa-square-check"></i> <b>{nbSelected.size}</b> selected</span>
+          <span className="qs-bar-sp"></span>
+          <button className="qb-btn qb-btn--ghost" onClick={clearNbSelection} disabled={nbBulkBusy}>Clear</button>
+          <button className="qb-btn qb-btn--primary" onClick={submitNbSelected} disabled={nbBulkBusy}>
+            <i className={`fa-solid ${nbBulkBusy ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`}></i> Submit selected
+          </button>
+        </div>
+      )}
+
       {/* Modals remain the same */}
       <LpViewerModal
         plan={viewerId ? lpData.find(p => p.id === viewerId) : null}
@@ -6012,6 +8974,7 @@ function Submissions({ toast, classesData = [] }) {
       />
 
       <SubPdfModal
+        acad={acad}
         req={pdfReq}
         unit={pdfReq?.type === 'nb-unit' && pdfReq.unitId ? nbData.find(u => u.unitId === pdfReq.unitId) : null}
         onClose={() => setPdfReq(null)}
@@ -6344,7 +9307,7 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
    SUBMISSION PDF — style picker modal + report builders
    verbatim from HTML (openSubPdfModal / subGeneratePdf / pdf* helpers)
    ═══════════════════════════════════════════════════════════════════ */
-function SubPdfModal({ req, unit, onClose, onGenerate }) {
+function SubPdfModal({ req, unit, onClose, onGenerate, acad = false }) {
   const [style, setStyle] = useState('color');
   const academicYearTag = (() => {
     const s = (sessionStorage.getItem('sessionName') || '').trim();
@@ -6361,7 +9324,7 @@ function SubPdfModal({ req, unit, onClose, onGenerate }) {
   let scopeDesc  = 'All units and lesson plans included';
   if (req.type === 'nb') {
     scopeIcon  = 'fa-book';
-    scopeTitle = 'Full Notebook Plan Report';
+    scopeTitle = acad ? 'Full Question Bank Report' : 'Full Notebook Plan Report';
     scopeDesc  = 'All units, question types and items included';
   }
   if (req.type === 'nb-unit' && unit) {
@@ -7089,7 +10052,7 @@ function buildNbSubReport(ctx, isColor, reportHeader = null) {
     });
   });
 
-  _openSubPdfWindow(buildLpReportHtml({ title: 'Notebook Plan Submission Report', metaCells, today, bodyHtml: html, isColor, reportHeader }));
+  _openSubPdfWindow(buildLpReportHtml({ title: ctx?.acad ? 'Question Bank Submission Report' : 'Notebook Plan Submission Report', metaCells, today, bodyHtml: html, isColor, reportHeader }));
 }
 
 /* 3. Notebook Plan submission report — single unit */
@@ -7169,7 +10132,7 @@ function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
     html += `</tbody></table>`;
   });
 
-  _openSubPdfWindow(buildLpReportHtml({ title: `${T('Notebook Plan Report')} — ${T('Unit')} ${unit.unitNo}: ${unit.unitName}`, metaCells, today, bodyHtml: html, isColor, reportHeader, isUrdu }));
+  _openSubPdfWindow(buildLpReportHtml({ title: `${T(ctx?.acad ? 'Question Bank Plan Report' : 'Notebook Plan Report')} — ${T('Unit')} ${unit.unitNo}: ${unit.unitName}`, metaCells, today, bodyHtml: html, isColor, reportHeader, isUrdu }));
 }
 
 /* Date+time stamp helper for admin reports (e.g. "May 27, 2026 — 7:01 PM") */
@@ -7349,7 +10312,7 @@ function buildAdminSubjectReport(isColor, reportHeader = null, rows = []) {
 /* ═══════════════════════════════════════════════════════════════════
    UNIT MGR MODAL — manage units (serial / no / name / lesson count)
    ═══════════════════════════════════════════════════════════════════ */
-function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openConfirm, toast }) {
+function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openConfirm, toast, acad = false }) {
   const [draft, setDraft] = useState([]);
   const [snoTarget, setSnoTarget] = useState(null); // {id, currentIdx}
   const [origIds, setOrigIds] = useState(new Set()); // unit ids present before edits
@@ -7524,7 +10487,7 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
             <div className="lp-modal-icon"><i className="fa-solid fa-layer-group"></i></div>
             <div>
               <div className="lp-modal-title">Manage Units</div>
-              <div className="lp-modal-sub">{source === 'lesson' ? 'Lesson Plans' : 'Notebook Plans'} — add, edit, reorder or remove units</div>
+              <div className="lp-modal-sub">{source === 'lesson' ? 'Lesson Plans' : (acad ? 'Question Bank' : 'Notebook Plans')} — add, edit, reorder or remove units</div>
             </div>
           </div>
           <Tooltip text="Close"><button className="lp-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
@@ -7691,6 +10654,9 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   /* Section timings — ab USER khud set karta hai (auto-divide nahi). Har section blank
      rehta hai; save par validation: sum(sections) === Time Duration. */
   const [secMins, setSecMins] = useState({ slo: '', intro: '', devel: '', recap: '' });
+  /* Academics variant: lesson topics are locked until the edit icon is clicked;
+     then a "Save Topic" action appears. New (unsaved) lessons start unlocked. */
+  const [unlockedTopics, setUnlockedTopics] = useState(new Set());
 
   useEffect(() => {
     if (!ctx) return;
@@ -7728,8 +10694,19 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         record: l.record || null, // original ULP master row (for update vs insert)
       };
     });
+    /* Academics "Add" on a unit row → append a fresh blank lesson and select it. */
+    if (ctx.addMode) {
+      const blank = { id: Date.now(), num: String(unitLessons.length + 1), topic: '', duration: '', contentMap: {}, source: 'manual', record: null };
+      setLessons([...unitLessons, blank]);
+      setSelectedIdx(unitLessons.length);
+      setDuration('');
+      setUnlockedTopics(new Set([blank.id]));
+      return;
+    }
     /* if the unit has no lessons, seed one blank */
-    setLessons(unitLessons.length ? unitLessons : [{ id: Date.now(), num: '1', topic: '', duration: '', contentMap: {}, source: 'manual' }]);
+    const seeded = unitLessons.length ? unitLessons : [{ id: Date.now(), num: '1', topic: '', duration: '', contentMap: {}, source: 'manual' }];
+    setLessons(seeded);
+    setUnlockedTopics(new Set(seeded.filter(l => !l.record).map(l => l.id)));
     const idx = Math.max(0, unitLessons.findIndex(l => l.id === ctx.lesson?.id));
     setSelectedIdx(idx);
     setDuration(unitLessons[idx]?.duration || ctx.lesson?.duration || '');
@@ -8146,8 +11123,22 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
               <div style={{ padding: '0 10px 8px' }}>
                 {lessons.map((l, li) => (
                   <div key={l.id}
-                    className="clml-lesson"
-                    style={li === selectedIdx ? { borderColor: '#1E40AF', boxShadow: '0 3px 12px rgba(30,64,175,.1)' } : null}>
+                    className={`clml-lesson${ctx.acad ? ' is-selectable' : ''}`}
+                    style={li === selectedIdx ? { borderColor: '#1E40AF', boxShadow: '0 3px 12px rgba(30,64,175,.1)' } : null}
+                    /* Academics variant: the card is the selector (no per-card
+                       Save / Fetch). Leaving a lesson commits its edited content
+                       (saveDetail, as Save did) and the clicked lesson's saved
+                       plan is loaded into the right-side slate (as Fetch did). */
+                    onClick={ctx.acad ? (e => {
+                      if (e.target.closest('button, input, textarea, select')) return;
+                      if (li === selectedIdx) return;
+                      const cur = lessons[selectedIdx];
+                      const map = captureEditors();
+                      const changed = cur && JSON.stringify(map) !== JSON.stringify(cur.contentMap || {});
+                      if (cur?.record?.id && changed) saveDetail(selectedIdx);
+                      fetchLesson(li);
+                      if (l.record?.id && !l.detail) loadDetailById(l.record.id);
+                    }) : undefined}>
                     <div className="clml-lesson-hdr">
                       <div className="clml-lesson-tags">
                         <span className="clml-ltag clml-ltag--seq">#{li + 1}</span>
@@ -8171,6 +11162,29 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                         <i className="fa-solid fa-hashtag"></i>
                       </button></Tooltip>
                     </div>
+                    {ctx.acad ? (
+                    <div className="clml-field-row" style={{ marginBottom: 6 }}>
+                      <input className="clml-field-input clml-field-input--grow"
+                        value={l.topic} placeholder="Lesson topic…" disabled={!unlockedTopics.has(l.id)}
+                        onChange={e => updateLesson(li, { topic: e.target.value })} />
+                      <Tooltip text="Edit topic"><button className="clml-edit-btn" aria-label="Edit topic"
+                        onClick={() => setUnlockedTopics(s => new Set([...s, l.id]))}>
+                        <i className="fa-solid fa-pen"></i>
+                      </button></Tooltip>
+                      {unlockedTopics.has(l.id) && (
+                        <Tooltip text={l.record ? 'Save topic changes' : 'Insert this topic'}>
+                          <button className="clml-topic-save" aria-label="Save topic"
+                            onClick={async () => {
+                              if (!String(l.topic || '').trim()) { toast('Enter a topic first', 'error'); return; }
+                              await saveTopic(li);
+                              setUnlockedTopics(s => { const n = new Set(s); n.delete(l.id); return n; });
+                            }}>
+                            <i className="fa-solid fa-check"></i> Save Topic
+                          </button>
+                        </Tooltip>
+                      )}
+                    </div>
+                    ) : (
                     <div className="clml-field-row" style={{ marginBottom: 6 }}>
                       <input className="clml-field-input clml-field-input--grow"
                         value={l.topic} placeholder="Lesson topic…"
@@ -8179,7 +11193,8 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                         <i className="fa-solid fa-pen"></i>
                       </button></Tooltip>
                     </div>
-                    <div className="clml-lesson-actions">
+                    )}
+                    {!ctx.acad && <div className="clml-lesson-actions">
                       <Tooltip text="Save this topic (same as the pencil) and its editor content">
                         <button className="clml-action-btn clml-action-save"
                           onClick={() => { if (li === selectedIdx) saveCurrent(); saveTopic(li); saveDetail(li); }}>
@@ -8192,7 +11207,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                           <i className="fa-solid fa-download"></i> Fetch
                         </button>
                       </Tooltip>
-                    </div>
+                    </div>}
                   </div>
                 ))}
 
@@ -9086,7 +12101,9 @@ function RichTextEditor({ value, onChange, placeholder, minHeight = 90, dir = 'l
 
 /* ─── Single AQ row — renders the correct layout per type ─── */
 
-function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr', isUrdu = false }) {
+function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr', isUrdu = false, hideActs = false }) {
+  /* hideActs — used only by the academics QbEditorModal inline form, which has
+     its own Add/Update/Cancel buttons instead of per-row Remove/Save. */
   const NUM_S  = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'linear-gradient(135deg,#0369A1,#0891B2)', color: '#fff', fontSize: 12, fontWeight: 800, flexShrink: 0 };
   const LABEL  = { fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 5 };
   const ACT_S  = { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, paddingTop: 10, borderTop: '1px dashed #E0F2FE' };
@@ -9125,7 +12142,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
     <RichTextEditor value={row[key] || ''} placeholder="" minHeight={minHeight} dir={dir} onChange={html => onChange(key, html)} />
   );
   const rte = (key, ph) => richField(key, ph, 90);
-  const acts = (
+  const acts = hideActs ? null : (
     <div style={ACT_S}>
       <button type="button" className="aq-rb-btn" onClick={onRemove}>
         <i className="fa-solid fa-trash-can"></i> {tr('Remove')}
@@ -10411,7 +13428,7 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
 /* ═══════════════════════════════════════════════════════════════════
    NOTEBOOK PDF — verbatim from HTML nbGeneratePdfHtml
    ═══════════════════════════════════════════════════════════════════ */
-function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = null) {
+function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = null, acad = false) {
   const pri    = isColor ? '#0C4A6E' : '#111';
   const hdrBg  = isColor ? 'linear-gradient(135deg,#1E3A8A,#2563EB)' : '#1a1a1a';
   const bdgBg  = isColor ? '#E0F2FE' : '#eee';
@@ -10464,7 +13481,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   </style></head><body><div class="page">
   <div class="header">
     ${getReportLogo(style, reportHeader)}
-    <h1>${T('Notebook')} — ${T('Unit')} ${u.unitNo}: ${lpEscapeHtml(u.unitName)}</h1>
+    <h1>${T(acad ? 'Question Bank' : 'Notebook')} — ${T('Unit')} ${u.unitNo}: ${lpEscapeHtml(u.unitName)}</h1>
     <div class="header-sub" style="margin-top:4px">${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor ? 'Colorful' : 'Colorless')} ${T('Report')}</div>
     <div class="meta">
       <span><strong>${T('Unit')}:</strong> ${u.unitNo}</span>
@@ -10540,7 +13557,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   </div>
   </div></body></html>`;
 
-  deliverReport(`Unit ${u.unitNo || ''} Notebook`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
+  deliverReport(`Unit ${u.unitNo || ''} ${acad ? 'Question Bank' : 'Notebook'}`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
 }
 
 async function generateLessonPlanReport(name, style, format, ctx) {
@@ -10621,7 +13638,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
         if (q) {
           const typeKey = q.typeId || q.type;
           const questions = { [typeKey]: { mainQ: q.mainQ || q.mainQuestion || '', rows: q.rows || q.items || [] } };
-          nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format);
+          nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format, !!ctx?.acad);
           return;
         }
       } else {
@@ -10631,15 +13648,15 @@ async function generateLessonPlanReport(name, style, format, ctx) {
   }
 
   /* Notebook unit PDF — "Unit <unitNo> — Notebook" (whole unit, all question types) */
-  if (/—\s*Notebook\s*$/.test(name)) {
+  if (/—\s*(?:Notebook|Question Bank)\s*$/.test(name)) {
     /* unitNo ko "Unit … — Notebook" ke beech se precisely nikaalo (em-dash se pehle). */
-    const m = name.match(/^Unit\s+(.+?)\s+—\s*Notebook\s*$/) || name.match(/^Unit\s+(\S+)/);
+    const m = name.match(/^Unit\s+(.+?)\s+—\s*(?:Notebook|Question Bank)\s*$/) || name.match(/^Unit\s+(\S+)/);
     const unitNo = m ? String(m[1]).trim() : '';
     const nbList = ctx?.nbUnits || [];
     /* EXACT unit.id se match (unitNo ambiguous ho sakta — do units same unitNo). */
     const unit = (ctx?.nbUnitId != null && nbList.find(u => String(u.id) === String(ctx.nbUnitId)))
       || nbList.find(u => String(u.unitNo).trim() === unitNo)
-      || nbList.find(u => `Unit ${u.unitNo} — Notebook` === name)
+      || nbList.find(u => `Unit ${u.unitNo} — Notebook` === name || `Unit ${u.unitNo} — Question Bank` === name)
       || (nbList.length === 1 ? nbList[0] : null);
     console.log('[nb-report] name:', name, '→ unitNo:', unitNo, '| nbUnits:', nbList.map(u => u.unitNo), '| matched:', !!unit);
     if (unit) {
@@ -10651,7 +13668,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
         if (!questions[typeKey]) questions[typeKey] = { mainQ: q.mainQ || q.mainQuestion || '', rows: [] };
         questions[typeKey].rows.push(...(q.rows || q.items || []));
       });
-      nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format);
+      nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format, !!ctx?.acad);
       return;
     }
   }
