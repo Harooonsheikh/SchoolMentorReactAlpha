@@ -839,6 +839,66 @@ const RC_DEFAULT_TEMPLATE = RC_TEMPLATES[0].id;
 const rcSafeTemplate = (id) =>
   RC_TEMPLATES.some(t => t.id === id) ? id : RC_DEFAULT_TEMPLATE;
 
+/* Result card watermark — branch ka logo card ke beech me halka sa (school.logo).
+   Logo na ho to Branch ID diagonal repeat. Visibility Options me "Watermark" toggle se
+   on/off. Backend me iska field nahi, is liye template ki tarah localStorage me rehta
+   hai (is browser ke liye). Default ON. Card DOM ka hissa hai, is liye print/PDF me bhi aata hai. */
+const RC_WATERMARK_PREF_KEY = 'sm.exam.resultCardWatermark';
+function RcWatermark({ logo, half, pageBreak }) {
+  let on = true;
+  try {
+    const raw = window.localStorage.getItem(RC_WATERMARK_PREF_KEY);
+    on = raw == null ? true : JSON.parse(raw) !== false;
+  } catch { /* storage band ho to default ON */ }
+  if (!on) return null;
+  /* Do-page card (Portfolio) ka watermark har page ka apna hota hai: `half` = 'top' / 'bottom'
+     screen par card ka aadha hissa gherta hai; PDF/print me .rc-seg (har page) relative hai aur
+     RC_PRINT_CSS `.rc-wm{inset:0}` lagati hai, to har page ke beech me ek logo. `pageBreak` wala
+     (page 2 ka) layer print script ke page-break marker ka kaam bhi deta hai, taake wo page 2 me jaye. */
+  const base = {
+    position: 'absolute',
+    inset: half === 'top' ? '0 0 50% 0' : half === 'bottom' ? '50% 0 0 0' : 0,
+    zIndex: 2, mixBlendMode: 'multiply', pointerEvents: 'none', userSelect: 'none',
+  };
+  const marks = { className: 'rc-wm', 'aria-hidden': 'true', ...(pageBreak ? { 'data-rc-page-break': '1' } : {}) };
+  if (logo) {
+    /* Card ke upar overlay (z-index 2) + multiply, 12% opacity — table/Grand Total jaise
+       opaque background wale hisse peeche rakhne par logo ko aadha dhak lete the, aur
+       multiply se neeche ka text poora padha jata hai. Logo bara (68% width), contain se
+       (kabhi cut/stretch nahi). Radial mask kinare narm kar deta hai — jin logos ka apna rang
+       wala square background ho (transparent nahi) unka sakht dabba nahi dikhta. */
+    const feather = 'radial-gradient(closest-side, #000 55%, transparent 100%)';
+    return (
+      <div
+        {...marks}
+        style={{ ...base, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      >
+        <img
+          src={logo}
+          alt=""
+          style={{
+            width: '68%', maxHeight: '72%', objectFit: 'contain', opacity: 0.12,
+            WebkitMaskImage: feather, maskImage: feather,
+          }}
+        />
+      </div>
+    );
+  }
+  const id = String(sessionStorage.getItem('branchID') || '').replace(/[^\w-]/g, '');
+  if (!id) return null;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='220' height='140'><text x='110' y='70' text-anchor='middle' dominant-baseline='middle' transform='rotate(-30 110 70)' font-family='Arial,sans-serif' font-size='22' font-weight='700' fill='#0F172A'>${id}</text></svg>`;
+  return (
+    <div
+      {...marks}
+      style={{
+        ...base,
+        opacity: 0.1, backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`,
+        backgroundRepeat: 'repeat',
+      }}
+    />
+  );
+}
+
 /* Date-sheet date/time helpers.
    API `date` is a DateTime; `timeFrom`/`timeTo` are strings — but GET kabhi ISO
    datetime, TimeSpan ("08:00:00"), ya "8:00 AM" bhejta hai, aur UTC `Z` par
@@ -2131,6 +2191,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
      result card usi se banta hai. */
   const [rcTemplateSaved, setRcTemplate] = useUiPref(RC_TEMPLATE_PREF_KEY, RC_DEFAULT_TEMPLATE);
   const rcTemplate = rcSafeTemplate(rcTemplateSaved);
+  const [rcWatermark, setRcWatermark] = useUiPref(RC_WATERMARK_PREF_KEY, true);
   const [rcoGeneral, setRcoGeneral] = useState(RCO_GENERAL_OPTIONS);
   const [rcoSig, setRcoSig] = useState(RCO_SIG_OPTIONS);
   const [rcoSettings, setRcoSettings] = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
@@ -5695,6 +5756,21 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                 </Tooltip>
                               </div>
                             ))}
+                            <div className="rco-row">
+                              <span className="rco-row-lbl">
+                                <i className="fa-solid fa-stamp" style={{ color: '#1E40AF', width: 14 }}></i>
+                                Watermark
+                              </span>
+                              <Tooltip text={rcWatermark ? 'Hide "Watermark" on result card' : 'Show "Watermark" on result card'}>
+                                <button
+                                  className={`rco-toggle${rcWatermark ? ' on' : ''}`}
+                                  onClick={() => setRcWatermark(v => !v)}
+                                  aria-pressed={!!rcWatermark}
+                                >
+                                  <span className="rco-dot"></span>
+                                </button>
+                              </Tooltip>
+                            </div>
                           </div>
 
                           <div className="rco-group-label" style={{ marginTop: 18 }}>
@@ -10512,7 +10588,8 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
 
   return (
-    <div className="rc-card rc-card-classic" style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
+    <div className="rc-card rc-card-classic" style={{ position: 'relative', isolation: 'isolate', fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
+      <RcWatermark logo={school?.logo} />
       {/* Header */}
      <div style={{ background: hdrBg, padding: '8px 14px',display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {opt['Show School Logo'] && (
@@ -10866,7 +10943,8 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   if (opt['Show Attendance']) summaryItems.push({ label: 'Attendance', val: st.attendance || '—', col: isColor ? '#7C3AED' : '#374151', bg: isColor ? '#FAF5FF' : '#F9FAFB', bdr: isColor ? '#DDD8FE' : '#D1D5DB' });
 
   return (
-    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 24px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
+    <div style={{ position: 'relative', isolation: 'isolate', fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 24px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
+      <RcWatermark logo={school?.logo} />
       {/* Header */}
       <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {opt['Show School Logo'] && (
@@ -11179,7 +11257,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const thC = { ...thBase, textAlign: 'center' };
 
   return (
-    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto' }}>
+    <div style={{ position: 'relative', isolation: 'isolate', fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto' }}>
+      <RcWatermark logo={school?.logo} half="top" />
       {/* ── PAGE 1 ── */}
       {/* Cover header */}
       <div style={{ background: C.p1bg, padding: 0, position: 'relative', overflow: 'hidden', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
@@ -11344,6 +11423,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
       </div>
 
       {/* ── PAGE 2 ── */}
+      <RcWatermark logo={school?.logo} half="bottom" pageBreak />
       <div data-rc-page-break="1" style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.hdrText, letterSpacing: '-.01em' }}>Performance Analytics</div>
@@ -14789,6 +14869,8 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
   overflow-wrap:anywhere;
   font-size:15px !important;
 }
+.rc-seg{position:relative;isolation:isolate}
+.rc-wm{inset:0!important}
 .rc-seg + .rc-seg{break-before:page;page-break-before:always}
 .wrap > * > *:not(:has(table)),.bulk-card > * > *:not(:has(table)),.rc-seg > *:not(:has(table)){break-inside:avoid;page-break-inside:avoid}
 @media print{
