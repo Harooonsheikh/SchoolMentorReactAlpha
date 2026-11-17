@@ -65,6 +65,7 @@ export default function SchoolPicker({ value, onChange }) {
   const filtered = useMemo(() => {
     if (!all) return [];
     const s = q.trim().toLowerCase();
+    /* Search by school name only. */
     const list = s ? all.filter((sc) => sc.name.toLowerCase().includes(s)) : all;
     return list.slice(0, 50);
   }, [all, q]);
@@ -100,7 +101,7 @@ export default function SchoolPicker({ value, onChange }) {
               onClick={() => { onChange(s.id); setOpen(false); setQ(''); }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--t1)' }}>{s.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.branch ? `${s.branch}` : ''}</div>
+                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.phone || 'No phone'}</div>
               </div>
             </div>
           ))}

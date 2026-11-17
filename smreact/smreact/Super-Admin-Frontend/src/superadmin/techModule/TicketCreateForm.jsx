@@ -53,11 +53,12 @@ export default function TicketCreateForm({
   const modules = modulesFor(f.platform, f.subPlatform);
 
   const onFiles = (e) => {
-    const picked = Array.from(e.target.files || []);
-    const bad = picked.find((file) => !(ALLOWED_IMG.includes(file.type) && /.(png|jpe?g)$/i.test(file.name)));
+    /* Only PNG / JPG are kept; anything else is dropped without a message. */
+    const picked = Array.from(e.target.files || []).filter((file) => ALLOWED_IMG.includes(file.type) && /.(png|jpe?g)$/i.test(file.name));
+    const rejected = Array.from(e.target.files || []).filter((file) => !picked.includes(file));
+    if (rejected.length) toast?.(`${rejected.map((x) => x.name).join(', ')}: this file type is not allowed. Only PNG or JPG files can be attached.`, 'warn');
     const big = picked.find((file) => file.size > MAX_BYTES);
     const room = MAX_FILES - f.attachments.length;
-    if (bad) { setError(`'${bad.name}' is not allowed. Choose PNG or JPG files only.`); e.target.value = ''; return; }
     if (big) { setError(`'${big.name}' is larger than 15 MB.`); e.target.value = ''; return; }
     if (picked.length > room) { setError(`You can attach up to ${MAX_FILES} files.`); e.target.value = ''; return; }
     setError('');

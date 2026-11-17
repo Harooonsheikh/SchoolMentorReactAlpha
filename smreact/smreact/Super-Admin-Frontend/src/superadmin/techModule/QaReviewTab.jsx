@@ -109,10 +109,11 @@ function ReviewModal({ ticket, decision, onClose, onSubmit, toast }) {
   const approve = decision === 'approved';
 
   const onFiles = (e) => {
-    const picked = Array.from(e.target.files || []);
-    const bad = picked.find((file) => !(['image/png', 'image/jpeg'].includes(file.type) && /.(png|jpe?g)$/i.test(file.name)));
+    /* Only PNG / JPG are kept; anything else is dropped without a message. */
+    const picked = Array.from(e.target.files || []).filter((file) => ['image/png', 'image/jpeg'].includes(file.type) && /.(png|jpe?g)$/i.test(file.name));
+    const rejected = Array.from(e.target.files || []).filter((file) => !picked.includes(file));
+    if (rejected.length) toast?.(`${rejected.map((x) => x.name).join(', ')}: this file type is not allowed. Only PNG or JPG files can be attached.`, 'warn');
     const big = picked.find((file) => file.size > 15 * 1024 * 1024);
-    if (bad) { setError(`'${bad.name}' is not allowed. Choose PNG or JPG files only.`); e.target.value = ''; return; }
     if (big) { setError(`'${big.name}' is larger than 15 MB.`); e.target.value = ''; return; }
     setError('');
     const files = picked;

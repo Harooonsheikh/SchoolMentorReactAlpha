@@ -8,11 +8,16 @@ import React, { useMemo } from 'react';
    ═══════════════════════════════════════════════════════════════════ */
 export default function AnalyticsCards({ tickets, server }) {
   const stats = useMemo(() => {
-    /* The server's stats are the source of truth; the list is only a fallback. */
+    /* Total Tickets card = only tickets still in "Bugs & New Development"
+       (the same set the Bugs and New Development tabs show), split by type. */
+    const intake = tickets.filter((t) => t.stage === 'bugs_new_dev');
+    const intakeBugs = intake.filter((t) => t.type === 'bug').length;
+    const intakeImprovements = intake.filter((t) => t.type === 'improvement').length;
+    /* The server's stats are the source of truth for the other cards; the list is only a fallback. */
     if (server) {
       const st = server.byStage || {};
       return {
-        total: server.total, bugs: server.bugs, improvements: server.improvements,
+        total: intake.length, bugs: intakeBugs, improvements: intakeImprovements,
         inProgress: st.in_progress || 0, inQa: st.qa_review || 0, readyForRelease: st.ready_for_release || 0,
         released: st.released || 0,
         avgDevTime: Number(server.avgReleaseDays || 0).toFixed(1),
@@ -20,9 +25,9 @@ export default function AnalyticsCards({ tickets, server }) {
         totalReviews: server.qaSubmissions || 0,
       };
     }
-    const total = tickets.length;
-    const bugs = tickets.filter((t) => t.type === 'bug').length;
-    const improvements = tickets.filter((t) => t.type === 'improvement').length;
+    const total = intake.length;
+    const bugs = intakeBugs;
+    const improvements = intakeImprovements;
     const inProgress = tickets.filter((t) => t.stage === 'in_progress').length;
     const inQa = tickets.filter((t) => t.stage === 'qa_review').length;
     const readyForRelease = tickets.filter((t) => t.stage === 'ready_for_release').length;
@@ -34,7 +39,7 @@ export default function AnalyticsCards({ tickets, server }) {
     const rejections = allReviews.filter((r) => r.decision === 'rejected').length;
     const rejectionRate = allReviews.length ? Math.round((rejections / allReviews.length) * 100) : 0;
     return { total, bugs, improvements, inProgress, inQa, readyForRelease, released: released.length, avgDevTime, rejectionRate, totalReviews: allReviews.length };
-  }, [tickets]);
+  }, [tickets, server]);
 
   const cards = [
     { icon: 'fa-layer-group', bg: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', val: stats.total, lbl: 'Total Tickets', sub: `${stats.bugs} bugs · ${stats.improvements} new dev` },
