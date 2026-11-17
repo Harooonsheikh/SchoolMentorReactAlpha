@@ -4591,7 +4591,11 @@ function FeeChallansList({ toast }) {
                                  par previous dues running-ledger (authority) se lo. */
                               const totRecv = rows.reduce((a, r) => a + (Number(r.receivedAmount) || 0), 0);
                               if (totRecv === 0) {
-                                const runningPrev = byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0);
+                               /* Advance "Previous Pending" row par consume hua ho (kisi head par nahi) to head-wise jor kam
+   aata hai — challan print (applyPrevByHead) jaisa kul (running) baqaya lo. */
+const runningNetAll = (+prevOut.dues || 0) - (+prevOut.advance || 0);
+const runningPrev = (byHeadSum > 0 && runningNetAll <= byHeadSum + byHeadNeg) ? byHeadSum : (+prevOut.dues || 0);
+
                                 if (runningPrev > 0) fig.dues = runningPrev;
                               }
                             }
