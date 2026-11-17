@@ -108,7 +108,7 @@ function ReviewModal({ ticket, decision, onClose, onSubmit, toast }) {
 
   const onFiles = (e) => {
     const files = Array.from(e.target.files || []);
-    const staged = files.map((file) => ({ id: `qa-att-${Date.now()}-${file.name}`, name: file.name, type: file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'document', size: `${(file.size / 1024).toFixed(0)} KB` }));
+    const staged = files.map((file) => ({ id: `qa-att-${Date.now()}-${file.name}`, name: file.name, file, type: file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'document', size: `${(file.size / 1024).toFixed(0)} KB` }));
     setAttachments((p) => [...p, ...staged]);
   };
   const removeAttachment = (id) => setAttachments((p) => p.filter((a) => a.id !== id));

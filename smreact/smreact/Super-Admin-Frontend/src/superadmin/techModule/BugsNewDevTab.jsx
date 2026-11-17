@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { DEVELOPERS, TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicketsData';
+import { TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicketsData';
+import useTechDevelopers from './useTechDevelopers';
 import TicketCreateForm from './TicketCreateForm';
 import LockedCard from '../adminPermissions/LockedCard';
 
@@ -16,6 +17,7 @@ import LockedCard from '../adminPermissions/LockedCard';
 export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssign, onViewDetails, toast, canCreate = true, canAssign = true }) {
   const [showCreate, setShowCreate] = useState(false);
   const [assigningId, setAssigningId] = useState(null);
+  const devs = useTechDevelopers();
   const kindLabel = kind === 'bug' ? 'bug' : 'new development request';
 
   return (
@@ -58,7 +60,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
                       <>
                         <select className="um-input" style={{ height: 32, width: 200 }} defaultValue="" onChange={(e) => { if (e.target.value) { onAssign(t.id, e.target.value); setAssigningId(null); } }}>
                           <option value="" disabled>Select developer…</option>
-                          {DEVELOPERS.map((d) => <option key={d.id} value={d.id}>{d.name} — {d.role}</option>)}
+                          {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                         <button className="btn-sm" onClick={() => setAssigningId(null)}>Cancel</button>
                       </>

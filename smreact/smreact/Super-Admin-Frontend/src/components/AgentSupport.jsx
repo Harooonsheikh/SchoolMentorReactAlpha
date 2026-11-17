@@ -8,6 +8,7 @@ import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
 import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION, MessageStatus, looksLikePhoneNumber } from '../support/config';
 import * as supportApi from '../support/api';
+import * as techTicketsApi from '../superadmin/api/services/techTickets';
 /* Notes aur Bug/Improvement Support ki apni API par nahi jate — wahi
    Super-Admin routes hain jo Schools Progress screen use karti hai, taake ek hi
    school ka record dono jagah se ek jaisa dikhe:
@@ -488,6 +489,27 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
         date: todayISO(),
         isSolved: false,
       });
+      /* Same report Tech Module me bhi ticket banta hai (Bugs / New Development),
+         taake dev team usay wahan se track kare. Unassigned rehta hai — triage
+         Tech Team Lead karta hai. */
+      try {
+        await techTicketsApi.createTicketFromReport({
+          type: kind === 'bug' ? 'bug' : 'improvement',
+          platform: 'erp',
+          subPlatform: null,
+          module: form.module.trim(),
+          source: 'customer_support',
+          school: { branchId: openSchoolId, name: schoolName },
+          title,
+          description: [form.desc.trim(), `Priority: ${form.priority}`].filter(Boolean).join('\n'),
+          expectedBehaviour: '',
+          actualBehaviour: '',
+          assignedTo: null,
+          attachments: [],
+        });
+      } catch (ticketErr) {
+        showToast(`Saved here, but Tech Module sync failed: ${ticketErr?.message || 'error'}`, 'warn');
+      }
       /* Chat me kuch nahi jorna — bug/improvement guftagu ka hissa nahi, wo
          Enquiries record hai. Pehle yahan ek rangeen card transcript me lag
          jata tha jo school ki chat me be-mauqa lagta tha. */

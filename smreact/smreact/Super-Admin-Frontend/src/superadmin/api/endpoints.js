@@ -330,30 +330,16 @@ export const EP = {
     remove: (id) => `${ROOT}/trainings/${id}`,
   },
 
-  /* ── Tech Module (Bugs & New Development → In Progress → QA Review →
-     Ready for Release, sourced from Support). Same paths as the standalone
-     copy (ROOT '/api/superadmin'); used only when the API is configured —
-     demo mode serves techTicketsData.js. ── */
+  /* ── Tech Module — API README (TECH_TICKETS_API_README.md). One GET route
+     (?action=…) and one multipart POST route per resource; the action is
+     chosen with the `action` parameter. ── */
   techTickets: {
-    list: () => `${SA_ROOT}/api/TechTickets`,
-    get: (id) => `${SA_ROOT}/api/TechTickets/${id}`,
-    create: () => `${SA_ROOT}/api/TechTickets`,
-    updateStatus: (id) => `${SA_ROOT}/api/TechTickets/${id}/status`,
-    assign: (id) => `${SA_ROOT}/api/TechTickets/${id}/assign`,
-    updatePriority: (id) => `${SA_ROOT}/api/TechTickets/${id}/priority`,
-    updateStage: (id) => `${SA_ROOT}/api/TechTickets/${id}/stage`,
-    devReport: (id) => `${SA_ROOT}/api/TechTickets/${id}/dev-report`,
-    sendForQa: (id) => `${SA_ROOT}/api/TechTickets/${id}/send-for-qa`,
-    qaReview: (id) => `${SA_ROOT}/api/TechTickets/${id}/qa-review`,
-    release: (id) => `${SA_ROOT}/api/TechTickets/${id}/release`,
-    stats: () => `${SA_ROOT}/api/TechTickets/stats`,
-    workload: () => `${SA_ROOT}/api/TechTickets/workload`,
+    base: () => `${SA_ROOT}/api/superadmin/tech-tickets`,
   },
 
   /* ── Tech Module — internal notifications (Release → Support handoff). ── */
   techNotifications: {
-    list: () => `${SA_ROOT}/api/TechNotifications`,
-    create: () => `${SA_ROOT}/api/TechNotifications`,
+    base: () => `${SA_ROOT}/api/superadmin/tech-notifications`,
   },
 
   /* ── Mentor AI ── */

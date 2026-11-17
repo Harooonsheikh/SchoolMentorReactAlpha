@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as techTicketsApi from './api/services/techTickets';
-import * as techNotificationsApi from './api/services/techNotifications';
 import { TM_CSS } from './techModule/techModuleStyles';
 import BugsNewDevTab from './techModule/BugsNewDevTab';
 import InProgressTab from './techModule/InProgressTab';
@@ -81,10 +80,12 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   }, [tickets]);
 
   const createTicket = (payload) => {
-    techTicketsApi.createTicketFromReport(payload).then(() => { load(); toast?.('Ticket created', 'success'); });
+    techTicketsApi.createTicketFromReport(payload).then(() => { load(); toast?.('Ticket created', 'success'); })
+      .catch((e) => toast?.(e?.message || 'Could not create the ticket', 'warn'));
   };
   const assignTicket = (id, developerId) => {
-    techTicketsApi.assignTicket(id, developerId).then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); });
+    techTicketsApi.assignTicket(id, developerId).then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); })
+      .catch((e) => toast?.(e?.message || 'Could not assign the ticket', 'warn'));
   };
   /* Submitting the Developer Testing Report and sending the ticket for
      QA Testing are now one action (In Progress tab's single "Send for
@@ -97,16 +98,13 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
       .catch((e) => { load(); toast?.(e?.message || 'Could not send for QA Testing', 'warn'); });
   };
   const submitReview = (id, decision, comments, attachments) => {
-    techTicketsApi.submitQaReview(id, { decision, comments, attachments, reviewedBy: 'QA Team' }).then(load);
+    techTicketsApi.submitQaReview(id, { decision, comments, attachments, reviewedBy: 'QA Team' }).then(load)
+      .catch((e) => { load(); toast?.(e?.message || 'Could not save the QA review', 'warn'); });
   };
+  /* The server creates the Support notification on release (README §9) —
+     the client only releases and reloads. */
   const release = (id, payload) => {
-    techTicketsApi.releaseTicket(id, { ...payload, releasedBy: 'Super Admin' }).then((t) => {
-      const message = `Your reported issue has been resolved. Issue: ${t.title}. Resolution: ${t.releaseInfo?.releaseNotes || t.releaseInfo?.testingComments || 'Fixed and verified by QA.'} Development time: ${t.releaseInfo?.devTimeDays} day${t.releaseInfo?.devTimeDays === 1 ? '' : 's'}. Please check and confirm.`;
-      techNotificationsApi.pushNotification({
-        audience: 'support', type: 'ticket_released', ticketId: t.id, ticketNumber: t.ticketNumber,
-        title: 'New Update Released', message, meta: { school: t.school.name, supportConversationId: t.supportConversationId },
-      }).then(() => load());
-    });
+    techTicketsApi.releaseTicket(id, payload).then(() => load()).catch((e) => toast?.(e?.message || 'Could not release', 'warn'));
   };
 
   const detailTicket = detailId ? tickets.find((t) => t.id === detailId || t.ticketNumber === detailId) : null;

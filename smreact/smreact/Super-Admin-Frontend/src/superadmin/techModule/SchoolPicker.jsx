@@ -1,35 +1,58 @@
-import React, { useMemo, useState } from 'react';
-import { SCHOOLS as TEST_SCHOOLS } from '../techTicketsData';
-import { INITIAL_ERP } from '../statusData';
+import React, { useEffect, useState } from 'react';
+import * as techTicketsApi from '../api/services/techTickets';
 
 /* ═══════════════════════════════════════════════════════════════════
-   SchoolPicker — search + list combining the demo/test schools
-   (techTicketsData.SCHOOLS, isTestSchool:true) with real member
-   schools (statusData.INITIAL_ERP, normalized here as isTestSchool:false).
-   Used by TicketCreateForm to link a ticket to a school + surface its
-   login info when available.
+   SchoolPicker — searches the SERVER's school list (README §7,
+   ?action=schools&search=). The chosen school is remembered so the form can
+   send its real branch id (schoolBranchId) with the ticket.
    ═══════════════════════════════════════════════════════════════════ */
 
-function normalizedSchools() {
-  const real = INITIAL_ERP.map((s) => ({
-    id: `erp-${s.id}`, name: s.name, branch: '', contact: s.principal, phone: s.contact,
-    loginId: null, password: null, isTestSchool: false,
-  }));
-  const test = TEST_SCHOOLS.map((s) => ({ ...s, isTestSchool: true }));
-  return [...real, ...test];
+const picked = new Map();   // picker id → school object
+
+/** The school object chosen earlier in the picker (or null). */
+export function findSchool(id) {
+  return picked.get(id) || null;
 }
+
+const toPick = (s) => ({
+  id: `srv-${s.branchId}`,
+  branchId: s.branchId,
+  name: String(s.branchName || '').trim(),
+  branch: s.branchCode || '',
+  contact: s.ownerName || '',
+  phone: s.phone || '',
+  loginId: s.loginId || null,
+  password: null,
+  isTestSchool: false,
+});
 
 export default function SchoolPicker({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const all = useMemo(() => normalizedSchools(), []);
-  const filtered = useMemo(() => {
-    if (!q.trim()) return all.slice(0, 30);
-    const s = q.trim().toLowerCase();
-    return all.filter((sc) => sc.name.toLowerCase().includes(s)).slice(0, 30);
-  }, [all, q]);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const selected = value ? all.find((s) => s.id === value) : null;
+  /* Search the server while the list is open (debounced). */
+  useEffect(() => {
+    if (!open) return undefined;
+    let alive = true;
+    setLoading(true);
+    const t = setTimeout(() => {
+      techTicketsApi.getSchools(q.trim())
+        .then((rows) => {
+          if (!alive) return;
+          const list = rows.map(toPick);
+          list.forEach((s) => picked.set(s.id, s));
+          setResults(list);
+        })
+        .catch(() => { if (alive) setResults([]); })
+        .finally(() => { if (alive) setLoading(false); });
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [open, q]);
+
+  const selected = value ? findSchool(value) : null;
+  const filtered = results;
 
   return (
     <div style={{ position: 'relative' }}>
@@ -67,4 +90,3 @@ export default function SchoolPicker({ value, onChange }) {
   );
 }
 
-export { normalizedSchools };

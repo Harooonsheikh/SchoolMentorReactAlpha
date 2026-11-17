@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { PLATFORMS, BUG_TYPES, SOURCES, modulesFor } from '../techModuleCatalog';
-import { DEVELOPERS } from '../techTicketsData';
-import { normalizedSchools } from './SchoolPicker';
+import useTechDevelopers from './useTechDevelopers';
+import { findSchool } from './SchoolPicker';
 import SchoolPicker from './SchoolPicker';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -42,13 +42,14 @@ export default function TicketCreateForm({
 }) {
   const [f, setF] = useState(() => emptyForm(defaultType, defaultSource, initialSchoolId));
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const devs = useTechDevelopers();
 
   const platform = PLATFORMS.find((p) => p.id === f.platform);
   const modules = modulesFor(f.platform, f.subPlatform);
 
   const onFiles = (e) => {
     const files = Array.from(e.target.files || []);
-    const staged = files.map((file) => ({ id: `att-${Date.now()}-${file.name}`, name: file.name, type: file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'document', size: `${(file.size / 1024).toFixed(0)} KB` }));
+    const staged = files.map((file) => ({ id: `att-${Date.now()}-${file.name}`, name: file.name, file, type: file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'document', size: `${(file.size / 1024).toFixed(0)} KB` }));
     setF((p) => ({ ...p, attachments: [...p.attachments, ...staged] }));
   };
   const removeAttachment = (id) => setF((p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== id) }));
@@ -59,7 +60,7 @@ export default function TicketCreateForm({
     if (platform.subPlatforms.length && !f.subPlatform) { toast?.('Please select a sub-platform', 'warn'); return; }
     if (!f.module) { toast?.('Please select a module', 'warn'); return; }
     if (!f.schoolId) { toast?.('Please select a school', 'warn'); return; }
-    const school = normalizedSchools().find((s) => s.id === f.schoolId);
+    const school = findSchool(f.schoolId);
     onCreate({
       type: f.type, platform: f.platform, subPlatform: f.subPlatform || null, module: f.module, source: f.source,
       title: f.title.trim(), description: f.description.trim(),
@@ -174,7 +175,7 @@ export default function TicketCreateForm({
                 <label className="um-label">Assign To Tech Team <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(optional — leave blank to triage later)</span></label>
                 <select className="um-input" value={f.assignedTo} onChange={(e) => set('assignedTo', e.target.value)}>
                   <option value="">Unassigned</option>
-                  {DEVELOPERS.map((d) => <option key={d.id} value={d.id}>{d.name} — {d.role}</option>)}
+                  {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
               {f.assignedTo && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-circle-info" /> Assigning now will move this ticket straight to <b>In Progress</b>.</div>}
