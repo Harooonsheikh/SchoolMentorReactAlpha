@@ -39,13 +39,41 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
     await reloadUsers?.();
     return true;
   };
-  const saveUser = (id, patch) => {
-    setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...patch } : u));
+  /* Save Changes → PUT /api/Auth/update-user. "Active" ka tick hataya ho to
+     saath me deactivate-user bhi. Kamyabi par list API se taza. */
+  const saveUser = async (id, patch) => {
+    const user = users.find((u) => u.id === id) || {};
+    try {
+      await authApi.updateUser({
+        id,
+        firstName: patch.firstName,
+        lastName:  patch.lastName,
+        userName:  patch.userName,
+        password:  patch.password,
+        isAdmin:   user.isAdmin,
+      });
+      if (user.active !== false && patch.active === false) await authApi.deactivateUser(id);
+      else if (user.active === false && patch.active === true) await authApi.activateUser(id);
+    } catch (err) {
+      toast?.(err?.message || 'Could not update user', 'error');
+      return false;
+    }
     setModal(null); toast?.('User updated', 'success');
+    await reloadUsers?.();
+    return true;
   };
-  const deleteUser = (id) => {
+  /* Delete → PUT /api/Auth/deactivate-user/{id} (user band hota hai, mitaya nahi jata). */
+  const deleteUser = async (id) => {
+    try {
+      await authApi.deactivateUser(id);
+    } catch (err) {
+      toast?.(err?.message || 'Could not deactivate user', 'error');
+      return false;
+    }
     setUsers((prev) => prev.filter((u) => u.id !== id));
-    setModal(null); toast?.('User deleted', 'info');
+    setModal(null); toast?.('User deactivated', 'info');
+    await reloadUsers?.();
+    return true;
   };
 
   return (
@@ -447,8 +475,10 @@ function EditUserModal({ user, onClose, onSave, toast }) {
     phone: user.phone || user.userName || '', password: '', active: user.active,
   });
   const [showPw, setShowPw] = useState(false);
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     if (!f.firstName.trim()) { toast?.('First name is required', 'warn'); return; }
     if (!f.lastName.trim()) { toast?.('Last name is required', 'warn'); return; }
     if (!f.phone.trim()) { toast?.('Phone number is required', 'warn'); return; }
@@ -456,7 +486,8 @@ function EditUserModal({ user, onClose, onSave, toast }) {
     const lastName = f.lastName.trim();
     const patch = { firstName, lastName, fullName: `${firstName} ${lastName}`, userName: f.phone.trim(), phone: f.phone.trim(), active: f.active };
     if (f.password.trim()) patch.password = f.password.trim();
-    onSave(user.id, patch);
+    setSaving(true);
+    try { await onSave(user.id, patch); } finally { setSaving(false); }
   };
   return (
     <div className="um-edit-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -479,7 +510,7 @@ function EditUserModal({ user, onClose, onSave, toast }) {
         </div>
         <div className="sop-modal-foot">
           <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
+          <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Changes'}</button>
         </div>
       </div>
     </div>
@@ -487,13 +518,19 @@ function EditUserModal({ user, onClose, onSave, toast }) {
 }
 
 function DeleteUserModal({ user, onClose, onConfirm }) {
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await onConfirm(); } finally { setBusy(false); }
+  };
   return (
     <div className="um-del-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="um-del-modal">
         <div style={{ width: 58, height: 58, borderRadius: '50%', background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626', fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}><i className="fa-solid fa-trash-can" /></div>
         <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--t1)', marginBottom: 8 }}>Delete User?</div>
-        <div style={{ fontSize: 13, color: 'var(--tm)', marginBottom: 20, lineHeight: 1.6 }}>"{user.fullName}" will be permanently deleted.</div>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete User</button></div>
+        <div style={{ fontSize: 13, color: 'var(--tm)', marginBottom: 20, lineHeight: 1.6 }}>"{user.fullName}" will be deactivated and will no longer be able to log in.</div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-danger" onClick={confirm} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} /> {busy ? 'Deleting…' : 'Delete User'}</button></div>
       </div>
     </div>
   );

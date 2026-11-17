@@ -576,7 +576,7 @@ function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave,
           <div className="sop-field"><label>Manual Code / Number</label><input className="sop-input" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="e.g. ACD-001" /></div>
         </div>
         <div className="sop-field"><label>Manual Title</label><input className="sop-input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Teacher Recruitment Manual" /></div>
-        <div className="sop-field"><label>Page Reference</label><input className="sop-input" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} value={f.pageRef} onChange={(e) => set('pageRef', e.target.value.replace(/\D/g, ''))} placeholder="e.g. 18" /></div>
+        <div className="sop-field"><label>Supporting Docs</label><input className="sop-input" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} value={f.pageRef} onChange={(e) => set('pageRef', e.target.value.replace(/\D/g, ''))} placeholder="e.g. 18" /></div>
         <div className="sop-field"><label>Short Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Brief description of this manual…" rows={2} /></div>
         <div className="sop-section-divider"><i className="fa-solid fa-file-pdf" /> Manual PDF</div>
         <FileRow icon="fa-file-pdf" iconBg="linear-gradient(135deg,#b91c1c,#dc2626)" label="Click to upload PDF manual (20–30+ pages)" sub="PDF files accepted" fileName={f.pdfName} accept=".pdf" onPick={(n, file) => { set('pdfName', n); setPdfFile(file || null); }} />

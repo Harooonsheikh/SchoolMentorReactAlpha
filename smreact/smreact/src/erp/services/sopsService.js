@@ -322,6 +322,10 @@ function mapForm(f) {
     code:     String(f?.formCode ?? '').trim(),
     pageRef:  String(f?.reference ?? '').trim(),
     desc:     String(f?.shortDescription ?? '').trim(),
+    /* Folder API ke path wala hi rakho — form kabhi Manuals/Forms me hoti hai,
+       kabhi Manuals/PDFs me (".../Manuals/PDFs/b8c36e5c-….pdf" sirf
+       /SchoolMentorSuperAdminAPI/Manuals/PDFs/ par 200 deti hai, Forms par 404).
+       sopFileUrl host chhod kar mojooda API base + SA root lagata hai. */
     fileUrl:  sopFileUrl(path),
     fileName,
   };
@@ -374,7 +378,12 @@ export async function downloadFormFile(form) {
   const a = document.createElement('a');
   if (blob) {
     a.href = URL.createObjectURL(blob);
-    a.download = form.fileName || fileNameFrom(fileUrl) || 'form';
+    /* Server par naam GUID hota hai ("bb936a42-….pdf") — download form ke
+       naam se karo, extension asal file ka. */
+    const original = form.fileName || fileNameFrom(fileUrl) || 'form';
+    const ext = (original.match(/\.[a-z0-9]{2,6}$/i) || [''])[0];
+    const nice = String(form.title || '').replace(/[\\/:*?"<>|]+/g, ' ').trim();
+    a.download = nice ? `${nice}${ext}` : original;
   } else {
     /* fetch na ho saka — browser ko seedha file par bhej do. Server .docx
        ko Word ke content-type se deta hai, is liye browser usay download hi

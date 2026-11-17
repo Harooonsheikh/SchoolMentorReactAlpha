@@ -51,6 +51,12 @@ export const EP = {
          body: { firstName, lastName, user_Name, password, isAdmin }
          (schema: MdlAHM_SuperAdmin_Signup) */
     signup: () => `${SA_ROOT}/api/Auth/signup`,
+    /* PUT — user edit: { id, firstName, lastName, user_Name, password, isAdmin }
+       (SuperAdminUserUpdateRequest). password na bhejo to purana rehta hai. */
+    updateUser: () => `${SA_ROOT}/api/Auth/update-user`,
+    /* PUT — user band / chalu (body nahi). */
+    deactivateUser: (id) => `${SA_ROOT}/api/Auth/deactivate-user/${encodeURIComponent(id)}`,
+    activateUser:   (id) => `${SA_ROOT}/api/Auth/activate-user/${encodeURIComponent(id)}`,
   },
 
   /* ── Dashboard ── */

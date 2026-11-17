@@ -4,7 +4,7 @@ import Tooltip from '../../components/Tooltip';
 import ModuleTutorialModal from '../../components/TutorialModal';
 import { usePermissions } from '../../context/PermissionsContext';
 import RouteFallback from '../../shared/RouteFallback';
-import { getAllSops } from '../../services/sopsService';
+import { getAllSops, downloadFormFile } from '../../services/sopsService';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — Centralised SOP & School Manual Library
@@ -222,7 +222,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
           <div className="sops-table-head">
             <div className="th c" style={{ width: 50 }}>S.No</div>
             <div className="th">Title</div>
-            <div className="th c" style={{ width: 70 }}>Pages</div>
+            <div className="th c" style={{ width: 130 }}>Supporting Docs</div>
             <div className="th" style={{ width: 130 }}>Last Updated</div>
             <div className="th c" style={{ width: 220 }}>Actions</div>
           </div>
@@ -292,7 +292,7 @@ function ManualRow({ manual, onView, onTutorial, canViewManuals = true, canWatch
           <span className="sops-title-text">{manual.title}</span>
           {manual.code && <span className="sops-badge sops-badge--blue" style={{ marginLeft: 8 }}>{manual.code}</span>}
         </div>
-        {/* Pages = manual-detail ka Reference (page number). */}
+        {/* Supporting Docs = manual-detail ka Reference. */}
         <div className="td c sops-pages">{manual.pageRef || '—'}</div>
         <div className="td sops-updated">{manual.lastUpdated}</div>
         <div className="td c sops-actions">
@@ -348,6 +348,20 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
      nayi call nahi jati. */
   const forms = manual.forms || [];
 
+  /* Form ki file asal format (.pdf / .docx) me download. */
+  const [downloadingId, setDownloadingId] = useState(null);
+  const downloadForm = async (f) => {
+    if (!f?.fileUrl || downloadingId) return;
+    setDownloadingId(f.id);
+    try {
+      await downloadFormFile(f);
+    } catch (err) {
+      toast(err?.message || 'Could not download form', 'error');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
@@ -393,7 +407,7 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
           {!fullScreen && (
             <div className="sops-pdf-meta">
               <div className="sops-pdf-meta-item">
-                <span className="sops-pdf-meta-lbl">Pages</span>
+                <span className="sops-pdf-meta-lbl">Supporting Docs</span>
                 <span className="sops-pdf-meta-val">{manual.pageRef || '—'}</span>
               </div>
               <div className="sops-pdf-meta-item">
@@ -423,6 +437,23 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
                       {f.desc || f.fileName}
                     </div>
                   </div>
+                  <Tooltip text={f.fileUrl ? 'Download form' : 'No file attached to this form'}>
+                    <button
+                      type="button"
+                      onClick={() => downloadForm(f)}
+                      disabled={!f.fileUrl || downloadingId === f.id}
+                      aria-label={`Download ${f.title}`}
+                      style={{
+                        width: 32, height: 32, flexShrink: 0, borderRadius: 8,
+                        border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1E40AF',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: (!f.fileUrl || downloadingId === f.id) ? 'not-allowed' : 'pointer',
+                        opacity: f.fileUrl ? 1 : 0.5,
+                      }}
+                    >
+                      <i className={`fa-solid ${downloadingId === f.id ? 'fa-spinner fa-spin' : 'fa-download'}`} aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
                 </div>
               ))}
             </div>
@@ -865,7 +896,7 @@ const SOPS_CSS = `
 }
 .sops-table-head {
   display: grid;
-  grid-template-columns: 50px 1fr 70px 130px 220px;
+  grid-template-columns: 50px 1fr 130px 130px 220px;
   gap: 12px;
   padding: 12px 16px;
   background: #F8FAFF;
@@ -894,7 +925,7 @@ const SOPS_CSS = `
 
 .sops-row {
   display: grid;
-  grid-template-columns: 50px 1fr 70px 130px 220px;
+  grid-template-columns: 50px 1fr 130px 130px 220px;
   gap: 12px;
   align-items: center;
   padding: 12px 16px;
