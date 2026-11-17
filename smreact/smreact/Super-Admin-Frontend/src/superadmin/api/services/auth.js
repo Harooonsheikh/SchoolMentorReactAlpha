@@ -162,6 +162,9 @@ export function userRowToUi(r) {
     /* firstName + lastName; dono khali hon to login id — koi naam ghadte nahi. */
     name:      full || login || `User #${Number(r?.id) || 0}`,
     isAdmin:   Boolean(r?.isAdmin),
+    /* get-all-users ab isActive bhejti hai (deactivate-user ke baad false).
+       Field na ho to active hi maano. */
+    isActive:  r?.isActive ?? r?.IsActive ?? true,
     signUpDateTime: String(r?.signUpDateTime ?? ''),
     raw: r,
   };

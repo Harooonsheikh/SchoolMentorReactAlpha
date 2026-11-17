@@ -120,7 +120,7 @@ export default function SuperAdminShell({ user, onLogout }) {
       const mapped = rows.map((u) => ({
         id: u.id, fullName: u.name, firstName: u.firstName, lastName: u.lastName,
         userName: u.userName, phone: u.userName, address: '',
-        active: true, pic: '', isAdmin: u.isAdmin, signUpDateTime: u.signUpDateTime,
+        active: u.isActive !== false, pic: '', isAdmin: u.isAdmin, signUpDateTime: u.signUpDateTime,
       }));
       setUsers(mapped);
       setPerms((prev) => {

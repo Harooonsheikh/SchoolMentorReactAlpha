@@ -70,8 +70,23 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
       toast?.(err?.message || 'Could not deactivate user', 'error');
       return false;
     }
-    setUsers((prev) => prev.filter((u) => u.id !== id));
+    /* List se hatate nahi — get-all-users ab isActive bhejti hai, to user
+       "Inactive" status ke saath list me rehta hai. */
+    setUsers((prev) => prev.map((u) => u.id === id ? { ...u, active: false } : u));
     setModal(null); toast?.('User deactivated', 'info');
+    await reloadUsers?.();
+    return true;
+  };
+  /* Inactive user → PUT /api/Auth/activate-user/{id}. */
+  const activateUser = async (u) => {
+    try {
+      await authApi.activateUser(u.id);
+    } catch (err) {
+      toast?.(err?.message || 'Could not activate user', 'error');
+      return false;
+    }
+    setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, active: true } : x));
+    toast?.(`${u.fullName} activated`, 'success');
     await reloadUsers?.();
     return true;
   };
@@ -95,7 +110,8 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
       {tab === 'reg' && (
         <RegistrationTab users={users} onAdd={addUser}
           onEdit={(u) => setModal({ type: 'edit', user: u })}
-          onDelete={(u) => setModal({ type: 'del', user: u })} toast={toast} />
+          onDelete={(u) => setModal({ type: 'del', user: u })}
+          onActivate={activateUser} toast={toast} />
       )}
       {tab === 'assign' && <AssignTab users={users} toast={toast} />}
       {tab === 'perm' && <PermissionTab users={users} setPerms={setPerms} toast={toast} onPermsSaved={onPermsSaved} />}
@@ -107,8 +123,14 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
 }
 
 /* ═══════════════════════ REGISTRATION TAB ═══════════════════════ */
-function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
+function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate, toast }) {
   const EMPTY = { firstName: '', lastName: '', phone: '', password: '', active: true };
+  const [activatingId, setActivatingId] = useState(null);
+  const onActivate = async (u) => {
+    if (activatingId) return;
+    setActivatingId(u.id);
+    try { await activate?.(u); } finally { setActivatingId(null); }
+  };
   const [form, setForm] = useState(EMPTY);
   const [showPw, setShowPw] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -193,7 +215,12 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
                   <td style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
                       <button className="btn-sm" style={{ height: 28, fontSize: 11.5 }} onClick={() => onEdit(u)}><i className="fa-solid fa-pen" /> Edit</button>
-                      <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => onDelete(u)}><i className="fa-solid fa-trash-can" /> Delete</button>
+                      {u.active ? (
+                        <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => onDelete(u)}><i className="fa-solid fa-trash-can" /> Delete</button>
+                      ) : (
+                        /* Deactivated user — dobara chalu karne ka rasta (PUT activate-user). */
+                        <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: '#16A34A', color: '#16A34A', background: 'rgba(22,163,74,.06)' }} onClick={() => onActivate(u)} disabled={activatingId === u.id}><i className={`fa-solid ${activatingId === u.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} /> Activate</button>
+                      )}
                     </div>
                   </td>
                 </tr>
