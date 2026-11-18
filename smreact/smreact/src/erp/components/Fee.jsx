@@ -7564,13 +7564,7 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
    with live counter, target description, send CTA.
    ═══════════════════════════════════════════════════════════════════ */
 function FeeReminderModal({ cfg, onClose, toast }) {
-  const DEFAULT_MSG = "Dear Parent, your child's fee for this month is pending. Please pay at your earliest convenience. — School Administration";
-  const [msg, setMsg] = useState(DEFAULT_MSG);
-
-  useEffect(() => {
-    if (!cfg) return;
-    setMsg(DEFAULT_MSG);
-  }, [cfg]);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!cfg) return undefined;
@@ -7585,15 +7579,27 @@ function FeeReminderModal({ cfg, onClose, toast }) {
 
   if (!cfg) return null;
 
-  const target = cfg.type === 'class'
-    ? `${cfg.classMeta.cls} (${cfg.classMeta.sec}) — ${cfg.sm?.unpaid ?? 0} unpaid parent${(cfg.sm?.unpaid ?? 0) === 1 ? '' : 's'}`
-    : `${cfg.student?.name} (${cfg.classMeta?.cls} / ${cfg.classMeta?.sec})`;
+  const unpaid = cfg.sm?.unpaid ?? 0;
+  const target = `${cfg.classMeta.cls} (${cfg.classMeta.sec}) — ${unpaid} unpaid parent${unpaid === 1 ? '' : 's'}`;
 
+  /* Live: BranchLedger/notify-unpaid-students — class/section + month/year, message server-side. */
   const handleSend = async () => {
-    if (!msg.trim()) { toast('Reminder message cannot be empty', 'error'); return; }
-    await feeService.sendFeeReminder({ target, message: msg, period: cfg.period }).catch(() => { });
-    toast('Fee reminder sent', 'success');
-    onClose();
+    if (sending) return;
+    setSending(true);
+    try {
+      await feeService.sendFeeReminder({
+        classId:   cfg.classMeta._gradeId,
+        sectionId: cfg.classMeta._sectionId,
+        month:     cfg.month,
+        year:      cfg.year,
+      });
+      toast('Fee reminder sent', 'success');
+      onClose();
+    } catch (err) {
+      toast(err?.message || 'Could not send fee reminder', 'error');
+    } finally {
+      setSending(false);
+    }
   };
 
   return createPortal(
@@ -7625,21 +7631,7 @@ function FeeReminderModal({ cfg, onClose, toast }) {
             </span>
           </div>
 
-          <div className="fee-field" style={{ marginTop: 12 }}>
-            <span className="fee-label">Notification Message</span>
-            <textarea
-              className="fee-input fee-textarea"
-              maxLength={160}
-              rows={4}
-              value={msg}
-              onChange={e => setMsg(e.target.value)}
-            />
-            <div className="fee-rem-counter">
-              <span>{msg.length}</span> / <span>160</span> characters
-            </div>
-          </div>
-
-          <div className="fee-rem-target">
+          <div className="fee-rem-target" style={{ marginTop: 12 }}>
             <i className="fa-solid fa-bullseye"></i> <strong>Target:</strong> {target}
           </div>
         </div>
@@ -7649,8 +7641,8 @@ function FeeReminderModal({ cfg, onClose, toast }) {
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
           <Tooltip text="Send reminder to parents">
-            <button className="fee-btn fee-btn-primary" onClick={handleSend}>
-              <i className="fa-solid fa-paper-plane"></i> Send Reminder
+            <button className="fee-btn fee-btn-primary" onClick={handleSend} disabled={sending}>
+              <i className="fa-solid fa-paper-plane"></i> {sending ? 'Sending…' : 'Send Reminder'}
             </button>
           </Tooltip>
         </div>
@@ -10234,7 +10226,7 @@ function FeeReceivingIndividual({ toast }) {
                 <div className="fee-td fee-center" data-label="Challan Summary">{summaryChips(sm)}</div>
                 <div className="fee-td fee-center" data-label="Actions" onClick={e => e.stopPropagation()}>
                   <Tooltip text="Send fee reminder to parents of unpaid students">
-                    <button className="fee-reminder-btn" onClick={() => setReminderCtx({ type: 'class', classMeta: c, sm, period: `${appliedMonth} ${appliedYear}` })}>
+                    <button className="fee-reminder-btn" onClick={() => setReminderCtx({ classMeta: c, sm, period: `${appliedMonth} ${appliedYear}`, month: monthIdx + 1, year: Number(appliedYear) })}>
                       <i className="fa-solid fa-bell"></i> Fee Reminder
                     </button>
                   </Tooltip>

@@ -3218,9 +3218,27 @@ export async function saveReceipt(payload) {
   await delay();
   return clone({ id: `rcv-${Date.now()}`, ...payload });
 }
-export async function sendFeeReminder(payload) {
-  await delay();
-  return clone({ ok: true, sentAt: new Date().toISOString(), ...payload });
+/* Fee Reminder — ek class/section ke unpaid parents ko parent app push notification.
+   POST /api/BranchLedger/notify-unpaid-students
+   body: { branchId, month (1-12), year, classId (gradeId), sectionId } */
+export async function sendFeeReminder({ classId, sectionId, month, year } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/notify-unpaid-students'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branchId:  branchID,
+      month:     Number(month) || 0,
+      year:      Number(year) || 0,
+      classId:   Number(classId) || 0,
+      sectionId: Number(sectionId) || 0,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not send fee reminder');
+  }
+  return json;
 }
 export async function saveFamilyReceipt(payload) {
   await delay();
