@@ -47,6 +47,22 @@ export const EP = {
        Screens ke "Assigned To" / "Select User" dropdowns isi se bharte hain,
        aur jahan API ko userId chahiye wahi `id` jata hai. */
     allUsers: () => `${SA_ROOT}/api/Auth/get-all-users`,
+    /* POST — naya Super Admin user (User Management ▸ Add User):
+         body: { firstName, lastName, user_Name, password, isAdmin }
+         (schema: MdlAHM_SuperAdmin_Signup) */
+    signup: () => `${SA_ROOT}/api/Auth/signup`,
+    /* PUT — user edit: { id, firstName, lastName, user_Name, password, isAdmin }
+       (SuperAdminUserUpdateRequest). password na bhejo to purana rehta hai. */
+    updateUser: () => `${SA_ROOT}/api/Auth/update-user`,
+    /* PUT — user band / chalu (body nahi). */
+    deactivateUser: (id) => `${SA_ROOT}/api/Auth/deactivate-user/${encodeURIComponent(id)}`,
+    activateUser:   (id) => `${SA_ROOT}/api/Auth/activate-user/${encodeURIComponent(id)}`,
+    /* Screen × action permissions (User Permission ▸ Edit Permissions):
+         POST save → { userID, modifiedBy, permissions:[{ menuName, subMenuName, action, isAccessable }] }
+         GET  by user → 404 { success:false, "No permissions found for this user." } jab kuch save na ho */
+    saveMenuPermissions: () => `${SA_ROOT}/api/Auth/save-superadmin-module-permission`,
+    getAllMenuPermissions: () => `${SA_ROOT}/api/Auth/get-superadmin-module-permission`,
+    getMenuPermissions:  (userId) => `${SA_ROOT}/api/Auth/get-superadmin-module-permission-byuserid/${encodeURIComponent(userId)}`,
   },
 
   /* ── Dashboard ── */
@@ -326,30 +342,16 @@ export const EP = {
     remove: (id) => `${ROOT}/trainings/${id}`,
   },
 
-  /* ── Tech Module (Bugs & New Development → In Progress → QA Review →
-     Ready for Release, sourced from Support). Same paths as the standalone
-     copy (ROOT '/api/superadmin'); used only when the API is configured —
-     demo mode serves techTicketsData.js. ── */
+  /* ── Tech Module — API README (TECH_TICKETS_API_README.md). One GET route
+     (?action=…) and one multipart POST route per resource; the action is
+     chosen with the `action` parameter. ── */
   techTickets: {
-    list: () => `${SA_ROOT}/api/TechTickets`,
-    get: (id) => `${SA_ROOT}/api/TechTickets/${id}`,
-    create: () => `${SA_ROOT}/api/TechTickets`,
-    updateStatus: (id) => `${SA_ROOT}/api/TechTickets/${id}/status`,
-    assign: (id) => `${SA_ROOT}/api/TechTickets/${id}/assign`,
-    updatePriority: (id) => `${SA_ROOT}/api/TechTickets/${id}/priority`,
-    updateStage: (id) => `${SA_ROOT}/api/TechTickets/${id}/stage`,
-    devReport: (id) => `${SA_ROOT}/api/TechTickets/${id}/dev-report`,
-    sendForQa: (id) => `${SA_ROOT}/api/TechTickets/${id}/send-for-qa`,
-    qaReview: (id) => `${SA_ROOT}/api/TechTickets/${id}/qa-review`,
-    release: (id) => `${SA_ROOT}/api/TechTickets/${id}/release`,
-    stats: () => `${SA_ROOT}/api/TechTickets/stats`,
-    workload: () => `${SA_ROOT}/api/TechTickets/workload`,
+    base: () => `${SA_ROOT}/api/superadmin/tech-tickets`,
   },
 
   /* ── Tech Module — internal notifications (Release → Support handoff). ── */
   techNotifications: {
-    list: () => `${SA_ROOT}/api/TechNotifications`,
-    create: () => `${SA_ROOT}/api/TechNotifications`,
+    base: () => `${SA_ROOT}/api/superadmin/tech-notifications`,
   },
 
   /* ── Mentor AI ── */

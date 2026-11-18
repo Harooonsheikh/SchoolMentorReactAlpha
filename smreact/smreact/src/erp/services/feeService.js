@@ -1528,13 +1528,13 @@ export function daysLate(dueDate, receivingDate) {
   return Math.max(0, Math.floor((rec - due) / dayMs));
 }
 
-/* false → frontend fine calculation band (computeFine hamesha 0). */
-const FINE_CALC_ENABLED = false;
+/* true → IS (current) challan par due date ke baad receiving par late fine banti hai
+   (receiving modal ki "Fine" line). false → computeFine hamesha 0.
+   Pichhle mahine ki baqaya fine frontend carry NAHI karta — backend agle challan me
+   "Late Fee Fine" row bana deta hai (FINE_CARRY_BY_BACKEND, Fee.jsx). */
+const FINE_CALC_ENABLED = true;
 
-/* Is challan par is receiving date tak banti kul fine.
-   DISABLED: receive ke waqt frontend fine calculate nahi karta. Fine sirf API ki
-   Late Fine rows se aati hai (billed/received wahan se). Purana calculation wapas
-   chahiye to ye guard hata dein. */
+/* Is challan par is receiving date tak banti kul fine. */
 export function computeFine({ dueDate, receivingDate, settings } = {}) {
   if (!FINE_CALC_ENABLED) return 0;
   if (!settings?.fineEnabled) return 0;
@@ -3218,9 +3218,27 @@ export async function saveReceipt(payload) {
   await delay();
   return clone({ id: `rcv-${Date.now()}`, ...payload });
 }
-export async function sendFeeReminder(payload) {
-  await delay();
-  return clone({ ok: true, sentAt: new Date().toISOString(), ...payload });
+/* Fee Reminder — ek class/section ke unpaid parents ko parent app push notification.
+   POST /api/BranchLedger/notify-unpaid-students
+   body: { branchId, month (1-12), year, classId (gradeId), sectionId } */
+export async function sendFeeReminder({ classId, sectionId, month, year } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res = await trackedFetch(buildUrl('/api/BranchLedger/notify-unpaid-students'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branchId:  branchID,
+      month:     Number(month) || 0,
+      year:      Number(year) || 0,
+      classId:   Number(classId) || 0,
+      sectionId: Number(sectionId) || 0,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not send fee reminder');
+  }
+  return json;
 }
 export async function saveFamilyReceipt(payload) {
   await delay();

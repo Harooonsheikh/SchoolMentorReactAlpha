@@ -1,4 +1,4 @@
-import { buildSuperAdminUrl, getMediaBase } from '../../utils/apiConfig';
+import { buildSuperAdminUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — read-only wiring to the Super Admin SOP APIs.
@@ -97,28 +97,28 @@ export function sopFileUrl(path) {
 
   if (!/^https?:\/\//i.test(raw)) return buildSuperAdminUrl(tailOf(raw));
 
+  /* Host API ka NAHI lete — wo kabhi "http://localhost:4100" bhejti hai (backend
+     jis machine se upload hua), jo browser se khulta hi nahi. File hamesha
+     mojooda API base ke SA root par milti hai (sandbox-alphaapi / sandbox-erp /
+     alphaapi / erp — charon par check kiya, 200 application/pdf). */
   try {
-    const u = new URL(raw);
-    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && u.protocol === 'http:') {
-      u.protocol = 'https:';
-      u.port = '';                       // https par 4100 jaisa http port nahi chalta
-    }
-    u.pathname = `/SchoolMentorSuperAdminAPI${tailOf(u.pathname)}`;
-    return u.toString();
+    return buildSuperAdminUrl(tailOf(new URL(raw).pathname));
   } catch { /* parse na ho to jaisa hai waisa */ }
   return raw;
 }
 
-/* Manual ki PDF ka URL — hamesha {MEDIA_BASE}/assests/Manuals/PDFs/{file}
-   (e.g. https://alphaapi.schoolmentor.ai/assests/Manuals/PDFs/77f9….pdf —
-   200 application/pdf). API pdfPath kisi bhi shakal me bheje (poora URL,
+/* Manual ki PDF ka URL — hamesha {API base}/SchoolMentorSuperAdminAPI/Manuals/PDFs/{file}.
+   API pdfPath kisi bhi shakal me bheje (poora URL, "http://localhost:4100/...",
    /Manuals/PDFs/x.pdf, ya sirf naam), sirf file ka naam le kar yahi rasta
-   banate hain. Host MEDIA_BASE (https), taake https page par block na ho.
-   (Folder ka naam backend ki spelling me hai: "assests".) */
+   banate hain.
+   Pehle {MEDIA_BASE}/assests/Manuals/PDFs/ tha — wo sirf API host par chalta
+   hai; ERP domain (erp / sandbox-erp) par /assests/ app ka index.html (200
+   text/html) lauta deta hai, is liye viewer me PDF dikhti hi nahi thi. SA root
+   wala rasta charon hosts par 200 application/pdf deta hai. */
 export function manualPdfUrl(path) {
   const name = fileNameFrom(path);
   if (!/\.[a-z0-9]{2,6}$/i.test(name)) return '';   // "string" jaisi bekar value
-  return `${getMediaBase()}/assests/Manuals/PDFs/${encodeURIComponent(name)}`;
+  return buildSuperAdminUrl(`/Manuals/PDFs/${encodeURIComponent(name)}`);
 }
 
 /* YouTube ka koi bhi link → embed URL.
@@ -217,7 +217,11 @@ export async function getManuals(headId) {
          kaafi nahi (youtubeURL "string" bhi ho sakta hai, dekhein
          toEmbedUrl). Warna Watch button khulta aur ERP apna hi page
          dikhata. */
-      hasTutorial: Boolean(m?.tutorialAvailable) && Boolean(toEmbedUrl(m?.youtubeURL)),
+      /* tutorialAvailable flag par bharosa NAHI — Super Admin se video link
+         dene par bhi API false bhejti hai (manual 46: youtubeURL bhara, flag
+         false), aur Tutorial button band reh jata tha. Chalne wala YouTube
+         link hi kaafi hai. */
+      hasTutorial: Boolean(toEmbedUrl(m?.youtubeURL)),
       videoUrl: toEmbedUrl(m?.youtubeURL),      // share-link → embed URL
       videoLink: String(m?.youtubeURL ?? '').trim(),   // asli link (naye tab me kholne ke liye)
       videoTitle: String(m?.videoTitle ?? '').trim(),
@@ -318,6 +322,10 @@ function mapForm(f) {
     code:     String(f?.formCode ?? '').trim(),
     pageRef:  String(f?.reference ?? '').trim(),
     desc:     String(f?.shortDescription ?? '').trim(),
+    /* Folder API ke path wala hi rakho — form kabhi Manuals/Forms me hoti hai,
+       kabhi Manuals/PDFs me (".../Manuals/PDFs/b8c36e5c-….pdf" sirf
+       /SchoolMentorSuperAdminAPI/Manuals/PDFs/ par 200 deti hai, Forms par 404).
+       sopFileUrl host chhod kar mojooda API base + SA root lagata hai. */
     fileUrl:  sopFileUrl(path),
     fileName,
   };
@@ -370,7 +378,12 @@ export async function downloadFormFile(form) {
   const a = document.createElement('a');
   if (blob) {
     a.href = URL.createObjectURL(blob);
-    a.download = form.fileName || fileNameFrom(fileUrl) || 'form';
+    /* Server par naam GUID hota hai ("bb936a42-….pdf") — download form ke
+       naam se karo, extension asal file ka. */
+    const original = form.fileName || fileNameFrom(fileUrl) || 'form';
+    const ext = (original.match(/\.[a-z0-9]{2,6}$/i) || [''])[0];
+    const nice = String(form.title || '').replace(/[\\/:*?"<>|]+/g, ' ').trim();
+    a.download = nice ? `${nice}${ext}` : original;
   } else {
     /* fetch na ho saka — browser ko seedha file par bhej do. Server .docx
        ko Word ke content-type se deta hai, is liye browser usay download hi

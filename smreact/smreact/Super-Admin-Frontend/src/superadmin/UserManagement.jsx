@@ -1,6 +1,10 @@
-import React, { useRef, useState } from 'react';
-import { UM_MENUS, INITIAL_USERS, userInitials, pageButtons } from './userMgmtData';
+import React, { useEffect, useState } from 'react';
+import { userInitials, pageButtons } from './userMgmtData';
 import { INITIAL_LAUNCH, INITIAL_ERP } from './statusData';
+import { authApi, schoolProgressApi } from './api';
+import UserPermissionMatrix from './UserPermissionMatrix';
+import { useSaPerms } from './saPerms';
+
 
 /* ═══════════════════════════════════════════════════════════════════
    USER MANAGEMENT — Super Admin module (frontend only)
@@ -12,29 +16,90 @@ import { INITIAL_LAUNCH, INITIAL_ERP } from './statusData';
    All state is in-component demo state (see ./userMgmtData). No backend.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* screen = permissionModel MODULE_SCREENS.userManagement ka id */
 const TABS = [
-  { id: 'reg',    name: 'User Registration', icon: 'fa-user-plus' },
-  { id: 'assign', name: 'Assign School',     icon: 'fa-school' },
-  { id: 'perm',   name: 'User Permission',   icon: 'fa-shield-halved' },
+  { id: 'reg',    name: 'User Registration', icon: 'fa-user-plus',     screen: 'registration' },
+  { id: 'assign', name: 'Assign School',     icon: 'fa-school',        screen: 'assign' },
+  { id: 'perm',   name: 'User Permission',   icon: 'fa-shield-halved', screen: 'permissions' },
 ];
 
-export default function UserManagement({ toast, users, setUsers, perms, setPerms }) {
-  const [tab, setTab] = useState('reg');
-  const [assignments, setAssignments] = useState({});   // userId → [schoolId]
+export default function UserManagement({ toast, users, setUsers, reloadUsers, setPerms, onPermsSaved }) {
+  const [tabSel, setTab] = useState('reg');
   const [modal, setModal] = useState(null);
-  const seq = useRef(Math.max(...INITIAL_USERS.map((u) => u.id), 0));
 
-  const addUser = (form) => {
-    setUsers((prev) => [...prev, { id: ++seq.current, ...form, pic: '' }]);
+  /* View permission na ho to tab chhupa do; current tab chhupa ho to pehla visible. */
+  const P = useSaPerms('userManagement');
+  const visibleTabs = TABS.filter((t) => P.canView(t.screen));
+  const tab = visibleTabs.some((t) => t.id === tabSel) ? tabSel : visibleTabs[0]?.id;
+
+  /* Add User → POST /api/Auth/signup, phir list GET /api/Auth/get-all-users se taza.
+     true lautata hai jab user ban gaya (form tab hi saaf hota hai). */
+  const addUser = async (form) => {
+    if (!P.guard('registration', 'create', toast)) return false;
+    const { firstName, lastName } = form;
+    try {
+      await authApi.signup({ firstName, lastName, userName: form.userName, password: form.password, isAdmin: true });
+    } catch (err) {
+      toast?.(err?.message || 'Could not create user', 'error');
+      return false;
+    }
     toast?.(`${form.fullName} added successfully`, 'success');
+    await reloadUsers?.();
+    return true;
   };
-  const saveUser = (id, patch) => {
-    setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...patch } : u));
+  /* Save Changes → PUT /api/Auth/update-user. "Active" ka tick hataya ho to
+     saath me deactivate-user bhi. Kamyabi par list API se taza. */
+  const saveUser = async (id, patch) => {
+    if (!P.guard('registration', 'edit', toast)) return false;
+    const user = users.find((u) => u.id === id) || {};
+    try {
+      await authApi.updateUser({
+        id,
+        firstName: patch.firstName,
+        lastName:  patch.lastName,
+        userName:  patch.userName,
+        password:  patch.password,
+        isAdmin:   user.isAdmin,
+      });
+      if (user.active !== false && patch.active === false) await authApi.deactivateUser(id);
+      else if (user.active === false && patch.active === true) await authApi.activateUser(id);
+    } catch (err) {
+      toast?.(err?.message || 'Could not update user', 'error');
+      return false;
+    }
     setModal(null); toast?.('User updated', 'success');
+    await reloadUsers?.();
+    return true;
   };
-  const deleteUser = (id) => {
-    setUsers((prev) => prev.filter((u) => u.id !== id));
-    setModal(null); toast?.('User deleted', 'info');
+  /* Delete → PUT /api/Auth/deactivate-user/{id} (user band hota hai, mitaya nahi jata). */
+  const deleteUser = async (id) => {
+    if (!P.guard('registration', 'delete', toast)) return false;
+    try {
+      await authApi.deactivateUser(id);
+    } catch (err) {
+      toast?.(err?.message || 'Could not deactivate user', 'error');
+      return false;
+    }
+    /* List se hatate nahi — get-all-users ab isActive bhejti hai, to user
+       "Inactive" status ke saath list me rehta hai. */
+    setUsers((prev) => prev.map((u) => u.id === id ? { ...u, active: false } : u));
+    setModal(null); toast?.('User deactivated', 'info');
+    await reloadUsers?.();
+    return true;
+  };
+  /* Inactive user → PUT /api/Auth/activate-user/{id}. */
+  const activateUser = async (u) => {
+    if (!P.guard('registration', 'edit', toast)) return false;
+    try {
+      await authApi.activateUser(u.id);
+    } catch (err) {
+      toast?.(err?.message || 'Could not activate user', 'error');
+      return false;
+    }
+    setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, active: true } : x));
+    toast?.(`${u.fullName} activated`, 'success');
+    await reloadUsers?.();
+    return true;
   };
 
   return (
@@ -50,16 +115,23 @@ export default function UserManagement({ toast, users, setUsers, perms, setPerms
       </div>
 
       <div className="um-tabs">
-        {TABS.map((t) => <button key={t.id} className={`um-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
+        {visibleTabs.map((t) => <button key={t.id} className={`um-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
       </div>
 
+      {!tab && (
+        <div className="section-card" style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>
+          <i className="fa-solid fa-lock" style={{ fontSize: 26, opacity: 0.3, display: 'block', marginBottom: 10 }} />
+          <div style={{ fontSize: 14, fontWeight: 700 }}>You don't have permission to view this</div>
+        </div>
+      )}
       {tab === 'reg' && (
         <RegistrationTab users={users} onAdd={addUser}
-          onEdit={(u) => setModal({ type: 'edit', user: u })}
-          onDelete={(u) => setModal({ type: 'del', user: u })} toast={toast} />
+          onEdit={(u) => { if (P.guard('registration', 'edit', toast)) setModal({ type: 'edit', user: u }); }}
+          onDelete={(u) => { if (P.guard('registration', 'delete', toast)) setModal({ type: 'del', user: u }); }}
+          onActivate={activateUser} toast={toast} />
       )}
-      {tab === 'assign' && <AssignTab users={users} assignments={assignments} setAssignments={setAssignments} toast={toast} />}
-      {tab === 'perm' && <PermissionTab users={users} perms={perms} setPerms={setPerms} toast={toast} />}
+      {tab === 'assign' && <AssignTab users={users} toast={toast} />}
+      {tab === 'perm' && <UserPermissionMatrix users={users} setPerms={setPerms} toast={toast} onPermsSaved={onPermsSaved} />}
 
       {modal?.type === 'edit' && <EditUserModal user={modal.user} onClose={() => setModal(null)} onSave={saveUser} toast={toast} />}
       {modal?.type === 'del' && <DeleteUserModal user={modal.user} onClose={() => setModal(null)} onConfirm={() => deleteUser(modal.user.id)} />}
@@ -68,34 +140,50 @@ export default function UserManagement({ toast, users, setUsers, perms, setPerms
 }
 
 /* ═══════════════════════ REGISTRATION TAB ═══════════════════════ */
-function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
-  const [form, setForm] = useState({ fullName: '', userName: '', phone: '', address: '', password: '', active: true });
+function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate, toast }) {
+  const EMPTY = { firstName: '', lastName: '', phone: '', password: '', active: true };
+  const P = useSaPerms('userManagement');
+  const [activatingId, setActivatingId] = useState(null);
+  const onActivate = async (u) => {
+    if (activatingId) return;
+    setActivatingId(u.id);
+    try { await activate?.(u); } finally { setActivatingId(null); }
+  };
+  const [form, setForm] = useState(EMPTY);
   const [showPw, setShowPw] = useState(false);
-  const [pic, setPic] = useState('');
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [perPage, setPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  const submit = () => {
-    if (!form.fullName.trim()) { toast?.('Please enter full name', 'warn'); return; }
-    if (!form.userName.trim()) { toast?.('Please enter user name', 'warn'); return; }
+  /* Address + Display Picture + User Name hide hain. Phone No. hi login id hai —
+     signup me user_Name = phone jata hai. */
+  const submit = async () => {
+    if (saving) return;
+    /* Backend: "FirstName and LastName are required." — dono lazmi. */
+    if (!form.firstName.trim()) { toast?.('Please enter first name', 'warn'); return; }
+    if (!form.lastName.trim()) { toast?.('Please enter last name', 'warn'); return; }
     if (!form.phone.trim()) { toast?.('Please enter phone number', 'warn'); return; }
     if (!form.password.trim()) { toast?.('Please enter password', 'warn'); return; }
-    onAdd({ fullName: form.fullName.trim(), userName: form.userName.trim(), phone: form.phone.trim(), address: form.address.trim(), password: form.password.trim(), active: form.active });
-    setForm({ fullName: '', userName: '', phone: '', address: '', password: '', active: true }); setPic('');
+    setSaving(true);
+    const phone = form.phone.trim();
+    const firstName = form.firstName.trim();
+    const lastName = form.lastName.trim();
+    const ok = await onAdd({ firstName, lastName, fullName: `${firstName} ${lastName}`, userName: phone, phone, password: form.password.trim(), active: form.active });
+    setSaving(false);
+    if (ok) setForm(EMPTY);
   };
 
+  const q = search.toLowerCase();
   const filtered = users.filter((u) =>
-    u.fullName.toLowerCase().includes(search.toLowerCase()) || u.phone.includes(search) || (u.address || '').toLowerCase().includes(search.toLowerCase()));
+    (u.fullName || '').toLowerCase().includes(q) || (u.userName || '').toLowerCase().includes(q) || (u.phone || '').includes(search));
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const cur = Math.min(page, totalPages);
   const slice = filtered.slice((cur - 1) * perPage, cur * perPage);
   const start = total ? (cur - 1) * perPage + 1 : 0;
   const end = Math.min(cur * perPage, total);
-
-  const onPic = (e) => { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = (ev) => setPic(ev.target.result); r.readAsDataURL(file); };
 
   return (
     <div className="um-panel">
@@ -104,22 +192,15 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
         <div className="card-header"><div className="card-title"><i className="fa-solid fa-user-plus" /> Add User</div></div>
         <div style={{ padding: 20 }}>
           <div className="um-form-grid">
-            <div className="um-field"><label className="um-label">Full Name</label><input className="um-input" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} placeholder="Enter Full Name" /></div>
-            <div className="um-field"><label className="um-label">User Name</label><input className="um-input" value={form.userName} onChange={(e) => set('userName', e.target.value)} placeholder="Enter User Name" /></div>
+            <div className="um-field"><label className="um-label">First Name</label><input className="um-input" value={form.firstName} onChange={(e) => set('firstName', e.target.value)} placeholder="Enter First Name" /></div>
+            <div className="um-field"><label className="um-label">Last Name</label><input className="um-input" value={form.lastName} onChange={(e) => set('lastName', e.target.value)} placeholder="Enter Last Name" /></div>
             <div className="um-field"><label className="um-label">Phone No.</label><input className="um-input" value={form.phone} onChange={(e) => set('phone', e.target.value)} placeholder="Enter Phone No." /></div>
-            <div className="um-field"><label className="um-label">Address</label><input className="um-input" value={form.address} onChange={(e) => set('address', e.target.value)} placeholder="Enter Address" /></div>
             <div className="um-field"><label className="um-label">Password</label>
               <div className="um-pw-wrap"><input className="um-input" type={showPw ? 'text' : 'password'} value={form.password} onChange={(e) => set('password', e.target.value)} placeholder="Enter Password" /><button className="um-pw-eye" type="button" data-tip="Show password" onClick={() => setShowPw((s) => !s)}><i className={`fa-regular ${showPw ? 'fa-eye-slash' : 'fa-eye'}`} /></button></div>
             </div>
-            <div className="um-field"><label className="um-label">Display Picture</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <input className="um-input" type="file" accept="image/*" style={{ height: 'auto', padding: '6px 10px', fontSize: 12 }} onChange={onPic} />
-                <div className="um-img-preview">{pic ? <img src={pic} alt="" /> : <i className="fa-solid fa-image" />}</div>
-              </div>
-            </div>
           </div>
           <div className="um-checkbox-row"><input type="checkbox" id="um-active" checked={form.active} onChange={(e) => set('active', e.target.checked)} /><label htmlFor="um-active">Active</label></div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn-primary" onClick={submit}><i className="fa-solid fa-user-plus" /> Add User</button></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button {...P.lock('registration', 'create', { className: 'btn-primary', disabled: saving })} onClick={submit}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-user-plus'}`} /> {saving ? 'Adding…' : 'Add User'}</button></div>
         </div>
       </div>
 
@@ -137,22 +218,27 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
         </div>
         <div className="tbl-wrap">
           <table className="um-table">
-            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 130 }}>Phone</th><th>Address</th><th style={{ width: 70, textAlign: 'center' }}>Status</th><th style={{ width: 130, textAlign: 'center' }}>Action</th></tr></thead>
+            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 130 }}>Phone</th><th style={{ width: 70, textAlign: 'center' }}>Status</th><th style={{ width: 130, textAlign: 'center' }}>Action</th></tr></thead>
             <tbody>
-              {slice.length === 0 ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}><i className="fa-solid fa-users" style={{ fontSize: 26, opacity: 0.2, display: 'block', marginBottom: 8 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>No users found</div></td></tr> : slice.map((u, i) => (
+              {slice.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}><i className="fa-solid fa-users" style={{ fontSize: 26, opacity: 0.2, display: 'block', marginBottom: 8 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>No users found</div></td></tr> : slice.map((u, i) => (
                 <tr key={u.id}>
                   <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{(cur - 1) * perPage + i + 1}</td>
                   <td><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                     <div className="um-avatar">{u.pic ? <img src={u.pic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : userInitials(u.fullName)}</div>
-                    <div><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>@{u.userName}</div></div>
+                    <div style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</div>
                   </div></td>
-                  <td>{u.phone}</td>
-                  <td style={{ fontSize: 12 }}>{u.address || '—'}</td>
+                  {/* user_Name hi phone number hai */}
+                  <td>{u.phone || u.userName || '—'}</td>
                   <td style={{ textAlign: 'center' }}><span className={`badge ${u.active ? 'b-green' : 'b-gray'}`}>{u.active ? 'Active' : 'Inactive'}</span></td>
                   <td style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
-                      <button className="btn-sm" style={{ height: 28, fontSize: 11.5 }} onClick={() => onEdit(u)}><i className="fa-solid fa-pen" /> Edit</button>
-                      <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => onDelete(u)}><i className="fa-solid fa-trash-can" /> Delete</button>
+                      <button {...P.lock('registration', 'edit', { className: 'btn-sm', style: { height: 28, fontSize: 11.5 } })} onClick={() => onEdit(u)}><i className="fa-solid fa-pen" /> Edit</button>
+                      {u.active ? (
+                        <button {...P.lock('registration', 'delete', { className: 'btn-sm', style: { height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } })} onClick={() => onDelete(u)}><i className="fa-solid fa-trash-can" /> Delete</button>
+                      ) : (
+                        /* Deactivated user — dobara chalu karne ka rasta (PUT activate-user). Activate = Edit permission. */
+                        <button {...P.lock('registration', 'edit', { className: 'btn-sm', style: { height: 28, fontSize: 11.5, borderColor: '#16A34A', color: '#16A34A', background: 'rgba(22,163,74,.06)' }, disabled: activatingId === u.id })} onClick={() => onActivate(u)}><i className={`fa-solid ${activatingId === u.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} /> Activate</button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -167,19 +253,61 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, toast }) {
 }
 
 /* ═══════════════════════ ASSIGN SCHOOL TAB ═══════════════════════ */
-function AssignTab({ users, assignments, setAssignments, toast }) {
+function AssignTab({ users, toast }) {
   const [userId, setUserId] = useState('');
   const [schoolType, setSchoolType] = useState('launch');
   const [search, setSearch] = useState('');
   const [perPage, setPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const [draft, setDraft] = useState(null);   // working copy of assigned ids for selected user
+  const [saving, setSaving] = useState(false);
+  const P = useSaPerms('userManagement');
 
-  const assignedForUser = userId ? (assignments[userId] || []) : [];
+  /* Asli assignments — manage_assignedUser (action GET): branchId → { id, userId }.
+     Ek branch ka ek hi user hota hai (UPSERT branchID par chalta hai). */
+  const [assignMap, setAssignMap] = useState({});
+  const loadAssignments = async () => {
+    try {
+      const rows = await schoolProgressApi.listAssignedUsers();
+      const m = {};
+      rows.forEach((r) => { m[r.branchId] = { id: r.id, userId: r.userId }; });
+      setAssignMap(m);
+      return m;
+    } catch (err) {
+      toast?.(err?.message || 'Could not load assignments', 'warn');
+      return null;
+    }
+  };
+  useEffect(() => { loadAssignments(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const idsForUser = (uid, m = assignMap) => Object.entries(m)
+    .filter(([, v]) => String(v.userId) === String(uid)).map(([bid]) => Number(bid));
+  const assignedForUser = userId ? idsForUser(userId) : [];
   const selected = draft != null ? draft : assignedForUser;
 
-  const onUser = (id) => { setUserId(id); setDraft(id ? (assignments[id] || []) : []); setPage(1); };
-  const schools = schoolType === 'launch' ? INITIAL_LAUNCH : INITIAL_ERP;
+  /* Schools — wahi lists jo Schools Progress ke Launch Setup / ERP tabs me hain
+     (branch-report API: launchSetup=0 / 1). API na chale to demo list. */
+  const [lists, setLists] = useState({ launch: [], erp: [] });
+  const [loadingSchools, setLoadingSchools] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    schoolProgressApi.listSchoolProgress()
+      .then(({ launch, erp }) => {
+        if (!alive) return;
+        if ((launch || []).length || (erp || []).length) setLists({ launch: launch || [], erp: erp || [] });
+        else { setLists({ launch: INITIAL_LAUNCH, erp: INITIAL_ERP }); toast?.('No schools returned — showing sample data', 'warn'); }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setLists({ launch: INITIAL_LAUNCH, erp: INITIAL_ERP });
+        toast?.(err?.message || 'Could not load schools — showing sample data', 'warn');
+      })
+      .finally(() => { if (alive) setLoadingSchools(false); });
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onUser = (id) => { setUserId(id); setDraft(null); setPage(1); };
+  const schools = schoolType === 'launch' ? lists.launch : lists.erp;
   const filtered = schools.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
@@ -195,10 +323,40 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
     return checked ? Array.from(new Set([...base, ...pageIds])) : base.filter((x) => !pageIds.includes(x));
   });
 
-  const save = () => {
+  /* Save Assignment → POST /api/AHM_School_Progress/manage_assignedUser
+       • naya check hua school  → UPSERT { branchID, userID, launchSetup }
+       • uncheck hua school     → DELETE (soft) us branch ki row
+     launchSetup: ERP list ka school 1, Launch Setup ka 0. */
+  const save = async () => {
+    if (saving) return;
+    if (!P.guard('assign', 'edit', toast)) return;
     if (!userId) { toast?.('Please select a user first', 'warn'); return; }
-    setAssignments((prev) => ({ ...prev, [userId]: draft || [] }));
-    toast?.('School assignment saved', 'success');
+    const want = new Set((draft || assignedForUser).map(Number));
+    const had = new Set(assignedForUser.map(Number));
+    const toAdd = [...want].filter((b) => !had.has(b));
+    const toRemove = [...had].filter((b) => !want.has(b));
+    if (!toAdd.length && !toRemove.length) { toast?.('No changes to save', 'info'); return; }
+
+    const erpIds = new Set(lists.erp.map((s) => Number(s.id)));
+    const ls = (bid) => (erpIds.has(bid) ? 1 : 0);
+    setSaving(true);
+    const results = await Promise.allSettled([
+      ...toAdd.map((bid) => schoolProgressApi.saveAssignedUser({
+        id: assignMap[bid]?.id || 0, branchId: bid, userId: Number(userId), launchSetup: ls(bid),
+      })),
+      ...toRemove.map((bid) => schoolProgressApi.clearAssignedUser({
+        id: assignMap[bid]?.id || 0, branchId: bid, launchSetup: ls(bid),
+      })),
+    ]);
+    const failed = results.filter((r) => r.status === 'rejected');
+    await loadAssignments();
+    setDraft(null);
+    setSaving(false);
+    if (failed.length) {
+      toast?.(`${results.length - failed.length} saved, ${failed.length} failed: ${failed[0].reason?.message || 'error'}`, 'error');
+    } else {
+      toast?.(`School assignment saved (${toAdd.length} assigned, ${toRemove.length} removed)`, 'success');
+    }
   };
 
   return (
@@ -212,8 +370,8 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
           </div>
 
           <div className="um-school-tabs">
-            <button className={`um-stab${schoolType === 'launch' ? ' active' : ''}`} onClick={() => { setSchoolType('launch'); setPage(1); }}><i className="fa-solid fa-rocket" /> Launch Setup ({INITIAL_LAUNCH.length})</button>
-            <button className={`um-stab${schoolType === 'erp' ? ' active' : ''}`} onClick={() => { setSchoolType('erp'); setPage(1); }}><i className="fa-solid fa-server" /> ERP ({INITIAL_ERP.length})</button>
+            <button className={`um-stab${schoolType === 'launch' ? ' active' : ''}`} onClick={() => { setSchoolType('launch'); setPage(1); }}><i className="fa-solid fa-rocket" /> Launch Setup ({lists.launch.length})</button>
+            <button className={`um-stab${schoolType === 'erp' ? ' active' : ''}`} onClick={() => { setSchoolType('erp'); setPage(1); }}><i className="fa-solid fa-server" /> ERP ({lists.erp.length})</button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
@@ -225,18 +383,29 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
             <table className="um-assign-table">
               <thead><tr><th style={{ width: 60 }}>Sr #</th><th style={{ width: 50 }}><input type="checkbox" checked={allOnPage} onChange={(e) => toggleAll(e.target.checked)} style={{ width: 15, height: 15, accentColor: '#fff', cursor: 'pointer' }} /></th><th>School Name</th></tr></thead>
               <tbody>
-                {slice.length === 0 ? <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No schools found</td></tr> : slice.map((s, i) => (
+                {loadingSchools ? <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</td></tr>
+                  : slice.length === 0 ? <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No schools found</td></tr> : slice.map((s, i) => (
                   <tr key={s.id}>
                     <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{(cur - 1) * perPage + i + 1}</td>
                     <td><input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} style={{ width: 15, height: 15, accentColor: 'var(--brand)', cursor: 'pointer' }} /></td>
-                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{s.name}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>
+                      {s.name}
+                      {(() => {
+                        const a = assignMap[s.id];
+                        if (!a || !a.userId || String(a.userId) === String(userId)) return null;
+                        const who = users.find((u) => String(u.id) === String(a.userId));
+                        return <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: 'var(--tm)' }}>
+                          (Assigned to {who ? who.fullName : `User #${a.userId}`}{selected.includes(s.id) ? ' — will be reassigned' : ''})
+                        </span>;
+                      })()}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           {total > perPage && <Pagination cur={cur} totalPages={totalPages} start={start} end={end} total={total} onGo={setPage} />}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Assignment</button></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button {...P.lock('assign', 'edit', { className: 'btn-primary', disabled: saving })} onClick={save}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Assignment'}</button></div>
         </div>
       </div>
     </div>
@@ -244,45 +413,8 @@ function AssignTab({ users, assignments, setAssignments, toast }) {
 }
 
 /* ═══════════════════════ PERMISSION TAB ═══════════════════════ */
-function PermissionTab({ users, perms, setPerms, toast }) {
-  const [userId, setUserId] = useState('');
-  const [draft, setDraft] = useState([]);
-
-  const onUser = (id) => { setUserId(id); setDraft(id ? (perms[id] || []) : []); };
-  const toggle = (menu) => setDraft((prev) => prev.includes(menu) ? prev.filter((m) => m !== menu) : [...prev, menu]);
-  const allChecked = UM_MENUS.every((m) => draft.includes(m));
-  const toggleAll = (checked) => setDraft(checked ? [...UM_MENUS] : []);
-  const save = () => { if (!userId) { toast?.('Please select a user first', 'warn'); return; } setPerms((prev) => ({ ...prev, [userId]: draft })); toast?.('Permissions updated', 'success'); };
-
-  return (
-    <div className="um-panel">
-      <div className="section-card">
-        <div className="card-header"><div className="card-title"><i className="fa-solid fa-shield-halved" /> User Permission</div></div>
-        <div style={{ padding: 20 }}>
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)', display: 'block', marginBottom: 6 }}><i className="fa-solid fa-user" style={{ color: 'var(--brand)', marginRight: 4 }} /> Select User</label>
-            <select className="um-user-select" value={userId} onChange={(e) => onUser(e.target.value)}><option value="">Select User</option>{users.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}</select>
-          </div>
-          <div className="tbl-wrap">
-            <table className="um-perm-table">
-              <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Menu</th><th style={{ width: 140 }}><label className="um-select-all-th"><input type="checkbox" checked={allChecked} onChange={(e) => toggleAll(e.target.checked)} /> Select All</label></th></tr></thead>
-              <tbody>
-                {UM_MENUS.map((menu, i) => (
-                  <tr key={menu}>
-                    <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{menu}</td>
-                    <td><input type="checkbox" checked={draft.includes(menu)} onChange={() => toggle(menu)} style={{ width: 16, height: 16, accentColor: 'var(--brand)', cursor: 'pointer' }} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Update Status</button></div>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* ERP jaisa design — users table + Edit Permissions modal (module rail +
+   screens × actions). Dekhein ./UserPermissionMatrix.jsx. */
 
 /* ═══════════════════════ SHARED ═══════════════════════ */
 function Pagination({ cur, totalPages, start, end, total, onGo }) {
@@ -301,14 +433,29 @@ function Pagination({ cur, totalPages, start, end, total, onGo }) {
 }
 
 function EditUserModal({ user, onClose, onSave, toast }) {
-  const [f, setF] = useState({ fullName: user.fullName, userName: user.userName, phone: user.phone, address: user.address || '', password: '', active: user.active });
+  /* Phone No. = user_Name (login id) — alag User Name field nahi. */
+  /* First / Last Name alag — API ke firstName / lastName. Purane (demo) users
+     ke liye fullName ko pehle space par tod kar bhar do. */
+  const parts = String(user.fullName || '').trim().split(/\s+/).filter(Boolean);
+  const [f, setF] = useState({
+    firstName: user.firstName ?? parts[0] ?? '',
+    lastName:  user.lastName ?? parts.slice(1).join(' '),
+    phone: user.phone || user.userName || '', password: '', active: user.active,
+  });
   const [showPw, setShowPw] = useState(false);
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
-  const save = () => {
-    if (!f.fullName.trim() || !f.phone.trim()) { toast?.('Name and phone required', 'warn'); return; }
-    const patch = { fullName: f.fullName.trim(), userName: f.userName.trim(), phone: f.phone.trim(), address: f.address.trim(), active: f.active };
+  const save = async () => {
+    if (saving) return;
+    if (!f.firstName.trim()) { toast?.('First name is required', 'warn'); return; }
+    if (!f.lastName.trim()) { toast?.('Last name is required', 'warn'); return; }
+    if (!f.phone.trim()) { toast?.('Phone number is required', 'warn'); return; }
+    const firstName = f.firstName.trim();
+    const lastName = f.lastName.trim();
+    const patch = { firstName, lastName, fullName: `${firstName} ${lastName}`, userName: f.phone.trim(), phone: f.phone.trim(), active: f.active };
     if (f.password.trim()) patch.password = f.password.trim();
-    onSave(user.id, patch);
+    setSaving(true);
+    try { await onSave(user.id, patch); } finally { setSaving(false); }
   };
   return (
     <div className="um-edit-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -320,10 +467,9 @@ function EditUserModal({ user, onClose, onSave, toast }) {
         </div>
         <div style={{ padding: 22 }}>
           <div className="um-form-grid-2">
-            <div className="um-field"><label className="um-label">Full Name</label><input className="um-input" value={f.fullName} onChange={(e) => set('fullName', e.target.value)} /></div>
-            <div className="um-field"><label className="um-label">User Name</label><input className="um-input" value={f.userName} onChange={(e) => set('userName', e.target.value)} /></div>
+            <div className="um-field"><label className="um-label">First Name</label><input className="um-input" value={f.firstName} onChange={(e) => set('firstName', e.target.value)} placeholder="Enter First Name" /></div>
+            <div className="um-field"><label className="um-label">Last Name</label><input className="um-input" value={f.lastName} onChange={(e) => set('lastName', e.target.value)} placeholder="Enter Last Name" /></div>
             <div className="um-field"><label className="um-label">Phone No.</label><input className="um-input" value={f.phone} onChange={(e) => set('phone', e.target.value)} /></div>
-            <div className="um-field"><label className="um-label">Address</label><input className="um-input" value={f.address} onChange={(e) => set('address', e.target.value)} /></div>
           </div>
           <div className="um-field" style={{ marginBottom: 14 }}><label className="um-label">New Password <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(leave blank to keep current)</span></label>
             <div className="um-pw-wrap"><input className="um-input" type={showPw ? 'text' : 'password'} value={f.password} onChange={(e) => set('password', e.target.value)} placeholder="Enter new password" /><button className="um-pw-eye" type="button" data-tip="Show password" onClick={() => setShowPw((s) => !s)}><i className={`fa-regular ${showPw ? 'fa-eye-slash' : 'fa-eye'}`} /></button></div>
@@ -332,7 +478,7 @@ function EditUserModal({ user, onClose, onSave, toast }) {
         </div>
         <div className="sop-modal-foot">
           <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
+          <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Changes'}</button>
         </div>
       </div>
     </div>
@@ -340,13 +486,19 @@ function EditUserModal({ user, onClose, onSave, toast }) {
 }
 
 function DeleteUserModal({ user, onClose, onConfirm }) {
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await onConfirm(); } finally { setBusy(false); }
+  };
   return (
     <div className="um-del-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="um-del-modal">
         <div style={{ width: 58, height: 58, borderRadius: '50%', background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626', fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}><i className="fa-solid fa-trash-can" /></div>
         <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--t1)', marginBottom: 8 }}>Delete User?</div>
-        <div style={{ fontSize: 13, color: 'var(--tm)', marginBottom: 20, lineHeight: 1.6 }}>"{user.fullName}" will be permanently deleted.</div>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete User</button></div>
+        <div style={{ fontSize: 13, color: 'var(--tm)', marginBottom: 20, lineHeight: 1.6 }}>"{user.fullName}" will be deactivated and will no longer be able to log in.</div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-danger" onClick={confirm} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} /> {busy ? 'Deleting…' : 'Delete User'}</button></div>
       </div>
     </div>
   );

@@ -162,9 +162,103 @@ export function userRowToUi(r) {
     /* firstName + lastName; dono khali hon to login id — koi naam ghadte nahi. */
     name:      full || login || `User #${Number(r?.id) || 0}`,
     isAdmin:   Boolean(r?.isAdmin),
+    /* get-all-users ab isActive bhejti hai (deactivate-user ke baad false).
+       Field na ho to active hi maano. */
+    isActive:  r?.isActive ?? r?.IsActive ?? true,
     signUpDateTime: String(r?.signUpDateTime ?? ''),
     raw: r,
   };
+}
+
+/**
+ * POST /api/Auth/signup — naya Super Admin user banao.
+ * body: { firstName, lastName, user_Name, password, isAdmin }
+ * @throws {ApiError} server ka apna message (e.g. username already exists)
+ */
+export async function signup({ firstName, lastName, userName, password, isAdmin = true }) {
+  const token = getSuperAdminToken();
+  let res;
+  let raw;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.auth.signup()}`, {
+      method: 'POST',
+      headers: {
+        Accept: '*/*', 'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        firstName: String(firstName || '').trim(),
+        lastName:  String(lastName || '').trim(),
+        user_Name: String(userName || '').trim(),
+        password,
+        isAdmin:   Boolean(isAdmin),
+      }),
+    });
+    raw = await res.text();
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { /* plain-text jawab */ }
+  /* HTTP 200 par bhi backend { success:false, message } bhej sakta hai. */
+  if (!res.ok || data?.success === false) {
+    throw new ApiError(messageFrom(data, raw, 'Could not create user'), res.status);
+  }
+  return data;
+}
+
+/* PUT helper — update / deactivate / activate sab { success, message } lautate hain. */
+async function putJson(url, body, fallbackMsg) {
+  const token = getSuperAdminToken();
+  let res;
+  let raw;
+  try {
+    res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        Accept: '*/*',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    raw = await res.text();
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { /* plain-text jawab */ }
+  if (!res.ok || data?.success === false) {
+    throw new ApiError(messageFrom(data, raw, fallbackMsg), res.status);
+  }
+  return data;
+}
+
+/**
+ * PUT /api/Auth/update-user
+ * body: { id, firstName, lastName, user_Name, password, isAdmin }
+ * password khali ho to bheja hi nahi jata — backend purana password rakhta hai.
+ */
+export async function updateUser({ id, firstName, lastName, userName, password, isAdmin }) {
+  const body = {
+    id: Number(id) || 0,
+    firstName: String(firstName || '').trim(),
+    lastName:  String(lastName || '').trim(),
+    user_Name: String(userName || '').trim(),
+    isAdmin:   Boolean(isAdmin),
+  };
+  if (String(password || '').trim()) body.password = String(password).trim();
+  return putJson(`${SA_ADMIN_API_BASE}${EP.auth.updateUser()}`, body, 'Could not update user');
+}
+
+/** PUT /api/Auth/deactivate-user/{id} — User Registration ka Delete yahi karta hai. */
+export async function deactivateUser(id) {
+  return putJson(`${SA_ADMIN_API_BASE}${EP.auth.deactivateUser(Number(id) || 0)}`, null, 'Could not deactivate user');
+}
+
+/** PUT /api/Auth/activate-user/{id} */
+export async function activateUser(id) {
+  return putJson(`${SA_ADMIN_API_BASE}${EP.auth.activateUser(Number(id) || 0)}`, null, 'Could not activate user');
 }
 
 /**

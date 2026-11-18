@@ -16,6 +16,7 @@ import BillingAutomationTab from './BillingAutomation';
 import NotificationsRemindersTab from './BillingNotificationsTab';
 import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
 import { SA_API_HOST } from './api/config';
+import { useSaPerms } from './saPerms';
 const NETWORK_SETUP_BASE = `${SA_API_HOST}/SchoolmentorChainManagementAPI/api/Network_Setup`;
 
 const branchCredentialApi = {
@@ -110,6 +111,12 @@ const TABS = [
   { id: 'report', name: 'Reports', icon: 'fa-chart-bar' },
 ];
 
+/* Tab → permission screen (permissionModel MODULE_SCREENS.schoolPayments).
+   Reports ka apna screen nahi — wo Challans + Receiving ka data dikhati hai,
+   is liye un dono me se kisi ek ka View kaafi hai. */
+const TAB_SCREEN = { setup: 'setup', challans: 'challans', receiving: 'receiving', automation: 'automation', notifications: 'reminders' };
+const tabVisible = (P, id) => (id === 'report' ? P.canView('challans') || P.canView('receiving') : P.canView(TAB_SCREEN[id]));
+
 /* Branch directory ki row → wohi school shape jo yeh screen padhti hai. */
 const branchToPaySchool = (b) => ({
   id: b.id,
@@ -122,7 +129,11 @@ const branchToPaySchool = (b) => ({
 });
 
 export default function SchoolPayment({ toast }) {
-  const [tab, setTab] = useState('setup');
+  const P = useSaPerms('schoolPayments');
+  const [tabSel, setTab] = useState('setup');
+  /* Jis tab ka View nahi wo dikhta hi nahi; chuna hua tab chhup jaye to pehla dikhne wala. */
+  const visibleTabs = TABS.filter((t) => tabVisible(P, t.id));
+  const tab = visibleTabs.some((t) => t.id === tabSel) ? tabSel : (visibleTabs[0]?.id || '');
   const [schools, setSchools] = useState([]);
   const [payStore, setPayStore] = useState({});
   const [chStore, setChStore] = useState({});
@@ -494,6 +505,7 @@ export default function SchoolPayment({ toast }) {
 
   /* ── Setup ── POST /manage, phir usi branch ka taaza summary payStore me. */
   const saveSetup = async (id, setup) => {
+    if (!P.guard('setup', payStore[id] ? 'edit' : 'create', toast)) return;
     const s = schools.find((x) => x.id === id);
     setSaving(true);
     try {
@@ -512,6 +524,7 @@ export default function SchoolPayment({ toast }) {
 
   /* ── Challans ── POST /manage_payment_ledger (ADD pehli baar, phir UPDATE). */
   const generateChallan = async (id, { dueDate, prevDues, issueDate }) => {
+    if (!P.guard('challans', 'create', toast)) return;
     const s = schools.find((x) => x.id === id);
     const setup = payStore[id];
     const monthly = setupMonthly(s, setup);
@@ -556,6 +569,7 @@ export default function SchoolPayment({ toast }) {
   const BULK_CONCURRENCY = 5;
 
   const bulkGenerate = async (ids, dueDate, issueDate) => {
+    if (!P.guard('challans', 'create', toast)) return;
     setSaving(true);
     const saved = {};
     const failures = [];
@@ -609,6 +623,7 @@ export default function SchoolPayment({ toast }) {
     toast?.(`Challans generated for ${word} · ${failures.length} failed (${failures[0].name}: ${failures[0].why})`, 'warn');
   };
   const deleteChallan = async (id) => {
+    if (!P.guard('challans', 'delete', toast)) return;
     const rowId = chStore[id]?.id || 0;
     /* Challan par receiving bani ho to DB usay hatane hi nahi deti (foreign
        key FK_NetworkSchoolPayment_Receiving_PaymentLedgerID). DELETE bhej kar
@@ -662,6 +677,7 @@ export default function SchoolPayment({ toast }) {
      sirf AAKHRI record rakhti hai, is liye purani history (jo screen par thi)
      nayi API row ke aage laga di jati hai. */
   const saveReceiving = async (id, rec) => {
+    if (!P.guard('receiving', 'approve', toast)) return;
     const s = schools.find((x) => x.id === id);
     const prevHistory = recvStore[id]?.history || [];
     /* Row par pehle se kitna JAMA tha — nayi history line isi ke farq se
@@ -703,6 +719,7 @@ export default function SchoolPayment({ toast }) {
   };
 
   const deleteReceiving = async (id) => {
+    if (!P.guard('receiving', 'edit', toast)) return;
     const rowId = recvStore[id]?.id || 0;
     try {
       if (rowId) await paymentsApi.deleteReceiving({ branchId: id, id: rowId });
@@ -720,6 +737,7 @@ export default function SchoolPayment({ toast }) {
 
   /* ── One-Time Challans (new school signups) — LIVE one_time_chalan_manage ── */
   const addOtChallan = async (data) => {
+    if (!P.guard('challans', 'create', toast)) return;
     setSaving(true);
     try {
       await paymentsApi.saveOneTimeChallan({ data });
@@ -739,6 +757,7 @@ export default function SchoolPayment({ toast }) {
     } finally { setSaving(false); }
   };
   const deleteOtChallan = async (challan) => {
+    if (!P.guard('challans', 'delete', toast)) return;
     /* Monthly challan wali hifazat yahan bhi: is challan ke khilaf receiving
        ho chuki ho to challan delete band. One-time me challan aur receiving EK
        hi row hain, is liye seedha DELETE dono (payment samet) chup-chaap uda
@@ -760,6 +779,7 @@ export default function SchoolPayment({ toast }) {
 
   /* ── One-Time Receiving — LIVE receive-payment / reset-payment ── */
   const saveOtReceiving = async (id, rec) => {
+    if (!P.guard('receiving', 'approve', toast)) return;
     setSaving(true);
     try {
       await paymentsApi.receiveOneTimePayment({ id, rec });
@@ -772,6 +792,7 @@ export default function SchoolPayment({ toast }) {
     } finally { setSaving(false); }
   };
   const deleteOtReceiving = async (id) => {
+    if (!P.guard('receiving', 'edit', toast)) return;
     setSaving(true);
     try {
       await paymentsApi.resetOneTimePayment(id);
@@ -785,6 +806,7 @@ export default function SchoolPayment({ toast }) {
   /* Reminders ab server (Hangfire) bhejta hai — frontend sirf settings save
      karta hai aur "abhi bhejo" ka trigger deta hai. */
   const saveNotifSettings = async (f) => {
+    if (!P.guard('reminders', 'edit', toast)) return;
     try {
       await paymentsApi.saveBillingReminderSettings(notifSettingsToApi(f));
       /* Save ke baad server ki taaza copy (ids / updatedOn) — na mile to jo bheja wahi. */
@@ -798,6 +820,7 @@ export default function SchoolPayment({ toast }) {
   };
 
   const sendRemindersNow = async () => {
+    if (!P.guard('reminders', 'create', toast)) return;
     try {
       const { sent, failed, challansChecked } = await paymentsApi.sendDueRemindersNow();
       /* sent:0 normal hai — abhi kuch due nahi ya pehle hi ja chuka (guide §5). */
@@ -833,10 +856,16 @@ export default function SchoolPayment({ toast }) {
       </div>
 
       <div className="pay-tabs">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button key={t.id} className={`pay-tab${tab === t.id ? ' active' : ''}`} onClick={() => switchTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>
         ))}
       </div>
+
+      {!visibleTabs.length && (
+        <div className="section-card" style={{ padding: 32, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
+          <i className="fa-solid fa-lock" style={{ marginRight: 6 }} />You don't have permission to view this
+        </div>
+      )}
 
       {tab === 'setup' && <SetupTab schools={schools} payStore={payStore} loading={loading || tabBusy.setup} onEdit={(s) => setModal({ type: 'setup', school: s })} />}
       {tab === 'challans' && (
@@ -868,6 +897,7 @@ export default function SchoolPayment({ toast }) {
         <BillingAutomationTab
           settings={automationSettings}
           onSave={async (s) => {
+            if (!P.guard('automation', 'edit', toast)) return;
             setAutomationSettings(s);
             try {
               const saved = await paymentsApi.saveBillingAutoSetup(automationToApi(s, s.id ?? null));
@@ -1118,6 +1148,7 @@ function Search({ value, onChange, placeholder, width = 220 }) {
 
 /* ═══════════════════════ SETUP TAB ═══════════════════════ */
 function SetupTab({ schools, payStore, loading, onEdit }) {
+  const P = useSaPerms('schoolPayments');
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('');
   const [expanded, setExpanded] = useState({});
@@ -1166,7 +1197,7 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
                         <td><TrialCell trial={trial} /></td>
                         <td style={{ textAlign: 'center' }}>{setup ? <><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>{setup.formula === 'perstudent' ? `${setup.perStudentRate} × ${setup.studentCount || s.students} students` : '/ month'}</div></> : '—'}</td>
                         <td style={{ textAlign: 'center' }}>{setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
-                        <td style={{ textAlign: 'center' }}><button className={`ps-action-btn${setup ? ' is-edit' : ' is-setup'}`} onClick={() => onEdit(s)}><i className={`fa-solid fa-${setup ? 'pen' : 'plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
+                        <td style={{ textAlign: 'center' }}><button {...P.lock('setup', setup ? 'edit' : 'create', { className: `ps-action-btn${setup ? ' is-edit' : ' is-setup'}` })} onClick={() => onEdit(s)}><i className={`fa-solid fa-${setup ? 'pen' : 'plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
                         <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
                       </tr>
                       {expanded[s.id] && (
@@ -1213,6 +1244,7 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
 
 /* ═══════════════════════ CHALLANS TAB ═══════════════════════ */
 function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownload, onDelete, onBulk, period, onPeriod, otChallans, onAddOt, onDownloadOt, onDeleteOt, otLoading }) {
+  const P = useSaPerms('schoolPayments');
   const [mode, setMode] = useState('monthly');
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('');
@@ -1245,7 +1277,7 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
             <select className="f-input" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 150, height: 38 }}>
               <option value="">All Schools</option><option value="generated">Challan Generated</option><option value="pending">Not Generated</option>
             </select>
-            <button className="btn-primary" onClick={onBulk}><i className="fa-solid fa-bolt" /> Generate in Bulk</button>
+            <button {...P.lock('challans', 'create', { className: 'btn-primary' })} onClick={onBulk}><i className="fa-solid fa-bolt" /> Generate in Bulk</button>
           </CardHeader>
           <div className="tbl-wrap">
             <table className="ch-table">
@@ -1271,17 +1303,19 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
                             usi row ka UPDATE chal jata tha — jo aksar ghalti se
                             hota tha. Badalna ho to pehle challan delete karein. */}
                             <button
-                              className="ch-btn ch-btn-gen"
-                              disabled={!setup || !!challan}
-                              data-tip={!setup
-                                ? 'Set up payment first'
-                                : challan ? `Challan already generated for ${periodLabel(period)}` : ''}
+                              {...P.lock('challans', 'create', {
+                                className: 'ch-btn ch-btn-gen',
+                                disabled: !setup || !!challan,
+                                'data-tip': !setup
+                                  ? 'Set up payment first'
+                                  : challan ? `Challan already generated for ${periodLabel(period)}` : '',
+                              })}
                               onClick={() => onGenerate(s)}
                             >
                               <i className="fa-solid fa-file-invoice-dollar" /> Generate
                             </button>
-                            <button className="ch-btn ch-btn-dl" disabled={!challan} data-tip={!challan ? 'Generate challan first' : ''} onClick={() => onDownload(s)}><i className="fa-solid fa-download" /> Download</button>
-                            <button className="ch-btn ch-btn-del" disabled={!challan} data-tip={challan ? 'Delete challan' : 'No challan to delete'} data-tip-pos="left" onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /></button>
+                            <button {...P.lock('challans', 'download', { className: 'ch-btn ch-btn-dl', disabled: !challan, 'data-tip': !challan ? 'Generate challan first' : '' })} onClick={() => onDownload(s)}><i className="fa-solid fa-download" /> Download</button>
+                            <button {...P.lock('challans', 'delete', { className: 'ch-btn ch-btn-del', disabled: !challan, 'data-tip': challan ? 'Delete challan' : 'No challan to delete' })} data-tip-pos="left" onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /></button>
                           </div>
                         </td>
                       </tr>
@@ -1298,6 +1332,7 @@ function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownlo
   );
 }
 function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, onPeriod, loading }) {
+  const P = useSaPerms('schoolPayments');
   const [q, setQ] = useState('');
   /* Mahina + saal selects se list us period ki aati hai — ye data pehle hi
      API se usi month/year par maanga gaya hai (one_time_chalan_list), is liye
@@ -1318,7 +1353,7 @@ function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, o
           {yearChoices(period.year).map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
         <Search value={q} onChange={setQ} placeholder="Search school or challan #…" />
-        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' }} onClick={onAdd}><i className="fa-solid fa-plus" /> Add New Challan</button>
+        <button {...P.lock('challans', 'create', { className: 'btn-primary', style: { background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(109,40,217,.28)' } })} onClick={onAdd}><i className="fa-solid fa-plus" /> Add New Challan</button>
       </CardHeader>
       <div className="tbl-wrap">
         <table className="ch-table">
@@ -1337,8 +1372,8 @@ function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, o
                   <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--t1)' }}>{pkr(c.netPayable)}</td>
                   <td style={{ textAlign: 'center' }}>
                     <div className="ch-actions" style={{ justifyContent: 'center' }}>
-                      <button className="ch-btn ch-btn-dl" onClick={() => onDownload(c)}><i className="fa-solid fa-download" /> Download</button>
-                      <button className="ch-btn ch-btn-del" data-tip="Delete challan" data-tip-pos="left" onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
+                      <button {...P.lock('challans', 'download', { className: 'ch-btn ch-btn-dl' })} onClick={() => onDownload(c)}><i className="fa-solid fa-download" /> Download</button>
+                      <button {...P.lock('challans', 'delete', { className: 'ch-btn ch-btn-del', 'data-tip': 'Delete challan' })} data-tip-pos="left" onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
                     </div>
                   </td>
                 </tr>
@@ -1352,6 +1387,7 @@ function OneTimeChallansTab({ otChallans, onAdd, onDownload, onDelete, period, o
 
 /* ═══════════════════════ RECEIVING TAB ═══════════════════════ */
 function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {}, loading, onReceive, onDelete, toast, period, onPeriod, otChallans, otRecvStore, onReceiveOt, onDeleteOt, otLoading }) {
+  const P = useSaPerms('schoolPayments');
   const [mode, setMode] = useState('monthly');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState({});
@@ -1471,17 +1507,19 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
                           ) : <span className="dues-zero">—</span>}</td>
                           {/* Total Payable — pichhla baqaya + is mahine ka charge. */}
                           <td style={{ textAlign: 'center' }}><Dues v={totalPayable} /></td>
-                          <td style={{ textAlign: 'center' }}><button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadRecvSlip(s, recv)}><i className="fa-solid fa-download" /> Download</button></td>
-                          <td style={{ textAlign: 'center' }}><button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /> Delete</button></td>
+                          <td style={{ textAlign: 'center' }}><button {...P.lock('receiving', 'download', { className: 'recv-btn-dl', disabled: !recv, 'data-tip': !recv ? 'No receiving record' : '' })} onClick={() => recv && P.can('receiving', 'download') && downloadRecvSlip(s, recv)}><i className="fa-solid fa-download" /> Download</button></td>
+                          <td style={{ textAlign: 'center' }}><button {...P.lock('receiving', 'edit', { className: 'recv-btn-del', disabled: !recv, 'data-tip': !recv ? 'No record to delete' : '' })} onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /> Delete</button></td>
                           <td style={{ textAlign: 'center' }}>
                             <button
-                              className="recv-btn-recv"
-                              disabled={!challan || fullyReceived}
-                              data-tip={!challan
-                                ? `No challan generated for ${periodLabel(period)}`
-                                : fullyReceived
-                                  ? `Payment already received for ${periodLabel(period)}`
-                                  : partlyReceived ? 'Receive the remaining balance' : ''}
+                              {...P.lock('receiving', 'approve', {
+                                className: 'recv-btn-recv',
+                                disabled: !challan || fullyReceived,
+                                'data-tip': !challan
+                                  ? `No challan generated for ${periodLabel(period)}`
+                                  : fullyReceived
+                                    ? `Payment already received for ${periodLabel(period)}`
+                                    : partlyReceived ? 'Receive the remaining balance' : '',
+                              })}
                               onClick={() => onReceive(s)}
                             >
                               <i className={`fa-solid ${partlyReceived ? 'fa-plus' : 'fa-hand-holding-dollar'}`} />
@@ -1512,6 +1550,7 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
   );
 }
 function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete, period, onPeriod, loading }) {
+  const P = useSaPerms('schoolPayments');
   const [q, setQ] = useState('');
   /* One-Time Challans tab ki tarah yahan bhi mahina + saal selects. Data pehle
      hi API se usi period par aata hai (one_time_chalan_list) — challan aur uski
@@ -1556,16 +1595,18 @@ function OneTimeReceivingTab({ otChallans, otRecvStore, onReceive, onDelete, per
                     <td style={{ textAlign: 'center' }}>{status === 'paid' ? <span className="rpt-paid">Received</span> : status === 'partial' ? <span className="rpt-partial">Partial</span> : <span className="rpt-pending">Pending</span>}</td>
                     <td style={{ textAlign: 'center' }}>
                       <div className="ch-actions" style={{ justifyContent: 'center' }}>
-                        <button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
-                        <button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
+                        <button {...P.lock('receiving', 'download', { className: 'recv-btn-dl', disabled: !recv, 'data-tip': !recv ? 'No receiving record' : '' })} onClick={() => recv && P.can('receiving', 'download') && downloadOtRecvSlip(c, recv)}><i className="fa-solid fa-download" /></button>
+                        <button {...P.lock('receiving', 'edit', { className: 'recv-btn-del', disabled: !recv, 'data-tip': !recv ? 'No record to delete' : '' })} onClick={() => onDelete(c)}><i className="fa-solid fa-trash-can" /></button>
                         {/* One-time payment EK hi dafa, POORI — "Receive More"
                           nahi. Jaise hi koi receiving record ban jaye, button
                           band. Adhuri payment modal me hi rok di jati hai. */}
                         <button
-                          className="recv-btn-recv"
-                          style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}
-                          disabled={!!recv}
-                          data-tip={recv ? 'Payment already received — delete to re-enter' : ''}
+                          {...P.lock('receiving', 'approve', {
+                            className: 'recv-btn-recv',
+                            style: { background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' },
+                            disabled: !!recv,
+                            'data-tip': recv ? 'Payment already received — delete to re-enter' : '',
+                          })}
                           onClick={() => onReceive(c)}
                         >
                           <i className="fa-solid fa-hand-holding-dollar" /> Receiving
@@ -1630,6 +1671,9 @@ function RptStatusBadge({ status }) {
   return <span className={cls}>{lbl}</span>;
 }
 function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onPeriod, otChallans, otRecvStore }) {
+  const P = useSaPerms('schoolPayments');
+  /* Reports ka apna screen nahi — Challans ya Receiving me se kisi ek ka Download kaafi. */
+  const pdfScreen = P.can('challans', 'download') ? 'challans' : 'receiving';
   const [mode, setMode] = useState('monthly');
   const [sub, setSub] = useState('summary');
   const [q, setQ] = useState('');
@@ -1707,7 +1751,7 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onP
               </select></div>
               <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-challan">No Challan</option><option value="no-setup">No Setup</option></select></div>
               <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
-              <button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
+              <button {...P.lock(pdfScreen, 'download', { className: 'rpt-pdf-btn' })} onClick={() => P.can(pdfScreen, 'download') && window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
             </div>
 
             <div style={{ padding: '14px 18px 0' }}>
@@ -1727,6 +1771,8 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading, period, onP
   );
 }
 function OneTimeReportTab({ otChallans, otRecvStore }) {
+  const P = useSaPerms('schoolPayments');
+  const pdfScreen = P.can('challans', 'download') ? 'challans' : 'receiving';
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
 
@@ -1769,7 +1815,7 @@ function OneTimeReportTab({ otChallans, otRecvStore }) {
           <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school or challan #…" width="100%" /></div>
           <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Received</option><option value="partial">Partial</option><option value="unpaid">Pending</option></select></div>
           <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
-          <button className="rpt-pdf-btn" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 2px 8px rgba(109,40,217,.25)' }} onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
+          <button {...P.lock(pdfScreen, 'download', { className: 'rpt-pdf-btn', style: { background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 2px 8px rgba(109,40,217,.25)' } })} onClick={() => P.can(pdfScreen, 'download') && window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
         </div>
         <ReportTable
           head={<><th style={{ width: 40 }}>#</th><th style={{ width: 120 }}>Challan #</th><th>School Name</th><th style={{ width: 100 }}>Invoice Date</th><th style={{ width: 120, textAlign: 'right' }}>Generated Amount</th><th style={{ width: 100, textAlign: 'center' }}>Payment Status</th><th style={{ width: 100 }}>Receiving Date</th><th style={{ width: 120, textAlign: 'right' }}>Received Amount</th><th style={{ width: 120, textAlign: 'right' }}>Pending Amount</th></>}

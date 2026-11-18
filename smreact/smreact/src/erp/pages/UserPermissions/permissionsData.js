@@ -105,6 +105,11 @@ export const MODULE_TREE = [
             the Chain Head Office into this school's own Activities,
             Lesson Plans, Notebook Plans and Resource Library. */
       { id: 'academics.horeleases',   label: 'Releases from Head Office' },
+
+      /* ── Reports — AcademicsReports.js, the Academics module's own
+            "Reports" L1 tab (Academics.js gates it with
+            can('Academics', 'Reports', 'View')). */
+      { id: 'academics.reports',      label: 'Reports' },
     ] },
   { id: 'examination', label: 'Examination',       icon: 'fa-file-pen',
     children: [
@@ -528,6 +533,10 @@ export const MODULE_PERMISSIONS = {
      No Create/Edit/Delete/Approve — content is authored by Head
      Office, the school can only view and import it. */
   'academics.horeleases':  ['view', 'import'],
+
+  /* Academics → Reports (AcademicsReports.js). View opens the tab;
+     Download enables the Generate buttons (PDF / Word / Excel). */
+  'academics.reports':     ['view', 'download'],
 
   /* ─── EXAMINATION — derived from real buttons in Examination.jsx
          (audited 2026-05-31). The L1 tab list is setup / datesheet /

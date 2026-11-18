@@ -15,7 +15,10 @@ import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
 import TechModule from './TechModule';
 import { PermissionsProvider } from './adminPermissions/AdminPermissionsContext';
-import { INITIAL_USERS, INITIAL_PERMS } from './userMgmtData';
+import { SaPermsProvider, useSaPerms } from './saPerms';
+import { effectivePermsFromRows } from './permissionModel';
+import { INITIAL_USERS, INITIAL_PERMS, UM_MENUS } from './userMgmtData';
+import { authApi, moduleAccessApi } from './api';
 import { installSessionGuard, setSessionGuardActive } from './api/sessionGuard';
 import SupportBackgroundListener from '../support/SupportBackgroundListener';
 import { requestSupportNotificationPermission } from '../support/notification';
@@ -58,6 +61,33 @@ const SUPPORT_TABS = [
   { id: 'overview', name: 'Overview',    icon: 'fa-gauge-high' },
   { id: 'inbox',    name: 'Agent Inbox', icon: 'fa-inbox' },
 ];
+
+/* Support tab strip + embedded console. A child of <SaPermsProvider> so it can read the
+   logged-in user's User Permission matrix: tabs without View are hidden, and a hidden
+   current tab falls back to the first visible one. */
+function SupportTabsBody({ supportTab, setSupportTab }) {
+  const P = useSaPerms('support');
+  const tabs = SUPPORT_TABS.filter((t) => P.canView(t.id));
+  const active = tabs.some((t) => t.id === supportTab) ? supportTab : (tabs[0]?.id || null);
+  if (!active) {
+    return <div className="db-block"><i className="fa-solid fa-lock" /><div className="db-block-ttl">You don't have permission to view this</div></div>;
+  }
+  return (
+    <>
+      <div className="app-tabs">
+        {tabs.map((t) => (
+          <button key={t.id} className={`app-tab${active === t.id ? ' active' : ''}`} onClick={() => setSupportTab(t.id)}>
+            <i className={`fa-solid ${t.icon}`} /> {t.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="sa-support-embed">
+        <AgentSupport embedded tab={active} onTab={(id) => { if (P.canView(id)) setSupportTab(id); }} />
+      </div>
+    </>
+  );
+}
 
 const CRUMB = {
   dashboard:   'Dashboard',
@@ -110,6 +140,75 @@ export default function SuperAdminShell({ user, onLogout }) {
   const [users, setUsers] = useState(INITIAL_USERS);
   const [perms, setPerms] = useState(INITIAL_PERMS);
 
+  /* Asli users — GET /api/Auth/get-all-users. API na chale to demo list rehti hai.
+     Naye ids ke liye (abhi permission API nahi) poora menu access seed karo,
+     warna Dashboard "view as" me un ke saare sections chhup jate. */
+  const reloadUsers = async () => {
+    try {
+      const rows = await authApi.listUsers();
+      const mapped = rows.map((u) => ({
+        id: u.id, fullName: u.name, firstName: u.firstName, lastName: u.lastName,
+        userName: u.userName, phone: u.userName, address: '',
+        active: u.isActive !== false, pic: '', isAdmin: u.isAdmin, signUpDateTime: u.signUpDateTime,
+      }));
+      setUsers(mapped);
+      setPerms((prev) => {
+        const next = { ...prev };
+        mapped.forEach((u) => { if (!next[u.id]) next[u.id] = [...UM_MENUS]; });
+        return next;
+      });
+      return mapped;
+    } catch (err) {
+      console.warn('[superadmin] get-all-users failed — keeping current list', err);
+      return null;
+    }
+  };
+  useEffect(() => { reloadUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Sidebar access — logged-in user ki saved permissions (Auth get-superadmin-module-permission).
+     null = koi record nahi / host-embedded → saare modules (full access by default). */
+  const [navAllowed, setNavAllowed] = useState(null);
+  /* Pehla get chalne tak sidebar khali (loader) — warna login ke baad ek pal ke
+     liye saare modules dikh kar phir chhupte. */
+  const [accessLoading, setAccessLoading] = useState(true);
+  /* Screen × action permissions of the logged-in user (null = full access). */
+  const [myPerms, setMyPerms] = useState(null);
+  const loadMyAccess = async () => {
+    const me = user?.id ? Number(user.id) : authApi.currentUserId();
+    if (!me) { setNavAllowed(null); setAccessLoading(false); return; }
+    try {
+      const rec = await moduleAccessApi.getModuleAccess(me);
+      setNavAllowed(moduleAccessApi.allowedNavIds(rec?.flags || null));
+      setMyPerms(rec ? effectivePermsFromRows(rec.flags, rec.rows) : null);
+    } catch (err) {
+      console.warn('[superadmin] module access load failed — showing all modules', err);
+      setNavAllowed(null);
+      setMyPerms(null);
+    } finally {
+      setAccessLoading(false);
+    }
+  };
+  /* Login ke baad (aur reload par) — GET /api/Auth/get-superadmin-module-permission-byuserid/{id}. */
+  useEffect(() => { setAccessLoading(true); loadMyAccess(); }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* User Permission save hua aur woh khud logged-in user tha → sidebar foran taza. */
+  const onPermsSaved = (uid) => {
+    const me = user?.id ? Number(user.id) : authApi.currentUserId();
+    if (Number(uid) === me) loadMyAccess();
+  };
+  const canSee = (id) => !accessLoading && (!navAllowed || navAllowed.has(id));
+  /* Page sirf tab render ho jab access load ho chuka aur module allowed ho. */
+  const view = canSee(active) ? active : null;
+  const visibleNav = NAV
+    .map((sec) => ({ ...sec, items: sec.items.filter((it) => canSee(it.id)) }))
+    .filter((sec) => sec.items.length);
+
+  /* Khula module ab allowed nahi → pehle allowed module par le jao. */
+  useEffect(() => {
+    if (!navAllowed || navAllowed.has(active)) return;
+    const first = NAV.flatMap((s) => s.items).find((it) => navAllowed.has(it.id));
+    if (first) setActive(first.id);
+  }, [navAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const toast = (msg, type = 'info') => {
     const id = seq.current++;
     setToasts((t) => [...t, { id, msg, type }]);
@@ -139,6 +238,7 @@ export default function SuperAdminShell({ user, onLogout }) {
   }, [Boolean(onLogout)]);
 
 const onNav = (id) => {
+  if (!canSee(id)) { toast('You do not have access to this module', 'warn'); return; }
   if (id === 'support') {
     requestSupportNotificationPermission();
   }
@@ -173,6 +273,7 @@ const onNav = (id) => {
 
   return (
     <PermissionsProvider>
+    <SaPermsProvider perms={myPerms}>
     <div className="sa-root" data-theme={theme === 'dark' ? 'dark' : undefined}>
       <SupportBackgroundListener
   enabled={true}
@@ -206,7 +307,12 @@ const onNav = (id) => {
             <div className="logo-name">SCHOOL MENTOR<br />SUPER ADMIN</div>
           </div>
           <nav className="sidebar-nav">
-            {NAV.map((sec) => (
+            {accessLoading && (
+              <div style={{ padding: '18px 16px', fontSize: 12, color: 'var(--tm)' }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} /> Loading modules…
+              </div>
+            )}
+            {visibleNav.map((sec) => (
               <React.Fragment key={sec.section}>
                 <div className="nav-section-label">{sec.section}</div>
                 {sec.items.map((it) => {
@@ -280,33 +386,33 @@ const onNav = (id) => {
             </div>
           </header>
 
-          {active === 'dashboard' && <Dashboard toast={toast} users={users} perms={perms} />}
+          {view === 'dashboard' && <Dashboard toast={toast} users={users} perms={perms} />}
 
-          {active === 'mentorAI' && <MentorAI toast={toast} />}
+          {view === 'mentorAI' && <MentorAI toast={toast} />}
 
-          {active === 'etube' && <ETube toast={toast} />}
+          {view === 'etube' && <ETube toast={toast} />}
 
-          {active === 'networkPermissions' && <NetworkPermissions toast={toast} />}
+          {view === 'networkPermissions' && <NetworkPermissions toast={toast} />}
 
-          {active === 'permissions' && <SchoolPermissions toast={toast} />}
+          {view === 'permissions' && <SchoolPermissions toast={toast} />}
 
-          {active === 'status' && <SchoolStatus toast={toast} />}
+          {view === 'status' && <SchoolStatus toast={toast} />}
 
-          {active === 'payments' && <SchoolPayment toast={toast} />}
+          {view === 'payments' && <SchoolPayment toast={toast} />}
 
-          {active === 'sops' && <OperationalSops toast={toast} />}
+          {view === 'sops' && <OperationalSops toast={toast} />}
 
-          {active === 'quiz' && <QuizContent toast={toast} />}
+          {view === 'quiz' && <QuizContent toast={toast} />}
 
-          {active === 'trainings' && <TeacherTrainings toast={toast} />}
+          {view === 'trainings' && <TeacherTrainings toast={toast} />}
 
-          {active === 'notifications' && <Notifications toast={toast} />}
+          {view === 'notifications' && <Notifications toast={toast} />}
 
-          {active === 'users' && <UserManagement toast={toast} users={users} setUsers={setUsers} perms={perms} setPerms={setPerms} />}
+          {view === 'users' && <UserManagement toast={toast} users={users} setUsers={setUsers} reloadUsers={reloadUsers} setPerms={setPerms} onPermsSaved={onPermsSaved} />}
 
-          {active === 'techModule' && <TechModule toast={toast} users={users} />}
+          {view === 'techModule' && <TechModule toast={toast} users={users} />}
 
-          {active === 'support' && (
+          {view === 'support' && (
             <div className="page-content">
               <div className="page-header">
                 <div className="page-title-row">
@@ -320,17 +426,7 @@ const onNav = (id) => {
                 </div>
               </div>
 
-              <div className="app-tabs">
-                {SUPPORT_TABS.map((t) => (
-                  <button key={t.id} className={`app-tab${supportTab === t.id ? ' active' : ''}`} onClick={() => setSupportTab(t.id)}>
-                    <i className={`fa-solid ${t.icon}`} /> {t.name}
-                  </button>
-                ))}
-              </div>
-
-              <div className="sa-support-embed">
-                <AgentSupport embedded tab={supportTab} onTab={setSupportTab} />
-              </div>
+              <SupportTabsBody supportTab={supportTab} setSupportTab={setSupportTab} />
             </div>
           )}
         </main>
@@ -346,6 +442,7 @@ const onNav = (id) => {
         ))}
       </div>
     </div>
+    </SaPermsProvider>
     </PermissionsProvider>
   );
 }

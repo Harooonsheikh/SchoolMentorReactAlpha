@@ -4,6 +4,7 @@ import {
   summarizeAutomation, previewTimeline, RESTRICTION_MODE_LABEL,
 } from './billingAutomationData';
 import { paymentsApi } from './api';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    BILLING AUTOMATION — settings screen (brief §4). Clear sections,
@@ -35,6 +36,7 @@ function Field({ label, hint, children }) {
 }
 
 export default function BillingAutomationTab({ settings, onSave, overrides, schools, toast, onGenerated }) {
+  const P = useSaPerms('schoolPayments');
   const [f, setF] = useState(settings);
   /* "Generate Now" — server Hangfire wala kaam abhi chala deta hai. Is mahine
      ka challan pehle se ho to school "skipped", is liye do dafa dabana safe. */
@@ -42,6 +44,7 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
   const [genResult, setGenResult] = useState(null);
   const generateNow = async () => {
     if (genBusy) return;
+    if (!P.guard('automation', 'create', toast)) return;
     setGenBusy(true);
     try {
       const r = await paymentsApi.triggerAutoChallanGeneration();
@@ -162,7 +165,7 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 24 }}>
         <button className="btn-secondary" disabled={!dirty} onClick={() => setF(settings)}>Discard Changes</button>
-        <button className="btn-primary" disabled={!dirty} onClick={() => onSave(f)}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
+        <button {...P.lock('automation', 'edit', { className: 'btn-primary', disabled: !dirty })} onClick={() => { if (!P.guard('automation', 'edit', toast)) return; onSave(f); }}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
       </div>
 
       {/* ── Manual trigger — server ka scheduled kaam abhi chalao ── */}
@@ -171,7 +174,7 @@ export default function BillingAutomationTab({ settings, onSave, overrides, scho
         <div style={{ padding: '0 18px 18px' }}>
           <div className="pay-toggle-row">
             <div><div className="pay-toggle-label">Run monthly challan generation now</div><div className="pay-toggle-sub">Creates this month's challan for every active school instead of waiting for the billing day. A school that already has a challan this month is skipped, not duplicated — safe to click twice.</div></div>
-            <button className="btn-primary" disabled={genBusy} onClick={generateNow}>
+            <button {...P.lock('automation', 'create', { className: 'btn-primary', disabled: genBusy })} onClick={generateNow}>
               <i className={`fa-solid ${genBusy ? 'fa-spinner fa-spin' : 'fa-bolt'}`} /> {genBusy ? 'Generating…' : 'Generate Now'}
             </button>
           </div>

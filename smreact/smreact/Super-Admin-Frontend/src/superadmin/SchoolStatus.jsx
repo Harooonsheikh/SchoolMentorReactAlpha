@@ -6,6 +6,7 @@ import {
 } from './statusData';
 import { schoolProgressApi, schoolPermissionsApi, authApi } from './api';
 import * as supportApi from '../support/api';
+import { useSaPerms, lockTip } from './saPerms';
 /* Assign dropdown ka pehla option — branch kisi ko assign na ho to yehi. */
 const UNASSIGNED = '-- Unassigned --';
 
@@ -31,8 +32,16 @@ function StatePill({ entered }) {
     : <span className="em-pill-red"><i className="fa-solid fa-xmark" style={{ fontSize: 8 }} /> Not Entered</span>;
 }
 
+/* Tab → User Permission screen (scoolProgress). Inactive schools Launch Setup
+   ke saath chalte hain (Make Active unhe wapas Launch Setup me bhejta hai). */
+const TAB_SCREEN = { launch: 'launch_setup', erp: 'erp_schools', inactive: 'launch_setup' };
+
 export default function SchoolStatus({ toast }) {
-  const [tab, setTab] = useState('launch');
+  const [tabSel, setTab] = useState('launch');
+  /* View permission na ho to tab chhupa do; current tab chhupa ho to pehla visible. */
+  const P = useSaPerms('scoolProgress');
+  const visibleTabs = ['launch', 'erp', 'inactive'].filter((t) => P.canView(TAB_SCREEN[t]));
+  const tab = visibleTabs.includes(tabSel) ? tabSel : visibleTabs[0];
   const [launch, setLaunch] = useState([]);
   const [erp, setErp] = useState([]);
   const [inactive, setInactive] = useState([]);
@@ -208,6 +217,7 @@ export default function SchoolStatus({ toast }) {
   }, []);
 
   const assign = async (group, branchId, userId) => {
+    if (!P.guard(group === 'launch' ? 'launch_setup' : 'erp_schools', 'edit', toast)) return;
     const uid = Number(userId) || 0;
     const launchSetup = group === 'launch' ? 0 : 1;
     const setter = group === 'launch' ? setLaunch : setErp;
@@ -262,6 +272,7 @@ export default function SchoolStatus({ toast }) {
   const [busy, setBusy] = useState(false);
 
   const confirmDeactivate = async (group, id) => {
+    if (!P.guard(group === 'launch' ? 'launch_setup' : 'erp_schools', 'edit', toast)) return;
     const list = group === 'launch' ? launch : erp;
     const s = list.find((x) => x.id === id);
     setBusy(true);
@@ -281,6 +292,7 @@ export default function SchoolStatus({ toast }) {
   };
 
   const confirmActivate = async (id) => {
+    if (!P.guard('launch_setup', 'edit', toast)) return;
     const s = inactive.find((x) => x.id === id);
     setBusy(true);
     try {
@@ -322,28 +334,35 @@ export default function SchoolStatus({ toast }) {
 
       {/* TABS */}
       <div className="app-tabs">
-        <button className={`app-tab${tab === 'launch' ? ' active' : ''}`} onClick={() => setTab('launch')}><i className="fa-solid fa-rocket" /> Launch Setup Schools <span className="tab-count">{counts.launch}</span></button>
-        <button className={`app-tab${tab === 'erp' ? ' active' : ''}`} onClick={() => setTab('erp')}><i className="fa-solid fa-server" /> ERP Schools <span className="tab-count">{counts.erp}</span></button>
-        <button className={`app-tab${tab === 'inactive' ? ' active' : ''}`} onClick={() => setTab('inactive')}><i className="fa-solid fa-moon" /> Inactive Schools <span className="tab-count">{counts.inactive}</span></button>
+        {visibleTabs.includes('launch') && <button className={`app-tab${tab === 'launch' ? ' active' : ''}`} onClick={() => setTab('launch')}><i className="fa-solid fa-rocket" /> Launch Setup Schools <span className="tab-count">{counts.launch}</span></button>}
+        {visibleTabs.includes('erp') && <button className={`app-tab${tab === 'erp' ? ' active' : ''}`} onClick={() => setTab('erp')}><i className="fa-solid fa-server" /> ERP Schools <span className="tab-count">{counts.erp}</span></button>}
+        {visibleTabs.includes('inactive') && <button className={`app-tab${tab === 'inactive' ? ' active' : ''}`} onClick={() => setTab('inactive')}><i className="fa-solid fa-moon" /> Inactive Schools <span className="tab-count">{counts.inactive}</span></button>}
       </div>
+
+      {!tab && (
+        <div className="section-card" style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>
+          <i className="fa-solid fa-lock" style={{ fontSize: 26, opacity: 0.3, display: 'block', marginBottom: 10 }} />
+          <div style={{ fontSize: 14, fontWeight: 700 }}>You don't have permission to view this</div>
+        </div>
+      )}
 
       {tab === 'launch' && (
         <LaunchPanel rows={launchRows} users={users} assignBusy={assignBusy} loading={loading} onAssign={(id, v) => assign('launch', id, v)}
-          onDeactivate={(s) => setModal({ type: 'deactivate', group: 'launch', school: s })}
+          onDeactivate={(s) => { if (P.guard('launch_setup', 'edit', toast)) setModal({ type: 'deactivate', group: 'launch', school: s }); }}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
       )}
       {tab === 'erp' && (
         <ErpPanel rows={erpRows} users={users} assignBusy={assignBusy} loading={loading} sub={erpSub} setSub={setErpSub}
           onAssign={(id, v) => assign('erp', id, v)}
-          onDeactivate={(s) => setModal({ type: 'deactivate', group: 'erp', school: s })}
+          onDeactivate={(s) => { if (P.guard('erp_schools', 'edit', toast)) setModal({ type: 'deactivate', group: 'erp', school: s }); }}
           onDetails={(s) => { ensureDetail(s); setModal({ type: 'erpDetail', school: s }); }}
           enquiries={enquiries} enqLoading={enqLoading}
-          onEnqAdd={(s) => setModal({ type: 'enqEdit', school: s, bug: null })}
+          onEnqAdd={(s) => { if (P.guard('erp_schools', 'create', toast)) setModal({ type: 'enqEdit', school: s, bug: null }); }}
           onEnqDetail={(s) => setModal({ type: 'enqDetail', school: s })} />
       )}
       {tab === 'inactive' && (
         <InactivePanel rows={inactive} loading={loading}
-          onActivate={(s) => setModal({ type: 'activate', school: s })}
+          onActivate={(s) => { if (P.guard('launch_setup', 'edit', toast)) setModal({ type: 'activate', school: s }); }}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
       )}
 
@@ -372,8 +391,8 @@ export default function SchoolStatus({ toast }) {
       {modal?.type === 'enqDetail' && (
         <EnquiryDetailModal school={modal.school} bugs={enquiries[modal.school.id] || []}
           onRefresh={refreshEnquiries} toast={toast}
-          onAdd={(activeTab) => setModal({ type: 'enqEdit', school: modal.school, bug: null, back: true, solved: activeTab === 'resolved' })}
-          onEdit={(bug) => setModal({ type: 'enqEdit', school: modal.school, bug, back: true })}
+          onAdd={(activeTab) => { if (P.guard('erp_schools', 'create', toast)) setModal({ type: 'enqEdit', school: modal.school, bug: null, back: true, solved: activeTab === 'resolved' }); }}
+          onEdit={(bug) => { if (P.guard('erp_schools', 'edit', toast)) setModal({ type: 'enqEdit', school: modal.school, bug, back: true }); }}
           onClose={() => setModal(null)} />
       )}
       {modal?.type === 'enqEdit' && (
@@ -389,14 +408,16 @@ export default function SchoolStatus({ toast }) {
 function FilterBar({ children }) { return <div className="filter-bar">{children}</div>; }
 /* Assign dropdown — value hamesha user ki `id` (0 = unassigned), text uska naam.
    `users` /api/Auth/get-all-users se aati hai. */
-function AssignSelect({ value, users, fallbackLabel, busy, onChange }) {
+function AssignSelect({ value, users, fallbackLabel, busy, onChange, screen }) {
+  const P = useSaPerms('scoolProgress');
+  const ok = !screen || P.can(screen, 'edit');
   const uid = Number(value) || 0;
   /* Branch kisi aisi id par assigned ho jo list me na ho (user hata diya gaya,
      ya list abhi load na hui) to usay bhi ek option bana do — warna select
      chup-chaap "-- Unassigned --" dikhane lagta hai. */
   const missing = uid > 0 && !users.some((u) => u.id === uid);
   return (
-    <select className="assign-select" value={uid} disabled={busy} onChange={(e) => onChange(Number(e.target.value) || 0)}>
+    <select className="assign-select" value={uid} disabled={busy || !ok} {...(ok ? {} : { 'data-tip': lockTip('edit'), style: { opacity: 0.5, cursor: 'not-allowed' } })} onChange={(e) => onChange(Number(e.target.value) || 0)}>
       <option value={0}>{UNASSIGNED}</option>
       {missing && <option value={uid}>{fallbackLabel || `User #${uid}`}</option>}
       {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -424,6 +445,7 @@ function LoadingRow({ cols, msg = 'Loading schools…' }) {
 }
 
 function LaunchPanel({ rows, users, assignBusy, loading, onAssign, onDeactivate, onDetails }) {
+  const P = useSaPerms('scoolProgress');
   const [q, setQ] = useState('');
   const [color, setColor] = useState('');
   const [user, setUser] = useState('');   // user id (string), '' = sab
@@ -451,8 +473,8 @@ function LaunchPanel({ rows, users, assignBusy, loading, onAssign, onDeactivate,
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.staff}</td>
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.students}</td>
                   <td><StatusBadge status={s.status} /></td>
-                  <td><AssignSelect value={s.assignedId} users={users} fallbackLabel={s.assigned} busy={assignBusy === s.id} onChange={(v) => onAssign(s.id, v)} /></td>
-                  <td><button className="btn-danger" style={{ height: 34, fontSize: 12, padding: '0 12px' }} onClick={() => onDeactivate(s)}><i className="fa-solid fa-moon" /> Make InActive</button></td>
+                  <td><AssignSelect screen="launch_setup" value={s.assignedId} users={users} fallbackLabel={s.assigned} busy={assignBusy === s.id} onChange={(v) => onAssign(s.id, v)} /></td>
+                  <td><button {...P.lock('launch_setup', 'edit', { className: 'btn-danger', style: { height: 34, fontSize: 12, padding: '0 12px' } })} onClick={() => onDeactivate(s)}><i className="fa-solid fa-moon" /> Make InActive</button></td>
                   <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Branch Details" data-tip-pos="left" onClick={() => onDetails(s)}><i className="fa-solid fa-chevron-down" /></button></td>
                 </tr>
               ))}
@@ -466,6 +488,7 @@ function LaunchPanel({ rows, users, assignBusy, loading, onAssign, onDeactivate,
 
 /* ═══════════════════════ ERP PANEL ═══════════════════════ */
 function ErpPanel({ rows, users, assignBusy, loading, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, enqLoading, onEnqAdd, onEnqDetail }) {
+  const P = useSaPerms('scoolProgress');
   const [q, setQ] = useState('');
   const [user, setUser] = useState('');   // user id (string), '' = sab
   const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!user || String(s.assignedId) === user));
@@ -514,8 +537,8 @@ function ErpPanel({ rows, users, assignBusy, loading, sub, setSub, onAssign, onD
                 <div className="erp-divider" />
                 <div className="erp-stat"><div className="erp-stat-val">{s.students}</div><div className="erp-stat-lbl">Students</div></div>
                 <div className="erp-divider" />
-                <AssignSelect value={s.assignedId} users={users} fallbackLabel={s.assigned} busy={assignBusy === s.id} onChange={(v) => onAssign(s.id, v)} />
-                <button className="btn-danger" style={{ height: 34, fontSize: 12, padding: '0 12px', marginLeft: 10 }} onClick={() => onDeactivate(s)}><i className="fa-solid fa-moon" /> Make InActive</button>
+                <AssignSelect screen="erp_schools" value={s.assignedId} users={users} fallbackLabel={s.assigned} busy={assignBusy === s.id} onChange={(v) => onAssign(s.id, v)} />
+                <button {...P.lock('erp_schools', 'edit', { className: 'btn-danger', style: { height: 34, fontSize: 12, padding: '0 12px', marginLeft: 10 } })} onClick={() => onDeactivate(s)}><i className="fa-solid fa-moon" /> Make InActive</button>
                 <button className="det-btn" data-tip="View Details" data-tip-pos="left" style={{ marginLeft: 8 }} onClick={() => onDetails(s)}><i className="fa-solid fa-chevron-down" /></button>
               </div>
               <div className="erp-meta">
@@ -566,7 +589,7 @@ function ErpPanel({ rows, users, assignBusy, loading, sub, setSub, onAssign, onD
                           <td><div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13.5 }}>{s.name}</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}><i className="fa-solid fa-user-tie" style={{ fontSize: 9, marginRight: 3 }} />{s.assigned}</div></td>
                           <td style={{ textAlign: 'center' }}><span className={`badge-open${open === 0 ? ' badge-zero' : ''}`}><i className="fa-solid fa-bug" style={{ fontSize: 9 }} />{open} bug{open !== 1 ? 's' : ''}</span></td>
                           <td style={{ textAlign: 'center' }}><span className={`badge-resolved${res === 0 ? ' badge-zero' : ''}`}><i className="fa-solid fa-circle-check" style={{ fontSize: 9 }} />{res} resolved</span></td>
-                          <td style={{ textAlign: 'center' }}><button className="enq-add-btn" onClick={() => onEnqAdd(s)}><i className="fa-solid fa-plus" /> Add Inquiry</button></td>
+                          <td style={{ textAlign: 'center' }}><button {...P.lock('erp_schools', 'create', { className: 'enq-add-btn' })} onClick={() => onEnqAdd(s)}><i className="fa-solid fa-plus" /> Add Inquiry</button></td>
                           <td style={{ textAlign: 'center' }}><button className="enq-det-btn" data-tip="View Enquiries" data-tip-pos="left" onClick={() => onEnqDetail(s)}><i className="fa-solid fa-chevron-down" /></button></td>
                         </tr>
                       );
@@ -584,6 +607,7 @@ function ErpPanel({ rows, users, assignBusy, loading, sub, setSub, onAssign, onD
 
 /* ═══════════════════════ INACTIVE PANEL ═══════════════════════ */
 function InactivePanel({ rows, loading, onActivate, onDetails }) {
+  const P = useSaPerms('scoolProgress');
   const [q, setQ] = useState('');
   const list = rows.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()));
   return (
@@ -608,7 +632,7 @@ function InactivePanel({ rows, loading, onActivate, onDetails }) {
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.students}</td>
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.staffSignup}</td>
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.stuSignup}</td>
-                  <td><button className="btn-success" style={{ height: 34, fontSize: 12, padding: '0 12px' }} onClick={() => onActivate(s)}><i className="fa-solid fa-circle-check" /> Make Active</button></td>
+                  <td><button {...P.lock('launch_setup', 'edit', { className: 'btn-success', style: { height: 34, fontSize: 12, padding: '0 12px' } })} onClick={() => onActivate(s)}><i className="fa-solid fa-circle-check" /> Make Active</button></td>
                   <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Branch Details" data-tip-pos="left" onClick={() => onDetails(s)}><i className="fa-solid fa-chevron-down" /></button></td>
                 </tr>
               ))}
@@ -705,6 +729,7 @@ function ConfirmModal({ tone, icon, title, sub, confirmText, confirmClass, confi
 
 /* ═══════════════════════ ERP DETAIL MODAL ═══════════════════════ */
 function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClose }) {
+  const P = useSaPerms('scoolProgress');
   const [sect, setSect] = useState('progress');
   const [follow, setFollow] = useState('notes');
   const [addType, setAddType] = useState(null);     // 'note' | 'call' | 'message'
@@ -807,6 +832,7 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
   /* Delete server par (action:delete) — kaamyabi par hi list se hatao. */
   const delItem = async (type, id) => {
     if (savingCard) return;
+    if (!P.guard('erp_schools', 'delete', toast)) return;
     setSavingCard(true);
     try {
       await schoolProgressApi.deleteCardAction(id, s.id);
@@ -900,8 +926,8 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
               ))}
             </div>
             <FollowList type={follow} items={follow === 'notes' ? d.notes : follow === 'calls' ? d.calls : d.messages}
-              onAdd={() => { setEditItem(null); setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message'); }}
-              onEdit={(item) => { setEditItem(item); setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message'); }}
+              onAdd={() => { if (!P.guard('erp_schools', 'create', toast)) return; setEditItem(null); setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message'); }}
+              onEdit={(item) => { if (!P.guard('erp_schools', 'edit', toast)) return; setEditItem(item); setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message'); }}
               onDelete={(id) => delItem(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message', id)} toast={toast} />
           </div>
         )}
@@ -923,6 +949,7 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
               {d.obModules.map((m, i) => (
                 <ObCard key={m.key} m={m} idx={i} saving={savingOb === m.key}
                   onSave={async (comment, date) => {
+                    if (!P.guard('erp_schools', 'edit', toast)) return;
                     if (!comment && !date) { toast?.('Enter comment or date first', 'warn'); return; }
                     if (savingOb) return;
                     setSavingOb(m.key);
@@ -966,6 +993,7 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
           onClose={() => { setAddType(null); setEditItem(null); }}
           onSave={async (text, dateStr) => {
             if (savingCard) return;
+            if (!P.guard('erp_schools', editItem ? 'edit' : 'create', toast)) return;
             setSavingCard(true);
             try {
               /* Sub-head wahi jo abhi khula sub-tab hai (Notes/Calls/Messages).
@@ -1171,6 +1199,7 @@ function MobileUsageBlock({ title, logins = 0, time = '00:00:00', mods, hideModu
 }
 
 function FollowList({ type, items, onAdd, onEdit, onDelete, toast }) {
+  const P = useSaPerms('scoolProgress');
   const cfg = {
     notes: { icon: 'fa-note-sticky', avatar: 'note', title: 'Notes', sub: 'Internal notes and follow-up reminders', add: 'Add Note', strip: '', tf: 'text', df: 'date' },
     calls: { icon: 'fa-phone', avatar: 'call', title: 'Calls', sub: 'Call logs and phone interaction history', add: 'Add Call', strip: 'call', tf: 'detail', df: 'dateTime' },
@@ -1188,7 +1217,7 @@ function FollowList({ type, items, onAdd, onEdit, onDelete, toast }) {
           <div className="fu-section-icon" style={{ background: cfg.avatar === 'note' ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : cfg.avatar === 'call' ? 'linear-gradient(135deg,#15803D,#16A34A)' : 'linear-gradient(135deg,#0369A1,#0284C7)' }}><i className={`fa-${type === 'calls' ? 'solid' : 'regular'} ${cfg.icon}`} /></div>
           <div><div className="fu-section-title">{cfg.title}</div><div className="fu-section-sub">{cfg.sub}</div></div>
         </div>
-        <button className="fu-add-btn" onClick={onAdd}><i className="fa-solid fa-plus" /> {cfg.add}</button>
+        <button {...P.lock('erp_schools', 'create', { className: 'fu-add-btn' })} onClick={onAdd}><i className="fa-solid fa-plus" /> {cfg.add}</button>
       </div>
       {items.length === 0 ? (
         <div className="fu-empty"><div className="fu-empty-icon"><i className={`fa-solid ${cfg.icon}`} /></div><div className="fu-empty-title">No {cfg.title} yet</div><div className="fu-empty-sub">{tips[type]}</div></div>
@@ -1210,8 +1239,8 @@ function FollowList({ type, items, onAdd, onEdit, onDelete, toast }) {
                   {/* tip-pos="left": .fu-card is overflow:hidden, so the
                       default upward tooltip gets clipped inside the card —
                       same reason every other action button here points left. */}
-                  <button className="fu-act-btn edit" data-tip="Edit" data-tip-pos="left" onClick={() => onEdit?.(item)}><i className="fa-solid fa-pen" /></button>
-                  <button className="fu-act-btn del" data-tip="Delete" data-tip-pos="left" onClick={() => onDelete(item.id)}><i className="fa-solid fa-trash-can" /></button>
+                  <button {...P.lock('erp_schools', 'edit', { className: 'fu-act-btn edit', 'data-tip': 'Edit', 'data-tip-pos': 'left' })} onClick={() => onEdit?.(item)}><i className="fa-solid fa-pen" /></button>
+                  <button {...P.lock('erp_schools', 'delete', { className: 'fu-act-btn del', 'data-tip': 'Delete', 'data-tip-pos': 'left' })} onClick={() => onDelete(item.id)}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               </div>
             </div>
@@ -1256,6 +1285,7 @@ function AddFollowModal({ type, saving = false, initial = null, onClose, onSave 
 }
 
 function ObCard({ m, idx, saving = false, onSave, onHistory }) {
+  const P = useSaPerms('scoolProgress');
   const [comment, setComment] = useState(m.comment);
   const [date, setDate] = useState(m.date);
   return (
@@ -1272,7 +1302,7 @@ function ObCard({ m, idx, saving = false, onSave, onHistory }) {
       </div>
       <div className="em-ob-foot">
         {m.done && m.history.length ? <button className="em-ob-view-btn" onClick={onHistory}><i className="fa-solid fa-eye" /> History</button> : <span />}
-        <button className="em-ob-save-btn" disabled={saving} onClick={() => { if (!saving) onSave(comment.trim(), date); }}><i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save'}</button>
+        <button {...P.lock('erp_schools', 'edit', { className: 'em-ob-save-btn', disabled: saving })} onClick={() => { if (!saving) onSave(comment.trim(), date); }}><i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save'}</button>
       </div>
     </div>
   );
@@ -1345,6 +1375,7 @@ function TrainingSection({ branchId, toast }) {
   const [savingEdit, setSavingEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(0);      // jis card par delete chal rahi hai
+  const P = useSaPerms('scoolProgress');
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const toastRef = useRef(toast);
@@ -1380,6 +1411,7 @@ function TrainingSection({ branchId, toast }) {
   /* Neeche wala form — hamesha NAYA session (id: 0). */
   const add = async () => {
     if (saving) return;
+    if (!P.guard('erp_schools', 'create', toast)) return;
     if (isBlank(form)) { toast?.('Fill participation details first', 'warn'); return; }
     setSaving(true);
     try {
@@ -1397,6 +1429,7 @@ function TrainingSection({ branchId, toast }) {
   /* Modal se update — mojooda session ki id ke sath. */
   const saveEdit = async (values) => {
     if (savingEdit || !editSession) return;
+    if (!P.guard('erp_schools', 'edit', toast)) return;
     if (isBlank(values)) { toast?.('Fill participation details first', 'warn'); return; }
     setSavingEdit(true);
     try {
@@ -1413,6 +1446,7 @@ function TrainingSection({ branchId, toast }) {
 
   const del = async (s) => {
     if (busyId) return;
+    if (!P.guard('erp_schools', 'delete', toast)) return;
     setBusyId(s.id);
     try {
       await schoolProgressApi.deleteTrainingSession(s.id, branchId);
@@ -1445,10 +1479,10 @@ function TrainingSection({ branchId, toast }) {
               <div className="em-tr-sub">{s.participants || 0} participant{s.participants === 1 ? '' : 's'}</div>
             </div>
             <div className="em-tr-acts">
-              <button className="em-tr-act" data-tip="Edit this session" disabled={busyId === s.id} onClick={() => setEditSession(s)}>
+              <button {...P.lock('erp_schools', 'edit', { className: 'em-tr-act', 'data-tip': 'Edit this session', disabled: busyId === s.id })} onClick={() => { if (P.guard('erp_schools', 'edit', toast)) setEditSession(s); }}>
                 <i className="fa-solid fa-pen" />
               </button>
-              <button className="em-tr-act danger" data-tip="Delete this session" disabled={busyId === s.id} onClick={() => del(s)}>
+              <button {...P.lock('erp_schools', 'delete', { className: 'em-tr-act danger', 'data-tip': 'Delete this session', disabled: busyId === s.id })} onClick={() => del(s)}>
                 <i className={`fa-solid ${busyId === s.id ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} />
               </button>
             </div>
@@ -1473,7 +1507,7 @@ function TrainingSection({ branchId, toast }) {
         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--t2)', display: 'block', marginBottom: 4 }}>Description / Coordination Note</label>
         <textarea className="em-tr-textarea" placeholder="Add coordination notes or follow-up actions..." value={form.desc} onChange={(e) => set('desc', e.target.value)} />
         <div className="em-tr-save">
-          <button className="em-tr-save-btn" disabled={saving} onClick={add}>
+          <button {...P.lock('erp_schools', 'create', { className: 'em-tr-save-btn', disabled: saving })} onClick={add}>
             <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-plus'}`} />
             {saving ? ' Adding…' : ' Add Session'}
           </button>
@@ -1497,6 +1531,7 @@ function TrainingSection({ branchId, toast }) {
    me, true wala Resolved me. Mark Resolved / Reopen dono `update` hain
    (poora record dobara jata hai, sirf isSolved badalta hai). */
 function EnquiryDetailModal({ school: s, bugs, onRefresh, toast, onAdd, onEdit, onClose }) {
+  const P = useSaPerms('scoolProgress');
   const [tab, setTab] = useState('open');
   const open = bugs.filter((b) => b.status === 'open');
   const res = bugs.filter((b) => b.status === 'resolved');
@@ -1518,9 +1553,9 @@ function EnquiryDetailModal({ school: s, bugs, onRefresh, toast, onAdd, onEdit, 
     }
   };
 
-  const markResolved = (bug) => run(bug, () => schoolProgressApi.setEnquirySolved(bug, true), 'Bug marked as resolved', 'success');
-  const reopen = (bug) => run(bug, () => schoolProgressApi.setEnquirySolved(bug, false), 'Bug reopened', 'info');
-  const del = (bug) => run(bug, () => schoolProgressApi.deleteEnquiry(bug.id, s.id), 'Bug deleted', 'info');
+  const markResolved = (bug) => P.guard('erp_schools', 'edit', toast) && run(bug, () => schoolProgressApi.setEnquirySolved(bug, true), 'Bug marked as resolved', 'success');
+  const reopen = (bug) => P.guard('erp_schools', 'edit', toast) && run(bug, () => schoolProgressApi.setEnquirySolved(bug, false), 'Bug reopened', 'info');
+  const del = (bug) => P.guard('erp_schools', 'delete', toast) && run(bug, () => schoolProgressApi.deleteEnquiry(bug.id, s.id), 'Bug deleted', 'info');
 
   return (
     <Overlay cls="enq-ov" onClose={onClose} wrapCls="enq-modal">
@@ -1530,7 +1565,7 @@ function EnquiryDetailModal({ school: s, bugs, onRefresh, toast, onAdd, onEdit, 
           <div className="enq-modal-school-name">{s.name}</div>
           <div className="enq-modal-sub">Assigned: {s.assigned} · {s.staff} Staff · {s.students} Students</div>
         </div>
-        <button className="enq-add-btn" style={{ height: 34, fontSize: 12 }} onClick={() => onAdd?.(tab)}><i className="fa-solid fa-plus" /> Add Bug</button>
+        <button {...P.lock('erp_schools', 'create', { className: 'enq-add-btn', style: { height: 34, fontSize: 12 } })} onClick={() => onAdd?.(tab)}><i className="fa-solid fa-plus" /> Add Bug</button>
         <button className="enq-modal-close" data-tip="Close" data-tip-pos="left" style={{ marginLeft: 8 }} onClick={onClose}><i className="fa-solid fa-xmark" /></button>
       </div>
       <div className="enq-modal-body">
@@ -1558,13 +1593,13 @@ function EnquiryDetailModal({ school: s, bugs, onRefresh, toast, onAdd, onEdit, 
                       <span className="enq-bug-user"><i className="fa-solid fa-user" style={{ fontSize: 9 }} />{bug.user}</span>
                       <span className="enq-bug-date"><i className="fa-solid fa-code" style={{ fontSize: 9 }} />Dev: {bug.developer}</span>
                       {bug.status === 'open'
-                        ? <button className="enq-resolve-btn" disabled={busyId === bug.id} onClick={() => markResolved(bug)}><i className={`fa-solid ${busyId === bug.id ? 'fa-spinner fa-spin' : 'fa-circle-check'}`} style={{ fontSize: 9 }} /> Mark Resolved</button>
-                        : <button className="enq-reopen-btn" disabled={busyId === bug.id} onClick={() => reopen(bug)}><i className={`fa-solid ${busyId === bug.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} style={{ fontSize: 9 }} /> Reopen</button>}
+                        ? <button {...P.lock('erp_schools', 'edit', { className: 'enq-resolve-btn', disabled: busyId === bug.id })} onClick={() => markResolved(bug)}><i className={`fa-solid ${busyId === bug.id ? 'fa-spinner fa-spin' : 'fa-circle-check'}`} style={{ fontSize: 9 }} /> Mark Resolved</button>
+                        : <button {...P.lock('erp_schools', 'edit', { className: 'enq-reopen-btn', disabled: busyId === bug.id })} onClick={() => reopen(bug)}><i className={`fa-solid ${busyId === bug.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} style={{ fontSize: 9 }} /> Reopen</button>}
                     </div>
                   </div>
                   <div className="enq-bug-actions">
-                    <button className="enq-iact" data-tip="Edit" data-tip-pos="left" disabled={busyId === bug.id} onClick={() => onEdit?.(bug)}><i className="fa-solid fa-pen" /></button>
-                    <button className="enq-iact del" data-tip="Delete" data-tip-pos="left" disabled={busyId === bug.id} onClick={() => del(bug)}><i className="fa-solid fa-trash-can" /></button>
+                    <button {...P.lock('erp_schools', 'edit', { className: 'enq-iact', 'data-tip': 'Edit', 'data-tip-pos': 'left', disabled: busyId === bug.id })} onClick={() => onEdit?.(bug)}><i className="fa-solid fa-pen" /></button>
+                    <button {...P.lock('erp_schools', 'delete', { className: 'enq-iact del', 'data-tip': 'Delete', 'data-tip-pos': 'left', disabled: busyId === bug.id })} onClick={() => del(bug)}><i className="fa-solid fa-trash-can" /></button>
                   </div>
                 </div>
               </div>
@@ -1577,6 +1612,7 @@ function EnquiryDetailModal({ school: s, bugs, onRefresh, toast, onAdd, onEdit, 
 }
 
 function EnquiryEditModal({ school: s, bug, defaultSolved = false, onRefresh, toast, onClose }) {
+  const P = useSaPerms('scoolProgress');
   const editing = Boolean(bug);
   const [form, setForm] = useState({ module: bug?.module || '', developer: bug?.developer || '', detail: bug?.detail || '', date: bug?.date || '' });
   const [saving, setSaving] = useState(false);
@@ -1585,6 +1621,7 @@ function EnquiryEditModal({ school: s, bug, defaultSolved = false, onRefresh, to
   /* Developer aur Date bhi backend par [Required] hain — khali chhode to 400
      aata hai, is liye Save se pehle chaaron ki jaanch yahin. */
   const save = async () => {
+    if (!P.guard('erp_schools', editing ? 'edit' : 'create', toast)) return;
     if (!form.module.trim() || !form.detail.trim()) { toast?.('Module and bug detail are required', 'warn'); return; }
     if (!form.developer.trim()) { toast?.('Developer is required', 'warn'); return; }
     if (!form.date) { toast?.('Date is required', 'warn'); return; }

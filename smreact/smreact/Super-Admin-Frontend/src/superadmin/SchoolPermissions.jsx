@@ -4,6 +4,7 @@ import {
   SCHOOLS, buildInitialPerms, defaultPerms,
 } from './permissionsData';
 import { schoolPermissionsApi } from './api';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL PERMISSIONS — Super Admin module (frontend only)
@@ -23,6 +24,9 @@ export default function SchoolPermissions({ toast }) {
   const [search, setSearch] = useState('');
   const [erpFilter, setErpFilter] = useState('');     // '' | 'active' | 'inactive'
   const [editId, setEditId] = useState(null);          // school being managed
+
+  /* Edit permission (User Permission ▸ School Permissions) = Manage + Save. View-only → Manage disabled. */
+  const P = useSaPerms('schoolPermission');
 
   /* Latest toast in a ref so the loader doesn't re-fire when the parent
      re-renders and hands down a fresh function (same trick as MentorAI). */
@@ -73,6 +77,7 @@ export default function SchoolPermissions({ toast }) {
   /* Save Permissions → modules + ERP Access + Active Branch +
      POST /manage-mobileapp-permission (chatType + toggles). */
   const savePerms = async (id, perms) => {
+    if (!P.guard('school_perms', 'edit', toast)) return;
     const s = schools.find((x) => x.id === id);
     setSaving(true);
     try {
@@ -196,7 +201,7 @@ export default function SchoolPermissions({ toast }) {
                       <div style={{ fontSize: 10, color: 'var(--tm)' }}>{s.hasPermissionRow === false ? 'not set yet' : 'modules on'}</div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => setEditId(s.id)}>
+                      <button {...P.lock('school_perms', 'edit', { className: 'btn-sm', style: { height: 30, fontSize: 11.5 } })} onClick={() => { if (P.guard('school_perms', 'edit', toast)) setEditId(s.id); }}>
                         <i className="fa-solid fa-sliders" /> Manage
                       </button>
                     </td>
@@ -248,6 +253,7 @@ function PermModal({ school, initial, saving, toast, onClose, onSave }) {
   const [showMobileModal, setShowMobileModal] = useState(false);
   const [mobileLoading, setMobileLoading] = useState(true);
   const [mobileSaving, setMobileSaving] = useState(false);
+  const P = useSaPerms('schoolPermission');
 
   useEffect(() => {
     let alive = true;
@@ -285,6 +291,7 @@ function PermModal({ school, initial, saving, toast, onClose, onSave }) {
 
   const saveMobileAndClose = async () => {
     if (mobileSaving || mobileLoading) return;
+    if (!P.guard('school_perms', 'edit', toast)) return;
     setMobileSaving(true);
     try {
       const saved = await schoolPermissionsApi.saveMobileAppPermission(school.id, draft);

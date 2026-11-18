@@ -13,6 +13,7 @@ import { METRIC_BY_ID } from './dashboard/metrics';
 import { metricsAffectedBy } from './dashboard/contract';
 import { PERIODS, periodLabel, pkToday, monthOfPeriod, monthName } from './dashboard/periods';
 import { fmtCount, fmtPKR, fmtAmount, fmtPct, MISSING } from './format';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD — platform overview (permission-aware)
@@ -72,6 +73,8 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const { status, data, error: loadErr, reload } = useDashboardData();
   const values = useMemo(() => data?.values || {}, [data]);
   const v = (id) => (values[id] === undefined ? null : values[id]);
+  /* Logged-in user's User Permission matrix (Dashboard sections) — ANDed with the "Viewing as" preview gates below. */
+  const P = useSaPerms('dashboard');
 
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
@@ -250,9 +253,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
 
   const accountInactive = !!viewUser && !viewUser.active;
   const canDashboard = has('Dashboard');
-  const canPay = hasAny(DASHBOARD_GATES.pay);
-  const canProgress = hasAny(DASHBOARD_GATES.progress);
-  const canVideo = hasAny(DASHBOARD_GATES.video);
+  const canPay = hasAny(DASHBOARD_GATES.pay) && P.canView('fee_analytics');
+  const canProgress = hasAny(DASHBOARD_GATES.progress) && P.canView('school_overview');
+  const canBugs = hasAny(DASHBOARD_GATES.progress) && P.canView('bugs_improve');
+  const canVideo = hasAny(DASHBOARD_GATES.video) && P.canView('video_details');
+  const noSectionVisible = !canPay && !canProgress && !canBugs && !canVideo;
 
   const hidden = [];
   if (canDashboard && !accountInactive) {
@@ -401,6 +406,13 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         </div>
       )}
 
+      {P.restricted && noSectionVisible && (
+        <div className="db-block">
+          <i className="fa-solid fa-lock" />
+          <div className="db-block-ttl">You don't have permission to view this</div>
+        </div>
+      )}
+
       {/* ─── FEE ANALYTICS ─── */}
       {canPay && (
         <>
@@ -510,7 +522,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       {/* ─── 1LINK / 1BILL TRANSACTION MONITORING & REVENUE ─── */}
       {canPay && <OneLinkOverviewSection toast={toast} />}
 
-      {canProgress && (
+      {canBugs && (
         <>
           {/* ─── BUGS SUMMARY ─── */}
           <div className="section-hdr" style={{ justifyContent: 'space-between' }}>
@@ -520,7 +532,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               {isSuper && (
-                <button className="btn-primary bm-add-btn" onClick={() => openBugForm(null)}>
+                <button {...P.lock('bugs_improve', 'create', { className: 'btn-primary bm-add-btn' })} onClick={() => { if (P.guard('bugs_improve', 'create', toast)) openBugForm(null); }}>
                   <i className="fa-solid fa-plus" /> Add New Bug
                 </button>
               )}
@@ -542,7 +554,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           <BugReportsSection rows={bugRows} periodLabel={periodLabel(bugPeriod)}
             scope={bugScope} onScope={setBugScope}
             schoolName={(id) => (branchNames && branchNames[id]) || ''}
-            canEdit={isSuper} loading={bugsBusy} error={bugsErr} onRetry={reloadBugs}
+            canEdit={isSuper && P.can('bugs_improve', 'edit')} loading={bugsBusy} error={bugsErr} onRetry={reloadBugs}
             onEdit={openBugForm} onChanged={reloadBugs} toast={toast} />
           </div>
           {bugForm && (
@@ -558,7 +570,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               {isSuper && (
-                <button className="btn-primary bm-add-btn" onClick={() => openImpForm(null)}>
+                <button {...P.lock('bugs_improve', 'create', { className: 'btn-primary bm-add-btn' })} onClick={() => { if (P.guard('bugs_improve', 'create', toast)) openImpForm(null); }}>
                   <i className="fa-solid fa-plus" /> Add Improvement
                 </button>
               )}
@@ -580,7 +592,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           <ImprovementReportsSection rows={impRows} periodLabel={periodLabel(impPeriod)}
             scope={impScope} onScope={setImpScope}
             schoolName={(id) => (branchNames && branchNames[id]) || ''}
-            canEdit={isSuper} loading={bugsBusy} error={bugsErr} onRetry={reloadBugs}
+            canEdit={isSuper && P.can('bugs_improve', 'edit')} loading={bugsBusy} error={bugsErr} onRetry={reloadBugs}
             onEdit={openImpForm} onChanged={reloadBugs} toast={toast} />
           </div>
           {impForm && (
@@ -720,7 +732,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           bodyStyle={{ padding: 0, background: '#F0F4FF' }} onClose={() => setSchoolReport(null)}
           footer={<>
             <button className="btn-secondary" onClick={() => setSchoolReport(null)}>Close</button>
-            <button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button>
+            <button {...P.lock('school_overview', 'download', { className: 'btn-primary' })} onClick={() => { if (P.guard('school_overview', 'download', toast)) window.print(); }}><i className="fa-solid fa-print" /> Print / Save</button>
           </>}>
           <div style={{ padding: 20 }}>
             {progressErr ? (

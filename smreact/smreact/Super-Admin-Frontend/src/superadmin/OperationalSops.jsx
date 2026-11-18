@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom';
 import { INITIAL_SOP, hasPdf, hasVideo, embedUrl } from './sopData';
 import { schoolSopsApi } from './api';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    OPERATIONAL SOPs — Super Admin module (frontend only)
@@ -87,6 +88,12 @@ export default function OperationalSops({ toast }) {
   const [openDd, setOpenDd] = useState(null);
   const [modal, setModal] = useState(null);
 
+  /* User Permission — Manual Heads / Manuals / Manual Forms (policyMenual). */
+  const P = useSaPerms('policyMenual');
+  const canHeads = P.canView('heads');
+  const canManuals = P.canView('manuals');
+  const canForms = P.canView('forms');
+
   /* (Pehle yahan ek local id-counter tha — ab ids server se aati hain.) */
 
   /* ── Manual Heads (categories) live API se ────────────────────────
@@ -168,6 +175,7 @@ export default function OperationalSops({ toast }) {
      API se laate hain, taake screen wahi dikhaye jo server par hai. */
   const saveCat = async (form, editId) => {
     if (savingCat) return;
+    if (!P.guard('heads', editId ? 'edit' : 'create', toast)) return;
     setSavingCat(true);
     try {
       await schoolSopsApi.saveManualHead(form, editId);
@@ -184,6 +192,7 @@ export default function OperationalSops({ toast }) {
   /* ── Manual CRUD — manual-detail API (insert / update) ── */
   const saveManual = async (form, editId) => {
     if (savingManual) return;
+    if (!P.guard('manuals', editId ? 'edit' : 'create', toast)) return;
     setSavingManual(true);
     try {
       await schoolSopsApi.saveManual(form, editId);
@@ -232,6 +241,7 @@ export default function OperationalSops({ toast }) {
 
   const saveForm = async (manualId, form, editId) => {
     if (savingForm) return;
+    if (!P.guard('forms', editId ? 'edit' : 'create', toast)) return;
     setSavingForm(true);
     try {
       await schoolSopsApi.saveForm(manualId, form, editId);
@@ -250,6 +260,7 @@ export default function OperationalSops({ toast }) {
      Manual head server par delete hota hai (action:delete) — kaamyabi par
      list dobara load. Manual/form abhi demo state me hain. */
   const confirmDelete = async ({ type, id, parentId }) => {
+    if (!P.guard(type === 'cat' ? 'heads' : type === 'manual' ? 'manuals' : 'forms', 'delete', toast)) return;
     if (type === 'cat') {
       if (savingCat) return;
       setSavingCat(true);
@@ -312,8 +323,16 @@ export default function OperationalSops({ toast }) {
             <div className="page-sub">Manage school policy manuals, forms, and tutorial videos by category.</div>
           </div>
         </div>
-        <button className="btn-primary" onClick={() => setModal({ type: 'cat', cat: null })}><i className="fa-solid fa-plus" /> Add New Manual Head</button>
+        {canHeads && <button {...P.lock('heads', 'create', { className: 'btn-primary' })} onClick={() => { if (P.guard('heads', 'create', toast)) setModal({ type: 'cat', cat: null }); }}><i className="fa-solid fa-plus" /> Add New Manual Head</button>}
       </div>
+
+      {!canHeads && !canManuals && !canForms && (
+        <div className="section-card" style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>
+          <i className="fa-solid fa-lock" style={{ fontSize: 26, opacity: 0.3, display: 'block', marginBottom: 10 }} />
+          <div style={{ fontSize: 14, fontWeight: 700 }}>You don't have permission to view this</div>
+        </div>
+      )}
+      {(canHeads || canManuals || canForms) && (<>
 
       {/* Stats */}
       <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
@@ -324,8 +343,8 @@ export default function OperationalSops({ toast }) {
         <div className="stat-card s-green"><div className="stat-icon"><i className="fa-solid fa-circle-play" /></div><div className="stat-val">{stats.vids}</div><div className="stat-lbl">Tutorial Videos</div></div>
       </div>
 
-      {/* Category bar */}
-      <div className="sop-cat-bar">
+      {/* Category bar — Manuals dekhne wale ko bhi head chunne ke liye chahiye. */}
+      {(canHeads || canManuals) && <div className="sop-cat-bar">
         {catsLoading && (
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)', padding: '8px 4px' }}>
             <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} /> Loading manual heads…
@@ -346,17 +365,17 @@ export default function OperationalSops({ toast }) {
                   chalta hai, taake usay khol kar edit bhi kiya ja sake. */}
               {c.status === 'inactive' && <span className="sop-cat-state" data-tip="This manual head is inactive">Inactive</span>}
               <span className="sop-cat-count">{count}</span>
-              <span className="sop-cat-edit-btn" data-tip="Edit category" onClick={(e) => { e.stopPropagation(); setModal({ type: 'cat', cat: c }); }}><i className="fa-solid fa-pen" /></span>
+              <span {...P.lock('heads', 'edit', { className: 'sop-cat-edit-btn', 'data-tip': 'Edit category' })} onClick={(e) => { e.stopPropagation(); if (!P.guard('heads', 'edit', toast)) return; setModal({ type: 'cat', cat: c }); }}><i className="fa-solid fa-pen" /></span>
               {count === 0
-                ? <span className="sop-cat-edit-btn" data-tip="Delete empty category" style={{ background: 'rgba(220,38,38,.18)', color: '#fca5a5' }} onClick={(e) => { e.stopPropagation(); setModal({ type: 'del', target: { type: 'cat', id: c.id }, name: c.title, label: 'Category' }); }}><i className="fa-solid fa-trash-can" /></span>
+                ? <span {...P.lock('heads', 'delete', { className: 'sop-cat-edit-btn', 'data-tip': 'Delete empty category', style: { background: 'rgba(220,38,38,.18)', color: '#fca5a5' } })} onClick={(e) => { e.stopPropagation(); if (!P.guard('heads', 'delete', toast)) return; setModal({ type: 'del', target: { type: 'cat', id: c.id }, name: c.title, label: 'Category' }); }}><i className="fa-solid fa-trash-can" /></span>
                 : <span className="sop-cat-edit-btn" data-tip={`Cannot delete — has ${count} manual${count !== 1 ? 's' : ''}`} style={{ opacity: 0.35, cursor: 'not-allowed' }}><i className="fa-solid fa-trash-can" /></span>}
             </button>
           );
         })}
-      </div>
+      </div>}
 
       {/* Manuals table */}
-      <div className="section-card">
+      {canManuals && <div className="section-card">
         <div className="card-header">
           <div>
             <div className="card-title"><i className="fa-solid fa-list" /> {cat ? `${cat.title} — Manual Head Details` : 'Manual Head Details'}</div>
@@ -364,7 +383,7 @@ export default function OperationalSops({ toast }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <div className="search-box" style={{ width: 210 }}><i className="fa-solid fa-magnifying-glass" /><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search manuals…" /></div>
-            <button className="btn-primary" onClick={() => setModal({ type: 'manual', manual: null })}><i className="fa-solid fa-plus" /> Add New Manual Detail</button>
+            <button {...P.lock('manuals', 'create', { className: 'btn-primary' })} onClick={() => { if (P.guard('manuals', 'create', toast)) setModal({ type: 'manual', manual: null }); }}><i className="fa-solid fa-plus" /> Add New Manual Detail</button>
           </div>
         </div>
         <div className="tbl-wrap">
@@ -412,22 +431,22 @@ export default function OperationalSops({ toast }) {
                               <DropMenu anchor={openDd.el} onClose={() => setOpenDd(null)}>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'detail', manual: m }); }}><i className="fa-solid fa-circle-info" /> Manual Details</div>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'pdf', manual: m }); }}><i className="fa-solid fa-eye" /> View Manual</div>
-                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'manual', manual: m }); }}><i className="fa-solid fa-pen" /> Edit</div>
-                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null }); }}><i className="fa-solid fa-paperclip" /> Add Form</div>
-                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); toggleForms(m.id); }}><i className="fa-solid fa-list" /> View Forms</div>
+                                <div {...P.lock('manuals', 'edit', { className: 'sop-dd-item' })} onClick={() => { if (!P.guard('manuals', 'edit', toast)) return; setOpenDd(null); setModal({ type: 'manual', manual: m }); }}><i className="fa-solid fa-pen" /> Edit</div>
+                                {canForms && <div {...P.lock('forms', 'create', { className: 'sop-dd-item' })} onClick={() => { if (!P.guard('forms', 'create', toast)) return; setOpenDd(null); setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null }); }}><i className="fa-solid fa-paperclip" /> Add Form</div>}
+                                {canForms && <div className="sop-dd-item" onClick={() => { setOpenDd(null); toggleForms(m.id); }}><i className="fa-solid fa-list" /> View Forms</div>}
                                 {vid && <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'video', manual: m }); }}><i className="fa-solid fa-circle-play" /> Watch Tutorial</div>}
-                                <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); setModal({ type: 'del', target: { type: 'manual', id: m.id }, name: m.title, label: 'Manual' }); }}><i className="fa-solid fa-trash-can" /> Delete</div>
+                                <div {...P.lock('manuals', 'delete', { className: 'sop-dd-item danger' })} onClick={() => { if (!P.guard('manuals', 'delete', toast)) return; setOpenDd(null); setModal({ type: 'del', target: { type: 'manual', id: m.id }, name: m.title, label: 'Manual' }); }}><i className="fa-solid fa-trash-can" /> Delete</div>
                               </DropMenu>
                             )}
                           </div>
-                          <button className="det-btn" data-tip="Expand forms" onClick={() => toggleForms(m.id)}><i className="fa-solid fa-chevron-down" /></button>
+                          {canForms && <button className="det-btn" data-tip="Expand forms" onClick={() => toggleForms(m.id)}><i className="fa-solid fa-chevron-down" /></button>}
                         </div>
                       </td>
                     </tr>
-                    {openForms[m.id] && (
+                    {canForms && openForms[m.id] && (
                       <tr className="sop-expand-row"><td colSpan={6}>
                         <div className="sop-forms-box open">
-                          <button className="sop-btn-view" style={{ height: 30, fontSize: 11.5, marginBottom: (m.forms && m.forms.length) ? 8 : 0 }} onClick={() => setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null })}><i className="fa-solid fa-plus" /> Add Form</button>
+                          <button {...P.lock('forms', 'create', { className: 'sop-btn-view', style: { height: 30, fontSize: 11.5, marginBottom: (m.forms && m.forms.length) ? 8 : 0 } })} onClick={() => { if (P.guard('forms', 'create', toast)) setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null }); }}><i className="fa-solid fa-plus" /> Add Form</button>
                           {formsLoading[m.id] ? (
                             <span style={{ fontSize: 12.5, color: 'var(--tm)', marginLeft: 12 }}><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 5 }} />Loading forms…</span>
                           ) : (!m.forms || m.forms.length === 0) ? (
@@ -447,16 +466,19 @@ export default function OperationalSops({ toast }) {
                               </div>
                               <div style={{ display: 'flex', gap: 5 }}>
                                 <button
-                                  className="btn-sm"
-                                  data-tip={f.fileUrl ? 'Open / download file' : 'No file attached'}
-                                  style={{ height: 26, fontSize: 10.5, opacity: f.fileUrl ? 1 : 0.45, cursor: f.fileUrl ? 'pointer' : 'not-allowed' }}
+                                  {...P.lock('forms', 'download', {
+                                    className: 'btn-sm',
+                                    'data-tip': f.fileUrl ? 'Open / download file' : 'No file attached',
+                                    style: { height: 26, fontSize: 10.5, opacity: f.fileUrl ? 1 : 0.45, cursor: f.fileUrl ? 'pointer' : 'not-allowed' },
+                                  })}
                                   onClick={() => {
+                                    if (!P.guard('forms', 'download', toast)) return;
                                     if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
                                     window.open(f.fileUrl, '_blank', 'noopener');
                                   }}
                                 ><i className="fa-solid fa-download" /></button>
-                                <button className="btn-sm" data-tip="Edit form" style={{ height: 26, fontSize: 10.5 }} onClick={() => setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: f })}><i className="fa-solid fa-pen" /></button>
-                                <button className="btn-sm" data-tip="Delete form" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setModal({ type: 'del', target: { type: 'form', id: f.id, parentId: m.id }, name: f.displayTitle || f.title, label: 'Form' })}><i className="fa-solid fa-trash-can" /></button>
+                                <button {...P.lock('forms', 'edit', { className: 'btn-sm', 'data-tip': 'Edit form', style: { height: 26, fontSize: 10.5 } })} onClick={() => { if (P.guard('forms', 'edit', toast)) setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: f }); }}><i className="fa-solid fa-pen" /></button>
+                                <button {...P.lock('forms', 'delete', { className: 'btn-sm', 'data-tip': 'Delete form', style: { height: 26, fontSize: 10.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } })} onClick={() => { if (P.guard('forms', 'delete', toast)) setModal({ type: 'del', target: { type: 'form', id: f.id, parentId: m.id }, name: f.displayTitle || f.title, label: 'Form' }); }}><i className="fa-solid fa-trash-can" /></button>
                               </div>
                             </div>
                           ))}
@@ -469,7 +491,8 @@ export default function OperationalSops({ toast }) {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
+      </>)}
 
       {/* ── MODALS ── */}
       {modal?.type === 'cat' && <CategoryModal cat={modal.cat} saving={savingCat} onClose={() => setModal(null)} onSave={saveCat} toast={toast} />}
@@ -576,7 +599,7 @@ function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave,
           <div className="sop-field"><label>Manual Code / Number</label><input className="sop-input" value={f.code} onChange={(e) => set('code', e.target.value)} placeholder="e.g. ACD-001" /></div>
         </div>
         <div className="sop-field"><label>Manual Title</label><input className="sop-input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Teacher Recruitment Manual" /></div>
-        <div className="sop-field"><label>Page Reference</label><input className="sop-input" value={f.pageRef} onChange={(e) => set('pageRef', e.target.value)} placeholder="e.g. Page 18" /></div>
+        <div className="sop-field"><label>Supporting Docs</label><input className="sop-input" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} value={f.pageRef} onChange={(e) => set('pageRef', e.target.value.replace(/\D/g, ''))} placeholder="e.g. 18" /></div>
         <div className="sop-field"><label>Short Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Brief description of this manual…" rows={2} /></div>
         <div className="sop-section-divider"><i className="fa-solid fa-file-pdf" /> Manual PDF</div>
         <FileRow icon="fa-file-pdf" iconBg="linear-gradient(135deg,#b91c1c,#dc2626)" label="Click to upload PDF manual (20–30+ pages)" sub="PDF files accepted" fileName={f.pdfName} accept=".pdf" onPick={(n, file) => { set('pdfName', n); setPdfFile(file || null); }} />
@@ -643,6 +666,7 @@ function FormModal({ manualId, manualTitle, form, saving = false, onClose, onSav
 
 /* ═══════════════════════ DETAIL MODAL ═══════════════════════ */
 function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast }) {
+  const P = useSaPerms('policyMenual');
   const cat = cats.find((c) => c.id === m.catId);
   const pdf = hasPdf(m); const vid = hasVideo(m); const forms = m.forms || [];
   return (
@@ -675,27 +699,30 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
               <button className="sop-btn-view" style={{ background: 'linear-gradient(135deg,#b91c1c,#dc2626)' }} onClick={onPdf}><i className="fa-solid fa-eye" /> View</button>
             </div>
           ) : (
-            <div style={{ textAlign: 'center', padding: 16, color: 'var(--tm)', fontSize: 12.5, background: 'var(--muted)', borderRadius: 'var(--r-md)' }}><i className="fa-solid fa-file-pdf" style={{ opacity: 0.3, fontSize: 22, display: 'block', marginBottom: 6 }} />No PDF uploaded yet. <button className="btn-sm" style={{ height: 26, fontSize: 11, marginLeft: 6 }} onClick={onEdit}><i className="fa-solid fa-upload" /> Upload</button></div>
+            <div style={{ textAlign: 'center', padding: 16, color: 'var(--tm)', fontSize: 12.5, background: 'var(--muted)', borderRadius: 'var(--r-md)' }}><i className="fa-solid fa-file-pdf" style={{ opacity: 0.3, fontSize: 22, display: 'block', marginBottom: 6 }} />No PDF uploaded yet. <button {...P.lock('manuals', 'edit', { className: 'btn-sm', style: { height: 26, fontSize: 11, marginLeft: 6 } })} onClick={() => { if (P.guard('manuals', 'edit', toast)) onEdit(); }}><i className="fa-solid fa-upload" /> Upload</button></div>
           )}
         </div>
-        <div className="sop-det-section">
+        {P.canView('forms') && <div className="sop-det-section">
           <div className="sop-det-section-title"><i className="fa-solid fa-paperclip" /> Attached Forms</div>
           {forms.length ? forms.map((f) => (
             <div className="sop-form-item" key={f.id}>
               <div className="sop-form-icon"><i className="fa-solid fa-file" /></div>
               <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
               <button
-                className="btn-sm"
-                data-tip={f.fileUrl ? 'Open / download file' : 'No file attached'}
-                style={{ height: 26, fontSize: 10.5, opacity: f.fileUrl ? 1 : 0.45, cursor: f.fileUrl ? 'pointer' : 'not-allowed' }}
+                {...P.lock('forms', 'download', {
+                  className: 'btn-sm',
+                  'data-tip': f.fileUrl ? 'Open / download file' : 'No file attached',
+                  style: { height: 26, fontSize: 10.5, opacity: f.fileUrl ? 1 : 0.45, cursor: f.fileUrl ? 'pointer' : 'not-allowed' },
+                })}
                 onClick={() => {
+                  if (!P.guard('forms', 'download', toast)) return;
                   if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
                   window.open(f.fileUrl, '_blank', 'noopener');
                 }}
               ><i className="fa-solid fa-download" /></button>
             </div>
           )) : <div style={{ textAlign: 'center', padding: 12, color: 'var(--tm)', fontSize: 12.5 }}>No forms attached.</div>}
-        </div>
+        </div>}
         <div className="sop-det-section">
           <div className="sop-det-section-title"><i className="fa-solid fa-circle-play" /> Tutorial Video</div>
           {vid ? (
@@ -711,8 +738,8 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
       </div>
       <div className="sop-det-foot">
         <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button>
-        <button className="btn-sm" onClick={onEdit}><i className="fa-solid fa-pen" /> Edit Manual</button>
-        <button className="btn-sm" style={{ borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={onDelete}><i className="fa-solid fa-trash-can" /> Delete</button>
+        <button {...P.lock('manuals', 'edit', { className: 'btn-sm' })} onClick={() => { if (P.guard('manuals', 'edit', toast)) onEdit(); }}><i className="fa-solid fa-pen" /> Edit Manual</button>
+        <button {...P.lock('manuals', 'delete', { className: 'btn-sm', style: { borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } })} onClick={() => { if (P.guard('manuals', 'delete', toast)) onDelete(); }}><i className="fa-solid fa-trash-can" /> Delete</button>
       </div>
     </Ov>
   );
@@ -725,6 +752,8 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
    is liye iframe me khulta hai, `download` attribute chalta hai, aur print
    bhi usi frame se ho jata hai. Pehle teenon jagah sirf toast tha. */
 function PdfModal({ m, onClose, onUpload, toast }) {
+  const P = useSaPerms('policyMenual');
+  const canDl = P.can('manuals', 'download');
   const forms = m.forms || [];
   const url = m.pdfUrl || '';
   /* Naam to ho magar file ka path na aaye — tab bhi "koi PDF nahi" hi kehna
@@ -742,6 +771,7 @@ function PdfModal({ m, onClose, onUpload, toast }) {
      har jagah contentWindow.print() nahi deta) to nayi tab me khol dete hain,
      wahan se browser ka apna print chalta hai. */
   const printPdf = () => {
+    if (!P.guard('manuals', 'download', toast)) return;
     if (!url) { toast?.('This manual has no PDF file uploaded yet', 'warn'); return; }
     const frame = frameRef.current;
     try {
@@ -759,7 +789,7 @@ function PdfModal({ m, onClose, onUpload, toast }) {
     <Ov cls="sop-pdf-ov" wrap="sop-pdf-wrap" onClose={onClose}>
       <div className="sop-pdf-toolbar">
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', display: 'flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-file-pdf" style={{ color: '#DC2626' }} /> {m.title}</div>
-        <div style={{ display: 'flex', gap: 8 }}><button className="btn-primary" style={{ height: 32, fontSize: 12, opacity: url ? 1 : 0.5 }} onClick={printPdf}><i className="fa-solid fa-print" /> Print</button><button className="pm-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button></div>
+        <div style={{ display: 'flex', gap: 8 }}><button {...P.lock('manuals', 'download', { className: 'btn-primary', style: { height: 32, fontSize: 12, opacity: url ? 1 : 0.5 } })} onClick={printPdf}><i className="fa-solid fa-print" /> Print</button><button className="pm-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button></div>
       </div>
       <div style={{ background: '#fff', maxHeight: '78vh', overflowY: 'auto' }}>
         <div style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff', padding: '20px 28px', display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -777,7 +807,9 @@ function PdfModal({ m, onClose, onUpload, toast }) {
                 <button onClick={openInTab} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: 'linear-gradient(135deg,#b91c1c,#dc2626)', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><i className="fa-solid fa-eye" /> Read PDF</button>
                 {/* Asli download — file apni hi origin se aati hai (base khali),
                     is liye `download` attribute browser mana nahi karta. */}
-                <a href={url || undefined} download={fileName} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: '#f1f5f9', color: '#1E3A8A', border: '1.5px solid #e2e8f0', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'none' }}><i className="fa-solid fa-download" /> Download</a>
+                {canDl
+                  ? <a href={url || undefined} download={fileName} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: '#f1f5f9', color: '#1E3A8A', border: '1.5px solid #e2e8f0', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'none' }}><i className="fa-solid fa-download" /> Download</a>
+                  : <button {...P.lock('manuals', 'download', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: '#f1f5f9', color: '#1E3A8A', border: '1.5px solid #e2e8f0', fontSize: 12, fontWeight: 700 } })}><i className="fa-solid fa-download" /> Download</button>}
               </div>
             </div>
           ) : (
@@ -785,7 +817,7 @@ function PdfModal({ m, onClose, onUpload, toast }) {
               <i className="fa-solid fa-file-pdf" style={{ fontSize: 32, color: '#cbd5e1', display: 'block', marginBottom: 10 }} />
               <div style={{ fontSize: 14, fontWeight: 700, color: '#475569' }}>No PDF Uploaded Yet</div>
               <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Upload a PDF manual to enable reading.</div>
-              <button onClick={onUpload} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 16px', borderRadius: 8, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginTop: 14 }}><i className="fa-solid fa-upload" /> Upload Manual PDF</button>
+              <button {...P.lock('manuals', 'edit', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 16px', borderRadius: 8, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginTop: 14 } })} onClick={() => { if (P.guard('manuals', 'edit', toast)) onUpload(); }}><i className="fa-solid fa-upload" /> Upload Manual PDF</button>
             </div>
           )}
           {/* Reader — file yahin parhi jaati hai (Print isi frame se chalta hai).
@@ -804,7 +836,7 @@ function PdfModal({ m, onClose, onUpload, toast }) {
           <div style={{ fontSize: 11, fontWeight: 800, color: '#1E3A8A', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 8 }}><i className="fa-solid fa-align-left" /> Description</div>
           <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.65 }}>{m.desc || 'No description available.'}</div>
         </div>
-        {forms.length > 0 && (
+        {forms.length > 0 && P.canView('forms') && (
           <div style={{ padding: '18px 28px' }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: '#1E3A8A', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}><i className="fa-solid fa-paperclip" /> Attached Forms ({forms.length})</div>
             {forms.map((f) => (
@@ -813,10 +845,11 @@ function PdfModal({ m, onClose, onUpload, toast }) {
                 <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: '#0F172A' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: '#64748B' }}>{f.code || ''}</div></div>
                 <button
                   onClick={() => {
+                    if (!P.guard('forms', 'download', toast)) return;
                     if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
                     window.open(f.fileUrl, '_blank', 'noopener');
                   }}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 28, padding: '0 12px', borderRadius: 7, background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE', fontSize: 11, fontWeight: 700, cursor: f.fileUrl ? 'pointer' : 'not-allowed', opacity: f.fileUrl ? 1 : 0.5 }}
+                  {...P.lock('forms', 'download', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, height: 28, padding: '0 12px', borderRadius: 7, background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE', fontSize: 11, fontWeight: 700, cursor: f.fileUrl ? 'pointer' : 'not-allowed', opacity: f.fileUrl ? 1 : 0.5 } })}
                 ><i className="fa-solid fa-download" /> Download</button>
               </div>
             ))}

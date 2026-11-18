@@ -41,6 +41,10 @@ module.exports = function (app) {
     createProxyMiddleware({
       target: ERP_TARGET,
       changeOrigin: true,
+      /* Sandbox kabhi slow jawab deta hai (dashboard ~20s) — default timeout par
+         ETIMEDOUT aata tha. 2 minute tak intezaar. */
+      proxyTimeout: 120000,
+      timeout: 120000,
     }),
   );
 

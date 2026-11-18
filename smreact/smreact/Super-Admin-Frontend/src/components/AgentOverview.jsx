@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import TechReleaseNotices from './TechReleaseNotices';
 import * as supportApi from '../support/api';
 import { MessageType, SenderType, VOICE_NOTE_CAPTION, fileUrl, looksLikePhoneNumber } from '../support/config';
 import { VoicePlayer, VideoBubble } from '../support/MediaBits';
@@ -309,6 +310,7 @@ export default function AgentOverview() {
   return (
     <div className="ov-root">
       <style>{OVERVIEW_CSS}</style>
+      <TechReleaseNotices />
 
       <div className="ov-head" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>

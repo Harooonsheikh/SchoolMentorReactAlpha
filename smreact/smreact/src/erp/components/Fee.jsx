@@ -4591,7 +4591,11 @@ function FeeChallansList({ toast }) {
                                  par previous dues running-ledger (authority) se lo. */
                               const totRecv = rows.reduce((a, r) => a + (Number(r.receivedAmount) || 0), 0);
                               if (totRecv === 0) {
-                                const runningPrev = byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0);
+                               /* Advance "Previous Pending" row par consume hua ho (kisi head par nahi) to head-wise jor kam
+   aata hai — challan print (applyPrevByHead) jaisa kul (running) baqaya lo. */
+const runningNetAll = (+prevOut.dues || 0) - (+prevOut.advance || 0);
+const runningPrev = (byHeadSum > 0 && runningNetAll <= byHeadSum + byHeadNeg) ? byHeadSum : (+prevOut.dues || 0);
+
                                 if (runningPrev > 0) fig.dues = runningPrev;
                               }
                             }
@@ -7560,13 +7564,7 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
    with live counter, target description, send CTA.
    ═══════════════════════════════════════════════════════════════════ */
 function FeeReminderModal({ cfg, onClose, toast }) {
-  const DEFAULT_MSG = "Dear Parent, your child's fee for this month is pending. Please pay at your earliest convenience. — School Administration";
-  const [msg, setMsg] = useState(DEFAULT_MSG);
-
-  useEffect(() => {
-    if (!cfg) return;
-    setMsg(DEFAULT_MSG);
-  }, [cfg]);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!cfg) return undefined;
@@ -7581,15 +7579,27 @@ function FeeReminderModal({ cfg, onClose, toast }) {
 
   if (!cfg) return null;
 
-  const target = cfg.type === 'class'
-    ? `${cfg.classMeta.cls} (${cfg.classMeta.sec}) — ${cfg.sm?.unpaid ?? 0} unpaid parent${(cfg.sm?.unpaid ?? 0) === 1 ? '' : 's'}`
-    : `${cfg.student?.name} (${cfg.classMeta?.cls} / ${cfg.classMeta?.sec})`;
+  const unpaid = cfg.sm?.unpaid ?? 0;
+  const target = `${cfg.classMeta.cls} (${cfg.classMeta.sec}) — ${unpaid} unpaid parent${unpaid === 1 ? '' : 's'}`;
 
+  /* Live: BranchLedger/notify-unpaid-students — class/section + month/year, message server-side. */
   const handleSend = async () => {
-    if (!msg.trim()) { toast('Reminder message cannot be empty', 'error'); return; }
-    await feeService.sendFeeReminder({ target, message: msg, period: cfg.period }).catch(() => { });
-    toast('Fee reminder sent', 'success');
-    onClose();
+    if (sending) return;
+    setSending(true);
+    try {
+      await feeService.sendFeeReminder({
+        classId:   cfg.classMeta._gradeId,
+        sectionId: cfg.classMeta._sectionId,
+        month:     cfg.month,
+        year:      cfg.year,
+      });
+      toast('Fee reminder sent', 'success');
+      onClose();
+    } catch (err) {
+      toast(err?.message || 'Could not send fee reminder', 'error');
+    } finally {
+      setSending(false);
+    }
   };
 
   return createPortal(
@@ -7621,21 +7631,7 @@ function FeeReminderModal({ cfg, onClose, toast }) {
             </span>
           </div>
 
-          <div className="fee-field" style={{ marginTop: 12 }}>
-            <span className="fee-label">Notification Message</span>
-            <textarea
-              className="fee-input fee-textarea"
-              maxLength={160}
-              rows={4}
-              value={msg}
-              onChange={e => setMsg(e.target.value)}
-            />
-            <div className="fee-rem-counter">
-              <span>{msg.length}</span> / <span>160</span> characters
-            </div>
-          </div>
-
-          <div className="fee-rem-target">
+          <div className="fee-rem-target" style={{ marginTop: 12 }}>
             <i className="fa-solid fa-bullseye"></i> <strong>Target:</strong> {target}
           </div>
         </div>
@@ -7645,8 +7641,8 @@ function FeeReminderModal({ cfg, onClose, toast }) {
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
           <Tooltip text="Send reminder to parents">
-            <button className="fee-btn fee-btn-primary" onClick={handleSend}>
-              <i className="fa-solid fa-paper-plane"></i> Send Reminder
+            <button className="fee-btn fee-btn-primary" onClick={handleSend} disabled={sending}>
+              <i className="fa-solid fa-paper-plane"></i> {sending ? 'Sending…' : 'Send Reminder'}
             </button>
           </Tooltip>
         </div>
@@ -8542,11 +8538,28 @@ const REGEN_BTN_STYLE = { color: '#A16207', background: '#FEF3C7', borderColor: 
 function challanHasReceiving(rec) {
   /* Rs. 0 receive (full Discount Manager discount) bhi receiving hai —
      challan delete band, voucher khud delete nahi hota. */
-  if (feeService.hasZeroReceiveMark(rec?.id)) return true;
+  if (feeService.hasZeroReceiveMark(rec?.id) || zeroSettledChallan(rec)) return true;   // doosre browser me mark nahi hota
   return (rec?.detailRows || []).some(r =>
     Math.abs(Number(r.receivedAmount) || 0) > 0 || Math.max(0, Number(r.recvDiscount) || 0) > 0);
 }
-const DEL_LOCKED_TIP = 'Delete disabled — this challan already has a receiving against it (partial or full). Delete the receiving in Fee Receiving first, then you can delete this challan.';
+/* Challan Rs 0 par settle hua (koi naqad wasooli nahi): cashier ne poore Discount Manager
+   discount par 0 receive kiya (zero-receive mark) ya receiving modal ki Give Discount
+   (recvDiscount) se poora settle kiya. Download slip isi par khulti hai. */
+function zeroSettledChallan(rec) {
+  if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return false;
+  if (feeService.hasZeroReceiveMark(rec.id)) return true;
+  if (rec.detailRows.some(r => Math.max(0, Number(r.recvDiscount) || 0) > 0
+    || (r.installments || []).some(i => Math.max(0, Number(i.recvDiscount) || 0) > 0))) return true;
+  /* Doosre browser / PC par zero-receive mark (localStorage) nahi hota — backend receive par
+     challan ki receivedDate bhar deta hai (unreceived challan par khaali). receivedDate ho aur
+     poora bill Discount Manager ke discount me chala gaya ho (net 0) → Rs 0 receive hua. */
+  const net = rec.detailRows.reduce((a, r) => {
+    if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return a;
+    return a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0);
+  }, 0);
+  return !!String(rec.receivedDate || '').trim() && net <= 0;
+}
+const DEL_LOCKED_TIP ='Delete disabled — this challan already has a receiving against it (partial or full). Delete the receiving in Fee Receiving first, then you can delete this challan.';
 
 /* Challan Type dropdown — 1 se 12 mahine. */
 const CHALLAN_TYPE_LABELS = [
@@ -8887,12 +8900,19 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
   /* Branch 1/15 par unclamped (previous advance ko clamp se nahi kaatna); baaqi branches purana formula. */
   const remaining = (isAdvanceAdjustBranch() ? (prev + thisMonth - disc - advance + billedFine) : payable) - paid;   /* MINUS = advance (total se zyada wasool) */
  let status = 'none';
+/* Receiving modal se di gayi Give Discount (recvDiscount) bhi receiving hai — poori head /
+   poora challan Give Discount se settle ho (naqad 0) to bhi row "Fully Received" ho, aur
+   Download slip + Delete receipt dikhein. (Sirf Discount Manager ka discount receiving NAHI —
+   wo recvDiscount me nahi aata.) challanHasReceiving() bhi yahi maanta hai. */
 const hasRecvActivity = (challan && Array.isArray(challan.detailRows))
-  ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0)
+  ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0
+      || Math.max(0, Number(r.recvDiscount) || 0) > 0
+      || (r.installments || []).some(i => Math.max(0, Number(i.recvDiscount) || 0) > 0))
   : (paidFromPayments !== 0);
 /* Full Discount Manager discount apne aap Fully Received NAHI banata — cashier
    receive modal me 0 likh kar receive kare. Us ke baad hi (zero-receive mark). */
-const zeroReceived = !!(challan?.id && feeService.hasZeroReceiveMark(challan.id));
+/* Mark (localStorage) sirf usi browser me — zeroSettledChallan backend ki receivedDate se bhi pehchanta hai. */
+const zeroReceived = !!(challan?.id && (feeService.hasZeroReceiveMark(challan.id) || zeroSettledChallan(challan)));
 if (generated && (paid > 0 || hasRecvActivity || zeroReceived)) {
   status = remaining <= 0 ? 'full' : 'partial';
 }
@@ -9522,7 +9542,10 @@ function FeeReceivingIndividual({ toast }) {
     const rec = challanMap[keyOf(c.key, s.reg)];
     const rows = rec && Array.isArray(rec.detailRows) ? rec.detailRows : [];
     const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-    if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
+    /* Rs 0 par settle hua challan (Discount Manager ka poora discount → cashier ne 0 receive
+       kiya, ya receiving modal ki Give Discount) bhi slip deta hai — Received 0, Remaining 0.
+       Pehle refresh ke baad Download par "No payment recorded" aata tha jabke row Fully Received thi. */
+    if (received <= 0 && !zeroSettledChallan(rec)) { toast('No payment recorded for this student yet', 'info'); return; }
     const perHead = {};
     rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
     setSlipCtx({
@@ -10203,7 +10226,7 @@ function FeeReceivingIndividual({ toast }) {
                 <div className="fee-td fee-center" data-label="Challan Summary">{summaryChips(sm)}</div>
                 <div className="fee-td fee-center" data-label="Actions" onClick={e => e.stopPropagation()}>
                   <Tooltip text="Send fee reminder to parents of unpaid students">
-                    <button className="fee-reminder-btn" onClick={() => setReminderCtx({ type: 'class', classMeta: c, sm, period: `${appliedMonth} ${appliedYear}` })}>
+                    <button className="fee-reminder-btn" onClick={() => setReminderCtx({ classMeta: c, sm, period: `${appliedMonth} ${appliedYear}`, month: monthIdx + 1, year: Number(appliedYear) })}>
                       <i className="fa-solid fa-bell"></i> Fee Reminder
                     </button>
                   </Tooltip>
@@ -11023,7 +11046,10 @@ function FamilyTreeReceiving({ toast }) {
     const rec = ch._challan || challanByStudent[String(ch.applicantsID)];
     const rows = rec && Array.isArray(rec.detailRows) ? rec.detailRows : [];
     const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-    if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
+    /* Rs 0 par settle hua challan (Discount Manager ka poora discount → cashier ne 0 receive
+       kiya, ya receiving modal ki Give Discount) bhi slip deta hai — Received 0, Remaining 0.
+       Pehle refresh ke baad Download par "No payment recorded" aata tha jabke row Fully Received thi. */
+    if (received <= 0 && !zeroSettledChallan(rec)) { toast('No payment recorded for this student yet', 'info'); return; }
     const perHead = {};
     rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
     //   setSlipCtx({
@@ -15068,7 +15094,7 @@ const FEE_REPORT_CATS = [
   { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists',
     info: 'Every row here comes directly from a real payment installment recorded in Fee Receiving, not from the challan amount. Daily Collections filters those installments to the selected date, Monthly Collections lists every installment in the selected month with its voucher, receiving method and amount, and Paid Student List shows students whose challan for the month is fully cleared.' },
   { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis',
-    info: 'Each student\'s total remaining balance is split into Current, 1 to 30, 31 to 60 and 61 plus day buckets using a proportional estimate based on this month\'s fee, since individual installment due dates are not tracked per day. Treat these buckets as a general sense of how overdue balances are distributed across the school, not as an exact day count for any one student.' },
+    info: 'Each student\'s unpaid balance (as of the selected date) is placed in a bucket by how many days have passed since the due date of the challan it belongs to: Current (not yet due), 1 to 30, 31 to 60 and 61 plus days. A balance carried forward from an older challan is aged from that older challan\'s due date. Advances and receivings made after the as-of date are not counted.' },
   { id: 'summary',    ic: 'fa-chart-pie',           name: 'Collection vs Expected',   desc: 'Realisation %, payment-mode breakdown',
     info: 'Expected Revenue is the sum of every student\'s payable amount across the school. Collected is the sum of everything actually received. Realisation percent is Collected divided by Expected. The payment mode breakdown adds up every recorded receipt by its payment method, such as Cash, Online, Bank Transfer or Cheque.' },
 ];
@@ -15416,7 +15442,12 @@ function pickReceivableChallan(priorList, pendList) {
        advance wale student par jhooti "previous fine"): P ki Due Date se IS challan ke banne
        ki tareekh tak ka fine (wahan freeze) + P me carry hua purana fine (recursive).
    Same "Fine" line me receiving popup isay is challan ke apne late fine ke saath jodta hai. */
+/* Pichhle mahine ki baqaya fine BACKEND carry karta hai (agle challan me "Late Fee Fine" row).
+   true → frontend apna carried / previous fine NAHI jorta (warna fine do dafa ginta). */
+const FINE_CARRY_BY_BACKEND = true;
+
 function carriedFineInto(rec, priorList, settings, depth = 0) {
+  if (FINE_CARRY_BY_BACKEND) return 0;
   if (!rec || !settings?.fineEnabled || depth > 24) return 0;
   if (!challanCarriesPrev(rec)) return 0;
   const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
@@ -15510,6 +15541,7 @@ async function payCarriedFine(plan, { paymentMethod, receivedDate, modifiedBy, w
    alag "Previous Fine" row ke taur par chhapta hai. Agar fine row pehle se bill ho chuki
    hai to wo prevOut ke dues me already shamil hai, is liye 0 (dobara na jorein). */
 function unpaidFineOf(latest, settings) {
+  if (FINE_CARRY_BY_BACKEND) return 0;   // backend "Late Fee Fine" row bana deta hai
   if (!latest || !settings?.fineEnabled) return 0;
   if ((latest.detailRows || []).some(feeService.isLateFineRow)) return 0;
   const remain = (latest.detailRows || []).reduce((a, r) =>
@@ -16415,20 +16447,25 @@ function ReportPanelCollection({ toast }) {
      clear ho aur aakhri wasooli range me ho — har student ek row (latest challan). */
   const items = useMemo(() => {
     if (seg === 'paid') {
-      const latest = new Map();
+      /* Paid Student List: jis student ki KOI BHI installment (pehli, doosri, ...) chuni hui
+         date range me wasool hui ho wo list me aaye — sirf poora clear challan nahi.
+         Amount = range ke andar wasool hui installments ka jama; Status: challan poora clear
+         ho to Cleared, warna Partial. */
+      const out = [];
       records.forEach(rec => {
         const who = byStudent.get(String(rec.studentID));
-        if (!who || !challanFullyPaid(rec)) return;
-        const receipts = ledgerInstallmentReceipts(rec);
-        const last = receipts.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).pop();
-        if (!last || !inRange(last.date)) return;
-        const paid = (rec.detailRows || []).reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-        const k = `${who.c.key}|${who.s.reg}`;
-        const prev = latest.get(k);
-        if (prev && prev.last.date > last.date) return;
-        latest.set(k, { ...who, rec, last, amount: paid, give: 0, method: feeService.paymentMethodDisplay(rec.paymentMethod) });
+        if (!who) return;
+        const inR = ledgerInstallmentReceipts(rec).filter(p => inRange(p.date));
+        if (!inR.length) return;
+        const last = inR.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).pop();
+        const amount = inR.reduce((a, p) => a + (p.amount || 0), 0);
+        const nos = [...new Set(inR.map(p => p.no).filter(Boolean))].join(', ');
+        /* Har installment ki apni raqam (pehli / doosri / ...), date ke order me. */
+        const parts = inR.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+          .map(p => ({ no: p.no, amount: p.amount || 0, date: p.date }));
+        out.push({ ...who, rec, last, amount, give: 0, method: feeService.paymentMethodDisplay(rec.paymentMethod), cleared: challanFullyPaid(rec), nos, parts });
       });
-      return [...latest.values()];
+      return out.sort((a, b) => `${a.last.date} ${a.last.time}`.localeCompare(`${b.last.date} ${b.last.time}`));
     }
     const out = [];
     records.forEach(rec => {
@@ -16536,7 +16573,7 @@ function ReportPanelCollection({ toast }) {
 
       {repKpiStrip([
         ['k-green', 'fa-sack-dollar', 'Total Received', fmtRs(kpi.recv), ''],
-        ['k-blue', 'fa-receipt', seg === 'paid' ? 'Students Cleared' : 'Receipts', `${seg === 'paid' ? kpi.students : kpi.receipts}`, ''],
+        ['k-blue', 'fa-receipt', seg === 'paid' ? 'Students Paid' : 'Receipts', `${seg === 'paid' ? kpi.students : kpi.receipts}`, ''],
         ['k-amber', 'fa-hand-holding-dollar', 'Receiving Discount', fmtRs(kpi.give), ''],
         ['k-blue', 'fa-users', 'Students', `${kpi.students}`, ''],
       ])}
@@ -16650,12 +16687,21 @@ function ReportPanelCollection({ toast }) {
                                 <td>{x.s.father || '—'}</td>
                                 <td>{x.s.reg}</td>
                                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{studentPhone(x.s)}</td>
-                                <td>{ledgerMonthLabel(x.rec)}</td>
+                                <td>
+                                  {ledgerMonthLabel(x.rec)}
+                                  {(x.parts || []).map((p, k) => (
+                                    <span key={k} className="fee-sub-eq">Installment {p.no || k + 1} · {money(p.amount)}</span>
+                                  ))}
+                                </td>
                                 <td className="fee-center">{dateCell(x)}</td>
                                 <td>{byName(x)}</td>
                                 <td className="fee-center"><MethodChip method={x.method} /></td>
                                 <td className="fee-right fee-paid-amt">{money(x.amount)}</td>
-                                <td className="fee-center"><span className="fee-chip fee-chip-active"><i className="fa-solid fa-check"></i> Cleared</span></td>
+                                <td className="fee-center">
+                                  {x.cleared
+                                    ? <span className="fee-chip fee-chip-active"><i className="fa-solid fa-check"></i> Cleared</span>
+                                    : <span className="fee-chip" style={{ background: 'rgba(217,119,6,.12)', color: '#B45309', border: '1px solid rgba(217,119,6,.3)' }}><i className="fa-solid fa-hourglass-half"></i> Partial</span>}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -17244,7 +17290,8 @@ function ReportPanelAging({ toast }) {
                       <td className="fee-right">{money(x.a.cur)}</td>
                       <td className="fee-right" style={{ color: '#D97706', fontWeight: 700 }}>{money(x.a.d30)}</td>
                       <td className="fee-right" style={{ color: '#D97706', fontWeight: 700 }}>{money(x.a.d60)}</td>
-                      <td className="fee-right fee-neg">{money(x.a.d90)}</td>
+                      {/* fee-stbl me td.fee-neg GREEN (advance) hota hai — 61–90+ legend/bar jaisa LAAL. */}
+                      <td className="fee-right" style={{ color: '#DC2626', fontWeight: 700 }}>{money(x.a.d90)}</td>
                       <td className="fee-right"><b>{money(x.m.remaining)}</b></td>
                       <td>
                         <div className="age-bar">
@@ -17307,7 +17354,12 @@ function ReportPanelSummary({ toast }) {
   const selY = Number(selYear) || new Date().getFullYear();
   const periods = useMemo(() => {
     const back = new Date(selY, selM - 13, 1);
-    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), selM, selY);
+    /* Agle 3 mahine ke challans bhi — is mahine me AGLE mahine ka challan (advance) receive
+       ho to wo receipt bhi is mahine ki "Collected" / Payment Mode me aaye (warna table
+       Dashboard ke Collected card se kam dikhati thi: 83,933 vs 91,193). Expected sirf isi
+       mahine ke challans, Outstanding sirf isi mahine tak — un par asar nahi. */
+    const ahead = new Date(selY, selM - 1 + 3, 1);
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), ahead.getMonth() + 1, ahead.getFullYear());
   }, [selM, selY]);
   const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
   const data = useMemo(() => {
@@ -17321,7 +17373,9 @@ function ReportPanelSummary({ toast }) {
     allStudents.forEach(({ c, s, m }) => {
       const recs = m.recs || [];
       if (!recs.length) return;
-      n += 1;
+      /* Student count pehle jaisa — sirf jin ka is mahine tak koi challan ho (agle mahine
+         ke challans sirf receipts ke liye load hue hain). */
+      if (recs.some(rec => startOf(rec) <= monthKey)) n += 1;
       let e = 0, r = 0;
       recs.forEach(rec => {
         if (startOf(rec) === monthKey) {
@@ -19472,12 +19526,14 @@ function buildRepCollectionHTML({ groups, seg, rangeLabel, kpi, isBW = false, sc
             <td>${escHtml(x.s.father || '—')}</td>
             <td>${escHtml(x.s.reg)}</td>
             <td>${escHtml(studentPhone(x.s))}</td>
-            <td>${escHtml(ledgerMonthLabel(x.rec))}</td>
+            <td>${escHtml(ledgerMonthLabel(x.rec))}${(x.parts || []).map((p, k) => `<br><small>Installment ${escHtml(p.no || k + 1)} · Rs. ${fmt(p.amount)}</small>`).join('')}</td>
             <td>${dt(x)}</td>
             <td>${escHtml(x.byName || '—')}</td>
             <td class="c">${methodChipHTML(x.method)}</td>
             <td class="r pos">${fmt(x.amount)}</td>
-            <td class="c"><span style="display:inline-block;padding:2px 9px;border-radius:999px;background:rgba(22,163,74,.12);color:#16A34A;font-size:9.5px;font-weight:800">✓ Cleared</span></td>
+            <td class="c">${x.cleared === false
+              ? '<span style="display:inline-block;padding:2px 9px;border-radius:999px;background:rgba(217,119,6,.12);color:#B45309;font-size:9.5px;font-weight:800">Partial</span>'
+              : '<span style="display:inline-block;padding:2px 9px;border-radius:999px;background:rgba(22,163,74,.12);color:#16A34A;font-size:9.5px;font-weight:800">✓ Cleared</span>'}</td>
           </tr>`).join('')}</tbody>
           <tfoot><tr class="rep-tot"><td colspan="9">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${fmt(sub)}</td><td></td></tr></tfoot>
         </table>`;
@@ -19505,10 +19561,10 @@ function buildRepCollectionHTML({ groups, seg, rangeLabel, kpi, isBW = false, sc
     : seg === 'month' ? `Monthly Collection — ${rangeLabel}`
     : 'Paid Students List';
   return repWrap(title,
-    `<span><b>Period:</b> ${escHtml(rangeLabel)}</span><span><b>${seg === 'paid' ? 'Students Cleared' : 'Receipts'}:</b> ${seg === 'paid' ? kpi.students : kpi.receipts}</span><span><b>Grand Total:</b> Rs. ${fmt(kpi.recv)}</span>`,
+    `<span><b>Period:</b> ${escHtml(rangeLabel)}</span><span><b>${seg === 'paid' ? 'Students Paid' : 'Receipts'}:</b> ${seg === 'paid' ? kpi.students : kpi.receipts}</span><span><b>Grand Total:</b> Rs. ${fmt(kpi.recv)}</span>`,
     `<div class="kpi-row">
       <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${fmt(kpi.recv)}</div></div>
-      <div class="kpi"><div class="l">${seg === 'paid' ? 'Students Cleared' : 'Receipts'}</div><div class="v">${seg === 'paid' ? kpi.students : kpi.receipts}</div></div>
+      <div class="kpi"><div class="l">${seg === 'paid' ? 'Students Paid' : 'Receipts'}</div><div class="v">${seg === 'paid' ? kpi.students : kpi.receipts}</div></div>
       <div class="kpi"><div class="l">Receiving Discount</div><div class="v">Rs. ${fmt(kpi.give)}</div></div>
       <div class="kpi"><div class="l">Students</div><div class="v">${kpi.students}</div></div>
     </div>

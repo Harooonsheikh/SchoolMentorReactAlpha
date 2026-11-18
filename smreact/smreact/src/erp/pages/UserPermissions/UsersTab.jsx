@@ -247,22 +247,22 @@ export default function UsersTab({
                 <div className="td up-emp-meta">{u.lastLogin}</div>
               </Tooltip>
               <div className="td c up-actions">
-                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'View read-only summary'}>
+                <Tooltip text={u._employee?.isPrinciple === true ? 'Not available for Principal' : 'View read-only summary'}>
                   <button
                     className="up-act"
                     onClick={() => setEditFor({ user: u, readOnly: true })}
-                    disabled={u.roleLabel === 'Principal'}
+                    disabled={u._employee?.isPrinciple === true}
                     aria-label="View permissions"
                   >
                     <i className="fa-solid fa-eye" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
                 {canEdit && (
-                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first to edit permissions' : 'Edit permissions'}>
+                  <Tooltip text={u._employee?.isPrinciple === true ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first to edit permissions' : 'Edit permissions'}>
                     <button
                       className="up-act"
                       onClick={() => setEditFor({ user: u, readOnly: false })}
-                      disabled={u.roleLabel === 'Principal' || u.status !== 'Active'}
+                      disabled={u._employee?.isPrinciple === true || u.status !== 'Active'}
                       aria-label="Edit permissions"
                     >
                       <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i>
@@ -285,11 +285,11 @@ export default function UsersTab({
                   </button>
                 </Tooltip> */}
                 {canEdit && (
-                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : (u.status === 'Active' ? 'Deactivate user' : 'Activate user')}>
+                  <Tooltip text={u._employee?.isPrinciple === true ? 'Not available for Principal' : (u.status === 'Active' ? 'Deactivate user' : 'Activate user')}>
                     <button
                       className={`up-act${u.status === 'Active' ? ' up-act--danger' : ''}`}
                       onClick={() => onStatusToggleAsk(u)}
-                      disabled={u.roleLabel === 'Principal'}
+                      disabled={u._employee?.isPrinciple === true}
                       aria-label={u.status === 'Active' ? 'Deactivate' : 'Activate'}
                     >
                       <i className={`fa-solid ${u.status === 'Active' ? 'fa-ban' : 'fa-check'}`} aria-hidden="true"></i>

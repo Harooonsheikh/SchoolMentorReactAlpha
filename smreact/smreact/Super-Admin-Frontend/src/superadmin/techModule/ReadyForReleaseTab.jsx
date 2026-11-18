@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicketsData';
 import LockedCard from '../adminPermissions/LockedCard';
+import { useSaPerms } from '../saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    ReadyForReleaseTab — Stage 4: history + release action. Releasing
@@ -12,6 +13,7 @@ import LockedCard from '../adminPermissions/LockedCard';
    ═══════════════════════════════════════════════════════════════════ */
 export default function ReadyForReleaseTab({ tickets, onRelease, onViewDetails, toast, canRelease = true }) {
   const [releasing, setReleasing] = useState(null);
+  const P = useSaPerms('techModule');
 
   const pending = tickets.filter((t) => t.stage === 'ready_for_release');
   const released = tickets.filter((t) => t.stage === 'released');
@@ -47,7 +49,7 @@ export default function ReadyForReleaseTab({ tickets, onRelease, onViewDetails, 
                 <div className="tm-card-actions">
                   <button className="btn-sm" onClick={() => onViewDetails?.(t.id)}><i className="fa-solid fa-eye" /> View Details</button>
                   {canRelease ? (
-                    <button className="btn-primary" style={{ height: 32, fontSize: 12.5 }} onClick={() => setReleasing(t)}><i className="fa-solid fa-rocket" /> Release</button>
+                    <button {...P.lock('ready_for_release', 'approve', { className: 'btn-primary', style: { height: 32, fontSize: 12.5 } })} onClick={() => { if (P.guard('ready_for_release', 'approve', toast)) setReleasing(t); }}><i className="fa-solid fa-rocket" /> Release</button>
                   ) : <LockedCard compact title="No access to release" />}
                 </div>
               </div>
@@ -62,7 +64,7 @@ export default function ReadyForReleaseTab({ tickets, onRelease, onViewDetails, 
       ) : (
         <div className="tm-card-list">
           {released.map((t) => (
-            <div key={t.id} className={`tm-card tm-card-${t.type}`}>
+            <div key={t.id} className={`tm-card tm-card-${t.type}`} style={{ background: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.45)' }}>
               <div className="tm-card-top">
                 <div><div className="tm-card-num">{t.ticketNumber}</div><div className="tm-card-title">{t.title}</div></div>
                 <span className="badge tt-b-green"><i className="fa-solid fa-circle-check" /> Released</span>
@@ -86,7 +88,7 @@ export default function ReadyForReleaseTab({ tickets, onRelease, onViewDetails, 
 
       {releasing && (
         <ReleaseModal ticket={releasing} onClose={() => setReleasing(null)} toast={toast}
-          onConfirm={(payload) => { onRelease(releasing.id, payload); setReleasing(null); toast?.('Ticket released — Support has been notified', 'success'); }} />
+          onConfirm={(payload) => { if (!P.guard('ready_for_release', 'approve', toast)) return; onRelease(releasing.id, payload); setReleasing(null); toast?.('Ticket released — Support has been notified', 'success'); }} />
       )}
     </div>
   );

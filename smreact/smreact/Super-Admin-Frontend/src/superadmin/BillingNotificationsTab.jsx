@@ -5,6 +5,7 @@ import {
   validateNotifSettings, HISTORY_CHANNEL_LABEL, HISTORY_TYPE_LABEL,
 } from './billingNotificationsData';
 import { paymentsApi } from './api';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    NOTIFICATIONS & REMINDERS — billing reminder templates, scheduling,
@@ -201,6 +202,7 @@ function DeliveryHistory({ refreshKey }) {
 }
 
 export default function NotificationsRemindersTab({ settings, onSave, announcements, onDeleteAnnouncement, toast, onSendRemindersNow, loadError = '' }) {
+  const P = useSaPerms('schoolPayments');
   const [f, setF] = useState(settings);
   /* Server se settings aayen (load / save ke baad) to form unhi par. */
   useEffect(() => { setF(settings); }, [settings]);
@@ -210,6 +212,7 @@ export default function NotificationsRemindersTab({ settings, onSave, announceme
   const [historyKey, setHistoryKey] = useState(0);
 
   const save = async () => {
+    if (!P.guard('reminders', 'edit', toast)) return;
     const err = validateNotifSettings(f);
     if (err) { toast?.(err, 'error'); return; }
     setSaving(true);
@@ -219,6 +222,7 @@ export default function NotificationsRemindersTab({ settings, onSave, announceme
   /* Do dafa click na ho — request ke dauran button band. */
   const sendNow = async () => {
     if (sending) return;
+    if (!P.guard('reminders', 'create', toast)) return;
     setSending(true);
     try { await onSendRemindersNow(); setHistoryKey((k) => k + 1); } finally { setSending(false); }
   };
@@ -245,7 +249,7 @@ export default function NotificationsRemindersTab({ settings, onSave, announceme
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 6 }}>
         <button className="btn-secondary" disabled={!dirty || saving} onClick={() => setF(settings)}>Discard Changes</button>
-        <button className="btn-primary" disabled={!dirty || saving} onClick={save}>
+        <button {...P.lock('reminders', 'edit', { className: 'btn-primary', disabled: !dirty || saving })} onClick={save}>
           <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Changes'}
         </button>
       </div>
@@ -268,7 +272,7 @@ export default function NotificationsRemindersTab({ settings, onSave, announceme
                     <td style={{ fontSize: 12 }}>{fmtDateLong(a.startAt)}</td>
                     <td style={{ fontSize: 12 }}>{a.endAt ? fmtDateLong(a.endAt) : '—'}</td>
                     <td style={{ textAlign: 'center' }}>{a.active ? <span className="badge b-green" style={{ fontSize: 9 }}>Active</span> : <span className="badge b-gray" style={{ fontSize: 9 }}>Inactive</span>}</td>
-                    <td style={{ textAlign: 'center' }}><button className="ch-btn ch-btn-del" onClick={() => onDeleteAnnouncement(a.id)}><i className="fa-solid fa-trash-can" /></button></td>
+                    <td style={{ textAlign: 'center' }}><button {...P.lock('reminders', 'edit', { className: 'ch-btn ch-btn-del' })} onClick={() => { if (!P.guard('reminders', 'edit', toast)) return; onDeleteAnnouncement(a.id); }}><i className="fa-solid fa-trash-can" /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -280,7 +284,7 @@ export default function NotificationsRemindersTab({ settings, onSave, announceme
       <div className="section-card">
         <CardHeader title="Reminder Delivery History" icon="fa-truck-fast" sub="Every reminder the server sent or tried to send, with channel and status. Click a row for the message / failure reason." />
         <div style={{ padding: '0 18px 14px' }}>
-          <button className="btn-primary" disabled={sending} onClick={sendNow}>
+          <button {...P.lock('reminders', 'create', { className: 'btn-primary', disabled: sending })} onClick={sendNow}>
             <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} /> {sending ? 'Sending…' : 'Send Due Reminders Now'}
           </button>
           <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--tm)' }}>Scans unpaid challans and sends immediately — paid challans are skipped by the server.</span>
