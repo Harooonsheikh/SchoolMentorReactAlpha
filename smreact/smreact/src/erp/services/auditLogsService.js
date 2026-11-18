@@ -76,6 +76,18 @@ export async function getAuditLogFilters(branchId = getBranchId(), opts = {}) {
   return normalizeAuditFilters(json);
 }
 
+/* Actions that belong to one module. The filters API returns a flat
+   actions list with no module mapping, so this reads that module's logs
+   (all dates) and collects the distinct action names. */
+const MODULE_ACTIONS_PAGE = 1000;
+export async function getAuditActionsForModule(module, branchId = getBranchId(), opts = {}) {
+  if (!module) return [];
+  const qs = buildQuery({ pageNumber: 1, pageSize: MODULE_ACTIONS_PAGE, module });
+  const json = await getJson(`/get-audit-logs-by-branch/${branchId}${qs}`, opts);
+  const names = (json.data || []).map((r) => r.action).filter(Boolean);
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    2) LOGS  — API row → shape used by AuditLogs.jsx / hydrateLog()
    ═══════════════════════════════════════════════════════════════════ */

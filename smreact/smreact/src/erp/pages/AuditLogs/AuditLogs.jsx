@@ -4,7 +4,7 @@ import TutorialModal from '../../components/TutorialModal';
 import LogDetailsModal from './LogDetailsModal';
 import ReportsPanel from './ReportsPanel';
 import { usePermissions } from '../../context/PermissionsContext';
-import { getAuditLogsByBranch, getAuditLogFilters } from '../../services/auditLogsService';
+import { getAuditLogsByBranch, getAuditLogFilters, getAuditActionsForModule } from '../../services/auditLogsService';
 import {
   hydrateLog,
   quickRange,
@@ -116,9 +116,38 @@ export default function AuditLogs({ toast = () => {} }) {
     return () => ctrl.abort();
   }, []);
 
+  /* Module → its own actions. Fetched once per module and cached; while
+     loading (or if the call fails) the Action dropdown keeps the full list. */
+  const [moduleActions, setModuleActions] = useState({});
+  const [moduleActionsLoading, setModuleActionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!moduleF || moduleActions[moduleF]) return undefined;
+    const ctrl = new AbortController();
+    setModuleActionsLoading(true);
+    getAuditActionsForModule(moduleF, undefined, { signal: ctrl.signal })
+      .then((list) => {
+        setModuleActions(prev => ({ ...prev, [moduleF]: list }));
+        setModuleActionsLoading(false);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('Could not load actions for module:', err);
+      })
+      .finally(() => { if (!ctrl.signal.aborted) setModuleActionsLoading(false); });
+    return () => ctrl.abort();
+  }, [moduleF, moduleActions]);
+
   const moduleOptions = filterOpts.modules;
   const userOptions   = filterOpts.users;
-  const actionOptions = filterOpts.actions;
+  const actionOptions = (moduleF && moduleActions[moduleF]) || filterOpts.actions;
+
+  /* Picked action doesn't belong to the newly selected module → reset it. */
+  useEffect(() => {
+    if (actionF && moduleF && moduleActions[moduleF] && !moduleActions[moduleF].includes(actionF)) {
+      setActionF('');
+    }
+  }, [moduleF, moduleActions, actionF]);
 
   const applyQuick = (preset) => {
     setQuick(preset);
@@ -332,8 +361,11 @@ export default function AuditLogs({ toast = () => {} }) {
               className="up-select"
               value={actionF}
               onChange={(e) => { setActionF(e.target.value); setPage(1); }}
+              disabled={!!moduleF && moduleActionsLoading && !moduleActions[moduleF]}
             >
-              <option value="">All Actions</option>
+              <option value="">
+                {moduleF && moduleActionsLoading && !moduleActions[moduleF] ? 'Loading actions…' : 'All Actions'}
+              </option>
               {actionOptions.map(a => <option key={a} value={a}>{a}</option>)}
             </select>
           </label>
