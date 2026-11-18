@@ -141,7 +141,7 @@ export async function loadPreschoolAllCardsData({ student, classID, sectionID, l
     items.push({
       exam: { name: r.exam, date: r.date, dateLabel, termID: r.termID, selectExam: r.selectExam },
       ad,
-      entry: { name: r.exam, kind: 'PRESCHOOL', kindTone: 'purple', published: dateLabel, pct: Math.round(sum / n), grade: top, values },
+      entry: { name: r.exam, kind: 'PRESCHOOL', kindTone: 'purple', published: dateLabel, publishedLabel: 'Exam date', pct: Math.round(sum / n), grade: top, values },
     });
   }
   return { items, placement };

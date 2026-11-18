@@ -529,8 +529,24 @@ if (navId === 'mentorai') {
       : l2 === 'cal' ? L3_LABELS[l3]
       : L2_LABELS[l2];
 
+  /* Global toast dedupe (QA A8/C11): wahi message + type agar 1.5s ke andar
+     dobara aaye to dusra toast nahi banta. Duplicate ka sabab call sites hain
+     (StrictMode dev me state-updater/effect ke andar toast do dafa chalta hai,
+     ya ek hi action do raston se toast karta hai) — sab jagah theek karne ki
+     bajaye yahan, ek hi container ke darwaze par, rok dete hain. Check updater
+     ke BAHAR hai taake StrictMode ka double-invoke ise na tode. */
+  const recentToastsRef = useRef(new Map());
   const pushToast = (msg, type = 'info') => {
-    const id = Date.now() + Math.random();
+    const now = Date.now();
+    const dedupeKey = `${type}|${typeof msg === 'string' ? msg : String(msg)}`;
+    const recent = recentToastsRef.current;
+    const last = recent.get(dedupeKey);
+    if (last && now - last < 1500) return;
+    recent.set(dedupeKey, now);
+    if (recent.size > 50) {
+      recent.forEach((t, k) => { if (now - t >= 1500) recent.delete(k); });
+    }
+    const id = now + Math.random();
     setToasts(prev => [...prev, { id, msg, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   };

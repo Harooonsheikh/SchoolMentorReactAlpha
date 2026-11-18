@@ -4263,14 +4263,29 @@ function LpGroupsHint({ onOpenGroups }) {
 /* ── Live fetch helpers (same endpoints/shape as CreateLessonPlans) ── */
 const lpAuthGet = () => ({ Accept: '*/*', Authorization: `bearer ${sessionStorage.getItem('token') || ''}` });
 
+/* ULP master GETs paged hain (page_Count 20) — sirf pageNo=1 lene se 20 se
+   zyada rows wale subject ke units/lessons gum ho jate the (aur naya unitNo
+   galat banta tha). Is liye saare pages laao (safety cap 25 pages). */
+async function lpGetAllRows(path) {
+  const all = [];
+  for (let page = 1; page <= 25; page += 1) {
+    const res = await window.fetch(buildUrl(`${path}&pageNo=${page}`), { method: 'GET', headers: lpAuthGet() });
+    const json = await res.json().catch(() => ({}));
+    const rows = Array.isArray(json?.data) ? json.data : [];
+    all.push(...rows);
+    const pages = Number(json?.totalPages) || 1;
+    if (!rows.length || page >= pages) break;
+  }
+  return all;
+}
+
+/* Unit number ke hisaab se sort (server id order deta hai → "Unit 2" pehle "Unit 1" baad me). */
+const lpByUnitNoSort = list => [...list].sort((a, b) => (Number(a.unitNo) || 0) - (Number(b.unitNo) || 0));
+
 async function lpFetchLessonUnits({ branchID, classID, sectionID, subjectID }) {
-  const res = await window.fetch(
-    buildUrl(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
-    { method: 'GET', headers: lpAuthGet() },
-  );
-  const json = await res.json().catch(() => ({}));
+  const rows = await lpGetAllRows(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}`);
   const byUnit = new Map();
-  (json?.data || []).forEach(r => {
+  rows.forEach(r => {
     const key = `${r.unitNo}__${r.unitName}`;
     if (!byUnit.has(key)) byUnit.set(key, { id: key, unitNo: r.unitNo, unitName: r.unitName, medium: String(r.medium || 'english').toLowerCase(), lessons: [] });
     const unit = byUnit.get(key);
@@ -4280,12 +4295,8 @@ async function lpFetchLessonUnits({ branchID, classID, sectionID, subjectID }) {
 }
 
 async function lpFetchNotebookUnits({ branchID, classID, sectionID, subjectID }) {
-  const res = await window.fetch(
-    buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
-    { method: 'GET', headers: lpAuthGet() },
-  );
-  const json = await res.json().catch(() => ({}));
-  return (json?.data || []).map(r => ({
+  const rows = await lpGetAllRows(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}`);
+  return rows.map(r => ({
     id: r.id, unitNo: r.unitNo, unitName: r.unitName, lessonPlanTopic: r.lessonPlanTopic || '',
     medium: String(r.medium || 'english').toLowerCase(), questions: [], record: r,
   }));
@@ -4298,8 +4309,6 @@ const lpCtxFor = (classId, sectionId, subjectId) => ({
   sectionID: sectionId != null ? String(sectionId) : '',
   subjectID: subjectId != null ? String(subjectId) : '',
 });
-const lpByUnitNoSort = list => [...list].sort((a, b) => (Number(a.unitNo) || 0) - (Number(b.unitNo) || 0));
-
 /* Subjects of a class+section (same endpoint Create Lesson Plans uses), de-duplicated by name. */
 async function lpSubjectsFor(classId, sectionId) {
   if (classId == null || sectionId == null) return [];
@@ -4307,6 +4316,26 @@ async function lpSubjectsFor(classId, sectionId) {
     const list = await fetchClassSubjects(classId, sectionId);
     return [...new Map(list.map(s => [String(s.subjectName).trim().toLowerCase(), s])).values()];
   } catch (_) { return []; }
+}
+
+/* "All sections" (class plan) row ke subjects = us group ke HAR section ke
+   subjects ka union (naam se). Pehle sirf representative (Section A) ke subjects
+   aate the, is liye Section B ke subjects ke units ban hi nahi sakte the.
+   Har subject apna `sectionId` rakhta hai (pehla section jis me wo subject hai) —
+   units usi section par save hote hain, phir baaki sections par fan-out. */
+async function lpSubjectsForRow(row) {
+  if (!row) return [];
+  const secIds = (row.sectionIds && row.sectionIds.length) ? row.sectionIds : [row.repSectionId];
+  const byName = new Map();
+  for (const secId of secIds) {
+    if (secId == null) continue;
+    const list = await lpSubjectsFor(row.classId, secId);
+    list.forEach(s => {
+      const k = String(s.subjectName).trim().toLowerCase();
+      if (!byName.has(k)) byName.set(k, { ...s, sectionId: secId });
+    });
+  }
+  return [...byName.values()];
 }
 
 /* Persist a unit draft for ONE class+section+subject — the exact diff/payload
@@ -4612,14 +4641,14 @@ function UnitsManagementScreen({ classesData = [], customSections = [], canEdit,
   const loadRow = async row => {
     let subs = subjByRow[row.key];
     if (!subs) {
-      subs = await lpSubjectsFor(row.classId, row.repSectionId);
+      subs = await lpSubjectsForRow(row); // group ke saare sections ke subjects
       setSubjByRow(p => ({ ...p, [row.key]: subs }));
       if (subs.length) setActiveSubj(p => ({ ...p, [row.key]: p[row.key] || subs[0].subjectName }));
     }
     if (!counts[row.key]) {
       const c = {};
       await lpMapLimited(subs, 4, async s => {
-        try { c[s.subjectName] = (await lpFetchLessonUnits(lpCtxFor(row.classId, row.repSectionId, s.subjectId))).length; }
+        try { c[s.subjectName] = (await lpFetchLessonUnits(lpCtxFor(row.classId, s.sectionId ?? row.repSectionId, s.subjectId))).length; }
         catch (_) { c[s.subjectName] = 0; }
       });
       setCounts(p => ({ ...p, [row.key]: c }));
@@ -4636,7 +4665,7 @@ function UnitsManagementScreen({ classesData = [], customSections = [], canEdit,
     if (requestedRef.current.has(listKey)) return;
     requestedRef.current.add(listKey);
     setLists(p => ({ ...p, [listKey]: { loading: true, lesson: [], notebook: [] } }));
-    const ctx = lpCtxFor(openRow.classId, openRow.repSectionId, curSubj.subjectId);
+    const ctx = lpCtxFor(openRow.classId, curSubj.sectionId ?? openRow.repSectionId, curSubj.subjectId);
     Promise.all([lpFetchLessonUnits(ctx).catch(() => []), lpFetchNotebookUnits(ctx).catch(() => [])])
       .then(([lesson, notebook]) => {
         setLists(p => ({ ...p, [listKey]: { loading: false, lesson: lpByUnitNoSort(lesson), notebook: lpByUnitNoSort(notebook) } }));
@@ -4752,7 +4781,7 @@ function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast,
     let alive = true;
     setSource(target.initialSource === 'notebook' ? 'notebook' : 'lesson');
     setSubjects([]); setOrig([]); setDraft([]); setNewName('');
-    lpSubjectsFor(row.classId, row.repSectionId).then(list => {
+    lpSubjectsForRow(row).then(list => { // saare grouped sections ke subjects
       if (!alive) return;
       setSubjects(list);
       const want = target.initialSubject && list.find(s => s.subjectName === target.initialSubject);
@@ -4763,7 +4792,9 @@ function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast,
   }, [target]);
 
   const curSubj = subjects.find(s => s.subjectName === subj) || null;
-  const ctx = row && curSubj ? lpCtxFor(row.classId, row.repSectionId, curSubj.subjectId) : null;
+  /* Subject jis section ka hai wahi save-section (Section B-only subject → Section B). */
+  const subjSectionId = curSubj ? (curSubj.sectionId ?? row?.repSectionId) : null;
+  const ctx = row && curSubj ? lpCtxFor(row.classId, subjSectionId, curSubj.subjectId) : null;
 
   const reload = async () => {
     if (!ctx) return;
@@ -4826,7 +4857,12 @@ function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast,
     if (!canEdit) { lockedToast(); return; }
     const name = newName.trim();
     if (!name) { toast('Please enter a unit name', 'error'); return; }
-    const nextNo = draft.reduce((m, u) => Math.max(m, Number(u.unitNo) || 0), 0) + 1;
+    /* Naya unitNo = list me units ki ginti + 1 (max+1 nahi — purane "Unit 25"
+       jaise numbers ki wajah se 7 units par 26 ban jata tha). Agar wo number
+       pehle se kisi unit ka ho to agla khali number lo. */
+    const used = new Set(draft.map(u => String(Number(u.unitNo) || '')));
+    let nextNo = draft.length + 1;
+    while (used.has(String(nextNo))) nextNo += 1;
     setDraft(d => [...d, { id: `new_${Date.now()}`, unitNo: String(nextNo), unitName: name, medium: 'english', lessons: [], questions: [] }]);
     setNewName('');
   };
@@ -4852,7 +4888,7 @@ function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast,
       let synced = 0;
       if (!row.custom) {
         for (const secId of row.sectionIds) {
-          if (String(secId) === String(row.repSectionId)) continue;
+          if (String(secId) === String(subjSectionId)) continue;
           const subs = await lpSubjectsFor(row.classId, secId);
           const hit = subs.find(s => s.subjectName.trim().toLowerCase() === curSubj.subjectName.trim().toLowerCase());
           if (!hit) continue;
@@ -4862,8 +4898,8 @@ function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast,
       }
       toast(synced ? `Units saved for ${synced + 1} sections` : 'Units saved successfully!', 'success');
       onSaved?.();
-      await reload();
-      if (andNext) goNext();
+      /* Save → modal band; Save & Next → agle subject par (taza list ke saath). */
+      if (andNext) { await reload(); goNext(); } else onClose();
       return true;
     } catch (e) {
       console.error('Error saving units:', e);
@@ -6625,14 +6661,9 @@ const resolveCtx = () => {
    lesson fetch so a notebook error never blocks the lesson list. Each row's raw
    record id is preserved so the Add-Unit modal can update/delete it. */
 const fetchNotebookUnits = async ({ branchID, classID, sectionID, subjectID }) => {
-  const token = sessionStorage.getItem('token') || '';
-  const res = await window.fetch(
-    buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
-    { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
-  );
-  const json = await res.json();
-  const rows = json?.data || [];
-  setNbUnits(rows.map(r => ({
+  // saare pages (page_Count 20) — warna 20 se zyada units gum
+  const rows = await lpGetAllRows(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}`);
+  setNbUnits(lpByUnitNoSort(rows.map(r => ({
     id: r.id,
     unitNo: r.unitNo,
     unitName: r.unitName,
@@ -6640,7 +6671,7 @@ const fetchNotebookUnits = async ({ branchID, classID, sectionID, subjectID }) =
     medium: String(r.medium || 'english').toLowerCase(),   // unit ki language (Manage Units se)
     questions: [],
     record: r,
-  })));
+  }))));
 };
 
 const fetchLessonPlans = async (opts) => {
@@ -6659,13 +6690,8 @@ const fetchLessonPlans = async (opts) => {
   catch (e) { console.error('Error fetching notebook units:', e); }
 
   try {
-    const token = sessionStorage.getItem('token') || '';
-    const res = await window.fetch(
-      buildUrl(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
-      { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
-    );
-    const json = await res.json();
-    const rows = json?.data || [];
+    // saare pages laao (page_Count 20) — pehle sirf pageNo=1 aata tha
+    const rows = await lpGetAllRows(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}`);
 
     /* Group rows by unit (unitNo + unitName mapped once); each row's
        lessonPlanTopic becomes a lesson under that unit. The raw record is kept
@@ -6686,7 +6712,8 @@ const fetchLessonPlans = async (opts) => {
         record: r,
       });
     });
-    setUnits(Array.from(byUnit.values()));
+    /* Unit number ke order me dikhao (server id order deta hai → Unit 2, 4, 25, 23 jumbled). */
+    setUnits(lpByUnitNoSort(Array.from(byUnit.values())));
     setClpFetched(true);
     if (!silent) toast(`Loaded plans for ${clpClass} · ${clpSubject}`, "success");
   } catch (e) {
@@ -7217,8 +7244,11 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
     fn();
   };
   const [open, setOpen] = useState(false);
-  const manualCount = unit.lessons.filter(l => l.source === 'manual').length;
-  const aiCount     = unit.lessons.filter(l => l.source === 'mentorai').length;
+  /* Naya unit ek khali-topic master row (placeholder) se banta hai — usay lesson
+     na gino, warna bina lessons wala unit "1 lesson · 1 manual" dikhata tha. */
+  const shownLessons = (unit.lessons || []).filter(lpHasTopic);
+  const manualCount = shownLessons.filter(l => l.source === 'manual').length;
+  const aiCount     = shownLessons.filter(l => l.source === 'mentorai').length;
 
   return (
     <div className="clpr-unit">
@@ -7229,7 +7259,7 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
         <div className="clpr-unit-stats">
           <Tooltip text="Total lesson plans in this unit">
             <span className="clpr-stat clpr-stat--total">
-              <i className="fa-solid fa-book"></i> {unit.lessons.length} lesson{unit.lessons.length !== 1 ? 's' : ''}
+              <i className="fa-solid fa-book"></i> {shownLessons.length} lesson{shownLessons.length !== 1 ? 's' : ''}
             </span>
           </Tooltip>
           <span className="clpr-stat-sep">·</span>
@@ -7282,11 +7312,11 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
 
       {open && (
         <div className="clpr-lessons-panel">
-          {unit.lessons.length === 0 ? (
+          {shownLessons.length === 0 ? (
             <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12.5, fontStyle: 'italic' }}>
               No lessons in this unit
             </div>
-          ) : unit.lessons.map((l, li) => (
+          ) : shownLessons.map((l, li) => (
             <div key={l.id} className="clpr-lesson-card">
               <div className="clpr-lesson-top">
                 <div className="clpr-lesson-meta">
@@ -10531,7 +10561,7 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
               />
               <span className="umgr-lesson-count">
                 <i className="fa-solid fa-book" style={{ fontSize: 9 }}></i>{' '}
-                {(u.lessons || u.questions || []).length}
+                {u.lessons ? u.lessons.filter(lpHasTopic).length : (u.questions || []).length}
               </span>
               {/* Per-unit language (medium) toggle — Lesson + Notebook dono.
                   Yahan jo select hoga wahi lesson/question modal ke andar read-only dikhega. */}
@@ -10654,6 +10684,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   /* Section timings — ab USER khud set karta hai (auto-divide nahi). Har section blank
      rehta hai; save par validation: sum(sections) === Time Duration. */
   const [secMins, setSecMins] = useState({ slo: '', intro: '', devel: '', recap: '' });
+  const [savingAll, setSavingAll] = useState(false); // Save & Close chal raha hai (double-click se bachao)
   /* Academics variant: lesson topics are locked until the edit icon is clicked;
      then a "Save Topic" action appears. New (unsaved) lessons start unlocked. */
   const [unlockedTopics, setUnlockedTopics] = useState(new Set());
@@ -10967,11 +10998,15 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     const l = lessons[li];
     try {
       const result = await lpPost('/api/ulpforclassmastercrud', ulpPayload(l, base));
-      updateLesson(li, { record: { ...(l.record || {}), ...result, id: result?.id ?? l.record?.id } });
+      // insert ka id kabhi top-level, kabhi data me aata hai
+      const newId = result?.id ?? result?.data?.id ?? (Array.isArray(result?.data) ? result.data[0]?.id : undefined) ?? l.record?.id;
+      updateLesson(li, { record: { ...(l.record || {}), ...result, id: newId } });
       toast(l.record ? 'Lesson topic updated' : 'Lesson topic added', 'success');
+      return newId ?? null; // Save & Close isi id se detail save karta hai
     } catch (e) {
       console.error('Error saving lesson topic:', e);
       toast('Could not save lesson topic', 'error');
+      return null;
     }
   };
 
@@ -11000,14 +11035,16 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   /* Save the lesson-plan detail (sections + timings) for a topic via
      ulpforclassdetailcrud. masterClassesID = the topic's ULP master id; the
      detail row's own id (from a prior load/save) drives update vs insert. */
-  const saveDetail = async li => {
+  /* opts.masterId / opts.secMins: Save & Close se — abhi insert hue topic ka id
+     (state abhi update nahi hui hoti) aur auto-split section minutes. Returns true/false. */
+  const saveDetail = async (li, opts = {}) => {
     const l = lessons[li];
-    const masterId = l?.record?.id;
-    if (!masterId) { toast('Save the topic first, then save the plan', 'error'); return; }
+    const masterId = opts.masterId ?? l?.record?.id;
+    if (!masterId) { toast('Save the topic first, then save the plan', 'error'); return false; }
     const map = (li === selectedIdx) ? captureEditors() : (l.contentMap || {});
     const dur = (li === selectedIdx) ? duration : (l.duration || '');
     // User-set section timings (auto-divide nahi). Current lesson → state se; warna lesson se.
-    const sm = (li === selectedIdx) ? secMins : (l.secMins || { slo: '', intro: '', devel: '', recap: '' });
+    const sm = opts.secMins || ((li === selectedIdx) ? secMins : (l.secMins || { slo: '', intro: '', devel: '', recap: '' }));
     const d = l.detail || {};
     try {
       const result = await lpPost('/api/ulpforclassdetailcrud', {
@@ -11038,24 +11075,46 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
       });
       updateLesson(li, { contentMap: map, duration: dur, detail: { ...d, ...result, id: result?.id ?? d.id } });
       toast(d.id ? 'Lesson plan updated' : 'Lesson plan saved', 'success');
+      return true;
     } catch (e) {
       console.error('Error saving lesson plan detail:', e);
-      toast('Could not save lesson plan', 'error');
+      toast(e.serverMessage || 'Could not save lesson plan', 'error');
+      return false;
     }
   };
 
   const saveAndClose = async () => {
-    /* Section timings ka total Time Duration ke barabar hona chahiye. */
-    if (!durationNum) { toast('Enter the Time Duration first', 'warning'); return; }
-    if (sectionsTotal !== durationNum) {
-      toast(`Section timings total ${sectionsTotal} mins — must equal Time Duration (${durationNum} mins)`, 'error');
+    if (savingAll) return;
+    const cur = lessons[selectedIdx];
+    if (!cur) { toast('Add a lesson first', 'error'); return; }
+    if (!String(cur.topic || '').trim()) { toast('Enter the Lesson Topic first', 'error'); return; }
+    if (!durationNum) { toast('Enter the Time Duration (mins) first', 'error'); return; }
+    /* Section minutes: sab khali hon to Time Duration ko khud baant do (pehle 0 rehte
+       the aur save chup-chaap ruk jata tha). Kuch bhare hon to total = duration. */
+    const allBlank = sections.every(s => !(parseInt(secMins[s.key], 10) || 0));
+    const sm = allBlank ? distributeMins(durationNum) : secMins;
+    if (allBlank) setSecMins(sm);
+    const smTotal = sections.reduce((a, s) => a + (parseInt(sm[s.key], 10) || 0), 0);
+    if (smTotal !== durationNum) {
+      toast(`Section minutes add up to ${smTotal} — they must equal the Time Duration (${durationNum} mins)`, 'error');
       return;
     }
-    /* Persist the current lesson's plan detail, then hand the lesson back. */
-    await saveDetail(selectedIdx);
-    const map = captureEditors();
-    const target = { ...lessons[selectedIdx], duration, contentMap: map, secMins };
-    onSave({ ...target });
+    setSavingAll(true);
+    try {
+      /* Topic abhi save nahi hua (naya lesson) ya edit hua → pehle topic save karo,
+         phir usi master id par plan detail. */
+      let masterId = cur.record?.id;
+      const topicChanged = cur.record && String(cur.record.lessonPlanTopic ?? '') !== String(cur.topic || '');
+      if (!masterId || topicChanged) {
+        masterId = await saveTopic(selectedIdx);
+        if (!masterId) return;
+      }
+      const ok = await saveDetail(selectedIdx, { masterId, secMins: sm });
+      if (!ok) return;
+      const map = captureEditors();
+      const target = { ...lessons[selectedIdx], duration, contentMap: map, secMins: sm, record: { ...(cur.record || {}), id: masterId } };
+      onSave({ ...target });
+    } finally { setSavingAll(false); }
   };
 
   return (
@@ -11548,12 +11607,12 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         <div className="clpm-footer">
           <div className="clpm-footer-hint">
             <i className="fa-solid fa-circle-info" style={{ color: '#94A3B8', fontSize: 12 }}></i>
-            Fill all sections before saving
+            Topic and Time Duration are required. Leave section minutes blank to split the duration automatically.
           </div>
           <div className="clpm-footer-btns">
             <button className="clpm-btn clpm-btn--cancel" onClick={onClose}>Close</button>
-            <button className="clpm-btn clpm-btn--save" onClick={saveAndClose}>
-              <i className="fa-solid fa-floppy-disk"></i> Save &amp; Close
+            <button className="clpm-btn clpm-btn--save" onClick={saveAndClose} disabled={savingAll}>
+              <i className={`fa-solid ${savingAll ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {savingAll ? 'Saving…' : <>Save &amp; Close</>}
             </button>
           </div>
         </div>

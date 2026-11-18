@@ -13,7 +13,26 @@
     <meta name="description" content="School Mentor — Pakistan's most trusted school operating system" />
  
     <title>School Mentor</title>
-<script src="/maintenance/erp-maintenance-watcher.js" defer></script>
+    <!-- Maintenance watcher lives OUTSIDE this repo (server-side /maintenance/).
+         Where it isn't deployed (local dev, sandbox) the SPA fallback returns
+         index.html for that URL and a plain <script> tag throws
+         "SyntaxError: Unexpected token '<'" on every page (QA A15). So check
+         first that the URL really serves JavaScript, then load it. -->
+    <script>
+      (function () {
+        var url = '/maintenance/erp-maintenance-watcher.js';
+        try {
+          fetch(url, { method: 'HEAD', cache: 'no-store' }).then(function (r) {
+            var ct = (r.headers.get('content-type') || '').toLowerCase();
+            if (!r.ok || ct.indexOf('javascript') === -1) return;
+            var s = document.createElement('script');
+            s.src = url;
+            s.defer = true;
+            document.head.appendChild(s);
+          }).catch(function () { /* not deployed — ignore */ });
+        } catch (e) { /* old browser — ignore */ }
+      })();
+    </script>
     <!-- Fonts used across the setup screens and the ERP -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
     <!-- Font Awesome icons -->

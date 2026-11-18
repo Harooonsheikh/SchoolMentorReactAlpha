@@ -136,7 +136,9 @@ export const EXAM_DESIGN_CSS = `
   border-color: var(--brand-solid, #1E40AF);
   box-shadow: var(--shadow-flatten, 0 6px 16px rgba(var(--brand-primary-rgb, 30,58,138), .16));
 }
-.exam-root .rs-modal-tab.active { color: var(--brand-solid, #1E40AF); }
+/* Active pill ka background blue gradient hai — text white rakho, warna
+   blue-on-blue label ("Grade") nazar nahi aata. */
+.exam-root .rs-modal-tab.active { color: #fff; }
 
 /* ── Grading Setup — default comment / final remark field ──
    View: text + "Auto" chip + pencil.  Edit: field + ✓ (keep) / ✕ (revert). */

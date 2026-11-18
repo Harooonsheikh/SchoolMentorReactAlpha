@@ -20,7 +20,7 @@ import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
 import useAsync from '../hooks/useAsync';
 import * as preschoolService from '../services/preschoolService';
-import { excludePreschoolClasses, preschoolLevelFor } from '../services/preschoolClassSetupStore';
+import { excludePreschoolClasses, preschoolLevelFor, preschoolClassKey, readPreschoolClassSetupSync } from '../services/preschoolClassSetupStore';
 import {
   pProgressForStudent,
   pTemplateForExam,
@@ -507,6 +507,54 @@ function saSubjectLabel(s) {
   const n = String(s?.subjectName || '').trim();
   if (!n || cbrApi.saIsPlaceholderName(n, s?.subjectID)) return '—';
   return n;
+}
+
+/* Grading / Final Remarks bands ka overlap check. "≥ 70" aur "≤ 70" dono 70%
+   par lagte hain → kaunsa remark aaye, tay nahi. Same direction ke tiers
+   (≥90, ≥80, ≥70 …) jaan-boojh kar overlap karte hain (sab se ooncha jeet-ta
+   hai) — wo allowed. Sirf ulti direction (≥/> vs ≤/<) ya "=" band jo kisi aur
+   band ke andar aa jaye, unhe pakadte hain. Returns [a, b] ya null. */
+function examRsBandOverlap(rows) {
+  const iv = (r) => {
+    const p = Number(r.pct);
+    switch (r.cond) {
+      case 'gt': return { lo: p, loC: false, hi: 100, hiC: true, dir: 'up' };
+      case 'lte': return { lo: 0, loC: true, hi: p, hiC: true, dir: 'down' };
+      case 'lt': return { lo: 0, loC: true, hi: p, hiC: false, dir: 'down' };
+      case 'eq': return { lo: p, loC: true, hi: p, hiC: true, dir: 'eq' };
+      default: return { lo: p, loC: true, hi: 100, hiC: true, dir: 'up' }; // gte
+    }
+  };
+  const meet = (a, b) => {
+    const lo = Math.max(a.lo, b.lo), hi = Math.min(a.hi, b.hi);
+    if (lo < hi) return true;
+    if (lo > hi) return false;
+    const aIn = (lo > a.lo || a.loC) && (lo < a.hi || a.hiC);
+    const bIn = (lo > b.lo || b.loC) && (lo < b.hi || b.hiC);
+    return aIn && bIn;
+  };
+  // 'between' ka sirf ek % hota hai (range ka doosra sira nahi) — us par check skip.
+  const list = (rows || []).filter(r => r.cond !== 'between' && String(r.pct ?? '').trim() !== '' && !Number.isNaN(Number(r.pct)));
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = iv(list[i]), b = iv(list[j]);
+      if (a.dir === b.dir && a.dir !== 'eq') continue;   // same-direction tiers OK
+      if (meet(a, b)) return [list[i], list[j]];
+    }
+  }
+  return null;
+}
+
+/* Result History score calc: exam ke subjects sirf subjectID se (dedupe) —
+   naam ki zaroorat nahi (getsasubjectbybranchclassandterm subjectName null
+   deta hai, rcNormalizeSubjects aisi rows drop kar deta hai). */
+function rhSubjectIdsOnly(rawSubs) {
+  const seen = new Set();
+  return (rawSubs || []).map(saNormSubject).filter(s => {
+    if (!s || !s.subjectID || seen.has(s.subjectID)) return false;
+    seen.add(s.subjectID);
+    return true;
+  });
 }
 
 function rcNormalizeSubjects(rawSubs, nameMap = {}) {
@@ -2047,7 +2095,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         const scores = {};
         await Promise.all(rhExams.map(async ex => {
           const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: ex.termID, examID: ex.selectExam }).catch(() => []);
-          const subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
+          // Score ke liye sirf subjectID chahiye — rcNormalizeSubjects naam-khali rows
+          // (API subjectName null deta hai) gira deta tha → tot 0 → score 0%.
+          const subs = rhSubjectIdsOnly(rawSubs);
           let obt = 0, tot = 0;
           await Promise.all(subs.map(async su => {
             try {
@@ -2157,11 +2207,23 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
               const exData = await exRes.json();
               exams = Array.isArray(exData?.data) ? exData.data : (Array.isArray(exData) ? exData : []);
             } catch { /* no exams */ }
-            const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+            /* Subjects HAR EXAM ke apne (getMainExamSubjects) — wahi jo detail view
+               (rhExamScores) use karta hai. Pehle get-subjects_byEmployeeID (teacher
+               scoped) se aate the: admin / non-teacher login par wo khali → har exam
+               ka tot 0 → har student Avg 0% / Best 0%. Exam subjects na milen to
+               purana syllabus list fallback. */
+            const sylSubs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+            const examSubs = {};
+            for (const ex of exams) {
+              const raw = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: ex.termID, examID: ex.selectExam }).catch(() => []);
+              const norm = rhSubjectIdsOnly(raw);
+              examSubs[ex.selectExam] = norm.length ? norm : sylSubs;
+            }
             for (const stu of students) {
               if (cancelled) return;
               const pcts = [];
               for (const ex of exams) {
+                const subs = examSubs[ex.selectExam] || [];
                 let obt = 0, tot = 0;
                 await Promise.all(subs.map(async su => {
                   try {
@@ -2205,6 +2267,12 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
   const [rcoGeneral, setRcoGeneral] = useState(RCO_GENERAL_OPTIONS);
   const [rcoSig, setRcoSig] = useState(RCO_SIG_OPTIONS);
   const [rcoSettings, setRcoSettings] = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
+  /* Latest rcoSettings — fetchSignatureSetup await ke baad isi se signature1/2
+     padhta hai. Closure wala rcoSettings purana (null) ho sakta tha jab card
+     options pehle load ho jayein → saari signatures "off" ho jati thin aur
+     card par sirf PARENTS dikhta tha. */
+  const rcoSettingsRef = useRef(null);
+  useEffect(() => { rcoSettingsRef.current = rcoSettings; }, [rcoSettings]);
   const [rcPreviewId, setRcPreviewId] = useState(null);      // template id being previewed
 
   /* ── Syllabus state ── */
@@ -2535,7 +2603,10 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
           pct,
           comment: item.remarks || ''
         };
-      }).filter(g => g.grade && g.pct !== '');
+      }).filter(g => g.grade && g.pct !== '')
+        /* Bands hamesha min % ke hisaab se OOPAR se NEECHE (desc) — list aur
+           lookup (rcGradeByScale) dono ek hi tarteeb me. */
+        .sort((a, b) => Number(b.pct) - Number(a.pct));
 
       setRsGrades(transformedGrades);
       /* Module cache bhi set — rcGetGrade (per-subject / history / trends) isi se
@@ -2733,13 +2804,14 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
       // API returns: { id, branchID, name: "Sawaira", designation: "principle", signature: "sawairaG" }
       // `on` = ye signature result card par dikhani hai ya nahi (max 2 — saved
       // signature1 / signature2 se restore).
-      const sig1 = rcoSettings?.signature1, sig2 = rcoSettings?.signature2;
+      const curRco = rcoSettingsRef.current || rcoSettings;
+      const sig1 = Number(curRco?.signature1) || 0, sig2 = Number(curRco?.signature2) || 0;
       const transformedSigs = (data || []).map(item => ({
         id: item.id,
         name: item.name || '',
         desig: item.designation || '',
         img: item.signature || '',  // signature field contains the name/signature text
-        on: !!(sig1 && item.id === sig1) || !!(sig2 && item.id === sig2),
+        on: !!(sig1 && Number(item.id) === sig1) || !!(sig2 && Number(item.id) === sig2),
       }));
 
       setRsSigs(transformedSigs);
@@ -2848,11 +2920,12 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         return;
       }
       setRcoSettings(s);
+      rcoSettingsRef.current = s;
       // API ke boolean fields se toggles ka on/off set karo
       setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
       setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
       // Signature selection (max 2) → saved signature1 / signature2 se restore karo.
-      setRsSigs(list => list.map(sg => ({ ...sg, on: (s.signature1 && sg.id === s.signature1) || (s.signature2 && sg.id === s.signature2) })));
+      setRsSigs(list => list.map(sg => ({ ...sg, on: !!((Number(s.signature1) && Number(sg.id) === Number(s.signature1)) || (Number(s.signature2) && Number(sg.id) === Number(s.signature2))) })));
       // Record mojood hai magar saare toggles band hain → card khaali chhapega,
       // is liye generate/open karte waqt user ko toaster se batao.
       const anyOn = [...Object.values(RCO_GENERAL_FIELD), ...Object.values(RCO_SIG_FIELD)].some(f => !!s[f]);
@@ -6560,10 +6633,14 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
             );
           })()}
           {rsTab === 'combinedassessment' && (() => {
+            // Preschool class-sections (Setup Preschool Classes) Combined se bahar —
+            // purane combined results me bhi wo rows na dikhen (card bhi na khule).
+            const cbrPschMap = readPreschoolClassSetupSync();
+            const cbrNonPre = excludePreschoolClasses(cbrResults, cbrPschMap);
             // Filter
             const filtered = cbrFilterClass
-              ? cbrResults.filter(r => `${r.cls} - ${r.section}` === cbrFilterClass || r.cls === cbrFilterClass)
-              : cbrResults;
+              ? cbrNonPre.filter(r => `${r.cls} - ${r.section}` === cbrFilterClass || r.cls === cbrFilterClass)
+              : cbrNonPre;
 
             // Group by base name (strip the " — Grade X" suffix)
             const groupName = cr => cr.name.replace(/\s*—\s*(Grade\s*\d|Class\s*\w).*$/i, '').trim();
@@ -6614,7 +6691,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                         "Grade 1 - A" format. value se neeche filter/search match hota hai. */}
                     {(cbrClassList.length
                       ? cbrClassList.flatMap(g => (g.sections || []).length
-                        ? (g.sections || []).map(s => `${g.name} - ${s.sectionName}`)
+                        ? (g.sections || [])
+                            .filter(s => !cbrPschMap[preschoolClassKey(g.id ?? g.gradeID, s.sectionID ?? s.id)])
+                            .map(s => `${g.name} - ${s.sectionName}`)
                         : [g.name])
                       : CBR_CLASS_OPTIONS
                     ).map(c => (
@@ -15748,9 +15827,18 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
   const [loading, setLoading] = useState(false);
 
   // Update drafts when props change
+  /* Props (server grades) badlen to draft refresh — LEKIN abhi tak save na
+     hui nayi rows (temp_) mat mitao. Pehle background reload (ya partial save
+     ke baad reload) user ki nayi add ki hui grade row ko gayab kar deta tha.
+     Jo temp row ab server list me aa chuki (same grade + cond + %) wo drop. */
   useEffect(() => {
     if (grades && grades.length) {
-      setDraftGrades(grades.map(autoGrade));
+      const sig = g => `${String(g.grade || '').trim().toUpperCase()}|${g.cond || 'gte'}|${Number(g.pct)}`;
+      const saved = new Set(grades.map(sig));
+      setDraftGrades(prev => [
+        ...grades.map(autoGrade),
+        ...(prev || []).filter(r => isNewRow(r.id) && !saved.has(sig(r))),
+      ]);
     }
   }, [grades]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -16202,13 +16290,46 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         }
         return null;
       };
-      const dupVal = findDup(draftGrades, gVal);
+      // Grade name case-insensitive compare ("a" aur "A" ek hi grade); % numeric
+      // compare ("80" aur "80.0" ek hi band).
+      const dupVal = findDup(draftGrades, g => gVal(g).toUpperCase());
       if (dupVal) { toast(`"${dupVal}" is added more than once. Remove the duplicate row before saving.`, 'error'); return; }
-      if (findDup(draftGrades, gPct)) { toast('This percentage has already been assigned a grade.', 'error'); return; }
       const bad = (draftGrades || []).some(g =>
         !String(g.grade ?? '').trim() || !String(g.pct ?? '').trim() || !String(g.comment ?? '').trim());
       if (bad) { toast('Grade, percentage and comment cannot be empty.', 'error'); return; }
       if ((draftGrades || []).some(g => !examRsValidPct(g.pct))) { toast('Percentage must be a number from 0 to 100.', 'error'); return; }
+      if (findDup(draftGrades, g => (gPct(g) ? `${g.cond || 'gte'}|${Number(g.pct)}` : ''))) { toast('This percentage has already been assigned a grade.', 'error'); return; }
+      // Tarteeb check (BLOCKING): jab sab bands "≥"/">" hon aur naam letter grades
+      // (A+, A, B-, …) hon, to zyada % wala band kabhi kam-tar letter na ho.
+      // Warna e.g. A≥100, A+≥80, D≥77, B≥29 par 78% ko "D" milta hai — har result
+      // card ka grade chup-chaap ghalat ho jata hai, is liye save rok dete hain.
+      const letterRank = (name) => {
+        const m = /^([A-F])([+-]*)$/i.exec(String(name || '').trim());
+        if (!m) return null;
+        const mod = m[2] || '';
+        return (m[1].toUpperCase().charCodeAt(0) - 65) * 10
+          - (mod.split('+').length - 1) + (mod.split('-').length - 1);
+      };
+      const gOv = examRsBandOverlap(draftGrades);
+      if (gOv) {
+        const lbl = g => `${g.grade} ${RS_COND_MAP[g.cond] || '≥'} ${g.pct}`;
+        toast(`Grade ranges overlap: "${lbl(gOv[0])}" and "${lbl(gOv[1])}" both match the same percentage. Adjust one of them.`, 'error');
+        return;
+      }
+      const allGte = (draftGrades || []).every(g => (g.cond || 'gte') === 'gte' || g.cond === 'gt');
+      if (allGte) {
+        const ordered = (draftGrades || [])
+          .map(g => ({ g, r: letterRank(g.grade), p: Number(g.pct) }))
+          .filter(x => x.r != null)
+          .sort((a, b) => b.p - a.p);
+        for (let i = 1; i < ordered.length; i++) {
+          const hi = ordered[i - 1], lo = ordered[i];
+          if (hi.p > lo.p && hi.r > lo.r) {
+            toast(`Grade order is not logical: "${hi.g.grade}" (≥ ${hi.p}%) is above "${lo.g.grade}" (≥ ${lo.p}%). A better grade must need a higher percentage.`, 'error');
+            return;
+          }
+        }
+      }
     } else if (tab === 'signatures') {
       // Signature tab: har row me name + designation + signature (image) required.
       const bad = (draftSigs || []).some(s =>
@@ -16222,6 +16343,13 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         !String(r.pct ?? '').trim() || !String(r.text ?? '').trim());
       if (bad) { toast('Final remark cannot be empty.', 'error'); return; }
       if ((draftRemarks || []).some(r => !examRsValidPct(r.pct))) { toast('Percentage must be a number from 0 to 100.', 'error'); return; }
+      // Overlap (BLOCKING): e.g. "≤ 70" aur "≥ 70" dono 70% par lagte hain.
+      const rOv = examRsBandOverlap(draftRemarks);
+      if (rOv) {
+        const lbl = r => `${RS_COND_MAP[r.cond] || '≥'} ${r.pct}`;
+        toast(`Final remark ranges overlap: "${lbl(rOv[0])}" and "${lbl(rOv[1])}" both match the same percentage. Adjust one of them.`, 'error');
+        return;
+      }
     }
 
     setLoading(true);
@@ -16243,9 +16371,22 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         // jinki write permission ho (nayi → hoAdd, existing → hoEdit).
         const gradesToSave = draftGrades.filter(g =>
           String(g.grade ?? '').trim() && String(g.pct ?? '').trim() && String(g.comment ?? '').trim());
+        // Har save ka result check karo — pehle fail hone par bhi "saved" toast
+        // aa jata tha aur naya grade list me nahi aata tha (refresh tak).
+        const failedGrades = [];
         for (const grade of gradesToSave) {
           if (!canWriteRow(grade.id)) continue;   // permission nahi → API skip
-          await saveGradeToAPI(grade);
+          const res = await saveGradeToAPI(grade);
+          const d = res?.data;
+          const apiFail = d && typeof d === 'object' && !Array.isArray(d)
+            && (d.success === false || d.Success === false || d.status === false || d.isSuccess === false);
+          if (!res?.success || apiFail) failedGrades.push({ grade, msg: d?.message || d?.Message || '' });
+        }
+        if (failedGrades.length) {
+          freshGrades = await reloadGrades?.();
+          const f = failedGrades[0];
+          toast(`Could not save grade "${f.grade.grade}"${f.msg ? `: ${f.msg}` : ''}. Please try again.`, 'error');
+          return;   // modal khula rahe; finally loading band karega
         }
         // Delete removed grades — sirf tab jab Delete permission ho.
         if (hoDelete) {

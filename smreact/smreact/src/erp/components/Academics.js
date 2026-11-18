@@ -1111,10 +1111,21 @@ const parseApiClasses = v => {
 };
 const ACT_AUD_KEY = () => `sm_activity_classes_${sessionStorage.getItem('branchID') || '0'}`;
 const actAudLoad = () => { try { const m = JSON.parse(localStorage.getItem(ACT_AUD_KEY())); return m && typeof m === 'object' ? m : {}; } catch { return {}; } };
-const actAudRemember = (id, classes) => {
-  if (id == null) return;
-  try { const m = actAudLoad(); m[String(id)] = classes || []; localStorage.setItem(ACT_AUD_KEY(), JSON.stringify(m)); } catch { /* ignore */ }
+/* Insert response me id na aaye to naam + start date (YYYY-MM-DD) se bhi yaad rakho. */
+const actAudAltKey = (name, start) => {
+  const d = new Date(start);
+  return `n:${String(name || '').trim().toLowerCase()}|${isNaN(d) ? String(start || '') : d.toISOString().slice(0, 10)}`;
 };
+const actAudRemember = (id, classes, name, start) => {
+  try {
+    const m = actAudLoad();
+    if (id != null) m[String(id)] = classes || [];
+    if (name) m[actAudAltKey(name, start)] = classes || [];
+    localStorage.setItem(ACT_AUD_KEY(), JSON.stringify(m));
+  } catch { /* ignore */ }
+};
+/* Backend ka placeholder "string" (khali field) → '' */
+const actClean = v => { const t = String(v ?? '').trim(); return t.toLowerCase() === 'string' ? '' : t; };
 
 function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [] }) {
   const [name, setName] = useState('');
@@ -1239,8 +1250,8 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
       throw new Error(msg);
     }
 
-    const savedId = editId || json?.id || json?.data?.id || Date.now();
-    actAudRemember(savedId, pickedClasses);
+    const savedId = editId || json?.id || json?.data?.id || (Array.isArray(json?.data) ? json.data[0]?.id : undefined) || Date.now();
+    actAudRemember(savedId, pickedClasses, name.trim(), startIso);
     onSave({
       id: savedId,
       classes: pickedClasses,
@@ -2681,6 +2692,8 @@ async function keyDatesCrud(payload) {
 /* ─── Activity Calendar backend */
    
 async function getActivityCalendar() {
+  /* SessionYearID khali ho to API 400 deti hai — call hi mat karo. */
+  if (!termsSessionYearID()) return [];
   const res = await fetch(
     buildUrl(`/api/getactivitycalendarbyid?BranchID=${termsBranchID()}&SessionYearID=${termsSessionYearID()}&pageNo=1`),
     {
@@ -2739,7 +2752,11 @@ const mapActivity = (a, i) => {
   /* Audience: API `classes` (empty/missing = whole school). Agar API ne
      field bheji hi nahi, to is branch ka local yaad rakha hua audience. */
   const apiClasses = parseApiClasses(a.classes ?? a.Classes);
-  const classes = apiClasses !== null ? apiClasses : (actAudLoad()[String(id)] || []);
+  /* Backend abhi `classes` save/return nahi karta (GET me field hi nahi) — API ki
+     list khali/missing ho to local yaad (id se, warna naam+start date se) use karo. */
+  const local = actAudLoad();
+  const classes = (apiClasses && apiClasses.length) ? apiClasses
+    : (local[String(id)] || local[actAudAltKey(a.name || a.activityName || a.title, rawStart)] || []);
 
   return {
     id,
@@ -2751,13 +2768,16 @@ const mapActivity = (a, i) => {
     rawEnd,
     color: ACT_COLORS[i % ACT_COLORS.length],
     status: actComputeStatus(rawStart, rawEnd),
-    purpose: a.activityPurpose || '',
-    development: a.activityDevelopment || '',
-    resource: a.resourseMaterial || '',
+    /* Khali field backend par placeholder "string" ban kar save hoti hai — UI me khali dikhao. */
+    purpose: actClean(a.activityPurpose),
+    development: actClean(a.activityDevelopment),
+    resource: actClean(a.resourseMaterial),
   };
 };
 //  Used to load activities for the visible calendar month. */
 async function getActivityByMonth(month) {
+  /* SessionYearID khali → GET 400 ("The value '' is invalid") — skip karo. */
+  if (!termsSessionYearID()) return [];
   const res = await fetch(
     buildUrl(`/api/getactivitycalendarbymonth?BranchID=${termsBranchID()}&month=${month}&SessionYearID=${termsSessionYearID()}&pageNo=1`),
     {

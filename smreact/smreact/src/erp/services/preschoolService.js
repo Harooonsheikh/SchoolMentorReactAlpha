@@ -133,10 +133,34 @@ export async function getLearningAreas() {
   const res = await apiGetOrEmpty('preschooling-learningareas-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
   });
-  const saved = (res.data || []).map(row => ({
-    id: String(row.id), dbId: row.id, name: row.subjectName, icon: 'fa-book',
-  }));
-  const list = mergeWithDefaults(saved, mockLearningAreas, x => x.name);
+  /* Server par ek hi learning area kai dafa save ho chuka hai (har preschool
+     lock / save par dobara insert) — wahi naam do baar chip ban kar aata tha
+     aur React duplicate-key warning deta tha. Naam (case/space/"and"≈"&"/
+     punctuation ignore) aur id dono par dedupe — pehli (sab se purani) row rakho. */
+  const laKey = s => String(s || '').toLowerCase().replace(/\band\b/g, '&').replace(/[^a-z0-9&]/g, '');
+  const seenName = new Set(), seenId = new Set();
+  const saved = (res.data || [])
+    .filter(Boolean)
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .map(row => ({
+      id: String(row.id), dbId: row.id, name: row.subjectName, icon: 'fa-book',
+    }))
+    .filter(r => {
+      const k = laKey(r.name);
+      if (!k || seenName.has(k) || seenId.has(r.id)) return false;
+      seenName.add(k); seenId.add(r.id);
+      return true;
+    });
+  const merged = mergeWithDefaults(saved, mockLearningAreas, x => laKey(x.name));
+  // Default + saved ke beech bhi (e.g. "Art, Craft and Creative Expression"
+  // vs default "Art, Craft & Creative Expression") ek hi chip.
+  const outName = new Set(), outId = new Set();
+  const list = merged.filter(la => {
+    const k = laKey(la.name);
+    if (outName.has(k) || outId.has(String(la.id))) return false;
+    outName.add(k); outId.add(String(la.id));
+    return true;
+  });
   _laCache = list;
   return clone(list);
 }

@@ -82,7 +82,8 @@ function pgBoardModel(board, level, group, info) {
   const live = !!info;
   const d = info || {};
   const O = d.showObj !== false, S = d.showSubj !== false;
-  const subj = d.subject || 'English';
+  /* QA C6: live paper mein subject abhi na chuna ho to sample "English" nahi, neutral placeholder. */
+  const subj = d.subject || (live ? 'Subject' : 'English');
   const oTm = +(d.objTime ?? 20) || 0, sTm = +(d.subjTime ?? 160) || 0;
   const oT = +(d.objMarks ?? 15) || 0,  sT = +(d.subjMarks ?? 60) || 0;
   const code = 1000 + (pgHashStr(subj + level.short + board.id) % 9000);

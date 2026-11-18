@@ -183,7 +183,7 @@ export function buildResultCardHtml({ student, entry, data, branch, isColor = tr
       <table style="width:100%"><tr>
         <td><div style="font-size:15px;font-weight:900">${E(examSchoolName(branch))}</div>
         <div style="font-size:10px;opacity:.75;margin-top:2px">Result Card${examYearLabel(branch) ? ` &middot; ${E(examYearLabel(branch))}` : ''}</div></td>
-        <td style="text-align:right;font-size:10px;opacity:.9">Published on<br><b style="font-size:12px">${E(entry.published || '—')}</b></td>
+        <td style="text-align:right;font-size:10px;opacity:.9">${E(entry.publishedLabel || 'Published on')}<br><b style="font-size:12px">${E(entry.published || '—')}</b></td>
       </tr></table>
     </div>
     <table style="width:100%;border:1px solid ${p.accBdr};margin:14px 0"><tr>${info}</tr></table>
@@ -255,7 +255,7 @@ export async function buildAllCardsHtml({ student, results, sessionLabel, isColo
   const cards = entries.map((entry, i) => {
     const custom = renderCard ? renderCard(entry, cardData[i], { student, branch: hdr, isColor, sessionLabel }) : null;
     if (custom) {
-      return `<div style="font-size:10px;color:#64748B;text-align:right;margin-bottom:4px">Published on <b>${examEsc(entry.published)}</b></div>${custom}`;
+      return `<div style="font-size:10px;color:#64748B;text-align:right;margin-bottom:4px">${examEsc(entry.publishedLabel || 'Published on')} <b>${examEsc(entry.published)}</b></div>${custom}`;
     }
     return buildResultCardHtml({ student, entry, data: cardData[i], branch: hdr, isColor, gradeFn, finalRemarkFn, useAutoComment });
   });

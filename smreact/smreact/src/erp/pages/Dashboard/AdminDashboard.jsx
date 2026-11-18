@@ -2425,12 +2425,12 @@ value={lpClass} style={{ display: 'none' }}
                   <span className="adm-pill-blue">{studentBdays.length}</span>
                 </div>
                 <div className="adm-bday-list">
-                  {studentBdays.map(b => {
+                  {studentBdays.map((b, bi) => {
                     const isToday = b.dob === TODAY_DAY;
                     const isTomorrow = b.dob === TODAY_DAY + 1;
                     return (
                       <div
-                      key={`${b.name}-${b.date}`}
+                      key={`${b.id ?? b.name}-${b.date}-${bi}`}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
                         <div className="adm-bday-av">{initials(b.name)}</div>
@@ -2459,12 +2459,12 @@ value={lpClass} style={{ display: 'none' }}
                   <span className="adm-pill-blue">{teacherBdays.length}</span>
                 </div>
                 <div className="adm-bday-list">
-                  {teacherBdays.map(b => {
+                  {teacherBdays.map((b, bi) => {
                     const isToday = b.dob === TODAY_DAY;
                     const isTomorrow = b.dob === TODAY_DAY + 1;
                     return (
                       <div
-                        key={b.name}
+                        key={`${b.id ?? b.name}-${b.date}-${bi}`}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
                         <div className="adm-bday-av adm-bday-av--purple">{initials(b.name)}</div>

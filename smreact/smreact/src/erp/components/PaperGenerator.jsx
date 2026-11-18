@@ -87,6 +87,32 @@
   function pgClassKey(cls) {
     return cls.name.replace(/\s+/g, '') + '_' + cls.section;
   }
+  /* QA C5: grade name aksar pehle se "Class II" hota hai → "Class Class II" na bane. */
+  function pgClassLabel(name) {
+    const n = String(name || '').trim();
+    return /^class\b/i.test(n) ? n : `Class ${n}`;
+  }
+  /* QA C10: demo "THE OXFORD SYSTEM" ki jagah is branch ka naam (login par
+     sessionStorage.branchName; report-header API ka branchName ho to wo upar se aata hai). */
+  function pgSchoolName() {
+    return sessionStorage.getItem('branchName') || 'School Name';
+  }
+  function pgSchoolLine(school) {
+    const name = school?.branchName || pgSchoolName();
+    return school?.address ? `${name} — ${school.address}` : name;
+  }
+  /* Header components ka data: live view (info) mein asal values / neutral
+     placeholders (QA C6); template preview (no info) mein sample paper data
+     lekin school naam/logo asal branch ka (QA C10). */
+  function pgHeaderData(info, school) {
+    const sc = school || {};
+    const logo = sc.branchLogo ? resolveMediaUrl(sc.branchLogo) : '';
+    if (!info) {
+      return { school: sc.branchName || pgSchoolName(), campus: sc.address || '', logo,
+        examTitle: 'Annual Examination 2026', subject: 'English (A)', className: 'IV', section: 'White' };
+    }
+    return { ...info, examTitle: info.examTitle || 'Paper Title', subject: info.subject || 'Subject' };
+  }
 
   /* Normalize a backend qpMaster record (getexamqpmasterbyids) into the card
     shape PapersGrid renders. API uses different field names + string numbers. */
@@ -140,14 +166,38 @@
       }
     }, [canSetupView, canGenView, tab]);
 
-    const [templateId, setTemplateId] = useState(1);
+    /* QA C2: backend mein template ka koi field/endpoint nahi (paper_generation_setup
+       sirf paperFormate/lineType rakhta hai) — is liye selected template + board
+       per-branch localStorage mein persist hota hai (isi browser tak). */
+    const pgTmplKey = `pg_template_${sessionStorage.getItem('branchID') || ''}`;
+    const [savedTmpl] = useState(() => {
+      try { return JSON.parse(localStorage.getItem(pgTmplKey) || 'null') || {}; } catch { return {}; }
+    });
+    const [templateId, setTemplateId] = useState(() => (TEMPLATES.some(t => t.id === savedTmpl.templateId) ? savedTmpl.templateId : 1));
     const [previewN, setPreviewN]     = useState(null);      // 1 | 2 | 3 | 4 | null
 
     /* Board Pattern (Template 4) — selected Matric/Intermediate board, level & group.
        Local UI state, same as templateId (no backend field for either). */
-    const [boardId, setBoardId]       = useState('lhr');
-    const [boardLevel, setBoardLevelState] = useState('ssc2');
-    const [boardGroup, setBoardGroup] = useState(PG_BOARD_LEVELS.ssc2.groups[0]);
+    const [boardId, setBoardId]       = useState(savedTmpl.boardId || 'lhr');
+    const [boardLevel, setBoardLevelState] = useState(PG_BOARD_LEVELS[savedTmpl.boardLevel] ? savedTmpl.boardLevel : 'ssc2');
+    const [boardGroup, setBoardGroup] = useState(() => {
+      const lvl = PG_BOARD_LEVELS[savedTmpl.boardLevel] || PG_BOARD_LEVELS.ssc2;
+      return lvl.groups.includes(savedTmpl.boardGroup) ? savedTmpl.boardGroup : lvl.groups[0];
+    });
+    useEffect(() => {
+      try { localStorage.setItem(pgTmplKey, JSON.stringify({ templateId, boardId, boardLevel, boardGroup })); } catch { /* storage blocked */ }
+    }, [pgTmplKey, templateId, boardId, boardLevel, boardGroup]);
+    /* QA C10: template thumbnails/preview ke liye branch naam + logo (report-header API). */
+    const [schoolHeader, setSchoolHeader] = useState(null);
+    useEffect(() => {
+      let alive = true;
+      fetchReportHeader().then(h => { if (alive) setSchoolHeader(h); });
+      return () => { alive = false; };
+    }, []);
+    const chooseTemplate = id => {
+      setTemplateId(id);
+      toast(id === 4 ? `Board Pattern — ${pgBoardFind(boardId).sh} selected` : `${(TEMPLATES.find(t => t.id === id) || {}).name || 'Template'} template selected`, 'success');
+    };
     const setBoardLevel = lvl => {
       setBoardLevelState(lvl);
       setBoardGroup(pgBoardLevel(lvl).groups[0]);
@@ -773,7 +823,7 @@ const setSubjLine = (ci, si, l) => {
                       <div
                         key={t.id}
                         className={`pg-tmpl-card${sel ? ' selected' : ''}`}
-                        onClick={() => setTemplateId(t.id)}
+                        onClick={() => { if (templateId !== t.id) chooseTemplate(t.id); }}
                       >
                         <div className="pg-tmpl-top-strip"></div>
                         {sel && (
@@ -783,7 +833,7 @@ const setSubjLine = (ci, si, l) => {
                         )}
                         <div className="pg-tmpl-body">
                           <div className="pg-tmpl-num">{String(t.id).padStart(2, '0')}</div>
-                          <TemplatePreview id={t.id} boardCfg={boardCfg} />
+                          <TemplatePreview id={t.id} boardCfg={boardCfg} school={schoolHeader} />
                           <div>
                             <div className="pg-tmpl-name">{t.name} <span className="pg-tmpl-name-bar"></span></div>
                             <div className="pg-tmpl-desc">{t.id === 4 ? pgBoardFind(boardId).sh + ' · ' + pgBoardLevel(boardLevel).short : t.desc}</div>
@@ -1141,11 +1191,11 @@ const setSubjLine = (ci, si, l) => {
         {previewN && (
           <TemplatePreviewModal
             n={previewN}
+            school={schoolHeader}
             onClose={() => setPreviewN(null)}
             onSelect={id => {
-              setTemplateId(id);
               setPreviewN(null);
-              toast(id === 4 ? `Board Pattern — ${pgBoardFind(boardId).sh} selected` : `Template ${id} selected`, 'success');
+              chooseTemplate(id);
             }}
             boardId={boardId} setBoardId={setBoardId}
             boardLevel={boardLevel} setBoardLevel={setBoardLevel}
@@ -1209,8 +1259,23 @@ const setSubjLine = (ci, si, l) => {
 
             onClose={() => setDeletePaper(null)}
             onConfirm={async () => {
-              const { key, index, paper } = deletePaper;
+              const { key, index, paper, cls: delCls } = deletePaper;
               const id = paper.qpMasterID ?? paper.id;
+              const removeLocal = () => setPapersByKey(prev => {
+                const next = { ...prev };
+                next[key] = (next[key] || []).filter((_, i) => i !== index);
+                return next;
+              });
+              /* QA C12: DELETE ka response non-OK / unreadable aaye lekin record
+                 waqai delete ho chuka ho → list dobara GET karke confirm karo,
+                 taake user ko sahi (success) toast mile. */
+              const confirmGone = async () => {
+                try {
+                  const list = await fetchPapersByClass(delCls.gradeID, delCls.sectionID);
+                  return !list.some(p => String(p.id ?? p.qpMasterID) === String(id));
+                } catch { return false; }
+              };
+              let ok = false, msg = '';
               try {
                 const token = sessionStorage.getItem('token');
                 const params = new URLSearchParams({ id: String(id) });
@@ -1219,19 +1284,17 @@ const setSubjLine = (ci, si, l) => {
                   { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
                 );
                 const data = await response.json().catch(() => ({}));
-                if (response.ok) {
-                  setPapersByKey(prev => {
-                    const next = { ...prev };
-                    next[key] = (next[key] || []).filter((_, i) => i !== index);
-                    return next;
-                  });
-                  toast(`Paper "${paper.title}" deleted successfully`, 'success');
-                } else {
-                  toast(data.message || 'Failed to delete paper', 'error');
-                }
+                ok = response.ok && data?.success !== false;
+                msg = data?.message || '';
               } catch (error) {
                 console.error('Error deleting paper:', error);
-                toast('Failed to delete paper', 'error');
+              }
+              if (!ok) ok = await confirmGone();
+              if (ok) {
+                removeLocal();
+                toast(`Paper "${paper.title}" deleted successfully`, 'success');
+              } else {
+                toast(msg || 'Failed to delete paper', 'error');
               }
               setDeletePaper(null);
             }}
@@ -1739,11 +1802,13 @@ const setSubjLine = (ci, si, l) => {
     /* blocksState = { obj: { typeKey: { open, activeTab, tabs:[...] } }, subj: {...} } */
     const [blocksState, setBlocksState] = useState({ obj: {}, subj: {} });
   const [qpMasterID, setQpMasterID] = useState(isEdit ? (initialPaper.qpMasterID || 0) : 0);
+    /* Esc → requestClose (confirm + draft cleanup); ref taake hamesha taza closure mile. */
+    const closeRef = useRef(onClose);
     useEffect(() => {
-      const onKey = e => { if (e.key === 'Escape') onClose(); };
+      const onKey = e => { if (e.key === 'Escape') closeRef.current(); };
       document.addEventListener('keydown', onKey);
       return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
+    }, []);
 
   
 
@@ -1776,12 +1841,17 @@ const setSubjLine = (ci, si, l) => {
         block save nahi) → dono tabs mein poore 18 dikhenge. */
     const objBlockKeys  = new Set(Object.keys(blocksState.obj || {}));
     const subjBlockKeys = new Set(Object.keys(blocksState.subj || {}));
+    /* QA C3: Objective tab mein sirf objective types (PG_OBJ_TYPES), Subjective
+       tab mein sirf subjective types (PG_SUBJ_TYPES). Jo type is section mein
+       pehle se saved hai (purana data) wo bhi dikhao taake reachable rahe. */
+    const sectionTypes = (base, ownKeys) => PG_ALL_TYPES.filter(t =>
+      base.some(b => b.key === t.key) || ownKeys.has(t.key));
     const objTabTypes = paperType === 'both'
-      ? PG_ALL_TYPES.filter(t => !subjBlockKeys.has(t.key))
-      : PG_ALL_TYPES;
+      ? sectionTypes(PG_OBJ_TYPES, objBlockKeys).filter(t => !subjBlockKeys.has(t.key))
+      : sectionTypes(PG_OBJ_TYPES, objBlockKeys);
     const subjTabTypes = paperType === 'both'
-      ? PG_ALL_TYPES.filter(t => !objBlockKeys.has(t.key))
-      : PG_ALL_TYPES;
+      ? sectionTypes(PG_SUBJ_TYPES, subjBlockKeys).filter(t => !objBlockKeys.has(t.key))
+      : sectionTypes(PG_SUBJ_TYPES, subjBlockKeys);
 
   const qpMasterIDRef = useRef(isEdit ? (initialPaper.qpMasterID || 0) : 0);
   /* entryIds whose save is currently in flight — a synchronous double-click
@@ -1792,6 +1862,12 @@ const setSubjLine = (ci, si, l) => {
      existingMasterID=0 le kar jaate the aur utne hi naye papers insert ho jaate the.
      Ye synchronous ref guard pehli click ke baad baaki clicks ko rok deta hai. */
   const fetchingRef = useRef(false);
+  /* QA C1: naya master ab Fetch par nahi, pehle question-block save par banta hai
+     (qpquestionselection_crud ko qpMastID chahiye). Agar ye modal draft master
+     banaye aur user Generate kiye baghair band kare to draft delete hota hai. */
+  const draftCreatedRef = useRef(false);
+  const generatedRef    = useRef(false);
+  const masterPromiseRef = useRef(null);
 
     /* Reset fetched state when settings change */
     const resetOnChange = () => { 
@@ -2233,7 +2309,9 @@ const setSubjLine = (ci, si, l) => {
   }
 
     // Fresh qpMasterID lives in the ref (state can be stale → 0 in this closure).
-    const qpMastId = qpMasterIDRef.current || qpMasterID;
+    // QA C1: naye paper ka master pehli block-save par banta hai (Fetch par nahi).
+    const qpMastId = qpMasterIDRef.current || qpMasterID || await ensureMaster();
+    if (!qpMastId) return; // createQuestionPaper ne error toast de diya
     console.log('Saving with qpMastID:', qpMastId);
 
       // Pehle se saved question (edit/prefill ya pehle insert ho chuka) → update, warna insert.
@@ -2301,7 +2379,9 @@ const setSubjLine = (ci, si, l) => {
     const editTab = (section, typeKey, entryId) =>
       updateTab(section, typeKey, entryId, { saved: false });
     // 👇 NEW: API function to create question paper
-    const createQuestionPaper = async () => {
+    /* silent: draft-master / Generate-time header save — success toast aur
+       fetched/tab state change nahi (sirf id return). */
+    const createQuestionPaper = async ({ silent = false } = {}) => {
       try {
         // NOTE: `loading` ab onFetch manage karta hai (poori fetch sequence ke liye).
         const branchID = sessionStorage.getItem("branchID");
@@ -2362,26 +2442,57 @@ const setSubjLine = (ci, si, l) => {
 
   if (data && (data.qpMasterID || data.qpMasterID === 0)) {
     const newID = data.qpMasterID;
-    toast(existingMasterID ? 'Question paper updated successfully!' : 'Question paper created successfully!', 'success');
+    if (!silent) toast(existingMasterID ? 'Question paper updated successfully!' : 'Question paper created successfully!', 'success');
     setQpMasterID(newID);
     qpMasterIDRef.current = newID;
     console.log('qpMasterIDRef set to:', qpMasterIDRef.current); // confirm
-    setFetched(true);
-    setQTab(showObj ? 'obj' : 'subj');
+    if (!silent) {
+      setFetched(true);
+      setQTab(showObj ? 'obj' : 'subj');
+    }
     return newID;
   } else {
     toast(data.message || 'Failed to create question paper', 'error');
-    setFetched(false);
+    if (!silent) setFetched(false);
     return false;
   }
       } catch (err) {
         console.error("Error creating question paper:", err);
         toast('Error creating question paper', 'error');
-        setFetched(false);
+        if (!silent) setFetched(false);
             return false; // 👈 return false on error
 
       }
     };
+  /* QA C1: draft master on-demand banao (ek hi baar — parallel saves same promise share karte hain). */
+  const ensureMaster = async () => {
+    if (qpMasterIDRef.current) return qpMasterIDRef.current;
+    if (!masterPromiseRef.current) {
+      masterPromiseRef.current = createQuestionPaper({ silent: true }).then(id => {
+        if (id) { if (!isEdit) draftCreatedRef.current = true; }
+        else masterPromiseRef.current = null;
+        return id;
+      });
+    }
+    return masterPromiseRef.current;
+  };
+
+  /* QA C1: Generate kiye baghair band → is modal ka banaya hua draft master delete. */
+  const discardDraftMaster = async () => {
+    const id = qpMasterIDRef.current;
+    if (!draftCreatedRef.current || generatedRef.current || !id) return;
+    draftCreatedRef.current = false;
+    try {
+      const token = sessionStorage.getItem('token');
+      await fetch(buildUrl(`/api/deleteqpmasterrecord?${new URLSearchParams({ id: String(id) }).toString()}`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+    } catch (err) {
+      console.error('Could not discard draft paper', err);
+    }
+  };
+
   // API response keys ko PG type keys se map karo
 
   // notebookDetails se ek subject ka PG_UNIT_DATA jaisa structure banao
@@ -2455,8 +2566,11 @@ const setSubjLine = (ci, si, l) => {
     fetchingRef.current = true;
     setLoading(true);
     try {
-      const newQpMasterID = await createQuestionPaper(); // 👈 naam badlo
-      if (!newQpMasterID) return;
+      /* QA C1: Fetch ab koi paper record save/insert NAHI karta — sirf questions
+         load. Master pehli block-save par (ensureMaster) banta hai aur header
+         (title/marks/time/units) Generate par save hota hai. */
+      setFetched(true);
+      setQTab(showObj ? 'obj' : 'subj');
       const details = await fetchNotebookDetails(selectedUnits);
       // qpMasterID ke against jo questions pehle save the unhe dobara dikhao.
       await reloadSavedTabs(details);
@@ -2466,13 +2580,17 @@ const setSubjLine = (ci, si, l) => {
     }
   };
 
-    const onGenerate = () => {
+    const onGenerate = async () => {
               if (isOtherSession) {
             toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
             return;
         }
       if (!baseOk) {
         toast('Please fill all the fields before generating', 'warning');
+        return;
+      }
+      if (!fetched) {
+        toast('Press Fetch Questions and add questions before generating the paper', 'warning');
         return;
       }
       /* Generate validates only the section of the ACTIVE tab — the button
@@ -2494,6 +2612,15 @@ const setSubjLine = (ci, si, l) => {
         ? validateSection(objStatus, objTarget, 'Objective')
         : validateSection(subjStatus, subjTarget, 'Subjective');
       if (!activeOk) return;
+
+      /* QA C1: Generate par hi paper header (title/marks/time) final save hota hai. */
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
+      const savedId = await createQuestionPaper({ silent: true });
+      fetchingRef.current = false;
+      if (!savedId) return;
+      generatedRef.current = true;
+      draftCreatedRef.current = false;
 
       toast(`Paper generated — "${title}"`, 'success');
       // Parent ki papers list dobara GET API se refresh karo (count + naya card turant update,
@@ -2518,6 +2645,18 @@ const setSubjLine = (ci, si, l) => {
         switchTab(section, key, block.tabs[0].entryId);
       }
     };
+
+    /* QA C8: Esc / overlay / X / Cancel — data bhara ho to pehle confirm.
+       QA C1: band karte waqt Generate na hua ho to draft master delete. */
+    const hasEnteredData = !!(subject || title.trim() || objMarks || objTime || subjMarks || subjTime
+      || selectedUnits.length || fetched);
+    const requestClose = () => {
+      if (hasEnteredData && !generatedRef.current
+          && !window.confirm('Discard changes? Anything you entered for this paper will be lost.')) return;
+      discardDraftMaster();
+      onClose();
+    };
+    closeRef.current = requestClose;
 
     /* Fetch / Refresh — the ERP onFetch (qpmaster_crud + notebook details +
        saved-block reload) unchanged; only the dropdown is cleared first. */
@@ -2556,7 +2695,7 @@ const setSubjLine = (ci, si, l) => {
     const liveObjTime   = showObj  ? (+objTime  || 0) : 0;
     const liveSubjTime  = showSubj ? (+subjTime || 0) : 0;
     const liveInfo = {
-      school:     previewHeader?.branchName || 'The Oxford System',
+      school:     previewHeader?.branchName || pgSchoolName(),
       campus:     previewHeader?.address || '',
       logo:       resolveMediaUrl(previewHeader?.branchLogo),
       examTitle:  title.trim(),
@@ -2677,8 +2816,21 @@ const setSubjLine = (ci, si, l) => {
       );
     };
 
+    /* QA C4: tooltip mein wo field batao jo abhi missing hai. */
+    const fetchMissing = [
+      !subject && 'Subject',
+      !title.trim() && 'Paper title',
+      !paperType && 'Paper type',
+      !paperFmt && 'Paper format',
+      showObj && !(+objMarks > 0) && 'Objective total marks',
+      showObj && !(+objTime > 0) && 'Objective time',
+      showSubj && !(+subjMarks > 0) && 'Subjective total marks',
+      showSubj && !(+subjTime > 0) && 'Subjective time',
+    ].filter(Boolean);
+    const fetchMissingMsg = fetchMissing.length ? `Please fill: ${fetchMissing.join(', ')}` : 'Fill the paper details first';
+
     const fetchBtn = (
-      <Tooltip text={canFetch ? 'Load questions for the selected class and subject' : 'Pick a class and subject first'}>
+      <Tooltip text={canFetch ? 'Load questions for the selected class and subject' : fetchMissingMsg}>
         <button className="pg-fetch-btn" onClick={runFetch} disabled={!canFetch || isOtherSession || loading}
           style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' }
             : loading ? { opacity: .6, cursor: 'wait' } : undefined}>
@@ -2694,7 +2846,7 @@ const setSubjLine = (ci, si, l) => {
     return createPortal(
       <div
         className="pg-modal-overlay open"
-        onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+        onClick={e => { if (e.target === e.currentTarget) requestClose(); }}
       >
         <div className={`pg-modal pgx${pane === 'preview' ? ' show-preview' : ''}`} aria-busy={editLoading || undefined}>
           {/* Edit mode: saved paper ki APIs load hone tak blocking loader */}
@@ -2722,7 +2874,7 @@ const setSubjLine = (ci, si, l) => {
                 <button type="button" className={pane === 'preview' ? 'active' : ''} onClick={() => setPane('preview')}>Preview</button>
               </div>
               <Tooltip text="Close">
-                <button className="pg-modal-close" onClick={onClose} aria-label="Close">
+                <button className="pg-modal-close" onClick={requestClose} aria-label="Close">
                   <i className="fa-solid fa-xmark"></i>
                 </button>
               </Tooltip>
@@ -2987,15 +3139,17 @@ const setSubjLine = (ci, si, l) => {
 
           <div className="pg-modal-footer pgx-foot">
             <Tooltip text="Discard changes and close">
-              <button className="pg-btn-secondary" onClick={onClose}>Cancel</button>
+              <button className="pg-btn-secondary" onClick={requestClose}>Cancel</button>
             </Tooltip>
             <div className={`pgx-status${statusClass ? ' ' + statusClass : ''}`}>{statusMsg}</div>
-            <Tooltip text={canGenerate ? 'Generate the paper' : 'Complete all marks validations first'}>
+            {/* QA C7: incomplete ho to button saaf disabled dikhe (click par onGenerate toast deta hai) + tooltip mein wajah */}
+            <Tooltip text={canGenerate ? 'Generate the paper' : statusMsg}>
               <button
                 className="pg-btn-primary"
                 onClick={onGenerate}
                 disabled={isOtherSession}
-                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : !canGenerate ? { opacity: .6 } : undefined}
+                aria-disabled={!canGenerate || undefined}
+                style={isOtherSession || !canGenerate ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                 title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
               >
                 <i className="fa-solid fa-wand-magic-sparkles"></i> Generate Paper
@@ -3971,6 +4125,8 @@ const setSubjLine = (ci, si, l) => {
     .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&apos;/gi, "'")
     .replace(/\s+/g, ' ')
     .trim();
+  /* QA C9: khaali MCQ option ('', '-', 'null', sirf HTML tags) print/preview mein na dikhao. */
+  const pgHasOpt = v => { const t = pgStripHtml(v); return !!t && !/^[-–—_.\s]+$/.test(t) && !/^(null|undefined|n\/a)$/i.test(t); };
   /* The most likely "question text" field for a row, across all types. (HTML → plain text) */
   const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.subject || r.punctuation || r.mainQuestion || '');
 
@@ -4126,7 +4282,7 @@ const setSubjLine = (ci, si, l) => {
           <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
             <div>{mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}</div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 3, paddingLeft: 14 }}>
-              {['option1','option2','option3','option4'].map((o, oi) => r[o] ? (
+              {['option1','option2','option3','option4'].map((o, oi) => pgHasOpt(r[o]) ? (
                 <span key={oi} style={{ border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: 11.5 }}>
                   ({String.fromCharCode(65 + oi)}) {pgStripHtml(r[o])}
                 </span>
@@ -4282,7 +4438,7 @@ const setSubjLine = (ci, si, l) => {
 
       if (k === 'mcqs') {
         body = rows.map((r, i) => {
-          const opts = ['option1','option2','option3','option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
+          const opts = ['option1','option2','option3','option4'].map((o, oi) => pgHasOpt(r[o]) ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
           return `<div class="mcq-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
         }).join('');
       } else if (k === 'wordsynonyms') body = twoCol('word', L.word, L.synonym);
@@ -4394,7 +4550,7 @@ const setSubjLine = (ci, si, l) => {
     /* Real paper data fed into the selected template's header design so the view
       matches the template the user picked (Classic / Modern / Formal). */
     const headerInfo = {
-      school:     reportHeader?.branchName || 'The Oxford System',
+      school:     reportHeader?.branchName || pgSchoolName(),
       campus:     reportHeader?.address || '',
       logo:       resolveMediaUrl(reportHeader?.branchLogo),
       examTitle:  paper.title || '',
@@ -4688,9 +4844,9 @@ const setSubjLine = (ci, si, l) => {
     if (templateId === 2) {
       /* Modern — logo + school block, blue underline, marks cards. */
       const AC = isBW ? '#0F172A' : '#1E3A8A';
-      const school = d.school || 'The Oxford System';
+      const school = d.school || pgSchoolName();
       const campusLine = [d.campus, d.examTitle].filter(Boolean).join('  ·  ');
-      const classLine  = d.className ? `Class ${d.className}${d.section ? `  ·  Section ${d.section}` : ''}` : '';
+      const classLine  = d.className ? `${pgClassLabel(d.className)}${d.section ? `  ·  Section ${d.section}` : ''}` : '';
       const seal = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
       const logoBox = d.logo
         ? `<img src="${d.logo}" alt="logo" style="width:44px;height:44px;object-fit:contain;border-radius:10px;flex-shrink:0" />`
@@ -4731,8 +4887,8 @@ const setSubjLine = (ci, si, l) => {
     if (templateId === 3) {
       /* Formal — round seal, board tag, gradient divider, meta + student grids. */
       const AC = isBW ? '#0F172A' : '#1E3A8A';
-      const schoolName = (d.school  || 'THE OXFORD SYSTEM').toUpperCase();
-      const schoolSub  = (d.campus  ? d.campus.toUpperCase() : 'LAHORE CAMPUS');
+      const schoolName = (d.school  || pgSchoolName()).toUpperCase();
+      const schoolSub  = (d.campus  ? d.campus.toUpperCase() : '');
       const examTitle  = (d.examTitle || 'ANNUAL EXAMINATION').toUpperCase();
       const seal = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
       const metaCells = [
@@ -4778,8 +4934,8 @@ const setSubjLine = (ci, si, l) => {
     const barBg     = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
     const barColor  = isBW ? '#0F172A' : '#fff';
     const barBorder = isBW ? '1px solid #0F172A' : 'none';
-    const schoolBar = (d.school ? `${d.school}${d.campus ? ' — ' + d.campus : ''}` : 'THE OXFORD SYSTEM').toUpperCase();
-    const examLine  = [d.examTitle, d.subject, d.className && `Class ${d.className}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ');
+    const schoolBar = (d.school ? `${d.school}${d.campus ? ' — ' + d.campus : ''}` : pgSchoolName()).toUpperCase();
+    const examLine  = [d.examTitle, d.subject, d.className && `${pgClassLabel(d.className)}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ');
     const objTxt    = `${d.objMarks  || 0} Marks${d.objTime  ? ` · ${d.objTime} Min`  : ''}`;
     const subjTxt   = `${d.subjMarks || 0} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
     const cell = (label, val, span, accent) =>
@@ -4811,7 +4967,7 @@ const setSubjLine = (ci, si, l) => {
   }
 
   function buildFullPaperHTML({ paper, cls, templateId = 1, boardCfg, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg, medium: mediumArg }) {
-    const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
+    const schoolName = reportHeader?.branchName || pgSchoolName();
     const schoolLogo = resolveMediaUrl(reportHeader?.branchLogo);
     const schoolAddress = reportHeader?.address || '';
     /* Prefer the setup-derived fmt/line (from the API submission detail); fall back
@@ -5242,7 +5398,7 @@ const setSubjLine = (ci, si, l) => {
     TEMPLATE PREVIEW MODAL — Classic / Modern / Formal + With/Without
     Answer Sheet + Single/Four-line answer style.
     ═══════════════════════════════════════════════════════════════════ */
-  function TemplatePreviewModal({ n, onClose, onSelect, boardId, setBoardId, boardLevel, setBoardLevel, boardGroup, setBoardGroup }) {
+  function TemplatePreviewModal({ n, school, onClose, onSelect, boardId, setBoardId, boardLevel, setBoardLevel, boardGroup, setBoardGroup }) {
     const [fmt, setFmt]   = useState('with');     // 'with' | 'without'
     const [line, setLine] = useState('single');   // 'single' | 'four'
 
@@ -5317,9 +5473,9 @@ const setSubjLine = (ci, si, l) => {
 
             {/* Paper preview */}
             <div className="pg-paper-preview-box">
-              {n === 1 && <ClassicHeader />}
-              {n === 2 && <ModernHeader />}
-              {n === 3 && <FormalHeader />}
+              {n === 1 && <ClassicHeader school={school} />}
+              {n === 2 && <ModernHeader school={school} />}
+              {n === 3 && <FormalHeader school={school} />}
               {n === 4 && <BoardHeader board={pgBoardFind(boardId)} level={pgBoardLevel(boardLevel)} group={boardGroup} />}
               {fmt === 'with' && <AnswerSheet line={line} />}
             </div>
@@ -5344,13 +5500,13 @@ const setSubjLine = (ci, si, l) => {
   /* ── Classic (Template 1) ──
     `info` (optional) drives real paper data in the live view; omitted in the
     template-preview modal so it keeps showing the sample layout. */
-  function ClassicHeader({ info }) {
-    const d = info || {};
+  function ClassicHeader({ info, school: school0 = {} }) {
+    const d = pgHeaderData(info, school0);
     const schoolBar = d.school
       ? `${d.school}${d.campus ? ' — ' + d.campus : ''}`.toUpperCase()
-      : 'THE OXFORD SYSTEM — LAHORE CAMPUS';
+      : pgSchoolLine(school0).toUpperCase();
     const examLine = d.examTitle
-      ? [d.examTitle, d.subject, d.className && `Class ${d.className}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ')
+      ? [d.examTitle, d.subject, d.className && `${pgClassLabel(d.className)}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ')
       : 'Annual Examination 2026  •  English (A)  •  Class IV (White)';
     const subject = d.subject || 'English (A)';
     const klass   = d.className || 'IV';
@@ -5385,13 +5541,13 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* ── Modern (Template 2) ── */
-  function ModernHeader({ info }) {
-    const d = info || {};
-    const school = d.school || 'The Oxford System';
+  function ModernHeader({ info, school: school0 = {} }) {
+    const d = pgHeaderData(info, school0);
+    const school = d.school || school0.branchName || pgSchoolName();
     const campusLine = d.campus
       ? `${d.campus}${d.examTitle ? '  ·  ' + d.examTitle : ''}`
-      : 'Lahore Campus  ·  Annual Examination 2026';
-    const classLine = d.className ? `Class ${d.className}${d.section ? `  ·  Section ${d.section}` : ''}` : 'Class IV · Section White';
+      : [school0.address, 'Annual Examination 2026'].filter(Boolean).join('  ·  ');
+    const classLine = d.className ? `${pgClassLabel(d.className)}${d.section ? `  ·  Section ${d.section}` : ''}` : 'Class IV · Section White';
     const subject = d.subject || 'English (A)';
     const total   = d.totalMarks ?? 100;
     const seal    = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
@@ -5441,10 +5597,10 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* ── Formal (Template 3) ── */
-  function FormalHeader({ info }) {
-    const d = info || {};
-    const schoolName = (d.school || 'THE OXFORD SYSTEM').toUpperCase();
-    const schoolSub  = (d.campus ? d.campus.toUpperCase() : 'LAHORE CAMPUS · ESTABLISHED 2004');
+  function FormalHeader({ info, school: school0 = {} }) {
+    const d = pgHeaderData(info, school0);
+    const schoolName = (d.school || school0.branchName || pgSchoolName()).toUpperCase();
+    const schoolSub  = (d.campus ? d.campus.toUpperCase() : String(school0.address || '').toUpperCase());
     const examTitle  = (d.examTitle || 'ANNUAL EXAMINATION — 2026').toUpperCase();
     const seal       = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
     const metaCells = [
@@ -5574,7 +5730,10 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* Small static preview for each template */
-  function TemplatePreview({ id, boardCfg }) {
+  function TemplatePreview({ id, boardCfg, school }) {
+    /* QA C10: thumbnails par is branch ka naam/logo */
+    const tName = school?.branchName || pgSchoolName();
+    const tLogo = school?.branchLogo ? resolveMediaUrl(school.branchLogo) : '';
     if (id === 4) {
       return (
         <div className="pg-tmpl-static pgx-bd-thumb">
@@ -5587,7 +5746,7 @@ const setSubjLine = (ci, si, l) => {
     if (id === 1) {
       return (
         <div className="pg-tmpl-static">
-          <div className="pg-tmpl-hbar">THE OXFORD SYSTEM — LAHORE CAMPUS</div>
+          <div className="pg-tmpl-hbar">{pgSchoolLine(school).toUpperCase()}</div>
           <div className="pg-tmpl-content">
             <div style={{ textAlign: 'center', fontSize: 5.5, fontWeight: 600, color: '#334155', padding: '2px 0', borderBottom: '1px solid #BFDBFE', marginBottom: 3 }}>
               Annual Examination 2026 · English (A) · Class IV
@@ -5616,10 +5775,10 @@ const setSubjLine = (ci, si, l) => {
         <div className="pg-tmpl-static">
           <div className="pg-tmpl-content" style={{ gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, borderBottom: '2.5px solid #1E3A8A', paddingBottom: 4, marginBottom: 4 }}>
-              <div style={{ width: 20, height: 20, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, color: '#fff' }}>O</div>
+              <div style={{ width: 20, height: 20, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, color: '#fff', overflow: 'hidden' }}>{tLogo ? <img src={tLogo} alt='' style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} /> : tName.charAt(0).toUpperCase()}</div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 7, fontWeight: 800, color: '#0F172A' }}>The Oxford System</div>
-                <div style={{ fontSize: 5, color: '#64748B' }}>Lahore Campus · Annual Exam 2026</div>
+                <div style={{ fontSize: 7, fontWeight: 800, color: '#0F172A' }}>{school?.branchName || pgSchoolName()}</div>
+                <div style={{ fontSize: 5, color: '#64748B' }}>{[school?.address, 'Annual Exam 2026'].filter(Boolean).join(' · ')}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 6.5, fontWeight: 800, color: '#1E3A8A' }}>Class IV</div>
@@ -5652,10 +5811,10 @@ const setSubjLine = (ci, si, l) => {
       <div className="pg-tmpl-static">
         <div className="pg-tmpl-content" style={{ gap: 3 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-            <div style={{ width: 16, height: 16, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 5, fontWeight: 900, color: '#fff', border: '1.5px solid #60A5FA' }}>OX</div>
+            <div style={{ width: 16, height: 16, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 5, fontWeight: 900, color: '#fff', border: '1.5px solid #60A5FA', overflow: 'hidden' }}>{tLogo ? <img src={tLogo} alt='' style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} /> : tName.replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase()}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 6.5, fontWeight: 900, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '.04em' }}>The Oxford System</div>
-              <div style={{ fontSize: 4.5, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.04em' }}>Lahore Campus · Est. 2004</div>
+              <div style={{ fontSize: 6.5, fontWeight: 900, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '.04em' }}>{school?.branchName || pgSchoolName()}</div>
+              <div style={{ fontSize: 4.5, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.04em' }}>{school?.address || ''}</div>
             </div>
             <div style={{ background: '#1E3A8A', color: '#fff', fontSize: 4, fontWeight: 800, padding: '2px 4px', borderRadius: 2, letterSpacing: '.06em' }}>BOARD</div>
           </div>

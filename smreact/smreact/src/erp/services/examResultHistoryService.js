@@ -139,6 +139,9 @@ export async function buildGradeEntries(student, results, { gradeFn = examDefaul
       kind: combined ? 'COMBINED' : 'SINGLE',
       kindTone: combined ? 'purple' : 'blue',
       published: examFormatDate(r.publishedDate || r.date),
+      // API me publish timestamp nahi — exam date dikhe to label "Exam date" ho,
+      // "Published on" nahi (warna exam start date publish date lagti thi).
+      publishedLabel: r.publishedDate ? 'Published on' : 'Exam date',
       pct: Number(r.pct) || 0,
       grade: g ? g.grade : '—',
       rank: r.rank,

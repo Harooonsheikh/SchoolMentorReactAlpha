@@ -41,7 +41,7 @@ export function useAppState() {
   }, []);
 
   const showToast = useCallback((msg, type = 'success') => {
-    const id = Date.now();
+    const id = Date.now() + Math.random();   // unique key even for two toasts in the same ms
     setToasts(prev => [...prev, { id, msg, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   }, []);
