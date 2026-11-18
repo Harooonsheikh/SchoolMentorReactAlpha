@@ -1404,11 +1404,594 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
   return { css, html: inner };
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   REPORTS tab (Students) — Custom / Gender-wise / Age-wise /
+   Guardian-wise / Year-wise (admission year). Sirf ACTIVE students ka data;
+   look & feel Fee › Reports jaisa (chips + preview + Download Report).
+   ═══════════════════════════════════════════════════════════════════ */
+const STU_REP_CATS = [
+  { id: 'custom',   name: 'Custom Report',        ic: 'fa-sliders',       desc: 'Pick your own filters and columns' },
+  { id: 'gender',   name: 'Gender-wise Report',   ic: 'fa-venus-mars',    desc: 'Male / Female strength class by class' },
+  { id: 'age',      name: 'Age-wise Report',      ic: 'fa-cake-candles',  desc: 'Students grouped by age' },
+  { id: 'guardian', name: 'Guardian-wise Report', ic: 'fa-user-shield',   desc: 'Students grouped under their guardian / father' },
+  { id: 'year',     name: 'Year-wise Report',     ic: 'fa-calendar-days', desc: 'Students grouped by admission year' },
+];
+
+/* Custom report columns — get(s, c) → cell text. `mono` = monospace, `ctr` = centered. */
+const STU_REP_COLS = [
+  { id: 'reg',      label: 'Reg No',      get: (s) => s.reg,                         mono: true },
+  { id: 'adm',      label: 'Adm No',      get: (s) => s.adm,                         mono: true },
+  { id: 'name',     label: 'Name',        get: (s) => stuFullName(s),                bold: true },
+  { id: 'father',   label: 'Father Name', get: (s) => s.father },
+  { id: 'mother',   label: 'Mother Name', get: (s) => s.mother },
+  { id: 'guardian', label: 'Guardian',    get: (s) => s.guardian },
+  { id: 'cls',      label: 'Class',       get: (s, c) => c.cls },
+  { id: 'sec',      label: 'Section',     get: (s, c) => c.sec,                      ctr: true },
+  { id: 'gender',   label: 'Gender',      get: (s) => s.gender,                      ctr: true },
+  { id: 'dob',      label: 'DOB',         get: (s) => (s.dob ? stuFmtDate(s.dob) : ''), ctr: true },
+  { id: 'age',      label: 'Age',         get: (s) => { const a = stuAgeOf(s.dob); return a == null ? '' : a; }, ctr: true },
+  { id: 'mobile',   label: 'Contact',     get: (s) => s.mobile,                      mono: true },
+  { id: 'bform',    label: 'B-Form No.',  get: (s) => s.bform,                       mono: true },
+  { id: 'fcnic',    label: 'Father CNIC', get: (s) => s.fcnic,                       mono: true },
+  { id: 'admdate',  label: 'Admitted',    get: (s) => (s.admdate ? stuFmtDate(s.admdate) : ''), ctr: true },
+  { id: 'family',   label: 'Family No.',  get: (s) => s.family,                      mono: true },
+  { id: 'email',    label: 'Email',       get: (s) => s.email },
+  { id: 'address',  label: 'Address',     get: (s) => s.address },
+  { id: 'disc',     label: 'Discount',    get: (s) => (stuHasDiscount(s) ? 'Yes' : ''), ctr: true },
+];
+const STU_REP_DEFAULT_COLS = ['reg', 'name', 'father', 'cls', 'sec', 'gender', 'dob', 'mobile'];
+
+/* Completed years since `dob` (null if missing/invalid). */
+function stuAgeOf(dob) {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d)) return null;
+  const now = new Date();
+  let a = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a -= 1;
+  return a >= 0 && a < 100 ? a : null;
+}
+function stuAdmYear(s) {
+  if (!s.admdate) return null;
+  const d = new Date(s.admdate);
+  return isNaN(d) ? null : d.getFullYear();
+}
+function stuRepDoc(title, bodyHtml, school, isBW, format, orientation = 'portrait') {
+  return buildStandardReportHtml({
+    title: stuEsc(title), format, isColor: !isBW, bodyHtml,
+    schoolName: stuEsc(school?.name || ''), orientation, includeToolbar: format !== 'excel',
+  });
+}
+const stuRepTally = () => ({ male: 0, female: 0, other: 0, total: 0 });
+const stuRepPct = (n, t) => (t ? `${((n / t) * 100).toFixed(1)}%` : '—');
+const stuRepKpis = (items) => `<div class="kpi-row">${items.map(([l, v]) => `<div class="kpi"><div class="l">${stuEsc(l)}</div><div class="v">${v}</div></div>`).join('')}</div>`;
+
+function stuGenderKey(g) {
+  const v = String(g || '').trim().toLowerCase();
+  if (v === 'male' || v === 'm' || v === 'boy') return 'male';
+  if (v === 'female' || v === 'f' || v === 'girl') return 'female';
+  return 'other';   // Other / not set
+}
+
+/* Gender-wise summary: class/section-wise Male / Female / Other counts. */
+function buildStuGenderReportHTML(classes, school, isBW = false, format = 'pdf') {
+  const isColor = !isBW, color = '#1E3A8A';
+  const tally = (students) => students.reduce((a, s) => { a[stuGenderKey(s.gender)] += 1; a.total += 1; return a; }, stuRepTally());
+  const grand = tally(classes.flatMap(c => c.students));
+  const rows = classes.map((c, i) => {
+    const t = tally(c.students);
+    return `<tr><td class="c">${i + 1}</td><td><b>${stuEsc(c.cls)}</b></td><td class="c">${stuEsc(c.sec)}</td><td class="c">${t.male}</td><td class="c">${t.female}</td><td class="c">${t.other}</td><td class="c"><b>${t.total}</b></td><td class="c">${stuRepPct(t.male, t.total)}</td><td class="c">${stuRepPct(t.female, t.total)}</td></tr>`;
+  }).join('');
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    ${stuRepKpis([['Total Students', grand.total], ['Male', `${grand.male} <small style="font-size:10px;color:#64748B">${stuRepPct(grand.male, grand.total)}</small>`], ['Female', `${grand.female} <small style="font-size:10px;color:#64748B">${stuRepPct(grand.female, grand.total)}</small>`]])}
+    <div class="sec-band"><span>Gender-wise Strength</span><small>${classes.length} section(s)${grand.other ? ` · ${grand.other} other / not set` : ''}</small></div>
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:24px">#</th><th>Class</th><th class="c" style="width:60px">Section</th><th class="c" style="width:60px">Male</th><th class="c" style="width:60px">Female</th><th class="c" style="width:60px">Other</th><th class="c" style="width:60px">Total</th><th class="c" style="width:64px">Male %</th><th class="c" style="width:64px">Female %</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}
+      ${rows ? `<tr><td></td><td colspan="2"><b>Grand Total</b></td><td class="c"><b>${grand.male}</b></td><td class="c"><b>${grand.female}</b></td><td class="c"><b>${grand.other}</b></td><td class="c"><b>${grand.total}</b></td><td class="c"><b>${stuRepPct(grand.male, grand.total)}</b></td><td class="c"><b>${stuRepPct(grand.female, grand.total)}</b></td></tr>` : ''}</tbody>
+    </table>`;
+  return stuRepDoc('Gender-wise Student Report', bodyHtml, school, isBW, format);
+}
+
+/* Class-wise Male-only / Female-only student list. */
+function buildStuGenderListHTML(classes, gender, school, isBW = false, format = 'pdf', showNames = true) {
+  const isColor = !isBW, color = '#1E3A8A';
+  const label = gender === 'female' ? 'Female' : 'Male';
+  const groups = classes
+    .map(c => ({ c, students: c.students.filter(s => stuGenderKey(s.gender) === gender) }))
+    .filter(g => g.students.length > 0);
+  const total = groups.reduce((a, g) => a + g.students.length, 0);
+  const sections = groups.map(({ c, students }) => `
+    <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${students.length} ${label.toLowerCase()} student(s)</small></div>
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:24px">#</th><th style="width:74px">Reg No</th>${showNames ? '<th>Name</th><th>Father Name</th>' : ''}<th class="c" style="width:64px">DOB</th><th style="width:80px">Contact</th><th style="width:86px">B-Form No.</th><th class="c" style="width:64px">Admitted</th></tr></thead>
+      <tbody>${students.map((s, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${stuEsc(s.reg)}</td>${showNames ? `<td><b>${stuEsc(stuFullName(s))}</b></td><td>${stuEsc(s.father || '—')}</td>` : ''}<td class="c">${stuFmtDate(s.dob)}</td><td class="mono">${stuEsc(s.mobile || '—')}</td><td class="mono">${stuEsc(s.bform || '—')}</td><td class="c">${stuFmtDate(s.admdate)}</td></tr>`).join('')}</tbody>
+    </table>`).join('');
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    ${stuRepKpis([[`${label} Students`, total], ['Sections', groups.length], ['Distinct Classes', new Set(groups.map(g => g.c.cls)).size]])}
+    ${sections || `<div class="empty">No ${label.toLowerCase()} students found.</div>`}`;
+  return stuRepDoc(`${label} Students — Class-wise Report`, bodyHtml, school, isBW, format);
+}
+
+/* Age-wise: one row per age, Male / Female / Other / Total. */
+function buildStuAgeReportHTML(classes, school, isBW = false, format = 'pdf') {
+  const isColor = !isBW, color = '#1E3A8A';
+  const all = classes.flatMap(c => c.students);
+  const by = new Map();
+  let sum = 0, known = 0;
+  all.forEach(s => {
+    const a = stuAgeOf(s.dob);
+    const k = a == null ? 'na' : a;
+    if (!by.has(k)) by.set(k, stuRepTally());
+    const t = by.get(k);
+    t[stuGenderKey(s.gender)] += 1; t.total += 1;
+    if (a != null) { sum += a; known += 1; }
+  });
+  const ages = [...by.keys()].filter(k => k !== 'na').sort((a, b) => a - b);
+  const row = (label, t) => `<tr><td><b>${label}</b></td><td class="c">${t.male}</td><td class="c">${t.female}</td><td class="c">${t.other}</td><td class="c"><b>${t.total}</b></td><td class="c">${stuRepPct(t.total, all.length)}</td></tr>`;
+  const grand = all.reduce((a, s) => { a[stuGenderKey(s.gender)] += 1; a.total += 1; return a; }, stuRepTally());
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    ${stuRepKpis([['Total Students', all.length], ['Average Age', known ? (sum / known).toFixed(1) + ' yrs' : '—'], ['Age Range', ages.length ? `${ages[0]} – ${ages[ages.length - 1]} yrs` : '—']])}
+    <div class="sec-band"><span>Age-wise Strength</span><small>as of ${stuFmtDate(new Date().toISOString())}</small></div>
+    <table class="tbl">
+      <thead><tr><th>Age</th><th class="c" style="width:70px">Male</th><th class="c" style="width:70px">Female</th><th class="c" style="width:70px">Other</th><th class="c" style="width:70px">Total</th><th class="c" style="width:80px">% of Students</th></tr></thead>
+      <tbody>${all.length ? ages.map(a => row(`${a} years`, by.get(a))).join('') + (by.has('na') ? row('DOB not recorded', by.get('na')) : '')
+        + `<tr><td><b>Grand Total</b></td><td class="c"><b>${grand.male}</b></td><td class="c"><b>${grand.female}</b></td><td class="c"><b>${grand.other}</b></td><td class="c"><b>${grand.total}</b></td><td></td></tr>`
+        : '<tr><td colspan="6" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
+    </table>`;
+  return stuRepDoc('Age-wise Student Report', bodyHtml, school, isBW, format);
+}
+
+/* Guardian-wise: students grouped under their father / guardian. */
+function buildStuGuardianReportHTML(classes, school, isBW = false, format = 'pdf', onlyMulti = false) {
+  const isColor = !isBW, color = '#1E3A8A';
+  const map = new Map();
+  classes.forEach(c => c.students.forEach(s => {
+    const cnic = String(s.fcnic || '').replace(/\D/g, '');
+    const name = String(s.father || s.guardian || '').trim();
+    const key = cnic || (name ? name.toLowerCase() : `_solo_${s._id}`);
+    if (!map.has(key)) map.set(key, { name: name || '—', cnic: s.fcnic || '', guardian: s.guardian || '', contact: s.mobile || s.gcontact || '', kids: [] });
+    map.get(key).kids.push({ s, c });
+  }));
+  let groups = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const totalStudents = groups.reduce((a, g) => a + g.kids.length, 0);
+  const multi = groups.filter(g => g.kids.length > 1).length;
+  if (onlyMulti) groups = groups.filter(g => g.kids.length > 1);
+  const rows = groups.map((g, i) => `<tr>
+      <td class="c">${i + 1}</td>
+      <td><b>${stuEsc(g.name)}</b>${g.guardian && g.guardian !== g.name ? `<div style="font-size:9px;color:#64748B">Guardian: ${stuEsc(g.guardian)}</div>` : ''}</td>
+      <td class="mono">${stuEsc(g.cnic || '—')}</td>
+      <td class="mono">${stuEsc(g.contact || '—')}</td>
+      <td class="c"><b>${g.kids.length}</b></td>
+      <td>${g.kids.map(({ s, c }) => `${stuEsc(stuFullName(s))} <span style="color:#64748B">(${stuEsc(c.cls)} – ${stuEsc(c.sec)})</span>`).join('<br>')}</td>
+    </tr>`).join('');
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    ${stuRepKpis([['Guardians', map.size], ['Students', totalStudents], ['With 2+ Children', multi]])}
+    <div class="sec-band"><span>Guardian-wise Students</span><small>${groups.length} guardian(s)${onlyMulti ? ' · siblings only' : ''}</small></div>
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:24px">#</th><th>Father / Guardian</th><th style="width:98px">CNIC</th><th style="width:84px">Contact</th><th class="c" style="width:52px">Children</th><th>Students</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
+    </table>`;
+  return stuRepDoc('Guardian-wise Student Report', bodyHtml, school, isBW, format);
+}
+
+/* Year-wise (admission year): counts per year; a chosen year also lists its students. */
+function buildStuYearReportHTML(classes, school, isBW = false, format = 'pdf', year = '') {
+  const isColor = !isBW, color = '#1E3A8A';
+  const flat = classes.flatMap(c => c.students.map(s => ({ s, c })));
+  const by = new Map();
+  flat.forEach(({ s }) => {
+    const y = stuAdmYear(s);
+    const k = y == null ? 'na' : y;
+    if (!by.has(k)) by.set(k, stuRepTally());
+    const t = by.get(k);
+    t[stuGenderKey(s.gender)] += 1; t.total += 1;
+  });
+  const years = [...by.keys()].filter(k => k !== 'na').sort((a, b) => b - a);
+  const row = (label, t) => `<tr><td><b>${label}</b></td><td class="c">${t.male}</td><td class="c">${t.female}</td><td class="c">${t.other}</td><td class="c"><b>${t.total}</b></td><td class="c">${stuRepPct(t.total, flat.length)}</td></tr>`;
+  let list = '';
+  if (year !== '') {
+    const picked = classes.map(c => ({ c, students: c.students.filter(s => String(stuAdmYear(s)) === String(year)) })).filter(g => g.students.length);
+    list = picked.map(({ c, students }) => `
+      <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)} · admitted ${stuEsc(year)}</span><small>${students.length} student(s)</small></div>
+      <table class="tbl">
+        <thead><tr><th class="c" style="width:24px">#</th><th style="width:74px">Reg No</th><th>Name</th><th>Father Name</th><th class="c" style="width:52px">Gender</th><th class="c" style="width:66px">Admitted</th></tr></thead>
+        <tbody>${students.map((s, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${stuEsc(s.reg)}</td><td><b>${stuEsc(stuFullName(s))}</b></td><td>${stuEsc(s.father || '—')}</td><td class="c">${stuEsc(s.gender || '—')}</td><td class="c">${stuFmtDate(s.admdate)}</td></tr>`).join('')}</tbody>
+      </table>`).join('') || `<div class="empty">No students admitted in ${stuEsc(year)}.</div>`;
+  }
+  const latest = years[0];
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    ${stuRepKpis([['Total Students', flat.length], ['Admission Years', years.length], ['Latest Intake', latest != null ? `${by.get(latest).total} <small style="font-size:10px;color:#64748B">(${latest})</small>` : '—']])}
+    <div class="sec-band"><span>Year-wise Admissions</span><small>by admission date</small></div>
+    <table class="tbl" style="margin-bottom:12px">
+      <thead><tr><th>Admission Year</th><th class="c" style="width:70px">Male</th><th class="c" style="width:70px">Female</th><th class="c" style="width:70px">Other</th><th class="c" style="width:70px">Total</th><th class="c" style="width:80px">% of Students</th></tr></thead>
+      <tbody>${flat.length ? years.map(y => row(y, by.get(y))).join('') + (by.has('na') ? row('Not recorded', by.get('na')) : '')
+        : '<tr><td colspan="6" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
+    </table>
+    ${list}`;
+  return stuRepDoc('Year-wise Student Report', bodyHtml, school, isBW, format);
+}
+
+/* Custom: one flat list — only the chosen columns, rows already filtered by the caller. */
+function buildStuCustomReportHTML(rows, colIds, school, isBW = false, format = 'pdf', filterNote = '') {
+  const isColor = !isBW, color = '#1E3A8A';
+  const cols = STU_REP_COLS.filter(c => colIds.includes(c.id));
+  const head = cols.map(c => `<th${c.ctr ? ' class="c"' : ''}>${stuEsc(c.label)}</th>`).join('');
+  const body = rows.map(({ s, c }, i) => `<tr><td class="c">${i + 1}</td>${cols.map(col => {
+    const v = stuEsc(col.get(s, c) || '—');
+    return `<td${col.ctr ? ' class="c"' : col.mono ? ' class="mono"' : ''}>${col.bold ? `<b>${v}</b>` : v}</td>`;
+  }).join('')}</tr>`).join('');
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    <div class="sec-band"><span>Custom Student Report</span><small>${rows.length} student(s)${filterNote ? ' · ' + stuEsc(filterNote) : ''}</small></div>
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:24px">#</th>${head}</tr></thead>
+      <tbody>${body || `<tr><td colspan="${cols.length + 1}" style="text-align:center;padding:24px;color:#94A3B8">No students match these filters.</td></tr>`}</tbody>
+    </table>`;
+  return stuRepDoc('Custom Student Report', bodyHtml, school, isBW, format, cols.length > 7 ? 'landscape' : 'portrait');
+}
+
+/* ─── On-screen report view (normal tables inside the Reports tab) ───
+   Download Report (PDF / Word / Excel) isi data se alag builders chalata hai. */
+const STU_REP_ROW_CAP = 1000;
+const stuRepCell = (v) => ((v === '' || v == null) ? '—' : v);
+
+function StuRepTable({ head, rows, foot, empty = 'No students.' }) {
+  return (
+    <div className="stu-rep-tblwrap">
+      <table className="stu-rep-tbl">
+        <thead><tr>{head.map((h, i) => <th key={i} className={h.c ? 'c' : undefined} style={h.w ? { width: h.w } : undefined}>{h.label}</th>)}</tr></thead>
+        <tbody>
+          {rows.length === 0
+            ? <tr><td colSpan={head.length} style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>{empty}</td></tr>
+            : rows.map((r, i) => (
+              <tr key={i}>{r.map((v, j) => <td key={j} className={head[j]?.c ? 'c' : undefined}>{v}</td>)}</tr>
+            ))}
+        </tbody>
+        {foot && rows.length > 0 && <tfoot><tr>{foot.map((v, j) => <td key={j} className={head[j]?.c ? 'c' : undefined}>{v}</td>)}</tr></tfoot>}
+      </table>
+    </div>
+  );
+}
+const StuRepKpis = ({ items }) => (
+  <div className="stu-rep-kpis">{items.map(([l, v]) => <div key={l} className="stu-rep-kpi"><div className="l">{l}</div><div className="v">{v}</div></div>)}</div>
+);
+const StuRepBand = ({ left, right }) => <div className="stu-rep-band"><span>{left}</span><small>{right}</small></div>;
+
+function StuRepScreen({ cur, scoped, gSub, gNames, onlyMulti, year, customRows, cols }) {
+  const tallyOf = (students) => students.reduce((a, s) => { a[stuGenderKey(s.gender)] += 1; a.total += 1; return a; }, stuRepTally());
+  const all = scoped.flatMap(c => c.students);
+
+  if (cur === 'custom') {
+    const shown = customRows.slice(0, STU_REP_ROW_CAP);
+    const picked = STU_REP_COLS.filter(c => cols.includes(c.id));
+    return (
+      <>
+        <StuRepKpis items={[['Students', customRows.length], ['Columns', picked.length]]} />
+        <StuRepTable
+          head={[{ label: '#', c: true, w: 40 }, ...picked.map(c => ({ label: c.label, c: c.ctr }))]}
+          rows={shown.map(({ s, c }, i) => [i + 1, ...picked.map(col => (col.bold ? <b>{stuRepCell(col.get(s, c))}</b> : stuRepCell(col.get(s, c))))])}
+          empty="No students match these filters."
+        />
+        {customRows.length > STU_REP_ROW_CAP && <div className="stu-rep-note">Showing the first {STU_REP_ROW_CAP} of {customRows.length} students — use Download Report to get all of them.</div>}
+      </>
+    );
+  }
+
+  if (cur === 'gender') {
+    if (gSub === 'summary') {
+      const grand = tallyOf(all);
+      return (
+        <>
+          <StuRepKpis items={[['Total Students', grand.total], ['Male', `${grand.male} (${stuRepPct(grand.male, grand.total)})`], ['Female', `${grand.female} (${stuRepPct(grand.female, grand.total)})`]]} />
+          <StuRepTable
+            head={[{ label: '#', c: true, w: 40 }, { label: 'Class' }, { label: 'Section', c: true }, { label: 'Male', c: true }, { label: 'Female', c: true }, { label: 'Other', c: true }, { label: 'Total', c: true }, { label: 'Male %', c: true }, { label: 'Female %', c: true }]}
+            rows={scoped.map((c, i) => { const t = tallyOf(c.students); return [i + 1, <b>{c.cls}</b>, c.sec, t.male, t.female, t.other, <b>{t.total}</b>, stuRepPct(t.male, t.total), stuRepPct(t.female, t.total)]; })}
+            foot={['', 'Grand Total', '', grand.male, grand.female, grand.other, grand.total, stuRepPct(grand.male, grand.total), stuRepPct(grand.female, grand.total)]}
+          />
+        </>
+      );
+    }
+    const groups = scoped.map(c => ({ c, students: c.students.filter(s => stuGenderKey(s.gender) === gSub) })).filter(g => g.students.length);
+    const label = gSub === 'female' ? 'Female' : 'Male';
+    const head = [{ label: '#', c: true, w: 40 }, { label: 'Reg No' }, ...(gNames ? [{ label: 'Name' }, { label: 'Father Name' }] : []),
+      { label: 'DOB', c: true }, { label: 'Contact' }, { label: 'B-Form No.' }, { label: 'Admitted', c: true }];
+    return (
+      <>
+        <StuRepKpis items={[[`${label} Students`, groups.reduce((a, g) => a + g.students.length, 0)], ['Sections', groups.length]]} />
+        {groups.length === 0 && <div className="stu-rep-note">No {label.toLowerCase()} students found.</div>}
+        {groups.map(({ c, students }) => (
+          <React.Fragment key={c.key}>
+            <StuRepBand left={`${c.cls} — Section ${c.sec}`} right={`${students.length} ${label.toLowerCase()} student(s)`} />
+            <StuRepTable head={head} rows={students.map((s, i) => [i + 1, s.reg, ...(gNames ? [<b>{stuFullName(s)}</b>, stuRepCell(s.father)] : []),
+              stuFmtDate(s.dob), stuRepCell(s.mobile), stuRepCell(s.bform), stuFmtDate(s.admdate)])} />
+          </React.Fragment>
+        ))}
+      </>
+    );
+  }
+
+  if (cur === 'age') {
+    const by = new Map(); let sum = 0, known = 0;
+    all.forEach(s => {
+      const a = stuAgeOf(s.dob); const k = a == null ? 'na' : a;
+      if (!by.has(k)) by.set(k, stuRepTally());
+      const t = by.get(k); t[stuGenderKey(s.gender)] += 1; t.total += 1;
+      if (a != null) { sum += a; known += 1; }
+    });
+    const ages = [...by.keys()].filter(k => k !== 'na').sort((a, b) => a - b);
+    const grand = tallyOf(all);
+    const row = (label, t) => [<b>{label}</b>, t.male, t.female, t.other, <b>{t.total}</b>, stuRepPct(t.total, all.length)];
+    return (
+      <>
+        <StuRepKpis items={[['Total Students', all.length], ['Average Age', known ? `${(sum / known).toFixed(1)} yrs` : '—'], ['Age Range', ages.length ? `${ages[0]} – ${ages[ages.length - 1]} yrs` : '—']]} />
+        <StuRepTable
+          head={[{ label: 'Age' }, { label: 'Male', c: true }, { label: 'Female', c: true }, { label: 'Other', c: true }, { label: 'Total', c: true }, { label: '% of Students', c: true }]}
+          rows={[...ages.map(a => row(`${a} years`, by.get(a))), ...(by.has('na') ? [row('DOB not recorded', by.get('na'))] : [])]}
+          foot={['Grand Total', grand.male, grand.female, grand.other, grand.total, '']}
+        />
+      </>
+    );
+  }
+
+  if (cur === 'guardian') {
+    const map = new Map();
+    scoped.forEach(c => c.students.forEach(s => {
+      const cnic = String(s.fcnic || '').replace(/\D/g, '');
+      const name = String(s.father || s.guardian || '').trim();
+      const key = cnic || (name ? name.toLowerCase() : `_solo_${s._id}`);
+      if (!map.has(key)) map.set(key, { name: name || '—', cnic: s.fcnic || '', guardian: s.guardian || '', contact: s.mobile || s.gcontact || '', kids: [] });
+      map.get(key).kids.push({ s, c });
+    }));
+    let groups = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const multi = groups.filter(g => g.kids.length > 1).length;
+    if (onlyMulti) groups = groups.filter(g => g.kids.length > 1);
+    return (
+      <>
+        <StuRepKpis items={[['Guardians', map.size], ['Students', all.length], ['With 2+ Children', multi]]} />
+        <StuRepTable
+          head={[{ label: '#', c: true, w: 40 }, { label: 'Father / Guardian' }, { label: 'CNIC' }, { label: 'Contact' }, { label: 'Children', c: true }, { label: 'Students' }]}
+          rows={groups.map((g, i) => [i + 1,
+            <><b>{g.name}</b>{g.guardian && g.guardian !== g.name ? <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Guardian: {g.guardian}</div> : null}</>,
+            stuRepCell(g.cnic), stuRepCell(g.contact), <b>{g.kids.length}</b>,
+            g.kids.map(({ s, c }) => <div key={s._id}>{stuFullName(s)} <span style={{ color: 'var(--text-muted)' }}>({c.cls} – {c.sec})</span></div>)])}
+        />
+      </>
+    );
+  }
+
+  /* year-wise */
+  const by = new Map();
+  all.forEach(s => {
+    const y = stuAdmYear(s); const k = y == null ? 'na' : y;
+    if (!by.has(k)) by.set(k, stuRepTally());
+    const t = by.get(k); t[stuGenderKey(s.gender)] += 1; t.total += 1;
+  });
+  const years = [...by.keys()].filter(k => k !== 'na').sort((a, b) => b - a);
+  const row = (label, t) => [<b>{label}</b>, t.male, t.female, t.other, <b>{t.total}</b>, stuRepPct(t.total, all.length)];
+  const picked = year === '' ? [] : scoped.map(c => ({ c, students: c.students.filter(s => String(stuAdmYear(s)) === String(year)) })).filter(g => g.students.length);
+  return (
+    <>
+      <StuRepKpis items={[['Total Students', all.length], ['Admission Years', years.length], ['Latest Intake', years.length ? `${by.get(years[0]).total} (${years[0]})` : '—']]} />
+      <StuRepTable
+        head={[{ label: 'Admission Year' }, { label: 'Male', c: true }, { label: 'Female', c: true }, { label: 'Other', c: true }, { label: 'Total', c: true }, { label: '% of Students', c: true }]}
+        rows={[...years.map(y => row(y, by.get(y))), ...(by.has('na') ? [row('Not recorded', by.get('na'))] : [])]}
+      />
+      {year !== '' && picked.length === 0 && <div className="stu-rep-note">No students admitted in {year}.</div>}
+      {picked.map(({ c, students }) => (
+        <React.Fragment key={c.key}>
+          <StuRepBand left={`${c.cls} — Section ${c.sec} · admitted ${year}`} right={`${students.length} student(s)`} />
+          <StuRepTable
+            head={[{ label: '#', c: true, w: 40 }, { label: 'Reg No' }, { label: 'Name' }, { label: 'Father Name' }, { label: 'Gender', c: true }, { label: 'Admitted', c: true }]}
+            rows={students.map((s, i) => [i + 1, s.reg, <b>{stuFullName(s)}</b>, stuRepCell(s.father), stuRepCell(s.gender), stuFmtDate(s.admdate)])}
+          />
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
+function StudentReportsTab({ loading, classes, school, toast }) {
+  const { can } = usePermissions();
+  const canDownload = can('Students', 'Active Students', 'Download');
+  const [cur, setCur]             = useState('custom');
+  const [scope, setScope]         = useState('');          // '' = all sections, else class key
+  const [gSub, setGSub]           = useState('summary');   // gender: summary | male | female
+  const [gNames, setGNames]       = useState(true);        // gender lists: with / without student names
+  const [onlyMulti, setOnlyMulti] = useState(false);       // guardian: siblings only
+  const [year, setYear]           = useState('');          // year-wise: list one year
+  const [cGender, setCGender]     = useState('');
+  const [cYear, setCYear]         = useState('');
+  const [cDisc, setCDisc]         = useState('');
+  const [cols, setCols]           = useState(STU_REP_DEFAULT_COLS);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const brandSchool = (branch) => ({
+    ...school,
+    name:    branch?.branchName || school?.name,
+    address: branch?.address    || school?.address,
+    logo:    studentService.stuFileUrl(branch?.branchLogo) || school?.logo,
+  });
+
+  const scoped = useMemo(() => classes.filter(c => !scope || c.key === scope), [classes, scope]);
+  const years  = useMemo(() => {
+    const set = new Set();
+    classes.forEach(c => c.students.forEach(s => { const y = stuAdmYear(s); if (y != null) set.add(y); }));
+    return [...set].sort((a, b) => b - a);
+  }, [classes]);
+
+  const customRows = useMemo(() => scoped.flatMap(c => c.students.map(s => ({ s, c }))).filter(({ s }) =>
+    (!cGender || stuGenderKey(s.gender) === cGender)
+    && (!cYear || String(stuAdmYear(s)) === cYear)
+    && (!cDisc || (cDisc === 'yes') === stuHasDiscount(s))), [scoped, cGender, cYear, cDisc]);
+  const customNote = [cGender && `${cGender}`, cYear && `admitted ${cYear}`, cDisc && (cDisc === 'yes' ? 'with discount' : 'without discount')].filter(Boolean).join(', ');
+
+  const meta = STU_REP_CATS.find(r => r.id === cur);
+  const titleFor = () => (cur === 'gender' && gSub !== 'summary'
+    ? `${gSub === 'female' ? 'Female' : 'Male'} Students Report` : meta.name);
+  const build = (sch, isBW, format) => {
+    if (cur === 'gender')   return gSub === 'summary' ? buildStuGenderReportHTML(scoped, sch, isBW, format)
+                                                      : buildStuGenderListHTML(scoped, gSub, sch, isBW, format, gNames);
+    if (cur === 'age')      return buildStuAgeReportHTML(scoped, sch, isBW, format);
+    if (cur === 'guardian') return buildStuGuardianReportHTML(scoped, sch, isBW, format, onlyMulti);
+    if (cur === 'year')     return buildStuYearReportHTML(scoped, sch, isBW, format, year);
+    return buildStuCustomReportHTML(customRows, cols, sch, isBW, format, customNote);
+  };
+
+  const doDownload = async ({ style, format }) => {
+    const branch = await fetchReportHeader();
+    const html = build(brandSchool(branch), style === 'bw', format);
+    stuDeliverKitReport(titleFor(), html, format, toast);
+    toast(`${titleFor()} (${style.toUpperCase()} · ${format.toUpperCase()}) ready`, 'success');
+    setPickerOpen(false);
+  };
+  const toggleCol = (id) => setCols(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
+
+  const lbl = { fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.4px', color: 'var(--text-muted)' };
+  const field = (label, node) => (<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={lbl}>{label}</span>{node}</div>);
+
+  return (
+    <>
+      <style>{`
+        .stu-rep-chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:16px}
+        .stu-rep-chip{display:flex;align-items:center;gap:11px;text-align:left;padding:13px 15px;border:1.5px solid var(--border-light);border-radius:12px;background:var(--bg-card);cursor:pointer;transition:all .2s ease;font-family:var(--font-body);width:100%}
+        .stu-rep-chip:hover{border-color:#1E3A8A;transform:translateY(-3px);box-shadow:0 12px 28px rgba(30,58,138,.15)}
+        .stu-rep-chip.active{border-color:#1E3A8A;background:linear-gradient(135deg,rgba(30,58,138,.06),transparent);box-shadow:0 0 0 3px rgba(30,58,138,.1)}
+        .stu-rep-chip-ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;flex-shrink:0;background:linear-gradient(135deg,#1E3A8A,#2563EB)}
+        .stu-rep-chip-name{font-size:13px;font-weight:800;color:var(--text-primary);line-height:1.2}
+        .stu-rep-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;padding:12px 14px;margin-bottom:12px}
+        .stu-rep-cols{display:flex;flex-wrap:wrap;gap:6px 14px;padding:0 14px 12px}
+        .stu-rep-cols label{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text-secondary);cursor:pointer}
+        .stu-rep-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:0 14px 12px}
+        .stu-rep-kpi{border:1.5px solid var(--border-light);border-radius:10px;padding:10px 14px;background:var(--bg-card)}
+        .stu-rep-kpi .l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted)}
+        .stu-rep-kpi .v{font-size:20px;font-weight:800;color:var(--text-primary);margin-top:2px}
+        .stu-rep-band{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 14px;margin:6px 14px 8px;border-radius:8px;background:var(--bg-muted);font-size:12px;font-weight:800;color:var(--text-primary)}
+        .stu-rep-band small{font-size:11px;font-weight:700;color:var(--text-muted)}
+        .stu-rep-tblwrap{margin:0 14px 14px;overflow:auto;max-height:560px;border:1.5px solid var(--border-light);border-radius:10px}
+        .stu-rep-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+        .stu-rep-tbl th{position:sticky;top:0;z-index:1;background:var(--bg-muted);color:var(--text-secondary);text-align:left;padding:9px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.3px;font-weight:800;white-space:nowrap}
+        .stu-rep-tbl td{padding:9px 12px;border-top:1px solid var(--border-light);color:var(--text-primary);vertical-align:top}
+        .stu-rep-tbl tbody tr:hover td{background:var(--bg-muted)}
+        .stu-rep-tbl .c{text-align:center}
+        .stu-rep-tbl tfoot td{font-weight:800;background:var(--bg-muted)}
+        .stu-rep-note{padding:0 14px 14px;font-size:12px;color:var(--text-muted)}
+        @media (max-width:640px){.stu-rep-chips{grid-template-columns:1fr}}
+      `}</style>
+
+      <div className="stu-rep-chips">
+        {STU_REP_CATS.map(r => (
+          <Tooltip key={r.id} text={r.desc}>
+            <button type="button" className={`stu-rep-chip${cur === r.id ? ' active' : ''}`} onClick={() => setCur(r.id)}>
+              <div className="stu-rep-chip-ic"><i className={`fa-solid ${r.ic}`}></i></div>
+              <div className="stu-rep-chip-name">{r.name}</div>
+            </button>
+          </Tooltip>
+        ))}
+      </div>
+
+      <div className="fee-section">
+        <div className="stu-rep-bar">
+          {field('Class / Section', (
+            <select className="fee-select" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="">All classes</option>
+              {classes.map(c => <option key={c.key} value={c.key}>{c.cls} ({c.sec})</option>)}
+            </select>
+          ))}
+          {cur === 'gender' && field('Show', (
+            <select className="fee-select" value={gSub} onChange={(e) => setGSub(e.target.value)}>
+              <option value="summary">Summary (counts)</option>
+              <option value="male">Male students list</option>
+              <option value="female">Female students list</option>
+            </select>
+          ))}
+          {cur === 'gender' && gSub !== 'summary' && field('Student names', (
+            <select className="fee-select" value={gNames ? 'with' : 'without'} onChange={(e) => setGNames(e.target.value === 'with')}>
+              <option value="with">With names</option>
+              <option value="without">Without names</option>
+            </select>
+          ))}
+          {cur === 'guardian' && field('Show', (
+            <select className="fee-select" value={onlyMulti ? 'multi' : 'all'} onChange={(e) => setOnlyMulti(e.target.value === 'multi')}>
+              <option value="all">All guardians</option>
+              <option value="multi">Siblings only (2+ children)</option>
+            </select>
+          ))}
+          {cur === 'year' && field('Admission year', (
+            <select className="fee-select" value={year} onChange={(e) => setYear(e.target.value)}>
+              <option value="">All years (summary)</option>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          ))}
+          {cur === 'custom' && (
+            <>
+              {field('Gender', (
+                <select className="fee-select" value={cGender} onChange={(e) => setCGender(e.target.value)}>
+                  <option value="">All</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other / not set</option>
+                </select>
+              ))}
+              {field('Admission year', (
+                <select className="fee-select" value={cYear} onChange={(e) => setCYear(e.target.value)}>
+                  <option value="">All</option>
+                  {years.map(y => <option key={y} value={String(y)}>{y}</option>)}
+                </select>
+              ))}
+              {field('Fee discount', (
+                <select className="fee-select" value={cDisc} onChange={(e) => setCDisc(e.target.value)}>
+                  <option value="">All</option><option value="yes">With discount</option><option value="no">Without discount</option>
+                </select>
+              ))}
+            </>
+          )}
+          <div style={{ marginLeft: 'auto' }}>
+            {canDownload && (
+              <Tooltip text={`Generate ${titleFor()}`}>
+                <button className="fee-btn fee-btn-primary" onClick={() => setPickerOpen(true)} disabled={loading || (cur === 'custom' && cols.length === 0)}>
+                  <i className="fa-solid fa-file-lines"></i> Download Report
+                </button>
+              </Tooltip>
+            )}
+          </div>
+        </div>
+
+        {cur === 'custom' && (
+          <div className="stu-rep-cols">
+            <span style={{ ...lbl, width: '100%' }}>Columns ({cols.length} selected)</span>
+            {STU_REP_COLS.map(c => (
+              <label key={c.id}><input type="checkbox" checked={cols.includes(c.id)} onChange={() => toggleCol(c.id)} /> {c.label}</label>
+            ))}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="stu-empty"><div className="stu-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div><div className="stu-empty-title">Loading students…</div></div>
+        ) : classes.length === 0 ? (
+          <div className="stu-empty"><div className="stu-empty-ic"><i className="fa-solid fa-user-graduate"></i></div><div className="stu-empty-title">No active students yet</div></div>
+        ) : cur === 'custom' && cols.length === 0 ? (
+          <div className="stu-empty"><div className="stu-empty-title">Select at least one column</div></div>
+        ) : (
+          <StuRepScreen cur={cur} scoped={scoped} gSub={gSub} gNames={gNames} onlyMulti={onlyMulti} year={year} customRows={customRows} cols={cols} />
+        )}
+      </div>
+
+      {pickerOpen && (
+        <StuReportPicker
+          cfg={{ title: `Download ${titleFor()}`, sub: 'Choose style and format, then generate.' }}
+          formats={['pdf', 'word']}
+          onClose={() => setPickerOpen(false)}
+          onConfirm={doDownload}
+        />
+      )}
+    </>
+  );
+}
+
 const STU_TABS = [
   { id: 'preenroll', icon: 'fa-user-clock',  label: 'Pre-Enrollment' },
   { id: 'active',   icon: 'fa-user-check',  label: 'Active Students' },
   { id: 'inactive', icon: 'fa-user-slash',  label: 'Inactive Students' },
   { id: 'family',   icon: 'fa-people-roof', label: 'Family Tree' },
+  { id: 'reports',  icon: 'fa-chart-column', label: 'Reports' },
 ];
 
 export default function Students({ toast, focus = null, onFocusHandled }) {
@@ -1443,7 +2026,9 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
 
   /* Screen (tab) View permission — jis screen ka View nahi wo tab hide. */
   const { can } = usePermissions();
-  const visibleTabs = STU_TABS.filter(t => can('Students', t.label, 'View'));
+  /* Reports tab ki apni permission screen abhi nahi — Active Students ka View hi
+     use lagta hai (download button Active Students › Download se). */
+  const visibleTabs = STU_TABS.filter(t => can('Students', t.id === 'reports' ? 'Active Students' : t.label, 'View'));
   useEffect(() => {
     if (visibleTabs.some(t => t.id === tab)) return;
     if (visibleTabs[0]) setTab(visibleTabs[0].id);
@@ -1528,6 +2113,13 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
           setClasses={setClasses}
           families={famList}
           setFamilies={setFamilies}
+          school={school}
+          toast={toast}
+        />
+      ) : tab === 'reports' ? (
+        <StudentReportsTab
+          loading={classesLoading}
+          classes={classList}
           school={school}
           toast={toast}
         />
@@ -3102,13 +3694,23 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
     (rows || []).filter(r => r.isActive !== false).forEach(r => {
       map[String(r.headID)] = { id: r.id, amt: Number(r.discountAmount) || 0 };
     });
+    /* Inputs yahan seedha NAHI bharte: ye function mount par chalne wale effect ke
+       purane render se call hota hai jahan `feeHeads` abhi khali hota hai — is liye
+       saved discount ki jagah {} set ho jata tha aur dobara kholne par sab 0 dikhta
+       tha (aur Save dabane par asli discount clear ho sakta tha). Ab sirf flag lagate
+       hain; neeche wala effect latest feeHeads ke saath inputs bharta hai. */
+    if (syncInputs) syncInputsRef.current = true;
     setSavedDisc(map);
-    if (syncInputs) {
-      const out = {};
-      feeHeads.forEach(h => { out[h.name] = rawForDiscType(h, map[String(h.feeStructureID)]?.amt || 0, discType); });
-      setDisc(out);
-    }
   };
+  const syncInputsRef = useRef(false);
+  useEffect(() => {
+    if (!syncInputsRef.current || feeHeads.length === 0) return;   // feeHeads aane ka intezaar
+    syncInputsRef.current = false;
+    const out = {};
+    feeHeads.forEach(h => { out[h.name] = rawForDiscType(h, savedDisc[String(h.feeStructureID)]?.amt || 0, discType); });
+    setDisc(out);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feeHeads, savedDisc]);
   useEffect(() => {
     if (!feeStep || !savedStudentId) return undefined;
     let alive = true;
@@ -3657,6 +4259,7 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
                   Fee heads are loaded from the standard class fee setup. Any discount or adjustment saved here will apply to this student's <strong>future fee challans</strong> unless changed later. Net payable recalculates automatically.
                 </span>
               </div>
+              {/* Discount Type (Fixed Amount / Percentage) toggle — hidden for now (commented out).
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                 <span className="stu-flabel" style={{ marginBottom: 0 }}>Discount Type</span>
                 <DiscountTypeToggle
@@ -3666,6 +4269,7 @@ const [preEnrolledData, setPreEnrolledData] = useState([]);
                   idleClassName="stu-btn-ghost"
                 />
               </div>
+              */}
               <div className="stu-feewrap">
                 <table className="stu-feetable">
                   <thead>
@@ -4934,13 +5538,13 @@ function StuDuesModal({ student, onClose, onSettle }) {
    School reports. Colorful/Colorless × PDF/Word picker that drives
    the PDF builder chosen via `cfg.kind`.
    ═══════════════════════════════════════════════════════════════════ */
-function StuReportPicker({ cfg, onClose, onConfirm }) {
+function StuReportPicker({ cfg, onClose, onConfirm, formats = ['pdf', 'word', 'excel'] }) {
   return (
     <StandardReportPicker
       open
       title={cfg.title}
       subtitle={cfg.sub}
-      formats={['pdf', 'word', 'excel']}
+      formats={formats}
       onClose={onClose}
       onGenerate={(style, format) => onConfirm({ style, format })}
     />
@@ -9130,7 +9734,9 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
 .stu-feetable tbody tr:hover td { background: rgba(30,58,138,.03); }
 .stu-feerow-name { font-weight: 800; color: var(--text-primary); font-size: 13px; }
 .stu-feerow-sub  { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
-.stu-feetable .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+/* Edit Fee Details ke amounts (Standard Fee / Net Payable) — Fee → Discount jaisa font
+   (app ka body font, 13px; pehle monospace tha). Sirf font; layout/colors waise hi. */
+.stu-feetable .mono { font-family: var(--font-body); font-size: 13px; font-variant-numeric: tabular-nums; }
 .stu-feetable tfoot td {
   background: rgba(30,58,138,.06);
   font-size: 13px;
@@ -9143,6 +9749,7 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   width: 110px;
   height: 32px;
   display: inline-block;
+  font-weight: 600;   /* Fee → Discount input jaisa font weight */
 }
 .stu-warn {
   display: flex; align-items: flex-start; gap: 9px;

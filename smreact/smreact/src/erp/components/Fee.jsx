@@ -16447,20 +16447,25 @@ function ReportPanelCollection({ toast }) {
      clear ho aur aakhri wasooli range me ho — har student ek row (latest challan). */
   const items = useMemo(() => {
     if (seg === 'paid') {
-      const latest = new Map();
+      /* Paid Student List: jis student ki KOI BHI installment (pehli, doosri, ...) chuni hui
+         date range me wasool hui ho wo list me aaye — sirf poora clear challan nahi.
+         Amount = range ke andar wasool hui installments ka jama; Status: challan poora clear
+         ho to Cleared, warna Partial. */
+      const out = [];
       records.forEach(rec => {
         const who = byStudent.get(String(rec.studentID));
-        if (!who || !challanFullyPaid(rec)) return;
-        const receipts = ledgerInstallmentReceipts(rec);
-        const last = receipts.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).pop();
-        if (!last || !inRange(last.date)) return;
-        const paid = (rec.detailRows || []).reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-        const k = `${who.c.key}|${who.s.reg}`;
-        const prev = latest.get(k);
-        if (prev && prev.last.date > last.date) return;
-        latest.set(k, { ...who, rec, last, amount: paid, give: 0, method: feeService.paymentMethodDisplay(rec.paymentMethod) });
+        if (!who) return;
+        const inR = ledgerInstallmentReceipts(rec).filter(p => inRange(p.date));
+        if (!inR.length) return;
+        const last = inR.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).pop();
+        const amount = inR.reduce((a, p) => a + (p.amount || 0), 0);
+        const nos = [...new Set(inR.map(p => p.no).filter(Boolean))].join(', ');
+        /* Har installment ki apni raqam (pehli / doosri / ...), date ke order me. */
+        const parts = inR.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+          .map(p => ({ no: p.no, amount: p.amount || 0, date: p.date }));
+        out.push({ ...who, rec, last, amount, give: 0, method: feeService.paymentMethodDisplay(rec.paymentMethod), cleared: challanFullyPaid(rec), nos, parts });
       });
-      return [...latest.values()];
+      return out.sort((a, b) => `${a.last.date} ${a.last.time}`.localeCompare(`${b.last.date} ${b.last.time}`));
     }
     const out = [];
     records.forEach(rec => {
@@ -16568,7 +16573,7 @@ function ReportPanelCollection({ toast }) {
 
       {repKpiStrip([
         ['k-green', 'fa-sack-dollar', 'Total Received', fmtRs(kpi.recv), ''],
-        ['k-blue', 'fa-receipt', seg === 'paid' ? 'Students Cleared' : 'Receipts', `${seg === 'paid' ? kpi.students : kpi.receipts}`, ''],
+        ['k-blue', 'fa-receipt', seg === 'paid' ? 'Students Paid' : 'Receipts', `${seg === 'paid' ? kpi.students : kpi.receipts}`, ''],
         ['k-amber', 'fa-hand-holding-dollar', 'Receiving Discount', fmtRs(kpi.give), ''],
         ['k-blue', 'fa-users', 'Students', `${kpi.students}`, ''],
       ])}
@@ -16682,12 +16687,21 @@ function ReportPanelCollection({ toast }) {
                                 <td>{x.s.father || '—'}</td>
                                 <td>{x.s.reg}</td>
                                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{studentPhone(x.s)}</td>
-                                <td>{ledgerMonthLabel(x.rec)}</td>
+                                <td>
+                                  {ledgerMonthLabel(x.rec)}
+                                  {(x.parts || []).map((p, k) => (
+                                    <span key={k} className="fee-sub-eq">Installment {p.no || k + 1} · {money(p.amount)}</span>
+                                  ))}
+                                </td>
                                 <td className="fee-center">{dateCell(x)}</td>
                                 <td>{byName(x)}</td>
                                 <td className="fee-center"><MethodChip method={x.method} /></td>
                                 <td className="fee-right fee-paid-amt">{money(x.amount)}</td>
-                                <td className="fee-center"><span className="fee-chip fee-chip-active"><i className="fa-solid fa-check"></i> Cleared</span></td>
+                                <td className="fee-center">
+                                  {x.cleared
+                                    ? <span className="fee-chip fee-chip-active"><i className="fa-solid fa-check"></i> Cleared</span>
+                                    : <span className="fee-chip" style={{ background: 'rgba(217,119,6,.12)', color: '#B45309', border: '1px solid rgba(217,119,6,.3)' }}><i className="fa-solid fa-hourglass-half"></i> Partial</span>}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -19512,12 +19526,14 @@ function buildRepCollectionHTML({ groups, seg, rangeLabel, kpi, isBW = false, sc
             <td>${escHtml(x.s.father || '—')}</td>
             <td>${escHtml(x.s.reg)}</td>
             <td>${escHtml(studentPhone(x.s))}</td>
-            <td>${escHtml(ledgerMonthLabel(x.rec))}</td>
+            <td>${escHtml(ledgerMonthLabel(x.rec))}${(x.parts || []).map((p, k) => `<br><small>Installment ${escHtml(p.no || k + 1)} · Rs. ${fmt(p.amount)}</small>`).join('')}</td>
             <td>${dt(x)}</td>
             <td>${escHtml(x.byName || '—')}</td>
             <td class="c">${methodChipHTML(x.method)}</td>
             <td class="r pos">${fmt(x.amount)}</td>
-            <td class="c"><span style="display:inline-block;padding:2px 9px;border-radius:999px;background:rgba(22,163,74,.12);color:#16A34A;font-size:9.5px;font-weight:800">✓ Cleared</span></td>
+            <td class="c">${x.cleared === false
+              ? '<span style="display:inline-block;padding:2px 9px;border-radius:999px;background:rgba(217,119,6,.12);color:#B45309;font-size:9.5px;font-weight:800">Partial</span>'
+              : '<span style="display:inline-block;padding:2px 9px;border-radius:999px;background:rgba(22,163,74,.12);color:#16A34A;font-size:9.5px;font-weight:800">✓ Cleared</span>'}</td>
           </tr>`).join('')}</tbody>
           <tfoot><tr class="rep-tot"><td colspan="9">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${fmt(sub)}</td><td></td></tr></tfoot>
         </table>`;
@@ -19545,10 +19561,10 @@ function buildRepCollectionHTML({ groups, seg, rangeLabel, kpi, isBW = false, sc
     : seg === 'month' ? `Monthly Collection — ${rangeLabel}`
     : 'Paid Students List';
   return repWrap(title,
-    `<span><b>Period:</b> ${escHtml(rangeLabel)}</span><span><b>${seg === 'paid' ? 'Students Cleared' : 'Receipts'}:</b> ${seg === 'paid' ? kpi.students : kpi.receipts}</span><span><b>Grand Total:</b> Rs. ${fmt(kpi.recv)}</span>`,
+    `<span><b>Period:</b> ${escHtml(rangeLabel)}</span><span><b>${seg === 'paid' ? 'Students Paid' : 'Receipts'}:</b> ${seg === 'paid' ? kpi.students : kpi.receipts}</span><span><b>Grand Total:</b> Rs. ${fmt(kpi.recv)}</span>`,
     `<div class="kpi-row">
       <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${fmt(kpi.recv)}</div></div>
-      <div class="kpi"><div class="l">${seg === 'paid' ? 'Students Cleared' : 'Receipts'}</div><div class="v">${seg === 'paid' ? kpi.students : kpi.receipts}</div></div>
+      <div class="kpi"><div class="l">${seg === 'paid' ? 'Students Paid' : 'Receipts'}</div><div class="v">${seg === 'paid' ? kpi.students : kpi.receipts}</div></div>
       <div class="kpi"><div class="l">Receiving Discount</div><div class="v">Rs. ${fmt(kpi.give)}</div></div>
       <div class="kpi"><div class="l">Students</div><div class="v">${kpi.students}</div></div>
     </div>
