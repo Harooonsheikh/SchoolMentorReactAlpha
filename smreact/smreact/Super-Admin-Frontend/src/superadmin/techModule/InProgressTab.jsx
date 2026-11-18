@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicketsData';
 import LockedCard from '../adminPermissions/LockedCard';
+import { useSaPerms } from '../saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    InProgressTab — Stage 2: the assigned developer works the ticket.
@@ -18,6 +19,7 @@ const wasReturnedFromQa = (t) => t.qaReview?.length > 0 && t.qaReview[t.qaReview
 
 export default function InProgressTab({ tickets, onSubmitAndSendForQa, onViewDetails, toast, canEdit = true }) {
   const [reportingId, setReportingId] = useState(null);
+  const P = useSaPerms('techModule');
   const [group, setGroup] = useState('all');   // 'all' | 'developer' | 'returned'
   const [type, setType] = useState('all');     // 'all' | 'bug' | 'improvement'
 
@@ -92,7 +94,7 @@ export default function InProgressTab({ tickets, onSubmitAndSendForQa, onViewDet
                 <div className="tm-card-actions">
                   <button className="btn-sm" onClick={() => onViewDetails?.(t.id)}><i className="fa-solid fa-eye" /> View Details</button>
                   {canEdit ? (
-                    <button className="btn-primary" style={{ height: 32, fontSize: 12.5 }} onClick={() => setReportingId(t.id)}>
+                    <button {...P.lock('in_progress', 'edit', { className: 'btn-primary', style: { height: 32, fontSize: 12.5 } })} onClick={() => { if (P.guard('in_progress', 'edit', toast)) setReportingId(t.id); }}>
                       <i className="fa-solid fa-paper-plane" /> Send for QA Testing
                     </button>
                   ) : <LockedCard compact title="No access" />}

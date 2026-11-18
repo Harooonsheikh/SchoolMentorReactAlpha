@@ -18,6 +18,7 @@ import * as techTicketsApi from '../superadmin/api/services/techTickets';
    (live tasdeeq shuda). */
 import { schoolProgressApi, authApi } from '../superadmin/api';
 import AgentOverview from './AgentOverview';
+import { useSaPerms } from '../superadmin/saPerms';
 
 let _agAttId = 1;
 const agAttId = () => `aatt${_agAttId++}`;
@@ -122,6 +123,12 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2600);
   };
+
+  /* Super Admin User Permission (Customer Support ▸ Agent Inbox) — only when embedded in the
+     Super Admin shell. Reply/attachment/note/bug = create; close session = edit. */
+  const SP = useSaPerms('support');
+  const inboxLock = (action, extra = {}) => (embedded ? SP.lock('inbox', action, extra) : extra);
+  const inboxGuard = (action) => !embedded || SP.guard('inbox', action, showToast);
 
   /* Locally bana hua apna bubble hamesha "Sent" — server ne abhi kuch kaha hi
      nahi, is liye tick single rehna chahiye (blue sirf server ke Read par). */
@@ -322,6 +329,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   /* Sidebar ka note → Follow-up Card > Notes (wahi record jo Schools Progress
      ke View Details me dikhta hai). */
   const saveSideNote = async () => {
+    if (!inboxGuard('create')) return;
     const text = sideNote.trim();
     if (!text) { showToast('Write a note first', 'warn'); return; }
     if (!requireSchool() || noteSaving) return;
@@ -346,6 +354,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
   /* ── Send a text message ── */
   const sendMsg = () => {
+    if (!inboxGuard('create')) return;
     const txt = input.trim();
     if (!txt) return;
     /* API tak baat na ho rahi ho to paighaam kahin mehfooz nahi hota. Pehle
@@ -400,12 +409,14 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
   /* Open the closing-remarks confirmation (keeps existing close behaviour). */
   const closeCurrentSession = () => {
+    if (!inboxGuard('edit')) return;
     if (liveConnected && chat.sessionId) { setCloseRemarks(''); setCloseOpen(true); }
     /* Pehle yahan "Session closed" ka kamyabi wala toast tha halanke API tak
        baat hi nahi ho rahi thi — session kahin band nahi hota tha. */
     else showToast('Support API is not reachable — session not closed', 'warn');
   };
   const confirmClose = () => {
+    if (!inboxGuard('edit')) return;
     const remarks = closeRemarks.trim() || 'Issue resolved.';
     setCloseOpen(false);
     chat.closeSession(remarks)
@@ -431,6 +442,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
      mehfooz shuda cheez API par jati hai. */
   const [savingNote, setSavingNote] = useState(false);
   const saveNote = async () => {
+    if (!inboxGuard('create')) return;
     const title = noteForm.title.trim();
     const details = noteForm.details.trim();
     if (!title && !details) { showToast('Please add a note before saving', 'warn'); return; }
@@ -468,6 +480,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   const [savingEnquiry, setSavingEnquiry] = useState(false);
 
   const submitEnquiry = async ({ form, kind, label }) => {
+    if (!inboxGuard('create')) return false;
     const title = form.title.trim();
     if (!title) { showToast(`Please enter ${kind === 'bug' ? 'a bug' : 'an improvement'} title`, 'warn'); return; }
     if (!form.module.trim()) { showToast('Module is required', 'warn'); return; }
@@ -586,6 +599,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   };
   const removeImg = (id) => setImgItems(prev => prev.filter(it => it.id !== id));
   const sendImages = () => {
+    if (!inboxGuard('create')) return;
     if (!imgItems.length) return;
     if (!imgCaption.trim()) { showToast(CAPTION_REQUIRED, 'warn'); return; }
     sendItemsTogether('image', imgItems, imgCaption, (it) => ({ image: { name: it.name, src: it.src, size: 'Image' } }), 'Images');
@@ -610,6 +624,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   };
   const removeDoc = (id) => setDocItems(prev => prev.filter(it => it.id !== id));
   const sendDocs = () => {
+    if (!inboxGuard('create')) return;
     if (!docItems.length) return;
     if (!docMsg.trim()) { showToast(CAPTION_REQUIRED, 'warn'); return; }
     sendItemsTogether('document', docItems, docMsg, (it) => ({ doc: { name: it.name, size: it.sizeLabel, ext: it.ext } }), 'Documents');
@@ -633,6 +648,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   };
   const removeVideo = (id) => setVideoItems(prev => prev.filter(it => it.id !== id));
   const sendVideos = () => {
+    if (!inboxGuard('create')) return;
     if (!videoItems.length) return;
     if (!videoCaption.trim()) { showToast(CAPTION_REQUIRED, 'warn'); return; }
     sendItemsTogether('video', videoItems, videoCaption, (it) => ({ video: { name: it.name, src: it.src } }), 'Videos');
@@ -642,6 +658,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   /* ── Real voice recording (mic button); auto-stops at 5 min ── */
   const voice = useVoiceRecorder({ onAutoStop: (res) => finishVoice(res) });
   const startRec = async () => {
+    if (!inboxGuard('create')) return;
     const ok = await voice.start();
     if (!ok) showToast('Microphone unavailable or permission denied.', 'warn');
   };
@@ -651,6 +668,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     if (res && res.blob && res.durationSec > 0) finishVoice(res);
   };
   const finishVoice = async (res) => {
+    if (!inboxGuard('create')) return;
     /* Chrome sirf WebM record karta hai aur upload route voice ke liye WebM
        leti nahi ("File type '.webm' is not allowed for voice" — .mp3/.wav/
        .m4a/.ogg chalti hain), is liye zaroorat par recording WAV me badal kar
@@ -783,7 +801,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
                 {prevSessions.length > 0 && <span className="ag-hdr-badge">{prevSessions.length}</span>}
               </button>
               {sessionOpen && (
-                <button className="ag-btn ag-btn-danger" onClick={closeCurrentSession}>
+                <button {...inboxLock('edit', { className: 'ag-btn ag-btn-danger' })} onClick={closeCurrentSession}>
                   <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Close Session
                 </button>
               )}
@@ -832,12 +850,12 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
             </div>
 
             <div className="ag-tray">
-              <button className="ag-tbtn" onClick={() => setModal('image')}><i className="fa-solid fa-image" aria-hidden="true"></i> Image</button>
-              <button className="ag-tbtn" onClick={() => setModal('video')}><i className="fa-solid fa-video" aria-hidden="true"></i> Video</button>
-              <button className="ag-tbtn" onClick={() => setModal('doc')}><i className="fa-solid fa-file" aria-hidden="true"></i> Document</button>
-              <button className="ag-tbtn" onClick={() => setModal('note')}><i className="fa-solid fa-note-sticky" aria-hidden="true"></i> Note</button>
-              <button className="ag-tbtn ag-tbtn-bug" onClick={() => setModal('bug')}><i className="fa-solid fa-bug" aria-hidden="true"></i> Bug</button>
-              <button className="ag-tbtn ag-tbtn-improv" onClick={() => setModal('improv')}><i className="fa-solid fa-lightbulb" aria-hidden="true"></i> Improvement</button>
+              <button {...inboxLock('create', { className: 'ag-tbtn' })} onClick={() => { if (inboxGuard('create')) setModal('image'); }}><i className="fa-solid fa-image" aria-hidden="true"></i> Image</button>
+              <button {...inboxLock('create', { className: 'ag-tbtn' })} onClick={() => { if (inboxGuard('create')) setModal('video'); }}><i className="fa-solid fa-video" aria-hidden="true"></i> Video</button>
+              <button {...inboxLock('create', { className: 'ag-tbtn' })} onClick={() => { if (inboxGuard('create')) setModal('doc'); }}><i className="fa-solid fa-file" aria-hidden="true"></i> Document</button>
+              <button {...inboxLock('create', { className: 'ag-tbtn' })} onClick={() => { if (inboxGuard('create')) setModal('note'); }}><i className="fa-solid fa-note-sticky" aria-hidden="true"></i> Note</button>
+              <button {...inboxLock('create', { className: 'ag-tbtn ag-tbtn-bug' })} onClick={() => { if (inboxGuard('create')) setModal('bug'); }}><i className="fa-solid fa-bug" aria-hidden="true"></i> Bug</button>
+              <button {...inboxLock('create', { className: 'ag-tbtn ag-tbtn-improv' })} onClick={() => { if (inboxGuard('create')) setModal('improv'); }}><i className="fa-solid fa-lightbulb" aria-hidden="true"></i> Improvement</button>
             </div>
 
             {voice.recording ? (
@@ -849,7 +867,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
                   <Waveform />
                   <span className="ag-vrec-lbl">Recording…</span>
                 </div>
-                <button className="ag-send" onClick={sendRec} aria-label="Send"><i className="fa-solid fa-paper-plane" aria-hidden="true"></i></button>
+                <button {...inboxLock('create', { className: 'ag-send', 'aria-label': 'Send' })} onClick={sendRec}><i className="fa-solid fa-paper-plane" aria-hidden="true"></i></button>
               </div>
             ) : (
               <div className="ag-inrow">
@@ -864,8 +882,8 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}
                   />
                 </div>
-                <button className="ag-mic" onClick={startRec} title="Record voice message"><i className="fa-solid fa-microphone" aria-hidden="true"></i></button>
-                <button className="ag-send" onClick={sendMsg} aria-label="Send"><i className="fa-solid fa-paper-plane" aria-hidden="true"></i></button>
+                <button {...inboxLock('create', { className: 'ag-mic', title: 'Record voice message' })} onClick={startRec}><i className="fa-solid fa-microphone" aria-hidden="true"></i></button>
+                <button {...inboxLock('create', { className: 'ag-send', 'aria-label': 'Send' })} onClick={sendMsg}><i className="fa-solid fa-paper-plane" aria-hidden="true"></i></button>
               </div>
             )}
           </div>
@@ -911,7 +929,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
               placeholder={lastNote ? `Last note: ${lastNote.comment}` : 'Write an internal note for this school…'}
               onChange={e => setSideNote(e.target.value)}
             />
-            <button className="ag-btn ag-btn-success ag-side-save" disabled={noteSaving} onClick={saveSideNote}>
+            <button {...inboxLock('create', { className: 'ag-btn ag-btn-success ag-side-save' })} disabled={noteSaving || !!inboxLock('create').disabled} onClick={saveSideNote}>
               <i className={`fa-solid ${noteSaving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} aria-hidden="true"></i>
               {noteSaving ? ' Saving…' : ' Save Notes'}
             </button>
@@ -967,7 +985,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
           onClose={() => setCloseOpen(false)}
           footer={<>
             <button className="ag-btn ag-btn-secondary" onClick={() => setCloseOpen(false)}>Cancel</button>
-            <button className="ag-btn ag-btn-danger" onClick={confirmClose}><i className="fa-solid fa-circle-check" aria-hidden="true" /> Close Session</button>
+            <button {...inboxLock('edit', { className: 'ag-btn ag-btn-danger' })} onClick={confirmClose}><i className="fa-solid fa-circle-check" aria-hidden="true" /> Close Session</button>
           </>}
         >
           <div className="ag-banner ag-banner-info" style={{ marginTop: 0, marginBottom: 14 }}>

@@ -3,6 +3,7 @@ import {
   TT_CATEGORIES, TT_CAT_LABEL, TT_CAT_FULL, REC_STATUS, UP_STATUS, STATUS_LABEL,
   INITIAL_RECORDED, INITIAL_UPCOMING, initials, fmtDate, embedUrl, currentYearMonth,
 } from './trainingsData';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    TEACHER TRAININGS — Super Admin module (frontend only)
@@ -20,6 +21,8 @@ export default function TeacherTrainings({ toast }) {
   const [modal, setModal] = useState(null);
   const seq = useRef(1000);
   const nextId = () => ++seq.current;
+  /* Ek hi screen 'trainings' — Add = create, Edit/Done = edit, Delete = delete. */
+  const P = useSaPerms('teachersTraining');
 
   const stats = useMemo(() => {
     const ym = currentYearMonth();
@@ -34,25 +37,37 @@ export default function TeacherTrainings({ toast }) {
 
   /* ── Recorded CRUD ── */
   const saveRecorded = (form, editId) => {
+    if (!P.guard('trainings', editId ? 'edit' : 'create', toast)) return;
     if (editId) setRecorded((prev) => prev.map((r) => r.id === editId ? { ...r, ...form } : r));
     else setRecorded((prev) => [{ id: nextId(), ...form }, ...prev]);
     setModal(null); toast?.('Recorded training saved!', 'success');
   };
   /* ── Upcoming CRUD ── */
   const saveUpcoming = (form, editId) => {
+    if (!P.guard('trainings', editId ? 'edit' : 'create', toast)) return;
     if (editId) setUpcoming((prev) => prev.map((u) => u.id === editId ? { ...u, ...form } : u));
     else setUpcoming((prev) => [{ id: nextId(), ...form }, ...prev]);
     setModal(null); toast?.('Upcoming training saved!', 'success');
   };
   const markCompleted = (id) => {
+    if (!P.guard('trainings', 'edit', toast)) return;
     setUpcoming((prev) => prev.map((u) => u.id === id ? { ...u, status: 'completed' } : u));
     toast?.('Marked as completed', 'success');
   };
   const confirmDelete = ({ kind, id }) => {
+    if (!P.guard('trainings', 'delete', toast)) return;
     if (kind === 'recorded') setRecorded((prev) => prev.filter((r) => r.id !== id));
     else setUpcoming((prev) => prev.filter((u) => u.id !== id));
     setModal(null); toast?.('Training deleted', 'info');
   };
+
+  if (!P.canView('trainings')) {
+    return (
+      <div className="page-content">
+        <div className="tt-empty"><i className="fa-solid fa-lock" /><div style={{ fontSize: 15, fontWeight: 700 }}>You don't have permission to view this</div></div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-content">
@@ -66,8 +81,8 @@ export default function TeacherTrainings({ toast }) {
         </div>
         <div>
           {tab === 'recorded'
-            ? <button className="btn-primary" onClick={() => setModal({ type: 'recorded', item: null })}><i className="fa-solid fa-plus" /> Add Recorded Training</button>
-            : <button className="btn-primary" onClick={() => setModal({ type: 'upcoming', item: null })}><i className="fa-solid fa-plus" /> Add Upcoming Training</button>}
+            ? <button {...P.lock('trainings', 'create', { className: 'btn-primary' })} onClick={() => { if (P.guard('trainings', 'create', toast)) setModal({ type: 'recorded', item: null }); }}><i className="fa-solid fa-plus" /> Add Recorded Training</button>
+            : <button {...P.lock('trainings', 'create', { className: 'btn-primary' })} onClick={() => { if (P.guard('trainings', 'create', toast)) setModal({ type: 'upcoming', item: null }); }}><i className="fa-solid fa-plus" /> Add Upcoming Training</button>}
         </div>
       </div>
 
@@ -87,16 +102,16 @@ export default function TeacherTrainings({ toast }) {
       </div>
 
       {tab === 'recorded' && (
-        <RecordedPanel rows={recorded}
+        <RecordedPanel rows={recorded} P={P}
           onView={(r) => setModal({ type: 'view', item: r })}
-          onEdit={(r) => setModal({ type: 'recorded', item: r })}
-          onDelete={(r) => setModal({ type: 'del', kind: 'recorded', id: r.id, name: r.title })} />
+          onEdit={(r) => { if (P.guard('trainings', 'edit', toast)) setModal({ type: 'recorded', item: r }); }}
+          onDelete={(r) => { if (P.guard('trainings', 'delete', toast)) setModal({ type: 'del', kind: 'recorded', id: r.id, name: r.title }); }} />
       )}
       {tab === 'upcoming' && (
-        <UpcomingPanel rows={upcoming}
-          onEdit={(u) => setModal({ type: 'upcoming', item: u })}
+        <UpcomingPanel rows={upcoming} P={P}
+          onEdit={(u) => { if (P.guard('trainings', 'edit', toast)) setModal({ type: 'upcoming', item: u }); }}
           onDone={markCompleted}
-          onDelete={(u) => setModal({ type: 'del', kind: 'upcoming', id: u.id, name: u.title })} />
+          onDelete={(u) => { if (P.guard('trainings', 'delete', toast)) setModal({ type: 'del', kind: 'upcoming', id: u.id, name: u.title }); }} />
       )}
 
       {/* ── MODALS ── */}
@@ -114,7 +129,7 @@ function StatusBadge({ status }) { return <span className={`tt-badge tt-status-$
 function Meta({ icon, children }) { return <span style={{ fontSize: 12, color: 'var(--tm)' }}><i className={`${icon} fa-xs`} /> {children}</span>; }
 
 /* ═══════════════════════ RECORDED PANEL ═══════════════════════ */
-function RecordedPanel({ rows, onView, onEdit, onDelete }) {
+function RecordedPanel({ rows, P, onView, onEdit, onDelete }) {
   const [cat, setCat] = useState('all');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
@@ -154,8 +169,8 @@ function RecordedPanel({ rows, onView, onEdit, onDelete }) {
           </div>
           <div className="tt-card-actions">
             <button className="tt-action-btn" onClick={() => onView(r)}><i className="fa-solid fa-play" /> View</button>
-            <button className="tt-action-btn" onClick={() => onEdit(r)}><i className="fa-regular fa-pen-to-square" /> Edit</button>
-            <button className="tt-action-btn danger" data-tip="Delete Training" data-tip-pos="left" onClick={() => onDelete(r)}><i className="fa-regular fa-trash-can" /></button>
+            <button {...P.lock('trainings', 'edit', { className: 'tt-action-btn' })} onClick={() => onEdit(r)}><i className="fa-regular fa-pen-to-square" /> Edit</button>
+            <button {...P.lock('trainings', 'delete', { className: 'tt-action-btn danger', 'data-tip': 'Delete Training', 'data-tip-pos': 'left' })} onClick={() => onDelete(r)}><i className="fa-regular fa-trash-can" /></button>
           </div>
         </div>
       ))}
@@ -164,7 +179,7 @@ function RecordedPanel({ rows, onView, onEdit, onDelete }) {
 }
 
 /* ═══════════════════════ UPCOMING PANEL ═══════════════════════ */
-function UpcomingPanel({ rows, onEdit, onDone, onDelete }) {
+function UpcomingPanel({ rows, P, onEdit, onDone, onDelete }) {
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('all');
   const [status, setStatus] = useState('all');
@@ -203,9 +218,9 @@ function UpcomingPanel({ rows, onEdit, onDone, onDelete }) {
             {u.link && <a href={u.link} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 700, color: 'var(--info)', textDecoration: 'none' }}><i className="fa-solid fa-video" /> Join Meeting</a>}
           </div>
           <div className="tt-card-actions">
-            <button className="tt-action-btn" onClick={() => onEdit(u)}><i className="fa-regular fa-pen-to-square" /> Edit</button>
-            {u.status === 'scheduled' && <button className="tt-action-btn" style={{ color: 'var(--success)', borderColor: 'var(--success)' }} onClick={() => onDone(u.id)}><i className="fa-solid fa-check" /> Done</button>}
-            <button className="tt-action-btn danger" data-tip="Delete Training" data-tip-pos="left" onClick={() => onDelete(u)}><i className="fa-regular fa-trash-can" /></button>
+            <button {...P.lock('trainings', 'edit', { className: 'tt-action-btn' })} onClick={() => onEdit(u)}><i className="fa-regular fa-pen-to-square" /> Edit</button>
+            {u.status === 'scheduled' && <button {...P.lock('trainings', 'edit', { className: 'tt-action-btn', style: { color: 'var(--success)', borderColor: 'var(--success)' } })} onClick={() => onDone(u.id)}><i className="fa-solid fa-check" /> Done</button>}
+            <button {...P.lock('trainings', 'delete', { className: 'tt-action-btn danger', 'data-tip': 'Delete Training', 'data-tip-pos': 'left' })} onClick={() => onDelete(u)}><i className="fa-regular fa-trash-can" /></button>
           </div>
         </div>
       ))}

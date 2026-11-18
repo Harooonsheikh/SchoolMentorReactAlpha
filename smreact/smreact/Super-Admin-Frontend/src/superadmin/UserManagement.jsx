@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { userInitials, pageButtons } from './userMgmtData';
 import { INITIAL_LAUNCH, INITIAL_ERP } from './statusData';
-import { authApi, schoolProgressApi, moduleAccessApi } from './api';
-import { MODULE_ACCESS_FIELDS } from './api/services/userModuleAccess';
+import { authApi, schoolProgressApi } from './api';
+import UserPermissionMatrix from './UserPermissionMatrix';
+import { useSaPerms } from './saPerms';
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -15,19 +16,26 @@ import { MODULE_ACCESS_FIELDS } from './api/services/userModuleAccess';
    All state is in-component demo state (see ./userMgmtData). No backend.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* screen = permissionModel MODULE_SCREENS.userManagement ka id */
 const TABS = [
-  { id: 'reg',    name: 'User Registration', icon: 'fa-user-plus' },
-  { id: 'assign', name: 'Assign School',     icon: 'fa-school' },
-  { id: 'perm',   name: 'User Permission',   icon: 'fa-shield-halved' },
+  { id: 'reg',    name: 'User Registration', icon: 'fa-user-plus',     screen: 'registration' },
+  { id: 'assign', name: 'Assign School',     icon: 'fa-school',        screen: 'assign' },
+  { id: 'perm',   name: 'User Permission',   icon: 'fa-shield-halved', screen: 'permissions' },
 ];
 
 export default function UserManagement({ toast, users, setUsers, reloadUsers, setPerms, onPermsSaved }) {
-  const [tab, setTab] = useState('reg');
+  const [tabSel, setTab] = useState('reg');
   const [modal, setModal] = useState(null);
+
+  /* View permission na ho to tab chhupa do; current tab chhupa ho to pehla visible. */
+  const P = useSaPerms('userManagement');
+  const visibleTabs = TABS.filter((t) => P.canView(t.screen));
+  const tab = visibleTabs.some((t) => t.id === tabSel) ? tabSel : visibleTabs[0]?.id;
 
   /* Add User → POST /api/Auth/signup, phir list GET /api/Auth/get-all-users se taza.
      true lautata hai jab user ban gaya (form tab hi saaf hota hai). */
   const addUser = async (form) => {
+    if (!P.guard('registration', 'create', toast)) return false;
     const { firstName, lastName } = form;
     try {
       await authApi.signup({ firstName, lastName, userName: form.userName, password: form.password, isAdmin: true });
@@ -42,6 +50,7 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
   /* Save Changes → PUT /api/Auth/update-user. "Active" ka tick hataya ho to
      saath me deactivate-user bhi. Kamyabi par list API se taza. */
   const saveUser = async (id, patch) => {
+    if (!P.guard('registration', 'edit', toast)) return false;
     const user = users.find((u) => u.id === id) || {};
     try {
       await authApi.updateUser({
@@ -64,6 +73,7 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
   };
   /* Delete → PUT /api/Auth/deactivate-user/{id} (user band hota hai, mitaya nahi jata). */
   const deleteUser = async (id) => {
+    if (!P.guard('registration', 'delete', toast)) return false;
     try {
       await authApi.deactivateUser(id);
     } catch (err) {
@@ -79,6 +89,7 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
   };
   /* Inactive user → PUT /api/Auth/activate-user/{id}. */
   const activateUser = async (u) => {
+    if (!P.guard('registration', 'edit', toast)) return false;
     try {
       await authApi.activateUser(u.id);
     } catch (err) {
@@ -104,17 +115,23 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
       </div>
 
       <div className="um-tabs">
-        {TABS.map((t) => <button key={t.id} className={`um-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
+        {visibleTabs.map((t) => <button key={t.id} className={`um-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
       </div>
 
+      {!tab && (
+        <div className="section-card" style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>
+          <i className="fa-solid fa-lock" style={{ fontSize: 26, opacity: 0.3, display: 'block', marginBottom: 10 }} />
+          <div style={{ fontSize: 14, fontWeight: 700 }}>You don't have permission to view this</div>
+        </div>
+      )}
       {tab === 'reg' && (
         <RegistrationTab users={users} onAdd={addUser}
-          onEdit={(u) => setModal({ type: 'edit', user: u })}
-          onDelete={(u) => setModal({ type: 'del', user: u })}
+          onEdit={(u) => { if (P.guard('registration', 'edit', toast)) setModal({ type: 'edit', user: u }); }}
+          onDelete={(u) => { if (P.guard('registration', 'delete', toast)) setModal({ type: 'del', user: u }); }}
           onActivate={activateUser} toast={toast} />
       )}
       {tab === 'assign' && <AssignTab users={users} toast={toast} />}
-      {tab === 'perm' && <PermissionTab users={users} setPerms={setPerms} toast={toast} onPermsSaved={onPermsSaved} />}
+      {tab === 'perm' && <UserPermissionMatrix users={users} setPerms={setPerms} toast={toast} onPermsSaved={onPermsSaved} />}
 
       {modal?.type === 'edit' && <EditUserModal user={modal.user} onClose={() => setModal(null)} onSave={saveUser} toast={toast} />}
       {modal?.type === 'del' && <DeleteUserModal user={modal.user} onClose={() => setModal(null)} onConfirm={() => deleteUser(modal.user.id)} />}
@@ -125,6 +142,7 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
 /* ═══════════════════════ REGISTRATION TAB ═══════════════════════ */
 function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate, toast }) {
   const EMPTY = { firstName: '', lastName: '', phone: '', password: '', active: true };
+  const P = useSaPerms('userManagement');
   const [activatingId, setActivatingId] = useState(null);
   const onActivate = async (u) => {
     if (activatingId) return;
@@ -182,7 +200,7 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate,
             </div>
           </div>
           <div className="um-checkbox-row"><input type="checkbox" id="um-active" checked={form.active} onChange={(e) => set('active', e.target.checked)} /><label htmlFor="um-active">Active</label></div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn-primary" onClick={submit} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-user-plus'}`} /> {saving ? 'Adding…' : 'Add User'}</button></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button {...P.lock('registration', 'create', { className: 'btn-primary', disabled: saving })} onClick={submit}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-user-plus'}`} /> {saving ? 'Adding…' : 'Add User'}</button></div>
         </div>
       </div>
 
@@ -214,12 +232,12 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate,
                   <td style={{ textAlign: 'center' }}><span className={`badge ${u.active ? 'b-green' : 'b-gray'}`}>{u.active ? 'Active' : 'Inactive'}</span></td>
                   <td style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
-                      <button className="btn-sm" style={{ height: 28, fontSize: 11.5 }} onClick={() => onEdit(u)}><i className="fa-solid fa-pen" /> Edit</button>
+                      <button {...P.lock('registration', 'edit', { className: 'btn-sm', style: { height: 28, fontSize: 11.5 } })} onClick={() => onEdit(u)}><i className="fa-solid fa-pen" /> Edit</button>
                       {u.active ? (
-                        <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => onDelete(u)}><i className="fa-solid fa-trash-can" /> Delete</button>
+                        <button {...P.lock('registration', 'delete', { className: 'btn-sm', style: { height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } })} onClick={() => onDelete(u)}><i className="fa-solid fa-trash-can" /> Delete</button>
                       ) : (
-                        /* Deactivated user — dobara chalu karne ka rasta (PUT activate-user). */
-                        <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: '#16A34A', color: '#16A34A', background: 'rgba(22,163,74,.06)' }} onClick={() => onActivate(u)} disabled={activatingId === u.id}><i className={`fa-solid ${activatingId === u.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} /> Activate</button>
+                        /* Deactivated user — dobara chalu karne ka rasta (PUT activate-user). Activate = Edit permission. */
+                        <button {...P.lock('registration', 'edit', { className: 'btn-sm', style: { height: 28, fontSize: 11.5, borderColor: '#16A34A', color: '#16A34A', background: 'rgba(22,163,74,.06)' }, disabled: activatingId === u.id })} onClick={() => onActivate(u)}><i className={`fa-solid ${activatingId === u.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} /> Activate</button>
                       )}
                     </div>
                   </td>
@@ -243,6 +261,7 @@ function AssignTab({ users, toast }) {
   const [page, setPage] = useState(1);
   const [draft, setDraft] = useState(null);   // working copy of assigned ids for selected user
   const [saving, setSaving] = useState(false);
+  const P = useSaPerms('userManagement');
 
   /* Asli assignments — manage_assignedUser (action GET): branchId → { id, userId }.
      Ek branch ka ek hi user hota hai (UPSERT branchID par chalta hai). */
@@ -310,6 +329,7 @@ function AssignTab({ users, toast }) {
      launchSetup: ERP list ka school 1, Launch Setup ka 0. */
   const save = async () => {
     if (saving) return;
+    if (!P.guard('assign', 'edit', toast)) return;
     if (!userId) { toast?.('Please select a user first', 'warn'); return; }
     const want = new Set((draft || assignedForUser).map(Number));
     const had = new Set(assignedForUser.map(Number));
@@ -385,7 +405,7 @@ function AssignTab({ users, toast }) {
             </table>
           </div>
           {total > perPage && <Pagination cur={cur} totalPages={totalPages} start={start} end={end} total={total} onGo={setPage} />}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button className="btn-primary" onClick={save} disabled={saving}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Assignment'}</button></div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}><button {...P.lock('assign', 'edit', { className: 'btn-primary', disabled: saving })} onClick={save}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Assignment'}</button></div>
         </div>
       </div>
     </div>
@@ -393,87 +413,8 @@ function AssignTab({ users, toast }) {
 }
 
 /* ═══════════════════════ PERMISSION TAB ═══════════════════════ */
-/* Menu list + save/load — POST /api/UserModuleAccess/manage (get / save).
-   draft = checked field keys (MODULE_ACCESS_FIELDS). Record na ho to sab checked
-   dikhte hain (sidebar bhi tab sab dikhata hai — full access by default). */
-const ALL_KEYS = MODULE_ACCESS_FIELDS.map((f) => f.key);
-function PermissionTab({ users, setPerms, toast, onPermsSaved }) {
-  const [userId, setUserId] = useState('');
-  const [draft, setDraft] = useState([]);
-  const [recId, setRecId] = useState(0);
-  const [hasRecord, setHasRecord] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const onUser = async (id) => {
-    setUserId(id); setDraft([]); setRecId(0); setHasRecord(false);
-    if (!id) return;
-    setLoading(true);
-    try {
-      const rec = await moduleAccessApi.getModuleAccess(id);
-      if (rec) { setRecId(rec.id); setHasRecord(true); setDraft(ALL_KEYS.filter((k) => rec.flags[k])); }
-      else setDraft([...ALL_KEYS]);
-    } catch (err) {
-      toast?.(err?.message || 'Could not load permissions', 'error');
-    } finally { setLoading(false); }
-  };
-  const toggle = (k) => setDraft((prev) => prev.includes(k) ? prev.filter((m) => m !== k) : [...prev, k]);
-  const allChecked = ALL_KEYS.every((k) => draft.includes(k));
-  const toggleAll = (checked) => setDraft(checked ? [...ALL_KEYS] : []);
-  const save = async () => {
-    if (saving) return;
-    if (!userId) { toast?.('Please select a user first', 'warn'); return; }
-    const flags = {}; ALL_KEYS.forEach((k) => { flags[k] = draft.includes(k); });
-    setSaving(true);
-    try {
-      const { id } = await moduleAccessApi.saveModuleAccess({ userId, id: recId, flags });
-      /* Dobara get — asal saved id/flags (agli save update bane, insert nahi). */
-      const rec = await moduleAccessApi.getModuleAccess(userId).catch(() => null);
-      setRecId(rec?.id || id || recId); setHasRecord(true);
-      setPerms?.((prev) => ({ ...prev, [userId]: moduleAccessApi.flagsToLegacyMenus(flags) }));
-      onPermsSaved?.(Number(userId));
-      toast?.('Permissions updated', 'success');
-    } catch (err) {
-      toast?.(err?.message || 'Could not save permissions', 'error');
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <div className="um-panel">
-      <div className="section-card">
-        <div className="card-header"><div className="card-title"><i className="fa-solid fa-shield-halved" /> User Permission</div></div>
-        <div style={{ padding: 20 }}>
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)', display: 'block', marginBottom: 6 }}><i className="fa-solid fa-user" style={{ color: 'var(--brand)', marginRight: 4 }} /> Select User</label>
-            <select className="um-user-select" value={userId} onChange={(e) => onUser(e.target.value)}><option value="">Select User</option>{users.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}</select>
-          </div>
-          <div className="tbl-wrap">
-            <table className="um-perm-table">
-              <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Menu</th><th style={{ width: 140 }}><label className="um-select-all-th"><input type="checkbox" disabled={!userId} checked={!!userId && allChecked} onChange={(e) => toggleAll(e.target.checked)} /> Select All</label></th></tr></thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading permissions…</td></tr>
-                ) : MODULE_ACCESS_FIELDS.map((m, i) => (
-                  <tr key={m.key}>
-                    <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                    <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{m.label}</td>
-                    <td><input type="checkbox" disabled={!userId} checked={draft.includes(m.key)} onChange={() => toggle(m.key)} style={{ width: 16, height: 16, accentColor: 'var(--brand)', cursor: 'pointer' }} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, gap: 10 }}>
-            <div style={{ fontSize: 12, color: 'var(--tm)' }}>
-              {userId && !loading && !hasRecord ? 'No saved permissions yet — this user currently has full access.' : ''}
-            </div>
-            <button className="btn-primary" onClick={save} disabled={saving || loading}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Update Status'}</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* ERP jaisa design — users table + Edit Permissions modal (module rail +
+   screens × actions). Dekhein ./UserPermissionMatrix.jsx. */
 
 /* ═══════════════════════ SHARED ═══════════════════════ */
 function Pagination({ cur, totalPages, start, end, total, onGo }) {

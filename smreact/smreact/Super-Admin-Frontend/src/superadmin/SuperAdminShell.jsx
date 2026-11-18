@@ -15,6 +15,8 @@ import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
 import TechModule from './TechModule';
 import { PermissionsProvider } from './adminPermissions/AdminPermissionsContext';
+import { SaPermsProvider, useSaPerms } from './saPerms';
+import { effectivePermsFromRows } from './permissionModel';
 import { INITIAL_USERS, INITIAL_PERMS, UM_MENUS } from './userMgmtData';
 import { authApi, moduleAccessApi } from './api';
 import { installSessionGuard, setSessionGuardActive } from './api/sessionGuard';
@@ -59,6 +61,33 @@ const SUPPORT_TABS = [
   { id: 'overview', name: 'Overview',    icon: 'fa-gauge-high' },
   { id: 'inbox',    name: 'Agent Inbox', icon: 'fa-inbox' },
 ];
+
+/* Support tab strip + embedded console. A child of <SaPermsProvider> so it can read the
+   logged-in user's User Permission matrix: tabs without View are hidden, and a hidden
+   current tab falls back to the first visible one. */
+function SupportTabsBody({ supportTab, setSupportTab }) {
+  const P = useSaPerms('support');
+  const tabs = SUPPORT_TABS.filter((t) => P.canView(t.id));
+  const active = tabs.some((t) => t.id === supportTab) ? supportTab : (tabs[0]?.id || null);
+  if (!active) {
+    return <div className="db-block"><i className="fa-solid fa-lock" /><div className="db-block-ttl">You don't have permission to view this</div></div>;
+  }
+  return (
+    <>
+      <div className="app-tabs">
+        {tabs.map((t) => (
+          <button key={t.id} className={`app-tab${active === t.id ? ' active' : ''}`} onClick={() => setSupportTab(t.id)}>
+            <i className={`fa-solid ${t.icon}`} /> {t.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="sa-support-embed">
+        <AgentSupport embedded tab={active} onTab={(id) => { if (P.canView(id)) setSupportTab(id); }} />
+      </div>
+    </>
+  );
+}
 
 const CRUMB = {
   dashboard:   'Dashboard',
@@ -136,26 +165,30 @@ export default function SuperAdminShell({ user, onLogout }) {
   };
   useEffect(() => { reloadUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Sidebar access — logged-in user ka UserModuleAccess record (action get).
+  /* Sidebar access — logged-in user ki saved permissions (Auth get-superadmin-module-permission).
      null = koi record nahi / host-embedded → saare modules (full access by default). */
   const [navAllowed, setNavAllowed] = useState(null);
   /* Pehla get chalne tak sidebar khali (loader) — warna login ke baad ek pal ke
      liye saare modules dikh kar phir chhupte. */
   const [accessLoading, setAccessLoading] = useState(true);
+  /* Screen × action permissions of the logged-in user (null = full access). */
+  const [myPerms, setMyPerms] = useState(null);
   const loadMyAccess = async () => {
     const me = user?.id ? Number(user.id) : authApi.currentUserId();
     if (!me) { setNavAllowed(null); setAccessLoading(false); return; }
     try {
       const rec = await moduleAccessApi.getModuleAccess(me);
       setNavAllowed(moduleAccessApi.allowedNavIds(rec?.flags || null));
+      setMyPerms(rec ? effectivePermsFromRows(rec.flags, rec.rows) : null);
     } catch (err) {
       console.warn('[superadmin] module access load failed — showing all modules', err);
       setNavAllowed(null);
+      setMyPerms(null);
     } finally {
       setAccessLoading(false);
     }
   };
-  /* Login ke baad (aur reload par) — GET /api/UserModuleAccess/manage, action "get". */
+  /* Login ke baad (aur reload par) — GET /api/Auth/get-superadmin-module-permission-byuserid/{id}. */
   useEffect(() => { setAccessLoading(true); loadMyAccess(); }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   /* User Permission save hua aur woh khud logged-in user tha → sidebar foran taza. */
   const onPermsSaved = (uid) => {
@@ -240,6 +273,7 @@ const onNav = (id) => {
 
   return (
     <PermissionsProvider>
+    <SaPermsProvider perms={myPerms}>
     <div className="sa-root" data-theme={theme === 'dark' ? 'dark' : undefined}>
       <SupportBackgroundListener
   enabled={true}
@@ -392,17 +426,7 @@ const onNav = (id) => {
                 </div>
               </div>
 
-              <div className="app-tabs">
-                {SUPPORT_TABS.map((t) => (
-                  <button key={t.id} className={`app-tab${supportTab === t.id ? ' active' : ''}`} onClick={() => setSupportTab(t.id)}>
-                    <i className={`fa-solid ${t.icon}`} /> {t.name}
-                  </button>
-                ))}
-              </div>
-
-              <div className="sa-support-embed">
-                <AgentSupport embedded tab={supportTab} onTab={setSupportTab} />
-              </div>
+              <SupportTabsBody supportTab={supportTab} setSupportTab={setSupportTab} />
             </div>
           )}
         </main>
@@ -418,6 +442,7 @@ const onNav = (id) => {
         ))}
       </div>
     </div>
+    </SaPermsProvider>
     </PermissionsProvider>
   );
 }

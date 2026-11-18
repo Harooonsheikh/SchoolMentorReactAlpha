@@ -5,6 +5,7 @@ import {
 } from './mentorData';
 import { branchesApi } from './api';
 import PaymentReport from './PaymentReport';
+import { useSaPerms, lockTip } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    MENTOR AI MANAGEMENT — Super Admin module (frontend only)
@@ -25,6 +26,7 @@ function StatusBadge({ status }) {
 }
 
 export default function MentorAI({ toast }) {
+  const P = useSaPerms('mentorAI');
   const [tab, setTab] = useState('plans');           // 'plans' | 'payments'
   const [schools, setSchools] = useState([]);
   const [payments, setPayments] = useState(INITIAL_PAYMENTS);
@@ -58,6 +60,11 @@ export default function MentorAI({ toast }) {
 
   const getSchool = (id) => schools.find((s) => s.id === id);
 
+  /* View permission → hide tabs; fall back to the first visible one. */
+  const canPlans = P.canView('plans');
+  const canPayments = P.canView('payments');
+  const curTab = tab === 'plans' && canPlans ? 'plans' : tab === 'payments' && canPayments ? 'payments' : canPlans ? 'plans' : canPayments ? 'payments' : null;
+
   return (
     <div className="page-content">
       {/* PAGE HEADER */}
@@ -73,20 +80,24 @@ export default function MentorAI({ toast }) {
 
       {/* MODULE TABS */}
       <div className="app-tabs">
-        <button className={`app-tab${tab === 'plans' ? ' active' : ''}`} onClick={() => setTab('plans')}>
+        {canPlans && <button className={`app-tab${curTab === 'plans' ? ' active' : ''}`} onClick={() => setTab('plans')}>
           <i className="fa-solid fa-sliders" /> Plan Management
-        </button>
-        <button className={`app-tab${tab === 'payments' ? ' active' : ''}`} onClick={() => setTab('payments')}>
+        </button>}
+        {canPayments && <button className={`app-tab${curTab === 'payments' ? ' active' : ''}`} onClick={() => setTab('payments')}>
           <i className="fa-solid fa-money-bill-wave" /> Payments
-        </button>
+        </button>}
       </div>
 
-      {tab === 'plans' && (
-        <PlansPanel schools={schools} setSchools={setSchools} getSchool={getSchool} toast={toast} loading={loadingSchools} reload={loadSchools} />
+      {!curTab && (
+        <div className="section-card" style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-lock" style={{ fontSize: 28, opacity: 0.2, display: 'block', marginBottom: 10 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>You don't have permission to view this</div></div>
       )}
-      {tab === 'payments' && (
+
+      {curTab === 'plans' && (
+        <PlansPanel P={P} schools={schools} setSchools={setSchools} getSchool={getSchool} toast={toast} loading={loadingSchools} reload={loadSchools} />
+      )}
+      {curTab === 'payments' && (
         <PaymentsPanel
-          schools={schools} payments={payments} setPayments={setPayments}
+          P={P} schools={schools} payments={payments} setPayments={setPayments}
           getSchool={getSchool} paymentSeq={paymentSeq} toast={toast}
         />
       )}
@@ -95,7 +106,10 @@ export default function MentorAI({ toast }) {
 }
 
 /* ═══════════════════════ PLANS PANEL ═══════════════════════ */
-function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) {
+/* Row action → permission action (usage / history are read-only views). */
+const planActPerm = (act) => (act === 'usage' || act === 'history' ? 'view' : 'edit');
+
+function PlansPanel({ P, schools, setSchools, getSchool, toast, loading, reload }) {
   const [search, setSearch] = useState('');
   const [planFilter, setPlanFilter] = useState('All Plans');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -130,6 +144,7 @@ function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) 
 
   const handleAction = (act, id) => {
     setOpenMenu(null);
+    if (!P.guard('plans', planActPerm(act), toast)) return;
     const s = getSchool(id);
     if (!s) return;
     if (act === 'block') setModal({ type: 'block', school: s, reason: '', notes: '', effective: today() });
@@ -141,6 +156,7 @@ function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) 
 
   const confirmPlan = async () => {
     if (modal.saving) return;                    // guard against double-submit
+    if (!P.guard('plans', 'edit', toast)) return;
     setModal((m) => ({ ...m, saving: true }));
     try {
       await branchesApi.updateBranchPlan(modal.school.id, modal.newPlan, true);
@@ -156,6 +172,7 @@ function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) 
   };
 const confirmBlock = async () => {
   if (modal.saving) return;
+  if (!P.guard('plans', 'edit', toast)) return;
   setModal((m) => ({ ...m, saving: true }));
   try {
     // POST /ai/api/wallet/admin/branches/{id}/status/  { wallet_enabled: false }
@@ -172,6 +189,7 @@ const confirmBlock = async () => {
 
 const confirmUnblock = async () => {
   if (modal.saving) return;
+  if (!P.guard('plans', 'edit', toast)) return;
   setModal((m) => ({ ...m, saving: true }));
   try {
     // POST /ai/api/wallet/admin/branches/{id}/status/  { wallet_enabled: true }
@@ -228,10 +246,10 @@ const confirmUnblock = async () => {
         </div>
 
         <div className="export-row">
-          <button className="btn-danger" onClick={() => toast('PDF export is wired to the backend in production', 'info')}>
+          <button {...P.lock('plans', 'download', { className: 'btn-danger' })} onClick={() => { if (P.guard('plans', 'download', toast)) toast('PDF export is wired to the backend in production', 'info'); }}>
             <i className="fa-solid fa-file-pdf" /> Export PDF Report
           </button>
-          <button className="btn-secondary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print</button>
+          <button {...P.lock('plans', 'download', { className: 'btn-secondary' })} onClick={() => { if (P.guard('plans', 'download', toast)) window.print(); }}><i className="fa-solid fa-print" /> Print</button>
         </div>
 
         <div className="tbl-wrap">
@@ -266,7 +284,7 @@ const confirmUnblock = async () => {
                       </button>
                       <div className={`action-menu${openMenu === s.id ? ' open' : ''}`}>
                         {actionsFor(s).map(([act, lbl]) => (
-                          <button key={act} className={act === 'block' ? 'danger' : ''} onClick={() => handleAction(act, s.id)}>
+                          <button key={act} {...P.lock('plans', planActPerm(act), { className: act === 'block' ? 'danger' : '' })} onClick={() => handleAction(act, s.id)}>
                             <i className={`fa-solid ${ACTION_ICON[act] || 'fa-circle'}`} />{lbl}
                           </button>
                         ))}
@@ -356,6 +374,7 @@ const confirmUnblock = async () => {
 
       {modal?.type === 'usage' && (
         <UsageModal
+          P={P}
           school={modal.school}
           toast={toast}
           onWalletChange={(enabled) => setSchools((prev) => prev.map((s) =>
@@ -368,7 +387,7 @@ const confirmUnblock = async () => {
 }
 
 /* ═══════════════════════ PAYMENTS PANEL ═══════════════════════ */
-function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, toast }) {
+function PaymentsPanel({ P, schools, payments, setPayments, getSchool, paymentSeq, toast }) {
   const [search, setSearch] = useState('');
   const [planFilter, setPlanFilter] = useState('All Plans');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -399,6 +418,7 @@ function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, 
   };
 
   const savePayment = (form) => {
+    if (!P.guard('payments', 'approve', toast)) return;
     const s = getSchool(Number(form.schoolId));
     setPayments((prev) => [{
       id: paymentSeq.current++, schoolId: s.id, school: s.school, campus: s.campus, currentPlan: s.plan,
@@ -426,7 +446,7 @@ function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, 
             <div className="card-title"><i className="fa-solid fa-receipt" /> Mentor AI Payments Management</div>
             <div className="card-sub">Track and manage all payment transactions for Mentor AI subscriptions</div>
           </div>
-          <button className="btn-success" onClick={() => setModal({ type: 'receive' })}><i className="fa-solid fa-plus" /> Receive Payment</button>
+          <button {...P.lock('payments', 'approve', { className: 'btn-success' })} onClick={() => { if (P.guard('payments', 'approve', toast)) setModal({ type: 'receive' }); }}><i className="fa-solid fa-plus" /> Receive Payment</button>
         </div>
 
         <div className="filter-bar">
@@ -463,8 +483,8 @@ function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, 
             <input type="month" className="f-input" value={toMonth} onChange={(e) => setToMonth(e.target.value)} />
           </div>
           <button className="btn-secondary" onClick={resetFilters}><i className="fa-solid fa-rotate-left" /> Reset</button>
-          <button className="btn-danger" onClick={() => setReportPopup('PDF')}><i className="fa-solid fa-file-pdf" /> PDF Report</button>
-          <button className="btn-info" onClick={() => setReportPopup('Word')}><i className="fa-solid fa-file-word" /> Word Report</button>
+          <button {...P.lock('payments', 'download', { className: 'btn-danger' })} onClick={() => { if (P.guard('payments', 'download', toast)) setReportPopup('PDF'); }}><i className="fa-solid fa-file-pdf" /> PDF Report</button>
+          <button {...P.lock('payments', 'download', { className: 'btn-info' })} onClick={() => { if (P.guard('payments', 'download', toast)) setReportPopup('Word'); }}><i className="fa-solid fa-file-word" /> Word Report</button>
         </div>
 
         {/* Desktop table */}
@@ -552,7 +572,7 @@ function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, 
       {/* Modals */}
       {modal?.type === 'receive' && <ReceivePaymentModal schools={schools} onClose={() => setModal(null)} onSave={savePayment} />}
       {modal?.type === 'history' && <PaymentHistoryModal payments={payments} school={getSchool(modal.schoolId)} schoolId={modal.schoolId} onClose={() => setModal(null)} />}
-      {modal?.type === 'proof' && <ProofViewModal payments={payments} clicked={modal.payment} from={applied.from} to={applied.to} onClose={() => setModal(null)} />}
+      {modal?.type === 'proof' && <ProofViewModal canDownload={P.can('payments', 'download')} payments={payments} clicked={modal.payment} from={applied.from} to={applied.to} onClose={() => setModal(null)} />}
 
       {reportPopup && (
         <Modal title="Select Report Style" sub={`Choose the style for your ${reportPopup} report.`} icon="fa-file-lines"
@@ -578,7 +598,7 @@ function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, 
           onClose={() => setReport(null)} bodyStyle={{ padding: 0 }}
           footer={<>
             <button className="btn-secondary" onClick={() => setReport(null)}>Close</button>
-            <button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button>
+            <button {...P.lock('payments', 'download', { className: 'btn-primary' })} onClick={() => { if (P.guard('payments', 'download', toast)) window.print(); }}><i className="fa-solid fa-print" /> Print / Save</button>
           </>}>
           <PaymentReport {...report} />
         </Modal>
@@ -600,7 +620,7 @@ const BUCKET_STATE_COLOR = {
   healthy: 'var(--success)', warning: 'var(--warn)', critical: 'var(--err)', exhausted: 'var(--err)',
 };
 
-function UsageModal({ school, toast, onWalletChange, onClose }) {
+function UsageModal({ P, school, toast, onWalletChange, onClose }) {
   const [loading, setLoading] = useState(true);
   const [wallet, setWallet] = useState(null);
   const [enabled, setEnabled] = useState(Boolean(school.walletEnabled));
@@ -619,6 +639,7 @@ function UsageModal({ school, toast, onWalletChange, onClose }) {
 
   const toggleWallet = async () => {
     if (toggling) return;
+    if (!P.guard('plans', 'edit', toast)) return;
     const next = !enabled;
     setToggling(true);
     try {
@@ -635,6 +656,7 @@ function UsageModal({ school, toast, onWalletChange, onClose }) {
   };
 
   const buckets = wallet?.buckets || {};
+  const canToggle = P.can('plans', 'edit');
 
   return (
     <Modal large title="Mentor AI Usage Details" sub={`Plan: ${school.plan} · Status: ${school.status} · Due: ${school.due}`}
@@ -645,8 +667,9 @@ function UsageModal({ school, toast, onWalletChange, onClose }) {
         <button
           className={enabled ? 'btn-success' : 'btn-secondary'}
           onClick={toggleWallet}
-          disabled={toggling || loading}
-          data-tip="Toggle wallet access">
+          disabled={toggling || loading || !canToggle}
+          data-tip={canToggle ? 'Toggle wallet access' : lockTip('edit')}
+          style={canToggle ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}>
           <i className={`fa-solid ${toggling ? 'fa-spinner fa-spin' : enabled ? 'fa-toggle-on' : 'fa-toggle-off'}`} />
           {' '}Wallet {enabled ? 'Enabled' : 'Disabled'}
         </button>
@@ -800,7 +823,7 @@ function PaymentHistoryModal({ payments, school, schoolId, onClose }) {
   );
 }
 
-function ProofViewModal({ payments, clicked, from, to, onClose }) {
+function ProofViewModal({ canDownload, payments, clicked, from, to, onClose }) {
   const schoolPayments = payments.filter((x) =>
     x.schoolId === clicked.schoolId && x.status === 'Received' &&
     (!from || x.date.slice(0, 7) >= from) && (!to || x.date.slice(0, 7) <= to));
@@ -840,7 +863,7 @@ function ProofViewModal({ payments, clicked, from, to, onClose }) {
                       <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.75)' }}>{monthList.length} payment{monthList.length > 1 ? 's' : ''} · PKR {fmt(totalAmt)}</div>
                     </div>
                   </div>
-                  {proofP && <a href={proofP.proofUrl} download={`proof-${mk}.svg`} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(255,255,255,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} data-tip="Download Proof"><i className="fa-solid fa-download" style={{ color: '#fff', fontSize: 11 }} /></a>}
+                  {proofP && canDownload && <a href={proofP.proofUrl} download={`proof-${mk}.svg`} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(255,255,255,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} data-tip="Download Proof"><i className="fa-solid fa-download" style={{ color: '#fff', fontSize: 11 }} /></a>}
                 </div>
                 <div className="proof-month-img">
                   {proofP

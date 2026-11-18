@@ -12,6 +12,7 @@ import { evaluateSpec, METRIC_BY_ID } from './dashboard/metrics';
 import { pkToday } from './dashboard/periods';
 import { fmtCount, fmtPKR, isMissing } from './format';
 import { TransactionReport, RevenueReport } from './OneLinkReports';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    1LINK / 1BILL OVERVIEW — network-wide payment monitoring + revenue.
@@ -42,6 +43,8 @@ const CUSTOM_MODES = [
 export default function OneLinkOverviewSection({ toast }) {
   /* ── Global period filter (shared by both cards + reports) ── */
   const today = pkToday();
+  /* User Permission: Dashboard ▸ Fee Analytics & 1LINK Overview — report/print = download. */
+  const P = useSaPerms('dashboard');
   const [quick, setQuick] = useState('thisMonth');
   const [customMode, setCustomMode] = useState('single');
   const [customDate, setCustomDate] = useState(today);
@@ -197,7 +200,7 @@ useEffect(() => {
           <div className="card-header">
             <div><div className="card-title"><i className="fa-solid fa-money-bill-transfer" /> 1LINK Collections</div><div className="card-sub" style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 3 }}>Network-wide · {period.label}</div></div>
             <div className="card-header-right">
-              <button className="rpt-pdf-btn" onClick={() => setShowTxnReport(true)} data-tip="Download the detailed transaction report" data-tip-pos="left">
+              <button {...P.lock('fee_analytics', 'download', { className: 'rpt-pdf-btn', 'data-tip': 'Download the detailed transaction report', 'data-tip-pos': 'left' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) setShowTxnReport(true); }}>
                 <i className="fa-solid fa-download" /> Download Report
               </button>
             </div>
@@ -232,10 +235,10 @@ useEffect(() => {
           <div className="card-header">
             <div><div className="card-title"><i className="fa-solid fa-sack-dollar" /> Transaction Revenue</div><div className="card-sub" style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 3 }}>School Mentor's margin · {period.label}</div></div>
             <div className="card-header-right">
-              <button className="btn-secondary" style={{ height: 34, padding: '0 12px', fontSize: 12 }} onClick={() => setShowRateConfig(true)} data-tip="Configure transaction rates" data-tip-pos="left">
+              <button {...P.lock('fee_analytics', 'edit', { className: 'btn-secondary', style: { height: 34, padding: '0 12px', fontSize: 12 }, 'data-tip': 'Configure transaction rates', 'data-tip-pos': 'left' })} onClick={() => { if (P.guard('fee_analytics', 'edit', toast)) setShowRateConfig(true); }}>
                 <i className="fa-solid fa-gear" /> Rates
               </button>
-              <button className="btn-info" style={{ height: 34, padding: '0 14px', fontSize: 12 }} onClick={() => setShowRevReport(true)} data-tip="Download the revenue report" data-tip-pos="left">
+              <button {...P.lock('fee_analytics', 'download', { className: 'btn-info', style: { height: 34, padding: '0 14px', fontSize: 12 }, 'data-tip': 'Download the revenue report', 'data-tip-pos': 'left' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) setShowRevReport(true); }}>
                 <i className="fa-solid fa-download" /> Revenue Report
               </button>
             </div>
@@ -275,7 +278,7 @@ useEffect(() => {
       {drillSchool && (
         <Modal title={drillSchool.schoolName} sub={[drillSchool.branch, `School ID ${drillSchool.schoolCode}`, period.label].filter(Boolean).join(' · ')} icon="fa-receipt" large
           onClose={() => setDrillSchool(null)}
-          footer={<><button className="btn-secondary" onClick={() => setDrillSchool(null)}>Close</button><button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print</button></>}>
+          footer={<><button className="btn-secondary" onClick={() => setDrillSchool(null)}>Close</button><button {...P.lock('fee_analytics', 'download', { className: 'rpt-pdf-btn' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) window.print(); }}><i className="fa-solid fa-print" /> Print</button></>}>
           <SchoolTransactionsTable rows={drillRows} />
         </Modal>
       )}
@@ -285,6 +288,7 @@ useEffect(() => {
           rateConfig={rateConfig}
           onClose={() => setShowRateConfig(false)}
           onSave={async (payload) => {
+            if (!P.guard('fee_analytics', 'edit', toast)) throw new Error('No Edit permission');
             try {
            const res = await fetch(`${SA_API_HOST}${EP.schoolProgress.networkChargesUpdate()}`, {
   method: 'PUT',
@@ -315,7 +319,7 @@ setRateConfig(saved);
       {showTxnReport && (
         <Modal title="1LINK / 1Bill Payment Report" sub={period.label} icon="fa-file-invoice" large bodyStyle={{ padding: 0, background: '#F0F4FF' }}
           onClose={() => setShowTxnReport(false)}
-          footer={<><button className="btn-secondary" onClick={() => setShowTxnReport(false)}>Close</button><button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button></>}>
+          footer={<><button className="btn-secondary" onClick={() => setShowTxnReport(false)}>Close</button><button {...P.lock('fee_analytics', 'download', { className: 'btn-primary' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) window.print(); }}><i className="fa-solid fa-print" /> Print / Save</button></>}>
           <div style={{ padding: 20 }}><TransactionReport period={period} rows={transactions} schoolWise={schoolWise} /></div>
         </Modal>
       )}
@@ -323,7 +327,7 @@ setRateConfig(saved);
       {showRevReport && (
         <Modal title="1LINK Transaction Revenue Report" sub={period.label} icon="fa-sack-dollar" large bodyStyle={{ padding: 0, background: '#F0F4FF' }}
           onClose={() => setShowRevReport(false)}
-          footer={<><button className="btn-secondary" onClick={() => setShowRevReport(false)}>Close</button><button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button></>}>
+          footer={<><button className="btn-secondary" onClick={() => setShowRevReport(false)}>Close</button><button {...P.lock('fee_analytics', 'download', { className: 'btn-primary' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) window.print(); }}><i className="fa-solid fa-print" /> Print / Save</button></>}>
           <div style={{ padding: 20 }}><RevenueReport period={period} schoolWise={schoolWise} rateConfig={rateConfig} /></div>
         </Modal>
       )}

@@ -3,6 +3,7 @@ import { TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicke
 import useTechDevelopers from './useTechDevelopers';
 import TicketCreateForm from './TicketCreateForm';
 import LockedCard from '../adminPermissions/LockedCard';
+import { useSaPerms } from '../saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    BugsNewDevTab — Stage 1 triage queue, rendered twice by TechModule.jsx
@@ -18,6 +19,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
   const [showCreate, setShowCreate] = useState(false);
   const [assigningId, setAssigningId] = useState(null);
   const devs = useTechDevelopers();
+  const P = useSaPerms('techModule');
   const kindLabel = kind === 'bug' ? 'bug' : 'new development request';
 
   return (
@@ -28,7 +30,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
           <div className="card-sub">{tickets.length} ticket{tickets.length === 1 ? '' : 's'} awaiting triage/assignment</div>
         </div>
         {canCreate ? (
-          <button className="btn-primary" onClick={() => setShowCreate(true)}><i className="fa-solid fa-plus" /> Create New</button>
+          <button {...P.lock('bugs_new_dev', 'create', { className: 'btn-primary' })} onClick={() => { if (P.guard('bugs_new_dev', 'create', toast)) setShowCreate(true); }}><i className="fa-solid fa-plus" /> Create New</button>
         ) : <LockedCard compact title="No access to create" />}
       </div>
 
@@ -58,14 +60,14 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
                   {canAssign ? (
                     assigningId === t.id ? (
                       <>
-                        <select className="um-input" style={{ height: 32, width: 200 }} defaultValue="" onChange={(e) => { const v = e.target.value; if (!v) return; const name = devs.find((d) => String(d.id) === String(v))?.name || 'this developer'; if (window.confirm(`Assign ${t.ticketNumber} to ${name}?`)) onAssign(t.id, v); setAssigningId(null); }}>
+                        <select {...P.lock('bugs_new_dev', 'edit', { className: 'um-input', style: { height: 32, width: 200 } })} defaultValue="" onChange={(e) => { const v = e.target.value; if (!v) return; const name = devs.find((d) => String(d.id) === String(v))?.name || 'this developer'; if (window.confirm(`Assign ${t.ticketNumber} to ${name}?`)) onAssign(t.id, v); setAssigningId(null); }}>
                           <option value="" disabled>Select developer…</option>
                           {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                         <button className="btn-sm" onClick={() => setAssigningId(null)}>Cancel</button>
                       </>
                     ) : (
-                      <button className="btn-sm" onClick={() => setAssigningId(t.id)}><i className="fa-solid fa-user-plus" /> Assign</button>
+                      <button {...P.lock('bugs_new_dev', 'edit', { className: 'btn-sm' })} onClick={() => { if (P.guard('bugs_new_dev', 'edit', toast)) setAssigningId(t.id); }}><i className="fa-solid fa-user-plus" /> Assign</button>
                     )
                   ) : <LockedCard compact title="No access to assign" />}
                 </div>

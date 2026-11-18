@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { INITIAL_QUIZ, DIFFICULTIES, BULK_COLUMNS, diffClass, todayISO } from './quizData';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    QUIZ CONTENT — Super Admin module (frontend only)
@@ -17,7 +18,11 @@ const TABS = [
   { id: 'mcq',      name: 'MCQ Bank', icon: 'fa-list-check' },
 ];
 
+/* type ('class' | 'subject' | 'mcq') → permission screen id */
+const SCR = { class: 'classes', subject: 'subjects', mcq: 'mcq' };
+
 export default function QuizContent({ toast }) {
+  const P = useSaPerms('quizContent');
   const [data, setData] = useState(() => JSON.parse(JSON.stringify(INITIAL_QUIZ)));
   const [tab, setTab] = useState('classes');
   const [openDd, setOpenDd] = useState(null);          // "type-id" of open dots menu
@@ -35,21 +40,25 @@ export default function QuizContent({ toast }) {
 
   /* ── CRUD ── */
   const saveClass = (form, editId) => {
+    if (!P.guard('classes', editId ? 'edit' : 'create', toast)) return;
     if (editId) setData((d) => ({ ...d, classes: d.classes.map((c) => c.id === editId ? { ...c, ...form } : c) }));
     else setData((d) => ({ ...d, classes: [...d.classes, { id: ++seq.current.class, ...form, order: form.order || d.classes.length + 1 }] }));
     setModal(null); toast?.(editId ? 'Class updated' : 'Class added', 'success');
   };
   const saveSubject = (form, editId) => {
+    if (!P.guard('subjects', editId ? 'edit' : 'create', toast)) return;
     if (editId) setData((d) => ({ ...d, subjects: d.subjects.map((s) => s.id === editId ? { ...s, ...form } : s) }));
     else setData((d) => ({ ...d, subjects: [...d.subjects, { id: ++seq.current.subject, ...form, order: form.order || d.subjects.length + 1 }] }));
     setModal(null); toast?.(editId ? 'Subject updated' : 'Subject added', 'success');
   };
   const saveMcq = (form, editId) => {
+    if (!P.guard('mcq', editId ? 'edit' : 'create', toast)) return;
     if (editId) setData((d) => ({ ...d, mcqs: d.mcqs.map((m) => m.id === editId ? { ...m, ...form } : m) }));
     else setData((d) => ({ ...d, mcqs: [...d.mcqs, { id: ++seq.current.mcq, ...form, createdAt: todayISO() }] }));
     setModal(null); toast?.(editId ? 'MCQ updated' : 'MCQ added', 'success');
   };
   const importBulk = (rows) => {
+    if (!P.guard('mcq', 'create', toast)) return;
     setData((d) => {
       const added = rows.map((r) => ({ ...r, id: ++seq.current.mcq, createdAt: todayISO() }));
       return { ...d, mcqs: [...d.mcqs, ...added] };
@@ -57,11 +66,13 @@ export default function QuizContent({ toast }) {
     setModal(null); toast?.(`${rows.length} MCQ${rows.length !== 1 ? 's' : ''} imported`, 'success');
   };
   const toggleStatus = (type, id) => {
+    if (!P.guard(SCR[type], 'edit', toast)) return;
     const key = type === 'class' ? 'classes' : type === 'subject' ? 'subjects' : 'mcqs';
     setData((d) => ({ ...d, [key]: d[key].map((x) => x.id === id ? { ...x, status: x.status === 'active' ? 'inactive' : 'active' } : x) }));
     toast?.('Status updated', 'success');
   };
   const confirmDelete = ({ type, id }) => {
+    if (!P.guard(SCR[type], 'delete', toast)) return;
     setData((d) => {
       if (type === 'class') return { ...d, classes: d.classes.filter((c) => c.id !== id), subjects: d.subjects.filter((s) => s.classId !== id), mcqs: d.mcqs.filter((m) => m.classId !== id) };
       if (type === 'subject') return { ...d, subjects: d.subjects.filter((s) => s.id !== id), mcqs: d.mcqs.filter((m) => m.subjectId !== id) };
@@ -73,6 +84,10 @@ export default function QuizContent({ toast }) {
   /* Drill-downs */
   const viewSubjects = (classId) => { setSubClassFilter(String(classId)); setTab('subjects'); };
   const viewMcqs = (classId, subjectId) => { setMcqFilter({ classId: String(classId), subjectId: String(subjectId), status: '', diff: '', q: '' }); setTab('mcq'); };
+
+  /* View permission → hide tabs; fall back to the first visible one. */
+  const visibleTabs = TABS.filter((t) => P.canView(t.id));
+  const curTab = visibleTabs.some((t) => t.id === tab) ? tab : visibleTabs[0]?.id;
 
   return (
     <div className="page-content" onClick={() => setOpenDd(null)}>
@@ -95,27 +110,31 @@ export default function QuizContent({ toast }) {
       </div>
 
       <div className="quiz-tabs">
-        {TABS.map((t) => <button key={t.id} className={`quiz-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
+        {visibleTabs.map((t) => <button key={t.id} className={`quiz-tab${curTab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
       </div>
 
-      {tab === 'classes' && (
-        <ClassesTab data={data} openDd={openDd} setOpenDd={setOpenDd}
+      {!curTab && (
+        <div className="section-card" style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-lock" style={{ fontSize: 28, opacity: 0.2, display: 'block', marginBottom: 10 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>You don't have permission to view this</div></div>
+      )}
+
+      {curTab === 'classes' && (
+        <ClassesTab P={P} canViewNext={P.canView('subjects')} data={data} openDd={openDd} setOpenDd={setOpenDd}
           onAdd={() => setModal({ type: 'class', item: null })}
           onEdit={(c) => setModal({ type: 'class', item: c })}
           onToggle={(id) => toggleStatus('class', id)}
           onDelete={(c) => setModal({ type: 'del', target: { type: 'class', id: c.id }, label: 'Class', name: c.name })}
           onView={viewSubjects} />
       )}
-      {tab === 'subjects' && (
-        <SubjectsTab data={data} classFilter={subClassFilter} setClassFilter={setSubClassFilter} openDd={openDd} setOpenDd={setOpenDd}
+      {curTab === 'subjects' && (
+        <SubjectsTab P={P} canViewNext={P.canView('mcq')} data={data} classFilter={subClassFilter} setClassFilter={setSubClassFilter} openDd={openDd} setOpenDd={setOpenDd}
           onAdd={() => setModal({ type: 'subject', item: null })}
           onEdit={(s) => setModal({ type: 'subject', item: s })}
           onToggle={(id) => toggleStatus('subject', id)}
           onDelete={(s) => setModal({ type: 'del', target: { type: 'subject', id: s.id }, label: 'Subject', name: s.name })}
           onView={viewMcqs} />
       )}
-      {tab === 'mcq' && (
-        <McqTab data={data} filter={mcqFilter} setFilter={setMcqFilter}
+      {curTab === 'mcq' && (
+        <McqTab P={P} data={data} filter={mcqFilter} setFilter={setMcqFilter}
           onAdd={() => setModal({ type: 'mcq', item: null })}
           onBulk={() => setModal({ type: 'bulk' })}
           onEdit={(m) => setModal({ type: 'mcq', item: m })}
@@ -127,7 +146,7 @@ export default function QuizContent({ toast }) {
       {modal?.type === 'class' && <ClassModal item={modal.item} onClose={() => setModal(null)} onSave={saveClass} toast={toast} />}
       {modal?.type === 'subject' && <SubjectModal item={modal.item} classes={data.classes} onClose={() => setModal(null)} onSave={saveSubject} toast={toast} />}
       {modal?.type === 'mcq' && <McqModal item={modal.item} classes={data.classes} subjects={data.subjects} onClose={() => setModal(null)} onSave={saveMcq} toast={toast} />}
-      {modal?.type === 'bulk' && <BulkModal classes={data.classes} subjects={data.subjects} onClose={() => setModal(null)} onImport={importBulk} toast={toast} />}
+      {modal?.type === 'bulk' && <BulkModal P={P} classes={data.classes} subjects={data.subjects} onClose={() => setModal(null)} onImport={importBulk} toast={toast} />}
       {modal?.type === 'del' && <DeleteModal label={modal.label} name={modal.name} onClose={() => setModal(null)} onConfirm={() => confirmDelete(modal.target)} />}
     </div>
   );
@@ -147,7 +166,7 @@ function Dots({ id, openDd, setOpenDd, children }) {
 }
 
 /* ═══════════════════════ CLASSES TAB ═══════════════════════ */
-function ClassesTab({ data, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete, onView }) {
+function ClassesTab({ P, canViewNext, data, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete, onView }) {
   const [q, setQ] = useState('');
   const rows = data.classes.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()));
   return (
@@ -157,7 +176,7 @@ function ClassesTab({ data, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete
           <div><div className="card-title"><i className="fa-solid fa-layer-group" /> Quiz Classes</div><div className="card-sub">Manage class levels for the quiz module.</div></div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <div className="search-box" style={{ width: 200 }}><i className="fa-solid fa-magnifying-glass" /><input className="search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search class…" /></div>
-            <button className="btn-primary" onClick={onAdd}><i className="fa-solid fa-plus" /> Add Class</button>
+            <button {...P.lock('classes', 'create', { className: 'btn-primary' })} onClick={onAdd}><i className="fa-solid fa-plus" /> Add Class</button>
           </div>
         </div>
         <div className="tbl-wrap">
@@ -178,10 +197,10 @@ function ClassesTab({ data, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete
                     <td data-label="Status" style={{ textAlign: 'center' }}><StatusBadge active={isActive} /></td>
                     <td data-label="Actions" style={{ textAlign: 'center' }}>
                       <Dots id={`class-${cls.id}`} openDd={openDd} setOpenDd={setOpenDd}>
-                        <div className="sop-dd-item" onClick={() => { setOpenDd(null); onView(cls.id); }}><i className="fa-solid fa-eye" /> View Subjects</div>
-                        <div className="sop-dd-item" onClick={() => { setOpenDd(null); onEdit(cls); }}><i className="fa-solid fa-pen" /> Edit</div>
-                        <div className="sop-dd-item" style={{ color: isActive ? 'var(--warn)' : 'var(--success)' }} onClick={() => { setOpenDd(null); onToggle(cls.id); }}><i className={`fa-solid fa-circle-${isActive ? 'xmark' : 'check'}`} /> {isActive ? 'Deactivate' : 'Activate'}</div>
-                        <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); onDelete(cls); }}><i className="fa-solid fa-trash-can" /> Delete</div>
+                        {canViewNext && <div className="sop-dd-item" onClick={() => { setOpenDd(null); onView(cls.id); }}><i className="fa-solid fa-eye" /> View Subjects</div>}
+                        <div {...P.lock('classes', 'edit', { className: 'sop-dd-item' })} onClick={() => { if (!P.can('classes', 'edit')) return; setOpenDd(null); onEdit(cls); }}><i className="fa-solid fa-pen" /> Edit</div>
+                        <div {...P.lock('classes', 'edit', { className: 'sop-dd-item', style: { color: isActive ? 'var(--warn)' : 'var(--success)' } })} onClick={() => { if (!P.can('classes', 'edit')) return; setOpenDd(null); onToggle(cls.id); }}><i className={`fa-solid fa-circle-${isActive ? 'xmark' : 'check'}`} /> {isActive ? 'Deactivate' : 'Activate'}</div>
+                        <div {...P.lock('classes', 'delete', { className: 'sop-dd-item danger' })} onClick={() => { if (!P.can('classes', 'delete')) return; setOpenDd(null); onDelete(cls); }}><i className="fa-solid fa-trash-can" /> Delete</div>
                       </Dots>
                     </td>
                   </tr>
@@ -196,7 +215,7 @@ function ClassesTab({ data, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete
 }
 
 /* ═══════════════════════ SUBJECTS TAB ═══════════════════════ */
-function SubjectsTab({ data, classFilter, setClassFilter, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete, onView }) {
+function SubjectsTab({ P, canViewNext, data, classFilter, setClassFilter, openDd, setOpenDd, onAdd, onEdit, onToggle, onDelete, onView }) {
   const [q, setQ] = useState('');
   const rows = data.subjects.filter((s) => {
     if (classFilter && s.classId !== Number(classFilter)) return false;
@@ -210,7 +229,7 @@ function SubjectsTab({ data, classFilter, setClassFilter, openDd, setOpenDd, onA
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select className="f-input" style={{ width: 150, height: 38 }} value={classFilter} onChange={(e) => setClassFilter(e.target.value)}><option value="">All Classes</option>{data.classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
             <div className="search-box" style={{ width: 180 }}><i className="fa-solid fa-magnifying-glass" /><input className="search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search subject…" /></div>
-            <button className="btn-primary" onClick={onAdd}><i className="fa-solid fa-plus" /> Add Subject</button>
+            <button {...P.lock('subjects', 'create', { className: 'btn-primary' })} onClick={onAdd}><i className="fa-solid fa-plus" /> Add Subject</button>
           </div>
         </div>
         <div className="tbl-wrap">
@@ -233,10 +252,10 @@ function SubjectsTab({ data, classFilter, setClassFilter, openDd, setOpenDd, onA
                     <td data-label="Status" style={{ textAlign: 'center' }}><StatusBadge active={isActive} /></td>
                     <td data-label="Actions" style={{ textAlign: 'center' }}>
                       <Dots id={`subject-${sub.id}`} openDd={openDd} setOpenDd={setOpenDd}>
-                        <div className="sop-dd-item" onClick={() => { setOpenDd(null); onView(sub.classId, sub.id); }}><i className="fa-solid fa-eye" /> View MCQs</div>
-                        <div className="sop-dd-item" onClick={() => { setOpenDd(null); onEdit(sub); }}><i className="fa-solid fa-pen" /> Edit</div>
-                        <div className="sop-dd-item" style={{ color: isActive ? 'var(--warn)' : 'var(--success)' }} onClick={() => { setOpenDd(null); onToggle(sub.id); }}><i className={`fa-solid fa-circle-${isActive ? 'xmark' : 'check'}`} /> {isActive ? 'Deactivate' : 'Activate'}</div>
-                        <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); onDelete(sub); }}><i className="fa-solid fa-trash-can" /> Delete</div>
+                        {canViewNext && <div className="sop-dd-item" onClick={() => { setOpenDd(null); onView(sub.classId, sub.id); }}><i className="fa-solid fa-eye" /> View MCQs</div>}
+                        <div {...P.lock('subjects', 'edit', { className: 'sop-dd-item' })} onClick={() => { if (!P.can('subjects', 'edit')) return; setOpenDd(null); onEdit(sub); }}><i className="fa-solid fa-pen" /> Edit</div>
+                        <div {...P.lock('subjects', 'edit', { className: 'sop-dd-item', style: { color: isActive ? 'var(--warn)' : 'var(--success)' } })} onClick={() => { if (!P.can('subjects', 'edit')) return; setOpenDd(null); onToggle(sub.id); }}><i className={`fa-solid fa-circle-${isActive ? 'xmark' : 'check'}`} /> {isActive ? 'Deactivate' : 'Activate'}</div>
+                        <div {...P.lock('subjects', 'delete', { className: 'sop-dd-item danger' })} onClick={() => { if (!P.can('subjects', 'delete')) return; setOpenDd(null); onDelete(sub); }}><i className="fa-solid fa-trash-can" /> Delete</div>
                       </Dots>
                     </td>
                   </tr>
@@ -251,7 +270,7 @@ function SubjectsTab({ data, classFilter, setClassFilter, openDd, setOpenDd, onA
 }
 
 /* ═══════════════════════ MCQ BANK TAB ═══════════════════════ */
-function McqTab({ data, filter, setFilter, onAdd, onBulk, onEdit, onToggle, onDelete }) {
+function McqTab({ P, data, filter, setFilter, onAdd, onBulk, onEdit, onToggle, onDelete }) {
   const [expanded, setExpanded] = useState({});
   const set = (k, v) => setFilter((f) => ({ ...f, [k]: v, ...(k === 'classId' ? { subjectId: '' } : {}) }));
   const subjectsForClass = filter.classId ? data.subjects.filter((s) => s.classId === Number(filter.classId)) : data.subjects;
@@ -270,8 +289,8 @@ function McqTab({ data, filter, setFilter, onAdd, onBulk, onEdit, onToggle, onDe
         <div className="card-header" style={{ flexWrap: 'wrap', gap: 10 }}>
           <div><div className="card-title"><i className="fa-solid fa-list-check" /> MCQ Bank</div><div className="card-sub">Manage all quiz questions, options, and answers.</div></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn-secondary" onClick={onBulk}><i className="fa-solid fa-file-excel" style={{ color: '#16A34A' }} /> Bulk Upload Excel</button>
-            <button className="btn-primary" onClick={onAdd}><i className="fa-solid fa-plus" /> Add MCQ</button>
+            <button {...P.lock('mcq', 'create', { className: 'btn-secondary' })} onClick={onBulk}><i className="fa-solid fa-file-excel" style={{ color: '#16A34A' }} /> Bulk Upload Excel</button>
+            <button {...P.lock('mcq', 'create', { className: 'btn-primary' })} onClick={onAdd}><i className="fa-solid fa-plus" /> Add MCQ</button>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, padding: '12px 18px', borderBottom: '1px solid var(--bl)', flexWrap: 'wrap', background: 'var(--muted)' }}>
@@ -324,9 +343,9 @@ function McqTab({ data, filter, setFilter, onAdd, onBulk, onEdit, onToggle, onDe
                   </div>
                 )}
                 <div className="mcq-actions">
-                  <button className="btn-sm" style={{ height: 28, fontSize: 11.5 }} onClick={() => onEdit(m)}><i className="fa-solid fa-pen" /> Edit</button>
-                  <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: m.status === 'active' ? 'var(--warn)' : 'var(--success)', color: m.status === 'active' ? 'var(--warn)' : 'var(--success)', background: m.status === 'active' ? 'rgba(217,119,6,.06)' : 'rgba(22,163,74,.06)' }} onClick={() => onToggle(m.id)}>{m.status === 'active' ? 'Deactivate' : 'Activate'}</button>
-                  <button className="btn-sm" style={{ height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => onDelete(m)}><i className="fa-solid fa-trash-can" /> Delete</button>
+                  <button {...P.lock('mcq', 'edit', { className: 'btn-sm', style: { height: 28, fontSize: 11.5 } })} onClick={() => onEdit(m)}><i className="fa-solid fa-pen" /> Edit</button>
+                  <button {...P.lock('mcq', 'edit', { className: 'btn-sm', style: { height: 28, fontSize: 11.5, borderColor: m.status === 'active' ? 'var(--warn)' : 'var(--success)', color: m.status === 'active' ? 'var(--warn)' : 'var(--success)', background: m.status === 'active' ? 'rgba(217,119,6,.06)' : 'rgba(22,163,74,.06)' } })} onClick={() => onToggle(m.id)}>{m.status === 'active' ? 'Deactivate' : 'Activate'}</button>
+                  <button {...P.lock('mcq', 'delete', { className: 'btn-sm', style: { height: 28, fontSize: 11.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } })} onClick={() => onDelete(m)}><i className="fa-solid fa-trash-can" /> Delete</button>
                 </div>
               </div>
             );
@@ -445,7 +464,7 @@ function McqModal({ item, classes, subjects, onClose, onSave, toast }) {
 }
 
 /* Bulk Excel upload — demo: generates a few sample rows from a "file" pick. */
-function BulkModal({ classes, subjects, onClose, onImport, toast }) {
+function BulkModal({ P, classes, subjects, onClose, onImport, toast }) {
   const [fileName, setFileName] = useState('');
   const [preview, setPreview] = useState(null);
   const fileRef = useRef(null);
@@ -470,6 +489,7 @@ function BulkModal({ classes, subjects, onClose, onImport, toast }) {
   };
 
   const downloadTemplate = () => {
+    if (!P.guard('mcq', 'download', toast)) return;
     const csv = BULK_COLUMNS.join(',') + '\nGrade 1,English,Sample question?,Option A,Option B,Option C,Option D,B,Easy,1,Optional explanation,active\n';
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -498,7 +518,7 @@ function BulkModal({ classes, subjects, onClose, onImport, toast }) {
               {BULK_COLUMNS.map((col) => <span key={col} style={{ background: 'var(--muted)', border: '1px solid var(--bl)', borderRadius: 4, padding: '2px 8px', fontSize: 10.5, fontWeight: 600, color: 'var(--brand)' }}>{col}</span>)}
             </div>
           </div>
-          <button className="btn-success" style={{ height: 34, fontSize: 12.5 }} onClick={downloadTemplate}><i className="fa-solid fa-download" /> Download Sample Excel Format</button>
+          <button {...P.lock('mcq', 'download', { className: 'btn-success', style: { height: 34, fontSize: 12.5 } })} onClick={downloadTemplate}><i className="fa-solid fa-download" /> Download Sample Excel Format</button>
         </div>
 
         <div style={{ marginBottom: 16 }}>

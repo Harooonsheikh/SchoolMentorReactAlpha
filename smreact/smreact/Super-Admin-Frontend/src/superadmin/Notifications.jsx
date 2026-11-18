@@ -4,6 +4,7 @@ import {
   AUDIENCES, SUB_AUDIENCES, NOTIF_TYPES, CLASSES, SECTIONS,
   defaultSub, buildAudienceLabel,
 } from './notificationsData';
+import { useSaPerms } from './saPerms';
 
 const API_BASE = `${SA_ADMIN_API_BASE}/SchoolMentorSuperAdminAPI`;
 const apiGet = async (url) => {
@@ -104,9 +105,15 @@ const mapNotification = (n) => ({
    ═══════════════════════════════════════════════════════════════════ */
 
 export default function Notifications({ toast }) {
-  const [tab, setTab] = useState('new');
+  const [tabSel, setTab] = useState('new');
   const [notifs, setNotifs] = useState([]);
   const [modal, setModal] = useState(null);
+
+  /* Tabs: new = 'compose' screen, sent = 'sent' screen. View na ho to tab chhupa do. */
+  const P = useSaPerms('notifications');
+  const showNew = P.canView('compose');
+  const showSent = P.canView('sent');
+  const tab = (tabSel === 'new' && showNew) || (tabSel === 'sent' && showSent) ? tabSel : showNew ? 'new' : showSent ? 'sent' : null;
 
   useEffect(() => {
     loadNotifications();
@@ -129,6 +136,7 @@ export default function Notifications({ toast }) {
   }), [notifs]);
 
   const send = async (data) => {
+    if (!P.guard('compose', 'create', toast)) return;
     const payload = {
       audienceType: mapAudience(data.audienceType),
       title: data.title,
@@ -150,11 +158,13 @@ export default function Notifications({ toast }) {
   };
   // Edit API endpoint is not available in API guide. Keep disabled until backend endpoint is provided.
   const saveEdit = (id, patch) => {
+    if (!P.guard('sent', 'edit', toast)) return;
     setNotifs((prev) => prev.map((n) => n.id === id ? { ...n, ...patch } : n));
     setModal(null); toast?.('Notification record updated successfully.', 'success');
   };
   // Delete API endpoint is not available in API guide. Keep disabled until backend endpoint is provided.
   const remove = (id) => {
+    if (!P.guard('sent', 'delete', toast)) return;
     setNotifs((prev) => prev.filter((n) => n.id !== id));
     setModal(null); toast?.('Notification record deleted.', 'info');
   };
@@ -181,15 +191,18 @@ export default function Notifications({ toast }) {
 
       {/* TABS */}
       <div className="app-tabs">
-        <button className={`app-tab${tab === 'new' ? ' active' : ''}`} onClick={() => setTab('new')}><i className="fa-solid fa-pen-to-square" /> New Notification</button>
-        <button className={`app-tab${tab === 'sent' ? ' active' : ''}`} onClick={() => setTab('sent')}><i className="fa-solid fa-list-check" /> Sent Notifications <span className="tab-count">{notifs.length}</span></button>
+        {showNew && <button className={`app-tab${tab === 'new' ? ' active' : ''}`} onClick={() => setTab('new')}><i className="fa-solid fa-pen-to-square" /> New Notification</button>}
+        {showSent && <button className={`app-tab${tab === 'sent' ? ' active' : ''}`} onClick={() => setTab('sent')}><i className="fa-solid fa-list-check" /> Sent Notifications <span className="tab-count">{notifs.length}</span></button>}
       </div>
 
-      {tab === 'new' && <Composer onReview={(data) => setModal({ type: 'confirm', data })} toast={toast} />}
+      {!tab && (
+        <div className="notif-empty"><div className="notif-empty-icon"><i className="fa-solid fa-lock" /></div><div className="notif-empty-title">You don't have permission to view this</div></div>
+      )}
+      {tab === 'new' && <Composer onReview={(data) => { if (P.guard('compose', 'create', toast)) setModal({ type: 'confirm', data }); }} toast={toast} />}
       {tab === 'sent' && (
         <SentList notifs={notifs} total={notifs.length}
 
-          onDelete={(n) => setModal({ type: 'del', notif: n })} />
+          onDelete={(n) => { if (P.guard('sent', 'delete', toast)) setModal({ type: 'del', notif: n }); }} />
       )}
 
       {/* ── MODALS ── */}
@@ -217,6 +230,7 @@ function Composer({ onReview, toast }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [type, setType] = useState('general');
+  const P = useSaPerms('notifications');
 
   const subs = SUB_AUDIENCES[aud] || null;
   const showClass = sub === 'class-wise' || sub === 'class-section';
@@ -336,7 +350,7 @@ function Composer({ onReview, toast }) {
             </div>
           </div>
 
-          <button className="notif-send-btn" onClick={review}><i className="fa-solid fa-paper-plane" /> Send Notification</button>
+          <button {...P.lock('compose', 'create', { className: 'notif-send-btn' })} onClick={review}><i className="fa-solid fa-paper-plane" /> Send Notification</button>
         </div>
       </div>
 
@@ -383,6 +397,7 @@ function SentList({ notifs, total, onEdit, onDelete }) {
   const [q, setQ] = useState('');
   const [aud, setAud] = useState('');
   const [type, setType] = useState('');
+  const P = useSaPerms('notifications');
   const list = notifs.filter((n) => {
     const matchQ = !q || n.title.toLowerCase().includes(q.toLowerCase()) || n.audience.toLowerCase().includes(q.toLowerCase()) || n.type.includes(q.toLowerCase()) || (n.cls || '').toLowerCase().includes(q.toLowerCase());
     const matchA = !aud || n.audienceType === aud;
@@ -423,7 +438,7 @@ function SentList({ notifs, total, onEdit, onDelete }) {
             <div className="notif-td">
               <div className="notif-act-btns">
                 
-                <button className="notif-del-btn" data-tip="Delete record" data-tip-pos="left" onClick={() => onDelete(n)}><i className="fa-solid fa-trash-can" /></button>
+                <button {...P.lock('sent', 'delete', { className: 'notif-del-btn', 'data-tip': 'Delete record', 'data-tip-pos': 'left' })} onClick={() => onDelete(n)}><i className="fa-solid fa-trash-can" /></button>
               </div>
             </div>
           </div>

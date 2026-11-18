@@ -10,6 +10,7 @@ import TicketDetailModal from './techModule/TicketDetailModal';
 import AnalyticsCards from './techModule/AnalyticsCards';
 import { usePermissionsStore } from './adminPermissions/AdminPermissionsContext';
 import { findRole } from './adminPermissions/adminPermissionsData';
+import { useSaPerms, denyMessage } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    TECH MODULE — 5-tab bug/new-development lifecycle: Bugs, New
@@ -24,6 +25,9 @@ import { findRole } from './adminPermissions/adminPermissionsData';
    to full Super Admin access), the same convention Dashboard.jsx's own
    legacy preview already established.
    ═══════════════════════════════════════════════════════════════════ */
+
+/* Tab id → User Permission screen id (permissionModel MODULE_SCREENS.techModule). */
+const TAB_SCREEN = { bugs: 'bugs_new_dev', new_dev: 'bugs_new_dev', in_progress: 'in_progress', qa_review: 'qa_review', ready_for_release: 'ready_for_release' };
 
 const TAB_DEFS = [
   { id: 'bugs',              label: 'Bugs',                   icon: 'fa-bug',               filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'bug') },
@@ -41,9 +45,13 @@ const STAGE_TO_TAB = { bugs_new_dev: 'bugs', in_progress: 'in_progress', qa_revi
 export default function TechModule({ toast, users = [], initialFilter, onConsumedInitialFilter, onOpenSupportSession }) {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('bugs');
+  const [tabState, setTab] = useState('bugs');
   const [detailId, setDetailId] = useState(null);
   const { roles, roleAssignments, permsForUser, viewingAsUserId, setViewingAsUserId } = usePermissionsStore();
+  /* Logged-in user's User Permission matrix — layered on top of the role-based "Viewing as" gate below. */
+  const P = useSaPerms('techModule');
+  const visibleTabs = TAB_DEFS.filter((d) => P.canView(TAB_SCREEN[d.id]));
+  const tab = visibleTabs.some((d) => d.id === tabState) ? tabState : (visibleTabs[0]?.id || null);
 
   /* Full-screen loader only on the first load. Later reloads (after a create,
      assign, review or release) refresh in the background so the screen never blanks. */
@@ -94,9 +102,11 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   }, [tickets]);
 
   const createTicket = (payload) => {
+    if (!P.guard('bugs_new_dev', 'create', toast)) return Promise.reject(new Error(denyMessage('create')));
     return techTicketsApi.createTicketFromReport(payload).then((t) => { load(); toast?.(`Ticket ${t.ticketNumber} created`, 'success'); return t; });
   };
   const assignTicket = (id, developerId) => {
+    if (!P.guard('bugs_new_dev', 'edit', toast)) return;
     techTicketsApi.assignTicket(id, developerId).then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); })
       .catch((e) => toast?.(e?.message || 'Could not assign the ticket', 'warn'));
   };
@@ -105,6 +115,7 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
      QA Testing" button opens the report modal directly) — save the
      report, then immediately send for QA, in one chained call. */
   const submitReportAndSendForQa = (id, report) => {
+    if (!P.guard('in_progress', 'edit', toast)) return;
     Promise.resolve(techTicketsApi.submitDeveloperTestingReport(id, report))
       .then(() => techTicketsApi.sendForQaTesting(id))
       .then(() => { load(); toast?.('Developer Testing Report submitted — sent for QA Testing', 'success'); })
@@ -112,6 +123,9 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   };
   /* Resolves only on success, so the QA modal closes only when the action worked. */
   const submitReview = (id, decision, comments, attachments) => {
+    /* Approve = 'approve'; Reject (sends the ticket back to In Progress) = 'edit'. */
+    const act = decision === 'approved' ? 'approve' : 'edit';
+    if (!P.guard('qa_review', act, toast)) return Promise.reject(new Error(denyMessage(act)));
     return techTicketsApi.submitQaReview(id, { decision, comments, attachments, reviewedBy: 'QA Team' }).then((t) => {
       load();
       toast?.(decision === 'approved' ? 'Ticket approved — Ready for Release' : 'Ticket rejected — returned to In Progress', decision === 'approved' ? 'success' : 'info');
@@ -125,6 +139,7 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   /* The server creates the Support notification on release (README §9) —
      the client only releases and reloads. */
   const release = (id, payload) => {
+    if (!P.guard('ready_for_release', 'approve', toast)) return;
     techTicketsApi.releaseTicket(id, payload).then(() => load()).catch((e) => toast?.(e?.message || 'Could not release', 'warn'));
   };
 
@@ -157,14 +172,16 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
       {!loading && <AnalyticsCards tickets={tickets} server={serverStats} />}
 
       <div className="app-tabs">
-        {TAB_DEFS.map((d) => (
+        {visibleTabs.map((d) => (
           <button key={d.id} className={`app-tab${tab === d.id ? ' active' : ''}`} onClick={() => setTab(d.id)}>
             <i className={`fa-solid ${d.icon}`} /> {d.label} <span className="tab-count">{counts[d.id] || 0}</span>
           </button>
         ))}
       </div>
 
-      {loading ? (
+      {!tab ? (
+        <div className="tm-empty"><i className="fa-solid fa-lock" /><div>You don't have permission to view this</div></div>
+      ) : loading ? (
         <div className="tm-empty"><i className="fa-solid fa-spinner fa-spin" /><div>Loading…</div></div>
       ) : (
         <>

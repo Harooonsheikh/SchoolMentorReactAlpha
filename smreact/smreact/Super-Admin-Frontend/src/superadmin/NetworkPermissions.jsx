@@ -6,6 +6,7 @@ import {
   defaultNetworkPerms,
 } from './api/services/networkPermissions';
 import { Switch } from './SchoolPermissions';
+import { useSaPerms } from './saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    NETWORK PERMISSIONS — Super Admin module
@@ -29,6 +30,9 @@ export default function NetworkPermissions({ toast }) {
   const [editId, setEditId] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  /* Edit permission (User Permission ▸ Network Permissions) = Manage + Save. View-only → Manage disabled. */
+  const P = useSaPerms('networkPermission');
 
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -99,6 +103,7 @@ export default function NetworkPermissions({ toast }) {
   };
 
   const savePerms = async (id, perms) => {
+    if (!P.guard('network_perms', 'edit', toast)) return;
     const n = networks.find((x) => x.id === id);
     setSaving(true);
     try {
@@ -220,7 +225,7 @@ export default function NetworkPermissions({ toast }) {
                       <div style={{ fontSize: 10, color: 'var(--tm)' }}>modules on</div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => openManage(n.id)}>
+                      <button {...P.lock('network_perms', 'edit', { className: 'btn-sm', style: { height: 30, fontSize: 11.5 } })} onClick={() => { if (P.guard('network_perms', 'edit', toast)) openManage(n.id); }}>
                         <i className="fa-solid fa-sliders" /> Manage
                       </button>
                     </td>

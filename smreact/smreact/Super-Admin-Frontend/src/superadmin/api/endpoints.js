@@ -57,6 +57,12 @@ export const EP = {
     /* PUT — user band / chalu (body nahi). */
     deactivateUser: (id) => `${SA_ROOT}/api/Auth/deactivate-user/${encodeURIComponent(id)}`,
     activateUser:   (id) => `${SA_ROOT}/api/Auth/activate-user/${encodeURIComponent(id)}`,
+    /* Screen × action permissions (User Permission ▸ Edit Permissions):
+         POST save → { userID, modifiedBy, permissions:[{ menuName, subMenuName, action, isAccessable }] }
+         GET  by user → 404 { success:false, "No permissions found for this user." } jab kuch save na ho */
+    saveMenuPermissions: () => `${SA_ROOT}/api/Auth/save-superadmin-module-permission`,
+    getAllMenuPermissions: () => `${SA_ROOT}/api/Auth/get-superadmin-module-permission`,
+    getMenuPermissions:  (userId) => `${SA_ROOT}/api/Auth/get-superadmin-module-permission-byuserid/${encodeURIComponent(userId)}`,
   },
 
   /* ── Dashboard ── */

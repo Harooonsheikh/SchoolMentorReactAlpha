@@ -70,7 +70,7 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const acp = useAcademicsContentPerms();
   /* Activity Planner sirf Activity Calendar par lagti hai.
      Academic Calendar school ki apni role permission par chalti hai. */
-  const showAcadCal   = acadView('Academic Calendar');
+  const showAcadCal   = acadView('Academic Calendar')
   const showActCal    = acadView('Activity Calendar') && acp.can('activity', 'view');
   const showCal       = showAcadCal || showActCal;
   const showSos       = showTextbooks || showTerms || showCal;

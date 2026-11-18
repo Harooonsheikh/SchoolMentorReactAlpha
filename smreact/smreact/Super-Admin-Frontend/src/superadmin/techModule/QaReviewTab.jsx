@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicketsData';
 import LockedCard from '../adminPermissions/LockedCard';
+import { useSaPerms } from '../saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    QaReviewTab — Stage 3: QA's Approve/Reject gate. Both decisions
@@ -12,6 +13,7 @@ import LockedCard from '../adminPermissions/LockedCard';
    ═══════════════════════════════════════════════════════════════════ */
 export default function QaReviewTab({ tickets, onReview, onViewDetails, toast, canApprove = true }) {
   const [reviewing, setReviewing] = useState(null); // { ticket, decision }
+  const P = useSaPerms('techModule');
   const [type, setType] = useState('all'); // 'all' | 'bug' | 'improvement'
 
   const filtered = useMemo(() => (type === 'all' ? tickets : tickets.filter((t) => t.type === type)), [tickets, type]);
@@ -78,8 +80,8 @@ export default function QaReviewTab({ tickets, onReview, onViewDetails, toast, c
                   <button className="btn-sm" onClick={() => onViewDetails?.(t.id)}><i className="fa-solid fa-eye" /> View Details</button>
                   {canApprove ? (
                     <>
-                      <button className="btn-sm" style={{ borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setReviewing({ ticket: t, decision: 'rejected' })}><i className="fa-solid fa-circle-xmark" /> Reject</button>
-                      <button className="btn-primary" style={{ height: 32, fontSize: 12.5 }} onClick={() => setReviewing({ ticket: t, decision: 'approved' })}><i className="fa-solid fa-circle-check" /> Approve</button>
+                      <button {...P.lock('qa_review', 'edit', { className: 'btn-sm', style: { borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' } })} onClick={() => { if (P.guard('qa_review', 'edit', toast)) setReviewing({ ticket: t, decision: 'rejected' }); }}><i className="fa-solid fa-circle-xmark" /> Reject</button>
+                      <button {...P.lock('qa_review', 'approve', { className: 'btn-primary', style: { height: 32, fontSize: 12.5 } })} onClick={() => { if (P.guard('qa_review', 'approve', toast)) setReviewing({ ticket: t, decision: 'approved' }); }}><i className="fa-solid fa-circle-check" /> Approve</button>
                     </>
                   ) : <LockedCard compact title="No access to review" />}
                 </div>
