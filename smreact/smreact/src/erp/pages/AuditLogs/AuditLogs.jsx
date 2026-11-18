@@ -535,7 +535,7 @@ export default function AuditLogs({ toast = () => {} }) {
       {reportsOpen && (
         <ReportsPanel
           type={reportsTab ?? 'summary'}
-          allLogs={logs}
+          filterOpts={filterOpts}
           onChangeType={setReportsTab}
           onClose={() => setReportsOpen(false)}
           toast={toast}
@@ -1114,6 +1114,7 @@ const AL_CSS = `
 .al-a4-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10.5px; }
 .al-a4-table th, .al-a4-table td {
   padding: 7px 8px; border: 1px solid #E2E8F0; text-align: left; vertical-align: top;
+  overflow-wrap: anywhere; word-break: break-word;
 }
 .al-a4-table thead th {
   background: #1E40AF; color: #fff;

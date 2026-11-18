@@ -2,16 +2,111 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import {
-  MODULES,
-  USERS,
-  ACTIONS,
   hydrateLog,
-  filterLogs,
   quickRange,
   formatDate,
-  aggregateByUser,
-  aggregateByModule,
 } from './auditLogsData';
+import { getAuditLogsByBranch } from '../../services/auditLogsService';
+import {
+  loadReportBranch,
+  reportSchoolName,
+  reportPalette,
+  escReportText,
+  buildReportTableHtml,
+  buildStandardReportHtml,
+  openDashReport,
+  downloadReportExcel,
+  reportFileName,
+} from '../../reports/reportKit';
+
+/* Columns per report type — shared by the Print (PDF) and Excel exports. */
+const EXPORT_COLUMNS = {
+  summary: [
+    { key: 'sr',      label: '#',       align: 'center', width: '4%'  },
+    { key: 'date',    label: 'Date',    width: '9%'  },
+    { key: 'time',    label: 'Time',    width: '7%'  },
+    { key: 'user',    label: 'User',    width: '11%' },
+    { key: 'role',    label: 'Role',    width: '9%'  },
+    { key: 'module',  label: 'Module',  width: '11%' },
+    { key: 'action',  label: 'Action',  width: '14%' },
+    { key: 'record',  label: 'Record',  width: '14%' },
+    { key: 'details', label: 'Details' },
+  ],
+  user: [
+    { key: 'sr',        label: '#',             align: 'center', width: '5%'  },
+    { key: 'user',      label: 'User',          width: '20%' },
+    { key: 'role',      label: 'Role',          width: '15%' },
+    { key: 'total',     label: 'Total Actions', align: 'center', width: '12%' },
+    { key: 'breakdown', label: 'Breakdown' },
+  ],
+  module: [
+    { key: 'sr',        label: '#',             align: 'center', width: '5%'  },
+    { key: 'module',    label: 'Module',        width: '22%' },
+    { key: 'total',     label: 'Total Actions', align: 'center', width: '13%' },
+    { key: 'breakdown', label: 'Breakdown' },
+  ],
+};
+
+function exportRows(type, data) {
+  if (type === 'user') {
+    return data.byUser.map((r, i) => ({
+      sr: i + 1, user: r.name || '—', role: r.role || '—', total: r.total, breakdown: breakdownText(r.byAction),
+    }));
+  }
+  if (type === 'module') {
+    return data.byModule.map((r, i) => ({
+      sr: i + 1, module: r.label || '—', total: r.total, breakdown: breakdownText(r.byAction),
+    }));
+  }
+  return data.rows.map((r, i) => ({
+    sr: i + 1,
+    date: formatDate(r.date),
+    time: r.time,
+    user: r.userName || '—',
+    role: r.userRole || '—',
+    module: r.moduleLabel || '—',
+    action: r.actionLabel || '—',
+    record: r.record || '—',
+    details: r.details || '—',
+  }));
+}
+
+/* Report rows are pulled page-by-page from the live API. */
+const REPORT_PAGE_SIZE = 500;
+const REPORT_MAX_PAGES = 40;   /* safety cap → max 20,000 rows per report */
+
+async function fetchAllReportRows(filters) {
+  const all = [];
+  let total = 0;
+  for (let page = 1; page <= REPORT_MAX_PAGES; page += 1) {
+    const res = await getAuditLogsByBranch({ ...filters, pageNumber: page, pageSize: REPORT_PAGE_SIZE });
+    const rows = res?.rows ?? [];
+    total = res?.totalRecords ?? 0;
+    all.push(...rows);
+    if (rows.length === 0 || all.length >= total) break;
+  }
+  return { rows: all, total };
+}
+
+/* Group real rows (API gives names, not mock ids). */
+function groupRows(rows, keyOf, metaOf) {
+  const map = new Map();
+  rows.forEach(r => {
+    const k = keyOf(r) || '—';
+    if (!map.has(k)) map.set(k, { key: k, ...metaOf(r), total: 0, byAction: {} });
+    const g = map.get(k);
+    g.total += 1;
+    const a = r.actionLabel || r.action || '—';
+    g.byAction[a] = (g.byAction[a] || 0) + 1;
+  });
+  return [...map.values()].sort((a, b) => b.total - a.total);
+}
+
+const breakdownText = (byAction) =>
+  Object.entries(byAction)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(' · ');
 
 const REPORT_TABS = [
   { id: 'summary', label: 'Audit Summary',  icon: 'fa-file-lines'  },
@@ -35,7 +130,9 @@ const QUICK_RANGES = [
                  a "Colorful / Colorless" toggle and Print/Excel
                  export. Print isolation is handled by global CSS.
    ═══════════════════════════════════════════════════════════════════ */
-export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toast, canDownload = true, canPrint = true }) {
+export default function ReportsPanel({ type, filterOpts = {}, onChangeType, onClose, toast = () => {}, canDownload = true, canPrint = true }) {
+  const userOptions   = filterOpts.users   || [];
+  const moduleOptions = filterOpts.modules || [];
   /* ─── Filter state (configure step). */
   const [fromDate, setFromDate] = useState(quickRange('last30').fromDate);
   const [toDate,   setToDate]   = useState(quickRange('last30').toDate);
@@ -60,29 +157,74 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
     setToDate(r.toDate);
   };
 
-  /* ─── Filtered rows for the report payload. */
-  const filtered = useMemo(() => filterLogs(allLogs, {
-    fromDate, toDate, user: userF, module: moduleF,
-  }), [allLogs, fromDate, toDate, userF, moduleF]);
+  const apiFilters = useMemo(() => ({
+    fromDate, toDate, userId: userF, module: moduleF,
+  }), [fromDate, toDate, userF, moduleF]);
+
+  /* ─── Live "Matching Entries" count (configure step) — 1-row API call. */
+  const [matchCount,   setMatchCount]   = useState(null);
+  const [countLoading, setCountLoading] = useState(false);
+  useEffect(() => {
+    if (step !== 'configure') return undefined;
+    const ctrl = new AbortController();
+    setCountLoading(true);
+    const t = setTimeout(() => {
+      getAuditLogsByBranch({ ...apiFilters, pageNumber: 1, pageSize: 1 }, { signal: ctrl.signal })
+        .then(res => setMatchCount(res?.totalRecords ?? 0))
+        .catch(err => { if (err.name !== 'AbortError') setMatchCount(null); })
+        .finally(() => { if (!ctrl.signal.aborted) setCountLoading(false); });
+    }, 300);
+    return () => { clearTimeout(t); ctrl.abort(); };
+  }, [apiFilters, step]);
+
+  /* ─── Full report rows — fetched when "Generate Report" is clicked. */
+  const [reportRows,  setReportRows]  = useState([]);
+  const [reportTotal, setReportTotal] = useState(0);
+  const [generating,  setGenerating]  = useState(false);
+  const [generatedAt, setGeneratedAt] = useState(null);
+  const [schoolName,  setSchoolName]  = useState(() => reportSchoolName());
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const [{ rows, total }] = await Promise.all([
+        fetchAllReportRows(apiFilters),
+        Promise.resolve(loadReportBranch()).catch(() => null),
+      ]);
+      setSchoolName(reportSchoolName());
+      setReportRows(rows);
+      setReportTotal(total);
+      setGeneratedAt(new Date());
+      if (rows.length === 0) {
+        toast('No entries match the selected filters', 'error');
+        return;
+      }
+      if (total > rows.length) {
+        toast(`Showing first ${rows.length} of ${total} entries — narrow the date range for a complete report`, 'warning');
+      }
+      setStep('preview');
+    } catch (err) {
+      console.error('Could not build audit report:', err);
+      toast(err.message || 'Could not generate report', 'error');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   /* ─── Report payload — denormalised for the A4 view. */
   const data = useMemo(() => {
-    const rows = filtered.map(hydrateLog).sort((a, b) => {
-      if (a.date === b.date) return a.time < b.time ? 1 : -1;
-      return a.date < b.date ? 1 : -1;
-    });
-    const byAction = ACTIONS.map(a => ({
-      label: a.label,
-      count: rows.filter(r => r.action === a.id).length,
-    })).filter(r => r.count > 0);
+    const rows = reportRows.map(hydrateLog);
+    const byAction = groupRows(rows, r => r.actionLabel || r.action, () => ({}))
+      .map(g => ({ label: g.key, count: g.total }));
     return {
       rows,
       byAction,
-      byUser:   aggregateByUser(rows),
-      byModule: aggregateByModule(rows),
+      byUser:   groupRows(rows, r => r.userName, r => ({ name: r.userName, role: r.userRole })),
+      byModule: groupRows(rows, r => r.moduleLabel || r.module, r => ({ label: r.moduleLabel || r.module })),
       total:    rows.length,
+      grandTotal: reportTotal,
     };
-  }, [filtered]);
+  }, [reportRows, reportTotal]);
 
   const rangeLabel = useMemo(() => {
     if (fromDate && toDate && fromDate === toDate) return formatDate(fromDate);
@@ -93,44 +235,83 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
   }, [fromDate, toDate]);
 
   const userLabel = userF
-    ? `${USERS.find(u => u.id === userF)?.name || ''}`
+    ? `${userOptions.find(u => u.id === userF)?.name || ''}`
     : 'All Users';
-  const moduleLabel = moduleF
-    ? `${MODULES.find(m => m.id === moduleF)?.label || ''}`
-    : 'All Modules';
-
-  /* ─── Excel export — CSV download with .xlsx extension trickery
-         (Excel opens CSV happily). Replace with a real xlsx generator
-         when wiring backend. */
-  const handleExcel = () => {
-    const headers = ['Date', 'Time', 'User', 'Role', 'Module', 'Screen', 'Action', 'Record', 'Details', 'Old Value', 'New Value'];
-    const csv = [headers.join(',')].concat(
-      data.rows.map(r => [
-        formatDate(r.date), r.time, r.userName, r.userRole,
-        r.moduleLabel, r.screen, r.actionLabel, r.record, r.details,
-        r.oldValue || '—', r.newValue || '—',
-      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
-    ).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `audit-${type}-${fromDate || 'all'}_${toDate || 'all'}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast('Report downloaded as CSV', 'success');
-  };
-
-  const handlePrint = () => {
-    /* Trigger native print; the global @media print rules in AL_CSS
-       hide everything except the A4 sheets. */
-    window.print();
-  };
+  const moduleLabel = moduleF || 'All Modules';
 
   const titleByType = {
     summary: 'Audit Summary Report',
     user:    'User Activity Report',
     module:  'Module Activity Report',
+  };
+
+  const filterLine = `${rangeLabel} · ${userLabel} · ${moduleLabel}`;
+
+  /* ─── Excel export — real .xlsx via the shared ERP report kit. */
+  const handleExcel = async () => {
+    try {
+      await downloadReportExcel({
+        title:    titleByType[type],
+        subtitle: schoolName,
+        metaLine: `${filterLine} · ${data.total} entries`,
+        columns:  EXPORT_COLUMNS[type],
+        rows:     exportRows(type, data),
+        filename: `${reportFileName(titleByType[type])}_${fromDate || 'all'}_${toDate || 'all'}.xlsx`,
+        isColor:  tone === 'colorful',
+      });
+      toast('Report downloaded as Excel', 'success');
+    } catch (err) {
+      console.error('Audit report Excel export failed:', err);
+      toast('Could not download Excel report', 'error');
+    }
+  };
+
+  /* ─── Print / PDF — opens a standalone, paginated report window
+         (same chrome as every other ERP report) instead of printing the
+         modal, which repeated page 1 and clipped the wide table. */
+  const handlePrint = () => {
+    const isColor = tone === 'colorful';
+    const p = reportPalette(isColor);
+    const cols = EXPORT_COLUMNS[type];
+    const rows = exportRows(type, data).map(r => {
+      const o = {};
+      cols.forEach(c => { o[c.key] = escReportText(r[c.key]); });
+      return o;
+    });
+    const stat = (lbl, val) => `
+      <div style="flex:1;min-width:120px;border:1px solid ${p.border};border-radius:10px;padding:10px 14px;background:${isColor ? '#F8FAFF' : '#fff'}">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:${p.textM}">${lbl}</div>
+        <div style="font-size:20px;font-weight:800;color:${p.accent};margin-top:4px">${val}</div>
+      </div>`;
+    const sectionH = (t) => `<div style="font-size:13px;font-weight:800;color:${p.accent};margin:0 0 10px;${p.sectionAccent}">${t}</div>`;
+    const sectionTitle = type === 'user' ? 'Activity by User' : type === 'module' ? 'Activity by Module' : 'Activity Log';
+    const bodyHtml = `
+      <style>
+        table{table-layout:fixed}
+        td,th{word-break:break-word;overflow-wrap:anywhere;vertical-align:top}
+        thead{display:table-header-group}
+        tr{page-break-inside:avoid;break-inside:avoid}
+        @media print{.page{width:auto !important}}
+      </style>
+      <div style="font-size:12px;color:${p.textM};margin-bottom:14px"><strong style="color:${p.textD}">Filters:</strong> ${escReportText(filterLine)}</div>
+      ${sectionH('Summary')}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px">
+        ${stat('Total Entries', data.total)}
+        ${stat('Unique Users', data.byUser.length)}
+        ${stat('Modules', data.byModule.length)}
+        ${stat('Action Types', data.byAction.length)}
+      </div>
+      ${sectionH(sectionTitle)}
+      ${buildReportTableHtml({ columns: cols, rows, isColor, emptyText: 'No activity in this range.' })}
+    `;
+    openDashReport(() => buildStandardReportHtml({
+      title: titleByType[type],
+      isColor,
+      bodyHtml,
+      schoolName,
+      subtitleLine: `Audit Trail · ${filterLine}`,
+      orientation: type === 'summary' ? 'landscape' : 'portrait',
+    }), { toast });
   };
 
   return createPortal((
@@ -214,14 +395,14 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
                 <span>User</span>
                 <select className="up-select" value={userF} onChange={(e) => setUserF(e.target.value)}>
                   <option value="">All Users</option>
-                  {USERS.map(u => <option key={u.id} value={u.id}>{u.name} — {u.role}</option>)}
+                  {userOptions.map(u => <option key={u.id} value={u.id}>{u.role ? `${u.name} — ${u.role}` : u.name}</option>)}
                 </select>
               </label>
               <label className="al-field">
                 <span>Module</span>
                 <select className="up-select" value={moduleF} onChange={(e) => setModuleF(e.target.value)}>
                   <option value="">All Modules</option>
-                  {MODULES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  {moduleOptions.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </label>
             </div>
@@ -229,7 +410,9 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
             <div className="al-rep-preview">
               <div>
                 <div className="al-rep-preview-lbl">Matching Entries</div>
-                <div className="al-rep-preview-val al-rep-preview-val--lg">{filtered.length}</div>
+                <div className="al-rep-preview-val al-rep-preview-val--lg">
+                  {countLoading ? <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> : (matchCount ?? '—')}
+                </div>
               </div>
               <div>
                 <div className="al-rep-preview-lbl">Range</div>
@@ -252,7 +435,7 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
                   </button>
                 </Tooltip>
                 <span className="al-rep-toolbar-meta">
-                  {data.total} entries · {rangeLabel}
+                  {data.total}{data.grandTotal > data.total ? ` of ${data.grandTotal}` : ''} entries · {rangeLabel}
                 </span>
               </div>
               <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -302,6 +485,8 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
                 userLabel={userLabel}
                 moduleLabel={moduleLabel}
                 titleByType={titleByType}
+                schoolName={schoolName}
+                generatedAt={generatedAt}
               />
             </div>
           </>
@@ -312,14 +497,16 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
             <Tooltip text="Discard and close the reports panel">
               <button type="button" className="up-btn up-btn-ghost" onClick={onClose}>Cancel</button>
             </Tooltip>
-            <Tooltip text={filtered.length === 0 ? 'No entries match the current filters' : 'Preview the report as an A4 sheet'}>
+            <Tooltip text={matchCount === 0 ? 'No entries match the current filters' : 'Preview the report as an A4 sheet'}>
               <button
                 type="button"
                 className="up-btn up-btn-primary"
-                disabled={filtered.length === 0}
-                onClick={() => setStep('preview')}
+                disabled={generating || matchCount === 0}
+                onClick={handleGenerate}
               >
-                <i className="fa-solid fa-eye" aria-hidden="true"></i> Generate Report
+                {generating
+                  ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Generating…</>
+                  : <><i className="fa-solid fa-eye" aria-hidden="true"></i> Generate Report</>}
               </button>
             </Tooltip>
           </div>
@@ -334,9 +521,12 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
    Same DOM for colorful + colorless; the .colorless class flips the
    palette via CSS overrides.
    ═══════════════════════════════════════════════════════════════════ */
-function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleByType }) {
+function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleByType, schoolName, generatedAt }) {
   const cls = `al-a4${tone === 'colorless' ? ' colorless' : ''}`;
-  const generatedAt = '31 May 2026 · 11:45 AM';
+  const d = generatedAt || new Date();
+  const isoDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const generatedLabel = `${formatDate(isoDay)} · ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+  const school = schoolName || 'School';
 
   return (
     <div className={cls}>
@@ -344,7 +534,7 @@ function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleBy
         <div className="al-a4-head-l">
           <div className="al-a4-logo"><i className="fa-solid fa-clipboard-list" aria-hidden="true"></i></div>
           <div>
-            <div className="al-a4-school">The Oxford System, Lahore Campus</div>
+            <div className="al-a4-school">{school}</div>
             <div className="al-a4-tagline">Audit Trail · Read-only Activity History</div>
           </div>
         </div>
@@ -352,7 +542,7 @@ function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleBy
           <div className="al-a4-title">{titleByType[type]}</div>
           <div className="al-a4-meta">Range: {rangeLabel}</div>
           <div className="al-a4-meta">{userLabel} · {moduleLabel}</div>
-          <div className="al-a4-meta">Generated: {generatedAt}</div>
+          <div className="al-a4-meta">Generated: {generatedLabel}</div>
         </div>
       </div>
 
@@ -419,14 +609,11 @@ function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleBy
               {data.byUser.length === 0 ? (
                 <tr><td colSpan={4} style={{ textAlign: 'center', padding: 16 }}>No activity in this range.</td></tr>
               ) : data.byUser.map(row => (
-                <tr key={row.user?.id}>
-                  <td>{row.user?.name || '—'}</td>
-                  <td>{row.user?.role || '—'}</td>
+                <tr key={row.key}>
+                  <td>{row.name || '—'}</td>
+                  <td>{row.role || '—'}</td>
                   <td>{row.total}</td>
-                  <td>{Object.entries(row.byAction).map(([k, v]) => {
-                    const lbl = ACTIONS.find(a => a.id === k)?.label || k;
-                    return `${lbl}: ${v}`;
-                  }).join(' · ')}</td>
+                  <td>{breakdownText(row.byAction)}</td>
                 </tr>
               ))}
             </tbody>
@@ -449,13 +636,10 @@ function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleBy
               {data.byModule.length === 0 ? (
                 <tr><td colSpan={3} style={{ textAlign: 'center', padding: 16 }}>No activity in this range.</td></tr>
               ) : data.byModule.map(row => (
-                <tr key={row.module?.id}>
-                  <td>{row.module?.label || '—'}</td>
+                <tr key={row.key}>
+                  <td>{row.label || '—'}</td>
                   <td>{row.total}</td>
-                  <td>{Object.entries(row.byAction).map(([k, v]) => {
-                    const lbl = ACTIONS.find(a => a.id === k)?.label || k;
-                    return `${lbl}: ${v}`;
-                  }).join(' · ')}</td>
+                  <td>{breakdownText(row.byAction)}</td>
                 </tr>
               ))}
             </tbody>
@@ -464,8 +648,8 @@ function A4Sheet({ type, tone, data, rangeLabel, userLabel, moduleLabel, titleBy
       )}
 
       <div className="al-a4-foot">
-        <span>The Oxford System, Lahore Campus · Audit Logs · Confidential</span>
-        <span>Page 1 of 1</span>
+        <span>{school} · Audit Logs · Confidential</span>
+        <span>{data.total} entries</span>
       </div>
     </div>
   );
