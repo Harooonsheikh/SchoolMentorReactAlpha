@@ -334,7 +334,8 @@ describe('Dashboard data state — races, refresh, remount', () => {
     expect(calls.filter((u) => u.includes('admin_dashboard'))).toHaveLength(2);
   });
 
-  test('switching the "Viewing as" user keeps every visible value equal to the API', async () => {
+  /* "Viewing as" dropdown UI se hata diya gaya — test skip. */
+  test.skip('switching the "Viewing as" user keeps every visible value equal to the API', async () => {
     const users = [{ id: 5, fullName: 'Fee Only', active: true }];
     const perms = { 5: ['Dashboard', 'School Payments'] };
     await renderDashboard({}, { users, perms });

@@ -170,6 +170,11 @@ export function overallStats(perms) {
   return { modules, screens, active, restricted };
 }
 
+/* Role (get-all-users ka isAdmin): true = Head (hamesha poori access, User
+   Permission us par lagu nahi), false = Teacher (User Permission se chalta hai). */
+export const isHeadUser = (u) => u?.isAdmin === true || String(u?.isAdmin).toLowerCase() === 'true';
+export const roleLabel = (u) => (isHeadUser(u) ? 'Head' : 'Teacher');
+
 /* Logged-in user ke saved rows → effective perms map. rows null = full access (null return). */
 export function effectivePermsFromRows(flags, rows) {
   if (!flags && !rows) return null;

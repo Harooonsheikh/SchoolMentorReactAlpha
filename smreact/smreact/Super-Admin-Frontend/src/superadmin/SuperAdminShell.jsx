@@ -16,7 +16,7 @@ import AgentSupport from '../components/AgentSupport';
 import TechModule from './TechModule';
 import { PermissionsProvider } from './adminPermissions/AdminPermissionsContext';
 import { SaPermsProvider, useSaPerms } from './saPerms';
-import { effectivePermsFromRows } from './permissionModel';
+import { effectivePermsFromRows, isHeadUser } from './permissionModel';
 import { INITIAL_USERS, INITIAL_PERMS, UM_MENUS } from './userMgmtData';
 import { authApi, moduleAccessApi } from './api';
 import { installSessionGuard, setSessionGuardActive } from './api/sessionGuard';
@@ -173,11 +173,19 @@ export default function SuperAdminShell({ user, onLogout }) {
   const [accessLoading, setAccessLoading] = useState(true);
   /* Screen × action permissions of the logged-in user (null = full access). */
   const [myPerms, setMyPerms] = useState(null);
+  const meIsHead = useRef(false);
   const loadMyAccess = async () => {
     const me = user?.id ? Number(user.id) : authApi.currentUserId();
     if (!me) { setNavAllowed(null); setAccessLoading(false); return; }
+    /* Head (login ka isAdmin = true) → hamesha poori access; User Permission lagu nahi. */
+    let headFlag = null;
+    try { headFlag = sessionStorage.getItem('superadminisadmin'); } catch { /* ignore */ }
+    if (String(headFlag).toLowerCase() === 'true') {
+      setNavAllowed(null); setMyPerms(null); setAccessLoading(false); return;
+    }
     try {
       const rec = await moduleAccessApi.getModuleAccess(me);
+      if (meIsHead.current) return;   // Head — users list ne pehle hi poori access de di
       setNavAllowed(moduleAccessApi.allowedNavIds(rec?.flags || null));
       setMyPerms(rec ? effectivePermsFromRows(rec.flags, rec.rows) : null);
     } catch (err) {
@@ -188,6 +196,14 @@ export default function SuperAdminShell({ user, onLogout }) {
       setAccessLoading(false);
     }
   };
+  /* Fallback: login response me isAdmin na aaya ho to get-all-users se — Head → poori access. */
+  useEffect(() => {
+    const me = user?.id ? Number(user.id) : authApi.currentUserId();
+    const mine = users.find((u) => Number(u.id) === me);
+    meIsHead.current = Boolean(mine && isHeadUser(mine));
+    if (meIsHead.current) { setNavAllowed(null); setMyPerms(null); setAccessLoading(false); }
+  }, [users, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* Login ke baad (aur reload par) — GET /api/Auth/get-superadmin-module-permission-byuserid/{id}. */
   useEffect(() => { setAccessLoading(true); loadMyAccess(); }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   /* User Permission save hua aur woh khud logged-in user tha → sidebar foran taza. */

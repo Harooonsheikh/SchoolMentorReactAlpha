@@ -4,6 +4,7 @@ import { INITIAL_LAUNCH, INITIAL_ERP } from './statusData';
 import { authApi, schoolProgressApi } from './api';
 import UserPermissionMatrix from './UserPermissionMatrix';
 import { useSaPerms } from './saPerms';
+import { isHeadUser, roleLabel } from './permissionModel';
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -218,9 +219,9 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate,
         </div>
         <div className="tbl-wrap">
           <table className="um-table">
-            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 130 }}>Phone</th><th style={{ width: 70, textAlign: 'center' }}>Status</th><th style={{ width: 130, textAlign: 'center' }}>Action</th></tr></thead>
+            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 130 }}>Phone</th><th style={{ width: 90, textAlign: 'center' }}>Role</th><th style={{ width: 70, textAlign: 'center' }}>Status</th><th style={{ width: 130, textAlign: 'center' }}>Action</th></tr></thead>
             <tbody>
-              {slice.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}><i className="fa-solid fa-users" style={{ fontSize: 26, opacity: 0.2, display: 'block', marginBottom: 8 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>No users found</div></td></tr> : slice.map((u, i) => (
+              {slice.length === 0 ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}><i className="fa-solid fa-users" style={{ fontSize: 26, opacity: 0.2, display: 'block', marginBottom: 8 }} /><div style={{ fontSize: 13, fontWeight: 700 }}>No users found</div></td></tr> : slice.map((u, i) => (
                 <tr key={u.id}>
                   <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{(cur - 1) * perPage + i + 1}</td>
                   <td><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -229,6 +230,7 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate,
                   </div></td>
                   {/* user_Name hi phone number hai */}
                   <td>{u.phone || u.userName || '—'}</td>
+                  <td style={{ textAlign: 'center' }}><span className={`badge ${isHeadUser(u) ? 'b-blue' : 'b-gray'}`}>{roleLabel(u)}</span></td>
                   <td style={{ textAlign: 'center' }}><span className={`badge ${u.active ? 'b-green' : 'b-gray'}`}>{u.active ? 'Active' : 'Inactive'}</span></td>
                   <td style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>

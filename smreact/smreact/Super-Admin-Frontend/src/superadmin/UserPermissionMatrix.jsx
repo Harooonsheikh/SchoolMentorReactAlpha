@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { moduleAccessApi } from './api';
-import { ACTIONS, ACTION_LABELS, PERM_MODULES, TOTAL_PERMS, pkey, isOn, permsToApiList, apiListToPerms, setModule, buildInitialPerms, moduleStat, overallStats } from './permissionModel';
+import { ACTIONS, ACTION_LABELS, PERM_MODULES, TOTAL_PERMS, pkey, isOn, permsToApiList, apiListToPerms, setModule, buildInitialPerms, moduleStat, overallStats, isHeadUser, roleLabel } from './permissionModel';
 import { useSaPerms, lockTip } from './saPerms';
 
 export { ACTIONS, PERM_MODULES };
@@ -87,7 +87,8 @@ export default function UserPermissionMatrix({ users, setPerms, toast, onPermsSa
   const backfilled = useRef(new Set());
   useEffect(() => {
     if (!canEditPerms) return;
-    const ids = users.map((u) => u.id).filter(Boolean);
+    /* Head (isAdmin) ko backfill nahi — un par User Permission lagu hi nahi. */
+    const ids = users.filter((u) => !isHeadUser(u)).map((u) => u.id).filter(Boolean);
     if (!ids.length || ids.some((id) => !access[id] || access[id].loading)) return; // load poora hone do
     const todo = ids.filter((id) => {
       const a = access[id];
@@ -150,13 +151,14 @@ export default function UserPermissionMatrix({ users, setPerms, toast, onPermsSa
           <table className="um-table">
             <thead><tr>
               <th style={{ width: 60 }}>Sr.No</th><th>Name</th><th style={{ width: 140 }}>Phone</th>
+              <th style={{ width: 90, textAlign: 'center' }}>Role</th>
               <th style={{ width: 90, textAlign: 'center' }}>Status</th>
               <th style={{ width: 190, textAlign: 'center' }}>Permissions</th>
               <th style={{ width: 90, textAlign: 'center' }}>Action</th>
             </tr></thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}>No users found</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 36, color: 'var(--tm)' }}>No users found</td></tr>
               ) : rows.map((u, i) => (
                 <tr key={u.id}>
                   <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
@@ -165,10 +167,12 @@ export default function UserPermissionMatrix({ users, setPerms, toast, onPermsSa
                     <div style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</div>
                   </div></td>
                   <td>{u.phone || u.userName || '—'}</td>
+                  <td style={{ textAlign: 'center' }}><span className={`badge ${isHeadUser(u) ? 'b-blue' : 'b-gray'}`}>{roleLabel(u)}</span></td>
                   <td style={{ textAlign: 'center' }}><span className={`badge ${u.active ? 'b-green' : 'b-gray'}`}>{u.active ? 'Active' : 'Inactive'}</span></td>
-                  <td style={{ textAlign: 'center' }}>{summary(u.id)}</td>
+                  <td style={{ textAlign: 'center' }}>{isHeadUser(u) ? <span className="upm-count" title="Head — always has full access">Full Access</span> : summary(u.id)}</td>
                   <td style={{ textAlign: 'center' }}>
-                    <button className="upm-icon-btn" data-tip={canEditPerms ? 'Edit Permissions' : lockTip('edit')} onClick={() => { if (P.guard('permissions', 'edit', toast)) setEditing(u); }} disabled={!canEditPerms || access[u.id]?.loading}>
+                    {/* Head = poori access, User Permission lagu nahi → icon disabled */}
+                    <button className="upm-icon-btn" data-tip={isHeadUser(u) ? 'Head has full access' : canEditPerms ? 'Edit Permissions' : lockTip('edit')} onClick={() => { if (isHeadUser(u)) return; if (P.guard('permissions', 'edit', toast)) setEditing(u); }} disabled={isHeadUser(u) || !canEditPerms || access[u.id]?.loading}>
                       <i className="fa-solid fa-user-shield" />
                     </button>
                   </td>

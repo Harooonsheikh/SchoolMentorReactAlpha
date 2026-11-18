@@ -157,6 +157,7 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
             <div className="page-sub">Bug &amp; development lifecycle — triage, develop, QA, and release.</div>
           </div>
         </div>
+        {/* "Viewing as" dropdown band — ab access User Permission (logged-in user) se chalta hai.
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tm)' }}>Viewing as</label>
           <select className="um-input" style={{ height: 34, width: 220 }} value={viewingAsUserId || ''} onChange={(e) => setViewingAsUserId(e.target.value || null)}>
@@ -167,6 +168,7 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
             })}
           </select>
         </div>
+        */}
       </div>
 
       {!loading && <AnalyticsCards tickets={tickets} server={serverStats} />}

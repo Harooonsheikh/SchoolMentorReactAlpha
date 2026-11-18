@@ -289,7 +289,8 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           <div className="page-sub">Platform overview &amp; analytics — {monthName(monthOfPeriod('thisMonth'))}</div>
         </div>
       </div>
-      {viewBar}
+      {/* "Viewing as" dropdown band — ab access User Permission (logged-in user) se chalta hai.
+          Wapas lana ho to ye line un-comment karein: {viewBar} */}
     </div>
   );
 
