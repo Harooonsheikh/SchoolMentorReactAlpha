@@ -14,7 +14,10 @@ import { INITIAL_USERS, INITIAL_ROLES } from '../pages/UserPermissions/permissio
        isAccessable false → denied  (disable)
    • Jo menu API response me hai HI nahi (governed nahi) → allow (taake
      purane/uncovered screens na tootein).
-   • Network/data fail → fail-open (fullAccess) taake app lock na ho.
+   • Network/data fail → ek retry, phir fail-CLOSED (koi gated module nahi).
+     Permissions kabhi khud-ba-khud zyada nahi di jati.
+   • Har load `cache: 'no-store'` + user/branch par keyed; tab par wapas aane
+     par (60s throttle) dobara load — Head ki tabdeeli bina re-login lagti hai.
 
    API surface (usePermissions):
      ready        — permissions load ho chuki hain
@@ -131,23 +134,62 @@ export function PermissionsProvider({ children }) {
     knownModules: new Set(),       // menu jo API me maujood (governed)
   }));
 
+  /* Permissions belong to ONE logged-in user. Keyed on branch + user so a
+     different login in the same tab never reuses another account's set. */
+  const sessionBranchId = sessionStorage.getItem('branchID') || '1';
+  const sessionUserId = sessionStorage.getItem('UserID') || '';
+
   useEffect(() => {
     /* School Head → sab allowed; chain → sab dikhega magar chalega kuch nahi.
        Dono soorton me per-user permissions mangane ki zaroorat nahi. */
     if (isSchoolHead || chainReadOnly) return undefined;
     let alive = true;
-    const branchId = sessionStorage.getItem('branchID') || '1';
-    const userId = sessionStorage.getItem('UserID') || '';
-    const token = sessionStorage.getItem('token');
-    if (!userId) { setState((s) => ({ ...s, ready: true, fullAccess: true, failOpen: true })); return undefined; }
+    const branchId = sessionBranchId;
+    const userId = sessionUserId;
+    /* Har naye user par pehle sab kuch saaf — purane user ki permissions kabhi
+       naye user par na lagein. */
+    setState({
+      ready: false, fullAccess: false, failOpen: false,
+      accessible: new Set(), screens: new Set(), modules: new Set(), knownModules: new Set(),
+    });
+    /* Fail CLOSED: permissions na mil sakein (no userId / network / server
+       error) to koi gated module nahi khulta. Pehle yahan fullAccess (fail-open)
+       lagta tha — is se kisi bhi aarzi error par Teacher ko poora Dashboard aur
+       baqi restricted data mil jata tha, chahe Head ne band kiya ho. */
+    const DENY_ALL = {
+      ready: true, fullAccess: false, failOpen: false,
+      accessible: new Set(), screens: new Set(), modules: new Set(), knownModules: new Set(),
+    };
+    if (!userId) { setState(DENY_ALL); return undefined; }
 
-    fetch(buildUrl(`/get-user-menu-permissions/${branchId}/${userId}`), {
-      method: 'GET',
-      headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
-      .then((r) => r.json())
+    let lastLoadAt = 0;
+    const load = (attempt = 0) => {
+      lastLoadAt = Date.now();
+      const token = sessionStorage.getItem('token');
+      return fetch(buildUrl(`/get-user-menu-permissions/${branchId}/${userId}`), {
+        method: 'GET',
+        /* Hamesha taaza — browser/proxy cache se purani permissions nahi. */
+        cache: 'no-store',
+        headers: { Accept: '*/*', 'Cache-Control': 'no-cache', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      })
+      .then(async (r) => {
+        const json = await r.json().catch(() => null);
+        if (!r.ok) {
+          const err = new Error(`get-user-menu-permissions failed (HTTP ${r.status})`);
+          err.status = r.status;
+          throw err;
+        }
+        return json;
+      })
       .then((json) => {
         if (!alive) return;
+        /* Response kisi aur user ka ho to use bilkul na maano. */
+        const respUser = json?.data?.userID ?? json?.data?.userId;
+        if (respUser != null && String(respUser) !== String(userId)) {
+          console.error('Permission response belongs to a different user — ignoring it.');
+          setState(DENY_ALL);
+          return;
+        }
         const perms = json?.data?.permissions;
         if (!Array.isArray(perms) || !perms.length) {
           /* Request KAMYAB hui magar koi granted row nahi — matlab is user ko
@@ -181,11 +223,28 @@ export function PermissionsProvider({ children }) {
         setState({ ready: true, fullAccess: false, failOpen: false, accessible, screens, modules, knownModules });
       })
       .catch((err) => {
+        if (!alive) return;
+        /* Aarzi network/server kharabi → ek dafa dobara koshish (401 par nahi —
+           session khatam hai, session guard login par bhej dega). */
+        if (attempt < 1 && err?.status !== 401 && err?.status !== 403) {
+          setTimeout(() => { if (alive) load(attempt + 1); }, 1500);
+          return;
+        }
         console.error('Could not load user permissions:', err);
-        if (alive) setState((s) => ({ ...s, ready: true, fullAccess: true, failOpen: true })); // fail-open
+        /* Pehli load fail → fail-closed. Baad ki refresh fail → jo aakhri
+           kamyab set tha wahi rehta hai (koi naya access nahi milta). */
+        setState((s) => (s.ready ? s : DENY_ALL));
       });
-    return () => { alive = false; };
-  }, [isSchoolHead, chainReadOnly]);
+    };
+    load();
+
+    /* Head ne permissions badli hon to user ke tab par wapas aate hi taaza set
+       laao (har 60s me zyada se zyada ek dafa) — logout/login ki zaroorat nahi. */
+    const REFRESH_MS = 60 * 1000;
+    const onFocus = () => { if (Date.now() - lastLoadAt >= REFRESH_MS) load(); };
+    window.addEventListener('focus', onFocus);
+    return () => { alive = false; window.removeEventListener('focus', onFocus); };
+  }, [isSchoolHead, chainReadOnly, sessionBranchId, sessionUserId]);
 
   const value = useMemo(() => {
     const { fullAccess, failOpen, accessible, screens, modules, knownModules, ready } = state;

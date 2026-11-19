@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import {
@@ -421,11 +421,14 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
 
   const stats = useMemo(() => permStats(perms), [perms]);
 
-  const [saving, setSaving] = useState(false);
+  const [saving, setSavingState] = useState(false);
+  /* Ref bhi — state async hai, double-click ek hi tick me do requests na bheje. */
+  const savingRef = useRef(false);
+  const setSaving = (v) => { savingRef.current = v; setSavingState(v); };
 
   const onSubmit = async () => {
     if (readOnly) { onClose(); return; }
-    if (saving) return;
+    if (savingRef.current) return;
     setSaving(true);
 
     /* Jo tab active hai usi ko save karo — ERP Access → menu permissions,
@@ -496,21 +499,31 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       }
     }
 
+    /* Kis user ki permissions save ho rahi hain — bina employee/branch ke
+       request bhejna ghalat row par likh sakta hai, is liye pehle hi rok do. */
+    const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+    const employeeID = Number(user.empId) || 0;
+    if (!branchId || !employeeID) {
+      toast('Could not save permissions: this user has no employee/branch ID. Reload the page and try again.', 'error');
+      setSaving(false);
+      return;
+    }
+
+    /* Bheje jane wale keys: API se aaye (apiKeys) + har woh key jo editor me
+       maujood hai — checked (true) AUR unchecked (false) dono. Pehle sirf
+       checked + apiKeys jaate the, is liye jo checkbox role/default seed se
+       checked dikh raha tha aur Head ne uncheck kiya, uska false kabhi backend
+       tak nahi pohnchta tha. */
+    const relevantKeys = new Set(apiKeys);
+    Object.keys(perms).forEach((k) => relevantKeys.add(k));
+    const sentPermissions = apiPermissionsFromKeys(perms, [...relevantKeys]);
+    const payload = { branchID: branchId, employeeID, permissions: sentPermissions };
+
     try {
-      const branchId = sessionStorage.getItem('branchID') || '1';
       const token = sessionStorage.getItem('token');
-      /* Sirf un menus/submenus ko bhejo jo user ne actually touch/grant kiye:
-         abhi checked (true) + jo API se load hue the (apiKeys — taake unchecking bhi
-         false ke saath persist ho). Poore module-tree ki entries nahi. */
-      const relevantKeys = new Set(apiKeys);
-      Object.keys(perms).forEach((k) => { if (perms[k]) relevantKeys.add(k); });
-      const payload = {
-        branchID: Number(branchId) || 0,
-        employeeID: Number(user.empId) || 0,
-        permissions: apiPermissionsFromKeys(perms, [...relevantKeys]),
-      };
       const res = await fetch(buildUrl('/save-user-menu-permissions'), {
         method: 'POST',
+        cache: 'no-store',
         headers: {
           Accept: '*/*',
           'Content-Type': 'application/json',
@@ -519,19 +532,50 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
         body: JSON.stringify(payload),
       });
       const json = await res.json().catch(() => null);
-      if (!res.ok || (json && json.success === false)) {
-        toast((json && json.message) || 'Could not save permissions', 'error');
+      const serverMsg = json && (json.message || json.Message);
+      /* Empty 200 body is not trusted on its own — the read-back below decides. */
+      if (!res.ok || (json && (json.success === false || json.status === false))) {
+        let msg;
+        if (res.status === 401 || res.status === 403) msg = 'Your session has expired. Please log in again, then save the permissions.';
+        else if (res.status === 400 || res.status === 422) msg = `Permissions were not saved: ${serverMsg || 'the server rejected the data.'}`;
+        else if (res.status >= 500) msg = `Permissions were not saved: server error (${res.status}). Please try again.`;
+        else msg = `Permissions were not saved: ${serverMsg || 'the server did not confirm the save.'}`;
+        toast(msg, 'error');
         setSaving(false);
-        return;
+        return;   /* modal open — unsaved changes intact, retry possible */
       }
     } catch (err) {
       console.error('Could not save permissions:', err);
-      toast('Could not save permissions', 'error');
+      toast('Permissions were not saved: network error. Check your connection and try again.', 'error');
       setSaving(false);
       return;
     }
 
+    /* Backend ne "success" kaha — ab wapas parh kar tasdeeq karo ke wahi
+       saved hua jo bheja tha (khaas tor par false wali entries). */
+    let verified = null;   /* true | false | null (could not re-read) */
+    let mismatches = 0;
+    try {
+      const fresh = permsFromApiPermissions(
+        await getUserMenuPermissions({ employeeId: user.empId, loginUserId: user.loginUserId }),
+      );
+      [...relevantKeys].forEach((k) => {
+        if (!!perms[k] !== !!fresh[k]) mismatches += 1;
+      });
+      verified = mismatches === 0;
+    } catch (err) {
+      console.error('Could not re-read saved permissions:', err);
+    }
     setSaving(false);
+    if (verified === false) {
+      toast(`The server accepted the request, but ${mismatches} permission${mismatches > 1 ? 's were' : ' was'} not stored as selected. Please try saving again.`, 'error');
+      return;   /* keep modal open */
+    }
+    if (verified === null) {
+      toast('Permissions saved, but they could not be re-checked right now. Reopen this user to confirm.', 'info');
+    } else {
+      toast('Permissions Saved Successfully — All assigned permissions have been updated successfully.', 'success');
+    }
     /* Naya role bhi parent ko batao — warna table purana role dikhata rehta
        hai aur sirf screen refresh par theek hota. Role na badla ho to null. */
     onSave(cleaned, summary, roleChanged ? pickedRoleId : null);

@@ -115,7 +115,7 @@ export async function getUserMenuPermissions({ employeeId, loginUserId }) {
   const userId = Number(loginUserId) || await resolveLoginUserId(employeeId, branchId, headers);
   if (userId) {
     try {
-      const res = await fetch(buildUrl(`/get-user-menu-permissions/${branchId}/${userId}`), { headers });
+      const res = await fetch(buildUrl(`/get-user-menu-permissions/${branchId}/${userId}`), { headers, cache: 'no-store' });
       const json = await res.json().catch(() => null);
       const data = json?.data;
       const sameEmployee = data?.employeeID == null || String(data.employeeID) === String(employeeId);
@@ -125,7 +125,7 @@ export async function getUserMenuPermissions({ employeeId, loginUserId }) {
     } catch (_) { /* neeche by-branch par girte hain */ }
   }
 
-  const res = await fetch(buildUrl(`/get-user-menu-permissions-by-branch/${branchId}`), { headers });
+  const res = await fetch(buildUrl(`/get-user-menu-permissions-by-branch/${branchId}`), { headers, cache: 'no-store' });
   const json = await res.json().catch(() => null);
   const entry = (json?.data || []).find((d) => String(d.employeeID) === String(employeeId));
   return entry?.permissions || [];

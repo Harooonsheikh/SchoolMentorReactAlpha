@@ -533,15 +533,42 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      data se bharta hai (mock constants ki jagah). Fee section alag se
      BranchLedger (Fee reports jaisa) se aata hai, is liye yahan FeeAnalytics
      use NAHI karte. */
+  /* ─── Per-card permission (logged-in user's saved ERP permissions) ───
+     Used both to render cards AND to decide whether a card's data request
+     may run at all — a card the user can't see never fetches its data. */
+  const cardAllowed = (cardId) => {
+    if (typeof visibility.can !== 'function') return false;
+    const label = MODULE_TREE.find((m) => m.id === 'dashboard')
+      ?.children.find((c) => c.id === `dashboard.${cardId}`)?.label || cardId;
+    return visibility.can('Dashboard', label, 'view');
+  };
+  const FEE_CARD_IDS = ['fee_analytics_overview', 'fee_currentmonth', 'fee_previousdues', 'fee_netreceivable',
+    'fee_received', 'fee_discountgiven', 'fee_advanceadjustments', 'fee_pending', 'fee_advance', 'fee_inactivestudents'];
+  /* get-dashboard feeds announcements (staff), app status, snapshot, attendance,
+     lesson plans, paper generator, birthdays and activities. */
+  const needDashData = ['announcements', 'teacherapp', 'parentapp', 'snapshot', 'attendance',
+    'lessonplananalytics', 'papergenerator', 'birthdays', 'activities'].some(cardAllowed);
+  const needActivities = cardAllowed('activities') || cardAllowed('snapshot');
+  const needTeacherApp = cardAllowed('teacherapp');
+  const needParentApp  = cardAllowed('parentapp');
+  const needFeeCards   = FEE_CARD_IDS.some(cardAllowed);
+  /* Snapshot ka "Fee Collection" tile bhi fee ledger/summary parhta hai. */
+  const needFeeLedger  = needFeeCards || cardAllowed('snapshot');
+  const needFeeReceipts = cardAllowed('fee_received') || cardAllowed('fee_discountgiven');
+  const needFinSummary = needFeeLedger || cardAllowed('finsummary');
+  const needPlTrend    = cardAllowed('plchart');
+  const needAnnouncements = cardAllowed('announcements');
+
   const [dash, setDash] = useState({});
   useEffect(() => {
+    if (!needDashData) { setDash({}); return undefined; }
     let alive = true;
     const { month, year } = dashboardService.currentMonthYear();
     dashboardService.getDashboard(month, year)
       .then((d) => { if (alive) setDash(d || {}); })
       .catch(() => { if (alive) setDash({}); });
     return () => { alive = false; };
-  }, []);
+  }, [needDashData]);
   const D    = dash || {};
   const kpi  = D.Kpi || {};
   const snap = D.ModuleSnapshot || {};
@@ -562,12 +589,13 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      shapes (camel / Pascal) se uthaye jate hain. */
   const [monthActs, setMonthActs] = useState(null);
   useEffect(() => {
+    if (!needActivities) { setMonthActs([]); return undefined; }
     let alive = true;
     dashboardService.getActivitiesByMonth(dashboardService.currentMonthYear().month)
       .then((rows) => { if (alive) setMonthActs(rows); })
       .catch(() => { if (alive) setMonthActs([]); });
     return () => { alive = false; };
-  }, []);
+  }, [needActivities]);
   const actMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const monthActivities = useMemo(() => {
 const src = [...(monthActs || []), ...liveUpActivities];
@@ -626,8 +654,12 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
 /* App cards — report (AppPendingReportModal) wali hi ginti: active students/staff + fcm-tokens. */
   const [appLive, setAppLive] = useState({});
   useEffect(() => {
+    if (!needTeacherApp && !needParentApp) { setAppLive({}); return undefined; }
     let alive = true;
-    Promise.allSettled([loadAppStatusCounts('teachers'), loadAppStatusCounts('parents')])
+    Promise.allSettled([
+      needTeacherApp ? loadAppStatusCounts('teachers') : Promise.reject(new Error('not permitted')),
+      needParentApp  ? loadAppStatusCounts('parents')  : Promise.reject(new Error('not permitted')),
+    ])
       .then(([t, p]) => {
         if (!alive) return;
         setAppLive({
@@ -636,7 +668,7 @@ total: Number(parentAppLive.Total) || Number(kpi.ActiveStudents) || 0,
         });
       });
     return () => { alive = false; };
-  }, []);
+  }, [needTeacherApp, needParentApp]);
   if (appLive.teachers) { teacherAppStatus.total = appLive.teachers.total; teacherAppStatus.downloaded = appLive.teachers.downloaded; }
   if (appLive.parents)  { parentAppStatus.total  = appLive.parents.total;  parentAppStatus.downloaded  = appLive.parents.downloaded; }
 
@@ -686,6 +718,7 @@ const canSeeCard = useCallback(
   const [feeMonthIdx, setFeeMonthIdx] = useState(() => new Date().getMonth());
   const [feeYear, setFeeYear] = useState(() => new Date().getFullYear());
   useEffect(() => {
+    if (!needFinSummary) return undefined;
     let alive = true;
     feeService.getFeeSettings()
       .then((settings) => {
@@ -696,7 +729,7 @@ const canSeeCard = useCallback(
       })
       .catch(() => { /* keep calendar default */ });
     return () => { alive = false; };
-  }, []);
+  }, [needFinSummary]);
   /* Daily Receiving drill-down popups — forked MOCK hata diya (koi fake data
      nahi). Live getReceipts stub [] deta hai, is liye ye popups ab empty state
      dikhate hain jab tak inka proper live-ledger wiring nahi hota. */
@@ -711,7 +744,8 @@ const canSeeCard = useCallback(
      (useLedgerReportData → ledgerModel), so every dashboard figure equals its
      Fee report. The forked reads above remain only for the Daily Receiving
      popups (secondary, behind buttons) until those are ported too. */
-  const faLedgerPeriods = useMemo(() => [{ month: feeMonthIdx + 1, year: feeYear }], [feeMonthIdx, feeYear]);
+  /* Empty periods → useLedgerReportData fetches no challans (fee cards not permitted). */
+  const faLedgerPeriods = useMemo(() => (needFeeLedger ? [{ month: feeMonthIdx + 1, year: feeYear }] : []), [needFeeLedger, feeMonthIdx, feeYear]);
   const { allStudents: faLedger = [] } = useLedgerReportData(faLedgerPeriods);
 
   /* Fee Received / Discount Given During Receiving REPORTS — is mahine ki ASLI receipts,
@@ -720,13 +754,14 @@ const canSeeCard = useCallback(
      Is liye pichhle 12 mahine + is mahine ke challans; har receipt ka method, received-by,
      date, time. Pehle sirf is mahine ke challans aur khaali (—) columns the. */
   const rcptPeriods = useMemo(() => {
+    if (!needFeeReceipts) return [];
     const out = [];
     for (let i = 12; i >= 0; i--) {
       const d = new Date(feeYear, feeMonthIdx - i, 1);
       out.push({ month: d.getMonth() + 1, year: d.getFullYear() });
     }
     return out;
-  }, [feeMonthIdx, feeYear]);
+  }, [needFeeReceipts, feeMonthIdx, feeYear]);
   const { allStudents: rcptLedger = [] } = useLedgerReportData(rcptPeriods);
   const monthReceipts = useMemo(() => {
     const ym = `${feeYear}-${String(feeMonthIdx + 1).padStart(2, '0')}`;
@@ -780,11 +815,12 @@ const canSeeCard = useCallback(
      Defaulters. Fetch that month's ledger separately and use its outstanding
      (totals.pend) as the dashboard's Previous Dues. */
   const faPrevPeriod = useMemo(() => {
+    if (!needFeeLedger) return [];
     const curM = feeMonthIdx + 1;              // 1-12 current
     const pm = curM === 1 ? 12 : curM - 1;
     const py = curM === 1 ? feeYear - 1 : feeYear;
     return [{ month: pm, year: py }];
-  }, [feeMonthIdx, feeYear]);
+  }, [needFeeLedger, feeMonthIdx, feeYear]);
   const { totals: faPrevTotals } = useLedgerReportData(faPrevPeriod);
   const prevMonthOutstanding = Number(faPrevTotals?.pend) || 0;
 
@@ -1027,12 +1063,13 @@ const canSeeCard = useCallback(
      branch) — get-dashboard Announcements ke saath isi card me. */
   const [billingAnnouncements, setBillingAnnouncements] = useState([]);
   useEffect(() => {
+    if (!needAnnouncements) { setBillingAnnouncements([]); return undefined; }
     let alive = true;
         getBillingAnnouncements()
       .then((list) => { console.log('HQ announcements:', list); if (alive) setBillingAnnouncements(list); })
       .catch((err) => { console.error('HQ announcements error:', err); });
     return () => { alive = false; };
-  }, []);
+  }, [needAnnouncements]);
 
   /* Newest announcement surfaces in the top card; sender + count of
      remaining new ones are computed for the pill + footer line. */
@@ -1142,6 +1179,7 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
   /* EK call — FinancialOverview (chuna account period) + FeeAnalytics (chuna fee
      mahina, feeMonthIdx/feeYear). Koi bhi filter badle to dobara fetch. */
   useEffect(() => {
+    if (!needFinSummary) { setFinSummary({}); return undefined; }
     let alive = true;
     setFinSummary(null);
     dashboardService.getFinancialSummary({
@@ -1153,7 +1191,7 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
       .then((d) => { if (alive) setFinSummary(d || {}); })
       .catch(() => { if (alive) setFinSummary({}); });
     return () => { alive = false; };
-  }, [finBranchId, finAccountQuery, feeMonthIdx, feeYear]);
+  }, [needFinSummary, finBranchId, finAccountQuery, feeMonthIdx, feeYear]);
 
   const finOverviewApi = finSummary?.FinancialOverview || null;
   const financeSummary = useMemo(() => {
@@ -1196,6 +1234,7 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
      Year dropdown badalne par us saal ka dashboard fetch hota hai. */
   const [plTrend, setPlTrend] = useState(null);
   useEffect(() => {
+    if (!needPlTrend) { setPlTrend([]); return undefined; }
     const now = new Date();
     const m = revenueYear === now.getFullYear() ? now.getMonth() + 1 : 12;
     let alive = true;
@@ -1214,7 +1253,7 @@ const finBranchId = Number(sessionStorage.getItem('branchID')) || Number(user?.b
         setPlTrend([...byMonth.values()]);
       });
     return () => { alive = false; };
-  }, [revenueYear]);
+  }, [needPlTrend, revenueYear]);
   const profitData = useMemo(() => {
     const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const rows = plTrend || [];
@@ -2005,7 +2044,9 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
 
       {/* OneLink Payments — LIVE from Super-Admin /branch_onelink-payments
           (getOneLinkPayments), period filter se. */}
-      {isActive('fee') && <OneLinkPaymentSection openModule={openModule} toast={toast} />}
+      {isActive('fee') && (canSeeCard('onelink')
+        ? <OneLinkPaymentSection openModule={openModule} toast={toast} />
+        : <LockedCard title="OneLink Payments" icon="fa-link" />)}
 
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
       {isActive('accounts') && (
