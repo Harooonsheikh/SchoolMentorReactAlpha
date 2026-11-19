@@ -4975,8 +4975,10 @@ function UnitsManagementModal({ target, canEdit, guard, onClose, onSaved, toast,
                     </Tooltip>
                   </div>
                   <div className="tbm-unit-top-btns">
+                    {/* Move up / down arrows band (comment) — order ab unit number se chalta hai.
                     <Tooltip text="Move up"><button className="tbm-unit-save-btn" disabled={i === 0 || !canEdit} onClick={() => confirmMove(u.id, -1)}><i className="fa-solid fa-arrow-up"></i></button></Tooltip>
                     <Tooltip text="Move down"><button className="tbm-unit-save-btn" disabled={i === draft.length - 1 || !canEdit} onClick={() => confirmMove(u.id, 1)}><i className="fa-solid fa-arrow-down"></i></button></Tooltip>
+                    */}
                     <Tooltip text="Delete unit"><button className="tbm-unit-save-btn" disabled={!canEdit}
                       style={{ borderColor: 'rgba(220,38,38,.25)', background: 'rgba(220,38,38,.07)', color: '#DC2626' }}
                       onClick={() => removeUnit(u)}><i className="fa-solid fa-trash"></i></button></Tooltip>
