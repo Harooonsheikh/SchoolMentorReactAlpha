@@ -6,7 +6,7 @@ import { INITIAL_TRANSACTIONS, calculateSchoolWiseSummary } from './transactionD
 import { isMockMode } from './api';
 import { onelinkReportToUi } from './api/services/schoolProgress';
 import { feeRowOf, remainingDuesOf } from './api/services/payments';
-import { loadSchoolDirectory } from './api/services/dashboard';
+import { loadSchoolStats } from './api/services/schoolStats';
 
 /* Dashboard ab hamesha LIVE chalti hai:
    GET .../api/AHM_School_Progress/admin_dashboard. jsdom me koi backend nahi,
@@ -88,11 +88,19 @@ beforeAll(() => {
 
 afterAll(() => { global.fetch = realFetch; });
 
+/* Shell ab khula module location.hash me rakhta hai (deep link + refresh par
+   wohi module). jsdom ka location poore test file bhar ek hi rehta hai, is
+   liye har test se pehle hash saaf karna zaroori hai — warna pichhle test ka
+   module agle test ka landing screen ban jata hai. */
+beforeEach(() => {
+  window.history.replaceState(null, '', window.location.pathname);
+});
+
 /* The interface modules a user can navigate to (sidebar labels). */
 const INTERFACE_MODULES = [
   'E-Tube', 'Network Permissions', 'School Permissions', 'Schools Progress', 'Schools Payment',
   'Policy Manuals', 'Mentor AI', 'Support', 'Teachers Training',
-  'Quiz Content', 'Notifications', 'User Management',
+  'Quiz Content', 'Notifications', 'User Management', 'School Agreements',
 ];
 
 const clickNav = (name) => {
@@ -151,11 +159,11 @@ describe('Super Admin — data layer', () => {
     const d = adminDashboardToUi(DASHBOARD_PAYLOAD.data);
     const v = d.values;
 
+    /* School counts come from the School Progress records (schoolStats), not
+       from admin_dashboard's aggregates — those are never read for display. */
+    ['schools.active', 'schools.erp', 'schools.launch', 'details.inactiveSchools', 'details.totalSchools', 'schools.erpNew', 'onboarding.fullyTrained']
+      .forEach((id) => expect(v[id]).toBeUndefined());
     expect(v).toMatchObject({
-      'schools.active': 71, 'schools.erp': 38, 'schools.launch': 33,
-      'details.inactiveSchools': 2,
-      'details.totalSchools': 73,                    // ActiveSchools + InActiveSchools
-      'schools.erpNew': 18, 'schools.launchNew': 29, // ThisMonthProgress
       'staff.total': 506, 'staff.new': 2,
       'students.total': 0, 'students.new': 0,        // a genuine API 0 stays 0
       'videos.total': 1,
@@ -167,9 +175,9 @@ describe('Super Admin — data layer', () => {
     expect(v['fee.received']).toBe(4900);
     expect(d.feeRows[0].name).toBe('Beacon Public School');
 
-    // No "Total Modules" in the API — not in the registry, never invented.
+    // Onboarding comes from School Progress onboarding cards, not this response.
     expect(v['onboarding.totalModules']).toBeUndefined();
-    expect(v['onboarding.inProcess']).toBe(6);
+    expect(v['onboarding.inProcess']).toBeUndefined();
 
     // BugDetail parse: tag, unwan, tafseel aur priority alag alag.
     expect(d.bugList).toHaveLength(2);
@@ -432,7 +440,7 @@ describe('Dashboard data audit — shared fee rule & school directory', () => {
     expect(remainingDuesOf({ total: 2500 }, { remainingAmount: -50 })).toBe(0);
   });
 
-  test('loadSchoolDirectory classifies by directory isActive + launchSetup and keeps branches missing from branch-report', async () => {
+  test('loadSchoolStats classifies by the School Progress tabs; inactive side from the directory; each school once', async () => {
     const prev = global.fetch;
     const ok = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     const br = (id, name) => ({ branchID: id, branchName: name, totalStudents: 10, totalStaff: 2, generalDetails: { createdAt: '5/20/2026 4:11:12 PM' }, stateDetails: {}, compulsionDetails: {} });
@@ -440,25 +448,26 @@ describe('Dashboard data audit — shared fee rule & school directory', () => {
       const u = String(url);
       if (u.includes('get-branches-with-permissions')) {
         return ok([
-          { branch: { id: 1, name: 'ERP Active', isActive: true, launchSetup: 1, createdAt: '2026-05-20T10:00:00' } },
-          { branch: { id: 2, name: 'Launch Active', isActive: true, launchSetup: 0, createdAt: '2026-06-01T10:00:00' } },
-          { branch: { id: 3, name: 'ERP Inactive', isActive: false, launchSetup: 1, createdAt: '2026-06-01T10:00:00' } },
-          { branch: { id: 4, name: 'Not In Report', isActive: true, launchSetup: 1, createdAt: '2026-06-01T10:00:00' } },
+          { branch: { id: 1, name: 'ERP Active', isActive: true, launchSetup: 1 } },
+          { branch: { id: 2, name: 'Launch Active', isActive: true, launchSetup: 0 } },
+          { branch: { id: 3, name: 'ERP Inactive', isActive: false, launchSetup: 1 } },
+          { branch: { id: 4, name: 'Not In Report', isActive: true, launchSetup: 1 } },
         ]);
       }
       if (u.includes('branch-report')) {
         if (u.includes('isActive=false')) return ok({ data: [br(3, 'ERP Inactive')] });
-        return ok({ data: u.includes('launchSetup=1') ? [br(1, 'ERP Active')] : [br(2, 'Launch Active')] });
+        return ok({ data: u.includes('launchSetup=1') ? [br(1, 'ERP Active'), br(1, 'ERP Active')] : [br(2, 'Launch Active')] });
       }
       return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) });
     };
     try {
-      const d = await loadSchoolDirectory();
-      expect(d.erp.map((r) => r.id)).toEqual([1, 4]);
-      expect(d.launch.map((r) => r.id)).toEqual([2]);
+      const d = await loadSchoolStats();
+      expect(d.erp.map((r) => r.id)).toEqual([1]);          // duplicate row counted once
+      expect(d.launch.map((r) => r.id)).toEqual([2]);       // #4 is not in School Progress → not counted
       expect(d.inactive).toEqual([expect.objectContaining({ id: 3, setupType: 'erp' })]);
-      expect(d.enriched).toBe(true);
-      expect(d.erp.find((r) => r.id === 4).students).toBe(0);
+      expect(d.counts).toMatchObject({ active: 2, erp: 1, launch: 1, inactive: 1, inactiveErp: 1, inactiveLaunch: 0, total: 3 });
+      expect(d.classified).toBe(true);
+      expect(d.erp[0].students).toBe(10);
     } finally {
       global.fetch = prev;
     }

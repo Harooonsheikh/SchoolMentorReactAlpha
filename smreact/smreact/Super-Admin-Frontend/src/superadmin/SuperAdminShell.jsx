@@ -11,6 +11,7 @@ import OperationalSops from './OperationalSops';
 import QuizContent from './QuizContent';
 import TeacherTrainings from './TeacherTrainings';
 import UserManagement from './UserManagement';
+import SchoolAgreements from './SchoolAgreements';
 import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
 import TechModule from './TechModule';
@@ -54,8 +55,36 @@ const NAV = [
     { id: 'quiz',        name: 'Quiz Content',       icon: 'fa-circle-question' },
     { id: 'notifications', name: 'Notifications',    icon: 'fa-bell' },
     { id: 'users',       name: 'User Management',    icon: 'fa-users-gear' },
+    /* Sabse neeche — User Management ke baad, Account/Log Out se pehle. */
+    { id: 'agreements',  name: 'School Agreements',  icon: 'fa-file-contract', sub: 'Legal documents' },
   ] },
 ];
+
+/* ── Deep links ───────────────────────────────────────────────────────
+   Is console me react-router nahi hai (App.js sirf #agent ko pehchanta
+   hai), is liye module ka "route" hash me rakha jata hai: #agreements,
+   #users, #dashboard waghera. Faida yehi ke refresh par wohi module
+   wapas khulta hai aur link share ho sakta hai.
+
+   `replaceState` se likhte hain — hashchange event nahi chalta, is liye
+   App ka useHashRoute dobara render nahi karwata. '#agent' kabhi nahi
+   likhte: wo App ka apna standalone Support route hai. */
+const MODULE_IDS = NAV.flatMap((s) => s.items).map((i) => i.id);
+
+function moduleFromHash() {
+  try {
+    const id = String(window.location.hash || '').replace(/^#/, '');
+    return MODULE_IDS.includes(id) ? id : null;
+  } catch { return null; }
+}
+
+function writeModuleHash(id) {
+  if (!id || id === 'agent') return;
+  try {
+    const { pathname, search } = window.location;
+    window.history.replaceState(null, '', `${pathname}${search}#${id}`);
+  } catch { /* history blocked — navigation phir bhi chalti hai */ }
+}
 
 const SUPPORT_TABS = [
   { id: 'overview', name: 'Overview',    icon: 'fa-gauge-high' },
@@ -104,6 +133,7 @@ const CRUMB = {
   notifications: 'Notifications',
   users:         'User Management',
   techModule:    'Tech Module',
+  agreements:    'School Agreements & Legal Documents',
 };
 
 const TOAST_ICON = { success: 'fa-circle-check', info: 'fa-circle-info', warn: 'fa-triangle-exclamation', error: 'fa-circle-xmark' };
@@ -128,7 +158,9 @@ export default function SuperAdminShell({ user, onLogout }) {
     return 'light';
   });
   const [supportUnreadCount, setSupportUnreadCount] = useState(0);
-  const [active, setActive] = useState('dashboard');      // landing module; see NAV for others
+  /* Landing module = hash me jo likha ho (refresh / shared link), warna
+     Dashboard. See NAV for the rest. */
+  const [active, setActive] = useState(() => moduleFromHash() || 'dashboard');
   const [supportTab, setSupportTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
@@ -234,6 +266,19 @@ export default function SuperAdminShell({ user, onLogout }) {
   /* Remember the theme choice across reloads. */
   useEffect(() => { try { localStorage.setItem('sa-theme', theme); } catch { /* ignore */ } }, [theme]);
 
+  /* Khula module hash me — refresh par wohi wapas khulta hai. Aur agar user
+     khud URL ka hash badle (ya back/forward dabaye) to screen uske saath
+     chale. */
+  useEffect(() => { writeModuleHash(active); }, [active]);
+  useEffect(() => {
+    const onHash = () => {
+      const id = moduleFromHash();
+      if (id) setActive(id);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   /* Session guard (bilkul ERP jaisa): login ke baad agar sessionStorage se
      superadminid / superadmintoken ghaayab ho jayein — ya server 401 de — to
      "session ended" toast dikha kar seedha login screen. Shell unmount hone
@@ -273,7 +318,8 @@ const onNav = (id) => {
     id === 'trainings' ||
     id === 'notifications' ||
     id === 'users' ||
-    id === 'techModule'
+    id === 'techModule' ||
+    id === 'agreements'
   ) {
     setActive(id);
   } else {
@@ -427,6 +473,8 @@ const onNav = (id) => {
           {view === 'users' && <UserManagement toast={toast} users={users} setUsers={setUsers} reloadUsers={reloadUsers} setPerms={setPerms} onPermsSaved={onPermsSaved} />}
 
           {view === 'techModule' && <TechModule toast={toast} users={users} />}
+
+          {view === 'agreements' && <SchoolAgreements toast={toast} />}
 
           {view === 'support' && (
             <div className="page-content">
