@@ -51,11 +51,46 @@ export function pgTypeApproved(apiItems, staticUnits, typeKey) {
 function pgLineStyle(key) {
   return key === 'mcq' ? 'mcq' : key === 'true_false' ? 'tf' : (key === 'fill_blanks' || key === 'circle_word') ? 'blank' : 'line';
 }
-function LivePaperQBody({ typeKey, tab }) {
+/* HTML → plain text (live preview ke liye). */
+const lpText = (s) => String(s == null ? '' : s)
+  .replace(/<br\s*\/?>/gi, ' ').replace(/<\/(p|div|h[1-6]|li)>/gi, ' ').replace(/<[^>]*>/g, '')
+  .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim();
+const lpRowText = (r) => lpText(r?.question || r?.word || r?.sentence || r?.statement || r?.topic || r?.title
+  || r?.comprehensionStatement || r?.subject || r?.punctuation || r?.mainQuestion || '');
+const lpHasOpt = (v) => { const t = lpText(v); return !!t && !/^[-–—_.\s]+$/.test(t) && !/^(null|undefined|n\/a)$/i.test(t); };
+
+function LivePaperQBody({ typeKey, tab, sample }) {
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
   const visible = Math.max(0, items - choices);
   const k = pgLineStyle(typeKey);
+  /* Asal questions (selected units/main questions ke eligible items) — sath sath preview.
+     Items abhi set nahi → jitne eligible hain un mein se pehle chand dikhao. */
+  const pool = (sample || []).filter(r => lpRowText(r));
+  if (pool.length) {
+    const limit = k === 'mcq' ? 3 : 4;
+    const want  = visible > 0 ? visible : pool.length;
+    const rows  = pool.slice(0, Math.min(want, limit));
+    const more  = (visible > 0 ? visible : pool.length) - rows.length;
+    return (
+      <div className="pgx-p-body">
+        {rows.map((r, i) => (
+          <div key={i} style={{ margin: '4px 0', fontSize: 11.5, lineHeight: 1.45 }}>
+            <div>{i + 1}. {lpRowText(r)}</div>
+            {k === 'mcq' && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', paddingLeft: 14, fontSize: 11 }}>
+                {['option1', 'option2', 'option3', 'option4'].map((o, oi) => (lpHasOpt(r[o]) ? <span key={o}>({String.fromCharCode(65 + oi)}) {lpText(r[o])}</span> : null))}
+              </div>
+            )}
+            {k === 'tf' && <div style={{ paddingLeft: 14, fontSize: 11, opacity: .75 }}>True / False</div>}
+          </div>
+        ))}
+        {more > 0 && <div className="pgx-p-more">+ {more} more question{more !== 1 ? 's' : ''}</div>}
+        {visible === 0 && <div className="pgx-p-more">Set the number of questions to finalise this block</div>}
+      </div>
+    );
+  }
   const show = Math.min(visible, k === 'mcq' ? 3 : 4);
   const lines = [];
   for (let i = 1; i <= show; i++) {
@@ -84,7 +119,11 @@ export function livePaperEntries(typeDefs, sectionState) {
   const out = [];
   typeDefs.forEach(t => {
     const block = sectionState?.[t.key];
-    (block?.tabs || []).forEach(tab => { if (+tab.items > 0) out.push({ t, tab }); });
+    /* Sath sath preview: block tab bhi dikhe jab units chune hon (items abhi 0 hon tab bhi). */
+    (block?.tabs || []).forEach(tab => {
+      const hasUnits = Object.keys(tab.unitSelections || {}).length > 0;
+      if (+tab.items > 0 || hasUnits) out.push({ t, tab });
+    });
   });
   return out;
 }
@@ -99,7 +138,7 @@ export function orderEntries(entries, order) {
   return order.map(id => map.get(id)).filter(Boolean);
 }
 
-export function LivePaperSection({ letter, name, entries, used, target, onMove, labelOf }) {
+export function LivePaperSection({ letter, name, entries, used, target, onMove, labelOf, sampleOf }) {
   if (!entries.length) return null;
   return (
     <>
@@ -123,7 +162,7 @@ export function LivePaperSection({ letter, name, entries, used, target, onMove, 
                 </Tooltip>
               </span>
             </div>
-            <LivePaperQBody typeKey={e.t.key} tab={e.tab} />
+            <LivePaperQBody typeKey={e.t.key} tab={e.tab} sample={sampleOf ? sampleOf(e.t.key, e.tab) : null} />
             {+e.tab.choices > 0 && <span className="pgx-p-note">+ {e.tab.choices} choice question{+e.tab.choices !== 1 ? 's' : ''}</span>}
           </div>
         );

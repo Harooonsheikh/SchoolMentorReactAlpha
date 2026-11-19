@@ -509,37 +509,18 @@ function saSubjectLabel(s) {
   return n;
 }
 
-/* Grading / Final Remarks bands ka overlap check. "≥ 70" aur "≤ 70" dono 70%
-   par lagte hain → kaunsa remark aaye, tay nahi. Same direction ke tiers
-   (≥90, ≥80, ≥70 …) jaan-boojh kar overlap karte hain (sab se ooncha jeet-ta
-   hai) — wo allowed. Sirf ulti direction (≥/> vs ≤/<) ya "=" band jo kisi aur
-   band ke andar aa jaye, unhe pakadte hain. Returns [a, b] ya null. */
+/* Grading / Final Remarks bands ka conflict check.
+   Conflict SIRF tab: dono rows ki direction ek ho aur % bhi ek ho —
+   dono "≥ 70" / "> 70" (greater) ya dono "≤ 70" / "< 70" (less) ya dono "= 70".
+   Ulti direction (e.g. "≤ 80" aur "≥ 70") conflict NAHI — user ki rule.
+   'between' skip. Returns [a, b] ya null. */
 function examRsBandOverlap(rows) {
-  const iv = (r) => {
-    const p = Number(r.pct);
-    switch (r.cond) {
-      case 'gt': return { lo: p, loC: false, hi: 100, hiC: true, dir: 'up' };
-      case 'lte': return { lo: 0, loC: true, hi: p, hiC: true, dir: 'down' };
-      case 'lt': return { lo: 0, loC: true, hi: p, hiC: false, dir: 'down' };
-      case 'eq': return { lo: p, loC: true, hi: p, hiC: true, dir: 'eq' };
-      default: return { lo: p, loC: true, hi: 100, hiC: true, dir: 'up' }; // gte
-    }
-  };
-  const meet = (a, b) => {
-    const lo = Math.max(a.lo, b.lo), hi = Math.min(a.hi, b.hi);
-    if (lo < hi) return true;
-    if (lo > hi) return false;
-    const aIn = (lo > a.lo || a.loC) && (lo < a.hi || a.hiC);
-    const bIn = (lo > b.lo || b.loC) && (lo < b.hi || b.hiC);
-    return aIn && bIn;
-  };
-  // 'between' ka sirf ek % hota hai (range ka doosra sira nahi) — us par check skip.
+  const dirOf = (c) => (c === 'lte' || c === 'lt') ? 'down' : c === 'eq' ? 'eq' : 'up';
   const list = (rows || []).filter(r => r.cond !== 'between' && String(r.pct ?? '').trim() !== '' && !Number.isNaN(Number(r.pct)));
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
-      const a = iv(list[i]), b = iv(list[j]);
-      if (a.dir === b.dir && a.dir !== 'eq') continue;   // same-direction tiers OK
-      if (meet(a, b)) return [list[i], list[j]];
+      const a = list[i], b = list[j];
+      if (dirOf(a.cond) === dirOf(b.cond) && Number(a.pct) === Number(b.pct)) return [a, b];
     }
   }
   return null;
@@ -1361,10 +1342,48 @@ export default function Examination({ toast = () => { } }) {
 
   /* ── Combined Assessment state ── */
   const [cbrResults, setCbrResults] = useState([]);
+  /* Pehli dafa list aane tak loader (warna "No Combined Results" ek pal ke liye dikhta). */
+  const [cbrListLoading, setCbrListLoading] = useState(true);
   const reloadCbr = async () => {
     try { setCbrResults(cbrApi.mapCombinedResults(await cbrApi.listCombinedResults())); }
     catch (e) { console.error('Error loading combined results:', e); toast('Could not load combined results', 'error'); }
+    finally { setCbrListLoading(false); }
   };
+  /* Combined results ke exams (main + sub) me jin class-sections ka TYPE Preschool
+     hai (server, getclassesinexam) — un ke combined rows aur dropdown entries chhupao. */
+  const [cbrPreKeys, setCbrPreKeys] = useState(() => new Set());
+  /* Preschool check mukammal hone tak list na dikhao (pehle sab dikh kar phir ek ghaib
+     ho jata tha) — loader chalta hai. Key = results ke exam IDs; students load hone par
+     (cbrResults badalta hai lekin exams wahi) dobara loader nahi. */
+  const [cbrPreReadyKey, setCbrPreReadyKey] = useState('');
+  const cbrPreExamKey = React.useMemo(() => {
+    const ids = new Set();
+    cbrResults.forEach(g => {
+      if (g.mainExamID != null) ids.add(String(g.mainExamID));
+      (g.subExamIDs || []).forEach(s => ids.add(String(s)));
+    });
+    return [...ids].sort().join(',');
+  }, [cbrResults]);
+  const cbrPreReady = !cbrResults.length || cbrPreReadyKey === cbrPreExamKey;
+  useEffect(() => {
+    if (!cbrResults.length) return undefined;
+    if (cbrPreReadyKey === cbrPreExamKey) return undefined;   // isi exam-set ka check ho chuka
+    let cancelled = false;
+    (async () => {
+      let pool = cbrAllExams;
+      if (!pool.length) pool = (await loadAllTermExams().catch(() => [])) || [];
+      const termOf = id => (pool || []).find(e => String(e.selectExam) === String(id))?.termID ?? '';
+      const ids = new Set();
+      cbrResults.forEach(g => {
+        if (g.mainExamID != null) ids.add(String(g.mainExamID));
+        (g.subExamIDs || []).forEach(s => ids.add(String(s)));
+      });
+      const keys = await cbrPreschoolKeysFor([...ids].map(id => ({ examId: id, termId: termOf(id) })));
+      if (!cancelled) { setCbrPreKeys(keys); setCbrPreReadyKey(cbrPreExamKey); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cbrPreExamKey]);
   /* Load the combined-result list the first time the user opens that tab — not on
      Examination mount (keeps the module fast and avoids racing other tab calls). */
   const cbrLoadedOnce = useRef(false);
@@ -1420,13 +1439,14 @@ export default function Examination({ toast = () => { } }) {
     if (!cr || cr.studentsLoaded || cbrStudentsLoading[cr.id]) return;
     setCbrStudentsLoading(p => ({ ...p, [cr.id]: true }));
     try {
-      const caRaw = await cbrApi.getCaObtainedMarks(cr.subExamIDs, cr.classID, cr.sectionID);
-      const caList = Array.isArray(caRaw) ? caRaw : (caRaw?.data || []);
-      const ids = caList.map(r => r.studentID ?? r.StudentID ?? r.studentId).filter(v => v != null);
-      const cards = await Promise.all(ids.map(id =>
-        cbrApi.getStudentCard({ studentID: id, subExamIDs: cr.subExamIDs, classID: cr.classID, sectionID: cr.sectionID, mainExamID: cr.mainExamID })
-          .catch(e => { console.error('Error loading student card:', e); return null; }),
-      ));
+      /* CA-marks API sirf un students ko deta hai jin ke sub-exam marks lage hon — is liye
+         kai classes me "No students" aata tha jabke Single Assessment me students the.
+         Ab students = class ki student list (Single jaisa) ∪ CA-marks wale students. */
+      let caList = [];
+      try {
+        const caRaw = await cbrApi.getCaObtainedMarks(cr.subExamIDs, cr.classID, cr.sectionID);
+        caList = Array.isArray(caRaw) ? caRaw : (caRaw?.data || []);
+      } catch (e) { console.error('CA marks load failed (student list se chalayenge):', e); }
       /* Field names are read defensively (camelCase + PascalCase) since the
          backend casing varies across endpoints. */
       const num = v => Number(v ?? 0) || 0;
@@ -1450,6 +1470,16 @@ export default function Examination({ toast = () => { } }) {
           };
         });
       } catch (e) { console.error('Could not load student names for CBR:', e); }
+      const idSet = new Set();
+      Object.keys(nameMap).forEach(k => { if (k !== 'undefined' && k !== 'null') idSet.add(String(k)); });
+      caList.forEach(r => { const v = r.studentID ?? r.StudentID ?? r.studentId; if (v != null) idSet.add(String(v)); });
+      const ids = [...idSet];
+      const cards = await Promise.all(ids.map(id =>
+        cbrApi.getStudentCard({ studentID: id, subExamIDs: cr.subExamIDs, classID: cr.classID, sectionID: cr.sectionID, mainExamID: cr.mainExamID })
+          .then(c => ({ studentID: id, ...((c && typeof c === 'object' && !Array.isArray(c) ? c : (Array.isArray(c) ? c[0] : null)) || {}) }))
+          /* Card API na chale (marks nahi) to bhi student row dikhao — marks 0 / "—". */
+          .catch(e => { console.error('Error loading student card:', e); return { studentID: id }; }),
+      ));
       const students = cards.filter(Boolean).map(c => {
         const sid = c.studentID ?? c.StudentID;
         const nm = nameMap[sid] || {};
@@ -1663,7 +1693,29 @@ export default function Examination({ toast = () => { } }) {
 
         /* Overall values — sab rows mein same hoti hain, pehli se lete hain */
         const first        = rows[0] || {};
-        const finalRemark  = first.studentFinalRemarks || first['Overall Remarks'] || '';
+        /* Final Remarks: student ka saved remark — getremarksbystudentfilters (card khulte hi).
+           Wahan na mile to marks API ka studentFinalRemarks; dono khali → card % band dikhata hai. */
+        let savedFinal = '';
+        try {
+          const fp = new URLSearchParams({
+            branchID:  String(sessionStorage.getItem('branchID') || ''),
+            classID:   String(classID),
+            sectionID: String(sectionID),
+            examID:    String(selectExam),
+            termID:    String(termID ?? ''),
+            studentID: String(studentId),
+            pageNo: '1',
+            pageCount: '20',
+          });
+          const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
+          const fd = await fr.json();
+          const list = Array.isArray(fd) ? fd : (Array.isArray(fd?.data) ? fd.data : []);
+          /* Kai rows hon to sab se naya (highest id) */
+          const frec = list.reduce((best, r) => (!best || Number(r.id) > Number(best.id) ? r : best), null);
+          savedFinal = String(frec?.remarks ?? frec?.Remarks ?? '').trim();
+        } catch { /* final remark API na chale to neeche fallback */ }
+        if (cancelled) return;
+        const finalRemark  = savedFinal || first.studentFinalRemarks || first['Overall Remarks'] || '';
         const overallGrade = first.finalGrade          || first['Overall Final Grade'] || '';
         const overallPct   = first['Overall Percentage'] || '';
         const ranking      = first.ranking || '';
@@ -6636,7 +6688,8 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
             // Preschool class-sections (Setup Preschool Classes) Combined se bahar —
             // purane combined results me bhi wo rows na dikhen (card bhi na khule).
             const cbrPschMap = readPreschoolClassSetupSync();
-            const cbrNonPre = excludePreschoolClasses(cbrResults, cbrPschMap);
+            const cbrNonPre = excludePreschoolClasses(cbrResults, cbrPschMap)
+              .filter(r => !cbrPreKeys.has(`${r.classID}_${r.sectionID}`));
             // Filter
             const filtered = cbrFilterClass
               ? cbrNonPre.filter(r => `${r.cls} - ${r.section}` === cbrFilterClass || r.cls === cbrFilterClass)
@@ -6692,7 +6745,8 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                     {(cbrClassList.length
                       ? cbrClassList.flatMap(g => (g.sections || []).length
                         ? (g.sections || [])
-                            .filter(s => !cbrPschMap[preschoolClassKey(g.id ?? g.gradeID, s.sectionID ?? s.id)])
+                            .filter(s => !cbrPschMap[preschoolClassKey(g.id ?? g.gradeID, s.sectionID ?? s.id)]
+                              && !cbrPreKeys.has(`${g.id ?? g.gradeID}_${s.sectionID ?? s.id}`))
                             .map(s => `${g.name} - ${s.sectionName}`)
                         : [g.name])
                       : CBR_CLASS_OPTIONS
@@ -6705,8 +6759,13 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                   </div>
                 </div>
 
-                {/* Groups list */}
-                {!groups.length ? (
+                {/* Groups list — list API + preschool check dono mukammal hone tak loader */}
+                {(cbrListLoading || !cbrPreReady) ? (
+                  <div className="ds-empty" style={{ padding: '40px 20px' }}>
+                    <i className="fa-solid fa-spinner fa-spin" style={{ display: 'block', fontSize: 26, marginBottom: 12, color: 'var(--brand-primary)' }}></i>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-muted)' }}>Loading combined results…</div>
+                  </div>
+                ) : !groups.length ? (
                   <div className="ds-empty" style={{ padding: '40px 20px' }}>
                     <i className="fa-solid fa-folder-open" style={{ display: 'block', fontSize: 28, marginBottom: 12, color: 'var(--border-med)' }}></i>
                     <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>No Combined Results</div>
@@ -10611,7 +10670,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-  const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
+  /* Student ka saved final remark (getremarksbystudentfilters) HAMESHA pehle — auto-comment branch me bhi; na ho to % band. */ const manualFinal = String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
 const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—' : (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—'))) : '—';
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
 
@@ -10649,8 +10708,8 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
       <RcWatermark logo={school?.logo} />
       {/* Header */}
      <div style={{ background: hdrBg, padding: '8px 14px',display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
-        {opt['Show School Logo'] && (
-          <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, border: `1.5px solid ${hdrLogoBdr}`, background: school?.logo ? '#fff' : hdrLogoBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: hdrLogoCol, overflow: 'hidden' }}>
+        {(opt['Show School Logo'] || school?.logo) && (
+          <div style={{ width: 60, height: 60, borderRadius: 14, flexShrink: 0, ...(school?.logo ? { boxShadow: '0 4px 18px rgba(0,0,0,.25), 0 0 0 2px rgba(255,255,255,.15)' } : {}), border: `1.5px solid ${hdrLogoBdr}`, background: school?.logo ? '#fff' : hdrLogoBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: hdrLogoCol, overflow: 'hidden' }}>
             {school?.logo
               ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 20 }}></i>}
@@ -10951,7 +11010,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-  const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
+  /* Student ka saved final remark (getremarksbystudentfilters) HAMESHA pehle — auto-comment branch me bhi; na ho to % band. */ const manualFinal = String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const barPalette = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#DC2626', '#0891B2', '#EA580C', '#059669', '#9333EA', '#B45309'];
@@ -10985,8 +11044,8 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       <RcWatermark logo={school?.logo} />
       {/* Header */}
       <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
-        {opt['Show School Logo'] && (
-          <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: school?.logo ? '#fff' : (isColor ? 'linear-gradient(135deg,#7C3AED,#1E40AF)' : '#F3F4F6'), display: 'flex', alignItems: 'center', justifyContent: 'center', color: isColor ? '#FCD34D' : '#374151', overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
+        {(opt['Show School Logo'] || school?.logo) && (
+          <div style={{ width: 52, height: 52, borderRadius: 12, flexShrink: 0, ...(school?.logo ? { boxShadow: '0 4px 18px rgba(0,0,0,.25), 0 0 0 2px rgba(255,255,255,.15)' } : {}), background: school?.logo ? '#fff' : (isColor ? 'linear-gradient(135deg,#7C3AED,#1E40AF)' : '#F3F4F6'), display: 'flex', alignItems: 'center', justifyContent: 'center', color: isColor ? '#FCD34D' : '#374151', overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
             {school?.logo
               ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 17 }}></i>}
@@ -11231,7 +11290,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
-  const manualFinal = rcUseAutoComment() ? '' : String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
+  /* Student ka saved final remark (getremarksbystudentfilters) HAMESHA pehle — auto-comment branch me bhi; na ho to % band. */ const manualFinal = String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
   const subjData = subjects.map((s, i) => {
     const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
@@ -11304,8 +11363,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
         {/* Brand row */}
         <div style={{ padding: '22px 28px 14px', display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
-          {opt['Show School Logo'] && (
-            <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.35)' : 'none', background: school?.logo ? '#fff' : C.logoGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.gold, overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
+          {(opt['Show School Logo'] || school?.logo) && (
+            <div style={{ width: 60, height: 60, borderRadius: 14, flexShrink: 0, boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.35)' : 'none', background: school?.logo ? '#fff' : C.logoGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.gold, overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
               {school?.logo
                 ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                 : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 22 }}></i>}
@@ -12605,14 +12664,22 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     return { obtained, manualRemarks, absentSubjects: Object.keys(absSet).filter(k => absSet[k]), finalRemarks: rcGetFinalRemarks(pct) };
   };
 
+  /* Double-click se multiple entries na banein: save chalte waqt dono buttons disabled + spinner.
+     Ref synchronous guard hai (state update se pehle aayi doosri click bhi ruk jati hai). */
+  const savingRef = useRef(false);
+  const [savingAct, setSavingAct] = useState('');   // '' | 'next' | 'close'
   const saveAndNext = async () => {
-    // Save & Close jaise hi saari save APIs chalao, phir next subject par jao.
-    // Agar save block ho (jaise total marks 0) to next par mat jao — user theek kare.
-    const ok = await saveCurrentSubject();
-    if (ok === false) return;
-    const nextIdx = (tab + 1) % (subjects.length || 1);
-    setTab(nextIdx);
-    fetchSubjectData(subjects[nextIdx]);
+    if (savingRef.current) return;
+    savingRef.current = true; setSavingAct('next');
+    try {
+      // Save & Close jaise hi saari save APIs chalao, phir next subject par jao.
+      // Agar save block ho (jaise total marks 0) to next par mat jao — user theek kare.
+      const ok = await saveCurrentSubject();
+      if (ok === false) return;
+      const nextIdx = (tab + 1) % (subjects.length || 1);
+      setTab(nextIdx);
+      fetchSubjectData(subjects[nextIdx]);
+    } finally { savingRef.current = false; setSavingAct(''); }
   };
   const saveCurrentSubject = async () => {
     try {
@@ -12743,10 +12810,14 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
   };
 
   const saveAndClose = async () => {
-    // Save block ho (total marks 0) to modal band mat karo — user total marks add kare.
-    const ok = await saveCurrentSubject();
-    if (ok === false) return;
-    onSave(computePayload());
+    if (savingRef.current) return;           // pehli click chal rahi hai — dobara entry nahi
+    savingRef.current = true; setSavingAct('close');
+    try {
+      // Save block ho (total marks 0) to modal band mat karo — user total marks add kare.
+      const ok = await saveCurrentSubject();
+      if (ok === false) return;
+      onSave(computePayload());
+    } finally { savingRef.current = false; setSavingAct(''); }
   };
   const curSubjObj = subjects[tab] || {};
   const curSubj = curSubjObj.subjectName || '';
@@ -12870,13 +12941,14 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
           <Tooltip text="Save and move to the next subject">
             <button
               className="exam-cancel-btn"
-              style={{ borderColor: '#1E40AF', color: '#1E40AF' }}
+              style={{ borderColor: '#1E40AF', color: '#1E40AF', ...(savingAct ? { opacity: .6, cursor: 'not-allowed' } : {}) }}
+              disabled={!!savingAct}
               onClick={saveAndNext}
             >
-              <i className="fa-solid fa-arrow-right"></i> Next Subject
+              <i className={`fa-solid ${savingAct === 'next' ? 'fa-spinner fa-spin' : 'fa-arrow-right'}`}></i> {savingAct === 'next' ? 'Saving…' : 'Next Subject'}
             </button>
           </Tooltip>
-          <Tooltip text="Save and close"><button className="exam-submit-btn" onClick={saveAndClose}><i className="fa-solid fa-check"></i> Save &amp; Close</button></Tooltip>
+          <Tooltip text="Save and close"><button className="exam-submit-btn" disabled={!!savingAct} style={savingAct ? { opacity: .7, cursor: 'not-allowed' } : undefined} onClick={saveAndClose}><i className={`fa-solid ${savingAct === 'close' ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {savingAct === 'close' ? 'Saving…' : <>Save &amp; Close</>}</button></Tooltip>
         </div>
       </div>
     </div>,
@@ -12892,6 +12964,53 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
 /* ═══════════════════════════════════════════════════════════════════
    COMBINED ASSESSMENT — CREATE NEW MODAL
    ═══════════════════════════════════════════════════════════════════ */
+/* ── Preschool TYPE (server) ──
+   getclassesinexam har exam ki class-section ke saath isPreSchooling deta hai (wahi
+   jo Single Assessment ke TYPE column me "Preschool" dikhta hai). Combined Assessment
+   me wo classes nahi aani chahiyen — chahe "Setup Preschool Classes" (is browser)
+   me mark hon ya exam ke andar Preschool type set ho.
+   Return: Set of "classID_sectionID" jo is exam me Preschool hain. (Cache per exam+term.) */
+const cbrExamPreschoolCache = new Map();
+async function cbrFetchExamPreschoolKeys(examId, termId) {
+  const ck = `${examId}|${termId ?? ''}`;
+  if (cbrExamPreschoolCache.has(ck)) return cbrExamPreschoolCache.get(ck);
+  const p = (async () => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(
+        buildUrl(`/api/getclassesinexam?branchID=${branchID}&selectExam=${examId}&termID=${termId ?? ''}&empID=${empID}`),
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+      );
+      const data = res.ok ? await res.json() : [];
+      /* Ek (grade,section) ke kai rows ho sakte hain — latest (highest id) authoritative. */
+      const latest = {};
+      (Array.isArray(data) ? data : []).forEach(it => {
+        const k = `${it.gradeID}_${it.sectionID}`;
+        if (!latest[k] || Number(it.id) > Number(latest[k].id)) latest[k] = it;
+      });
+      return new Set(Object.entries(latest)
+        .filter(([, it]) => (it.isPreSchooling ?? it.IsPreSchooling) === true)
+        .map(([k]) => k));
+    } catch (e) {
+      console.error('Preschool type load failed for exam', examId, e);
+      cbrExamPreschoolCache.delete(ck);   // agli dafa dobara try
+      return new Set();
+    }
+  })();
+  cbrExamPreschoolCache.set(ck, p);
+  return p;
+}
+/* Kai exams ke Preschool keys ka union. items: [{ examId, termId }] */
+async function cbrPreschoolKeysFor(items) {
+  const sets = await Promise.all((items || []).filter(x => x && x.examId != null && x.examId !== '')
+    .map(x => cbrFetchExamPreschoolKeys(x.examId, x.termId)));
+  const all = new Set();
+  sets.forEach(s => s.forEach(k => all.add(k)));
+  return all;
+}
+
 function CbrCreateModal({ exams, onClose, onCreate, toast }) {
   /* Exams are keyed by selectExam — the real exam id all the combined-assessment
      APIs expect (mainExamID / subExams.examID / examIDs). */
@@ -12958,8 +13077,12 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
     try {
       const examIDs = [mainSel, ...subSels];
       const rawCommon = await cbrApi.getCommonClasses(examIDs);
-      /* Preschool classes are excluded from Combined Assessment Results. */
-      const common = excludePreschoolClasses(rawCommon);
+      /* Preschool classes are excluded from Combined Assessment Results —
+         (1) "Setup Preschool Classes" (local) aur (2) kisi bhi chune exam me
+         class ka TYPE Preschool (getclassesinexam isPreSchooling). */
+      const preKeys = await cbrPreschoolKeysFor(examIDs.map(sel => ({ examId: sel, termId: findBySel(sel)?.termID })));
+      const common = excludePreschoolClasses(rawCommon)
+        .filter(c => !preKeys.has(`${c.classID ?? c.gradeID}_${c.sectionID}`));
       if (!common || !common.length) {
         setErrorMsg('No common classes found between main and sub exams.');
         setFetched(true); setCommonClasses([]); setClasses([]);
@@ -16313,7 +16436,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
       const gOv = examRsBandOverlap(draftGrades);
       if (gOv) {
         const lbl = g => `${g.grade} ${RS_COND_MAP[g.cond] || '≥'} ${g.pct}`;
-        toast(`Grade ranges overlap: "${lbl(gOv[0])}" and "${lbl(gOv[1])}" both match the same percentage. Adjust one of them.`, 'error');
+        toast(`Duplicate grade range: "${lbl(gOv[0])}" and "${lbl(gOv[1])}" are the same range. Change one of them.`, 'error');
         return;
       }
       const allGte = (draftGrades || []).every(g => (g.cond || 'gte') === 'gte' || g.cond === 'gt');
@@ -16343,11 +16466,11 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onAbsentChange, o
         !String(r.pct ?? '').trim() || !String(r.text ?? '').trim());
       if (bad) { toast('Final remark cannot be empty.', 'error'); return; }
       if ((draftRemarks || []).some(r => !examRsValidPct(r.pct))) { toast('Percentage must be a number from 0 to 100.', 'error'); return; }
-      // Overlap (BLOCKING): e.g. "≤ 70" aur "≥ 70" dono 70% par lagte hain.
+      // Duplicate (BLOCKING): dono greater (≥/>) ya dono less (≤/<) aur % ek jaisa — e.g. "≥ 70" do dafa.
       const rOv = examRsBandOverlap(draftRemarks);
       if (rOv) {
         const lbl = r => `${RS_COND_MAP[r.cond] || '≥'} ${r.pct}`;
-        toast(`Final remark ranges overlap: "${lbl(rOv[0])}" and "${lbl(rOv[1])}" both match the same percentage. Adjust one of them.`, 'error');
+        toast(`Duplicate final remark: "${lbl(rOv[0])}" and "${lbl(rOv[1])}" are the same range. Change one of them.`, 'error');
         return;
       }
     }
@@ -18847,7 +18970,8 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
    ═══════════════════════════════════════════════════════════════════ */
 .res-table-head {
   display:grid;
-  grid-template-columns: 56px minmax(150px, 1.3fr) 60px 88px 115px 140px 125px 175px;
+  /* Head aur rows ki columns BILKUL ek jaisi — warna heading (e.g. SECTION) text ke upar nahi aati. */
+  grid-template-columns: 56px minmax(150px, 1.3fr) 80px 88px 120px 150px 130px 190px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -18861,7 +18985,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-row-wrap:last-child .res-detail.open { border-radius:0 0 10px 10px; }
 .res-row {
   display:grid;
-  grid-template-columns: 56px 1.3fr 80px 88px 120px 150px 130px 190px;
+  grid-template-columns: 56px minmax(150px, 1.3fr) 80px 88px 120px 150px 130px 190px;   /* = .res-table-head */
   align-items:center; gap:10px;
   padding:13px 14px;
   background:var(--bg-card);

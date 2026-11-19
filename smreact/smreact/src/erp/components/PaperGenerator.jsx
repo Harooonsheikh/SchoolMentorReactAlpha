@@ -2650,11 +2650,8 @@ const setSubjLine = (ci, si, l) => {
 
     /* QA C8: Esc / overlay / X / Cancel — data bhara ho to pehle confirm.
        QA C1: band karte waqt Generate na hua ho to draft master delete. */
-    const hasEnteredData = !!(subject || title.trim() || objMarks || objTime || subjMarks || subjTime
-      || selectedUnits.length || fetched);
+    /* "Discard changes?" confirm band (user ki request) — modal seedha band hota hai. */
     const requestClose = () => {
-      if (hasEnteredData && !generatedRef.current
-          && !window.confirm('Discard changes? Anything you entered for this paper will be lost.')) return;
       discardDraftMaster();
       onClose();
     };
@@ -2722,6 +2719,20 @@ const setSubjLine = (ci, si, l) => {
     const templateName = { 1: 'Classic', 2: 'Modern', 3: 'Formal', 4: 'Board Pattern' }[effTemplateId] || 'Classic';
 
     const typeLabelOf = tDef => pgTypeLabel(tDef.key, tDef.label, isUrdu);
+    /* Live preview ke asal questions: is block ke chune units + main questions ke
+       fetched (eligible) items. Static/demo mode me kuch nahi → purani lines. */
+    const liveSampleOf = (typeKey, tab) => {
+      const rows = notebookDetails ? (notebookDetails[API_KEY_MAP[typeKey]] || []) : [];
+      if (!rows.length) return null;
+      const units = tab.unitSelections || {};
+      const smq = tab.selectedMainQs || {};
+      return rows.filter(r => {
+        const u = r.unitName || 'Unit';
+        if (!(u in units)) return false;
+        const mqs = Array.isArray(smq) ? smq : smq[u];
+        return !mqs || mqs.includes(r.mainQuestion || 'Section A');
+      });
+    };
     const objEntriesRaw  = livePaperEntries(PG_ALL_TYPES, blocksState.obj);
     const subjEntriesRaw = livePaperEntries(PG_ALL_TYPES, blocksState.subj);
     const objOrder  = reconcileOrder(ord.obj,  objEntriesRaw.map(e => e.tab.entryId));
@@ -3124,9 +3135,9 @@ const setSubjLine = (ci, si, l) => {
                     </div>
                   ) : (
                     <div dir={isUrdu ? 'rtl' : undefined}>
-                      <LivePaperSection letter="A" name="Objective" entries={objEntries} used={objUsed} target={objTarget} labelOf={typeLabelOf}
+                      <LivePaperSection letter="A" name="Objective" entries={objEntries} used={objUsed} target={objTarget} labelOf={typeLabelOf} sampleOf={liveSampleOf}
                         onMove={(id, dir) => moveQuestion('obj', objOrder, id, dir)} />
-                      <LivePaperSection letter={hasObjEntries ? 'B' : 'A'} name="Subjective" entries={subjEntries} used={subjUsed} target={subjTarget} labelOf={typeLabelOf}
+                      <LivePaperSection letter={hasObjEntries ? 'B' : 'A'} name="Subjective" entries={subjEntries} used={subjUsed} target={subjTarget} labelOf={typeLabelOf} sampleOf={liveSampleOf}
                         onMove={(id, dir) => moveQuestion('subj', subjOrder, id, dir)} />
                       <div className="pgx-p-foot">
                         <span>{paperFmt === 'with' ? 'Answer sheet included' : paperFmt === 'without' ? 'No answer sheet' : ''}</span>
@@ -3140,7 +3151,7 @@ const setSubjLine = (ci, si, l) => {
           </div>
 
           <div className="pg-modal-footer pgx-foot">
-            <Tooltip text="Discard changes and close">
+            <Tooltip text="Close">
               <button className="pg-btn-secondary" onClick={requestClose}>Cancel</button>
             </Tooltip>
             <div className={`pgx-status${statusClass ? ' ' + statusClass : ''}`}>{statusMsg}</div>

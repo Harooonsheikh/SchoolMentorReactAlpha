@@ -1110,19 +1110,16 @@ const getClassesData = async () => {
 
       {tab === 'breakup' && isAcad && (
         <>
-          <div className="ds-switcher">
-            <div className="ds-switcher-group">
-              <Tooltip text="Manage units for each class plan">
-                <button className={`ds-switcher-tab${breakupSubtab === 'units' ? ' active' : ''}`} onClick={() => setBreakupSubtab('units')}>
-                  <i className="fa-solid fa-layer-group"></i> Manage Units
-                </button>
-              </Tooltip>
-              <Tooltip text="Switch to Term Breakups">
-                <button className={`ds-switcher-tab${breakupSubtab === 'breakups' ? ' active' : ''}`} onClick={() => setBreakupSubtab('breakups')}>
-                  <i className="fa-solid fa-table-list"></i> Term Breakups
-                </button>
-              </Tooltip>
-            </div>
+          {/* Demo jaisa L2 tab bar (Academics ke Textbooks / Terms Setting / Calendar wala). */}
+          <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <button title="Manage units for each class plan" className={`l2-tab${breakupSubtab === 'units' ? ' active' : ''}`} onClick={() => setBreakupSubtab('units')}>
+              <div className="l2-tab-dot"></div>
+              <i className="fa-solid fa-layer-group" style={{ fontSize: 13 }}></i> Manage Units
+            </button>
+            <button title="Switch to Term Breakups" className={`l2-tab${breakupSubtab === 'breakups' ? ' active' : ''}`} onClick={() => setBreakupSubtab('breakups')}>
+              <div className="l2-tab-dot"></div>
+              <i className="fa-solid fa-table-list" style={{ fontSize: 13 }}></i> Term Breakups
+            </button>
           </div>
           {!canEditCurriculum && (
             <div className="perm-locked-banner">
@@ -5326,92 +5323,180 @@ function CopyUnitsConfigModal({ source, classesData = [], customSections = [], o
   );
 }
 
-/* Copy Term Breakup — one plan + term → another class's class plan + term
-   (live: replaces the target's breakup for each copied subject). */
+/* Copy Term Breakup — the plan it was opened from (e.g. Class 4) → another
+   class's class plan (e.g. Class 3). Default "All Terms": every term that has
+   saved data is copied term-by-term into the SAME term of the target class;
+   a single source term can still be copied into a chosen target term.
+   Saves with the same live calls as TermBreakupModal (lpTbWrite →
+   /api/lptermbreakupcrud + /api/lptermbreakupdetailscrud). Breakup rows carry
+   unit number/name as text (no unit ids), so nothing needs id-mapping; units
+   missing from the target's Manage Units are still copied and listed in a toast. */
+const LP_ALL_TERMS = '__all__';
 function CopyTermBreakupsModal({ source, classesData = [], customSections = [], canDelete = true, onClose, onDone, toast, openConfirm }) {
   const [terms, setTerms] = useState([]);
-  const [srcTerm, setSrcTerm] = useState('');
+  const [srcTerm, setSrcTerm] = useState(LP_ALL_TERMS);
   const [tgtTerm, setTgtTerm] = useState('');
   const [targetClassId, setTargetClassId] = useState('');
   const [srcSubjects, setSrcSubjects] = useState([]);
-  const [withData, setWithData] = useState(null); // [{subjectID, subjectName, rows}]
+  const [withData, setWithData] = useState(null); // [{subjectID, subjectName, byTerm: [{termID, rows}]}]
   const [selected, setSelected] = useState([]);
   const [tgtSubjects, setTgtSubjects] = useState([]);
+  /* Source subject → target subject (naam alag ho to user khud chune). { srcName: tgtName } */
+  const [subjMap, setSubjMap] = useState({});
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const busyRef = useRef(false); // blocks a double submit before React re-renders
 
   useEffect(() => {
     if (!source) return;
-    setTargetClassId(''); setWithData(null);
-    lpTbTerms().then(ts => { setTerms(ts); setSrcTerm(ts[0]?.id ?? ''); setTgtTerm(ts[0]?.id ?? ''); });
+    setTargetClassId(''); setWithData(null); setSrcTerm(LP_ALL_TERMS);
+    lpTbTerms().then(ts => { setTerms(ts); setTgtTerm(ts[0]?.id ?? ''); });
     lpTbSubjects(source.classId, source.repSectionId).then(setSrcSubjects);
   }, [source]);
 
+  const allTerms = srcTerm === LP_ALL_TERMS;
+
+  /* Source data: every subject × (all terms | the chosen term) that has saved rows. */
   useEffect(() => {
-    if (!source || !srcTerm || !srcSubjects.length) return;
+    if (!source || !srcSubjects.length || !terms.length) return;
     let alive = true;
     setWithData(null);
-    const out = [];
-    lpMapLimited(srcSubjects, 4, async s => {
-      const { rows } = await lpTbFetch({ classID: source.classId, sectionID: source.repSectionId, subjectID: s.subjectID, termID: srcTerm }).catch(() => ({ rows: [] }));
-      if (rows.length) out.push({ ...s, rows });
-    }).then(() => { if (alive) { setWithData(out); setSelected(out.map(s => s.subjectName)); } });
+    const termIds = allTerms ? terms.map(t => t.id) : [srcTerm];
+    const pairs = [];
+    srcSubjects.forEach(s => termIds.forEach(termID => pairs.push({ s, termID })));
+    const bySubj = new Map();
+    lpMapLimited(pairs, 4, async ({ s, termID }) => {
+      const { rows } = await lpTbFetch({ classID: source.classId, sectionID: source.repSectionId, subjectID: s.subjectID, termID }).catch(() => ({ rows: [] }));
+      if (!rows.length) return;
+      if (!bySubj.has(s.subjectName)) bySubj.set(s.subjectName, { ...s, byTerm: [] });
+      bySubj.get(s.subjectName).byTerm.push({ termID, rows });
+    }).then(() => {
+      if (!alive) return;
+      const order = id => terms.findIndex(t => String(t.id) === String(id));
+      const out = srcSubjects.filter(s => bySubj.has(s.subjectName)).map(s => {
+        const e = bySubj.get(s.subjectName);
+        return { ...e, byTerm: [...e.byTerm].sort((a, b) => order(a.termID) - order(b.termID)) };
+      });
+      setWithData(out); setSelected(out.map(s => s.subjectName));
+    });
     return () => { alive = false; };
-  }, [source, srcTerm, srcSubjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, srcTerm, srcSubjects, terms]);
 
+  /* Target dropdown lists classes (class plans), so the source is excluded by
+     class id — e.g. opened from Class 4 → Class 4 never shows as a target. */
+  const targetOptions = source ? classesData.filter(c => (c.sections || []).length && String(c.id) !== String(source.classId)) : [];
   const targetRow = targetClassId ? cgBuildScopeRows(classesData, customSections).find(r => String(r.classId) === String(targetClassId) && !r.custom) : null;
   useEffect(() => {
+    setSubjMap({});
     if (!targetRow?.repSectionId) { setTgtSubjects([]); return; }
     lpTbSubjects(targetRow.classId, targetRow.repSectionId).then(setTgtSubjects);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetRow?.key]);
 
   if (!source) return null;
-  const tgtNames = new Set(tgtSubjects.map(s => s.subjectName.trim().toLowerCase()));
-  const compatible = selected.filter(s => tgtNames.has(s.trim().toLowerCase()));
+  const norm = v => String(v || '').trim().toLowerCase();
+  const tgtNames = new Set(tgtSubjects.map(s => norm(s.subjectName)));
+  /* Target subject: user ka chuna hua, warna same-name wala (auto). */
+  const autoTgt = n => (tgtSubjects.find(t => norm(t.subjectName) === norm(n)) || {}).subjectName || '';
+  const tgtFor = n => (subjMap[n] !== undefined ? subjMap[n] : autoTgt(n));
+  const compatible = selected.filter(n => tgtFor(n));
   const termName = id => (terms.find(t => String(t.id) === String(id)) || {}).name || '—';
-  const unitCount = rows => new Set(rows.map(r => `${lpTbVal(r, 'unitNumber', 'UnitNumber')}__${lpTbVal(r, 'unitName', 'UnitName')}`)).size;
-  const sameAsSource = targetRow && String(targetRow.classId) === String(source.classId) && String(tgtTerm) === String(srcTerm) && !source.custom;
+  const unitKey = r => `${lpTbVal(r, 'unitNumber', 'UnitNumber')}__${lpTbVal(r, 'unitName', 'UnitName')}`;
+  const unitCount = rows => new Set(rows.map(unitKey)).size;
+  /* Source term → target term: all terms map to the same term id (terms are
+     per branch + session, shared by every class); a single term → chosen term. */
+  const tgtTermFor = srcTermID => (allTerms ? srcTermID : tgtTerm);
+  const jobsFor = subj => (subj?.byTerm || []).map(b => ({ srcTermID: b.termID, termID: tgtTermFor(b.termID), rows: b.rows }));
+  const locked = busy || checking;
 
   const doCopy = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     let n = 0;
+    const failed = [];
+    const skipped = [];
+    const notInUnits = [];
+    const subjCache = new Map();
+    const subjectsOf = async secId => {
+      if (!subjCache.has(String(secId))) subjCache.set(String(secId), await lpTbSubjects(targetRow.classId, secId));
+      return subjCache.get(String(secId));
+    };
     try {
       for (const subjName of compatible) {
         const src = withData.find(s => s.subjectName === subjName);
-        for (const secId of targetRow.sectionIds) {
-          if (String(targetRow.classId) === String(source.classId) && String(secId) === String(source.repSectionId) && String(tgtTerm) === String(srcTerm)) continue;
-          const subs = await lpTbSubjects(targetRow.classId, secId);
-          const hit = subs.find(s => s.subjectName.trim().toLowerCase() === subjName.trim().toLowerCase());
-          if (!hit) continue;
-          await lpTbWrite({ classID: targetRow.classId, sectionID: secId, subjectID: hit.subjectID, termID: tgtTerm, sourceRows: src.rows });
-          n += 1;
+        if (!src) continue;
+        for (const job of jobsFor(src)) {
+          for (const secId of targetRow.sectionIds) {
+            if (String(targetRow.classId) === String(source.classId)) continue; // never write back into the source class
+            const hit = (await subjectsOf(secId)).find(s => norm(s.subjectName) === norm(tgtFor(subjName)));
+            if (!hit) { skipped.push(`${subjName} (section ${targetRow.sectionNames[targetRow.sectionIds.indexOf(secId)] ?? secId})`); continue; }
+            try {
+              await lpTbWrite({ classID: targetRow.classId, sectionID: secId, subjectID: hit.subjectID, termID: job.termID, sourceRows: job.rows });
+              n += 1;
+            } catch (e) {
+              if (e?.isSessionError) throw e;
+              console.error('Copy term breakup failed', subjName, job.termID, secId, e);
+              failed.push(`${subjName} · ${termName(job.termID)}`);
+            }
+          }
         }
+        /* Informational: units copied that the target's Manage Units does not have. */
+        try {
+          const repHit = (await subjectsOf(targetRow.repSectionId)).find(s => norm(s.subjectName) === norm(tgtFor(subjName)));
+          if (repHit) {
+            const cat = await lpFetchLessonUnits(lpCtxFor(targetRow.classId, targetRow.repSectionId, repHit.subjectID));
+            const have = new Set(cat.map(u => `${String(u.unitNo ?? '').trim()}__${norm(u.unitName)}`));
+            const missing = new Set();
+            src.byTerm.forEach(b => b.rows.forEach(r => {
+              const no = String(lpTbVal(r, 'unitNumber', 'UnitNumber')).trim();
+              const nm = String(lpTbVal(r, 'unitName', 'UnitName')).trim();
+              if (nm && !have.has(`${no}__${norm(nm)}`)) missing.add(`Unit ${no} ${nm}`.trim());
+            }));
+            if (missing.size) notInUnits.push(`${subjName}: ${[...missing].join(', ')}`);
+          }
+        } catch (_) { /* check only — never blocks the copy */ }
       }
-      toast(n ? 'Term breakup configuration copied successfully' : 'Nothing was copied', n ? 'success' : 'info');
-      onDone?.();
-      onClose();
+      const uniq = a => [...new Set(a)];
+      if (n) toast(`Term breakup copied from ${source.className} to ${targetRow.className} (${n} subject/term/section save${n !== 1 ? 's' : ''})`, 'success');
+      else if (!failed.length) toast('Nothing was copied', 'info');
+      if (failed.length) toast(`Could not copy: ${uniq(failed).join('; ')}`, 'error');
+      if (skipped.length) toast(`Skipped — subject not assigned in target: ${uniq(skipped).join('; ')}`, 'info');
+      if (notInUnits.length) toast(`Copied, but these units are not in ${targetRow.className}'s Manage Units: ${notInUnits.join(' | ')}`, 'info');
+      if (n) onDone?.();
+      if (!failed.length) onClose();
     } catch (e) {
       console.error('Copy term breakup failed', e);
       if (!e.isSessionError) toast(e.serverMessage || e.message || 'Could not copy term breakup', 'error');
-    } finally { setBusy(false); }
+      if (n) onDone?.();
+    } finally { busyRef.current = false; setBusy(false); }
   };
 
   const confirmCopy = async () => {
+    if (locked || busyRef.current) return;
     if (!targetRow) { toast('Select a target class', 'error'); return; }
-    if (sameAsSource) { toast('Target is the same as the source — pick a different class or term', 'error'); return; }
-    if (!compatible.length) { toast('Select at least one subject that the target class also has', 'error'); return; }
-    /* Which target subjects already have a breakup for this term (will be replaced)? */
+    if (String(targetRow.classId) === String(source.classId)) { toast('Target must be a different class', 'error'); return; }
+    if (!allTerms && !tgtTerm) { toast('Select a target term', 'error'); return; }
+    if (!compatible.length) { toast('Select a target subject (Copy into) for at least one subject', 'error'); return; }
+    setChecking(true);
     const overlapping = [];
-    for (const subjName of compatible) {
-      const hit = tgtSubjects.find(s => s.subjectName.trim().toLowerCase() === subjName.trim().toLowerCase());
-      if (!hit) continue;
-      const { rows } = await lpTbFetch({ classID: targetRow.classId, sectionID: targetRow.repSectionId, subjectID: hit.subjectID, termID: tgtTerm }).catch(() => ({ rows: [] }));
-      if (rows.length) overlapping.push(`${targetRow.className} · ${termName(tgtTerm)} · ${subjName}`);
-    }
+    try {
+      /* Which target subject+term already has a breakup (will be replaced)? */
+      for (const subjName of compatible) {
+        const hit = tgtSubjects.find(s => norm(s.subjectName) === norm(tgtFor(subjName)));
+        if (!hit) continue;
+        for (const job of jobsFor(withData.find(s => s.subjectName === subjName))) {
+          const { rows } = await lpTbFetch({ classID: targetRow.classId, sectionID: targetRow.repSectionId, subjectID: hit.subjectID, termID: job.termID }).catch(() => ({ rows: [] }));
+          if (rows.length) overlapping.push(`${targetRow.className} · ${termName(job.termID)} · ${hit.subjectName}`);
+        }
+      }
+    } finally { setChecking(false); }
     if (overlapping.length && !canDelete) { toast('You do not have permission to replace an existing term breakup', 'error'); return; }
+    const termsLabel = allTerms ? 'all terms (term-by-term)' : `${termName(srcTerm)} → ${termName(tgtTerm)}`;
     openConfirm({
       title: 'Copy Term Breakups',
-      message: `You're about to copy <strong>${source.className} – ${termName(srcTerm)}</strong> to the <strong>${targetRow.className}</strong> class plan – ${termName(tgtTerm)}.
+      message: `You're about to copy <strong>${source.className}</strong> term breakup — <strong>${termsLabel}</strong> — to the <strong>${targetRow.className}</strong> class plan.
         ${overlapping.length ? `<br/><br/><strong>These will be replaced:</strong><ul style="margin:8px 0 0 18px;padding:0;">${overlapping.map(o => `<li>${o}</li>`).join('')}</ul>` : ''}
         <br/><br/>Do you want to continue?`,
       hint: 'This cannot be undone.',
@@ -5421,14 +5506,14 @@ function CopyTermBreakupsModal({ source, classesData = [], customSections = [], 
   };
 
   return (
-    <div className="tbm-overlay open" onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+    <div className="tbm-overlay open" onClick={e => { if (e.target === e.currentTarget && !locked) onClose(); }}>
       <div className="tbm-modal" style={{ maxWidth: 640, height: 'auto', maxHeight: 'min(760px, calc(100vh - 48px))' }}>
         <div className="tbm-header">
           <div>
             <div className="tbm-title"><i className="fa-solid fa-copy" style={{ fontSize: 14, marginRight: 8, opacity: .8 }}></i>Copy Term Breakups</div>
             <div style={{ marginTop: 5, display: 'flex', gap: 7, alignItems: 'center', fontSize: 11, color: 'var(--text-muted)' }}>From {source.className} <LpScopeBadge row={source} /></div>
           </div>
-          <Tooltip text="Close"><button className="tbm-close" onClick={() => !busy && onClose()} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+          <Tooltip text="Close"><button className="tbm-close" onClick={() => !locked && onClose()} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
         <div className="tbm-scroll-area">
           <div className="tbm-body">
@@ -5438,7 +5523,8 @@ function CopyTermBreakupsModal({ source, classesData = [], customSections = [], 
                 <div><label className="tbm-label">Source Plan</label><input className="tbm-input" disabled value={`${source.className}${source.custom ? ` · Section ${source.repSectionName}` : ' · class plan'}`} /></div>
                 <div>
                   <label className="tbm-label">Source Term</label>
-                  <select className="tbm-input" value={srcTerm} onChange={e => setSrcTerm(e.target.value)}>
+                  <select className="tbm-input" value={srcTerm} disabled={locked} onChange={e => setSrcTerm(e.target.value)}>
+                    <option value={LP_ALL_TERMS}>All Terms</option>
                     {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </div>
@@ -5449,16 +5535,20 @@ function CopyTermBreakupsModal({ source, classesData = [], customSections = [], 
               <div className="umn-copy-grid">
                 <div>
                   <label className="tbm-label">Target Class (class plan)</label>
-                  <select className="tbm-input" value={targetClassId} onChange={e => setTargetClassId(e.target.value)}>
+                  <select className="tbm-input" value={targetClassId} disabled={locked} onChange={e => setTargetClassId(e.target.value)}>
                     <option value="">Select class…</option>
-                    {classesData.filter(c => (c.sections || []).length).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {targetOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="tbm-label">Target Term</label>
-                  <select className="tbm-input" value={tgtTerm} onChange={e => setTgtTerm(e.target.value)}>
-                    {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
+                  {allTerms ? (
+                    <input className="tbm-input" disabled value="Same terms as source" />
+                  ) : (
+                    <select className="tbm-input" value={tgtTerm} disabled={locked} onChange={e => setTgtTerm(e.target.value)}>
+                      {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
               {targetRow && <div style={{ marginTop: 8 }}><LpScopeBadge row={targetRow} /></div>}
@@ -5468,32 +5558,43 @@ function CopyTermBreakupsModal({ source, classesData = [], customSections = [], 
               {withData === null ? (
                 <div className="umn-units-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading term breakups…</div>
               ) : withData.length === 0 ? (
-                <div className="umn-units-empty">No term breakup configured yet for {source.className} · {termName(srcTerm)}.</div>
+                <div className="umn-units-empty">No term breakup configured yet for {source.className} · {allTerms ? 'any term' : termName(srcTerm)}.</div>
               ) : (
                 <div className="umn-copy-checks">
                   {withData.map(s => {
-                    const ok = !targetRow || tgtNames.has(s.subjectName.trim().toLowerCase());
-                    const n = unitCount(s.rows);
+                    const ok = !targetRow || !!tgtFor(s.subjectName);
+                    const n = unitCount(s.byTerm.flatMap(b => b.rows));
+                    const tl = allTerms ? ` · ${s.byTerm.map(b => termName(b.termID)).join(', ')}` : '';
                     return (
-                      <label key={s.subjectID} className={`umn-copy-check${!ok ? ' disabled' : ''}`}>
-                        <input type="checkbox" checked={selected.includes(s.subjectName)} onChange={() => setSelected(p => (p.includes(s.subjectName) ? p.filter(x => x !== s.subjectName) : [...p, s.subjectName]))} />
-                        {s.subjectName} ({n} unit{n !== 1 ? 's' : ''}){!ok ? ' — not in target class' : ''}
+                      <div key={s.subjectID} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <label className={`umn-copy-check${!ok ? ' disabled' : ''}`} style={{ flex: '1 1 220px' }}>
+                        <input type="checkbox" disabled={locked} checked={selected.includes(s.subjectName)} onChange={() => setSelected(p => (p.includes(s.subjectName) ? p.filter(x => x !== s.subjectName) : [...p, s.subjectName]))} />
+                        {s.subjectName} ({n} unit{n !== 1 ? 's' : ''}{tl})
                       </label>
+                      {/* Target class ke subjects — chune subject ke against units/breakup save hota hai. */}
+                      {targetRow && (
+                        <select className="tbm-input" style={{ flex: '1 1 200px', maxWidth: 260, height: 34, fontSize: 12.5 }} disabled={locked || !tgtSubjects.length}
+                          value={tgtFor(s.subjectName)} onChange={e => { const v = e.target.value; setSubjMap(m => ({ ...m, [s.subjectName]: v })); if (v) setSelected(p => (p.includes(s.subjectName) ? p : [...p, s.subjectName])); }}>
+                          <option value="">{tgtSubjects.length ? 'Copy into subject…' : 'Loading subjects…'}</option>
+                          {tgtSubjects.map(t => <option key={t.subjectID ?? t.subjectName} value={t.subjectName}>{t.subjectName}</option>)}
+                        </select>
+                      )}
+                      </div>
                     );
                   })}
                 </div>
               )}
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-                Each selected subject copies its units, Weeks Required, Sub Topics and Total Period Required together.
+                Each selected subject copies its units, Weeks Required, Sub Topics and Total Period Required together{allTerms ? ', term by term into the same term of the target class' : ''}.
               </div>
             </div>
           </div>
         </div>
         <div className="tbm-footer">
-          <Tooltip text="Close"><button className="tbm-btn tbm-btn--cancel" disabled={busy} onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Close"><button className="tbm-btn tbm-btn--cancel" disabled={locked} onClick={onClose}>Cancel</button></Tooltip>
           <Tooltip text="Copy the selected configuration to the target class plan">
-            <button className="tbm-btn tbm-btn--save" disabled={busy} onClick={confirmCopy}>
-              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-copy'}`}></i> {busy ? 'Copying…' : 'Copy Configuration'}
+            <button className="tbm-btn tbm-btn--save" disabled={locked || withData === null} onClick={confirmCopy}>
+              <i className={`fa-solid ${locked ? 'fa-spinner fa-spin' : 'fa-copy'}`}></i> {busy ? 'Copying…' : checking ? 'Checking…' : 'Copy Configuration'}
             </button>
           </Tooltip>
         </div>

@@ -39,7 +39,8 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
     if (!P.guard('registration', 'create', toast)) return false;
     const { firstName, lastName } = form;
     try {
-      await authApi.signup({ firstName, lastName, userName: form.userName, password: form.password, isAdmin: true });
+      /* Admin tick = Head (isAdmin true), bina tick = Teacher (isAdmin false). */
+      await authApi.signup({ firstName, lastName, userName: form.userName, password: form.password, isAdmin: !!form.isAdmin });
     } catch (err) {
       toast?.(err?.message || 'Could not create user', 'error');
       return false;
@@ -60,7 +61,7 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
         lastName:  patch.lastName,
         userName:  patch.userName,
         password:  patch.password,
-        isAdmin:   user.isAdmin,
+        isAdmin:   patch.isAdmin ?? user.isAdmin,
       });
       if (user.active !== false && patch.active === false) await authApi.deactivateUser(id);
       else if (user.active === false && patch.active === true) await authApi.activateUser(id);
@@ -142,7 +143,7 @@ export default function UserManagement({ toast, users, setUsers, reloadUsers, se
 
 /* ═══════════════════════ REGISTRATION TAB ═══════════════════════ */
 function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate, toast }) {
-  const EMPTY = { firstName: '', lastName: '', phone: '', password: '', active: true };
+  const EMPTY = { firstName: '', lastName: '', phone: '', password: '', active: true, isAdmin: false };
   const P = useSaPerms('userManagement');
   const [activatingId, setActivatingId] = useState(null);
   const onActivate = async (u) => {
@@ -171,7 +172,7 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate,
     const phone = form.phone.trim();
     const firstName = form.firstName.trim();
     const lastName = form.lastName.trim();
-    const ok = await onAdd({ firstName, lastName, fullName: `${firstName} ${lastName}`, userName: phone, phone, password: form.password.trim(), active: form.active });
+    const ok = await onAdd({ firstName, lastName, fullName: `${firstName} ${lastName}`, userName: phone, phone, password: form.password.trim(), active: form.active, isAdmin: form.isAdmin });
     setSaving(false);
     if (ok) setForm(EMPTY);
   };
@@ -200,7 +201,11 @@ function RegistrationTab({ users, onAdd, onEdit, onDelete, onActivate: activate,
               <div className="um-pw-wrap"><input className="um-input" type={showPw ? 'text' : 'password'} value={form.password} onChange={(e) => set('password', e.target.value)} placeholder="Enter Password" /><button className="um-pw-eye" type="button" data-tip="Show password" onClick={() => setShowPw((s) => !s)}><i className={`fa-regular ${showPw ? 'fa-eye-slash' : 'fa-eye'}`} /></button></div>
             </div>
           </div>
-          <div className="um-checkbox-row"><input type="checkbox" id="um-active" checked={form.active} onChange={(e) => set('active', e.target.checked)} /><label htmlFor="um-active">Active</label></div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
+            {/* "Active" checkbox hata diya — naya user hamesha Active banta hai (EMPTY.active = true). */}
+            {/* Admin tick = Head (poori access), bina tick = Teacher (User Permission se chalta hai). */}
+            <div className="um-checkbox-row"><input type="checkbox" id="um-admin" checked={!!form.isAdmin} onChange={(e) => set('isAdmin', e.target.checked)} /><label htmlFor="um-admin">Admin</label></div>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button {...P.lock('registration', 'create', { className: 'btn-primary', disabled: saving })} onClick={submit}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-user-plus'}`} /> {saving ? 'Adding…' : 'Add User'}</button></div>
         </div>
       </div>
@@ -443,6 +448,7 @@ function EditUserModal({ user, onClose, onSave, toast }) {
     firstName: user.firstName ?? parts[0] ?? '',
     lastName:  user.lastName ?? parts.slice(1).join(' '),
     phone: user.phone || user.userName || '', password: '', active: user.active,
+    isAdmin: isHeadUser(user),
   });
   const [showPw, setShowPw] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -454,7 +460,7 @@ function EditUserModal({ user, onClose, onSave, toast }) {
     if (!f.phone.trim()) { toast?.('Phone number is required', 'warn'); return; }
     const firstName = f.firstName.trim();
     const lastName = f.lastName.trim();
-    const patch = { firstName, lastName, fullName: `${firstName} ${lastName}`, userName: f.phone.trim(), phone: f.phone.trim(), active: f.active };
+    const patch = { firstName, lastName, fullName: `${firstName} ${lastName}`, userName: f.phone.trim(), phone: f.phone.trim(), active: f.active, isAdmin: !!f.isAdmin };
     if (f.password.trim()) patch.password = f.password.trim();
     setSaving(true);
     try { await onSave(user.id, patch); } finally { setSaving(false); }
@@ -476,7 +482,11 @@ function EditUserModal({ user, onClose, onSave, toast }) {
           <div className="um-field" style={{ marginBottom: 14 }}><label className="um-label">New Password <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(leave blank to keep current)</span></label>
             <div className="um-pw-wrap"><input className="um-input" type={showPw ? 'text' : 'password'} value={f.password} onChange={(e) => set('password', e.target.value)} placeholder="Enter new password" /><button className="um-pw-eye" type="button" data-tip="Show password" onClick={() => setShowPw((s) => !s)}><i className={`fa-regular ${showPw ? 'fa-eye-slash' : 'fa-eye'}`} /></button></div>
           </div>
-          <div className="um-checkbox-row"><input type="checkbox" id="um-edit-active" checked={f.active} onChange={(e) => set('active', e.target.checked)} /><label htmlFor="um-edit-active">Active</label></div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
+            {/* "Active" checkbox hata diya — status table ke Delete (deactivate) / Activate buttons se badalta hai.
+                f.active user ki maujooda value hi rehti hai, is liye Save par status nahi badalta. */}
+            <div className="um-checkbox-row"><input type="checkbox" id="um-edit-admin" checked={!!f.isAdmin} onChange={(e) => set('isAdmin', e.target.checked)} /><label htmlFor="um-edit-admin">Admin</label></div>
+          </div>
         </div>
         <div className="sop-modal-foot">
           <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>

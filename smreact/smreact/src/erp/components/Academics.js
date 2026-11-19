@@ -55,8 +55,8 @@ const parseEventDate = str => {
 /* Classes cache survives leaving the tab so a return visit is not empty. */
 let acadClassesCache = [];
 
-/* Academics › Reports L1 tab. Set to true to show it again. */
-const ACADEMICS_REPORTS_TAB_VISIBLE = false;
+/* Academics › Reports L1 tab. Ab dikh raha hai — chhupana ho to false kar dein. */
+const ACADEMICS_REPORTS_TAB_VISIBLE = true;
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN ACADEMICS SHELL
@@ -86,7 +86,7 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   // const showRl        = acadView('Resource Library');
   const showRl        = false;
   /* Reports L1 tab (AcademicsReports.js) — "Academics > Reports" View permission.
-     Hidden for now (ACADEMICS_REPORTS_TAB_VISIBLE = false). */
+     ACADEMICS_REPORTS_TAB_VISIBLE = true → dikhta hai (View permission ke saath). */
   const showReports   = ACADEMICS_REPORTS_TAB_VISIBLE && acadView('Reports');
 
   /* Agar active tab ka View nahi to pehle visible tab par snap karo (L1/L2/L3). */
@@ -418,22 +418,22 @@ return (
         Shared tab system: L1 = .ds-tabs, L2 = .ds-switcher, L3 = .ds-underline.
         Rules ACADEMICS_CSS me .acad-root ke neeche scoped hain, taake
         Examination waghera par asar na pade. */}
-    <div className="ds-tabs" role="tablist">
+    <div className="l1-tabs" role="tablist">
       {showSos && (
       <button
-        className={`ds-tab${l1 === 'sos' ? ' active' : ''}`}
+        className={`l1-tab${l1 === 'sos' ? ' active' : ''}`}
         onClick={() => setL1('sos')}
       >
-        <i className="fa-solid fa-book"></i>
+        <div className="l1-tab-icon"><i className="fa-solid fa-book"></i></div>
         Scheme of Studies
       </button>
       )}
       {showLp && (
       <button
-        className={`ds-tab${l1 === 'lp' ? ' active' : ''}`}
+        className={`l1-tab${l1 === 'lp' ? ' active' : ''}`}
         onClick={() => setL1('lp')}
       >
-        <i className="fa-solid fa-chalkboard-user"></i>
+        <div className="l1-tab-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
         Lesson Plans
       </button>
       )}
@@ -442,20 +442,20 @@ return (
           karein aur upar `showRl` wali asli line bhi bahal karein. ──
       {showRl && (
       <button
-        className={`ds-tab${l1 === 'rl' ? ' active' : ''}`}
+        className={`l1-tab${l1 === 'rl' ? ' active' : ''}`}
         onClick={() => setL1('rl')}
       >
-        <i className="fa-solid fa-folder-open"></i>
+        <div className="l1-tab-icon"><i className="fa-solid fa-folder-open"></i></div>
         Resource Library
       </button>
       )}
       */}
       {showReports && (
       <button
-        className={`ds-tab${l1 === 'reports' ? ' active' : ''}`}
+        className={`l1-tab${l1 === 'reports' ? ' active' : ''}`}
         onClick={() => setL1('reports')}
       >
-        <i className="fa-solid fa-chart-column"></i>
+        <div className="l1-tab-icon"><i className="fa-solid fa-chart-column"></i></div>
         Reports
       </button>
       )}
@@ -464,33 +464,34 @@ return (
     {l1 === 'sos' ? (
       <>
         {/* ─── LEVEL 2 TABS ─── (View permission ke hisaab se) */}
-        <div className="ds-switcher">
-          <div className="ds-switcher-group">
+        <div className="l2-tabs" style={{ gridTemplateColumns: `repeat(${[showTextbooks, showTerms, showCal].filter(Boolean).length || 1}, 1fr)` }}>
           {showTextbooks && (
           <button
-            className={`ds-switcher-tab${l2 === "tb" ? " active" : ""}`}
+            className={`l2-tab${l2 === "tb" ? " active" : ""}`}
             onClick={() => { setL2("tb"); getClassesData(); }}
           >
-            <i className="fa-solid fa-book-bookmark"></i> Textbooks
+            <div className="l2-tab-dot"></div>
+            <i className="fa-solid fa-book-bookmark" style={{ fontSize: 13 }}></i> Textbooks
           </button>
           )}
           {showTerms && (
           <button
-            className={`ds-switcher-tab${l2 === 'terms' ? ' active' : ''}`}
+            className={`l2-tab${l2 === 'terms' ? ' active' : ''}`}
             onClick={() => setL2('terms')}
           >
-            <i className="fa-solid fa-list-ol"></i> Terms Setting
+            <div className="l2-tab-dot"></div>
+            <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
           </button>
           )}
           {showCal && (
           <button
-            className={`ds-switcher-tab${l2 === 'cal' ? ' active' : ''}`}
+            className={`l2-tab${l2 === 'cal' ? ' active' : ''}`}
             onClick={() => setL2('cal')}
           >
-            <i className="fa-solid fa-calendar-days"></i> Calendar
+            <div className="l2-tab-dot"></div>
+            <i className="fa-solid fa-calendar-days" style={{ fontSize: 13 }}></i> Calendar
           </button>
           )}
-          </div>
         </div>
 
         {l2 === 'tb' && (
@@ -509,23 +510,29 @@ return (
         {l2 === 'cal' && (
           <>
             {/* ─── LEVEL 3 TABS ─── (View permission ke hisaab se) */}
-            <div className="ds-underline">
+            <div className="l3-tabs">
               {showAcadCal && (
               <button
-                className={`ds-underline-tab${l3 === 'ac' ? ' active' : ''}`}
+                className={`l3-tab${l3 === 'ac' ? ' active' : ''}`}
                 onClick={() => setL3('ac')}
-                title="Key dates & term schedule"
               >
-                <i className="fa-solid fa-calendar-check"></i> Academic Calendar
+                <div className="l3-tab-icon"><i className="fa-solid fa-calendar-check"></i></div>
+                <div className="l3-tab-text">
+                  <div className="l3-tab-name">Academic Calendar</div>
+                  <div className="l3-tab-desc">Key dates &amp; term schedule</div>
+                </div>
               </button>
               )}
               {showActCal && (
               <button
-                className={`ds-underline-tab${l3 === 'act' ? ' active' : ''}`}
+                className={`l3-tab${l3 === 'act' ? ' active' : ''}`}
                 onClick={() => setL3('act')}
-                title="Events & school activities"
               >
-                <i className="fa-solid fa-calendar-plus"></i> Activity Calendar
+                <div className="l3-tab-icon"><i className="fa-solid fa-calendar-plus"></i></div>
+                <div className="l3-tab-text">
+                  <div className="l3-tab-name">Activity Calendar</div>
+                  <div className="l3-tab-desc">Events &amp; school activities</div>
+                </div>
               </button>
               )}
             </div>
@@ -1293,6 +1300,7 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
             <label className="form-label">Name <span className="req-star">*</span></label>
             <input className="form-input" value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
           </div>
+          {/* "Who is this for?" (Whole school / Specific classes) — abhi band (comment). Wapas lana ho to ye block un-comment karein.
           <div className="form-group">
             <label className="form-label">Who is this for? <span className="req-star">*</span></label>
             <div className="act-aud-seg" role="radiogroup" aria-label="Activity audience">
@@ -1329,6 +1337,7 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
               </div>
             )}
           </div>
+          */}
           <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div className="form-group">
               <label className="form-label">Start at <span className="req-star">*</span></label>
