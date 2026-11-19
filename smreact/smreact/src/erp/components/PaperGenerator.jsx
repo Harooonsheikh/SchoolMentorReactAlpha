@@ -1235,6 +1235,7 @@ const setSubjLine = (ci, si, l) => {
             onClose={() => setViewPaper(null)}
             onDownload={() => { setDownloadPaper(viewPaper); setViewPaper(null); }}
             canDownload={canGenDownload}
+            setupMap={setupMap}
           />
         )}
 
@@ -1247,6 +1248,7 @@ const setSubjLine = (ci, si, l) => {
             boardCfg={boardCfg}
             onClose={() => setDownloadPaper(null)}
             toast={toast}
+            setupMap={setupMap}
           />
         )}
 
@@ -4038,6 +4040,15 @@ const setSubjLine = (ci, si, l) => {
     drive how answer space is rendered:
       • fmt  'with'  → answer sheet/lines shown, 'without' → questions only
       • line 'single' → 1 answer line per question, 'four' → 4 lines. */
+  /* Class + section + subject par user ne jo line (single / four) chuni wo paper_generation_setup me
+    save hoti hai (lineType "DoubleLine" = four). Submission-detail API ka `lineType` purana
+    ("SingleLine") reh sakta hai, is liye setup milne par wahi line lo jo user ne select ki thi. */
+  function pgLineWithSetup(detail, setupMap) {
+    const par = detail?.parent || {};
+    const saved = setupMap && setupMap[pgSetupKey(par.gradeID, par.sectionID, par.subjectID)];
+    return saved?.line || detail.line;
+  }
+
   function normalizeQpDetail(list) {
     const blocks = Array.isArray(list) ? list : [];
     const parent = blocks[0]?.parentData || null;
@@ -4488,7 +4499,7 @@ const setSubjLine = (ci, si, l) => {
   /* ═══════════════════════════════════════════════════════════════════
     PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
     ═══════════════════════════════════════════════════════════════════ */
-  function PaperViewModal({ paper, cls, templateId = 1, boardCfg, onClose, onDownload, canDownload = true }) {
+  function PaperViewModal({ paper, cls, templateId = 1, boardCfg, onClose, onDownload, canDownload = true, setupMap }) {
     const [tone, setTone] = useState('color'); // 'color' | 'bw'
     const [sections, setSections] = useState([]);
     /* Answer-space config from the class+subject setup (API submission detail). */
@@ -4525,7 +4536,7 @@ const setSubjLine = (ci, si, l) => {
             const detail = normalizeQpDetail(list);
             setSections(detail.sections);
             // Medium API se aaye to wahi, warna paper ka apna medium (fallback english).
-            setMeta({ fmt: detail.fmt, line: detail.line, medium: detail.medium || paper.medium || 'english' });
+            setMeta({ fmt: detail.fmt, line: pgLineWithSetup(detail, setupMap), medium: detail.medium || paper.medium || 'english' });
           }
         } catch (err) {
           console.error('Could not load paper detail', err);
@@ -4960,7 +4971,7 @@ const setSubjLine = (ci, si, l) => {
         ${d.showObj  ? cell('Objective', objTxt, true) : ''}
         ${d.showSubj ? cell('Subjective', subjTxt, true) : ''}
       </div>
-      <div style="display:flex;justify-content:space-between;border-top:2px solid ${AC};padding-top:8px;margin-top:6px;font-size:11px;font-weight:600;color:${AC}">
+      <div style="display:flex;justify-content:space-between;border-top:2px solid ${AC};padding-top:8px;margin-top:6px;margin-bottom:16px;font-size:11px;font-weight:600;color:${AC}">
         <span>Obtained Marks: ____________ / ${d.totalMarks}</span>
         <span>Grade: _______ &nbsp;&nbsp; Rank: _______</span>
       </div>`;
@@ -5166,6 +5177,7 @@ const setSubjLine = (ci, si, l) => {
   boardCfg,
   onClose,
   toast,
+  setupMap,
 }) {
   const handleDownload = async ({ style, format }) => {
     /*
@@ -5246,7 +5258,7 @@ const setSubjLine = (ci, si, l) => {
         detail.fmt;
 
       line =
-        detail.line;
+        pgLineWithSetup(detail, setupMap);
 
       medium =
         detail.medium ||
