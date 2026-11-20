@@ -232,11 +232,11 @@ function docForm(action, d = {}) {
   return fd;
 }
 
-async function postForm(fd, label, path = EP.agreements.documents()) {
+async function postForm(fd, label) {
   const token = getSuperAdminToken();
   let res;
   try {
-    res = await fetch(`${SA_ADMIN_API_BASE}${path}`, {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.agreements.documents()}`, {
       method: 'POST',
       /* Content-Type jaan-boojh kar set NAHI karte — browser khud multipart
          boundary ke saath lagata hai. */
@@ -439,100 +439,6 @@ export function deleteDocument(id, branchId) {
   return postForm(docForm('delete', { id, branchId }), 'delete document');
 }
 
-/**
- * action: update — sirf ek document ke Notes (Description) badlo. Baaqi har
- * field bilkul wohi wapas jata hai jo server ne diya (file, upload date,
- * uploaded-by, link) — taake note likhne se kuch aur na badle.
- * @param doc   docToUi() ki row
- * @param note  naya note ('' = note hata do)
- */
-export function saveDocumentNote(doc, note) {
-  if (!doc?.id) return Promise.reject(new ApiError('This document has no id', 400));
-  const text = String(note ?? '').trim();
-  if (text.length > NOTE_MAX) return Promise.reject(new ApiError(`Notes can be at most ${NOTE_MAX} characters`, 400));
-  return postForm(docForm('update', {
-    id: doc.id,
-    branchId: doc.branchId,
-    title: doc.title,
-    category: doc.category,
-    branchName: doc.branchName,
-    fileName: doc.isLink ? '' : doc.fileName,
-    kind: doc.isLink ? 'link' : 'file',
-    uploadDate: pick(doc.raw, ['uploadDate', 'uploadedDate', 'createdAt'], '') || doc.uploadedDate,
-    filePath: doc.filePath,
-    signingDate: doc.signingDate,
-    expiryDate: doc.expiryDate,
-    documentNo: doc.documentNo,
-    description: text,
-    uploadedBy: doc.uploadedBy,
-  }), 'save notes');
-}
-
-export const NOTE_MAX = 2000;
-
-/* ── general comments (school-level) ─────────────────────────────
-   POST .../AHM_School_Agreements/manage_comments — BACKEND PENDING.
-   Spec: SCHOOL_AGREEMENTS_API_HANDOFF.md §11. Route na ho to screen
-   "not available yet" dikhati hai — kabhi farzi comment nahi. */
-
-export const COMMENT_MAX = 1000;
-
-function commentForm(action, c = {}) {
-  const me = getSuperAdminIdentity();
-  const fd = new FormData();
-  fd.append('Action', action);
-  fd.append('ID', String(Number(c.id) || 0));
-  fd.append('BranchID', String(Number(c.branchId) || 0));
-  fd.append('CommentText', c.text ?? '');
-  fd.append('CreatedBy', String(userId()));
-  fd.append('CreatedByName', String(me.name || ''));
-  fd.append('CreatedAt', new Date().toISOString());
-  return fd;
-}
-
-export function commentToUi(c) {
-  const createdBy = Number(pick(c, ['createdBy', 'userId'])) || 0;
-  return {
-    id: Number(pick(c, ['id', 'commentID', 'commentId'])) || 0,
-    branchId: Number(pick(c, ['branchID', 'branchId', 'schoolID', 'schoolId'])) || 0,
-    text: String(pick(c, ['commentText', 'comment', 'text'], '') || ''),
-    createdBy,
-    createdByName: String(pick(c, ['createdByName', 'userName', 'author'], '') || '').trim(),
-    createdAt: String(pick(c, ['createdAt', 'createdDate', 'date'], '') || ''),
-  };
-}
-
-/** action: get — ek school ke general comments, naye pehle. */
-export async function listComments(branchId) {
-  const id = Number(branchId) || 0;
-  if (!id) return [];
-  let json;
-  try {
-    json = await postForm(commentForm('get', { branchId: id }), 'load comments', EP.agreements.comments());
-  } catch (err) {
-    if (isEmptyResult(err)) return [];
-    throw err;
-  }
-  return rowsOf(json).map(commentToUi)
-    .filter((c) => c.id && c.branchId === id)
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || b.id - a.id);
-}
-
-/** action: insert — naya general comment. */
-export function addComment(branchId, text) {
-  const id = Number(branchId) || 0;
-  const t = String(text ?? '').trim();
-  if (!id) return Promise.reject(new ApiError('No school selected for this comment', 400));
-  if (!t) return Promise.reject(new ApiError('Write a comment first', 400));
-  if (t.length > COMMENT_MAX) return Promise.reject(new ApiError(`Comments can be at most ${COMMENT_MAX} characters`, 400));
-  return postForm(commentForm('insert', { branchId: id, text: t }), 'add comment', EP.agreements.comments());
-}
-
-/** action: delete — ek comment. */
-export function deleteComment(id, branchId) {
-  return postForm(commentForm('delete', { id, branchId }), 'delete comment', EP.agreements.comments());
-}
-
 /* ── derived figures (sirf asli records se) ─────────────────────── */
 
 /**
@@ -565,6 +471,5 @@ const schoolAgreementsService = {
   uploadDocument, saveLinkDocument, downloadDocumentFile, isExternalLink,
   docToUi, summarize, statusOf, agreementFileUrl, fileNameFrom, toDateInput,
   todayInput, isEmptyResult, isMissingEndpoint,
-  saveDocumentNote, listComments, addComment, deleteComment, commentToUi,
 };
 export default schoolAgreementsService;
