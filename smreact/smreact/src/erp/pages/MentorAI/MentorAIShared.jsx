@@ -426,3 +426,57 @@ export function VoiceDictationButton({ onResult, disabled, className = 'msai-voi
     </button>
   );
 }
+
+/* ─── YouTube links → thumbnail cards ───
+   Lesson plan me "YouTube Resources" jaise sections me `[title](https://youtube.com/watch?v=…)` aata
+   hai. Har YouTube link ka thumbnail (i.ytimg.com) card ki shakl me dikhate hain — click par video khulti hai. */
+const YT_ID_RE = /(?:youtube\.com\/watch\?(?:[^\s)#]*&)?v=|youtu\.be\/|youtube\.com\/(?:embed|shorts|live)\/)([A-Za-z0-9_-]{11})/;
+export const youTubeThumbUrl = (id) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+
+/* text → [{ id, url, title }] (markdown links + bare URLs, duplicates hata kar). */
+export function extractYouTubeLinks(text) {
+  const src = String(text || '');
+  const out = [];
+  const seen = new Set();
+  const add = (url, title) => {
+    const m = String(url || '').match(YT_ID_RE);
+    if (!m || seen.has(m[1])) return;
+    seen.add(m[1]);
+    out.push({ id: m[1], url: String(url).trim(), title: String(title || '').replace(/[*_`]/g, '').trim() });
+  };
+  src.replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (_, t, u) => { add(u, t); return _; });
+  (src.match(/https?:\/\/[^\s)\]]+/g) || []).forEach(u => add(u, ''));
+  return out;
+}
+
+const YT_CSS = `
+.msai-yt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px; margin:10px 0 4px; }
+.msai-yt-card { display:flex; flex-direction:column; border:1.5px solid var(--border-light); border-radius:var(--radius-md); overflow:hidden; background:var(--bg-card); text-decoration:none; transition:var(--tr); }
+.msai-yt-card:hover { border-color:var(--brand-primary); box-shadow:var(--shadow-sm); transform:translateY(-1px); }
+.msai-yt-thumb { position:relative; aspect-ratio:16/9; background:#0F172A; }
+.msai-yt-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.msai-yt-play { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+.msai-yt-play span { width:46px; height:32px; border-radius:9px; background:rgba(220,38,38,.92); color:#fff; display:flex; align-items:center; justify-content:center; font-size:14px; box-shadow:0 2px 8px rgba(0,0,0,.35); }
+.msai-yt-title { padding:9px 11px; font:700 12px/1.4 var(--font-body); color:var(--text-primary); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+`;
+
+export function YouTubeCards({ text }) {
+  const links = extractYouTubeLinks(text);
+  if (!links.length) return null;
+  return (
+    <>
+      <style>{YT_CSS}</style>
+      <div className="msai-yt-grid">
+        {links.map(l => (
+          <a key={l.id} className="msai-yt-card" href={l.url} target="_blank" rel="noreferrer" title={l.title || l.url}>
+            <div className="msai-yt-thumb">
+              <img src={youTubeThumbUrl(l.id)} alt="" loading="lazy" />
+              <div className="msai-yt-play"><span><i className="fa-solid fa-play" aria-hidden="true" /></span></div>
+            </div>
+            <div className="msai-yt-title">{l.title || 'Watch on YouTube'}</div>
+          </a>
+        ))}
+      </div>
+    </>
+  );
+}

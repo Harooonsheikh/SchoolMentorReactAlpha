@@ -5,6 +5,9 @@ import * as mentorAIWalletService from './services/mentorAIWalletService';
 import ChatAssistant from './ChatAssistant';
 import LessonPlans from './LessonPlans';
 import Worksheets from './Worksheets';
+import QuestionPapers from './QuestionPapers';
+import MentorAIProfile from './MentorAIProfile';
+import MentorAIErrorBoundary from './MentorAIErrorBoundary';
 import DesignStudio from './DesignStudio';
 import Wallet from './Wallet';
 import Library from './Library';
@@ -33,6 +36,7 @@ const TABS = [
   { id: 'chat',         label: 'AI Chat Assistant', icon: 'fa-comments',        perm: 'AI Chat Assistant' },
   { id: 'lessonplans',  label: 'Lesson Plans',   icon: 'fa-chalkboard-user',    perm: 'Lesson Plans' },
   { id: 'worksheets',   label: 'Worksheets',     icon: 'fa-file-pen',           perm: 'Worksheet Generator' },
+  { id: 'questionpapers', label: 'Question Papers', icon: 'fa-file-circle-question', perm: 'Worksheet Generator' },
   { id: 'designstudio', label: 'Design Studio',  icon: 'fa-palette',            perm: 'Design Studio' },
   { id: 'library',      label: 'Library',        icon: 'fa-folder-open',        perm: 'Library' },
   { id: 'wallet',       label: 'Wallet',         icon: 'fa-wallet',             perm: 'Wallet & Usage' },
@@ -51,14 +55,16 @@ const tab = TABS.some(t => t.id === rawTab)
   ? rawTab
   : 'chat';
   const [wallet, setWallet] = useState(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   /* walletData drives the header chip, the Home teaser and the Wallet
      screen itself — sourced from the dedicated mentorAIWalletService
      (see Wallet.jsx header comment). `wallet`/`refreshWallet` above
      stay wired exactly as before so Chat/Lesson Plans/Worksheets/
      Design Studio's onConsumed callbacks are untouched. */
   const [walletData, setWalletData] = useState(null);
-  const initializeMentorAI = async () => {
-
+  // const initializeMentorAI = async () => {
+const initializeMentorAI = async () => {
+    localStorage.removeItem("mentor_ai_access");
     try {
 
         const user = {
@@ -143,6 +149,13 @@ useEffect(() => {
   useEffect(() => { refreshWalletData(); }, [refreshWalletData]);
 
   const goTo = (id) => { if (canGo(id)) setTab(id); };
+  /* ProgressBar ka "Open Wallet" button (usage limit khatam hone par) is event se Wallet tab kholta hai. */
+  useEffect(() => {
+    const open = () => { if (canGo('wallet')) { setTab('wallet'); refreshWalletData(); } };
+    window.addEventListener('mentorai:open-wallet', open);
+    return () => window.removeEventListener('mentorai:open-wallet', open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="msai-root">
       <style>{MENTORAI_CSS}</style>
@@ -157,6 +170,7 @@ useEffect(() => {
             <div className="page-sub" style={{ marginTop: 2 }}>Your AI teaching assistant — chat, lesson plans, worksheets &amp; designs.</div>
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {walletData && canGo('wallet') && (() => {
                     const activePlan = walletData.plans?.find(p => p.isCurrent);
           if (!activePlan) return null;
@@ -168,7 +182,12 @@ useEffect(() => {
             </button>
           );
         })()}
+        {/* <button type="button" className="msai-wallet-chip" onClick={() => setProfileOpen(true)} title="Mentor AI profile">
+          <i className="fa-solid fa-user-gear" aria-hidden="true" /> Profile
+        </button> */}
+        </div>
       </div>
+      {profileOpen && <MentorAIProfile toast={toast} onClose={() => setProfileOpen(false)} />}
 
       <div className="msai-tabs">
     {TABS.map(t => {
@@ -202,6 +221,7 @@ useEffect(() => {
       </div>
 
       <div className="msai-screen">
+      <MentorAIErrorBoundary key={tab}>
 {tab === 'chat' && (
   <ChatAssistant
     toast={toast}
@@ -214,9 +234,11 @@ useEffect(() => {
             after every generation / edit on any screen. */}
         {tab === 'lessonplans' && <LessonPlans toast={toast} onConsumed={refreshWalletData} goTo={goTo} />}
         {tab === 'worksheets' && <Worksheets toast={toast} onConsumed={refreshWalletData} />}
+        {tab === 'questionpapers' && <QuestionPapers toast={toast} onConsumed={refreshWalletData} />}
         {tab === 'designstudio' && <DesignStudio toast={toast} onConsumed={refreshWalletData} />}
         {tab === 'library' && <Library toast={toast} />}
         {tab === 'wallet' && <Wallet goTo={goTo} />}
+      </MentorAIErrorBoundary>
       </div>
     </div>
   );

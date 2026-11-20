@@ -29,8 +29,68 @@ const themeFor = (id) => PLAN_THEMES[id] || PLAN_THEMES.pro;
 const PLAN_PRICE_OVERRIDE = { premium: 7000 };
 const priceFor = (p) => PLAN_PRICE_OVERRIDE[p?.id] ?? p?.price;
 
+const errText = (e) => {
+  const d = e?.response?.data;
+  return (typeof d === 'string' ? d : d?.error || d?.message || d?.detail) || e?.message || 'Something went wrong.';
+};
+
+/* Super-admin only: all branches' wallet status + plan. Renders nothing
+   unless the admin list call succeeds (401/403/404 → silently hidden). */
+function WalletAdminSection({ plans }) {
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [note, setNote] = useState('');
+
+  const load = () => mentorAIWalletService.getBranchSubscriptions().then(setRows).catch(() => setRows(null));
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!rows) return null;
+
+  const run = async (key, fn, okMsg) => {
+    setBusy(key); setNote('');
+    try { await fn(); setNote(okMsg); await load(); } catch (e) { setNote(errText(e)); } finally { setBusy(''); }
+  };
+
+  return (
+    <div className="msai-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="msai-step-title">Branch Subscriptions <span className="msai-step-pill">Super Admin</span></div>
+      {note && <div className="msai-tip-card"><i className="fa-solid fa-circle-info" aria-hidden="true" /> {note}</div>}
+      {rows.length === 0 && <div className="msai-empty-state">No branches found.</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table className="msai-nb-table">
+          <thead><tr><th>Branch</th><th>Plan</th><th>Wallet</th><th>Change plan</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.branchId}>
+                <td>{r.name || `Branch ${r.branchId}`}<div style={{ fontSize: 11, opacity: .6 }}>#{r.branchId}</div></td>
+                <td>{r.planCode || '—'}</td>
+                <td>
+                  <label className="msai-toggle-wrap" title="Wallet enabled">
+                    <input type="checkbox" className="msai-toggle-input" checked={!!r.walletEnabled} disabled={busy === `s${r.branchId}`}
+                      onChange={(e) => run(`s${r.branchId}`, () => mentorAIWalletService.setBranchWalletStatus(r.branchId, e.target.checked), 'Wallet status updated')} />
+                    <span className="msai-toggle-track"><span className="msai-toggle-knob" /></span>
+                  </label>
+                </td>
+                <td>
+                  <select defaultValue="" disabled={busy === `p${r.branchId}`}
+                    onChange={(e) => { const code = e.target.value; e.target.value = ''; if (code) run(`p${r.branchId}`, () => mentorAIWalletService.setBranchSubscription(r.branchId, code, true), `Plan changed to ${code} (period reset)`); }}>
+                    <option value="">Select…</option>
+                    {plans.map(p => <option key={p.id} value={p.code || p.id}>{p.name}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Wallet({ goTo }) {
   console.log("WALLET COMPONENT OPENED");
+  const [paying, setPaying] = useState(false);
+  const [payNote, setPayNote] = useState('');
   const [data, setData] = useState(null);
   const [viewPlanId, setViewPlanId] = useState(null);
   const [tooltipKey, setTooltipKey] = useState(null);
@@ -83,7 +143,27 @@ export default function Wallet({ goTo }) {
   const plan = data.plans.find(p => p.id === viewPlanId) || data.plans.find(p => p.isCurrent);
 
   const openUpgrade = () => {
+    setPayNote('');
     setUpgradeOpen(true);
+  };
+
+  /* POST /ai/api/wallet/payment/ — open the checkout URL if the server gives
+     one, otherwise show its message and re-read the wallet. */
+  const purchase = async () => {
+    if (!upgradeTarget || paying) return;
+    setPaying(true); setPayNote('');
+    try {
+      const r = await mentorAIWalletService.purchasePlan(upgradeTarget.code || upgradeTarget.id);
+      if (r.url) {
+        window.open(r.url, '_blank', 'noopener');
+        setPayNote('Payment page opened in a new tab. Complete the payment there — your plan updates automatically.');
+      } else {
+        setPayNote(r.message || 'Purchase request sent.');
+        load();
+      }
+    } catch (e) {
+      setPayNote(errText(e));
+    } finally { setPaying(false); }
   };
   return (
     <div className="mwallet">
@@ -214,11 +294,19 @@ export default function Wallet({ goTo }) {
                 <i className="fa-solid fa-circle-info" aria-hidden="true" style={{ marginTop: 3, color: '#7c3aed' }} />
                 <span>Once purchased, your upgraded limits will appear here the next time you open the Wallet.</span>
               </div>
-              <button type="button" className="msai-btn-primary" onClick={() => setUpgradeOpen(false)}>Got It</button>
+              {payNote && <div style={{ fontSize: 12.5, lineHeight: 1.5, margin: '0 0 12px' }}>{payNote}</div>}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="msai-btn-primary" disabled={paying} onClick={purchase}>
+                  <i className={`fa-solid ${paying ? 'fa-spinner fa-spin' : 'fa-credit-card'}`} aria-hidden="true" /> Purchase {upgradeTarget?.name} now
+                </button>
+                <button type="button" className="msai-btn-secondary" onClick={() => setUpgradeOpen(false)}>Got It</button>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      <WalletAdminSection plans={data.plans} />
     </div>
   );
 }

@@ -1,10 +1,20 @@
 import mentorAiApi from "./mentorAiApi";
 
 
-export async function createChatSession(title) {
+/* createChatSession(title, mode?)
+   mode = { slug?, serverId? } of a mode picked from GET /chat/modes/.
+   Without it (or with no serverId) the request is exactly what it always was:
+   { title, mode: 'universal' }. With a server mode we ALSO send mode_type_id. */
+export async function createChatSession(title, mode) {
+    /* Universal = koi mode_type nahi (server par Universal chats ka mode_type null hota hai).
+       Koi aur server mode ho to sirf mode_type_id bhejte hain (collection jaisa) — `mode: <slug>`
+       nahi, kyunke server us naam ko pehchanta nahi. */
+    const isServerMode = mode?.serverId != null && mode.serverId !== '' && mode.slug !== 'universal';
+    const body = isServerMode ? { title, mode_type_id: mode.serverId } : { title, mode: CHAT_MODE };
+
     const res = await mentorAiApi.post(
         "/ai/api/chat/sessions/",
-        { title, mode: CHAT_MODE }
+        body
     );
 
     return res.data;
@@ -30,6 +40,63 @@ export async function updateChatSession(id, data){
     );
 
     return res.data;
+}
+
+/* Rename a chat — PATCH /ai/api/chat/sessions/:id/ { title } */
+export async function renameChatSession(id, title) {
+    return updateChatSession(id, { title });
+}
+
+/* Clear all messages of a chat but keep the session —
+   POST /ai/api/chat/sessions/:id/clear/ */
+export async function clearChatSession(id) {
+    const res = await mentorAiApi.post(
+        `/ai/api/chat/sessions/${id}/clear/`
+    );
+
+    return res.data;
+}
+
+/* Available chat modes — GET /ai/api/chat/modes/ (raw server body). */
+export async function getChatModes() {
+    const res = await mentorAiApi.get(
+        "/ai/api/chat/modes/"
+    );
+
+    return res.data;
+}
+
+/* Server body → [{ serverId, slug, name, description, category, color? }].
+   Accepts an array or { results | data | modes }, with flexible key names.
+   Returns [] when nothing usable (the UI then keeps its local mode list). */
+export function normalizeChatModes(body) {
+    /* Array seedha, ya kisi bhi key me (results / data / modes / mode_types / …); aakhir me
+       object ki pehli array-of-objects wali value. */
+    let raw = Array.isArray(body) ? body
+        : (body?.results || body?.data || body?.modes || body?.mode_types || body?.modeTypes || null);
+    if (raw && !Array.isArray(raw) && typeof raw === 'object') raw = raw.results || raw.modes || raw.mode_types || null;
+    if (!Array.isArray(raw) && body && typeof body === 'object') {
+        raw = Object.values(body).find(v => Array.isArray(v) && v.length && typeof v[0] === 'object') || [];
+    }
+    if (!Array.isArray(raw)) return [];
+    const pick = (o, ...keys) => {
+        for (const k of keys) { if (o?.[k] !== undefined && o[k] !== null && o[k] !== '') return o[k]; }
+        return undefined;
+    };
+    return raw.map((m) => {
+        if (typeof m === 'string') return { serverId: undefined, slug: m.toLowerCase(), name: m, description: '', category: '' };
+        const name = pick(m, 'display_name', 'name', 'title', 'label');
+        if (!name) return null;
+        return {
+            serverId: pick(m, 'id', 'mode_type_id', 'pk'),
+            sortOrder: Number(pick(m, 'sort_order', 'order', 'position')) || 0,
+            slug: String(pick(m, 'slug', 'key', 'code', 'name') || name).toLowerCase().replace(/\s+/g, '_'),
+            name: String(name),
+            description: String(pick(m, 'description', 'desc', 'details') || ''),
+            category: String(pick(m, 'category', 'group', 'type') || ''),
+            color: pick(m, 'color'),
+        };
+    }).filter(Boolean);
 }
 
 export async function getChatSession(id) {
@@ -61,7 +128,9 @@ export async function sendMessage(id, content, files = [], opts = {}) {
     const formData = new FormData();
 
     formData.append("content", content);
-    formData.append("mode", CHAT_MODE);
+    /* opts.mode === false → mode field bhejna hi nahi (chat ka apna mode_type server par hai —
+       "mode: universal" bhejne se wo override ho jata). */
+    if (opts.mode !== false) formData.append("mode", opts.mode || CHAT_MODE);
 
     files.forEach(file => {
         formData.append("files", file);

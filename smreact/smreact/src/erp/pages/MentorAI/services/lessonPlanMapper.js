@@ -218,6 +218,14 @@ export function buildGenerateFormData(input = {}) {
   fd.append('time_duration', String(duration || 40));
   fd.append('number_of_lesson_plans', String(count || 1));
   if (nonEmpty(instructions)) fd.append('additional_prompt', instructions.trim());
+  /* Optional V2 options — sent only when the user actually set them, so an
+     untouched form produces exactly the same request as before. */
+  if (nonEmpty(input.teachingApproach)) fd.append('teaching_approach', input.teachingApproach.trim());
+  if (input.insertLink) fd.append('insert_link', 'True');
+  if (input.suggestHomework) fd.append('suggest_homework', 'True');
+  if (nonEmpty(String(input.region ?? ''))) fd.append('region', String(input.region));
+  if (nonEmpty(String(input.curriculum ?? ''))) fd.append('curriculum', String(input.curriculum));
+  if (nonEmpty(String(input.documentId ?? ''))) fd.append('document_id', String(input.documentId));
   return { formData: fd, fileType };
 }
 
@@ -241,7 +249,10 @@ return payload;
 const PLAN_HINT_KEYS = ['lesson_plan_title', 'student_learning_objective', 'lesson_introduction', 'development', 'recap_consolidation'];
 const looksLikePlan = (o) => isObj(o) && PLAN_HINT_KEYS.some((k) => k in o);
 const WRAPPER_KEYS = ['lesson_plan_data', 'lesson_plan', 'plan', 'data'];
-const CONTAINER_KEYS = ['lesson_plans', 'lessonplans', 'plans', 'lesson_plan_data', 'lesson_plan', 'results', 'result', 'data', 'response'];
+/* `generated_content`: Library / lesson-plans list me server plans isi naam se bhejta hai
+   ({ lessonplan_type, source, request_payload, generated_content:[plans…], created_at }) —
+   pehle ye key pehchani nahi jati thi, is liye Library ka plan khali (sections: []) aata tha. */
+const CONTAINER_KEYS = ['generated_content', 'lesson_plans', 'lessonplans', 'plans', 'lesson_plan_data', 'lesson_plan', 'results', 'result', 'data', 'response'];
 
 const docIdOf = (o) => (isObj(o) ? o.document_id ?? o.documentId ?? null : null);
 
@@ -429,6 +440,7 @@ export function parsePlansResponse(data, ctx = {}, headers) {
   const lessonId =
     body?.lesson_plan_id ?? body?.lesson_id ??
     body?.data?.lesson_plan_id ?? body?.data?.lesson_id ??
+    body?.result?.lesson_plan_id ?? body?.result?.lesson_id ??   // async status responses
     ctx.lessonId ?? null;
 
   const plans = found

@@ -34,6 +34,9 @@ export default function ProgressBar({ progress, title, compact = false, onCancel
   const current = stages[Math.max(0, stageIndex)] || null;
   const indeterminate = running && (fraction === null || fraction === undefined);
   const label = status === 'done' ? 'Done' : ended ? (error || END_TEXT[status]) : (current?.label || 'Working…');
+  /* Server ka usage-limit / quota message: dobara Retry bekaar hai — Wallet kholne ka button do. */
+  const limitHit = ended && /usage limit|limit (has been )?exceeded|recharge your limit|quota (has been )?(exceeded|reached)/i.test(String(error || ''));
+  const openWallet = () => window.dispatchEvent(new CustomEvent('mentorai:open-wallet'));
 
   return (
     <div
@@ -93,7 +96,12 @@ export default function ProgressBar({ progress, title, compact = false, onCancel
           {ended && onDismiss && (
             <button type="button" className="msai-btn-secondary msai-pb-btn" onClick={onDismiss}>{dismissLabel}</button>
           )}
-          {ended && onRetry && (
+          {ended && limitHit && (
+            <button type="button" className="msai-btn-primary msai-pb-btn" onClick={openWallet}>
+              <i className="fa-solid fa-wallet" aria-hidden="true" /> Open Wallet
+            </button>
+          )}
+          {ended && onRetry && !limitHit && (
             <button type="button" className="msai-btn-primary msai-pb-btn" onClick={onRetry}>
               <i className="fa-solid fa-rotate-right" aria-hidden="true" /> Retry
             </button>

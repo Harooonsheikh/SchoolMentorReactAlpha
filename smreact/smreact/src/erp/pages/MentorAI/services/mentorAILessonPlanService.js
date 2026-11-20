@@ -1,10 +1,11 @@
 import mentorAiApi from "./mentorAiApi";
-import { axiosProgressConfig } from "./aiProgress";
+import { axiosProgressConfig, sleep, stageFromJobStatus } from "./aiProgress";
 import {
     LessonPlanError,
     buildGenerateFormData,
     buildEditPayload,
     parsePlansResponse,
+    pickBackendMessage,
     summarizeChanges,
     toLessonPlanError,
 } from "./lessonPlanMapper";
@@ -37,6 +38,20 @@ const GENERATE_URL = "/ai/api/generate-lesson-plan-openai/";
 const EDIT_URL = "/ai/api/edit-lesson-plan-openai/";
 const NOTEBOOK_WORK_URL = "/ai/api/generate-notebook-work-openai/";
 const REQUEST_TIMEOUT_MS = 120000;
+
+/* Async (V2) endpoints — Postman "lesson plan V2" folder. Generate / edit
+   return a tracking id immediately; the result is then polled from the
+   status endpoint. If the server doesn't have them (404/405) every call
+   below quietly falls back to the sync endpoint above. */
+const ASYNC_GENERATE_URL = "/ai/api/generate-lesson-plan-openai-async/";
+const ASYNC_EDIT_URL = "/ai/api/edit-lesson-plan-openai-async/";
+const statusUrl = (id) => `/ai/api/generate-lesson-plan-openai-status/${id}/`;
+const EXTRACT_URL = "/ai/api/extract-document/";
+const libraryUrl = (id) => `/ai/api/lesson-plans/${id}/save-to-library/`;
+const POLL_DELAY_MS = 3000;
+const POLL_MAX_ATTEMPTS = 120;                       // ≈ 6 minutes
+const JOB_DONE = new Set(["completed", "complete", "success", "succeeded", "done", "finished"]);
+const JOB_FAILED = new Set(["failed", "failure", "error"]);
 
 /* ── Frontend NB type id → API question_field_type mapping ── */
 const NB_TYPE_TO_API = {
@@ -94,6 +109,64 @@ function reportFailure(label, err) {
     }
 }
 
+/* ── Async job helpers ── */
+const isNotFound = (e) => e?.response?.status === 404 || e?.response?.status === 405;
+
+/* Plan / notebook content already present in a response body? */
+const hasContent = (body) => {
+    try { return /lesson_introduction|student_learning_objective|"questions"/.test(JSON.stringify(body)); }
+    catch { return false; }
+};
+
+function trackingIdOf(body) {
+    const pools = [body, body?.data, body?.result];
+    for (const p of pools) {
+        if (!p || typeof p !== "object") continue;
+        const v = p.tracking_id ?? p.task_id ?? p.job_id ?? p.generation_id ?? p.id;
+        if (v != null && v !== "") return v;
+    }
+    return null;
+}
+
+/* Poll the status endpoint until the job finishes. Returns the final body. */
+async function pollLessonPlanStatus(id, opts = {}) {
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        const res = await mentorAiApi.get(statusUrl(id), { signal: opts.signal });
+        const body = res.data;
+        const status = String(body?.status ?? body?.state ?? body?.data?.status ?? "").toLowerCase();
+
+        if (JOB_FAILED.has(status)) {
+            throw new LessonPlanError(
+                pickBackendMessage(body) || "Mentor AI could not finish this request. Please try again.",
+                { kind: "server", details: body }
+            );
+        }
+        if (JOB_DONE.has(status) || (!status && hasContent(body))) return body;
+
+        opts.onProgress?.(stageFromJobStatus(body));
+        await sleep(POLL_DELAY_MS, opts.signal);
+    }
+    throw new LessonPlanError(
+        "Generating is taking longer than expected. Please try again in a moment.",
+        { kind: "timeout" }
+    );
+}
+
+/* POST to the async endpoint and wait for the result; fall back to the sync
+   endpoint when the async one doesn't exist. Resolves { data, headers }. */
+async function postWithAsync(syncUrl, asyncUrl, body, opts = {}) {
+    try {
+        const first = await mentorAiApi.post(asyncUrl, body, requestConfig(opts));
+        const id = hasContent(first.data) ? null : trackingIdOf(first.data);
+        if (id == null) return first;                               // direct result
+        const data = await pollLessonPlanStatus(id, opts);
+        return { data, headers: first.headers };
+    } catch (e) {
+        if (!isNotFound(e)) throw e;
+    }
+    return mentorAiApi.post(syncUrl, body, requestConfig(opts));
+}
+
 
 // ===============================
 // GENERATE LESSON PLAN (classwork)
@@ -104,10 +177,11 @@ export async function generateLessonPlan(payload = {}, opts = {}) {
         assertSession();
 console.log("CLASSWORK DEBUG:", JSON.stringify((payload.files || []).map(f => ({ name: f.name, size: f.size, lastModified: f.lastModified }))));
         const { formData } = buildGenerateFormData(payload);
-        const response = await mentorAiApi.post(
+        const response = await postWithAsync(
             GENERATE_URL,
+            ASYNC_GENERATE_URL,
             formData,
-            requestConfig(opts)
+            opts
         );
         opts.onProgress?.({ stage: "formatting" });
         return parsePlansResponse(
@@ -136,10 +210,11 @@ console.log("CLASSWORK DEBUG:", JSON.stringify((payload.files || []).map(f => ({
 export async function editLessonPlanViaAI(plan, instruction, opts = {}) {
     try {
         assertSession();
-        const response = await mentorAiApi.post(
+        const response = await postWithAsync(
             EDIT_URL,
+            ASYNC_EDIT_URL,
             buildEditPayload(plan, instruction),
-            requestConfig(opts)
+            opts
         );
         opts.onProgress?.({ stage: "formatting" });
         const { plans, tokens } = parsePlansResponse(
@@ -240,10 +315,11 @@ console.log("UPLOAD DEBUG:", file?.name, file?.size, file?.lastModified, "docume
             console.log(`  ${k}:`, v instanceof File ? `[File: ${v.name}]` : v);
         }
 
-        const response = await mentorAiApi.post(
+        const response = await postWithAsync(
             GENERATE_URL,
+            ASYNC_GENERATE_URL,
             formData,
-            requestConfig(opts)
+            opts
         );
         opts.onProgress?.({ stage: "formatting" });
 
@@ -297,10 +373,11 @@ export async function editNotebookLessonPlanViaAI(notebookData, instruction, opt
             console.warn("Notebook edit: the generate response had no document_id / lesson_plan_id.", notebookData);
         }
 
-        const response = await mentorAiApi.post(
+        const response = await postWithAsync(
             EDIT_URL,
+            ASYNC_EDIT_URL,
             payload,
-            requestConfig(opts)
+            opts
         );
         opts.onProgress?.({ stage: "formatting" });
 
@@ -368,6 +445,51 @@ export async function generateNotebookWork(params, opts = {}) {
 
     } catch (error) {
         console.error("Notebook API Error:", error.response?.data || error.message);
+        throw error;
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// EXTRACT DOCUMENT  (POST /ai/api/extract-document/)
+// Textbook photos / PDF se text nikalta hai. UI me abhi wired nahi —
+// service function ready hai. Resolves the raw response body.
+// ═══════════════════════════════════════════════════════════════════
+
+export async function extractDocument(files = [], opts = {}) {
+    try {
+        assertSession();
+        const list = (Array.isArray(files) ? files : [files]).filter(Boolean);
+        if (!list.length) {
+            throw new LessonPlanError("Please add at least one photo or PDF.", { kind: "validation" });
+        }
+        const pdf = list.some((f) => /\.pdf$/i.test(f?.name || "") || f?.type === "application/pdf");
+        const formData = new FormData();
+        formData.append("file_type", pdf ? "pdf" : "image");
+        list.forEach((f) => formData.append("files", f, f.name));
+        const response = await mentorAiApi.post(EXTRACT_URL, formData, requestConfig(opts));
+        return response.data;
+    } catch (error) {
+        const err = toLessonPlanError(error);
+        reportFailure("Extract Document Error", err);
+        throw err;
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// SAVE TO MENTOR AI LIBRARY  (POST /ai/api/lesson-plans/:id/save-to-library/)
+// Body { lesson_plans: [ …raw plan bodies… ] }. UI me abhi wired nahi.
+// ═══════════════════════════════════════════════════════════════════
+
+export async function saveLessonPlansToLibrary(lessonPlanId, plans = []) {
+    try {
+        const response = await mentorAiApi.post(libraryUrl(lessonPlanId), {
+            lesson_plans: plans.map((p) => p?.raw || p),
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Save To Library Error:", error.response?.data || error.message);
         throw error;
     }
 }

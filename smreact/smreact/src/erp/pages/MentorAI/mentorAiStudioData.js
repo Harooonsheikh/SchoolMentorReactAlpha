@@ -233,6 +233,7 @@ export const WS_TYPES = [
   { id: 'assessment',  name: 'Assessment',  description: 'Graded questions to check understanding.' },
   { id: 'homework',    name: 'Homework',    description: 'Take-home exercises for independent work.' },
   { id: 'enrichment',  name: 'Enrichment',  description: 'Extra-challenge questions for fast finishers.' },
+  { id: 'custom',      name: 'Custom',      description: 'Describe exactly what you want — Mentor AI builds it from your instructions.' },
 ];
 export const WS_DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 export const WS_FORMATS = ['Text Only', 'Text + Pictures'];
@@ -304,4 +305,21 @@ export const DESIGN_GENERATING_STEPS = [
   'Writing copy with AI',
   'Applying school branding',
   'Finalising HD output',
+];
+
+/* ─── Design Studio — extra options from the Postman collection ───
+   DS_PLATFORMS_EXTRA: platforms the API supports that the original list
+   lacks (ids match PLATFORM_API_MAP in services/mentorraistudioservice.js).
+   DS_PHOTO_USAGE: how uploaded reference images are used (photo_usage). */
+export const DS_PLATFORMS_EXTRA = [
+  { id: 'ig-story',  name: 'Instagram Story',   size: '1080 × 1920' },
+  { id: 'fb-story',  name: 'Facebook Story',    size: '1080 × 1920' },
+  { id: 'yt-post',   name: 'YouTube Post',      size: '1080 × 1080' },
+  { id: 'tiktok',    name: 'TikTok Post',       size: '1080 × 1920' },
+  { id: 'whatsapp',  name: 'WhatsApp Status',   size: '1080 × 1920' },
+];
+export const DS_PHOTO_USAGE = [
+  { id: 'inside_design', name: 'Inside design',  description: 'Place the photo inside the design.' },
+  { id: 'background',    name: 'As background',  description: 'Use the photo as the background.' },
+  { id: 'style_ref',     name: 'Style reference', description: 'Only copy its look & style.' },
 ];

@@ -4,7 +4,9 @@ import { usePermissions } from '../../context/PermissionsContext';import {
 } from './services/mentorAILibraryService';
 import MarkdownMessage, { InlineMarkdown } from './MarkdownMessage';
 import { WorksheetPages } from './Worksheets';
-import { downloadFile } from './MentorAIShared';
+import { QuestionPaperPages, libraryPaperMeta, openQuestionPaperPrintWindow } from './QuestionPapers';
+import { fetchReportHeader } from '../../../utils/pdfReports';
+import { downloadFile, YouTubeCards, extractYouTubeLinks, youTubeThumbUrl } from './MentorAIShared';
 import { secureMentorUrl } from './services/mentorAiApi';
 /* ═══════════════════════════════════════════════════════════════════
    Library — everything saved with "Save to Library": lesson plans,
@@ -22,6 +24,7 @@ const normalizeList = (res) => ({ items: res?.items || [], total: res?.total ?? 
 
 const TABS = [  { id: 'lessonplan', label: 'Lesson Plans', icon: 'fa-chalkboard-user', from: 'Lesson Plans' },
   { id: 'worksheet', label: 'Worksheets', icon: 'fa-file-pen', from: 'Worksheets' },
+  { id: 'questionpaper', label: 'Question Papers', icon: 'fa-file-lines', from: 'Question Papers' },
   { id: 'design', label: 'Designs', icon: 'fa-palette', from: 'Design Studio' },
 ];
 
@@ -292,6 +295,11 @@ function metaOf(item) {
     const w = c.worksheet || {};
     return [w.cls, w.subject, w.pageContent?.length ? `${w.pageContent.length}p` : ''].filter(Boolean);
   }
+  if (item.type === 'questionpaper') {
+    const m = c.meta || {};
+    const pg = c.paper?.pageContent?.length;
+    return [m.cls, m.subject, pg ? `${pg}p` : ''].filter(Boolean);
+  }
   if (item.type === 'design') {
     const p = c.post || {};
     return [p.categoryName, p.platformName].filter(Boolean);
@@ -303,6 +311,18 @@ function Thumb({ item, icon }) {
   const img = item.type === 'design' ? item.content?.post?.imageUrl : null;
   if (img) return <img src={img} alt="" className="msai-lib-thumb-img" />;
   return <i className={`fa-solid ${icon}`} aria-hidden="true" />;
+}
+
+/* Saved paper me brand na ho (server se aaya) to current branch ka naam/logo laate hain. */
+function LibraryQuestionPaper({ paper, meta, savedBrand }) {
+  const [brand, setBrand] = useState(savedBrand || null);
+  useEffect(() => {
+    if (savedBrand) return undefined;
+    let alive = true;
+    fetchReportHeader().then(h => { if (alive && h) setBrand({ name: h.branchName || '', logo: h.branchLogo || '' }); }).catch(() => {});
+    return () => { alive = false; };
+  }, [savedBrand]);
+  return <QuestionPaperPages paper={paper} meta={meta} brand={brand} />;
 }
 
 function ItemView({ item }) {
@@ -318,6 +338,7 @@ function ItemView({ item }) {
             {sec.type === 'numbered'
               ? <ol className="msai-resp-numbered">{(sec.items || []).map((it, i) => <li key={i}><InlineMarkdown text={typeof it === 'string' ? it : JSON.stringify(it)} /></li>)}</ol>
               : <MarkdownMessage text={sec.text || ''} />}
+            <YouTubeCards text={sec.type === 'numbered' ? (sec.items || []).map(i => (typeof i === 'string' ? i : '')).join('\n') : (sec.text || '')} />
           </div>
         ))}
       </div>
@@ -329,6 +350,20 @@ function ItemView({ item }) {
     return (
       <div className="msai-ws-result">
         <WorksheetPages worksheet={{ ...w, pageContent: Array.isArray(w.pageContent) ? w.pageContent : [] }} />
+        {pdf && <div className="msai-result-actions"><a className="msai-btn-primary" href={pdf} target="_blank" rel="noreferrer"><i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF</a></div>}
+      </div>
+    );
+  }
+  if (item.type === 'questionpaper') {
+    const paper = c.paper || {};
+    const pdf = paper.pdfUrl || paper.pdf_url;
+    const m = c.meta || {};
+    const metaRows = libraryPaperMeta(c);
+    return (
+      <div className="msai-ws-result">
+        {Array.isArray(paper.pageContent) && paper.pageContent.length
+          ? <LibraryQuestionPaper paper={paper} meta={metaRows} savedBrand={c.brand} />
+          : <WorksheetPages worksheet={{ ...paper, pageContent: [] }} />}
         {pdf && <div className="msai-result-actions"><a className="msai-btn-primary" href={pdf} target="_blank" rel="noreferrer"><i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF</a></div>}
       </div>
     );
@@ -356,7 +391,8 @@ function plainText(md) {
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')                                         // any html tags
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')                            // images
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')                         // links → text
+    .replace(/\[([^\]]+)\]\(([^)]*)\)/g, (m, t, u) => (u ? `${t} (${u})` : t))   // links → "text (url)" — URL na hataein
+    .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '')   // emoji — PDF ke standard font me nahi aate (kharab haroof banate hain)
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')                              // # headings
     .replace(/^\s*>\s?/gm, '')                                       // > quotes
     .replace(/^\s*[-*+]\s+\[( |x|X)\]\s+/gm, '• ')                   // task list
@@ -386,9 +422,13 @@ async function downloadLessonPlanPdf(item) {
     doc.setFontSize(size);
     doc.setTextColor(...color);
     const lh = size * 1.35;
+    /* Line me URL ho to wo clickable link banta hai (neela rang). */
+    const url = (String(text).match(/https?:\/\/[^\s)]+/) || [])[0];
+    if (url) doc.setTextColor(30, 64, 175);
     doc.splitTextToSize(String(text), width - indent).forEach(line => {
       ensure(lh);
-      doc.text(line, M + indent, y + size);
+      if (url) doc.textWithLink(line, M + indent, y + size, { url });
+      else doc.text(line, M + indent, y + size);
       y += lh;
     });
     y += gap;
@@ -402,8 +442,18 @@ async function downloadLessonPlanPdf(item) {
   doc.line(M, y, pageW - M, y);
   y += 14;
 
+  /* YouTube thumbnail ko data-URL me laao (best-effort — CORS / network fail ho to PDF me sirf link rehta hai). */
+  const loadThumb = async (id) => {
+    try {
+      const r = await fetch(youTubeThumbUrl(id));
+      if (!r.ok) return null;
+      const blob = await r.blob();
+      return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+    } catch { return null; }
+  };
+
   // Sections
-  (p.sections || []).forEach(sec => {
+  for (const sec of (p.sections || [])) {
     ensure(40);
     write(`${sec.title || ''}${sec.mins ? `  (${sec.mins} min)` : ''}`, { size: 13, bold: true, color: [30, 64, 175], gap: 4 });
     if (sec.type === 'numbered') {
@@ -416,8 +466,19 @@ async function downloadLessonPlanPdf(item) {
         write(line, { indent: line.startsWith('• ') ? 10 : 0, gap: 2 });
       });
     }
+    /* Is section me YouTube links hon to har video ka thumbnail (clickable) lagao. */
+    const ytLinks = extractYouTubeLinks(sec.type === 'numbered' ? (sec.items || []).map(i => (typeof i === 'string' ? i : '')).join('\n') : sec.text);
+    for (const l of ytLinks) {
+      const data = await loadThumb(l.id);
+      if (!data) continue;
+      const w = 190, h = Math.round((w * 9) / 16);
+      ensure(h + 12);
+      doc.addImage(data, 'JPEG', M, y, w, h);
+      doc.link(M, y, w, h, { url: l.url });
+      y += h + 8;
+    }
     y += 10;
-  });
+  }
 
   // Page numbers
   const pages = doc.getNumberOfPages();
@@ -436,17 +497,32 @@ async function downloadLessonPlanPdf(item) {
 function downloadItem(item, toast) {
   const c = item.content || {};
   const url = item.type === 'worksheet' ? (c.worksheet?.pdfUrl || c.worksheet?.pdf_url)
+    : item.type === 'questionpaper' ? (c.paper?.pdfUrl || c.paper?.pdf_url)
     : item.type === 'design' ? (c.post?.imageUrl || c.post?.pdfUrl) : null;
+  if (item.type === 'questionpaper' && !url) {
+    /* PDF nahi → poora paper laa kar same design ka printable window kholo (Print / Save as PDF). */
+    toast?.('Preparing paper…');
+    const hasBody = (c.paper?.pageContent || []).length > 0;
+    (hasBody ? Promise.resolve(item) : getLibraryItem(item.id)).then(async (full) => {
+      const fc = full.content || {};
+      const brand = fc.brand || await fetchReportHeader().then(h => (h ? { name: h.branchName || '', logo: h.branchLogo || '' } : null)).catch(() => null);
+      if (!openQuestionPaperPrintWindow(fc.paper || {}, libraryPaperMeta(fc), brand)) toast?.('Please allow pop-ups to download the paper.');
+    }).catch(() => toast?.('Could not prepare this paper. Please try again.'));
+    return;
+  }
   if (url) {
     toast?.('Downloading…');
-    downloadFile(url, `${item.title || 'mentor-ai'}${item.type === 'worksheet' ? '.pdf' : ''}`)
+    downloadFile(url, `${item.title || 'mentor-ai'}${(item.type === 'worksheet' || item.type === 'questionpaper') ? '.pdf' : ''}`)
       .then(r => { if (r === 'opened') toast?.('Opened in a new tab — use Save there to keep it.'); });
     return;
   }
   if (item.type === 'worksheet' || item.type === 'design') { toast?.('No downloadable file was saved with this item.'); return; }
   if (item.type === 'lessonplan') {
     toast?.('Preparing PDF…');
-    downloadLessonPlanPdf(item).catch(err => {
+    /* List ke row me plan ka body nahi hota (sirf title/class) — "Open" jaisa poora item
+       server se dobara lao, tabhi PDF me sections aate hain. */
+    const hasBody = (item.content?.plan?.sections || []).length > 0;
+    (hasBody ? Promise.resolve(item) : getLibraryItem(item.id)).then(full => downloadLessonPlanPdf(full)).catch(err => {
       console.error('Lesson plan PDF failed:', err);
       toast?.('Could not create the PDF. Please try again.');
     });

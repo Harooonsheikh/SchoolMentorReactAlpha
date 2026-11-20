@@ -21,7 +21,7 @@ import mentorAiApi from './mentorAILibraryAdapter';
    ═══════════════════════════════════════════════════════════════════ */
 
 export const LIBRARY_URL = '/ai/api/library/';
-export const LIBRARY_TYPES = ['lessonplan', 'worksheet', 'design', 'chat'];
+export const LIBRARY_TYPES = ['lessonplan', 'worksheet', 'design', 'questionpaper', 'chat'];
 const LOCAL_PREFIX = 'mentor_ai_library_v1:';
 const CHANGE_EVENT = 'mentorai:library-changed';
 

@@ -2,6 +2,7 @@ import mentorAiApi from './mentorAiApi';
 import { parsePlansResponse } from './lessonPlanMapper';
 import { normalizeWorksheet } from './mentorAIWorksheetService';
 import { normalizeDesignPost } from './mentorraistudioservice';
+import { normalizeQuestionPaper } from './mentorAIQuestionPaperService';
 
 /* ═══════════════════════════════════════════════════════════════════
    Library adapter.
@@ -30,6 +31,7 @@ const BASE = '/ai/api/library/';
 const LP_LIST = '/ai/api/lesson-plans/';
 const WS_LIST = '/api/worksheets/';
 const DS_LIST = '/api/design-studio/';
+const QP_LIST = '/api/question-papers/';
 
 /* ─── helpers ─── */
 function fail(status, detail) {
@@ -89,6 +91,9 @@ function lessonPlanItems(row) {
 
 function worksheetItem(raw) {
   const row = { ...(raw?.worksheet || raw) };
+  /* v2 / library rows kabhi poora worksheet `generated_content` (object) me dete hain. */
+  const gc = row.generated_content;
+  if (gc && typeof gc === 'object' && !Array.isArray(gc)) Object.assign(row, { ...gc, id: row.id ?? gc.id });
   if (row.id == null) row.id = row.worksheet_id;
   if (row?.id == null) return null;
   const w = normalizeWorksheet({ ...row, cls: row.cls || row.grade_label, subject: row.subject || row.subject_label });
@@ -99,6 +104,24 @@ function worksheetItem(raw) {
     title: row.title || row.topic || [row.subject_label, row.grade_label && `Grade ${row.grade_label}`, 'worksheet'].filter(Boolean).join(' '),
     content: { worksheet: w }, source_key: `worksheet:${row.id}`,
     created_at: created, updated_at: row.updated_at || created,
+  };
+}
+
+function questionPaperItem(raw, { requireContent = false, fallbackId = null } = {}) {
+  const row = { ...(raw?.question_paper || raw?.paper || raw) };
+  const gc = row.generated_content;      // kabhi poora paper `generated_content` object me hota hai
+  if (gc && typeof gc === 'object' && !Array.isArray(gc)) Object.assign(row, { ...gc, id: row.id ?? gc.id });
+  const p = normalizeQuestionPaper(row);
+  if (p.id == null) p.id = fallbackId;
+  if (p.id == null) return null;
+  /* List rows me paper ka body nahi hota — wahan hide na karo; "Open" detail se poora laata hai. */
+  if (requireContent && !p.pageContent.length && !p.pdfUrl) return null;
+  const created = row.created_at || row.createdAt || null;
+  return {
+    id: `questionpaper:${p.id}`, item_type: 'questionpaper',
+    title: p.title || [row.subject_label, row.grade_label && `Class ${row.grade_label}`, 'Question Paper'].filter(Boolean).join(' '),
+    content: { paper: p, meta: { cls: row.grade_label || '', subject: row.subject_label || '', paperType: row.paper_type || '' } },
+    source_key: `questionpaper:${p.id}`, created_at: created, updated_at: row.updated_at || created,
   };
 }
 
@@ -133,18 +156,19 @@ async function listType(type, { page = 1, limit = 20, search } = {}) {
   const params = { page, page_size: limit, per_page: limit };
   if (search) params.search = search;
   if (type === 'lessonplan') params.lessonplan_type = 'classwork';
-  const url = { lessonplan: LP_LIST, worksheet: WS_LIST, design: DS_LIST }[type];
+  const url = { lessonplan: LP_LIST, worksheet: WS_LIST, design: DS_LIST, questionpaper: QP_LIST }[type];
   const { data } = await mentorAiApi.get(url, { params });
   const rows = rowsOf(data);
   let out = [];
   if (type === 'lessonplan') rows.forEach(r => out.push(...lessonPlanItems(r)));
   if (type === 'worksheet') rows.forEach(r => { const i = worksheetItem(r); if (i) out.push(i); });
   if (type === 'design') rows.forEach(r => { const i = designItem(r); if (i) out.push(i); });
+  if (type === 'questionpaper') rows.forEach(r => { const i = questionPaperItem(r); if (i) out.push(i); });
   return { results: decorate(out), count: totalOf(data, rows.length) };
 }
 
 async function listAll() {
-  const types = ['lessonplan', 'worksheet', 'design'];
+  const types = ['lessonplan', 'worksheet', 'design', 'questionpaper'];
   const res = await Promise.allSettled(types.map(t => listType(t, { page: 1, limit: 100 })));
   if (res.every(r => r.status === 'rejected')) throw res[0].reason;
   const out = [];
@@ -178,12 +202,19 @@ async function getOne(id) {
     if (!item) throw fail(404, 'This design has no image yet.');
     return decorate([item])[0];
   }
+  if (type === 'questionpaper') {
+    const { data } = await mentorAiApi.get(`${QP_LIST}${key}/`);
+    console.log('Library question paper detail:', key, data);
+    const item = questionPaperItem(data?.question_paper || data?.paper || data?.data || data, { fallbackId: key });
+    if (!item) throw fail(500, 'This question paper could not be read.');
+    return decorate([item])[0];
+  }
   throw fail(404, 'Unknown library item.');
 }
 
 async function removeOne(id) {
   const [type, key] = String(id).split(':');
-  const url = { lessonplan: `${LP_LIST}${key}/`, worksheet: `${WS_LIST}${key}/`, design: `${DS_LIST}${key}/` }[type];
+  const url = { lessonplan: `${LP_LIST}${key}/`, worksheet: `${WS_LIST}${key}/`, design: `${DS_LIST}${key}/`, questionpaper: `${QP_LIST}${key}/` }[type];
   if (!url) throw fail(404, 'Unknown library item.');
   try {
     await mentorAiApi.delete(url);
@@ -200,8 +231,14 @@ async function removeOne(id) {
 async function syncToServer(body) {
   const [type, key] = String(body.source_key || '').split('#')[0].split(':');
   if (!/^\d+$/.test(key || '')) return;                 // not stored yet (e.g. "worksheet:new")
-  const url = { worksheet: `${WS_LIST}${key}/`, design: `${DS_LIST}${key}/`, lessonplan: `${LP_LIST}${key}/` }[type];
+  const url = { worksheet: `${WS_LIST}${key}/`, design: `${DS_LIST}${key}/`, lessonplan: `${LP_LIST}${key}/`, questionpaper: `${QP_LIST}${key}/` }[type];
   if (!url) return;
+  if (type === 'questionpaper') {                        // dedicated endpoint: POST :id/save-to-library/
+    try { await mentorAiApi.post(`${url}save-to-library/`); return; } catch (err) {
+      const st = err?.response?.status;
+      if (!st || ![400, 403, 404, 405, 501].includes(st)) throw err;
+    }
+  }
   let patched = false;
   if (type !== 'lessonplan') {                           // never write to lesson plans
     try {

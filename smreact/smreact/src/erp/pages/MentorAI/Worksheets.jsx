@@ -323,20 +323,25 @@ if (
       {step === 'step2' && (
         <div className="msai-card msai-ws-step">
           <div className="msai-step-title">Worksheet Generator <span className="msai-step-pill">Step 2 of 2</span></div>
-          <div className="msai-field"><label>Difficulty</label>
-            <div className="msai-chip-row">{WS_DIFFICULTIES.map(d => <button key={d} type="button" className={`msai-chip${form2.difficulty === d ? ' msai-chip--active' : ''}`} onClick={() => setForm2(f => ({ ...f, difficulty: d }))}>{d}</button>)}</div>
-          </div>
-          <div className="msai-form-grid">
-            <Field label="Format"><select value={form2.format} onChange={e => setForm2(f => ({ ...f, format: e.target.value }))}>{WS_FORMATS.map(o => <option key={o}>{o}</option>)}</select></Field>
-            <Field label="Colour Style"><select value={form2.colorStyle} onChange={e => setForm2(f => ({ ...f, colorStyle: e.target.value }))}>{WS_COLOR_STYLES.map(o => <option key={o}>{o}</option>)}</select></Field>
-            <Field label="Number of Pages">
-              <div className="msai-stepper">
-                <button type="button" onClick={() => setForm2(f => ({ ...f, pages: Math.max(1, f.pages - 1) }))}>−</button>
-                <span>{form2.pages}</span>
-                <button type="button" onClick={() => setForm2(f => ({ ...f, pages: Math.min(10, f.pages + 1) }))}>+</button>
+          {/* Custom type: sirf instructions / branding / reference pictures (API ye hi leti hai). */}
+          {form1.type !== 'custom' && (
+            <>
+              <div className="msai-field"><label>Difficulty</label>
+                <div className="msai-chip-row">{WS_DIFFICULTIES.map(d => <button key={d} type="button" className={`msai-chip${form2.difficulty === d ? ' msai-chip--active' : ''}`} onClick={() => setForm2(f => ({ ...f, difficulty: d }))}>{d}</button>)}</div>
               </div>
-            </Field>
-          </div>
+              <div className="msai-form-grid">
+                <Field label="Format"><select value={form2.format} onChange={e => setForm2(f => ({ ...f, format: e.target.value }))}>{WS_FORMATS.map(o => <option key={o}>{o}</option>)}</select></Field>
+                <Field label="Colour Style"><select value={form2.colorStyle} onChange={e => setForm2(f => ({ ...f, colorStyle: e.target.value }))}>{WS_COLOR_STYLES.map(o => <option key={o}>{o}</option>)}</select></Field>
+                <Field label="Number of Pages">
+                  <div className="msai-stepper">
+                    <button type="button" onClick={() => setForm2(f => ({ ...f, pages: Math.max(1, f.pages - 1) }))}>−</button>
+                    <span>{form2.pages}</span>
+                    <button type="button" onClick={() => setForm2(f => ({ ...f, pages: Math.min(10, f.pages + 1) }))}>+</button>
+                  </div>
+                </Field>
+              </div>
+            </>
+          )}
           <label className="msai-toggle-row">
             <span>Include School Name &amp; Logo</span>
             <span className="msai-toggle-wrap">
@@ -349,7 +354,7 @@ if (
           </div>
           <Field label="Instructions to Mentor AI">
             <div className="msai-field-voice-wrap">
-              <textarea rows={3} value={form2.instructions} onChange={e => setForm2(f => ({ ...f, instructions: e.target.value }))} placeholder="What should this worksheet focus on?" />
+              <textarea rows={3} value={form2.instructions} onChange={e => setForm2(f => ({ ...f, instructions: e.target.value }))} placeholder={form1.type === 'custom' ? 'Describe the worksheet you want — topic, question types (true/false, MCQs…), images, etc.' : 'What should this worksheet focus on?'} />
               <VoiceDictationButton onResult={t => setForm2(f => ({ ...f, instructions: f.instructions.trim() ? `${f.instructions.trim()} ${t}` : t }))} />
             </div>
           </Field>
@@ -392,7 +397,14 @@ if (
 
                  {!(editing && canEdit) ? (
             <div className="msai-result-actions">
-              <a className="msai-btn-primary" href={worksheet.pdfUrl || worksheet.pdf_url || '#'} target="_blank" rel="noreferrer"><i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF</a>
+              {(worksheet.pdfUrl || worksheet.pdf_url) ? (
+                <a className="msai-btn-primary" href={worksheet.pdfUrl || worksheet.pdf_url} target="_blank" rel="noreferrer"><i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF</a>
+              ) : (
+                /* v2 PDF link nahi deta — printable page kholte hain (Print / Save as PDF). */
+                <button type="button" className="msai-btn-primary" onClick={() => { if (!mentorAIWorksheetService.openWorksheetPrintWindow(worksheet)) toast?.('Please allow pop-ups to view the worksheet.'); }}>
+                  <i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF
+                </button>
+              )}
               {canEdit && (
                 <button type="button" className="msai-btn-secondary" onClick={() => setEditing(true)}><i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Edit via AI</button>
               )}
@@ -402,7 +414,9 @@ if (
                 </button>
               )}
               {canDownload && (
-                <button type="button" className="msai-btn-secondary" disabled={!(worksheet.pdfUrl || worksheet.pdf_url)} onClick={() => downloadFile(worksheet.pdfUrl || worksheet.pdf_url, `${worksheetTitle(worksheet, form1)}.pdf`)}><i className="fa-solid fa-download" aria-hidden="true" /> Download PDF</button>
+                <button type="button" className="msai-btn-secondary" disabled={!(worksheet.pdfUrl || worksheet.pdf_url || worksheet.pageContent?.length)} onClick={() => ((worksheet.pdfUrl || worksheet.pdf_url)
+                  ? downloadFile(worksheet.pdfUrl || worksheet.pdf_url, `${worksheetTitle(worksheet, form1)}.pdf`)
+                  : (mentorAIWorksheetService.openWorksheetPrintWindow(worksheet) || toast?.('Please allow pop-ups to download the worksheet.')))}><i className="fa-solid fa-download" aria-hidden="true" /> Download PDF</button>
               )}
               <SaveToLibraryButton
                 perm="Worksheet Generator"

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useMentorAIActions } from './mentorAIPermissions';
-import { GeneratingProgress, EditViaAIPanel, VersionBadge, AttachmentPicker, revokeAttachments, VoiceDictationButton, SaveToLibraryButton } from './MentorAIShared';
+import { GeneratingProgress, EditViaAIPanel, VersionBadge, AttachmentPicker, revokeAttachments, VoiceDictationButton, SaveToLibraryButton, YouTubeCards } from './MentorAIShared';
 import { STAGE_SETS, useJobProgress } from './services/aiProgress';
 import { HowItWorksButton } from './HowItWorks';
 import { getPortalUnits, savePlanToPortal, saveNotebookPlanToPortal } from './services/Mentoraiportalservice';
@@ -17,7 +17,40 @@ import { toLessonPlanError, summarizeChanges } from './services/lessonPlanMapper
 
 const mapGroupTemplate = mentorAiStudioService.mapTypeToTemplate;
 
-const EMPTY_SETUP = { unit: '', unitNumber: 1, unitMedium: 'english', count: 2, duration: 40, instructions: '' };
+const EMPTY_SETUP = { unit: '', unitNumber: 1, unitMedium: 'english', count: 2, duration: 40, instructions: '', teachingApproach: '', insertLink: false, suggestHomework: false, region: '', curriculum: '' };
+
+/* Server error → saaf text. HTML error page (Django "Not Found" waghera) seedha na dikhao. */
+const apiErrText = (e) => {
+  const d = e?.response?.data;
+  const st = e?.response?.status ?? e?.status;
+  if (typeof d === 'string' && /^\s*<(!doctype|html)/i.test(d)) {
+    return st === 404
+      ? 'This feature is not available on the Mentor AI server yet (404).'
+      : `The Mentor AI server returned an error${st ? ` (${st})` : ''}.`;
+  }
+  if (st === 404) return 'This feature is not available on the Mentor AI server yet (404).';
+  return (typeof d === 'string' ? d : d?.error || d?.message || d?.detail) || e?.message || 'Something went wrong.';
+};
+/* extract-document response se document id (document_id / id, top-level ya data / result me). */
+const docIdFromBody = (b) => {
+  for (const p of [b, b?.data, b?.result]) {
+    if (p && typeof p === 'object') {
+      const v = p.document_id ?? p.documentId ?? p.id;
+      if (v != null && v !== '') return v;
+    }
+  }
+  return null;
+};
+
+/* Teaching approach (API: teaching_approach). '' = not sent → Mentor AI's own default. */
+const TEACHING_APPROACHES = [
+  { id: '', label: 'Default (Mentor AI decides)' },
+  { id: 'smart_choice', label: 'Smart Choice' },
+  { id: 'inquiry_discovery', label: 'Inquiry & Discovery' },
+  { id: 'project_hands_on', label: 'Project / Hands-on' },
+  { id: 'story_interactive', label: 'Story & Interactive' },
+  { id: 'structured_mastery', label: 'Structured Mastery' },
+];
 const unitKey = (u) => `${u.unitNo}__${u.unitName}`;
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -37,6 +70,10 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
   const [setupForm, setSetupForm] = useState(EMPTY_SETUP);
   const [units, setUnits] = useState([]);           // units from the ERP portal for class + section + subject
   const [savingPortal, setSavingPortal] = useState(false);
+  const [savingLib, setSavingLib] = useState(false);           // Save to Mentor AI Library
+  const [showAdvanced, setShowAdvanced] = useState(false);     // Region / Curriculum ids
+  const [extracting, setExtracting] = useState(false);         // extract-document in flight
+  const [extractDocId, setExtractDocId] = useState(null);      // document id returned by extract-document
   const [lpResult, setLpResult] = useState(null);
   const [activePlanIdx, setActivePlanIdx] = useState(0);
   const [generating, setGenerating] = useState(false);
@@ -163,6 +200,32 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
     setNbForm({ count: 8, mainQuestion: '', instructions: '' });
   };
 
+  /* Files badlein to pehle extract kiya hua document ab purana hai — clear kar do. */
+  const pagesKey = pages.map(p => p.id).join('|');
+  useEffect(() => { setExtractDocId(null); }, [pagesKey]);
+
+  const runExtract = async () => {
+    const files = pages.map(p => p.file).filter(Boolean);
+    if (!files.length || extracting) return;
+    setExtracting(true);
+    try {
+      const body = await mentorAiStudioService.extractDocument(files);
+      const id = docIdFromBody(body);
+      if (id == null) {
+        setExtractDocId(null);
+        toast?.('Pages were read, but the server returned no document id. You can still continue normally.');
+      } else {
+        setExtractDocId(id);
+        toast?.('Document ready');
+      }
+    } catch (error) {
+      setExtractDocId(null);
+      toast?.(`Could not extract text — ${apiErrText(error)} You can continue without it.`);
+    } finally {
+      setExtracting(false);
+    }
+  };
+
   const addPageAttachment = (item) => setPages(p => [...p, item]);
   const removePage = (id) => setPages(p => {
     const found = p.find(x => x.id === id);
@@ -213,6 +276,13 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
         unit: setupForm.unit, unitNumber: setupForm.unitNumber || 1,
         duration: setupForm.duration, count: setupForm.count,
         instructions: setupForm.instructions,
+        teachingApproach: setupForm.teachingApproach,
+        insertLink: setupForm.insertLink,
+        suggestHomework: setupForm.suggestHomework,
+        /* Optional ids — mapper sirf tab bhejta hai jab bhare hon. */
+        region: setupForm.region,
+        curriculum: setupForm.curriculum,
+        documentId: extractDocId ?? undefined,
         files: pages.map(p => p.file).filter(Boolean),
       }, { signal, onProgress: lpJob.report });
       lpJob.report({ stage: 'finalizing' });
@@ -263,6 +333,29 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
       toast?.(error?.message || 'Save failed');
     } finally {
       setSavingPortal(false);
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // LESSON PLAN — Save to Mentor AI Library
+  //   POST /ai/api/lesson-plans/:id/save-to-library/  { lesson_plans: [...] }
+  //   (Save to Portal / SaveToLibraryButton se alag; unhe nahi chhua.)
+  // ═══════════════════════════════════════════════════════════════
+  const handleLpLibrarySave = async () => {
+    if (savingLib || !currentPlan) return;
+    const id = currentPlan.lessonId ?? lpResult?.plans?.find(p => p.lessonId != null)?.lessonId ?? null;
+    if (id == null) {
+      toast?.('This plan has no server id, so it cannot be saved to the Mentor AI library.');
+      return;
+    }
+    setSavingLib(true);
+    try {
+      await mentorAiStudioService.saveLessonPlansToLibrary(id, [currentPlan]);
+      toast?.('Saved to Mentor AI Library');
+    } catch (error) {
+      toast?.(`Could not save to Mentor AI Library — ${apiErrText(error)}`);
+    } finally {
+      setSavingLib(false);
     }
   };
 
@@ -453,6 +546,16 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
             <span>Position the page inside the frame</span>
           </div>
           <AttachmentPicker items={pages} onAdd={addPageAttachment} onRemove={removePage} formatName={(p, i) => `Page ${i + 1} — ${p.name}`} />
+          {pages.length > 0 && (
+            <div className="msai-chip-row" style={{ alignItems: 'center' }}>
+              <button type="button" className="msai-btn-secondary" onClick={runExtract} disabled={extracting || extractDocId != null}>
+                <i className={`fa-solid ${extracting ? 'fa-spinner fa-spin' : 'fa-file-lines'}`} aria-hidden="true" /> {extracting ? 'Extracting…' : 'Extract text from pages first'}
+              </button>
+              {extractDocId != null && (
+                <span className="msai-version-pill"><i className="fa-solid fa-circle-check" aria-hidden="true" /> Document ready ✓</span>
+              )}
+            </div>
+          )}
           <div className="msai-tip-card"><i className="fa-solid fa-lightbulb" aria-hidden="true" /> Tip: good lighting and a flat page give Mentor AI the clearest content to work from.</div>
           <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} disabled={pages.length === 0} onClick={() => setStep('contenttype')}>
             Continue ({pages.length} page{pages.length === 1 ? '' : 's'}) <i className="fa-solid fa-arrow-right" aria-hidden="true" />
@@ -500,6 +603,40 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
                 <button type="button" aria-label="Increase" onClick={() => setSetupForm(f => ({ ...f, duration: Math.min(90, f.duration + 5) }))}>+</button>
               </div>
             </Field>
+            <Field label="Teaching Approach">
+              <select value={setupForm.teachingApproach} onChange={e => setSetupForm(f => ({ ...f, teachingApproach: e.target.value }))}>
+                {TEACHING_APPROACHES.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+              </select>
+            </Field>
+          </div>
+          <label className="msai-toggle-row">
+            <span>Insert helpful links &amp; resources</span>
+            <span className="msai-toggle-wrap">
+              <input type="checkbox" className="msai-toggle-input" checked={setupForm.insertLink} onChange={e => setSetupForm(f => ({ ...f, insertLink: e.target.checked }))} />
+              <span className="msai-toggle-track"><span className="msai-toggle-knob" /></span>
+            </span>
+          </label>
+          <label className="msai-toggle-row">
+            <span>Suggest homework</span>
+            <span className="msai-toggle-wrap">
+              <input type="checkbox" className="msai-toggle-input" checked={setupForm.suggestHomework} onChange={e => setSetupForm(f => ({ ...f, suggestHomework: e.target.checked }))} />
+              <span className="msai-toggle-track"><span className="msai-toggle-knob" /></span>
+            </span>
+          </label>
+          <div className="msai-field">
+            <button type="button" className="msai-back-link" onClick={() => setShowAdvanced(v => !v)} aria-expanded={showAdvanced}>
+              <i className={`fa-solid fa-chevron-${showAdvanced ? 'down' : 'right'}`} aria-hidden="true" /> Advanced options
+            </button>
+            {showAdvanced && (
+              <div className="msai-form-grid">
+                <Field label="Region ID (optional)">
+                  <input type="number" min="0" inputMode="numeric" value={setupForm.region} onChange={e => setSetupForm(f => ({ ...f, region: e.target.value }))} placeholder="e.g. 1" />
+                </Field>
+                <Field label="Curriculum ID (optional)">
+                  <input type="number" min="0" inputMode="numeric" value={setupForm.curriculum} onChange={e => setSetupForm(f => ({ ...f, curriculum: e.target.value }))} placeholder="e.g. 1" />
+                </Field>
+              </div>
+            )}
           </div>
           <Field label="Additional Instructions (optional)">
             <div className="msai-field-voice-wrap">
@@ -550,6 +687,7 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
       ))}
     </ol>
   : <MarkdownMessage text={sec.text} />}
+              <YouTubeCards text={sec.type === 'numbered' ? (sec.items || []).join('\n') : sec.text} />
             </div>
           ))}
 
@@ -568,6 +706,11 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
               {canDownload && (
                 <button type="button" className="msai-btn-secondary" onClick={handleLpSave} disabled={savingPortal}>
                   <i className="fa-solid fa-floppy-disk" aria-hidden="true" /> {savingPortal ? 'Saving…' : 'Save to Portal'}
+                </button>
+              )}
+              {currentPlan.lessonId != null && (
+                <button type="button" className="msai-btn-secondary" onClick={handleLpLibrarySave} disabled={savingLib}>
+                  <i className={`fa-solid ${savingLib ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`} aria-hidden="true" /> {savingLib ? 'Saving…' : 'Save to Mentor AI Library'}
                 </button>
               )}
               <SaveToLibraryButton

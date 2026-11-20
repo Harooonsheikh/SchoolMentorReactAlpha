@@ -6,7 +6,7 @@ import { STAGE_SETS, useJobProgress, isCancelError } from './services/aiProgress
 import { HowItWorksButton } from './HowItWorks';
 import { useMentorAIActions } from './mentorAIPermissions';import {
   DS_PLATFORMS, DS_CATEGORIES, DS_QUICK_TAGS, DS_EDIT_CHIPS,
-  GENERATING_FACTS,
+  GENERATING_FACTS, DS_PLATFORMS_EXTRA, DS_PHOTO_USAGE,
 } from './mentorAiStudioData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -27,6 +27,7 @@ export default function DesignStudio({ toast, onConsumed }) {
   const [draftColor, setDraftColor] = useState('#1E40AF');
   const colorInputRef = useRef(null);
   const [refImages, setRefImages] = useState([]);
+  const [photoUsage, setPhotoUsage] = useState('inside_design');   // how reference images are used
   const [post, setPost] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -38,7 +39,7 @@ export default function DesignStudio({ toast, onConsumed }) {
 
   const reset = () => {
     revokeAttachments(refImages);
-    setStep('landing'); setPlatform(null); setCategory(null); setPrompt(''); setPost(null); setRefImages([]);
+    setStep('landing'); setPlatform(null); setCategory(null); setPrompt(''); setPost(null); setRefImages([]); setPhotoUsage('inside_design');
     setBrandColor(''); setColorPickerOpen(false); setApiError(null);
   };
 
@@ -93,6 +94,7 @@ export default function DesignStudio({ toast, onConsumed }) {
         brandColor,
         customSize: platform === 'custom' ? customSize : null,
         refImages,
+        photoUsage,
       }, opts);
 
       console.log('Design Studio generation response:', response);
@@ -244,7 +246,7 @@ export default function DesignStudio({ toast, onConsumed }) {
           </div>
           <div className="msai-field"><label>Platform &amp; Size</label>
             <div className="msai-ds-platform-grid">
-              {DS_PLATFORMS.map(p => (
+              {[...DS_PLATFORMS, ...DS_PLATFORMS_EXTRA].map(p => (
                 <button key={p.id} type="button" className={`msai-ds-platform-card${platform?.id === p.id ? ' selected' : ''}`} onClick={() => setPlatform(p)}>
                   <div className="msai-ds-platform-name">{p.name}</div>
                   <div className="msai-ds-platform-size">{p.size}</div>
@@ -388,6 +390,15 @@ export default function DesignStudio({ toast, onConsumed }) {
           <div className="msai-field"><label>Reference Images (optional)</label>
             <AttachmentPicker items={refImages} onAdd={addRefImage} onRemove={removeRefImage} />
           </div>
+          {refImages.length > 0 && (
+            <div className="msai-field"><label>How should Mentor AI use these photos?</label>
+              <div className="msai-chip-row">
+                {DS_PHOTO_USAGE.map(o => (
+                  <button key={o.id} type="button" title={o.description} className={`msai-chip${photoUsage === o.id ? ' msai-chip--active' : ''}`} onClick={() => setPhotoUsage(o.id)}>{o.name}</button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} disabled={!canCreate || !prompt.trim()} onClick={runGenerate}>
             <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Generate Post

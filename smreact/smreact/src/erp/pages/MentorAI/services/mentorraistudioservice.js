@@ -59,6 +59,7 @@ export async function generateDesignPost(params = {}, opts = {}) {
       brandColor,
       customSize,
       refImages,
+      photoUsage: requestedPhotoUsage,
     } = params;
 
     const apiPlatform = PLATFORM_API_MAP[platform] || platform || 'instagram_1_1';
@@ -68,7 +69,10 @@ export async function generateDesignPost(params = {}, opts = {}) {
     let photoUsage = 'none';
     const hasFiles = Array.isArray(refImages) && refImages.length > 0;
     if (hasFiles) {
-      photoUsage = 'inside_design';
+      // API values: none | background | inside_design | style_ref
+      photoUsage = ['background', 'inside_design', 'style_ref'].includes(requestedPhotoUsage)
+        ? requestedPhotoUsage
+        : 'inside_design';
     }
 
     // Build JSON payload

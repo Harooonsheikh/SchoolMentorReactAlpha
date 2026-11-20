@@ -248,8 +248,12 @@ export function normalizePlans(raw) {
             totals[key] = t ?? local?.totals?.[key] ?? 0;
         });
         const price = num(pl?.price ?? pl?.monthly_price ?? pl?.amount ?? pl?.price_per_month);
+        /* Server ka apna plan code (jaisa bheja gaya) — purchase / plan-change me yahi bhejna
+           chahiye; `id` UI ke liye local (basic/pro/premium) rakha jata hai. */
+        const serverCode = String(pl?.plan_code ?? pl?.code ?? pl?.slug ?? "").trim();
         return {
             id: local?.id || code || String(pl?.id),
+            code: serverCode || local?.id || code,
             name: pl?.name || pl?.title || local?.name || code,
             tagline: pl?.description || pl?.tagline || local?.tagline || "",
             price: price === undefined ? (local?.price ?? null) : (price || null),
@@ -338,4 +342,47 @@ console.log("PLANS JSON:", JSON.stringify(plansRaw, null, 2));
 }
 export async function getBankDetails() {
     return WALLET_BANK_DETAILS;
+}
+
+/* ─── Postman "Wallet" folder: payment + super-admin endpoints ─── */
+
+/* POST /ai/api/wallet/payment/ { plan_code }. Response shape unknown — it may
+   carry a checkout/payment URL or just a success message. Returns
+   { url, message, raw } so the UI can open the URL or toast the message. */
+export async function purchasePlan(planCode) {
+    const res = await mentorAiApi.post("/ai/api/wallet/payment/", { plan_code: String(planCode || "") });
+    const d = res.data;
+    const url = d?.payment_url || d?.checkout_url || d?.url || d?.redirect_url || d?.link
+        || d?.data?.payment_url || d?.data?.checkout_url || d?.data?.url || null;
+    return { url: url ? String(url) : null, message: d?.message || d?.detail || "", raw: d };
+}
+
+/* GET /ai/api/wallet/admin/branches/subscriptions/ → [{ branchId, name, planCode,
+   walletEnabled, raw }]. Rejects for non-super-admins (401/403/404) — the
+   caller hides the admin section on any failure. */
+export async function getBranchSubscriptions() {
+    const res = await mentorAiApi.get("/ai/api/wallet/admin/branches/subscriptions/");
+    const body = res.data;
+    const list = Array.isArray(body) ? body : (body?.results || body?.branches || body?.data || []);
+    return (Array.isArray(list) ? list : []).map((b) => ({
+        branchId: b?.branch_id ?? b?.branch ?? b?.branchId ?? b?.id,
+        name: b?.branch_name || b?.name || b?.school_name || "",
+        planCode: String(b?.plan_code ?? b?.plan?.code ?? b?.plan?.plan_code ?? b?.plan ?? b?.subscription?.plan_code ?? "").toLowerCase(),
+        walletEnabled: b?.wallet_enabled ?? b?.walletEnabled ?? b?.is_enabled ?? undefined,
+        raw: b,
+    }));
+}
+
+/* POST /ai/api/wallet/admin/branches/:id/status/ { wallet_enabled } */
+export async function setBranchWalletStatus(branchId, walletEnabled) {
+    const res = await mentorAiApi.post(`/ai/api/wallet/admin/branches/${branchId}/status/`, { wallet_enabled: !!walletEnabled });
+    return res.data;
+}
+
+/* POST /ai/api/wallet/admin/branches/:id/subscription/ { plan_code, reset_period } */
+export async function setBranchSubscription(branchId, planCode, resetPeriod = true) {
+    const res = await mentorAiApi.post(`/ai/api/wallet/admin/branches/${branchId}/subscription/`, {
+        plan_code: String(planCode || ""), reset_period: !!resetPeriod,
+    });
+    return res.data;
 }

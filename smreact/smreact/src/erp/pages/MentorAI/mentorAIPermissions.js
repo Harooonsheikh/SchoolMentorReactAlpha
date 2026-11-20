@@ -7,6 +7,9 @@ export const MENTOR_AI_SCREEN_LABELS = {
   chat:         'AI Chat Assistant',
   lessonplans:  'Lesson Plans',
   worksheets:   'Worksheet Generator',
+  /* Question Papers ki apni permission screen abhi nahi — Worksheet Generator ki
+     permissions use hoti hain. */
+  questionpapers: 'Worksheet Generator',
   designstudio: 'Design Studio',
   library:      'Library',
   wallet:       'Wallet & Usage',

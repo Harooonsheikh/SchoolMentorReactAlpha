@@ -11,6 +11,10 @@ import {
   sendMessage,
   deleteChatSession as deleteApiChatSession,
    updateChatSession,
+  renameChatSession,
+  clearChatSession,
+  getChatModes,
+  normalizeChatModes,
 } from './services/mentorAIChatService';
 import { useMentorAIActions } from './mentorAIPermissions';
 /* ═══════════════════════════════════════════════════════════════════
@@ -67,7 +71,37 @@ const EXPLORE_FEATURES = [
 export default function ChatAssistant({ toast, onConsumed, goTo, schoolName, canGo = () => true }) {
   const { canCreate, deny } = useMentorAIActions('chat', toast);
       const [historyOpen, setHistoryOpen] = useState(false);
-  const [modeOpen, setModeOpen] = useState(false);  const [query, setQuery] = useState('');
+  const [modeOpen, setModeOpen] = useState(false);
+  /* Modes from GET /ai/api/chat/modes/. Empty (call failed / 404 / nothing usable) →
+     the panel keeps the local Universal-only list exactly as before. `modeSel` is the
+     chosen server mode (null = today's behaviour: universal, no mode_type_id). */
+  const [serverModes, setServerModes] = useState([]);
+  const [modeSel, setModeSel] = useState(null);
+  const [modesErr, setModesErr] = useState('');
+  /* Chat ka mode_type server par hota hai — agar current chat kisi server mode (jaise STEAM) ki ho
+     to har message me `mode: universal` bhejna us ko override kar deta tha. Is ref se pata rehta hai. */
+  const sessionHasModeRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    getChatModes().then((body) => {
+      if (!alive) return;
+      const list = normalizeChatModes(body).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      console.log('Chat modes response:', body, '→ usable modes:', list.length);
+      if (!list.length) { setModesErr('The server returned no modes.'); return; }
+      /* Universal hamesha pehle (server par Universal = koi mode_type nahi, is liye list me na ho to bhi). */
+      const isUni = (m) => m.slug === 'universal' || m.name.toLowerCase() === 'universal';
+      const localUni = CHAT_MODES.find(m => m.id === 'universal') || CHAT_MODES[0];
+      const uni = list.find(isUni) || { serverId: undefined, slug: 'universal', name: 'Universal', description: localUni?.description || '', category: 'General', color: localUni?.color };
+      const withUni = [{ ...uni, slug: 'universal' }, ...list.filter(m => !isUni(m))];
+      setServerModes(withUni);
+      setModeSel(withUni[0]);
+    }).catch((e) => {
+      console.warn('Chat modes not loaded (using local list):', e?.message);
+      setModesErr(`Could not load modes from the server${e?.response?.status ? ` (${e.response.status})` : ''}.`);
+    });
+    return () => { alive = false; };
+  }, []);
+  const [query, setQuery] = useState('');
   const [exchanges, setExchanges] = useState([]);
   const [history, setHistory] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
@@ -165,9 +199,10 @@ const runQuery = async (q, exchangeId, atts = []) => {
     let sessionId = sessionRef.current;
     const isNewSession = !sessionId;
     if (!sessionId) {
-      const session = await createChatSession(titleFrom(q || atts[0]?.name));
+      const session = await createChatSession(titleFrom(q || atts[0]?.name), modeSel);
       sessionId = session.id;
       sessionRef.current = sessionId;
+      sessionHasModeRef.current = !!(session?.mode_type || (modeSel?.serverId != null && modeSel?.slug !== 'universal'));
       setActiveSessionId(sessionId);
     }
 
@@ -177,6 +212,7 @@ const runQuery = async (q, exchangeId, atts = []) => {
       atts.map(a => a.file).filter(Boolean),
       {
         signal,
+        mode: sessionHasModeRef.current ? false : undefined,   // mode-wali chat: mode field mat bhejo; baqi: universal
         onProgress: job.report,
         onDelta: (text) => { if (!signal.aborted) patchExchange(exchangeId, { status: 'streaming', text }); },
       }
@@ -284,6 +320,7 @@ const startNewChat = async () => {
 
   setExchanges([]);
   sessionRef.current = null;
+  sessionHasModeRef.current = false;
   setActiveSessionId(null);
   setQuery('');
   setPendingAttachments([]);
@@ -297,6 +334,8 @@ const loadSession = async (item) => {
     const data = await getChatSession(item.id);
 
     console.log("SESSION DETAIL:", data);
+    /* Purani chat kisi mode (jaise STEAM) me thi to aage ke messages me mode field nahi bhejna. */
+    sessionHasModeRef.current = !!(data?.mode_type || item?.mode_type);
 
     const messages = data?.messages || [];
 
@@ -375,6 +414,73 @@ const deleteSession = async (id) => {
   }
 
 };
+
+  /* Rename a chat from the history panel (PATCH sessions/:id/ { title }). */
+  /* Rename / Clear / Clear all ab browser ke window.prompt / confirm ki jagah app ke apne pop-up
+     (niche `dialog`) se hote hain. */
+  const [dialog, setDialog] = useState(null);      // null | { kind: 'rename'|'clear'|'clearAll', item?, title? }
+  const [dlgBusy, setDlgBusy] = useState(false);
+  const renameSession = (item) => setDialog({ kind: 'rename', item, title: item.title || '' });
+  const doRename = async () => {
+    const { item } = dialog || {};
+    const title = String(dialog?.title || '').trim();
+    if (!item || !title || title === item.title) { setDialog(null); return; }
+    setDlgBusy(true);
+    try {
+      await renameChatSession(item.id, title);
+      setHistory(prev => prev.map(h => (h.id === item.id ? { ...h, title } : h)));
+      setDialog(null);
+    } catch (error) {
+      console.error('Failed to rename chat:', error.response?.data || error);
+      toast?.('Could not rename this chat.');
+    } finally { setDlgBusy(false); }
+  };
+
+  /* Clear the open conversation (POST sessions/:id/clear/). Server sirf messages mitata hai —
+     chat ka entry History me reh jata tha ("clear kiya magar history abhi bhi dikh rahi hai").
+     Ab messages saaf hone ke baad khali chat ko History se bhi hata dete hain (best-effort DELETE). */
+  const clearCurrentChat = () => { if (sessionRef.current) setDialog({ kind: 'clear' }); };
+  const doClearCurrent = async () => {
+    const id = sessionRef.current;
+    if (!id) { setDialog(null); return; }
+    if (busy) job.cancel();
+    setDlgBusy(true);
+    try {
+      await clearChatSession(id);
+      try { await deleteApiChatSession(id); } catch (e) { console.warn('Chat cleared but its history entry could not be removed:', e?.response?.data || e?.message); }
+      setHistory(prev => prev.filter(item => item.id !== id));
+      sessionRef.current = null;
+      setActiveSessionId(null);
+      setExchanges([]);
+      setQuery('');
+      setPendingAttachments([]);
+      toast?.('Chat cleared');
+    } catch (error) {
+      console.error('Failed to clear chat:', error.response?.data || error);
+      toast?.('Could not clear this chat.');
+    } finally { setDlgBusy(false); setDialog(null); }
+  };
+
+  /* History panel → "Clear all": har chat ko server se delete karta hai (DELETE sessions/:id/). */
+  const clearAllHistory = () => { if (history.length) setDialog({ kind: 'clearAll' }); };
+  const doClearAll = async () => {
+    if (!history.length) { setDialog(null); return; }
+    if (busy) job.cancel();
+    setDlgBusy(true);
+    const ids = history.map(h => h.id);
+    const results = await Promise.allSettled(ids.map(id => deleteApiChatSession(id)));
+    const failed = new Set(ids.filter((id, i) => results[i].status === 'rejected'));
+    setHistory(prev => prev.filter(h => failed.has(h.id)));
+    if (activeSessionId != null && !failed.has(activeSessionId)) {
+      sessionRef.current = null;
+      setActiveSessionId(null);
+      setExchanges([]);
+      setQuery('');
+    }
+    toast?.(failed.size ? `Deleted ${ids.length - failed.size} chats — ${failed.size} could not be deleted.` : 'Chat history cleared');
+    setDlgBusy(false);
+    setDialog(null);
+  };
 
   /* ── Simulated voice input ── */
 const recognitionRef = useRef(null);
@@ -460,12 +566,17 @@ const stopRecording = () => {
         </div>
         <div className="msai-chat-head-r">
                    <button type="button" className="msai-chip msai-chip--mode" onClick={() => setModeOpen(true)} aria-haspopup="dialog">
-            <i className="fa-solid fa-sliders" aria-hidden="true" /> Universal <i className="fa-solid fa-chevron-down" aria-hidden="true" />
+            <i className="fa-solid fa-sliders" aria-hidden="true" /> {modeSel?.name || 'Universal'} <i className="fa-solid fa-chevron-down" aria-hidden="true" />
           </button>
                 <button type="button" className="msai-icon-btn" onClick={() => { if (!historyOpen) loadChatHistory(); setHistoryOpen(o => !o); }} aria-label="Chat history">
             <i className="fa-solid fa-clock-rotate-left" aria-hidden="true" />
             {!historyLoading && history.length > 0 && <span className="msai-icon-badge">{history.length}</span>}
           </button>
+          {activeSessionId && exchanges.length > 0 && (
+            <button type="button" className="msai-icon-btn" onClick={clearCurrentChat} aria-label="Clear chat" title="Clear chat">
+              <i className="fa-solid fa-broom" aria-hidden="true" />
+            </button>
+          )}
           <button type="button" className="msai-icon-btn" onClick={startNewChat} aria-label="New chat">
             <i className="fa-solid fa-pen-to-square" aria-hidden="true" />
           </button>
@@ -620,7 +731,7 @@ placeholder={!canCreate ? 'You have view-only access to AI Chat' : busy ? 'Mento
 
       {modeOpen && (
         <div className="msai-panel-overlay" onClick={e => { if (e.target === e.currentTarget) setModeOpen(false); }}>
-          <ModeList onClose={() => setModeOpen(false)} />
+          <ModeList onClose={() => setModeOpen(false)} serverModes={serverModes} selected={modeSel} onSelect={setModeSel} loadError={modesErr} />
         </div>
       )}
 
@@ -630,6 +741,9 @@ placeholder={!canCreate ? 'You have view-only access to AI Chat' : busy ? 'Mento
               <span>Chat History</span>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" className="msai-chip" onClick={startNewChat}><i className="fa-solid fa-plus" aria-hidden="true" /> New</button>
+                {history.length > 0 && (
+                  <button type="button" className="msai-chip" onClick={clearAllHistory} title="Delete all chats"><i className="fa-solid fa-broom" aria-hidden="true" /> Clear all</button>
+                )}
                 <button type="button" className="msai-icon-btn" onClick={() => setHistoryOpen(false)} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
               </div>
             </div>
@@ -647,8 +761,9 @@ placeholder={!canCreate ? 'You have view-only access to AI Chat' : busy ? 'Mento
                       <div className="msai-hist-item-m">
 <span>
   {timeAgo(new Date(h.updated_at).getTime())}
-</span>                        <span className="msai-hist-item-mode">Universal</span>
+</span>                        <span className="msai-hist-item-mode">{h.mode_type?.display_name || h.mode_type?.name || 'Universal'}</span>
                       </div>
+                      <button type="button" className="msai-hist-del" style={{ right: 36 }} onClick={e => { e.stopPropagation(); renameSession(h); }} aria-label="Rename" title="Rename"><i className="fa-solid fa-pen" aria-hidden="true" /></button>
                       <button type="button" className="msai-hist-del" onClick={e => { e.stopPropagation(); deleteSession(h.id); }} aria-label="Delete"><i className="fa-solid fa-trash" aria-hidden="true" /></button>
                     </div>
                   ))}
@@ -656,6 +771,50 @@ placeholder={!canCreate ? 'You have view-only access to AI Chat' : busy ? 'Mento
               ))}
             </div>
           </aside>
+        </div>
+      )}
+
+      {/* App ka apna pop-up (Rename / Clear chat / Clear all) — browser ke "localhost says" dabbe ki jagah. */}
+      {dialog && (
+        <div className="modal-overlay open" style={{ zIndex: 1300 }} onClick={e => { if (e.target === e.currentTarget && !dlgBusy) setDialog(null); }}>
+          <div className="modal modal-sm" role="dialog" aria-modal="true">
+            <div className="msai-panel-head">
+              <span>
+                {dialog.kind === 'rename' ? 'Rename chat' : dialog.kind === 'clearAll' ? 'Clear all chat history?' : 'Clear this chat?'}
+              </span>
+            </div>
+            <div className="msai-panel-body">
+              {dialog.kind === 'rename' ? (
+                <div className="msai-field">
+                  <label>Chat title</label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={dialog.title}
+                    maxLength={120}
+                    onChange={e => setDialog(d => ({ ...d, title: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') doRename(); }}
+                  />
+                </div>
+              ) : dialog.kind === 'clearAll' ? (
+                <p className="msai-resp-text">All {history.length} chats and their messages will be deleted from your Chat History. This cannot be undone.</p>
+              ) : (
+                <p className="msai-resp-text">This chat's messages and its entry in Chat History will be removed. This cannot be undone.</p>
+              )}
+              <div className="msai-editai-actions">
+                <button type="button" className="msai-btn-secondary" onClick={() => setDialog(null)} disabled={dlgBusy}>Cancel</button>
+                {dialog.kind === 'rename' ? (
+                  <button type="button" className="msai-btn-primary" onClick={doRename} disabled={dlgBusy || !String(dialog.title).trim()}>
+                    {dlgBusy ? 'Saving…' : 'Save'}
+                  </button>
+                ) : (
+                  <button type="button" className="msai-btn-primary" style={{ background: '#DC2626' }} onClick={dialog.kind === 'clearAll' ? doClearAll : doClearCurrent} disabled={dlgBusy}>
+                    {dlgBusy ? 'Clearing…' : (dialog.kind === 'clearAll' ? 'Clear all' : 'Clear chat')}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -702,13 +861,56 @@ function VoiceBar({ state, seconds, text, onChangeText, onStop, onCancel, onSend
   );
 }
 
-function ModeList({ onClose }) {
+function ModeList({ onClose, serverModes = [], selected = null, onSelect, loadError = '' }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   const universal = CHAT_MODES.find(m => m.id === 'universal') || CHAT_MODES[0];
+
+  /* Server modes available → pick one (applies to NEW chats). Same panel look; colours /
+     example come from the matching local mode when there is one. */
+  if (serverModes.length > 0) {
+    const localFor = (m) => CHAT_MODES.find(l => l.id === m.slug || l.name.toLowerCase() === m.name.toLowerCase());
+    const cur = serverModes.find(m => selected && m.serverId === selected.serverId) || serverModes[0];
+    const curLocal = localFor(cur);
+    const color = cur.color || curLocal?.color || universal.color;
+    return (
+      <aside className="msai-panel msai-panel--right msai-panel--wide" role="dialog" aria-label="Mentor modes" onClick={e => e.stopPropagation()}>
+        <div className="msai-panel-head">
+          <span>Mentor Modes</span>
+          <button type="button" className="msai-icon-btn" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
+        </div>
+        <div className="msai-panel-body">
+          <div className="msai-mode-preview" style={{ borderColor: color }}>
+            <span className="msai-mode-tag" style={{ background: `${color}1A`, color }}>{cur.name}</span>
+            <div className="msai-mode-preview-desc">{cur.description || curLocal?.description || ''}</div>
+            {curLocal?.example && <div className="msai-mode-preview-ex"><i className="fa-solid fa-quote-left" aria-hidden="true" /> {curLocal.example}</div>}
+          </div>
+          <div className="msai-mode-note">The selected mode is used for new chats.</div>
+          <div className="msai-mode-list">
+            {serverModes.map(m => {
+              const isCur = m.serverId === cur.serverId && m.slug === cur.slug;
+              const c = m.color || localFor(m)?.color || universal.color;
+              return (
+                <button key={`${m.serverId ?? m.slug}`} type="button"
+                  className={`msai-mode-item${isCur ? ' current' : ''}`}
+                  onClick={() => { onSelect?.(m); onClose(); }}>
+                  <span className="msai-mode-dot" style={{ background: c }} />
+                  <span className="msai-mode-item-txt">
+                    <span className="msai-mode-item-name">{m.name}</span>
+                    <span className="msai-mode-item-cat">{m.category || localFor(m)?.category || ''}</span>
+                  </span>
+                  {isCur && <i className="fa-solid fa-check" aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside className="msai-panel msai-panel--right msai-panel--wide" role="dialog" aria-label="Mentor modes" onClick={e => e.stopPropagation()}>
@@ -722,7 +924,7 @@ function ModeList({ onClose }) {
           <div className="msai-mode-preview-desc">{universal.description}</div>
           <div className="msai-mode-preview-ex"><i className="fa-solid fa-quote-left" aria-hidden="true" /> {universal.example}</div>
         </div>
-        <div className="msai-mode-note">Universal is active. Other modes are coming soon.</div>
+        <div className="msai-mode-note">{loadError ? `Universal is active. ${loadError}` : 'Universal is active. Other modes are coming soon.'}</div>
         <div className="msai-mode-list">
           {CHAT_MODES.map(m => {
             const isUniversal = m.id === 'universal';
