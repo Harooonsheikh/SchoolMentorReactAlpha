@@ -325,28 +325,6 @@ export const EP = {
     manualForm: () => `${SA_ROOT}/api/AHM_School_SOPs/manual-form`,
   },
 
-  /* ── School Agreements & Legal Documents ─────────────────────────
-     ⚠ BACKEND PENDING — ye route live API par ABHI NAHI hai. Poora
-     swagger check kiya gaya (SchoolMentorSuperAdminAPI ke 60 routes, ERP
-     ke 644, Chain ke 86): per-school agreement/legal-document store kahin
-     nahi. Jo endpoint banna hai uski poori spec — fields, actions,
-     responses, file storage, validation — SCHOOL_AGREEMENTS_API_HANDOFF.md
-     me hai.
-
-     Shakal jaan-boojh kar AHM_School_SOPs/manual-detail jaisi rakhi hai:
-     ek hi POST route, multipart/form-data, PascalCase fields aur ek
-     `Action` (get | insert | update | delete) — taake backend par koi naya
-     pattern na banana pare.
-
-     get par BranchID = 0 ka matlab "poore network ke documents" hai; wo
-     sirf module ke chaar summary cards bharta hai. ── */
-  agreements: {
-    documents: () => `${SA_ROOT}/api/AHM_School_Agreements/manage_documents`,
-    /* School-level general comments (get | insert | delete) — BACKEND PENDING,
-       spec: SCHOOL_AGREEMENTS_API_HANDOFF.md §11. */
-    comments: () => `${SA_ROOT}/api/AHM_School_Agreements/manage_comments`,
-  },
-
   /* ── Quiz Content ── */
   quiz: {
     classes: () => `${ROOT}/quiz/classes`,
@@ -383,39 +361,10 @@ export const EP = {
     payments: () => `${ROOT}/mentor/payments`,
   },
 
-  /* ── Registration — branch directory + branch CRUD. Ye routes MAIN ERP API
-     par hain (superadmin root ke BAHAR), is liye services inhe ERP_API_BASE
-     ke saath bulati hain; dev me src/setupProxy.js pehle se /api/Registration
-     forward karta hai, is liye koi nayi proxy entry nahi chahiye.
-
-     Sab live swagger par tasdeeq-shuda hain (ERP ke 644 routes, 2026-11-10) —
-     koi endpoint farz nahi kiya gaya:
-
-       old_MISDBBranch     purani MIS directory (880 rows, alag id space —
-                           sirf Mentor AI use karta hai; school list ke liye
-                           NAHI, warna duplicate/ghair-mutaliq records aate).
-       get-all-branches    MOJOODA branch directory, poori (live: 346 rows).
-                           Yehi superset hai — get-branches-with-permissions
-                           323 aur branch-report 319 deta hai.
-       get-branch/{id}     ek branch ki poori tafseel.
-       signup              naya school: { password, branchName,
-                           branchOwnerName, branchPhone } → branch + login
-                           user. ERP ka apna SignupFlow bhi yehi chalata hai.
-       register-branch     mukammal multipart create (Branch.* + LoginUser.* +
-                           Employee.*) — abhi koi screen use nahi karti,
-                           reference ke liye yahan likha hai.
-       update-branch       PUT multipart, poora branch record (wahi field
-                           list jo ERP ke src/tabs/SchoolTab.jsx bhejti hai).
-       delete-branch/{id}  PERMANENT delete — wapas nahi aata. Screen pehle
-                           hamesha ToggleBranchStatus (deactivate) deti hai. ── */
+  /* ── Registration (branch directory — lives on the main ERP API, NOT under
+     the superadmin root, so services call it with an absolute URL). ── */
   registration: {
     branches: () => `/api/Registration/old_MISDBBranch`,
-    allBranches: () => `/api/Registration/get-all-branches`,
-    branch: (id) => `/api/Registration/get-branch/${id}`,
-    signup: () => `/api/Registration/signup`,
-    registerBranch: () => `/api/Registration/register-branch`,
-    updateBranch: () => `/api/Registration/update-branch`,
-    deleteBranch: (id) => `/api/Registration/delete-branch/${id}`,
   },
 
   /* ── AI / wallet (per-branch Mentor AI plan + subscription state). ── */
