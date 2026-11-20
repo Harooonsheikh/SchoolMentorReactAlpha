@@ -82,6 +82,13 @@ export const ACADEMICS_REPORTS_CSS = `
 .aca-rep-kpi-val { font-size:22px; font-weight:800; color:var(--kc, var(--text-primary)); }
 .aca-rep-kpi-lbl { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.3px; margin-top:2px; }
 
+.aca-rep-loading { min-height:220px; display:flex; align-items:center; justify-content:center; }
+.aca-rep-loading-inner {
+  display:flex; flex-direction:column; align-items:center; gap:12px;
+  color:var(--text-muted); font-size:13px; font-weight:600;
+}
+.aca-rep-loading-inner i { font-size:28px; color:var(--brand-solid,#1E3A8A); }
+
 .aca-rep-filters {
   display:grid; grid-template-columns:repeat(2,1fr); gap:16px 20px;
   padding:16px; border:1.5px solid var(--border-light); border-radius:var(--radius-lg);

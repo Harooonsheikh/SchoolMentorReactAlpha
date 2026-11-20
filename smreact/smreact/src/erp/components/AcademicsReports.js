@@ -22,14 +22,11 @@ import TeacherPerformanceReportPanel from './AcademicsTeacherPerformanceReport';
      4. Academic Activities Report         (Activity Calendar)
      5. Academic Setup Report              (Session, Terms, Vacations, Textbooks)
 
-   Every report reads REAL data from academicsService (the same
-   service the Dashboard's Academics section and LessonPlans.js use —
-   see mock/lessonPlans.js's header comment for the class/subject/
-   teacher linkage) — nothing here is a hand-typed placeholder. The
-   Question Bank report reuses the exact same "a unit counts as
-   submitted once every item inside it is submitted" rule the
-   Dashboard already established (nbUnitStatus, imported, not
-   redefined), so the two never drift apart.
+   Every report reads LIVE ERP data via academicsReportsService
+   (Lesson Plans / Question Bank / assignments / activities / session /
+   textbooks). Koi mock seed nahi — API empty ho to report empty.
+   Question Bank uses nbUnitStatus (unit = submitted jab har item
+   submitted ho).
 
    Every report follows the same shape every other module's Reports
    tab already uses in this app (Fee.jsx's ReportPanelX functions):
@@ -138,6 +135,18 @@ function KpiStrip({ items }) {
   );
 }
 
+/* API response aane tak 0/empty KPI flash na ho — spinner. Design same. */
+function ReportDataLoading({ label = 'Loading report data…' }) {
+  return (
+    <div className="section-card aca-rep-panel aca-rep-loading">
+      <div className="aca-rep-loading-inner">
+        <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
 function kpiStripHtml(items, p) {
   return `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px">${items.map(k => `
     <div style="flex:1;min-width:130px;border:1px solid ${p.border};border-radius:10px;padding:12px 14px;background:${p.rowBaseBg}">
@@ -220,7 +229,14 @@ const LP_COLUMNS = [
   { key: 'date', label: 'Date' }, { key: 'status', label: 'Status' }, { key: 'submittedDate', label: 'Submitted Date' },
 ];
 
-function LessonPlanReportPanel({ lpData, classList, subjectList, teacherList }) {
+function LessonPlanReportPanel() {
+  /* Sirf is tab pe LP + filter lists — NB / setup / activities nahi. */
+  const { data: lpData = [], loading: lpLoading } = useAsync(academicsService.getSubLpData, []);
+  const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
+  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
+  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
+  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
+
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
@@ -268,6 +284,10 @@ function LessonPlanReportPanel({ lpData, classList, subjectList, teacherList }) 
     ],
     emptyText: 'No lesson plans match the selected filters.',
   });
+
+  if (lpLoading || assignLoading) {
+    return <ReportDataLoading label="Loading lesson plan submissions…" />;
+  }
 
   return (
     <div className="section-card aca-rep-panel">
@@ -321,7 +341,13 @@ const NB_ITEM_COLUMNS = [
   { key: 'item', label: 'Item' }, { key: 'status', label: 'Status' },
 ];
 
-function NotebookPlanReportPanel({ nbData, classList, subjectList, teacherList }) {
+function NotebookPlanReportPanel() {
+  const { data: nbData = [], loading: nbLoading } = useAsync(academicsService.getSubNbData, []);
+  const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
+  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
+  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
+  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
+
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
@@ -394,6 +420,10 @@ function NotebookPlanReportPanel({ nbData, classList, subjectList, teacherList }
     emptyText: 'No question bank units match the selected filters.',
   });
 
+  if (nbLoading || assignLoading) {
+    return <ReportDataLoading label="Loading question bank submissions…" />;
+  }
+
   return (
     <div className="section-card aca-rep-panel">
       <div className="aca-rep-panel-h">
@@ -444,7 +474,15 @@ const TW_COLUMNS_ALL = [
   { key: 'nbTotal', label: 'Question Bank Total' }, { key: 'nbSubmitted', label: 'Question Bank Submitted' }, { key: 'nbPending', label: 'Question Bank Pending' },
 ];
 
-function TeacherWorkloadReportPanel({ lpData, nbData, teacherAssignments, classList, subjectList, teacherList }) {
+function TeacherWorkloadReportPanel() {
+  /* Workload ko LP + NB dono chahiye — sirf is tab pe dono load. */
+  const { data: lpData = [], loading: lpLoading } = useAsync(academicsService.getSubLpData, []);
+  const { data: nbData = [], loading: nbLoading } = useAsync(academicsService.getSubNbData, []);
+  const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
+  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
+  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
+  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
+
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
@@ -502,6 +540,10 @@ function TeacherWorkloadReportPanel({ lpData, nbData, teacherAssignments, classL
     emptyText: 'No teachers match the selected filters.',
   });
 
+  if (lpLoading || nbLoading || assignLoading) {
+    return <ReportDataLoading label="Loading teacher workload…" />;
+  }
+
   return (
     <div className="section-card aca-rep-panel">
       <div className="aca-rep-panel-h">
@@ -548,7 +590,8 @@ const ACT_COLUMNS = [
 ];
 const ACT_TONE = { upcoming: 'amber', ongoing: 'green', completed: 'gray' };
 
-function ActivitiesReportPanel({ activities }) {
+function ActivitiesReportPanel() {
+  const { data: activities = [], loading: actLoading } = useAsync(academicsService.getActivities, []);
   const [fStatuses, setFStatuses] = useState([]);
   const [fFrom, setFFrom] = useState('');
   const [fTo, setFTo] = useState('');
@@ -594,6 +637,10 @@ function ActivitiesReportPanel({ activities }) {
     emptyText: 'No activities match the selected filters.',
   });
 
+  if (actLoading) {
+    return <ReportDataLoading label="Loading activities…" />;
+  }
+
   return (
     <div className="section-card aca-rep-panel">
       <div className="aca-rep-panel-h">
@@ -633,8 +680,12 @@ function ActivitiesReportPanel({ activities }) {
    (multi-section, PDF/Word only — no single flat table, so Excel
    is intentionally not offered rather than faked.)
    ═══════════════════════════════════════════════════════════════════ */
-function AcademicSetupReportPanel({ session, terms, termData, vacations }) {
-  /* Live classes + textbooks (replaces the demo's static CLASSES array). */
+function AcademicSetupReportPanel() {
+  /* Setup tab pe hi session/terms/vacations/textbooks — dusri tabs nahi. */
+  const { data: session, loading: sessionLoading } = useAsync(academicsService.getSession, []);
+  const { data: terms = [], loading: termsLoading } = useAsync(academicsService.getTerms, []);
+  const { data: termData = [], loading: termDataLoading } = useAsync(academicsService.getTermData, []);
+  const { data: vacations = [], loading: vacLoading } = useAsync(academicsService.getVacations, []);
   const { data: CLASSES = [], loading: classesLoading } = useAsync(academicsService.getClassesWithSubjects, []);
   const [includeSession, setIncludeSession] = useState(true);
   const [includeTerms, setIncludeTerms] = useState(true);
@@ -706,6 +757,10 @@ function AcademicSetupReportPanel({ session, terms, termData, vacations }) {
     deliverAcademicsHtmlReport({ title, format, isColor, bodyHtml });
   };
 
+  if (sessionLoading || termsLoading || termDataLoading || vacLoading) {
+    return <ReportDataLoading label="Loading academic setup…" />;
+  }
+
   return (
     <div className="section-card aca-rep-panel">
       <div className="aca-rep-panel-h">
@@ -753,18 +808,7 @@ export default function AcademicsReportsTab() {
   const { can } = usePermissions();
   const canView = can('Academics', 'Reports', 'View');
 
-  const { data: lpData = [] }              = useAsync(academicsService.getSubLpData, []);
-  const { data: nbData = [] }              = useAsync(academicsService.getSubNbData, []);
-  const { data: teacherAssignments = [] }  = useAsync(academicsService.getAcademicsTeacherAssignments, []);
-  const { data: activities = [] }          = useAsync(academicsService.getActivities, []);
-  const { data: terms = [] }               = useAsync(academicsService.getTerms, []);
-  const { data: termData = [] }            = useAsync(academicsService.getTermData, []);
-  const { data: session }                  = useAsync(academicsService.getSession, []);
-  const { data: vacations = [] }           = useAsync(academicsService.getVacations, []);
-
-  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
-  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
-  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
+  /* Data fetch har panel ke andar — sirf active tile mount hoti hai. */
 
   if (!canView) {
     return (
@@ -793,22 +837,11 @@ export default function AcademicsReportsTab() {
         ))}
       </div>
 
-      {active === 'lp' && (
-        <LessonPlanReportPanel lpData={lpData} classList={classList} subjectList={subjectList} teacherList={teacherList} />
-      )}
-      {active === 'nb' && (
-        <NotebookPlanReportPanel nbData={nbData} classList={classList} subjectList={subjectList} teacherList={teacherList} />
-      )}
-      {active === 'tw' && (
-        <TeacherWorkloadReportPanel
-          lpData={lpData} nbData={nbData} teacherAssignments={teacherAssignments}
-          classList={classList} subjectList={subjectList} teacherList={teacherList}
-        />
-      )}
-      {active === 'act' && <ActivitiesReportPanel activities={activities} />}
-      {active === 'setup' && (
-        <AcademicSetupReportPanel session={session} terms={terms} termData={termData} vacations={vacations} />
-      )}
+      {active === 'lp' && <LessonPlanReportPanel />}
+      {active === 'nb' && <NotebookPlanReportPanel />}
+      {active === 'tw' && <TeacherWorkloadReportPanel />}
+      {active === 'act' && <ActivitiesReportPanel />}
+      {active === 'setup' && <AcademicSetupReportPanel />}
       {active === 'teacher' && <TeacherPerformanceReportPanel />}
     </>
   );

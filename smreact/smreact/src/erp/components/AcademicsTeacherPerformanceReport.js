@@ -317,9 +317,9 @@ function TeacherDetail({ perf, onBack }) {
 
 /* ─── Main panel: search + card grid, or detail view ─── */
 export default function TeacherPerformanceReportPanel() {
-  const { data: teacherAssignments = [] } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
-  const { data: lpData = [] }             = useAsync(academicsService.getSubLpData, []);
-  const { data: nbData = [] }             = useAsync(academicsService.getSubNbData, []);
+  const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
+  const { data: lpData = [], loading: lpLoading } = useAsync(academicsService.getSubLpData, []);
+  const { data: nbData = [], loading: nbLoading } = useAsync(academicsService.getSubNbData, []);
   const { data: activities = [] }         = useAsync(academicsService.getActivities, []);
   const { data: termBreakups = [] }       = useAsync(academicsService.getTermBreakups, []);
   const { data: studentAttendanceClasses = [] } = useAsync(academicsService.getStudentAttendance, []);
@@ -331,6 +331,9 @@ export default function TeacherPerformanceReportPanel() {
   const { data: weeklyOff = [] }          = useAsync(academicsService.getWeeklyOff, []);
   const { data: holidays = [] }           = useAsync(academicsService.getHolidays, []);
   const { data: resources = [] }         = useAsync(academicsService.getTeacherResources, []);
+
+  /* Teacher cards / % ke liye assignments + LP/NB chahiye — pehle spinner. */
+  const coreLoading = assignLoading || lpLoading || nbLoading;
 
   const teacherNames = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
 
@@ -359,6 +362,17 @@ export default function TeacherPerformanceReportPanel() {
     const submitted = lpSubmitted + nbSubmitted;
     return { classes: Array.from(new Set(pairs.map(p => p.class))), subjects: Array.from(new Set(pairs.map(p => p.subject))), pct: Pct(submitted, total) };
   };
+
+  if (coreLoading) {
+    return (
+      <div className="section-card tp-panel aca-rep-loading">
+        <div className="aca-rep-loading-inner">
+          <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+          <span>Loading teacher performance…</span>
+        </div>
+      </div>
+    );
+  }
 
   if (active) {
     const perf = computeTeacherPerformance(active, dataBundle);

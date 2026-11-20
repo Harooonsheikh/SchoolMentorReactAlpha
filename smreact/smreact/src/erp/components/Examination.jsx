@@ -2996,7 +2996,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
   // Exam History row ke Download icon ke liye: View jaise REAL data (subjects/marks/remarks/finalRemark)
   // load karke us se report banao (mock nahi).
   const rhDownloadCardReport = async (st, r) => {
-    loadCardOptions(true);
+    await loadCardOptions(true);
     const isCombined = r?.type === 'combined' || r?.combinedId != null;
     const classID = r?.classID ?? st?.gradeId ?? st?.classID;
     const sectionID = r?.sectionID ?? st?.sectionId ?? st?.sectionID;
@@ -6320,10 +6320,11 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                       className="res-bulk-btn"
                                       disabled={!canSingleDownload}
                                       style={!canSingleDownload ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                                      onClick={e => {
+                                      onClick={async e => {
                                         e.stopPropagation();
                                         if (!canSingleDownload) return;
-                                        loadCardOptions(true);
+                                        /* Fresh visibility prefs (logo etc.) pehle load — phir cards. */
+                                        await loadCardOptions(true);
                                         setBulkCardCtx({
                                           classID: cls.classID,
                                           sectionID: cls.sectionID,
@@ -6701,7 +6702,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                                     <Tooltip text="View this student's result card">
                                                       <button
                                                         className="res-action-btn view"
-                                                        onClick={() => { setResCardMarks(null); loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
+                                                        onClick={async () => { setResCardMarks(null); await loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
                                                       >
                                                         <i className="fa-solid fa-eye"></i> Card
                                                       </button>
@@ -6900,7 +6901,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                       className="res-download-btn"
                                       onClick={async e => {
                                         e.stopPropagation();
-                                        loadCardOptions(true);
+                                        await loadCardOptions(true);
                                         // Main exam ka term resolve karo (jaise single combined card karta hai)
                                         let pool = cbrAllExams;
                                         if (!pool.length) pool = await loadAllTermExams();
@@ -7006,7 +7007,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                                     <Tooltip text="View combined result card">
                                                       <button
                                                         className="res-action-btn view"
-                                                        onClick={() => { setCbrCardMarks(null); loadCardOptions(true); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
+                                                        onClick={async () => { setCbrCardMarks(null); await loadCardOptions(true); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
                                                       >
                                                         <i className="fa-solid fa-eye"></i> Card
                                                       </button>
@@ -7352,7 +7353,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                         <Tooltip text="View result card">
                                           <button
                                             className="res-action-btn view"
-                                            onClick={() => { setRhCardMarks(null); loadCardOptions(true); setRhCardCtx({ student: st, result: r }); }}
+                                            onClick={async () => { setRhCardMarks(null); await loadCardOptions(true); setRhCardCtx({ student: st, result: r }); }}
                                             style={{ padding: '6px 11px', fontSize: 11 }}
                                           >
                                             <i className="fa-solid fa-eye"></i> View
@@ -10752,7 +10753,8 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
       <RcWatermark logo={school?.logo} />
       {/* Header */}
      <div style={{ background: hdrBg, padding: '8px 14px',display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
-        {(opt['Show School Logo'] || school?.logo) && (
+        {/* Visibility Options: showSchoolLogo false → logo bilkul na dikhao (single/bulk/combined). */}
+        {opt['Show School Logo'] && (
           <div style={{ width: 60, height: 60, borderRadius: 14, flexShrink: 0, ...(school?.logo ? { boxShadow: '0 4px 18px rgba(0,0,0,.25), 0 0 0 2px rgba(255,255,255,.15)' } : {}), border: `1.5px solid ${hdrLogoBdr}`, background: school?.logo ? '#fff' : hdrLogoBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: hdrLogoCol, overflow: 'hidden' }}>
             {school?.logo
               ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -10769,7 +10771,7 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
             Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}
           </div>
         </div>
-        {(opt['Show Student Photo'] || st.photo) && (
+        {opt['Show Student Photo'] && (
           <RcAvatar src={st.photo} initials={initials} size={54} fontSize={19} color={hdrText}
             bg={hdrLogoBg} border={`2px solid ${hdrLogoBdr}`} />
         )}
@@ -11088,7 +11090,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       <RcWatermark logo={school?.logo} />
       {/* Header */}
       <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
-        {(opt['Show School Logo'] || school?.logo) && (
+        {opt['Show School Logo'] && (
           <div style={{ width: 52, height: 52, borderRadius: 12, flexShrink: 0, ...(school?.logo ? { boxShadow: '0 4px 18px rgba(0,0,0,.25), 0 0 0 2px rgba(255,255,255,.15)' } : {}), background: school?.logo ? '#fff' : (isColor ? 'linear-gradient(135deg,#7C3AED,#1E40AF)' : '#F3F4F6'), display: 'flex', alignItems: 'center', justifyContent: 'center', color: isColor ? '#FCD34D' : '#374151', overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
             {school?.logo
               ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -11101,7 +11103,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           )}
           <div style={{ fontSize: 9.5, color: isColor ? 'rgba(255,255,255,.6)' : '#4B5563', marginTop: 1 }}>Insight Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}</div>
         </div>
-        {(opt['Show Student Photo'] || st.photo) && (
+        {opt['Show Student Photo'] && (
           <RcAvatar src={st.photo} initials={initials} size={50} fontSize={17} color={hdrText}
             bg={isColor ? 'rgba(255,255,255,.15)' : '#F3F4F6'} border={isColor ? '2px solid rgba(255,255,255,.35)' : '2px solid #D1D5DB'} />
         )}
@@ -11407,7 +11409,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
         {/* Brand row */}
         <div style={{ padding: '22px 28px 14px', display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
-          {(opt['Show School Logo'] || school?.logo) && (
+          {opt['Show School Logo'] && (
             <div style={{ width: 60, height: 60, borderRadius: 14, flexShrink: 0, boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.35)' : 'none', background: school?.logo ? '#fff' : C.logoGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.gold, overflow: 'hidden', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
               {school?.logo
                 ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -11431,7 +11433,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
         {/* Student banner */}
         <div style={{ padding: '16px 28px 22px', display: 'flex', alignItems: 'center', gap: 18, position: 'relative' }}>
-          {(opt['Show Student Photo'] || st.photo) && (
+          {opt['Show Student Photo'] && (
             <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color={C.hdrText}
               bg={C.hdrChip} border={`1px solid ${C.hdrChipBdr}`}
               extraStyle={{ borderRadius: 16, boxShadow: isColor ? '0 4px 16px rgba(0,0,0,.25)' : 'none' }} />
