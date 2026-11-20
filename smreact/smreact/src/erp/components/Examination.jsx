@@ -2349,6 +2349,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
   const [filtered, setFiltered] = useState([]);
   const [selectedTermId, setSelectedTermId] = useState(null);
   const [examClasses, setExamClasses] = useState([]);
+  /* Single Assessment — exam click par classes API load; is dauran spinner,
+     "No classes assigned" sirf load khatam hone ke baad. */
+  const [resClassesLoading, setResClassesLoading] = useState(false);
   const [loadingGrades, setLoadingGrades] = useState(false);
   const [loadingSigs, setLoadingSigs] = useState(false);
   const [loadingRemarks, setLoadingRemarks] = useState(false);
@@ -5822,9 +5825,20 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                 '--rct-accent-light': t.accentLight,
                                 '--rct-accent-bg': t.accentBg,
                               }}
-                              onClick={() => setRcTemplate(t.id)}
+                              onClick={() => {
+                                setRcTemplate(t.id);
+                                const names = { classic: 'Classic', insight: 'Insight', portfolio: 'Portfolio' };
+                                if (!sel) toast(`${names[t.id] || t.id} Result Card selected.`, 'success');
+                              }}
                             >
-                              <div className={`rct-check${sel ? '' : ' hollow'}`} onClick={e => { e.stopPropagation(); setRcTemplate(t.id); }}>
+                              <div className={`rct-check${sel ? '' : ' hollow'}`} onClick={e => {
+                                e.stopPropagation();
+                                setRcTemplate(t.id);
+                                if (!sel) {
+                                  const names = { classic: 'Classic', insight: 'Insight', portfolio: 'Portfolio' };
+                                  toast(`${names[t.id] || t.id} Result Card selected.`, 'success');
+                                }
+                              }}>
                                 {sel && <i className="fa-solid fa-check"></i>}
                               </div>
                               <div className="rct-preview"><TemplateHero id={t.id} /></div>
@@ -5857,7 +5871,13 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                   <button
                                     type="button"
                                     className="rct-preview-btn"
-                                    onClick={e => { e.stopPropagation(); setRcPreviewId(t.id); }}
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      /* Preview bhi selection save karti hai — new tab / reload
+                                         par wahi format selected + usi se report. */
+                                      setRcTemplate(t.id);
+                                      setRcPreviewId(t.id);
+                                    }}
                                   >
                                     <i className="fa-solid fa-eye"></i> Preview
                                   </button>
@@ -6026,48 +6046,52 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
               setResExamId(id);
               setResOpenKey(null);
               setExamClasses([]);
+              setResClassesLoading(true);
 
-              const selectedExam = filtered.find(ex => ex.id === id);
-              if (selectedExam) {
-                const selectExamId = selectedExam.selectExam;
-                const termID = selectedExam.termID;
+              try {
+                const selectedExam = filtered.find(ex => ex.id === id);
+                if (selectedExam) {
+                  const selectExamId = selectedExam.selectExam;
+                  const termID = selectedExam.termID;
 
-                const classes = await getExamClasses(selectExamId, termID);
-                setExamClasses(classes);
+                  const classes = await getExamClasses(selectExamId, termID);
+                  setExamClasses(classes);
 
-                // ── TYPE column ── getclassesinexam response ke isPreSchooling se:
-                // true → Preschool checked, false → marks-based (grade). Level
-                // changePreSchoolingClassName se. Reload/navigate par bhi sahi
-                // (backend saved state, mock nahi).
-                if (classes.length) {
-                  /* TYPE/level har class ke APNE getclassesinexam isPreSchooling /
-                     changePreSchoolingClassName se: isPreSchooling === true → preschool,
-                     warna grade. Branch ki shart nahi — API jis class ko preschool bataye
-                     wahi preschool. Sirf is exam ke keys MERGE karte hain (replace nahi),
-                     taake kisi doosri class/exam ki state na badle. */
-                  const types = {};
-                  const levels = {};
-                  classes.forEach((c, i) => {
-                    const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
-                    /* Setup Preschool Classes mapping (this device) also marks a class as Preschool. */
-                    const isPre = c.isPreSchooling === true || !!preschoolLevelFor(null, c.classID, c.sectionID);
-                    types[key] = isPre ? 'preschool' : 'grade';
-                    if (isPre) {
-                      const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
-                      if (levelId) levels[key] = levelId;
-                    }
-                  });
-                  setPClassTypes(prev => ({ ...prev, ...types }));
-                  setPClassLevels(prev => ({ ...prev, ...levels }));
+                  // ── TYPE column ── getclassesinexam response ke isPreSchooling se:
+                  // true → Preschool checked, false → marks-based (grade). Level
+                  // changePreSchoolingClassName se. Reload/navigate par bhi sahi
+                  // (backend saved state, mock nahi).
+                  if (classes.length) {
+                    /* TYPE/level har class ke APNE getclassesinexam isPreSchooling /
+                       changePreSchoolingClassName se: isPreSchooling === true → preschool,
+                       warna grade. Branch ki shart nahi — API jis class ko preschool bataye
+                       wahi preschool. Sirf is exam ke keys MERGE karte hain (replace nahi),
+                       taake kisi doosri class/exam ki state na badle. */
+                    const types = {};
+                    const levels = {};
+                    classes.forEach((c, i) => {
+                      const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
+                      /* Setup Preschool Classes mapping (this device) also marks a class as Preschool. */
+                      const isPre = c.isPreSchooling === true || !!preschoolLevelFor(null, c.classID, c.sectionID);
+                      types[key] = isPre ? 'preschool' : 'grade';
+                      if (isPre) {
+                        const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
+                        if (levelId) levels[key] = levelId;
+                      }
+                    });
+                    setPClassTypes(prev => ({ ...prev, ...types }));
+                    setPClassLevels(prev => ({ ...prev, ...levels }));
+                  }
+                  try {
+                    // Visibility map — grade + preschool dono GET, har class apni type se
+                    const visMap = await fetchResVisibilityMap(id, termID, selectExamId, classes);
+                    setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
+                  } catch (error) {
+                    console.error('Error fetching visibility:', error);
+                  }
                 }
-                try {
-                  // Visibility map — grade + preschool dono GET, har class apni type se
-                  const visMap = await fetchResVisibilityMap(id, termID, selectExamId, classes);
-                  setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
-
-                } catch (error) {
-                  console.error('Error fetching visibility:', error);
-                }
+              } finally {
+                setResClassesLoading(false);
               }
             };
 
@@ -6086,6 +6110,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                         setResExamId(null);
                         setResOpenKey(null);
                         setExamClasses([]);
+                        setResClassesLoading(false);
                       }}
                     >
                       {t.term}
@@ -6120,6 +6145,11 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                     <div className="ds-empty" style={{ marginTop: 4 }}>
                       <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
                       {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view classes'}
+                    </div>
+                  ) : resClassesLoading ? (
+                    <div className="ds-empty" style={{ marginTop: 4 }}>
+                      <i className="fa-solid fa-spinner fa-spin" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--brand-primary)' }}></i>
+                      Loading classes…
                     </div>
                   ) : examClasses.length === 0 ? (
                     <div className="ds-empty">No classes assigned. Edit the exam in Exam Setup.</div>
@@ -6338,7 +6368,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                     </button>
                                   </Tooltip>
                                 </>}
-                                <Tooltip text="Delete preschool exam records for this class">
+                                <Tooltip text={isPreschool
+                                  ? 'Delete preschool exam records for this class'
+                                  : 'Delete single assessment result for this class'}>
                                   <button
                                     className="ds-del-btn"
                                     disabled={isOtherSession}
@@ -6346,12 +6378,22 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                     onClick={e => {
                                       e.stopPropagation();
                                       if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-                                      setPConfirmDeleteRecords({
-                                        key, className,
-                                        classID: cls.classID, sectionID: cls.sectionID,
-                                        selectExam: resCurrentExam?.selectExam,
-                                        termID: resCurrentExam?.termID ?? selectedTermId,
-                                      });
+                                      /* Preschool → delete-preschool-exam-records
+                                         Grade 1-12 → deletesingleassessment */
+                                      if (isPreschool || isPreschoolResCls(cls, key)) {
+                                        setPConfirmDeleteRecords({
+                                          key, className,
+                                          classID: cls.classID, sectionID: cls.sectionID,
+                                          selectExam: resCurrentExam?.selectExam,
+                                          termID: resCurrentExam?.termID ?? selectedTermId,
+                                        });
+                                      } else {
+                                        setResConfirmDelete({
+                                          examId: resExamId,
+                                          key,
+                                          className,
+                                        });
+                                      }
                                     }}
                                   >
                                     <i className="fa-solid fa-trash"></i>
@@ -6374,9 +6416,17 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                             <div className={`res-detail${isOpen ? ' open' : ''}`}>
                               <div className="res-detail-inner">
                                 {resLoadingKey === key ? (
-                                  <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
-                                    <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
-                                    Loading student data...
+                                  <div>
+                                    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+                                      <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                                      Student Results — {className}
+                                    </div>
+                                    <div className="res-student-scroll" style={{ minHeight: 160, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>
+                                        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
+                                        Loading student data...
+                                      </div>
+                                    </div>
                                   </div>
                                 ) : isPreschool ? (
                                   <div>
@@ -6472,27 +6522,20 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                     </div>
                                   </div>
                                 ) : (
-                                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
-                                    <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                                    Student Results — {className}
-                                    {/* Subject count from API */}
-                                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-                                      {(() => {
-                                        // Sirf Launch-Setup mapped subjects ko count karo (FIX 1). Mapped set khaali
-                                        // ho (API fail) to purana behavior — poori list count.
-                                        const subs = resStudentData[key]?.subjects || [];
-                                        const mset = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
-                                        const scoped = mset.size ? subs.filter(s => mset.has(Number(s.subjectID ?? s.SubjectID ?? 0))) : subs;
-                                        const n = (mset.size && scoped.length) ? scoped.length : subs.length;
-                                        return `${n} Subject${n !== 1 ? 's' : ''}`;
-                                      })()}
-                                    </span>
-                                  </div>)}
-
-                                {/* Marks-based (Grade 1-12) student list — SIRF non-preschool class ke
-                                    liye. Preschool class apni Assess list upar (ternary) me dikhati hai,
-                                    is liye ye yahan render na ho warna dono lists ek saath aati thin. */}
-                                {!isPreschool && (
+                                  <div>
+                                    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+                                      <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                                      Student Results — {className}
+                                      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+                                        {(() => {
+                                          const subs = resStudentData[key]?.subjects || [];
+                                          const mset = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
+                                          const scoped = mset.size ? subs.filter(s => mset.has(Number(s.subjectID ?? s.SubjectID ?? 0))) : subs;
+                                          const n = (mset.size && scoped.length) ? scoped.length : subs.length;
+                                          return `${n} Subject${n !== 1 ? 's' : ''}`;
+                                        })()}
+                                      </span>
+                                    </div>
                                   <div className="res-student-scroll">
                                     <table className="res-student-table">
                                       <thead>
@@ -6671,6 +6714,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                         })()}
                                       </tbody>
                                     </table>
+                                  </div>
                                   </div>
                                 )}
                               </div>
@@ -12521,6 +12565,12 @@ function BulkMarksUploadModal({ ctx, grades = [], remarksScale = [], onClose, on
 function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [], resTotalMarksCtx, selectedTermId, grades = [] }) {
   const [obtained, setObtained] = useState(() => ({ ...(student.obtained || {}) }));
   const [manualRemarks, setManualRemarks] = useState(() => ({ ...(student.manualRemarks || {}) }));
+  /* Uncontrolled Manual Comment — Save click par DOM se padho.
+     manualDirty = user ne type kiya; uske baad fetch field ko wipe nahi karega. */
+  const manualInputRef = useRef(null);
+  const manualDirtyRef = useRef(false);
+  const [manualInputKey, setManualInputKey] = useState(0);
+  const [manualDefault, setManualDefault] = useState('');
   // Per-subject absent — { [subjectName]: true }. Har subject alag mark hota hai.
   const [absentSubs, setAbsentSubs] = useState(() => {
     const init = {};
@@ -12599,13 +12649,22 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
           ...prev,
           [subjectID]: marksRecord.id || 0
         }));
-        // Manual Comment = is subject ke saved remarks (getsauploadmarks... API se).
-        // Casing tolerate karo (remarks / Remarks) aur hamesha reflect karo (API source of truth).
-        const savedRemarks = marksRecord.remarks ?? marksRecord.Remarks ?? '';
-        setManualRemarks(prev => ({
-          ...prev,
-          [subjectObj.subjectName]: savedRemarks
-        }));
+        // Saved remarks Manual field me — sirf jab auto comment se alag ho.
+        // User already type kar chuka ho to fetch field mat chhudo.
+        if (!manualDirtyRef.current) {
+          const savedRemarks = String(marksRecord.remarks ?? marksRecord.Remarks ?? '').trim();
+          const obtNum = Number(marksRecord.obtainedMarks || marksRecord.obtainMarks || marksRecord.marks || 0);
+          const totNum = Number(marksRecord.totalMarks || apiTotal || 0);
+          const pctNum = totNum > 0 ? Math.round((obtNum / totNum) * 100) : 0;
+          const autoCmt = String(((rcGradeByScale(pctNum, grades) || rcGetGrade(obtNum, totNum) || {}).comment) || '').trim();
+          const manualOnly = (savedRemarks && savedRemarks !== autoCmt) ? savedRemarks : '';
+          setManualRemarks(prev => ({ ...prev, [subjectObj.subjectName]: manualOnly }));
+          setManualDefault(manualOnly);
+          setManualInputKey(k => k + 1);
+        }
+      } else if (!manualDirtyRef.current) {
+        setManualDefault('');
+        setManualInputKey(k => k + 1);
       }
     } catch (err) {
       console.error('Error fetching subject data:', err);
@@ -12622,7 +12681,17 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     }
   }, []);
 
+  const readManualComment = () => {
+    const el = manualInputRef.current || document.getElementById('exam-manual-comment');
+    return String(el?.value ?? '').trim();
+  };
+
   const handleTabClick = (idx) => {
+    const prevName = subjects[tab]?.subjectName;
+    if (prevName) {
+      setManualRemarks(o => ({ ...o, [prevName]: readManualComment() }));
+    }
+    manualDirtyRef.current = false;
     setTab(idx);
     fetchSubjectData(subjects[idx]);
   };
@@ -12635,10 +12704,6 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       ...o,
       [subject]: val === '' ? '' : Math.max(0, Math.min(maxMarks, parseFloat(val) || 0))
     }));
-  };
-
-  const updateMc = (subject, val) => {
-    setManualRemarks(o => ({ ...o, [subject]: val }));
   };
 
   const onAbsentToggle = e => {
@@ -12661,7 +12726,10 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       : subjNames.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0);
     const obt = subjNames.reduce((a, s) => a + (skipSubj(s) ? 0 : (obtained[s] || 0)), 0);
     const pct = tot ? (obt / tot) * 100 : 0;
-    return { obtained, manualRemarks, absentSubjects: Object.keys(absSet).filter(k => absSet[k]), finalRemarks: rcGetFinalRemarks(pct) };
+    const curName = subjects[tab]?.subjectName;
+    const mergedRemarks = { ...manualRemarks };
+    if (curName) mergedRemarks[curName] = readManualComment();
+    return { obtained, manualRemarks: mergedRemarks, absentSubjects: Object.keys(absSet).filter(k => absSet[k]), finalRemarks: rcGetFinalRemarks(pct) };
   };
 
   /* Double-click se multiple entries na banein: save chalte waqt dono buttons disabled + spinner.
@@ -12670,18 +12738,20 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
   const [savingAct, setSavingAct] = useState('');   // '' | 'next' | 'close'
   const saveAndNext = async () => {
     if (savingRef.current) return;
+    /* setState se PEHLE Manual Comment padho — re-render se input miss na ho. */
+    const manualFromField = readManualComment();
     savingRef.current = true; setSavingAct('next');
     try {
-      // Save & Close jaise hi saari save APIs chalao, phir next subject par jao.
-      // Agar save block ho (jaise total marks 0) to next par mat jao — user theek kare.
-      const ok = await saveCurrentSubject();
+      const ok = await saveCurrentSubject(manualFromField);
       if (ok === false) return;
+      manualDirtyRef.current = false;
       const nextIdx = (tab + 1) % (subjects.length || 1);
       setTab(nextIdx);
       fetchSubjectData(subjects[nextIdx]);
     } finally { savingRef.current = false; setSavingAct(''); }
   };
-  const saveCurrentSubject = async () => {
+  /* overrideManual = Save click par field se pakdi hui value (lazmi use). */
+  const saveCurrentSubject = async (overrideManual) => {
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
@@ -12706,10 +12776,19 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       const gradeObj = (obtainedMarks && curTotal)
         ? (rcGradeByScale(pct, grades) || rcGetGrade(obtainedMarks, curTotal))
         : null;
-      // Manual comment mojood hai? (agar hai to CalculateUploadRemark na chalao warna
-      // wo auto-computed remark se manual value overwrite kar dega.)
-      const hasManual = !!(manualRemarks[curSubj] && String(manualRemarks[curSubj]).trim());
-      const remarks = manualRemarks[curSubj] || (gradeObj ? gradeObj.comment : '');
+      /* sauploadmarkscrud.remarks:
+         1) Manual Comment me text hai → WAHI remarks
+         2) Manual Comment khali hai → screen wala Auto Comment remarks me */
+      const typedManual = String(
+        overrideManual != null ? overrideManual : readManualComment()
+      ).trim();
+      const autoComment = String(gradeObj?.comment || '');
+      const hasManual = typedManual.length > 0;
+      const remarks = hasManual ? typedManual : autoComment;
+      console.log('[saveMarks] remarks:', JSON.stringify(remarks), '| manual:', JSON.stringify(typedManual), '| auto:', JSON.stringify(autoComment));
+      if (curSubj) {
+        setManualRemarks(o => ({ ...o, [curSubj]: typedManual }));
+      }
 
       const headers = {
         Authorization: `Bearer ${token}`,
@@ -12811,10 +12890,11 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
 
   const saveAndClose = async () => {
     if (savingRef.current) return;           // pehli click chal rahi hai — dobara entry nahi
+    /* setState se PEHLE Manual Comment padho — yahi remarks me jani hai. */
+    const manualFromField = readManualComment();
     savingRef.current = true; setSavingAct('close');
     try {
-      // Save block ho (total marks 0) to modal band mat karo — user total marks add kare.
-      const ok = await saveCurrentSubject();
+      const ok = await saveCurrentSubject(manualFromField);
       if (ok === false) return;
       onSave(computePayload());
     } finally { savingRef.current = false; setSavingAct(''); }
@@ -12924,11 +13004,15 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
                 <div style={{ marginTop: 12 }}>
                   <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Manual Comment (optional)</label>
                   <input
+                    id="exam-manual-comment"
+                    key={`manual-${manualInputKey}-${curSubjID || tab}`}
+                    ref={manualInputRef}
                     className="rs-input"
                     type="text"
-                    value={manualRemarks[curSubj] || ''}
-                    onChange={e => updateMc(curSubj, e.target.value)}
-                    placeholder="Override auto comment..."
+                    defaultValue={manualDefault}
+                    placeholder="Type manual comment — this goes in remarks"
+                    onInput={() => { manualDirtyRef.current = true; }}
+                    onChange={() => { manualDirtyRef.current = true; }}
                   />
                 </div>
               </>

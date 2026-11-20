@@ -27,6 +27,32 @@
     { id: 4, name: 'Board Pattern', desc: 'Matric & Intermediate board paper style' },
   ];
 
+  /* localStorage se last selected paper template (new tab / download pe use). */
+  function pgReadStoredTemplate(fallbackId = 1) {
+    const bid = String(typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('branchID') || '') : '').trim();
+    const tryKeys = [`pg_template_${bid || '0'}`];
+    try {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('pg_template_') && !tryKeys.includes(k)) tryKeys.push(k);
+      }
+    } catch { /* ignore */ }
+    for (const key of tryKeys) {
+      try {
+        const s = JSON.parse(localStorage.getItem(key) || 'null');
+        if (s && TEMPLATES.some(t => t.id === s.templateId)) {
+          return {
+            templateId: s.templateId,
+            boardId: s.boardId,
+            boardLevel: s.boardLevel,
+            boardGroup: s.boardGroup,
+          };
+        }
+      } catch { /* ignore */ }
+    }
+    return { templateId: fallbackId };
+  }
+
   const PG_CLASSES_DATA = [
     { name:'class 1A',    section:'B',       subjects:['English','Urdu','Mathematics','Science','Social Studies'] },
     { name:'class 1A',    section:'C',       subjects:['English','Urdu','Mathematics','Science'] },
@@ -168,10 +194,30 @@
 
     /* QA C2: backend mein template ka koi field/endpoint nahi (paper_generation_setup
        sirf paperFormate/lineType rakhta hai) — is liye selected template + board
-       per-branch localStorage mein persist hota hai (isi browser tak). */
-    const pgTmplKey = `pg_template_${sessionStorage.getItem('branchID') || ''}`;
+       per-branch localStorage mein persist hota hai (isi browser / new tab tak). */
+    const pgBranchId = () => String(sessionStorage.getItem('branchID') || '').trim();
+    const pgTmplKeyFor = (bid) => `pg_template_${bid || '0'}`;
+    const pgTmplKey = pgTmplKeyFor(pgBranchId());
+    const readSavedTmpl = (key = pgTmplKey) => {
+      try { return JSON.parse(localStorage.getItem(key) || 'null') || {}; } catch { return {}; }
+    };
+    const writeSavedTmpl = (payload, key = pgTmplKey) => {
+      try { localStorage.setItem(key, JSON.stringify(payload)); } catch { /* storage blocked */ }
+    };
     const [savedTmpl] = useState(() => {
-      try { return JSON.parse(localStorage.getItem(pgTmplKey) || 'null') || {}; } catch { return {}; }
+      /* Branch key pehle; warna kisi bhi pg_template_* se last save (new tab / empty branch). */
+      const direct = readSavedTmpl(pgTmplKey);
+      if (direct.templateId != null) return direct;
+      try {
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('pg_template_')) {
+            const v = readSavedTmpl(k);
+            if (v.templateId != null) return v;
+          }
+        }
+      } catch { /* ignore */ }
+      return {};
     });
     const [templateId, setTemplateId] = useState(() => (TEMPLATES.some(t => t.id === savedTmpl.templateId) ? savedTmpl.templateId : 1));
     const [previewN, setPreviewN]     = useState(null);      // 1 | 2 | 3 | 4 | null
@@ -185,7 +231,7 @@
       return lvl.groups.includes(savedTmpl.boardGroup) ? savedTmpl.boardGroup : lvl.groups[0];
     });
     useEffect(() => {
-      try { localStorage.setItem(pgTmplKey, JSON.stringify({ templateId, boardId, boardLevel, boardGroup })); } catch { /* storage blocked */ }
+      writeSavedTmpl({ templateId, boardId, boardLevel, boardGroup }, pgTmplKey);
     }, [pgTmplKey, templateId, boardId, boardLevel, boardGroup]);
     /* QA C10: template thumbnails/preview ke liye branch naam + logo (report-header API). */
     const [schoolHeader, setSchoolHeader] = useState(null);
@@ -196,6 +242,7 @@
     }, []);
     const chooseTemplate = id => {
       setTemplateId(id);
+      writeSavedTmpl({ templateId: id, boardId, boardLevel, boardGroup }, pgTmplKey);
       toast(id === 4 ? `Board Pattern — ${pgBoardFind(boardId).sh} selected` : `${(TEMPLATES.find(t => t.id === id) || {}).name || 'Template'} template selected`, 'success');
     };
     const setBoardLevel = lvl => {
@@ -841,7 +888,13 @@ const setSubjLine = (ci, si, l) => {
                           <Tooltip text="Preview this paper template">
                             <button
                               className="pg-tmpl-prev-btn"
-                              onClick={e => { e.stopPropagation(); setPreviewN(t.id); }}
+                              onClick={e => {
+                                e.stopPropagation();
+                                /* Preview bhi selection save — new tab / reload par wahi template. */
+                                if (templateId !== t.id) chooseTemplate(t.id);
+                                else writeSavedTmpl({ templateId: t.id, boardId, boardLevel, boardGroup }, pgTmplKey);
+                                setPreviewN(t.id);
+                              }}
                             >
                               <i className="fa-solid fa-eye"></i> Preview
                             </button>
@@ -2624,7 +2677,7 @@ const setSubjLine = (ci, si, l) => {
       generatedRef.current = true;
       draftCreatedRef.current = false;
 
-      toast(`Paper generated — "${title}"`, 'success');
+      toast('Paper generated', 'success');
       // Parent ki papers list dobara GET API se refresh karo (count + naya card turant update,
       // bina screen refresh ke).
       onGenerated?.();
@@ -2710,9 +2763,15 @@ const setSubjLine = (ci, si, l) => {
       showObj,
       showSubj,
     };
-    const effTemplateId = templateId || 1;
+    const makeStored = pgReadStoredTemplate(templateId || 1);
+    const effTemplateId = makeStored.templateId || templateId || 1;
+    const makeBoardCfg = boardCfg || {
+      boardId: makeStored.boardId,
+      boardLevel: makeStored.boardLevel,
+      boardGroup: makeStored.boardGroup,
+    };
     let headerEl;
-    if (effTemplateId === 4) headerEl = <BoardHeader board={pgBoardFind(boardCfg?.boardId)} level={pgBoardLevel(boardCfg?.boardLevel)} group={boardCfg?.boardGroup} info={liveInfo} />;
+    if (effTemplateId === 4) headerEl = <BoardHeader board={pgBoardFind(makeBoardCfg?.boardId)} level={pgBoardLevel(makeBoardCfg?.boardLevel)} group={makeBoardCfg?.boardGroup} info={liveInfo} />;
     else if (effTemplateId === 2) headerEl = <ModernHeader info={liveInfo} />;
     else if (effTemplateId === 3) headerEl = <FormalHeader info={liveInfo} />;
     else headerEl = <ClassicHeader info={liveInfo} />;
@@ -4568,6 +4627,13 @@ const setSubjLine = (ci, si, l) => {
     const totalMin  = ((paper.objTime || 0) + (paper.subjTime || 0)) || 100;
     const showObj   = paper.type === 'objective'  || paper.type === 'both';
     const showSubj  = paper.type === 'subjective' || paper.type === 'both';
+    const storedTmpl = pgReadStoredTemplate(templateId || 1);
+    const viewTemplateId = storedTmpl.templateId || templateId || 1;
+    const viewBoardCfg = boardCfg || {
+      boardId: storedTmpl.boardId,
+      boardLevel: storedTmpl.boardLevel,
+      boardGroup: storedTmpl.boardGroup,
+    };
 
     /* Real paper data fed into the selected template's header design so the view
       matches the template the user picked (Classic / Modern / Formal). */
@@ -4589,9 +4655,9 @@ const setSubjLine = (ci, si, l) => {
       showSubj,
     };
     const templateHeader = () => {
-      if (templateId === 4) return <BoardHeader board={pgBoardFind(boardCfg?.boardId)} level={pgBoardLevel(boardCfg?.boardLevel)} group={boardCfg?.boardGroup} info={headerInfo} isBW={isBW} />;
-      if (templateId === 2) return <ModernHeader info={headerInfo} />;
-      if (templateId === 3) return <FormalHeader info={headerInfo} />;
+      if (viewTemplateId === 4) return <BoardHeader board={pgBoardFind(viewBoardCfg?.boardId)} level={pgBoardLevel(viewBoardCfg?.boardLevel)} group={viewBoardCfg?.boardGroup} info={headerInfo} isBW={isBW} />;
+      if (viewTemplateId === 2) return <ModernHeader info={headerInfo} />;
+      if (viewTemplateId === 3) return <FormalHeader info={headerInfo} />;
       return <ClassicHeader info={headerInfo} />;
     };
 
@@ -5284,12 +5350,21 @@ const setSubjLine = (ci, si, l) => {
       );
     }
 
+    /* New tab / stale props: localStorage se selected format uthao. */
+    const storedTmpl = pgReadStoredTemplate(templateId || 1);
+    const effTemplateId = storedTmpl.templateId || templateId || 1;
+    const effBoardCfg = boardCfg || {
+      boardId: storedTmpl.boardId,
+      boardLevel: storedTmpl.boardLevel,
+      boardGroup: storedTmpl.boardGroup,
+    };
+
     const html =
       buildFullPaperHTML({
         paper,
         cls,
-        templateId,
-        boardCfg,
+        templateId: effTemplateId,
+        boardCfg: effBoardCfg,
 
         isBW:
           style === 'bw',
