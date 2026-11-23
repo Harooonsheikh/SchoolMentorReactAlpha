@@ -12,7 +12,7 @@ import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds }
 import { computePrevOut as prevDuesWorkerCompute } from '../services/prevDuesWorker';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
-import { runAdvanceAdjust, reverseAdvanceAdjust, isAdvanceAdjustReceipt } from '../services/advanceAdjustFlow';
+import { runAdvanceAdjust, reverseAdvanceAdjust, isAdvanceAdjustReceipt, splitReceiveByAdvance } from '../services/advanceAdjustFlow';
 import { downloadDocxFromHtml } from '../../utils/docx';
 import { qrSvg } from '../../utils/qr';
 import { code128BSvg } from '../../utils/barcode';
@@ -6903,8 +6903,10 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
       amount: receivingNow,
       perHead,
       pendByHead,
-      /* Branch 1/15: Adjust From Advance tick ho to advance-adjust flow (no-account), warna normal. */
-      advanceAdjust: !!(adjustFromAdvance && isAdvanceAdjustBranch()),
+      /* Checked: the Advance Adjustment Amount stays off the account.
+         Any Pay Now above that amount is cash and is posted to the account. */
+      advanceAdjust: !!(adjustFromAdvance && isAdvanceAdjustBranch() && advAdjustAmt > 0),
+      advanceAdjustAmount: (adjustFromAdvance && isAdvanceAdjustBranch()) ? advAdjustAmt : 0,
       /* Slip ke liye modal ke exact per-head numbers (Previous / Std / Discount / Received / Remaining). */
       slipRows: !isAdvanceAdjustBranch() ? [] : rows
         .filter(r => !r.isCredit && (r.recvNow !== 0 || (r.disc || 0) > 0 || (r.headPrev || 0) !== 0))
@@ -9801,12 +9803,37 @@ function FeeReceivingIndividual({ toast }) {
         if (payload.advanceAdjust && rec) {
           const mm = Number(rec.startMonth || rec.month), yy = Number(rec.startYear || rec.year);
           const prevM = mm === 1 ? 12 : mm - 1, prevY = mm === 1 ? yy - 1 : yy;
-          await runAdvanceAdjust({
-            studentID: rec.studentID, currentChallan: rec, perHead: payload.perHead || {},
-            userId: userID, paymentMethod: payMethodForApi, receivedDate: payload.date || '',
-            prevMonth: prevM, prevYear: prevY,
-          });
-          recvRes = { success: true };
+          const { advance, cash } = splitReceiveByAdvance(payload.perHead || {}, payload.advanceAdjustAmount);
+          const cashPerHead = Object.fromEntries(Object.entries(cash).filter(([, v]) => Number(v) > 0));
+          const cashFine = Math.max(0, Number(payload.fine) || 0);
+          if (Object.keys(cashPerHead).length || cashFine > 0) {
+            const cashBody = feeService.buildReceiveInstallmentRequest({
+              ledgerId: rec.id,
+              paymentMethod: payMethodForApi,
+              receivedDate: payload.date || '',
+              modifiedBy: userID,
+              isReceiving: true,
+              detailRows: rec.detailRows || [],
+              perHead: cashPerHead,
+              pendByHead: {},
+              giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
+              fine: cashFine,
+              fineBilled: payload.fineBilled || 0,
+              walletId: payload.walletId || 0,
+              newHeads: (payload.newHeads || [])
+                .map(h => ({ ...h, recv: Math.max(0, Number(cash[h.name]) || 0) }))
+                .filter(h => h.recv > 0),
+            });
+            if (cashBody.detailRows.length) recvRes = await feeService.receiveInstallment(cashBody);
+          }
+          if (Object.values(advance).some(v => Number(v) > 0)) {
+            await runAdvanceAdjust({
+              studentID: rec.studentID, currentChallan: rec, perHead: advance,
+              userId: userID, paymentMethod: 'Advance Adjustment', receivedDate: payload.date || '',
+              prevMonth: prevM, prevYear: prevY, studentName: payload.studentName || '',
+            });
+            if (!recvRes) recvRes = { success: true };
+          }
         } else {
           recvRes = recvBody.detailRows.length ? await feeService.receiveInstallment(recvBody) : null;
         }

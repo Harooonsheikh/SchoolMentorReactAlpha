@@ -15,6 +15,7 @@
         dobara receive BINA account — advance wapas aata hai.
 
    Marker localStorage me (per challan) — reverse ko pata ho ke ye adjustment hai. */
+import { buildUrl } from '../../utils/apiConfig';
 import {
   getStudentChallans,
   getLedgerRange,
@@ -107,9 +108,71 @@ async function findAdvanceChallan(studentID, currentChallan, adjustTotal) {
   return best ? best.ch : null;
 }
 
-/* currentChallan: rec (server challan of this month). perHead: modal ke Received amounts (head name → amount).
-   Adjust amount = current challan me jo total receive hua (typed amount) — utna hi advance kam hota hai. */
-export async function runAdvanceAdjust({ studentID, currentChallan, perHead, userId, paymentMethod, receivedDate, prevMonth, prevYear }) {
+/* Checkbox on: `advanceAmount` is the no-account portion, taken left to right.
+   Anything received above it is cash and must go through the account API. */
+export function splitReceiveByAdvance(perHead, advanceAmount) {
+  let left = Math.max(0, Math.round(Number(advanceAmount) || 0));
+  const advance = {};
+  const cash = {};
+  Object.entries(perHead || {}).forEach(([name, raw]) => {
+    const amt = Math.round(Number(raw) || 0);
+    if (!amt) return;
+    if (amt < 0) { cash[name] = amt; return; }
+    const take = Math.min(amt, left);
+    if (take > 0) advance[name] = take;
+    if (amt - take > 0) cash[name] = amt - take;
+    left -= take;
+  });
+  return { advance, cash };
+}
+
+async function feePaymentsForMonth(year, month) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res = await fetch(
+    buildUrl(`/get-account-entries-by-branch-month/${branchID}/1/${month}/${year}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+/* The without-account receive still inserts a Fee Payment. Drop only the rows
+   created during this adjust for this student. The original cash receipt stays. */
+async function removeAdjustAccountEntries({ beforeIds, studentName, receivedDate }) {
+  const date = receivedDate ? new Date(receivedDate) : new Date();
+  if (Number.isNaN(date.getTime())) return;
+  let rows = [];
+  try { rows = await feePaymentsForMonth(date.getFullYear(), date.getMonth() + 1); } catch (e) { return; }
+  const name = String(studentName || '').trim().toUpperCase();
+  const fresh = rows.filter(r => {
+    const id = r.ID ?? r.id;
+    if (id == null || beforeIds.has(id)) return false;
+    if (!/fee payment/i.test(String(r.AccountHead || r.accountHead || ''))) return false;
+    if (!name || !String(r.Details || r.details || '').toUpperCase().includes(name)) return false;
+    return true;
+  });
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  for (const r of fresh) {
+    const id = r.ID ?? r.id;
+    try {
+      await fetch(buildUrl(`/delete-account-entry/${id}?modifiedBy=${userID}`), {
+        method: 'DELETE', headers: { Accept: '*/*' },
+      });
+    } catch (e) { /* challan adjust already saved */ }
+  }
+}
+
+async function feePaymentIds(receivedDate) {
+  const date = receivedDate ? new Date(receivedDate) : new Date();
+  if (Number.isNaN(date.getTime())) return new Set();
+  try {
+    const rows = await feePaymentsForMonth(date.getFullYear(), date.getMonth() + 1);
+    return new Set(rows.map(r => r.ID ?? r.id).filter(id => id != null));
+  } catch (e) { return new Set(); }
+}
+
+/* currentChallan: rec (server challan of this month). perHead: advance portion only. */
+export async function runAdvanceAdjust({ studentID, currentChallan, perHead, userId, paymentMethod, receivedDate, prevMonth, prevYear, studentName }) {
   const curRows = (currentChallan.detailRows || []).map(r => {
     const amt = Math.round(Number(perHead?.[r.subHead || r.head]) || 0);
     return { id: r.id, installmentId: 0, receivedAmount: Math.max(0, amt), discount: 0, pendingorAdv: 0, walletId: 0 };
@@ -143,8 +206,9 @@ export async function runAdvanceAdjust({ studentID, currentChallan, perHead, use
   /* Marker pehle: agar aage kuch fail ho to reverse ko pata ho. */
   const srcMonth = Number(prev.startMonth || prev.month) || prevMonth;
   const srcYear = Number(prev.startYear || prev.year) || prevYear;
-  writeMark(currentChallan.id, { prevChallanId: prev.id, prevMonth: srcMonth, prevYear: srcYear, cashOriginal, studentID });
+  writeMark(currentChallan.id, { prevChallanId: prev.id, prevMonth: srcMonth, prevYear: srcYear, cashOriginal, studentID, studentName });
 
+  const beforeIds = await feePaymentIds(receivedDate);
   await clearReceivingNoAccount(prev.id, userId);
   /* Sab heads wapas — advance wali heads utna kam, baqi heads apni asli raqam par. */
   const reReceive = prevAll
@@ -159,6 +223,7 @@ export async function runAdvanceAdjust({ studentID, currentChallan, perHead, use
     ledgerId: currentChallan.id, paymentMethod: paymentMethod || 'Advance Adjustment', receivedDate, modifiedBy: userId,
     isReceiving: true, walletId: 0, detailRows: curRows,
   });
+  await removeAdjustAccountEntries({ beforeIds, studentName, receivedDate });
   return { prevChallanId: prev.id };
 }
 
@@ -166,6 +231,7 @@ export async function runAdvanceAdjust({ studentID, currentChallan, perHead, use
 export async function reverseAdvanceAdjust({ currentChallanId, userId }) {
   const mark = readMark(currentChallanId);
   if (!mark) return false;
+  const beforeIds = await feePaymentIds(new Date().toISOString().slice(0, 10));
   await clearReceivingNoAccount(currentChallanId, userId);
   await clearReceivingNoAccount(mark.prevChallanId, userId);
   const detailRows = Object.entries(mark.cashOriginal).map(([rowId, cash]) => ({
@@ -174,6 +240,11 @@ export async function reverseAdvanceAdjust({ currentChallanId, userId }) {
   await receiveNoAccount({
     ledgerId: mark.prevChallanId, paymentMethod: 'Advance Adjustment', receivedDate: new Date().toISOString().slice(0, 10), modifiedBy: userId,
     isReceiving: true, walletId: 0, detailRows,
+  });
+  await removeAdjustAccountEntries({
+    beforeIds,
+    studentName: mark.studentName || '',
+    receivedDate: new Date().toISOString().slice(0, 10),
   });
   clearMark(currentChallanId);
   return true;
