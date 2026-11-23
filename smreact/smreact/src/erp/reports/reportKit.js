@@ -810,5 +810,7 @@ export function StandardReportPicker({ open, title = 'Download Report', subtitle
      relative to the viewport — an ancestor with a transform / filter /
      animation (page-enter effects, cards) would otherwise become the
      containing block and push the dialog off-screen. */
-  return scrollable && typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog;
+  /* Hamesha body par portal: page ke andar render hone par kisi transformed/animated parent
+     ki wajah se fixed overlay sirf content area ko dhakta tha (sidebar khula reh jata tha). */
+  return typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog;
 }

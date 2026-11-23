@@ -320,20 +320,37 @@ export default function TeacherPerformanceReportPanel() {
   const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
   const { data: lpData = [], loading: lpLoading } = useAsync(academicsService.getSubLpData, []);
   const { data: nbData = [], loading: nbLoading } = useAsync(academicsService.getSubNbData, []);
-  const { data: activities = [] }         = useAsync(academicsService.getActivities, []);
-  const { data: termBreakups = [] }       = useAsync(academicsService.getTermBreakups, []);
-  const { data: studentAttendanceClasses = [] } = useAsync(academicsService.getStudentAttendance, []);
-  const { data: staffAttendance = [] }    = useAsync(academicsService.getStaffAttendance, []);
-  const { data: hrEmployees = [] }        = useAsync(academicsService.getHrEmployees, []);
-  const { data: papers = {} }             = useAsync(academicsService.getAllPapers, []);
-  const { data: session = null }          = useAsync(academicsService.getSession, []);
-  const { data: vacations = [] }          = useAsync(academicsService.getVacations, []);
-  const { data: weeklyOff = [] }          = useAsync(academicsService.getWeeklyOff, []);
-  const { data: holidays = [] }           = useAsync(academicsService.getHolidays, []);
-  const { data: resources = [] }         = useAsync(academicsService.getTeacherResources, []);
+  /* Saare loaders mount par ek saath (parallel) chalte hain. */
+  const actQ   = useAsync(academicsService.getActivities, []);
+  const tbQ    = useAsync(academicsService.getTermBreakups, []);
+  const satQ   = useAsync(academicsService.getStudentAttendance, []);
+  const staffQ = useAsync(academicsService.getStaffAttendance, []);
+  const hrQ    = useAsync(academicsService.getHrEmployees, []);
+  const papQ   = useAsync(academicsService.getAllPapers, []);
+  const sesQ   = useAsync(academicsService.getSession, []);
+  const vacQ   = useAsync(academicsService.getVacations, []);
+  const woQ    = useAsync(academicsService.getWeeklyOff, []);
+  const holQ   = useAsync(academicsService.getHolidays, []);
+  const resQ   = useAsync(academicsService.getTeacherResources, []);
+  const activities = actQ.data || [];
+  const termBreakups = tbQ.data || [];
+  const studentAttendanceClasses = satQ.data || [];
+  const staffAttendance = staffQ.data || [];
+  const hrEmployees = hrQ.data || [];
+  const papers = papQ.data || {};
+  const session = sesQ.data || null;
+  const vacations = vacQ.data || [];
+  const weeklyOff = woQ.data || [];
+  const holidays = holQ.data || [];
+  const resources = resQ.data || [];
 
   /* Teacher cards / % ke liye assignments + LP/NB chahiye — pehle spinner. */
   const coreLoading = assignLoading || lpLoading || nbLoading;
+  /* Detail view ke baqi sections — jab tak ye na aayein, 0 dikhane ke bajaye spinner
+     (pehle cards khulte hi 0 aata tha aur phir ek ek karke numbers badalte the). */
+  const extraQs = [actQ, tbQ, satQ, staffQ, hrQ, papQ, sesQ, vacQ, woQ, holQ, resQ];
+  const extraDone = extraQs.filter(x => !x.loading).length;
+  const extraLoading = extraDone < extraQs.length;
 
   const teacherNames = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
 
@@ -369,6 +386,20 @@ export default function TeacherPerformanceReportPanel() {
         <div className="aca-rep-loading-inner">
           <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
           <span>Loading teacher performance…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (active && extraLoading) {
+    return (
+      <div className="section-card tp-panel aca-rep-loading">
+        <div className="aca-rep-loading-inner">
+          <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+          <span>Loading {active}'s report… ({extraDone}/{extraQs.length})</span>
+          <button type="button" className="tp-back-btn" style={{ marginLeft: 12 }} onClick={() => setActive(null)}>
+            <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> All Teachers
+          </button>
         </div>
       </div>
     );

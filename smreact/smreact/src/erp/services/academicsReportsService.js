@@ -46,12 +46,27 @@ async function mapLimited(items, limit, mapper) {
   return out;
 }
 
+/* GET JSON with one retry on network error / 429 / 5xx — bahut saari parallel
+   calls me kabhi kabhi server throttle karta tha aur report khali (0) aa jati thi. */
+async function getJsonRetry(path, tries = 2) {
+  let lastErr;
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const res = await fetch(buildUrl(path), { method: 'GET', headers: authHeaders() });
+      if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`);
+      return await res.json().catch(() => ({}));
+    } catch (e) {
+      lastErr = e;
+      // eslint-disable-next-line no-await-in-loop
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 /* ─── Branch grades + employees (LaunchSetup) ─── */
 async function fetchBranchGrades() {
-  const res = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchIdStr()}`), {
-    method: 'GET', headers: authHeaders(),
-  });
-  const json = await res.json().catch(() => ({}));
+  const json = await getJsonRetry(`/api/LaunchSetup/get-grades-by-branch/${branchIdStr()}`);
   const list = Array.isArray(json) ? json : (json?.data || json?.Data || json?.result || []);
   return list.map((g) => ({
     gradeId: g.gradeID ?? g.gradeId ?? g.id ?? g.classID ?? g.ClassID,
@@ -63,25 +78,34 @@ async function fetchBranchGrades() {
   })).filter((g) => g.gradeId != null);
 }
 
+/* Employee list already carries its subject assignments (same field HR's
+   mapApiEmployeeToEmp reads). `assignments` = null → field absent in the API,
+   caller falls back to per-section get-subjects_byEmployeeID calls. */
+function employeeAssignmentRows(e) {
+  const rows = e.assignments ?? e.subjectAssignments ?? e.employeeSubjects ?? e.subjects;
+  if (!Array.isArray(rows)) return null;
+  return rows.map((a) => ({
+    gradeId: a.gradeId ?? a.gradeID ?? a.grade_id ?? a.classID,
+    sectionId: a.sectionId ?? a.sectionID ?? a.section_id,
+    subjectId: a.subjectId ?? a.subjectID ?? a.subject_id,
+    subjectName: a.subjectName ?? a.subject ?? '',
+  })).filter((a) => a.gradeId != null && a.sectionId != null && a.subjectId != null);
+}
+
 async function fetchBranchEmployees() {
-  const res = await fetch(buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchIdStr()}`), {
-    method: 'GET', headers: authHeaders(),
-  });
-  const json = await res.json().catch(() => ({}));
+  const json = await getJsonRetry(`/api/LaunchSetup/get-employees-by-branch/${branchIdStr()}`);
   const list = Array.isArray(json) ? json : (json?.data || json?.Data || json?.result || []);
   return list.map((e) => ({
     empId: e.employeeID ?? e.employeeId ?? e.empID ?? e.id ?? e.EmployeeID,
     name: (e.employeeName ?? e.name ?? e.fullName)
       || (`${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || 'Teacher'),
     designation: e.designation ?? e.designationName ?? e.role ?? '',
+    assignments: employeeAssignmentRows(e),
   })).filter((e) => e.empId != null);
 }
 
 async function fetchClassSubjects(gradeId, sectionId) {
-  const res = await fetch(buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`), {
-    method: 'GET', headers: authHeaders(),
-  });
-  const json = await res.json().catch(() => ({}));
+  const json = await getJsonRetry(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`).catch(() => ({}));
   const list = Array.isArray(json) ? json : (json?.data || []);
   return list
     .map((s) => ({ subjectId: s.subjectID ?? s.subjectId ?? s.id, subjectName: s.subjectName ?? s.name ?? '' }))
@@ -89,10 +113,7 @@ async function fetchClassSubjects(gradeId, sectionId) {
 }
 
 async function fetchEmployeeSubjects(gradeId, sectionId, empId) {
-  const res = await fetch(buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empId}`), {
-    method: 'GET', headers: authHeaders(),
-  });
-  const json = await res.json().catch(() => ({}));
+  const json = await getJsonRetry(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empId}`).catch(() => ({}));
   const list = (json?.success && Array.isArray(json.data))
     ? json.data
     : (Array.isArray(json) ? json : (json?.data || []));
@@ -150,15 +171,12 @@ async function fetchNbCheckedSet(notebookID, gradeID, subjectID) {
 
 async function loadNbForCell({ classID, sectionID, subjectID, className, subjectName, teacher }) {
   try {
-    const mres = await fetch(
-      buildUrl(`/api/getulpfornotebookmaster?branchID=${branchIdStr()}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
-      { method: 'GET', headers: authHeaders() },
-    );
-    const units = rowsOf(await mres.json().catch(() => ({})));
+    const units = rowsOf(await getJsonRetry(
+      `/api/getulpfornotebookmaster?branchID=${branchIdStr()}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`,
+    ));
     return Promise.all(units.map(async (u) => {
       const [dres, checkedSet] = await Promise.all([
-        fetch(buildUrl(`/api/getulpfornotebookdetails?masterNoteBookIDs=${u.id}`), { method: 'GET', headers: authHeaders() })
-          .then((r) => r.json().catch(() => ({}))),
+        getJsonRetry(`/api/getulpfornotebookdetails?masterNoteBookIDs=${u.id}`).catch(() => ({})),
         fetchNbCheckedSet(u.id, classID, subjectID),
       ]);
       const questionTypes = [];
@@ -191,29 +209,25 @@ async function loadNbForCell({ classID, sectionID, subjectID, className, subject
 
 async function loadLpForCell({ classID, sectionID, subjectID, className, subjectName, teacher }) {
   try {
-    const mres = await fetch(
-      buildUrl(`/api/getulpforclassesmaster?branchID=${branchIdStr()}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
-      { method: 'GET', headers: authHeaders() },
-    );
-    const masters = rowsOf(await mres.json().catch(() => ({})));
+    const masters = rowsOf(await getJsonRetry(
+      `/api/getulpforclassesmaster?branchID=${branchIdStr()}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`,
+    ));
     return Promise.all(masters.map(async (m) => {
       let status = 'pending';
       let submittedDate = '';
       try {
-        const dres = await fetch(
-          buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${m.id}&classID=${classID}&subjectID=${subjectID}&pageNo=1`),
-          { method: 'GET', headers: authHeaders() },
-        );
-        const d = rowsOf(await dres.json().catch(() => ({})))[0];
+        const d = rowsOf(await getJsonRetry(
+          `/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${m.id}&classID=${classID}&subjectID=${subjectID}&pageNo=1`,
+        ))[0];
         if (d?.id) {
-          const sres = await fetch(
-            buildUrl(`/api/getulpforclasssuggestion?BranchID=${branchIdStr()}&ClassID=${classID}&SubjectID=${subjectID}&DetailClassID=${d.id}&pageNo=1`),
-            { method: 'GET', headers: authHeaders() },
-          );
-          const s = rowsOf(await sres.json().catch(() => ({})))[0];
+          const s = rowsOf(await getJsonRetry(
+            `/api/getulpforclasssuggestion?BranchID=${branchIdStr()}&ClassID=${classID}&SubjectID=${subjectID}&DetailClassID=${d.id}&pageNo=1`,
+          ))[0];
           if (s) {
             status = 'submitted';
-            submittedDate = iso10(s.createdAt || s.modifiedAt || s.submittedDate || '') || todayIso();
+            /* Asli date na mile to khali — "aaj" lagane se date filter galat match karta tha. */
+            submittedDate = iso10(s.submittedDate || s.createdAt || s.createdDate || s.createdOn
+              || s.modifiedAt || s.modifiedDate || '');
           }
         }
       } catch { /* pending */ }
@@ -222,7 +236,8 @@ async function loadLpForCell({ classID, sectionID, subjectID, className, subject
         unitNo: m.unitNo || '',
         unit: m.unitName ? `Unit ${m.unitNo || ''} — ${m.unitName}`.replace(/\s+/g, ' ').trim() : `Unit ${m.unitNo || m.id}`,
         topic: m.lessonPlanTopic || m.unitName || '(no topic)',
-        date: iso10(m.createdAt || m.modifiedAt || '') || '',
+        date: iso10(m.lessonDate || m.date || m.createdAt || m.createdDate || m.createdOn || m.CreatedAt
+          || m.CreatedDate || m.modifiedAt || m.modifiedDate || m.updatedAt || '') || '',
         term: m.termName || m.term || '',
         status,
         submittedDate,
@@ -237,63 +252,88 @@ async function loadLpForCell({ classID, sectionID, subjectID, className, subject
   }
 }
 
-/* Assignments / cells — light; LP aur NB alag-alag tab pe load hote hain. */
-let _assignCache = { key: '', at: 0, promise: null };
+/* Assignments / cells — light; LP aur NB alag-alag tab pe load hote hain.
+   Cache 5 min; khali / fail result cache NAHI hota (agli dafa dobara try). */
+const CACHE_MS = 5 * 60 * 1000;
+const cacheKey = () => `${branchIdStr()}|${sessionYearId()}`;
+function cached(slot, build, isGood) {
+  const key = cacheKey();
+  if (slot.promise && slot.key === key && Date.now() - slot.at < CACHE_MS) return slot.promise;
+  const promise = build();
+  Object.assign(slot, { key, at: Date.now(), promise });
+  promise.then((v) => { if (!isGood(v) && slot.promise === promise) slot.promise = null; })
+    .catch(() => { if (slot.promise === promise) slot.promise = null; });
+  return promise;
+}
+
+const _assignCache = { key: '', at: 0, promise: null };
 function loadAssignmentsBundle() {
-  const key = `${branchIdStr()}|${sessionYearId()}`;
-  if (_assignCache.promise && _assignCache.key === key && Date.now() - _assignCache.at < 60000) {
-    return _assignCache.promise;
-  }
-  const promise = (async () => {
+  return cached(_assignCache, async () => {
     const empty = { assignments: [], cells: [], classes: [] };
     try {
       const [grades, employees] = await Promise.all([fetchBranchGrades(), fetchBranchEmployees()]);
       if (!grades.length) return empty;
 
+      /* Every class-section (flat) — parallel, not grade-by-grade. */
+      const sectionsFlat = grades.flatMap((g) => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
+        .map((s) => ({ g, s, cls: classLabel(g.gradeName, s.sectionName) })));
+      const sectionKey = (gid, sid) => `${gid}:${sid}`;
+      const sectionByKey = new Map(sectionsFlat.map((x) => [sectionKey(x.g.gradeId, x.s.sectionId), x]));
+
+      /* 1) Class subjects (cells) */
+      const subjectsBySection = new Map();
+      await mapLimited(sectionsFlat, 8, async (x) => {
+        subjectsBySection.set(sectionKey(x.g.gradeId, x.s.sectionId), await fetchClassSubjects(x.g.gradeId, x.s.sectionId));
+      });
+      const subjectName = (gid, sid, subId, fallback) => {
+        const hit = (subjectsBySection.get(sectionKey(gid, sid)) || []).find((s) => String(s.subjectId) === String(subId));
+        return hit?.subjectName || fallback || '';
+      };
+
+      /* 2) Teacher assignments — employee list se (1 call). Agar API ne field
+         nahi bheji / sab khali hai to purana per-section fallback (8 parallel). */
       const assignments = [];
       const teacherByCell = new Map();
-      await mapLimited(employees, 3, async (emp) => {
-        for (const g of grades) {
-          const secs = g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }];
-          for (const s of secs) {
-            const subs = await fetchEmployeeSubjects(g.gradeId, s.sectionId, emp.empId);
-            for (const sub of subs) {
-              const cls = classLabel(g.gradeName, s.sectionName);
-              assignments.push({
-                teacher: emp.name,
-                class: cls,
-                subject: sub.subjectName,
-                gradeId: g.gradeId,
-                sectionId: s.sectionId,
-                subjectId: sub.subjectId,
-              });
-              const ck = `${g.gradeId}:${s.sectionId}:${sub.subjectId}`;
-              if (!teacherByCell.has(ck)) teacherByCell.set(ck, emp.name);
-            }
-          }
-        }
-      });
+      const addAssignment = (emp, gid, sid, subId, subName) => {
+        const sec = sectionByKey.get(sectionKey(gid, sid));
+        if (!sec) return; // is branch ki class/section nahi
+        const name = subjectName(gid, sid, subId, subName);
+        assignments.push({
+          teacher: emp.name, class: sec.cls, subject: name,
+          gradeId: sec.g.gradeId, sectionId: sec.s.sectionId, subjectId: subId,
+        });
+        const ck = `${gid}:${sid}:${subId}`;
+        if (!teacherByCell.has(ck)) teacherByCell.set(ck, emp.name);
+      };
+      const listHasAssignments = employees.some((e) => e.assignments && e.assignments.length);
+      if (listHasAssignments) {
+        employees.forEach((emp) => (emp.assignments || []).forEach((a) => (
+          addAssignment(emp, a.gradeId, a.sectionId, a.subjectId, a.subjectName)
+        )));
+      } else {
+        const jobs = employees.flatMap((emp) => sectionsFlat.map((x) => ({ emp, x })));
+        await mapLimited(jobs, 8, async ({ emp, x }) => {
+          const subs = await fetchEmployeeSubjects(x.g.gradeId, x.s.sectionId, emp.empId);
+          subs.forEach((sub) => addAssignment(emp, x.g.gradeId, x.s.sectionId, sub.subjectId, sub.subjectName));
+        });
+      }
 
       const cells = [];
       const seen = new Set();
-      await mapLimited(grades, 3, async (g) => {
-        const secs = g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }];
-        for (const s of secs) {
-          const subs = await fetchClassSubjects(g.gradeId, s.sectionId);
-          for (const sub of subs) {
-            const ck = `${g.gradeId}:${s.sectionId}:${sub.subjectId}`;
-            if (seen.has(ck)) continue;
-            seen.add(ck);
-            cells.push({
-              classID: g.gradeId,
-              sectionID: s.sectionId,
-              subjectID: sub.subjectId,
-              className: classLabel(g.gradeName, s.sectionName),
-              subjectName: sub.subjectName,
-              teacher: teacherByCell.get(ck) || '',
-            });
-          }
-        }
+      sectionsFlat.forEach((x) => {
+        (subjectsBySection.get(sectionKey(x.g.gradeId, x.s.sectionId)) || []).forEach((sub) => {
+          const ck = `${x.g.gradeId}:${x.s.sectionId}:${sub.subjectId}`;
+          if (seen.has(ck)) return;
+          seen.add(ck);
+          cells.push({
+            classID: x.g.gradeId,
+            sectionID: x.s.sectionId,
+            subjectID: sub.subjectId,
+            className: x.cls,
+            subjectName: sub.subjectName,
+            teacher: teacherByCell.get(ck) || '',
+          });
+        });
       });
 
       const classMap = new Map();
@@ -311,52 +351,42 @@ function loadAssignmentsBundle() {
       console.error('Academics reports: assignments load failed', e);
       return empty;
     }
-  })();
-  _assignCache = { key, at: Date.now(), promise };
-  return promise;
+  }, (v) => v && v.cells && v.cells.length > 0);
 }
 
-let _lpCache = { key: '', at: 0, promise: null };
-let _nbCache = { key: '', at: 0, promise: null };
+const _lpCache = { key: '', at: 0, promise: null };
+const _nbCache = { key: '', at: 0, promise: null };
 
-async function loadLpRowsOnly() {
-  const key = `${branchIdStr()}|${sessionYearId()}`;
-  if (_lpCache.promise && _lpCache.key === key && Date.now() - _lpCache.at < 60000) return _lpCache.promise;
-  const promise = (async () => {
+function loadLpRowsOnly() {
+  return cached(_lpCache, async () => {
     try {
       const { cells } = await loadAssignmentsBundle();
-      const lpData = [];
-      await mapLimited(cells, 3, async (cell) => {
-        lpData.push(...(await loadLpForCell(cell)));
-      });
-      return lpData;
+      const parts = await mapLimited(cells, 8, (cell) => loadLpForCell(cell));
+      return parts.flat(); // cell order stable (pehle push order random tha)
     } catch (e) {
       console.error('Academics reports: LP load failed', e);
       return [];
     }
-  })();
-  _lpCache = { key, at: Date.now(), promise };
-  return promise;
+  }, (v) => Array.isArray(v) && v.length > 0);
 }
 
-async function loadNbRowsOnly() {
-  const key = `${branchIdStr()}|${sessionYearId()}`;
-  if (_nbCache.promise && _nbCache.key === key && Date.now() - _nbCache.at < 60000) return _nbCache.promise;
-  const promise = (async () => {
+function loadNbRowsOnly() {
+  return cached(_nbCache, async () => {
     try {
       const { cells } = await loadAssignmentsBundle();
-      const nbData = [];
-      await mapLimited(cells, 3, async (cell) => {
-        nbData.push(...(await loadNbForCell(cell)));
-      });
-      return nbData;
+      const parts = await mapLimited(cells, 6, (cell) => loadNbForCell(cell));
+      return parts.flat();
     } catch (e) {
       console.error('Academics reports: NB load failed', e);
       return [];
     }
-  })();
-  _nbCache = { key, at: Date.now(), promise };
-  return promise;
+  }, (v) => Array.isArray(v) && v.length > 0);
+}
+
+/* Reports tab khulte hi background me shuru — user jab tak panel kholay, data tayyar. */
+export function prefetchAcademicsReports() {
+  loadAssignmentsBundle();
+  loadLpRowsOnly();
 }
 
 export async function getSubLpData() {
@@ -376,8 +406,15 @@ export async function getAcademicsClasses() {
 export async function getUnitsCatalog() { return []; }
 export async function getTermBreakupAllocations() { return []; }
 
+/* Simple per-branch/session memo for the Teacher Performance loaders — panel
+   dobara kholne par ya do jagah se call hone par APIs phir se na chalein. */
+function memoLoader(build, isGood = (v) => (Array.isArray(v) ? v.length > 0 : !!v && Object.keys(v).length > 0)) {
+  const slot = { key: '', at: 0, promise: null };
+  return async () => clone(await cached(slot, build, isGood));
+}
+
 /* ─── LIVE: term breakups (gettermbreakups + details) ─── */
-export async function getTermBreakups() {
+async function loadTermBreakups() {
   try {
     /* assignments only — LP/NB bundle yahan use nahi (tab-wise load). */
     const [terms, bundle] = await Promise.all([fetchTerms(), loadAssignmentsBundle()]);
@@ -391,9 +428,12 @@ export async function getTermBreakups() {
       seen.add(k);
       pairs.push(a);
     });
+    /* Pehle har pair ke terms ek ek karke, sirf 2 pairs saath — bahut slow tha.
+       Ab pair × term flat list, 8 saath. */
+    const jobs = pairs.flatMap((a) => termList.map((term) => ({ a, term })));
     const out = [];
-    await mapLimited(pairs, 2, async (a) => {
-      for (const term of termList) {
+    await mapLimited(jobs, 8, async ({ a, term }) => {
+      {
         try {
           const params = new URLSearchParams({
             branchID: branchIdStr(),
@@ -404,13 +444,9 @@ export async function getTermBreakups() {
             sessionID: String(sessionYearId()),
             pageNo: '1',
           });
-          const res1 = await fetch(buildUrl(`/api/gettermbreakups?${params}`), {
-            method: 'GET', headers: authHeaders(),
-          });
-          if (!res1.ok) continue;
-          const list1 = rowsOf(await res1.json().catch(() => ({})));
+          const list1 = rowsOf(await getJsonRetry(`/api/gettermbreakups?${params}`));
           const tbId = list1[0]?.id;
-          if (!tbId) continue;
+          if (!tbId) return;
           const res2 = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
             method: 'POST',
             headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -437,15 +473,16 @@ export async function getTermBreakups() {
         } catch { /* skip cell */ }
       }
     });
-    return clone(out);
+    return out;
   } catch (e) {
     console.error('Academics reports: term breakups load failed', e);
     return [];
   }
 }
+export const getTermBreakups = memoLoader(loadTermBreakups);
 
 /* ─── LIVE: holidays (attendance monthly setup) ─── */
-export async function getHolidays() {
+async function loadHolidays() {
   try {
     const bid = branchId();
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -481,15 +518,16 @@ export async function getHolidays() {
         });
       } catch { /* skip month */ }
     });
-    return clone(all);
+    return all;
   } catch (e) {
     console.error('Academics reports: holidays load failed', e);
     return [];
   }
 }
+export const getHolidays = memoLoader(loadHolidays);
 
 /* ─── LIVE: student attendance snapshot (today) ─── */
-export async function getStudentAttendance() {
+async function loadStudentAttendance() {
   try {
     const bId = sessionStorage.getItem('branchID');
     const empId = sessionStorage.getItem('employee_ID');
@@ -501,9 +539,9 @@ export async function getStudentAttendance() {
     const json = await res.json().catch(() => ({}));
     const classes = Array.isArray(json?.data) ? json.data : [];
     const rows = [];
-    await mapLimited(classes, 3, async (c) => {
-      const sections = Array.isArray(c.sections) ? c.sections : [];
-      for (const s of sections) {
+    const secJobs = classes.flatMap((c) => (Array.isArray(c.sections) ? c.sections : []).map((s) => ({ c, s })));
+    await mapLimited(secJobs, 8, async ({ c, s }) => {
+      {
         const students = Array.isArray(s.students) ? s.students : (Array.isArray(s.studentList) ? s.studentList : []);
         const total = students.length;
         let present = 0; let absent = 0; let leave = 0; let late = 0; let marked = false;
@@ -540,7 +578,9 @@ export async function getStudentAttendance() {
           leave,
           late,
           marked,
-          teacher: '',
+          /* Class teacher — API jo bhi naam field bheje. */
+          teacher: String(s.classTeacherName ?? s.classTeacher ?? s.teacherName ?? s.inchargeName
+            ?? c.classTeacherName ?? c.teacherName ?? '').trim(),
           markedBy,
           markedFrom,
           markedTime,
@@ -548,15 +588,16 @@ export async function getStudentAttendance() {
         });
       }
     });
-    return clone(rows);
+    return rows;
   } catch (e) {
     console.error('Academics reports: student attendance load failed', e);
     return [];
   }
 }
+export const getStudentAttendance = memoLoader(loadStudentAttendance);
 
 /* ─── LIVE: staff attendance snapshot (today) ─── */
-export async function getStaffAttendance() {
+async function loadStaffAttendance() {
   try {
     const date = todayIso();
     const [emps, att] = await Promise.all([
@@ -573,7 +614,7 @@ export async function getStaffAttendance() {
       if (id) byEmp.set(id, r);
     });
     const ST = { 1: 'present', 2: 'absent', 3: 'leave', 4: 'late', present: 'present', absent: 'absent', leave: 'leave', late: 'late' };
-    return clone(emps.map((e) => {
+    return emps.map((e) => {
       const rec = byEmp.get(String(e.empId));
       const raw = rec ? (rec.status ?? rec.Status) : '';
       const status = ST[String(raw).toLowerCase()] || ST[String(raw)] || (rec ? 'present' : '');
@@ -582,21 +623,23 @@ export async function getStaffAttendance() {
         empId: String(e.empId),
         desig: e.designation || '',
         dept: 'Academics',
-        status: status || 'absent',
+        /* Aaj ka record hi nahi to "absent" nahi — "not marked". */
+        status: status || 'not marked',
         inTime: String(rec?.CheckInTime ?? rec?.checkInTime ?? ''),
         outTime: String(rec?.CheckOutTime ?? rec?.checkOutTime ?? ''),
         from: String(rec?.Platform ?? rec?.platform ?? ''),
         marked: !!rec,
       };
-    }));
+    });
   } catch (e) {
     console.error('Academics reports: staff attendance load failed', e);
     return [];
   }
 }
+export const getStaffAttendance = memoLoader(loadStaffAttendance);
 
 /* ─── LIVE: question papers (getexamqpmasterbyids per class/section) ─── */
-export async function getAllPapers() {
+async function loadAllPapers() {
   try {
     const bId = sessionStorage.getItem('branchID');
     const empId = sessionStorage.getItem('employee_ID');
@@ -606,9 +649,9 @@ export async function getAllPapers() {
     const json = await res.json().catch(() => ({}));
     const classList = Array.isArray(json?.data) ? json.data : [];
     const papersByKey = {};
-    await mapLimited(classList, 3, async (c) => {
-      const sections = Array.isArray(c.sections) ? c.sections : [];
-      for (const s of sections) {
+    const secJobs = classList.flatMap((c) => (Array.isArray(c.sections) ? c.sections : []).map((s) => ({ c, s })));
+    await mapLimited(secJobs, 8, async ({ c, s }) => {
+      {
         const gradeId = c.id;
         const sectionID = s.sectionID ?? s.sectionId ?? 0;
         const secName = s.sectionName || s.name || 'A';
@@ -643,12 +686,13 @@ export async function getAllPapers() {
         }
       }
     });
-    return clone(papersByKey);
+    return papersByKey;
   } catch (e) {
     console.error('Academics reports: papers load failed', e);
     return {};
   }
 }
+export const getAllPapers = memoLoader(loadAllPapers);
 
 /* ─── LIVE: resource library (worksheets etc.) ─── */
 export async function getTeacherResources() {
@@ -840,6 +884,12 @@ export async function getActivities() {
       { method: 'GET', headers: authHeaders() },
     );
     const rows = rowsOf(await res.json().catch(() => ({})));
+    /* createdBy aksar employee ID (number) hota hai — Teacher Performance naam se
+       match karta hai, is liye ID ko employee ke naam me badlo. */
+    let empName = new Map();
+    if (rows.some((a) => !a.createdByName && !a.createdByEmployeeName && /^\d+$/.test(String(a.createdBy ?? '')))) {
+      try { empName = new Map((await fetchBranchEmployees()).map((e) => [String(e.empId), e.name])); } catch { /* ids stay */ }
+    }
     return rows.map((a, i) => {
       const rawStart = a.startAt || a.startDate || a.start || a.fromDate || a.activityDate || a.date || '';
       const rawEnd = a.endAt || a.endDate || a.end || a.toDate || a.activityDate || a.date || rawStart;
@@ -852,7 +902,8 @@ export async function getActivities() {
         purpose: a.activityPurpose || '',
         development: a.activityDevelopment || '',
         resource: a.resourseMaterial || '',
-        createdBy: a.createdByName || a.createdByEmployeeName || a.createdBy || '',
+        createdBy: a.createdByName || a.createdByEmployeeName
+          || empName.get(String(a.createdBy ?? '')) || a.createdBy || '',
       };
     });
   } catch (e) {

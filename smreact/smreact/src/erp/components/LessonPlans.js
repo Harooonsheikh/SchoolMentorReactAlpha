@@ -16263,7 +16263,8 @@ const LP_CSS = `
   font-weight:700; color:#0F172A; background:#F8FAFF; outline:none;
   transition:all .15s ease;
 }
-.clml-field-input--grow { flex:1; }
+.clml-field-input--grow { flex:1 1 0; min-width:0; }
+.clml-field-row .clml-edit-btn, .clml-field-row .clml-topic-save { flex-shrink:0; }
 .clml-field-input:not(:disabled):focus { border-color:#1E40AF; background:#fff; }
 .clml-field-input:disabled { background:#F1F5F9; color:#94A3B8; border-color:transparent; }
 

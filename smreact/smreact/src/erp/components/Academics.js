@@ -1183,9 +1183,13 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
 
   const submit = async () => {
   if (savingRef.current) return;
-  if (!name.trim()) return;
-  if (audience === 'classes' && !classes.length) { setAudErr(true); return; }
-  if (!start || !end) return;
+  /* Validation ab side toaster par dikhti hai (pehle silent return / browser alert tha). */
+  const warn = msg => (toast || window.alert)(msg, 'error');
+  if (!name.trim()) { warn('Please enter the activity name.'); return; }
+  if (audience === 'classes' && !classes.length) { setAudErr(true); warn('Please select at least one class.'); return; }
+  if (!start && !end) { warn('Please select the start and end date.'); return; }
+  if (!start) { warn('Please select the start date.'); return; }
+  if (!end) { warn('Please select the end date.'); return; }
 
   /* Keep the live class-list order so lists/reports read naturally. */
   const pickedClasses = audience === 'school' ? [] : pickList.filter(c => classes.includes(c));
@@ -1193,10 +1197,7 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
   const startDate = new Date(start);
   const endDate = new Date(end);
 
-  if (startDate > endDate) {
-    alert('Start date cannot be after end date.');
-    return;
-  }
+  if (startDate > endDate) { warn('Start date cannot be after end date.'); return; }
 
   /* Session-date guard: activity start & end current session ki UTC window ke andar hon —
      bahar ho to toaster (session range ke saath) + block. */
