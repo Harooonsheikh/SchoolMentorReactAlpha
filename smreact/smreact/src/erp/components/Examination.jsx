@@ -38,6 +38,7 @@ import {
   EXAM_RS_AUTO_COMMENTS, EXAM_RS_AUTO_REMARKS, examRsIsAutoText, examRsWithAutoText, examRsValidPct, examRsDefaultText,
 } from './examGradingDefaults';
 import { downloadAllCards as examDownloadAllCards } from './examDownloadAll';
+import ExaminationReportsTab from './examReportsTab';
 
 /* ── Shared report-kit glue: header / footer / toolbar come from reportKit.
    School name + academic year stay LIVE — they come from the /report-header
@@ -1118,13 +1119,17 @@ export default function Examination({ toast = () => { } }) {
   const canCombinedCreate = can('Examination', 'Combined Assessment', 'Create');
 
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [tab, setTab] = useState('setup'); // setup | datesheet | syllabus | results
+  const [tab, setTab] = useState('setup'); // setup | datesheet | syllabus | results | reports
+  const [reportsSubTab, setReportsSubTab] = useState('dashboard');
+  const [xReportReq, setXReportReq] = useState(null);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const reportsLoadedRef = useRef(new Set());
 
   /* Agar active tab ka View permission nahi, to pehle visible tab par snap karo. */
   useEffect(() => {
-    const visible = { setup: showSetupTab, datesheet: showDatesheetTab, syllabus: showSyllabusTab, results: showResultsTab };
+    const visible = { setup: showSetupTab, datesheet: showDatesheetTab, syllabus: showSyllabusTab, results: showResultsTab, reports: true };
     if (visible[tab]) return;
-    const first = ['setup', 'datesheet', 'syllabus', 'results'].find((t) => visible[t]);
+    const first = ['setup', 'datesheet', 'syllabus', 'results', 'reports'].find((t) => visible[t]);
     if (first && first !== tab) setTab(first);
   }, [showSetupTab, showDatesheetTab, showSyllabusTab, showResultsTab, tab]);
   const [term, setTerm] = useState('');
@@ -4732,6 +4737,69 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
       return [];
     }
   }
+  /* Reports tab — pull date sheet + syllabus for every class of the loaded exams. */
+  useEffect(() => {
+    if (tab !== 'reports' || !exams.length) return undefined;
+    const pending = exams.filter((ex) => ex && ex.id != null && !reportsLoadedRef.current.has(String(ex.id)));
+    if (!pending.length) return undefined;
+    let cancel = false;
+    setReportsLoading(true);
+    (async () => {
+      const dsPatch = {};
+      const sylPatch = {};
+      const queue = [];
+      pending.forEach((ex) => {
+        (Array.isArray(ex.classes) ? ex.classes : []).forEach((cls, idx) => {
+          if (!cls || typeof cls !== 'object' || cls.classID == null) return;
+          queue.push({ ex, cls, idx });
+        });
+      });
+      const runOne = async ({ ex, cls, idx }) => {
+        const dsKey = `cls_${ex.id}_${cls.sectionID}_${idx}`;
+        const sylKey = `scls_${ex.id}_${cls.sectionID}_${idx}`;
+        const [dsRows, sylRows] = await Promise.all([
+          getDateSheetData(cls.classID, cls.sectionID, ex.id, ex.termID),
+          getExamSyllabusByClassAndTerms(cls.classID, cls.sectionID, ex.selectExam, ex.termID, 1),
+        ]);
+        if (!dsPatch[ex.id]) dsPatch[ex.id] = {};
+        if (!sylPatch[ex.id]) sylPatch[ex.id] = {};
+        dsPatch[ex.id][dsKey] = dsRows || [];
+        const seen = new Set();
+        sylPatch[ex.id][sylKey] = (sylRows || []).reduce((acc, r) => {
+          const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+          if (dk && seen.has(dk)) return acc;
+          if (dk) seen.add(dk);
+          acc.push({
+            subject: r.subjectDisplayName || r.subjectName || '',
+            content: r.subjectDetails || '',
+            updatedAt: r.updatedAt || r.UpdatedOn || '—',
+          });
+          return acc;
+        }, []);
+      };
+      for (let i = 0; i < queue.length; i += 4) {
+        if (cancel) return;
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.all(queue.slice(i, i + 4).map((job) => runOne(job).catch(() => {})));
+      }
+      if (cancel) return;
+      pending.forEach((ex) => reportsLoadedRef.current.add(String(ex.id)));
+      setDateSheets((prev) => {
+        const next = { ...prev };
+        Object.entries(dsPatch).forEach(([id, map]) => { next[id] = { ...(next[id] || {}), ...map }; });
+        return next;
+      });
+      setSyllabusData((prev) => {
+        const next = { ...prev };
+        Object.entries(sylPatch).forEach(([id, map]) => { next[id] = { ...(next[id] || {}), ...map }; });
+        return next;
+      });
+      setReportsLoading(false);
+    })().catch(() => { if (!cancel) setReportsLoading(false); });
+    return () => { cancel = true; setReportsLoading(false); };
+    /* getDateSheetData / getExamSyllabusByClassAndTerms are recreated each render; exams identity is the trigger. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, exams]);
   async function deleteSyllabusByAllIds(classID, sectionID, selectExam, termName) {
     try {
       const branchID = sessionStorage.getItem('branchID');
@@ -4923,7 +4991,69 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
             <i className="fa-solid fa-chart-bar"></i> Results
           </button>
         )}
+        <button className={`exam-tab${tab === 'reports' ? ' active' : ''}`} onClick={() => setTab('reports')}>
+          <i className="fa-solid fa-clipboard-list"></i> Reports
+        </button>
       </div>
+
+      {tab === 'reports' && (
+        <ExaminationReportsTab
+          reportsSubTab={reportsSubTab}
+          setReportsSubTab={setReportsSubTab}
+          exams={exams.map((ex) => {
+            const st = getExamStatus(ex);
+            return {
+              ...ex,
+              _statusCls: st.cls,
+              _statusLabel: st.label,
+              _fromLabel: formatDate(ex.from),
+              _toLabel: formatDate(ex.to),
+              _duration: calcDuration(ex.from, ex.to),
+            };
+          })}
+          terms={terms}
+          dateSheets={dateSheets}
+          syllabusData={syllabusData}
+          resultPacks={resStudentData}
+          loading={reportsLoading}
+          onExport={setXReportReq}
+        />
+      )}
+      {xReportReq && (
+        <StandardReportPicker
+          open
+          title={xReportReq.title}
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setXReportReq(null)}
+          onGenerate={(style, format) => {
+            const isColor = style === 'color';
+            if (format === 'excel') {
+              downloadReportExcel({ ...xReportReq, isColor });
+            } else {
+              const bodyHtml = buildReportTableHtml({
+                columns: xReportReq.columns,
+                rows: xReportReq.rows,
+                isColor,
+                groupKey: xReportReq.groupKey,
+                groupLabel: xReportReq.groupLabel,
+                emptyText: 'No rows.',
+              });
+              const html = buildStandardReportHtml({
+                title: xReportReq.title,
+                subtitleLine: examKitSub(branchSchool, xReportReq.metaLine || ''),
+                schoolName: examKitSchool(branchSchool),
+                format,
+                isColor,
+                bodyHtml,
+                orientation: 'landscape',
+              });
+              examDeliverReport(xReportReq.title, format, html);
+            }
+            setXReportReq(null);
+            toast(format === 'excel' ? 'Excel report downloaded' : format === 'word' ? 'Word document downloaded' : 'Report window opened', 'success');
+          }}
+        />
+      )}
 
       {/* ── Exam Setup ── */}
       {tab === 'setup' && (

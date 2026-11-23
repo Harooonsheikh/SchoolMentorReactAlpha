@@ -1,5 +1,6 @@
 import { delay, clone } from './_http';
 import { buildUrl, buildChainApiUrl, apiMessage } from '../../utils/apiConfig';
+import { getEmployeeNameByLoginUser } from './feeService';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
@@ -25,6 +26,36 @@ function mapAccEntry(e = {}) {
     walletId:  String(pick(e, 'wallatID', 'WallatID', 'walletID', 'walletId', 'WalletID') ?? ''),
     acctId:    String(pick(e, 'wallatID', 'WallatID', 'walletID', 'walletId', 'WalletID') ?? ''),
   };
+}
+
+/* createdBy / modifiedBy are login user ids. Swap each distinct id for the
+   employee name so the audit trail shows a person, not "34052". */
+const isLoginUserId = (v) => /^\d+$/.test(String(v ?? '').trim()) && Number(v) > 0;
+
+export async function withActorNames(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const ids = [...new Set(list.flatMap(r => [r?.createdBy, r?.updatedBy, r?.modifiedBy]).filter(isLoginUserId).map(String))];
+  const pairs = await Promise.all(ids.map(async (id) => {
+    const name = await getEmployeeNameByLoginUser(id).catch(() => null);
+    return [id, name];
+  }));
+  const names = Object.fromEntries(pairs);
+  const label = (v) => {
+    const s = String(v ?? '').trim();
+    if (isLoginUserId(s) && names[s]) return names[s];
+    return v;
+  };
+  return list.map(r => {
+    const createdName = names[String(r.createdBy)] || '';
+    const updatedName = names[String(r.updatedBy)] || '';
+    return {
+      ...r,
+      createdBy: label(r.createdBy) || r.createdBy,
+      createdByName: (r.createdByName && !isLoginUserId(r.createdByName) ? r.createdByName : '') || createdName || r.createdByName || '',
+      updatedBy: r.updatedBy ? (label(r.updatedBy) || r.updatedBy) : r.updatedBy,
+      updatedByName: (r.updatedByName && !isLoginUserId(r.updatedByName) ? r.updatedByName : '') || updatedName || r.updatedByName || '',
+    };
+  });
 }
 
 /* Read APIs — return clones so callers can mutate locally without
@@ -72,7 +103,7 @@ export async function getAccEntriesByMonth(seg, ym) {
   );
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not load account entries');
-  return (json?.data || []).map(mapAccEntry);
+  return withActorNames((json?.data || []).map(mapAccEntry));
 }
 
 export async function getAccEntriesForMonths(months = []) {

@@ -2431,7 +2431,8 @@ export async function getEmployeeNameByLoginUser(loginUserId) {
       const json = await res.json().catch(() => null);
       if (!res.ok || json?.success === false || !json?.data) return null;
       const e = json.data;
-      return [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || null;
+      return [e.firstName || e.FirstName, e.lastName || e.LastName].filter(Boolean).join(' ').trim()
+        || e.employeeName || e.EmployeeName || e.fullName || e.FullName || e.name || e.Name || null;
     } catch (err) {
       return null;
     }

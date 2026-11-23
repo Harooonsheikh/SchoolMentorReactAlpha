@@ -35,6 +35,16 @@ async function readJson(res, label) {
 
 export const getBranchId = () => Number(sessionStorage.getItem('branchID')) || 0;
 
+/* Logged-in LOGIN userId (AHM_Login_Users.ID) — createdBy / modifiedBy me yahi jati hai
+   (employee id nahi). Backend ke model me ye string hai, is liye String() me bhejte hain. */
+const loginUserId = () => {
+  for (const k of ['UserID', 'userID', 'userId', 'user_id']) {
+    const v = Number(sessionStorage.getItem(k));
+    if (v > 0) return String(v);
+  }
+  return '';
+};
+
 /* GET area-list */
 export async function getAreas(branchId = getBranchId()) {
   const res = await fetch(buildUrl(`${BASE}/area-list?branchId=${branchId}`), {
@@ -57,7 +67,7 @@ export async function addAreas(items, branchId = getBranchId()) {
     body: JSON.stringify({
       items: items.map((it) => {
         const name = typeof it === 'string' ? it : it.name;
-        return { id: 0, branchId, name, type: typeof it === 'string' ? seedTypeOf(name) : (it.type || seedTypeOf(name)) };
+        return { id: 0, branchId, name, type: typeof it === 'string' ? seedTypeOf(name) : (it.type || seedTypeOf(name)), createBy: loginUserId() };
       }),
     }),
   });
@@ -99,7 +109,7 @@ export async function addArea(name, type = 'daily', branchId = getBranchId()) {
     headers: authHeaders(),
     body: JSON.stringify({
       action: 'insert',
-      data: { id: 0, branchId, name: name.trim(), type: AREA_TYPES.includes(type) ? type : 'daily' },
+      data: { id: 0, branchId, name: name.trim(), type: AREA_TYPES.includes(type) ? type : 'daily', createBy: loginUserId() },
     }),
   });
   const json = await res.json().catch(() => null);
@@ -247,7 +257,7 @@ export async function addTasks(items) {
   const res = await fetch(buildUrl(`${BASE}/task-add-list`), {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items: items.map((it) => ({ ...it, createdBy: it.createdBy ?? loginUserId() })) }),
   });
   return readJson(res, 'task-add-list');
 }
@@ -279,8 +289,8 @@ export async function taskAction(action, task, branchId = getBranchId()) {
   const pic = await toFile(task.photo);
   if (pic) fd.append('RemarksPicFile', pic, pic.name || 'evidence.jpg');
   else fd.append('RemarksPic', task.remarksPic || '');
-  const me = currentUser();
-  if (me.name) fd.append(action === 'insert' ? 'CreatedBy' : 'ModifiedBy', me.name);
+  const uid = loginUserId();
+  if (uid) fd.append(action === 'insert' ? 'CreatedBy' : 'ModifiedBy', uid);
 
   const token = sessionStorage.getItem('token') || '';
   const res = await fetch(buildUrl(`${BASE}/task-action`), {
@@ -567,7 +577,7 @@ export async function reportProblem(p, branchId = getBranchId()) {
   if (p.dueDate) fd.append('DueDate', p.dueDate);
   fd.append('ReportProblemDateTime', new Date().toISOString());
   if (me.id) fd.append('ReportedBy', me.id);
-  if (me.name) fd.append('CreatedBy', me.name);
+  if (loginUserId()) fd.append('CreatedBy', loginUserId());
   if (Number(p.assignTo) > 0) fd.append('AssignTo', p.assignTo);   // real employee id ho tabhi
 
   const file = await toFile(p.photo);
@@ -583,9 +593,9 @@ export async function problemStep(step, problem, { remarks = '' } = {}) {
   const id = Number(problem.id);
 
   const bodies = {
-    progress: { id, isProgress: true, isProgressEmployee: me.id, isProgressDateTime: now, modifiedBy: me.name },
-    resolve:  { id, isResolved: true, isResolvedEmployee: me.id, resolvedRemarks: remarks, markResolvedDateTime: now, modifiedBy: me.name },
-    verify:   { id, isVerify: true, isVerifiedUser: me.id, isVerifyDateTime: now, modifiedBy: me.name },
+    progress: { id, isProgress: true, isProgressEmployee: me.id, isProgressDateTime: now, modifiedBy: loginUserId() },
+    resolve:  { id, isResolved: true, isResolvedEmployee: me.id, resolvedRemarks: remarks, markResolvedDateTime: now, modifiedBy: loginUserId() },
+    verify:   { id, isVerify: true, isVerifiedUser: me.id, isVerifyDateTime: now, modifiedBy: loginUserId() },
   };
 
   const res = await fetch(buildUrl(`${BASE}/problem-${step}`), {
@@ -600,7 +610,7 @@ export async function problemStep(step, problem, { remarks = '' } = {}) {
 export async function deleteProblem(problem) {
   const id = Number(problem?.id);
   if (!id) throw new Error('Could not delete: problem id is missing.');
-  const res = await fetch(buildUrl(`${BASE}/problem-delete/${id}`), {
+  const res = await fetch(buildUrl(`${BASE}/problem-delete/${id}?modifiedBy=${loginUserId() || 0}`), {
     method: 'DELETE',
     headers: authHeaders(),
   });

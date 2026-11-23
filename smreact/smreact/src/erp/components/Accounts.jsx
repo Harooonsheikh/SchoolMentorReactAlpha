@@ -1205,7 +1205,8 @@ function Transactions({ toast, isOtherSession }) {
         { headers: { Accept: '*/*' } },
       );
       const json = await res.json();
-      setTxns(prev => ({ ...prev, [s]: (json?.data || []).map(mapEntry) }));
+      const rows = await accountsService.withActorNames((json?.data || []).map(mapEntry));
+      setTxns(prev => ({ ...prev, [s]: rows }));
     } catch (e) {
       console.error('Error loading transactions:', e);
            toastRef.current('Could not load transactions', 'error');
