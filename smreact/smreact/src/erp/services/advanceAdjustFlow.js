@@ -17,6 +17,7 @@
    Marker localStorage me (per challan) — reverse ko pata ho ke ye adjustment hai. */
 import {
   getStudentChallans,
+  getLedgerRange,
   clearReceivingNoAccount,
   receiveNoAccount,
 } from './feeService';
@@ -38,11 +39,72 @@ export function isAdvanceAdjustReceipt(challanId) {
 }
 
 
-async function findAdvanceChallan(studentID, month, year) {
-  const list = await getStudentChallans(studentID, month, year);
-  return (list || []).find(ch =>
-    (ch.detailRows || []).some(r => (Number(r.pendingorAdv) || 0) < 0 && (Number(r.receivedAmount) || 0) > 0)
-  ) || null;
+/* Unused advance still sitting on a head: negative pendingorAdv, or cash
+   received above that head's own bill. The list shows this as a negative
+   previous balance, and it is often older than the immediately previous month. */
+function advanceOnRow(r) {
+  const received = Number(r.receivedAmount) || 0;
+  if (received <= 0) return 0;
+  const fromPending = Math.max(0, -(Number(r.pendingorAdv) || 0));
+  const net = (Number(r.challanAmount) || 0) - (Number(r.discount) || 0);
+  const over = Math.max(0, received - Math.max(0, net));
+  const fromField = Math.max(0, Number(r.advanceAmount) || 0);
+  return Math.min(received, Math.max(fromPending, over, fromField));
+}
+
+function challanAdvance(ch) {
+  return (ch.detailRows || []).reduce((a, r) => a + advanceOnRow(r), 0);
+}
+
+function challanOrdinal(ch) {
+  const y = Number(ch.startYear || ch.year) || 0;
+  const m = Number(ch.startMonth || ch.month) || 0;
+  return y * 12 + m;
+}
+
+function monthOfOrdinal(ord) {
+  return { year: Math.floor((ord - 1) / 12), month: ((ord - 1) % 12) + 1 };
+}
+
+function pickInList(list, excludeId, adjustTotal, beforeOrd) {
+  const ranked = (list || [])
+    .filter(ch => (Number(ch.id) || 0) !== excludeId && (!beforeOrd || challanOrdinal(ch) < beforeOrd))
+    .map(ch => ({ ch, adv: challanAdvance(ch), ord: challanOrdinal(ch) }))
+    .filter(x => x.adv > 0);
+  if (!ranked.length) return null;
+  const covering = ranked.filter(x => x.adv + 0.5 >= adjustTotal);
+  const pool = covering.length ? covering : ranked;
+  return pool.sort((a, b) => b.ord - a.ord || b.adv - a.adv)[0];
+}
+
+async function findAdvanceChallan(studentID, currentChallan, adjustTotal) {
+  const curOrd = challanOrdinal(currentChallan);
+  const excludeId = Number(currentChallan?.id) || 0;
+  const sid = String(studentID);
+  let best = null;
+  if (curOrd > 0) {
+    const from = monthOfOrdinal(curOrd - 24);
+    const to = monthOfOrdinal(curOrd - 1);
+    try {
+      const rows = await getLedgerRange(from.month, from.year, to.month, to.year);
+      const mine = (rows || []).filter(ch => String(ch.studentID) === sid || String(ch.applicantsID || '') === sid);
+      const hit = pickInList(mine, excludeId, adjustTotal, curOrd);
+      if (hit && hit.adv + 0.5 >= adjustTotal) return hit.ch;
+      best = hit;
+    } catch (e) { /* month walk below */ }
+  }
+  let m = Number(currentChallan.startMonth || currentChallan.month) || 0;
+  let y = Number(currentChallan.startYear || currentChallan.year) || 0;
+  for (let i = 0; i < 18 && m && y; i++) {
+    m = m === 1 ? 12 : m - 1;
+    if (m === 12) y -= 1;
+    const list = await getStudentChallans(studentID, m, y).catch(() => []);
+    const hit = pickInList(list, excludeId, adjustTotal, curOrd);
+    if (!hit) continue;
+    if (!best || hit.adv > best.adv) best = hit;
+    if (hit.adv + 0.5 >= adjustTotal) return hit.ch;
+  }
+  return best ? best.ch : null;
 }
 
 /* currentChallan: rec (server challan of this month). perHead: modal ke Received amounts (head name → amount).
@@ -53,10 +115,10 @@ export async function runAdvanceAdjust({ studentID, currentChallan, perHead, use
     return { id: r.id, installmentId: 0, receivedAmount: Math.max(0, amt), discount: 0, pendingorAdv: 0, walletId: 0 };
   }).filter(r => r.receivedAmount > 0);
   const adjustTotal = curRows.reduce((a, r) => a + r.receivedAmount, 0);
-  if (!curRows.length || adjustTotal <= 0) throw new Error('Adjust amount kisi head me split nahi hua.');
+  if (!curRows.length || adjustTotal <= 0) throw new Error('The adjust amount could not be applied to any head.');
 
-  const prev = await findAdvanceChallan(studentID, prevMonth, prevYear);
-  if (!prev) throw new Error('Previous month me advance wala challan nahi mila.');
+  const prev = await findAdvanceChallan(studentID, currentChallan, adjustTotal);
+  if (!prev) throw new Error('No earlier challan with an unused advance was found.');
 
   /* Previous challan ki SAB heads (sirf advance wali nahi) — har head ki asli cash
      yaad rakho, taake reset ke baad sab wapas receive ho jayen. */
@@ -70,16 +132,18 @@ export async function runAdvanceAdjust({ studentID, currentChallan, perHead, use
   const newReceived = {};
   prevAll.forEach(r => {
     newReceived[r.id] = cashOriginal[r.id];
-    const advance = Math.min(Math.max(0, -(Number(r.pendingorAdv) || 0)), cashOriginal[r.id]);
+    const advance = advanceOnRow(r);
     if (advance <= 0 || left <= 0) return;
     const take = Math.min(advance, left);
     newReceived[r.id] = cashOriginal[r.id] - take;
     left -= take;
   });
-  if (left > 0) throw new Error(`Advance kam hai — ${adjustTotal} me se ${left} adjust nahi ho saka.`);
+  if (left > 0) throw new Error(`Not enough advance — ${left} of ${adjustTotal} could not be adjusted.`);
 
   /* Marker pehle: agar aage kuch fail ho to reverse ko pata ho. */
-  writeMark(currentChallan.id, { prevChallanId: prev.id, prevMonth, prevYear, cashOriginal, studentID });
+  const srcMonth = Number(prev.startMonth || prev.month) || prevMonth;
+  const srcYear = Number(prev.startYear || prev.year) || prevYear;
+  writeMark(currentChallan.id, { prevChallanId: prev.id, prevMonth: srcMonth, prevYear: srcYear, cashOriginal, studentID });
 
   await clearReceivingNoAccount(prev.id, userId);
   /* Sab heads wapas — advance wali heads utna kam, baqi heads apni asli raqam par. */
