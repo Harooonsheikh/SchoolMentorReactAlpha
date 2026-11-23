@@ -217,7 +217,8 @@ export default function ExaminationReportsTab({
 function XrDashboardSummary({ exams, dateSheets, syllabusData, resultPacks }) {
   /* HR teachers + class subjects — Teacher Pending Work tab wala hi data. */
   const teacherMeta = useTeacherWorkMeta(exams);
-  const assignments = teacherMeta ? teacherMeta.assignments : null;
+  /* "Teachers With Pending Work" card band hai — sirf usi mein use hota tha.
+  const assignments = teacherMeta ? teacherMeta.assignments : null; */
   /* Results Pending = roster ke wo students jin ka kisi bhi exam mein result (marks) nahi bana —
      Result History jaisa (31 students, 2 ke results → 29 pending). */
   const [rosterIds, setRosterIds] = useState(null);
@@ -274,7 +275,8 @@ function XrDashboardSummary({ exams, dateSheets, syllabusData, resultPacks }) {
     { label: 'Date Sheets Pending', value: plural(pendingDateSheetClasses, 'Class', 'Classes'), icon: 'fa-calendar-days', tone: 'amber' },
     { label: 'Syllabus Pending', value: plural(pendingSyllabusClasses, 'Class', 'Classes'), icon: 'fa-book-open', tone: 'amber' },
     { label: 'Results Pending', value: rosterIds ? plural(resultsPendingCount, 'Student', 'Students') : '…', icon: 'fa-chart-bar', tone: 'red' },
-    { label: 'Teachers With Pending Work', value: assignments ? pendingTeachers.size : '…', icon: 'fa-chalkboard-user', tone: 'red' },
+    /* Card hide (comment) — wapas chahiye ho to uncomment karein aur upar `assignments` bhi.
+    { label: 'Teachers With Pending Work', value: assignments ? pendingTeachers.size : '…', icon: 'fa-chalkboard-user', tone: 'red' }, */
   ];
 
   return (
