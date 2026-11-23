@@ -1993,7 +1993,8 @@ function SetupSummaryStrip({ school, summary, loading }) {
 
 function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast }) {
   const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '', oneLinkUserName: '', oneLinkPassword: '', oneLink: defaultOneLink(), lateSurcharge: 0 };
-  const [showOlPass, setShowOlPass] = useState(false);
+const [showOlPass, setShowOlPass] = useState(false);
+const [showCostPass, setShowCostPass] = useState(false);
   const [f, setF] = useState({ ...init, oneLink: { ...defaultOneLink(), ...(init.oneLink || {}) }, lateSurcharge: init.lateSurcharge ?? 0 });
    const [summary, setSummary] = useState(existing || null);
   const [loadingSummary, setLoadingSummary] = useState(true);
@@ -2116,7 +2117,36 @@ function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast
               <button type="button" onClick={() => setShowOlPass((v) => !v)} aria-label={showOlPass ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', color: 'var(--tm)', cursor: 'pointer' }}>
                 <i className={`fa-solid ${showOlPass ? 'fa-eye-slash' : 'fa-eye'}`} />
               </button>
-            </div>
+                 </div>
+        </div>
+        </div>
+
+        <div className="pay-input-row" style={{ marginTop: 14 }}>
+          <div className="pay-field" style={{ marginBottom: 0 }}>
+            <label>
+              <i className="fa-solid fa-user-tag" style={{ color: 'var(--brand)', marginRight: 4 }} />
+              Customer Transaction Charge (PKR)
+            </label>
+            <input
+              className="pay-input"
+              type="number"
+              value={f.customerTransactionCharge || ''}
+              onChange={(e) => set('customerTransactionCharge', e.target.value)}
+              placeholder="e.g. 25"
+            />
+          </div>
+          <div className="pay-field" style={{ marginBottom: 0 }}>
+            <label>
+              <i className="fa-solid fa-coins" style={{ color: 'var(--brand)', marginRight: 4 }} />
+              Cost Per Transaction (PKR)
+            </label>
+            <input
+              className="pay-input"
+              type="number"
+              value={f.costPerTransaction || ''}
+              onChange={(e) => set('costPerTransaction', e.target.value)}
+              placeholder="e.g. 10"
+            />
           </div>
         </div>
 
