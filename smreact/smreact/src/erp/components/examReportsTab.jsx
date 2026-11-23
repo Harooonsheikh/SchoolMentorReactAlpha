@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 
-/* Examination → Reports. Same six monitoring screens as the front-end
-   exam module, reading this app's live exam / date-sheet / syllabus /
-   result stores (class rows are objects, keys are cls_|scls_|rcls_). */
+/* Examination → Reports. Six monitoring screens fed LIVE by
+   services/examReportsService (every term's exams + per-class date sheet,
+   syllabus and result upload status), merged with whatever the other tabs
+   have just edited. Class rows are objects, keys are cls_|scls_|rcls_. */
 
 const XR_TABS = [
   { id: 'dashboard', label: 'Dashboard Summary', icon: 'fa-gauge-high' },
@@ -72,15 +73,43 @@ function xrStudentId(st) {
   return st?.id ?? st?.studentID ?? st?.StudentID ?? st?.studentId;
 }
 /* A loaded Single Assessment pack: student has marks when the branch-sum list has a row. */
-function xrStudentUploaded(pack, st) {
+function xrMarksRow(pack, st) {
   const id = xrStudentId(st);
+  if (id == null) return null;
   const rows = Array.isArray(pack?.marks) ? pack.marks : [];
-  return rows.some((m) => {
-    const mid = m?.studentID ?? m?.StudentID ?? m?.studentId ?? m?.id;
-    if (id != null && mid != null && String(mid) !== String(id)) return false;
-    const obt = m?.obtainedMarks ?? m?.obtainMarks ?? m?.marks ?? m?.ObtainedMarks;
-    return obt != null && obt !== '';
-  });
+  return rows.find((m) => {
+    const mid = m?.studentID ?? m?.StudentID ?? m?.studentId;
+    return mid != null && String(mid) === String(id);
+  }) || null;
+}
+function xrObtained(m) {
+  const obt = m?.obtainedMarks ?? m?.obtainMarks ?? m?.marks ?? m?.ObtainedMarks;
+  return obt == null || obt === '' ? null : Number(obt);
+}
+function xrStudentUploaded(pack, st) {
+  return xrObtained(xrMarksRow(pack, st)) != null;
+}
+function xrPackTotal(pack) {
+  const subs = Array.isArray(pack?.subjects) ? pack.subjects : [];
+  const sum = Number(subs[0]?.totalMarksSum ?? subs[0]?.TotalMarksSum);
+  if (sum > 0) return sum;
+  return subs.reduce((a, x) => a + (Number(x?.totalMarks ?? x?.TotalMarks) || 0), 0);
+}
+function xrTermNames(terms) {
+  return terms.map((t) => t.term).filter(Boolean);
+}
+function xrInTerm(ex, term) {
+  return !term || xrExamTerm(ex) === term;
+}
+function XrTermSelect({ terms, value, onChange }) {
+  return (
+    <div className="xr-field"><label>Term</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">All Terms</option>
+        {xrTermNames(terms).map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+    </div>
+  );
 }
 
 function xrDateSheetRow(ex, cls, dateSheets) {
@@ -112,11 +141,31 @@ function xrSyllabusSubjects(ex, cls, syllabusData) {
 export default function ExaminationReportsTab({
   reportsSubTab, setReportsSubTab, exams = [], terms = [],
   dateSheets = {}, syllabusData = {}, resultPacks = {},
-  loading = false, onExport,
+  loading = false, progress = null, loadedAt = null, onRefresh, onExport,
 }) {
+  const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
     <>
       <style>{XR_CSS}</style>
+      <div className="xr-toolbar">
+        <div className="xr-toolbar-info">
+          {loading ? (
+            <><i className="fa-solid fa-spinner fa-spin"></i> Loading live exam data{progress && progress.total ? ` — ${progress.done}/${progress.total} classes (${pct}%)` : '…'}</>
+          ) : loadedAt ? (
+            <><i className="fa-solid fa-circle-check"></i> Live data · {exams.length} exam{exams.length === 1 ? '' : 's'} across {terms.length} term{terms.length === 1 ? '' : 's'} · updated {loadedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</>
+          ) : (
+            <><i className="fa-solid fa-circle-info"></i> Waiting for terms…</>
+          )}
+        </div>
+        {onRefresh && (
+          <button type="button" className="xr-refresh" onClick={onRefresh} disabled={loading}>
+            <i className={`fa-solid fa-rotate-right${loading ? ' fa-spin' : ''}`}></i> Refresh
+          </button>
+        )}
+      </div>
+      {loading && progress && progress.total > 0 && (
+        <div className="xr-progress"><div className="xr-progress-fill" style={{ width: `${pct}%` }} /></div>
+      )}
       <div className="xr-subtabs">
         {XR_TABS.map((t) => (
           <button key={t.id} type="button" className={`xr-stab${reportsSubTab === t.id ? ' active' : ''}`} onClick={() => setReportsSubTab(t.id)}>
@@ -124,43 +173,47 @@ export default function ExaminationReportsTab({
           </button>
         ))}
       </div>
-      {loading && (
-        <div className="xr-note" style={{ marginBottom: 12 }}>
-          <i className="fa-solid fa-spinner fa-spin"></i>
-          Loading date sheets and syllabi for this term…
-        </div>
-      )}
       {reportsSubTab === 'dashboard' && (
-        <XrDashboardSummary exams={exams} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} loading={loading} />
+        <XrDashboardSummary exams={exams} terms={terms} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} loading={loading} />
       )}
       {reportsSubTab === 'overview' && <XrExamOverview exams={exams} terms={terms} onExport={onExport} />}
       {reportsSubTab === 'datesheet' && <XrDateSheetStatus exams={exams} terms={terms} dateSheets={dateSheets} onExport={onExport} />}
       {reportsSubTab === 'syllabus' && <XrSyllabusSharing exams={exams} terms={terms} syllabusData={syllabusData} onExport={onExport} />}
-      {reportsSubTab === 'results' && <XrResultUploadStatus exams={exams} resultPacks={resultPacks} onExport={onExport} />}
+      {reportsSubTab === 'results' && <XrResultUploadStatus exams={exams} terms={terms} resultPacks={resultPacks} loading={loading} onExport={onExport} />}
       {reportsSubTab === 'teacher' && (
-        <XrTeacherPendingWork exams={exams} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} onExport={onExport} />
+        <XrTeacherPendingWork exams={exams} terms={terms} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} onExport={onExport} />
       )}
     </>
   );
 }
 
-function XrDashboardSummary({ exams, dateSheets, syllabusData, resultPacks, loading }) {
+function XrDashboardSummary({ exams: allExams, terms, dateSheets, syllabusData, resultPacks, loading }) {
+  const [term, setTerm] = useState('');
+  const exams = allExams.filter((e) => xrInTerm(e, term));
   const completedExams = exams.filter((ex) => ex._statusCls === 'past').length;
   let pendingDateSheetClasses = 0;
   let pendingSyllabusClasses = 0;
   let pendingResultStudents = 0;
+  let uploadedResultStudents = 0;
   let resultClassesSeen = 0;
+  let subjectsScheduled = 0;
+  let subjectsDated = 0;
 
   exams.forEach((ex) => {
     xrClassList(ex).forEach((cls) => {
       const ds = xrDateSheetRow(ex, cls, dateSheets);
       if (ds.loaded && ds.status !== 'Completed') pendingDateSheetClasses += 1;
+      const named = (xrFindEntries(dateSheets, ex.id, 'cls', cls) || []).filter((e) => e && e.subject);
+      subjectsScheduled += named.length;
+      subjectsDated += named.filter((e) => e.date).length;
       const subs = xrSyllabusSubjects(ex, cls, syllabusData);
       if (subs && subs.some((s) => !s.uploaded)) pendingSyllabusClasses += 1;
       const pack = xrResultPack(resultPacks, ex, cls);
       if (pack && Array.isArray(pack.students)) {
         resultClassesSeen += 1;
-        pendingResultStudents += pack.students.filter((st) => !xrStudentUploaded(pack, st)).length;
+        const up = pack.students.filter((st) => xrStudentUploaded(pack, st)).length;
+        uploadedResultStudents += up;
+        pendingResultStudents += pack.students.length - up;
       }
     });
   });
@@ -170,14 +223,20 @@ function XrDashboardSummary({ exams, dateSheets, syllabusData, resultPacks, load
     { label: 'Completed Exams', value: completedExams, icon: 'fa-flag-checkered', tone: 'green' },
     { label: 'Date Sheets Pending', value: loading ? '…' : `${pendingDateSheetClasses} Class${pendingDateSheetClasses === 1 ? '' : 'es'}`, icon: 'fa-calendar-days', tone: 'amber' },
     { label: 'Syllabus Pending', value: loading ? '…' : `${pendingSyllabusClasses} Class${pendingSyllabusClasses === 1 ? '' : 'es'}`, icon: 'fa-book-open', tone: 'amber' },
-    { label: 'Results Pending', value: resultClassesSeen ? `${pendingResultStudents} Student${pendingResultStudents === 1 ? '' : 's'}` : '—', icon: 'fa-chart-bar', tone: 'red' },
-    { label: 'Classes On This Term', value: exams.reduce((n, ex) => n + xrClassList(ex).length, 0), icon: 'fa-chalkboard-user', tone: 'blue' },
+    { label: 'Results Pending', value: loading && !resultClassesSeen ? '…' : resultClassesSeen ? `${pendingResultStudents} Student${pendingResultStudents === 1 ? '' : 's'}` : '—', icon: 'fa-chart-bar', tone: 'red' },
+    { label: term ? 'Exam Classes In Term' : 'Exam Classes (All Terms)', value: exams.reduce((n, ex) => n + xrClassList(ex).length, 0), icon: 'fa-chalkboard-user', tone: 'blue' },
+    { label: 'Date Sheet Coverage', value: subjectsScheduled ? `${Math.round((subjectsDated / subjectsScheduled) * 100)}%` : '—', icon: 'fa-clock', tone: 'green' },
+    { label: 'Results Uploaded', value: resultClassesSeen ? `${uploadedResultStudents} / ${uploadedResultStudents + pendingResultStudents}` : '—', icon: 'fa-user-check', tone: 'green' },
+    { label: 'Upcoming / Ongoing Exams', value: exams.filter((ex) => ex._statusCls && ex._statusCls !== 'past').length, icon: 'fa-hourglass-half', tone: 'amber' },
   ];
 
   return (
     <div className="section-card">
       <div className="xr-card-head">
         <div className="xr-card-title"><i className="fa-solid fa-gauge-high"></i> Examination Dashboard Summary</div>
+      </div>
+      <div className="xr-filter-bar">
+        <XrTermSelect terms={terms} value={term} onChange={setTerm} />
       </div>
       <div className="xr-kpi-grid">
         {cards.map((c) => (
@@ -188,7 +247,7 @@ function XrDashboardSummary({ exams, dateSheets, syllabusData, resultPacks, load
           </div>
         ))}
       </div>
-      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Counts use the exams in the term selected on Exam Setup, plus date sheets and syllabi loaded for that term. Result pending counts appear after a class is opened in Single Assessment.</div>
+      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> All counts come live from the exams, date sheets, syllabi and uploaded marks of every term in this session. Press Refresh after changes made on another device.</div>
     </div>
   );
 }
@@ -254,7 +313,7 @@ function XrExamOverview({ exams, terms, onExport }) {
             <th style={{ textAlign: 'center' }}>Duration</th><th>Classes Included</th><th style={{ textAlign: 'center' }}>Status</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 ? <tr><td colSpan={6} className="xr-empty">No exams match these filters. Pick a term on Exam Setup to load its exams.</td></tr> : rows.map((r, i) => (
+            {rows.length === 0 ? <tr><td colSpan={6} className="xr-empty">No exams match these filters.</td></tr> : rows.map((r, i) => (
               <tr key={i}>
                 <td style={{ fontWeight: 700 }}>{r.name}</td>
                 <td style={{ textAlign: 'center' }}>{r.from}</td>
@@ -267,7 +326,7 @@ function XrExamOverview({ exams, terms, onExport }) {
           </tbody>
         </table>
       </div>
-      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Generated {xrToday()}. This list is the term currently loaded in Examination.</div>
+      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Generated {xrToday()}. Live list of exams across all terms of this session.</div>
     </div>
   );
 }
@@ -458,7 +517,8 @@ function XrSyllabusSharing({ exams, terms, syllabusData, onExport }) {
   );
 }
 
-function XrResultUploadStatus({ exams, resultPacks, onExport }) {
+function XrResultUploadStatus({ exams, terms, resultPacks, loading, onExport }) {
+  const [term, setTerm] = useState('');
   const [examId, setExamId] = useState('');
   const [classKey, setClassKey] = useState('');
   const ex = exams.find((e) => String(e.id) === examId);
@@ -473,12 +533,16 @@ function XrResultUploadStatus({ exams, resultPacks, onExport }) {
         ? pack.mappedSubjectIDs.length
         : (Array.isArray(pack.subjects) ? pack.subjects.length : 0))
       : 0;
+    const maxMarks = pack ? xrPackTotal(pack) : 0;
     const rows = students ? students.map((st) => {
-      const uploaded = xrStudentUploaded(pack, st);
+      const obt = xrObtained(xrMarksRow(pack, st));
+      const uploaded = obt != null;
       return {
         name: xrStudentName(st),
         rollNo: xrStudentRoll(st),
         total: subjectTotal || '—',
+        marks: uploaded ? `${obt}${maxMarks ? ` / ${maxMarks}` : ''}` : '—',
+        score: uploaded && maxMarks ? `${Math.round((obt / maxMarks) * 1000) / 10}%` : '—',
         uploaded: uploaded ? 'Yes' : 'No',
         pending: uploaded ? 0 : 1,
         pct: uploaded ? 100 : 0,
@@ -486,7 +550,7 @@ function XrResultUploadStatus({ exams, resultPacks, onExport }) {
         class: c.cls.name,
       };
     }) : [];
-    return { blockKey: c.key, class: c.cls.name, hasData: !!students, rows };
+    return { blockKey: c.key, class: c.cls.name, hasData: !!students, rows, up: rows.filter((r) => r.uploaded === 'Yes').length };
   }) : [];
   const flatRows = classBlocks.flatMap((b) => b.rows);
 
@@ -496,11 +560,12 @@ function XrResultUploadStatus({ exams, resultPacks, onExport }) {
     groupKey: 'blockKey',
     groupLabel: (r) => r.class,
     columns: [
-      { key: 'name', label: 'Student Name', width: '34%' },
-      { key: 'rollNo', label: 'Roll Number', width: '18%', align: 'center' },
-      { key: 'total', label: 'Subjects', width: '16%', align: 'center' },
-      { key: 'uploaded', label: 'Marks Uploaded', width: '16%', align: 'center' },
-      { key: 'pctLbl', label: 'Completion', width: '16%', align: 'center' },
+      { key: 'name', label: 'Student Name', width: '30%' },
+      { key: 'rollNo', label: 'Roll Number', width: '16%', align: 'center' },
+      { key: 'total', label: 'Subjects', width: '12%', align: 'center' },
+      { key: 'uploaded', label: 'Marks Uploaded', width: '14%', align: 'center' },
+      { key: 'marks', label: 'Obtained', width: '16%', align: 'center' },
+      { key: 'score', label: 'Score', width: '12%', align: 'center' },
     ],
     rows: flatRows.map((r) => ({ ...r, pctLbl: `${r.pct}%` })),
     filename: 'Result-Upload-Status-Report.xlsx',
@@ -514,9 +579,11 @@ function XrResultUploadStatus({ exams, resultPacks, onExport }) {
         {ex && flatRows.length > 0 && <button type="button" className="export-btn pdf" onClick={() => onExport(exportSpec())}><i className="fa-solid fa-download"></i> Export</button>}
       </div>
       <div className="xr-filter-bar">
+        <XrTermSelect terms={terms} value={term} onChange={(v) => { setTerm(v); setExamId(''); setClassKey(''); }} />
         <div className="xr-field"><label>Exam</label>
           <select value={examId} onChange={(e) => { setExamId(e.target.value); setClassKey(''); }}>
-            <option value="">Select Exam…</option>{exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            <option value="">Select Exam…</option>
+            {exams.filter((e) => xrInTerm(e, term)).map((e) => <option key={e.id} value={e.id}>{e.name}{term ? '' : ` (${xrExamTerm(e) || '—'})`}</option>)}
           </select>
         </div>
         <div className="xr-field"><label>Class</label>
@@ -532,15 +599,16 @@ function XrResultUploadStatus({ exams, resultPacks, onExport }) {
           <div className="xr-class-block-head">
             <div className="xr-class-block-name"><i className="fa-solid fa-chalkboard"></i> {b.class}</div>
             <div className="xr-class-block-meta">{ex.name}</div>
-            {b.hasData && <div className="xr-class-block-badge">{b.rows.length} student{b.rows.length === 1 ? '' : 's'}</div>}
+            {b.hasData && <div className="xr-class-block-badge">{b.up}/{b.rows.length} uploaded</div>}
           </div>
           {!b.hasData ? (
-            <div className="xr-empty">Open this class in Results → Single Assessment to load upload status.</div>
+            <div className="xr-empty">{loading ? 'Loading students and marks…' : 'Could not load students for this class. Press Refresh to try again.'}</div>
           ) : (
             <table className="xr-table xr-table--nested">
               <thead><tr>
                 <th>Student Name</th><th style={{ textAlign: 'center' }}>Roll Number</th>
                 <th style={{ textAlign: 'center' }}>Subjects</th><th style={{ textAlign: 'center' }}>Marks</th>
+                <th style={{ textAlign: 'center' }}>Obtained</th><th style={{ textAlign: 'center' }}>Score</th>
                 <th style={{ textAlign: 'center', width: 90 }}>Completion</th>
               </tr></thead>
               <tbody>
@@ -550,6 +618,8 @@ function XrResultUploadStatus({ exams, resultPacks, onExport }) {
                     <td style={{ textAlign: 'center' }}>{r.rollNo}</td>
                     <td style={{ textAlign: 'center' }}>{r.total}</td>
                     <td style={{ textAlign: 'center' }}>{r.uploaded === 'Yes' ? <span className="xr-status-pill completed">Uploaded</span> : <span className="xr-status-pill pending">Pending</span>}</td>
+                    <td style={{ textAlign: 'center' }}>{r.marks}</td>
+                    <td style={{ textAlign: 'center' }}>{r.score}</td>
                     <td>
                       <div className="xr-pct-bar"><div className={`xr-pct-fill${r.pending > 0 ? ' incomplete' : ''}`} style={{ width: `${r.pct}%` }} /></div>
                       <div style={{ fontSize: 10, textAlign: 'center', marginTop: 2 }}>{r.pct}%</div>
@@ -586,7 +656,9 @@ function xrRealPending(ex, cls, dateSheets, syllabusData, resultPacks) {
   return tasks;
 }
 
-function XrTeacherPendingWork({ exams, dateSheets, syllabusData, resultPacks, onExport }) {
+function XrTeacherPendingWork({ exams: allExams, terms, dateSheets, syllabusData, resultPacks, onExport }) {
+  const [term, setTerm] = useState('');
+  const exams = allExams.filter((e) => xrInTerm(e, term));
   const [workType, setWorkType] = useState('');
   const [examId, setExamId] = useState('');
   const [classFilter, setClassFilter] = useState('');
@@ -614,7 +686,7 @@ function XrTeacherPendingWork({ exams, dateSheets, syllabusData, resultPacks, on
     ],
     rows,
     filename: 'Exam-Pending-Work-Report.xlsx',
-    metaLine: `${workTypeLabel}  ·  Class: ${classFilter || 'All'}  ·  Exam: ${examLabel}  ·  ${rows.length} pending items`,
+    metaLine: `Term: ${term || 'All'}  ·  ${workTypeLabel}  ·  Class: ${classFilter || 'All'}  ·  Exam: ${examLabel}  ·  ${rows.length} pending items`,
   });
 
   return (
@@ -624,6 +696,7 @@ function XrTeacherPendingWork({ exams, dateSheets, syllabusData, resultPacks, on
         <button type="button" className="export-btn pdf" onClick={() => onExport(exportSpec())}><i className="fa-solid fa-download"></i> Export</button>
       </div>
       <div className="xr-filter-bar">
+        <XrTermSelect terms={terms} value={term} onChange={(v) => { setTerm(v); setExamId(''); }} />
         <div className="xr-field"><label>Class</label>
           <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)}>
             <option value="">All Classes</option>{classNames.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -654,12 +727,20 @@ function XrTeacherPendingWork({ exams, dateSheets, syllabusData, resultPacks, on
           </tbody>
         </table>
       </div>
-      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Lists classes whose date sheet, syllabus, or opened result upload is still incomplete. Generated {xrToday()}.</div>
+      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Lists classes whose date sheet, syllabus, or result marks upload is still incomplete. Generated {xrToday()}.</div>
     </div>
   );
 }
 
 const XR_CSS = `
+.xr-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.xr-toolbar-info { font-size: 12px; color: var(--text-muted); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.xr-toolbar-info i { color: var(--brand-solid, #1E40AF); }
+.xr-refresh { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1.5px solid var(--border-light); border-radius: 8px; background: var(--bg-card); color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.xr-refresh:hover:not(:disabled) { border-color: #93C5FD; color: var(--brand-solid, #1E40AF); }
+.xr-refresh:disabled { opacity: .6; cursor: progress; }
+.xr-progress { height: 4px; border-radius: 99px; background: var(--border-light); overflow: hidden; margin-bottom: 14px; }
+.xr-progress-fill { height: 100%; background: linear-gradient(90deg,#1E40AF,#3B82F6); transition: width .25s ease; }
 .xr-subtabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .xr-stab {
   display: inline-flex; align-items: center; gap: 7px;

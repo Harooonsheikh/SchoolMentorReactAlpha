@@ -39,6 +39,7 @@ import {
 } from './examGradingDefaults';
 import { downloadAllCards as examDownloadAllCards } from './examDownloadAll';
 import ExaminationReportsTab from './examReportsTab';
+import { loadExamReportsData } from '../services/examReportsService';
 
 /* ── Shared report-kit glue: header / footer / toolbar come from reportKit.
    School name + academic year stay LIVE — they come from the /report-header
@@ -883,6 +884,20 @@ const rcSafeTemplate = (id) =>
    on/off. Backend me iska field nahi, is liye template ki tarah localStorage me rehta
    hai (is browser ke liye). Default ON. Card DOM ka hissa hai, is liye print/PDF me bhi aata hai. */
 const RC_WATERMARK_PREF_KEY = 'sm.exam.resultCardWatermark';
+
+/* Card par class label — callers "Grade 1 - A" (grade + section) pehle se bhejte hain.
+   Pehle har template iske aage hardcoded "· Section A" / "· A" laga deta tha, to har
+   class ka section "A" dikhta tha (B/C/Green waghera bhi). */
+function rcClassLabel(ex) {
+  return String((ex && ex.classes && ex.classes[0]) || '').trim() || '—';
+}
+/* Insight bars: Obtained / Total toggles alag alag — dono on "45/50", sirf obtained "45",
+   sirf total "/50". Pehle koi ek bhi on ho to dono dikhte the. */
+function rcObtTot(opt, obt, tot) {
+  if (opt['Show Obtained Marks'] && opt['Show Total Marks']) return `${obt}/${tot}`;
+  if (opt['Show Obtained Marks']) return `${obt}`;
+  return `/${tot}`;
+}
 function RcWatermark({ logo, half, pageBreak }) {
   let on = true;
   try {
@@ -1066,6 +1081,13 @@ function dsMapApiRow(item) {
   };
 }
 
+/* Reports: API-loaded bags + jo user ne doosre tabs me abhi edit/load kiya (wo zyada taaza). */
+function xrMergeBags(base, live) {
+  const out = { ...(base || {}) };
+  Object.entries(live || {}).forEach(([id, bag]) => { out[id] = { ...(out[id] || {}), ...(bag || {}) }; });
+  return out;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
@@ -1123,7 +1145,10 @@ export default function Examination({ toast = () => { } }) {
   const [reportsSubTab, setReportsSubTab] = useState('dashboard');
   const [xReportReq, setXReportReq] = useState(null);
   const [reportsLoading, setReportsLoading] = useState(false);
-  const reportsLoadedRef = useRef(new Set());
+  const [reportData, setReportData] = useState(null); // { exams, dateSheets, syllabus, results }
+  const [reportsReloadTick, setReportsReloadTick] = useState(0);
+  const [reportsProgress, setReportsProgress] = useState({ done: 0, total: 0 });
+  const [reportsLoadedAt, setReportsLoadedAt] = useState(null);
 
   /* Agar active tab ka View permission nahi, to pehle visible tab par snap karo. */
   useEffect(() => {
@@ -2981,9 +3006,14 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
       }
       setRcoSettings(s);
       rcoSettingsRef.current = s;
-      // API ke boolean fields se toggles ka on/off set karo
-      setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
-      setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
+      // API ke boolean fields se toggles ka on/off set karo. Field naam case-insensitive
+      // (e.g. showClassAndSection / ShowClassandSection) — warna toggle save hone ke
+      // bawajood card par "off" padhta tha.
+      const sLower = {};
+      Object.keys(s).forEach(k => { sLower[k.toLowerCase()] = s[k]; });
+      const flag = f => !!(s[f] ?? sLower[String(f).toLowerCase()]);
+      setRcoGeneral(g => g.map(it => ({ ...it, on: flag(RCO_GENERAL_FIELD[it.label]) })));
+      setRcoSig(g => g.map(it => ({ ...it, on: flag(RCO_SIG_FIELD[it.label]) })));
       // Signature selection (max 2) → saved signature1 / signature2 se restore karo.
       setRsSigs(list => list.map(sg => ({ ...sg, on: !!((Number(s.signature1) && Number(sg.id) === Number(s.signature1)) || (Number(s.signature2) && Number(sg.id) === Number(s.signature2))) })));
       // Record mojood hai magar saare toggles band hain → card khaali chhapega,
@@ -4737,69 +4767,29 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
       return [];
     }
   }
-  /* Reports tab — pull date sheet + syllabus for every class of the loaded exams. */
+  /* Reports tab — LIVE: har term ke exams + har class ka date sheet, syllabus aur
+     result upload status seedha API se (examReportsService). Tab par aate hi aur
+     Refresh par dobara load hota hai; purana data load ke dauran dikhta rehta hai. */
   useEffect(() => {
-    if (tab !== 'reports' || !exams.length) return undefined;
-    const pending = exams.filter((ex) => ex && ex.id != null && !reportsLoadedRef.current.has(String(ex.id)));
-    if (!pending.length) return undefined;
+    if (tab !== 'reports' || !terms.length) return undefined;
     let cancel = false;
     setReportsLoading(true);
-    (async () => {
-      const dsPatch = {};
-      const sylPatch = {};
-      const queue = [];
-      pending.forEach((ex) => {
-        (Array.isArray(ex.classes) ? ex.classes : []).forEach((cls, idx) => {
-          if (!cls || typeof cls !== 'object' || cls.classID == null) return;
-          queue.push({ ex, cls, idx });
-        });
-      });
-      const runOne = async ({ ex, cls, idx }) => {
-        const dsKey = `cls_${ex.id}_${cls.sectionID}_${idx}`;
-        const sylKey = `scls_${ex.id}_${cls.sectionID}_${idx}`;
-        const [dsRows, sylRows] = await Promise.all([
-          getDateSheetData(cls.classID, cls.sectionID, ex.id, ex.termID),
-          getExamSyllabusByClassAndTerms(cls.classID, cls.sectionID, ex.selectExam, ex.termID, 1),
-        ]);
-        if (!dsPatch[ex.id]) dsPatch[ex.id] = {};
-        if (!sylPatch[ex.id]) sylPatch[ex.id] = {};
-        dsPatch[ex.id][dsKey] = dsRows || [];
-        const seen = new Set();
-        sylPatch[ex.id][sylKey] = (sylRows || []).reduce((acc, r) => {
-          const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
-          if (dk && seen.has(dk)) return acc;
-          if (dk) seen.add(dk);
-          acc.push({
-            subject: r.subjectDisplayName || r.subjectName || '',
-            content: r.subjectDetails || '',
-            updatedAt: r.updatedAt || r.UpdatedOn || '—',
-          });
-          return acc;
-        }, []);
-      };
-      for (let i = 0; i < queue.length; i += 4) {
+    setReportsProgress({ done: 0, total: 0 });
+    loadExamReportsData(terms, {
+      mapDateSheetRow: dsMapApiRow,
+      isCancelled: () => cancel,
+      onProgress: (done, total) => { if (!cancel) setReportsProgress({ done, total }); },
+    })
+      .then((data) => {
         if (cancel) return;
-        // eslint-disable-next-line no-await-in-loop
-        await Promise.all(queue.slice(i, i + 4).map((job) => runOne(job).catch(() => {})));
-      }
-      if (cancel) return;
-      pending.forEach((ex) => reportsLoadedRef.current.add(String(ex.id)));
-      setDateSheets((prev) => {
-        const next = { ...prev };
-        Object.entries(dsPatch).forEach(([id, map]) => { next[id] = { ...(next[id] || {}), ...map }; });
-        return next;
-      });
-      setSyllabusData((prev) => {
-        const next = { ...prev };
-        Object.entries(sylPatch).forEach(([id, map]) => { next[id] = { ...(next[id] || {}), ...map }; });
-        return next;
-      });
-      setReportsLoading(false);
-    })().catch(() => { if (!cancel) setReportsLoading(false); });
+        setReportData(data);
+        setReportsLoadedAt(new Date());
+      })
+      .catch((e) => { console.error('Exam reports: could not load', e); if (!cancel) toast('Could not load examination reports', 'error'); })
+      .finally(() => { if (!cancel) setReportsLoading(false); });
     return () => { cancel = true; setReportsLoading(false); };
-    /* getDateSheetData / getExamSyllabusByClassAndTerms are recreated each render; exams identity is the trigger. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, exams]);
+  }, [tab, terms, reportsReloadTick]);
   async function deleteSyllabusByAllIds(classID, sectionID, selectExam, termName) {
     try {
       const branchID = sessionStorage.getItem('branchID');
@@ -5000,7 +4990,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         <ExaminationReportsTab
           reportsSubTab={reportsSubTab}
           setReportsSubTab={setReportsSubTab}
-          exams={exams.map((ex) => {
+          exams={(reportData?.exams || exams).map((ex) => {
             const st = getExamStatus(ex);
             return {
               ...ex,
@@ -5012,10 +5002,13 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
             };
           })}
           terms={terms}
-          dateSheets={dateSheets}
-          syllabusData={syllabusData}
-          resultPacks={resStudentData}
+          dateSheets={xrMergeBags(reportData?.dateSheets, dateSheets)}
+          syllabusData={xrMergeBags(reportData?.syllabus, syllabusData)}
+          resultPacks={{ ...(reportData?.results || {}), ...resStudentData }}
           loading={reportsLoading}
+          progress={reportsProgress}
+          loadedAt={reportsLoadedAt}
+          onRefresh={() => setReportsReloadTick((n) => n + 1)}
           onExport={setXReportReq}
         />
       )}
@@ -10927,7 +10920,7 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
         {opt['Show Class and Section'] ? (
           <div>
             <div style={{ fontSize: 8, fontWeight: 700, color: textMut, textTransform: 'uppercase', letterSpacing: '.4px' }}>Class</div>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: textSec, marginTop: 1 }}>{ex.classes[0] || '—'} · Section A</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: textSec, marginTop: 1 }}>{rcClassLabel(ex)}</div>
           </div>
         ) : <div />}
         <div>
@@ -11259,7 +11252,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         {opt['Show Class and Section'] ? (
           <div>
             <div style={{ fontSize: 8, fontWeight: 700, color: textMut, textTransform: 'uppercase', letterSpacing: '.4px' }}>Class</div>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: accent, marginTop: 1 }}>{ex.classes[0] || '—'} · A</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: accent, marginTop: 1 }}>{rcClassLabel(ex)}</div>
           </div>
         ) : <div />}
         <div>
@@ -11299,8 +11292,9 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         </div>
       )}
 
-      {/* Subject performance bars */}
-      <div style={{ padding: '12px 20px 8px' }}>
+      {/* Subject performance bars — "Show Subject-wise Marks" off ho to poora block band
+          (Classic/Portfolio me bhi yahi toggle subject-wise table ka hai). */}
+      {opt['Show Subject-wise Marks'] && <div style={{ padding: '12px 20px 8px' }}>
         <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 8 }}>
           Subject Performance
         </div>
@@ -11315,7 +11309,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
             </div>
             {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
               <div style={{ width: 36, textAlign: 'right', fontSize: 10, color: textMut, flexShrink: 0 }}>
-                {d.isAbs ? '—' : `${d.obt}/${d.tot}`}
+                {d.isAbs ? '—' : rcObtTot(opt, d.obt, d.tot)}
               </div>
             )}
             {opt['Show Grade'] && (
@@ -11339,12 +11333,12 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           <div style={{ width: 30, textAlign: 'right', fontSize: 10.5, fontWeight: 800, color: accent, flexShrink: 0 }}>{gtPct}%</div>
           {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
             <div style={{ width: 36, textAlign: 'right', fontSize: 10, fontWeight: 700, color: accent, flexShrink: 0 }}>
-              {obtAll}/{totalAll}
+              {rcObtTot(opt, obtAll, totalAll)}
             </div>
           )}
           {opt['Show Grade'] && <div style={{ width: 22, flexShrink: 0 }} />}
         </div>
-      </div>
+      </div>}
 
       {/* Final Remarks */}
       {opt['Show Final Remarks'] && finalRem && (
@@ -11552,7 +11546,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             )}
             <div style={{ fontSize: 10, color: C.hdrTextMut, marginTop: 2 }}>Academic Portfolio Report &nbsp;·&nbsp; {ex.name}</div>
           </div>
-          {ovGrade && (
+          {opt['Show Grade'] && ovGrade && (
             <div style={{ textAlign: 'center', background: C.hdrChip, borderRadius: 14, padding: '10px 18px', border: `1px solid ${C.hdrChipBdr}`, flexShrink: 0 }}>
               <div style={{ fontSize: 30, fontWeight: 900, color: C.gold }}>{ovGrade.grade}</div>
               <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: C.hdrTextMut }}>Grade</div>
@@ -11581,19 +11575,19 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
               )}
               {opt['Show Class and Section'] && (
                 <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: C.hdrChip, color: C.hdrText, border: `1px solid ${C.hdrChipBdr}` }}>
-                  <i className="fa-solid fa-chalkboard" style={{ fontSize: 8.5, marginRight: 3 }}></i>{ex.classes[0] || '—'} · A
+                  <i className="fa-solid fa-chalkboard" style={{ fontSize: 8.5, marginRight: 3 }}></i>{rcClassLabel(ex)}
                 </span>
               )}
               <span style={{ fontSize: 10, color: C.hdrTextMut }}>{today}</span>
             </div>
           </div>
           {/* Overall % — same rounded-rectangle chip as the Grade badge above (reference design) */}
-          <div style={{ textAlign: 'center', flexShrink: 0 }}>
+          {opt['Show Percentage'] && <div style={{ textAlign: 'center', flexShrink: 0 }}>
             <div style={{ minWidth: 72, padding: '9px 14px', borderRadius: 14, background: C.hdrChip, border: `1px solid ${C.hdrChipBdr}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
               <div style={{ fontSize: 18, fontWeight: 900, color: C.hdrText, lineHeight: 1, whiteSpace: 'nowrap' }}>{ovPct}%</div>
               <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', color: C.hdrTextMut, letterSpacing: '.5px' }}>Score</div>
             </div>
-          </div>
+          </div>}
         </div>
       </div>
 
@@ -11746,7 +11740,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
                 </div>
                 {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
                   <div style={{ width: 36, textAlign: 'right', fontSize: 9.5, color: C.textM, flexShrink: 0 }}>
-                    {d.isAbs ? '—' : `${d.obt}/${d.tot}`}
+                    {d.isAbs ? '—' : rcObtTot(opt, d.obt, d.tot)}
                   </div>
                 )}
                 <div style={{ width: 32, textAlign: 'right', fontSize: 10.5, fontWeight: 800, color: lblC, flexShrink: 0 }}>

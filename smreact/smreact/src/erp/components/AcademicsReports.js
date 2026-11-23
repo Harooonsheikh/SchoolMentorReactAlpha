@@ -407,8 +407,6 @@ function LessonPlanReportPanel() {
         <ColumnToggles label="Columns To Include" options={LP_COLUMNS} selected={cols} onChange={setCols} />
       </div>
 
-      <ReportPreviewTable columns={columns} rows={sorted.map(r => rowMapper(r, 'excel'))} emptyText="No lesson plans match the selected filters." />
-
       <ReportActions title="Lesson Plan Submission Report" disabled={cols.length === 0} onGenerate={generate} />
     </div>
   );
@@ -550,7 +548,6 @@ function NotebookPlanReportPanel() {
         <ColumnToggles label="Columns To Include" options={columnOptions} selected={effectiveCols} onChange={setCols} />
       </div>
 
-      <ReportPreviewTable columns={columns} rows={sorted.map(r => rowMapper(r, 'excel'))} emptyText="No question bank units match the selected filters." />
 
       <ReportActions title="Question Bank Submission Report" disabled={effectiveCols.length === 0} onGenerate={generate} />
     </div>
