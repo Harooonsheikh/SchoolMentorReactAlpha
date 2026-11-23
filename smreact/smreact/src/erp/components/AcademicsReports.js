@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import useAsync from '../hooks/useAsync';
 import * as academicsService from '../services/academicsReportsService';
 import { nbUnitItems, nbUnitStatus } from './academicsReportsUnits';
@@ -166,13 +166,97 @@ function fmtDate(d) {
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+/* YYYY-MM-DD (local) — string compare, timezone se din aage/peeche na ho. */
+function ymd(v) {
+  if (!v) return '';
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/* Date filter laga ho to jis row ki date hi nahi wo bahar (pehle wo hamesha
+   report me aa jati thi, isliye date range "kaam nahi karta" lagta tha). */
 function inRange(dateStr, from, to) {
-  if (!dateStr) return true;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return true;
-  if (from && d < new Date(from)) return false;
-  if (to && d > new Date(to)) return false;
+  if (!from && !to) return true;
+  const d = ymd(dateStr);
+  if (!d) return false;
+  if (from && d < from) return false;
+  if (to && d > to) return false;
   return true;
+}
+
+/* Cascading Class → Subject → Teacher options. Records = assignments + report
+   rows (jin cells ka teacher assign nahi wo bhi filter me aayen). Class chuno to
+   sirf usi class ke subjects; class+subject chuno to sirf unke teachers. */
+function useCascadingFilters(records, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers) {
+  const uniq = (arr) => Array.from(new Set(arr.filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)));
+  const classList = useMemo(() => uniq(records.map(r => r.class)), [records]);
+  const subjectList = useMemo(() => uniq(records
+    .filter(r => !fClasses.length || fClasses.includes(r.class))
+    .filter(r => !fTeachers.length || fTeachers.includes(r.teacher))
+    .map(r => r.subject)), [records, fClasses, fTeachers]);
+  const teacherList = useMemo(() => uniq(records
+    .filter(r => !fClasses.length || fClasses.includes(r.class))
+    .filter(r => !fSubjects.length || fSubjects.includes(r.subject))
+    .map(r => r.teacher)), [records, fClasses, fSubjects]);
+
+  /* Jo selection ab options me nahi (class badalne par) usay hata do. */
+  useEffect(() => {
+    if (fSubjects.some(s => !subjectList.includes(s))) setFSubjects(fSubjects.filter(s => subjectList.includes(s)));
+  }, [subjectList]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (fTeachers.some(t => !teacherList.includes(t))) setFTeachers(fTeachers.filter(t => teacherList.includes(t)));
+  }, [teacherList]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return { classList, subjectList, teacherList };
+}
+
+/* Row teacher filter: row ka apna teacher YA koi bhi chuna hua teacher jo us
+   class+subject par assigned hai (ek cell ke kai teachers ho sakte hain). */
+function useTeacherMatcher(assignments, fTeachers) {
+  return useMemo(() => {
+    if (!fTeachers.length) return () => true;
+    const cells = new Set(assignments.filter(a => fTeachers.includes(a.teacher)).map(a => `${a.class}||${a.subject}`));
+    return (r) => fTeachers.includes(r.teacher) || cells.has(`${r.class}||${r.subject}`);
+  }, [assignments, fTeachers]);
+}
+
+/* On-screen preview of exactly what the report will contain (plain text cells). */
+function ReportPreviewTable({ columns, rows, emptyText, limit = 100 }) {
+  if (!columns.length) return null;
+  return (
+    <div className="aca-rep-preview">
+      <div className="aca-rep-flabel" style={{ marginBottom: 8 }}>
+        <i className="fa-solid fa-table"></i> Preview — {rows.length} row{rows.length === 1 ? '' : 's'}
+        {rows.length > limit ? ` (showing first ${limit}; the report includes all)` : ''}
+      </div>
+      <div style={{ overflowX: 'auto', border: '1px solid var(--border-light)', borderRadius: 10 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ background: 'rgba(var(--brand-dark-rgb, 30,64,175), .06)' }}>
+              {columns.map(c => (
+                <th key={c.key} style={{ textAlign: 'left', padding: '8px 10px', fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.3px', color: 'var(--text-muted)', whiteSpace: 'nowrap', borderBottom: '1px solid var(--border-light)' }}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={columns.length} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>{emptyText}</td></tr>
+            ) : rows.slice(0, limit).map((r, i) => (
+              <tr key={i}>
+                {columns.map(c => (
+                  <td key={c.key} style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)', color: 'var(--text-primary)' }}>{r[c.key] ?? '—'}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 /* ─── Shared "Generate Report" trigger + builder, reused by every
@@ -233,27 +317,29 @@ function LessonPlanReportPanel() {
   /* Sirf is tab pe LP + filter lists — NB / setup / activities nahi. */
   const { data: lpData = [], loading: lpLoading } = useAsync(academicsService.getSubLpData, []);
   const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
-  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
-  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
-  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
 
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
+  const filterRecords = useMemo(() => [...teacherAssignments, ...lpData], [teacherAssignments, lpData]);
+  const { classList, subjectList, teacherList } = useCascadingFilters(
+    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers,
+  );
   const [fStatus, setFStatus] = useState('all');
   const [fFrom, setFFrom] = useState('');
   const [fTo, setFTo] = useState('');
   const [groupBy, setGroupBy] = useState('none');
   const [cols, setCols] = useState(LP_COLUMNS.map(c => c.key));
 
+  const teacherMatch = useTeacherMatcher(teacherAssignments, fTeachers);
   const filtered = useMemo(() => lpData.filter(r => {
     if (fClasses.length && !fClasses.includes(r.class)) return false;
     if (fSubjects.length && !fSubjects.includes(r.subject)) return false;
-    if (fTeachers.length && !fTeachers.includes(r.teacher)) return false;
+    if (!teacherMatch(r)) return false;
     if (fStatus !== 'all' && r.status !== fStatus) return false;
-    if (!inRange(r.date, fFrom, fTo)) return false;
+    if (!inRange(r.date || r.submittedDate, fFrom, fTo)) return false;
     return true;
-  }), [lpData, fClasses, fSubjects, fTeachers, fStatus, fFrom, fTo]);
+  }), [lpData, fClasses, fSubjects, teacherMatch, fStatus, fFrom, fTo]);
 
   const sorted = useMemo(() => {
     if (groupBy === 'none') return filtered;
@@ -321,6 +407,8 @@ function LessonPlanReportPanel() {
         <ColumnToggles label="Columns To Include" options={LP_COLUMNS} selected={cols} onChange={setCols} />
       </div>
 
+      <ReportPreviewTable columns={columns} rows={sorted.map(r => rowMapper(r, 'excel'))} emptyText="No lesson plans match the selected filters." />
+
       <ReportActions title="Lesson Plan Submission Report" disabled={cols.length === 0} onGenerate={generate} />
     </div>
   );
@@ -344,13 +432,14 @@ const NB_ITEM_COLUMNS = [
 function NotebookPlanReportPanel() {
   const { data: nbData = [], loading: nbLoading } = useAsync(academicsService.getSubNbData, []);
   const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
-  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
-  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
-  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
 
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
+  const filterRecords = useMemo(() => [...teacherAssignments, ...nbData], [teacherAssignments, nbData]);
+  const { classList, subjectList, teacherList } = useCascadingFilters(
+    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers,
+  );
   const [fStatus, setFStatus] = useState('all');
   const [granularity, setGranularity] = useState('unit'); // 'unit' | 'item'
   const [groupBy, setGroupBy] = useState('none');
@@ -362,12 +451,13 @@ function NotebookPlanReportPanel() {
     [cols, columnOptions]
   );
 
+  const teacherMatch = useTeacherMatcher(teacherAssignments, fTeachers);
   const unitsFiltered = useMemo(() => nbData.filter(u => {
     if (fClasses.length && !fClasses.includes(u.class)) return false;
     if (fSubjects.length && !fSubjects.includes(u.subject)) return false;
-    if (fTeachers.length && !fTeachers.includes(u.teacher)) return false;
+    if (!teacherMatch(u)) return false;
     return true;
-  }), [nbData, fClasses, fSubjects, fTeachers]);
+  }), [nbData, fClasses, fSubjects, teacherMatch]);
 
   const unitRows = useMemo(() => unitsFiltered.map(u => {
     const items = nbUnitItems(u);
@@ -460,6 +550,8 @@ function NotebookPlanReportPanel() {
         <ColumnToggles label="Columns To Include" options={columnOptions} selected={effectiveCols} onChange={setCols} />
       </div>
 
+      <ReportPreviewTable columns={columns} rows={sorted.map(r => rowMapper(r, 'excel'))} emptyText="No question bank units match the selected filters." />
+
       <ReportActions title="Question Bank Submission Report" disabled={effectiveCols.length === 0} onGenerate={generate} />
     </div>
   );
@@ -479,13 +571,14 @@ function TeacherWorkloadReportPanel() {
   const { data: lpData = [], loading: lpLoading } = useAsync(academicsService.getSubLpData, []);
   const { data: nbData = [], loading: nbLoading } = useAsync(academicsService.getSubNbData, []);
   const { data: teacherAssignments = [], loading: assignLoading } = useAsync(academicsService.getAcademicsTeacherAssignments, []);
-  const classList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.class))).sort(), [teacherAssignments]);
-  const subjectList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.subject))).sort(), [teacherAssignments]);
-  const teacherList = useMemo(() => Array.from(new Set(teacherAssignments.map(a => a.teacher))).sort(), [teacherAssignments]);
 
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
+  /* Workload sirf assigned teachers ka — options bhi assignments se, cascading. */
+  const { classList, subjectList, teacherList } = useCascadingFilters(
+    teacherAssignments, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers,
+  );
   const [includeLp, setIncludeLp] = useState(true);
   const [includeNb, setIncludeNb] = useState(true);
   const [sortBy, setSortBy] = useState('teacher');
@@ -808,7 +901,12 @@ export default function AcademicsReportsTab() {
   const { can } = usePermissions();
   const canView = can('Academics', 'Reports', 'View');
 
-  /* Data fetch har panel ke andar — sirf active tile mount hoti hai. */
+  /* Data fetch har panel ke andar — sirf active tile mount hoti hai. Shared
+     bundle (classes/teachers + LP) tab khulte hi background me warm; panels
+     usi cached promise ko reuse karte hain, dobara call nahi. */
+  useEffect(() => {
+    if (canView) academicsService.prefetchAcademicsReports();
+  }, [canView]);
 
   if (!canView) {
     return (

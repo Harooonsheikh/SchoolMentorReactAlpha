@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import LessonPlans from './LessonPlans';
@@ -1141,7 +1141,10 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
   const [purpose, setPurpose] = useState('');
   const [development, setDevelopment] = useState('');
   const [resource, setResource] = useState('');
-   const [saving, setSaving] = useState(false); // for save new activity
+  const [saving, setSaving] = useState(false); // for save new activity
+  /* Double-click guard: state re-render se pehle doosra click bhi submit chala deta tha
+     (activity 2 baar banti thi) — ref turant lock karta hai. */
+  const savingRef = useRef(false);
   /* Audience: 'school' = everyone, 'classes' = only the picked classes. */
   const [audience, setAudience] = useState('school');
   const [classes, setClasses] = useState([]);
@@ -1179,6 +1182,7 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
   const colors = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#1E40AF', '#E11D48'];
 
   const submit = async () => {
+  if (savingRef.current) return;
   if (!name.trim()) return;
   if (audience === 'classes' && !classes.length) { setAudErr(true); return; }
   if (!start || !end) return;
@@ -1210,6 +1214,7 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
     return;
   }
 
+  savingRef.current = true;
   setSaving(true);
 
   try {
@@ -1233,6 +1238,8 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
       /* Audience — empty = whole school. */
       classes: pickedClasses,
       createdDate: new Date().toISOString(),
+      /* Teacher Performance report "Activities Created" isi se ginta hai. */
+      ...(editing ? {} : { createdBy: Number(sessionStorage.getItem('employee_ID')) || 0 }),
       action: editing ? 'update' : 'insert',
     };
 
@@ -1277,6 +1284,7 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
     console.error('Error saving activity:', e);
     (toast || window.alert)(e.message || 'Could not save activity', 'error');
   } finally {
+    savingRef.current = false;
     setSaving(false);
   }
 };
@@ -1363,11 +1371,12 @@ function ActivityModal({ open, editing, onClose, onSave, toast, classOptions = [
         </div>
         <div className="modal-footer">
           <Tooltip text="Discard changes and close">
-            <button className="btn btn-secondary" onClick={onClose}>Close</button>
+            <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Close</button>
           </Tooltip>
           <Tooltip text="Save the activity">
-            <button className="btn btn-primary" onClick={submit}>
-              <i className="fa-solid fa-check"></i> Save
+            <button className="btn btn-primary" onClick={submit} disabled={saving}
+              style={saving ? { opacity: .7, cursor: 'wait' } : undefined}>
+              <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {saving ? 'Saving…' : 'Save'}
             </button>
           </Tooltip>
         </div>
