@@ -1,4 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { getAcademicsTeacherAssignments } from '../services/academicsReportsService';
+import { buildUrl } from '../../utils/apiConfig';
+import { loadTeacherWorkMeta } from '../services/examReportsService';
+
+/* Branch ka poora student roster — wahi API jo Result History use karta hai
+   (get-class-section-studentlist-by-branch), taake dono jagah total same ho. */
+async function xrFetchRosterIds() {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  const r = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
+    headers: { Accept: '*/*', Authorization: `Bearer ${sessionStorage.getItem('token') || ''}` },
+  });
+  const json = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const ids = [];
+  (Array.isArray(json?.data) ? json.data : []).forEach((g) => {
+    (g.sections || []).forEach((s) => {
+      (s.students || []).forEach((st) => { if (st?.id != null) ids.push(String(st.id)); });
+    });
+  });
+  return ids;
+}
 
 /* Examination → Reports. Six monitoring screens fed LIVE by
    services/examReportsService (every term's exams + per-class date sheet,
@@ -11,13 +32,13 @@ const XR_TABS = [
   { id: 'datesheet', label: 'Date Sheet Status', icon: 'fa-calendar-days' },
   { id: 'syllabus', label: 'Syllabus Sharing', icon: 'fa-book-open' },
   { id: 'results', label: 'Result Upload Status', icon: 'fa-chart-bar' },
-  { id: 'teacher', label: 'Teacher Pending Work', icon: 'fa-chalkboard-user' },
+  /* Teacher Pending Work tab abhi band (commented) — wapas lana ho to ye line aur neeche render uncomment karein. */
+  // { id: 'teacher', label: 'Teacher Pending Work', icon: 'fa-chalkboard-user' },
 ];
 const XR_WORK_TYPES = [
   { id: '', label: 'Overall Pending Work' },
   { id: 'datesheet', label: 'Date Sheet Status' },
   { id: 'syllabus', label: 'Syllabus Status' },
-  { id: 'results', label: 'Results Status' },
 ];
 
 const xrToday = () => new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -143,15 +164,13 @@ export default function ExaminationReportsTab({
   dateSheets = {}, syllabusData = {}, resultPacks = {},
   loading = false, progress = null, loadedAt = null, onRefresh, onExport,
 }) {
-  const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
     <>
       <style>{XR_CSS}</style>
       <div className="xr-toolbar">
         <div className="xr-toolbar-info">
-          {loading ? (
-            <><i className="fa-solid fa-spinner fa-spin"></i> Loading live exam data{progress && progress.total ? ` — ${progress.done}/${progress.total} classes (${pct}%)` : '…'}</>
-          ) : loadedAt ? (
+          {/* Loading ke dauran yahan kuch nahi — sirf neeche wala spinner. */}
+          {loading ? null : loadedAt ? (
             <><i className="fa-solid fa-circle-check"></i> Live data · {exams.length} exam{exams.length === 1 ? '' : 's'} across {terms.length} term{terms.length === 1 ? '' : 's'} · updated {loadedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</>
           ) : (
             <><i className="fa-solid fa-circle-info"></i> Waiting for terms…</>
@@ -163,9 +182,6 @@ export default function ExaminationReportsTab({
           </button>
         )}
       </div>
-      {loading && progress && progress.total > 0 && (
-        <div className="xr-progress"><div className="xr-progress-fill" style={{ width: `${pct}%` }} /></div>
-      )}
       <div className="xr-subtabs">
         {XR_TABS.map((t) => (
           <button key={t.id} type="button" className={`xr-stab${reportsSubTab === t.id ? ' active' : ''}`} onClick={() => setReportsSubTab(t.id)}>
@@ -173,70 +189,98 @@ export default function ExaminationReportsTab({
           </button>
         ))}
       </div>
+      {/* Data aane tak har sub-tab par poora loader (Academics Reports jaisa) — adhe numbers / "…" na dikhein. */}
+      {loading ? (
+        <div className="xr-loading">
+          <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+          <span>Loading {(XR_TABS.find(t => t.id === reportsSubTab) || XR_TABS[0]).label}…</span>
+        </div>
+      ) : (<>
       {reportsSubTab === 'dashboard' && (
-        <XrDashboardSummary exams={exams} terms={terms} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} loading={loading} />
+        <XrDashboardSummary exams={exams} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} />
       )}
       {reportsSubTab === 'overview' && <XrExamOverview exams={exams} terms={terms} onExport={onExport} />}
       {reportsSubTab === 'datesheet' && <XrDateSheetStatus exams={exams} terms={terms} dateSheets={dateSheets} onExport={onExport} />}
       {reportsSubTab === 'syllabus' && <XrSyllabusSharing exams={exams} terms={terms} syllabusData={syllabusData} onExport={onExport} />}
       {reportsSubTab === 'results' && <XrResultUploadStatus exams={exams} terms={terms} resultPacks={resultPacks} loading={loading} onExport={onExport} />}
+      {/* Teacher Pending Work tab — commented out.
       {reportsSubTab === 'teacher' && (
         <XrTeacherPendingWork exams={exams} terms={terms} dateSheets={dateSheets} syllabusData={syllabusData} resultPacks={resultPacks} onExport={onExport} />
-      )}
+      )} */}
+      </>)}
     </>
   );
 }
 
-function XrDashboardSummary({ exams: allExams, terms, dateSheets, syllabusData, resultPacks, loading }) {
-  const [term, setTerm] = useState('');
-  const exams = allExams.filter((e) => xrInTerm(e, term));
+/* Dashboard Summary — sirf 6 cards (reference design): Total Exams, Completed Exams,
+   Date Sheets Pending, Syllabus Pending, Results Pending (students), Teachers With Pending Work. */
+function XrDashboardSummary({ exams, dateSheets, syllabusData, resultPacks }) {
+  /* HR teachers + class subjects — Teacher Pending Work tab wala hi data. */
+  const teacherMeta = useTeacherWorkMeta(exams);
+  const assignments = teacherMeta ? teacherMeta.assignments : null;
+  /* Results Pending = roster ke wo students jin ka kisi bhi exam mein result (marks) nahi bana —
+     Result History jaisa (31 students, 2 ke results → 29 pending). */
+  const [rosterIds, setRosterIds] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    xrFetchRosterIds()
+      .then((ids) => { if (alive) setRosterIds(ids); })
+      .catch(() => { if (alive) setRosterIds([]); });
+    return () => { alive = false; };
+  }, []);
+
   const completedExams = exams.filter((ex) => ex._statusCls === 'past').length;
   let pendingDateSheetClasses = 0;
   let pendingSyllabusClasses = 0;
-  let pendingResultStudents = 0;
-  let uploadedResultStudents = 0;
-  let resultClassesSeen = 0;
-  let subjectsScheduled = 0;
-  let subjectsDated = 0;
+  const pendingStudents = new Set();
+  const studentsWithResult = new Set();
+  const pendingTeachers = new Set();
 
   exams.forEach((ex) => {
     xrClassList(ex).forEach((cls) => {
       const ds = xrDateSheetRow(ex, cls, dateSheets);
       if (ds.loaded && ds.status !== 'Completed') pendingDateSheetClasses += 1;
-      const named = (xrFindEntries(dateSheets, ex.id, 'cls', cls) || []).filter((e) => e && e.subject);
-      subjectsScheduled += named.length;
-      subjectsDated += named.filter((e) => e.date).length;
       const subs = xrSyllabusSubjects(ex, cls, syllabusData);
-      if (subs && subs.some((s) => !s.uploaded)) pendingSyllabusClasses += 1;
+      /* Syllabus bilkul add nahi (0 subjects) bhi pending hai. */
+      if (subs && (!subs.length || subs.some((s) => !s.uploaded))) pendingSyllabusClasses += 1;
       const pack = xrResultPack(resultPacks, ex, cls);
       if (pack && Array.isArray(pack.students)) {
-        resultClassesSeen += 1;
-        const up = pack.students.filter((st) => xrStudentUploaded(pack, st)).length;
-        uploadedResultStudents += up;
-        pendingResultStudents += pack.students.length - up;
+        pack.students.forEach((st) => {
+          if (xrStudentUploaded(pack, st)) {
+            if (xrStudentId(st) != null) studentsWithResult.add(String(xrStudentId(st)));
+            return;
+          }
+          pendingStudents.add(String(xrStudentId(st) ?? `${cls.sectionID}:${xrStudentRoll(st)}:${xrStudentName(st)}`));
+        });
       }
     });
   });
 
+  /* Teachers With Pending Work — Teacher Pending Work tab wali hi subject-wise rows. */
+  if (teacherMeta) {
+    xrTeacherWorkRows(exams, teacherMeta, dateSheets, syllabusData).forEach((r) => pendingTeachers.add(r.teacher));
+  }
+
+  /* Roster mil gaya to: poore roster mein se wo jin ka koi result nahi. Roster fail/khali → purana
+     exam-classes wala count (pendingStudents). */
+  const resultsPendingCount = rosterIds && rosterIds.length
+    ? new Set(rosterIds).size - [...new Set(rosterIds)].filter((id) => studentsWithResult.has(id)).length
+    : pendingStudents.size;
+
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const cards = [
     { label: 'Total Exams', value: exams.length, icon: 'fa-file-pen', tone: 'blue' },
     { label: 'Completed Exams', value: completedExams, icon: 'fa-flag-checkered', tone: 'green' },
-    { label: 'Date Sheets Pending', value: loading ? '…' : `${pendingDateSheetClasses} Class${pendingDateSheetClasses === 1 ? '' : 'es'}`, icon: 'fa-calendar-days', tone: 'amber' },
-    { label: 'Syllabus Pending', value: loading ? '…' : `${pendingSyllabusClasses} Class${pendingSyllabusClasses === 1 ? '' : 'es'}`, icon: 'fa-book-open', tone: 'amber' },
-    { label: 'Results Pending', value: loading && !resultClassesSeen ? '…' : resultClassesSeen ? `${pendingResultStudents} Student${pendingResultStudents === 1 ? '' : 's'}` : '—', icon: 'fa-chart-bar', tone: 'red' },
-    { label: term ? 'Exam Classes In Term' : 'Exam Classes (All Terms)', value: exams.reduce((n, ex) => n + xrClassList(ex).length, 0), icon: 'fa-chalkboard-user', tone: 'blue' },
-    { label: 'Date Sheet Coverage', value: subjectsScheduled ? `${Math.round((subjectsDated / subjectsScheduled) * 100)}%` : '—', icon: 'fa-clock', tone: 'green' },
-    { label: 'Results Uploaded', value: resultClassesSeen ? `${uploadedResultStudents} / ${uploadedResultStudents + pendingResultStudents}` : '—', icon: 'fa-user-check', tone: 'green' },
-    { label: 'Upcoming / Ongoing Exams', value: exams.filter((ex) => ex._statusCls && ex._statusCls !== 'past').length, icon: 'fa-hourglass-half', tone: 'amber' },
+    { label: 'Date Sheets Pending', value: plural(pendingDateSheetClasses, 'Class', 'Classes'), icon: 'fa-calendar-days', tone: 'amber' },
+    { label: 'Syllabus Pending', value: plural(pendingSyllabusClasses, 'Class', 'Classes'), icon: 'fa-book-open', tone: 'amber' },
+    { label: 'Results Pending', value: rosterIds ? plural(resultsPendingCount, 'Student', 'Students') : '…', icon: 'fa-chart-bar', tone: 'red' },
+    { label: 'Teachers With Pending Work', value: assignments ? pendingTeachers.size : '…', icon: 'fa-chalkboard-user', tone: 'red' },
   ];
 
   return (
     <div className="section-card">
       <div className="xr-card-head">
         <div className="xr-card-title"><i className="fa-solid fa-gauge-high"></i> Examination Dashboard Summary</div>
-      </div>
-      <div className="xr-filter-bar">
-        <XrTermSelect terms={terms} value={term} onChange={setTerm} />
       </div>
       <div className="xr-kpi-grid">
         {cards.map((c) => (
@@ -247,7 +291,7 @@ function XrDashboardSummary({ exams: allExams, terms, dateSheets, syllabusData, 
           </div>
         ))}
       </div>
-      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> All counts come live from the exams, date sheets, syllabi and uploaded marks of every term in this session. Press Refresh after changes made on another device.</div>
+      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> These figures are computed live from Exam Setup, Date Sheet, Syllabus and Result data — open the individual reports above for the full breakdown behind each number.</div>
     </div>
   );
 }
@@ -439,9 +483,22 @@ function XrSyllabusSharing({ exams, terms, syllabusData, onExport }) {
       });
     });
   });
-  const flatRows = classBlocks.flatMap((b) => b.subjectRows.map((r) => ({ ...r, class: b.class, exam: b.exam, blockKey: b.blockKey })));
+  /* Jis class ka syllabus bilkul save hi nahi hua (0 subjects) wo bhi PENDING hai —
+     report/export me "Syllabus not added" row ke saath. */
+  const flatRows = classBlocks.flatMap((b) => (b.loaded && !b.subjectRows.length
+    ? [{ subject: 'Syllabus not added', uploaded: false, notAdded: true, class: b.class, exam: b.exam, blockKey: b.blockKey }]
+    : b.subjectRows.map((r) => ({ ...r, class: b.class, exam: b.exam, blockKey: b.blockKey }))));
   const pendingByClass = {};
-  flatRows.forEach((r) => { if (!r.uploaded) pendingByClass[r.class] = (pendingByClass[r.class] || 0) + 1; });
+  flatRows.forEach((r) => {
+    if (r.uploaded) return;
+    const p = pendingByClass[r.class] || (pendingByClass[r.class] = { count: 0, notAdded: [] });
+    if (r.notAdded) p.notAdded.push(r.exam); else p.count += 1;
+  });
+  const pendingLabel = (p) => [
+    p.count ? `${p.count} subject${p.count === 1 ? '' : 's'}` : '',
+    p.notAdded.length ? `Syllabus not added${p.notAdded.length > 1 || p.count ? ` (${p.notAdded.join(', ')})` : ''}` : '',
+  ].filter(Boolean).join(' · ');
+  const pendingWeight = (p) => p.count + p.notAdded.length * 100;
 
   const exportSpec = () => ({
     title: 'Syllabus Sharing Report',
@@ -453,7 +510,7 @@ function XrSyllabusSharing({ exams, terms, syllabusData, onExport }) {
       { key: 'uploadedLbl', label: 'Syllabus Uploaded', width: '33%', align: 'center' },
       { key: 'statusLbl', label: 'Status', width: '33%', align: 'center' },
     ],
-    rows: flatRows.map((r) => ({ ...r, uploadedLbl: r.uploaded ? 'Yes' : 'No', statusLbl: r.uploaded ? 'Uploaded' : 'Pending' })),
+    rows: flatRows.map((r) => ({ ...r, uploadedLbl: r.uploaded ? 'Yes' : 'No', statusLbl: r.uploaded ? 'Uploaded' : r.notAdded ? 'Not Added' : 'Pending' })),
     filename: 'Syllabus-Sharing-Report.xlsx',
     metaLine: `Term: ${term || 'All'}  ·  ${classBlocks.length} classes`,
   });
@@ -484,9 +541,11 @@ function XrSyllabusSharing({ exams, terms, syllabusData, onExport }) {
           <div className="xr-class-block-head">
             <div className="xr-class-block-name"><i className="fa-solid fa-chalkboard"></i> {b.class}</div>
             <div className="xr-class-block-meta">{b.exam}</div>
-            <div className="xr-class-block-badge">{b.loaded ? `${b.uploadedCount}/${b.total} uploaded` : 'Not loaded'}</div>
+            <div className="xr-class-block-badge">{!b.loaded ? 'Not loaded' : !b.total ? 'Pending' : `${b.uploadedCount}/${b.total} uploaded`}</div>
           </div>
-          {!b.loaded ? <div className="xr-empty">Syllabus has not loaded for this class yet.</div> : !b.subjectRows.length ? <div className="xr-empty">No syllabus subjects on file.</div> : (
+          {!b.loaded ? <div className="xr-empty">Syllabus has not loaded for this class yet.</div> : !b.subjectRows.length ? (
+            <div className="xr-empty">Syllabus has not been added for this class yet.</div>
+          ) : (
             <table className="xr-table xr-table--nested">
               <thead><tr><th>Subject</th><th style={{ textAlign: 'center' }}>Syllabus</th></tr></thead>
               <tbody>
@@ -504,11 +563,11 @@ function XrSyllabusSharing({ exams, terms, syllabusData, onExport }) {
       <div className="xr-subhead"><i className="fa-solid fa-book-open"></i> Classes With Pending Syllabus</div>
       <div className="xr-table-wrap">
         <table className="xr-table">
-          <thead><tr><th>Class</th><th style={{ textAlign: 'center' }}>Pending Subjects</th></tr></thead>
+          <thead><tr><th>Class</th><th style={{ textAlign: 'center' }}>Pending</th></tr></thead>
           <tbody>
             {Object.keys(pendingByClass).length === 0 ? <tr><td colSpan={2} className="xr-empty">Nothing pending.</td></tr> :
-              Object.entries(pendingByClass).sort((a, b) => b[1] - a[1]).map(([cls, count]) => (
-                <tr key={cls}><td style={{ fontWeight: 700 }}>{cls}</td><td style={{ textAlign: 'center' }}>{count}</td></tr>
+              Object.entries(pendingByClass).sort((a, b) => pendingWeight(b[1]) - pendingWeight(a[1])).map(([cls, p]) => (
+                <tr key={cls}><td style={{ fontWeight: 700 }}>{cls}</td><td style={{ textAlign: 'center' }}>{pendingLabel(p)}</td></tr>
               ))}
           </tbody>
         </table>
@@ -635,71 +694,131 @@ function XrResultUploadStatus({ exams, terms, resultPacks, loading, onExport }) 
   );
 }
 
-function xrRealPending(ex, cls, dateSheets, syllabusData, resultPacks) {
-  const tasks = [];
-  const ds = xrFindEntries(dateSheets, ex.id, 'cls', cls);
-  if (ds) {
-    const named = ds.filter((e) => e && e.subject);
-    if (!named.length) tasks.push({ type: 'datesheet', label: 'Date sheet not prepared' });
-    else if (named.some((e) => !e.date)) tasks.push({ type: 'datesheet', label: 'Date sheet incomplete' });
-  }
-  const syl = xrSyllabusSubjects(ex, cls, syllabusData);
-  if (syl) {
-    const missing = syl.filter((s) => !s.uploaded);
-    if (!syl.length || missing.length === syl.length) tasks.push({ type: 'syllabus', label: 'Syllabus not uploaded' });
-    else if (missing.length) tasks.push({ type: 'syllabus', label: `Syllabus pending (${missing.map((s) => s.subject).join(', ')})` });
-  }
-  const pack = xrResultPack(resultPacks, ex, cls);
-  if (pack && Array.isArray(pack.students) && pack.students.some((st) => !xrStudentUploaded(pack, st))) {
-    tasks.push({ type: 'results', label: 'Result marks not uploaded' });
-  }
-  return tasks;
+/* Class-section par assigned teacher rows (Academics / HR employee subject assignments).
+   Pehle section/grade ID se, na milen to class naam se ("Class II - A") — dono jagah label
+   alag source se aata hai. */
+const xrNorm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function xrAssignmentsFor(assignments, cls) {
+  return (assignments || []).filter((a) => {
+    if (!a || !a.teacher) return false;
+    const secHit = cls.sectionID != null && String(a.sectionId) === String(cls.sectionID);
+    const clsOk = cls.classID == null || String(a.gradeId) === String(cls.classID);
+    const nameHit = xrNorm(a.class) && xrNorm(a.class) === xrNorm(cls.name);
+    return (secHit && clsOk) || nameHit;
+  });
+}
+const xrSubId = (x) => x?.subjectID ?? x?.subjectId ?? x?.SubjectID ?? null;
+const xrSubName = (x) => x?.subject ?? x?.subjectName ?? x?.SubjectName ?? '';
+/* Same subject? ID dono taraf ho to ID se, warna naam se. */
+function xrSameSubject(a, b) {
+  if (a.id != null && b.id != null) return String(a.id) === String(b.id);
+  return !!xrNorm(a.name) && xrNorm(a.name) === xrNorm(b.name);
 }
 
-function XrTeacherPendingWork({ exams: allExams, terms, dateSheets, syllabusData, resultPacks, onExport }) {
-  const [term, setTerm] = useState('');
-  const exams = allExams.filter((e) => xrInTerm(e, term));
-  const [workType, setWorkType] = useState('');
-  const [examId, setExamId] = useState('');
-  const [classFilter, setClassFilter] = useState('');
-
+/* Teacher Pending Work rows — SIRF Human Resource → Employee → Assignments me save kiye gaye
+   (teacher, class-section, subject). Har us exam ke liye jis me wo class-section hai:
+     • us subject ki date sheet me date nahi  → "Date Sheet not prepared"
+     • us subject ka syllabus upload nahi     → "Syllabus not uploaded"
+   Ek row = ek pending task. Data load na ho (API fail → null) to us ka task nahi ginte.
+   meta = loadTeacherWorkMeta(): { assignments (HR), classSubjects ('<classID>_<sectionID>' → [{subjectId, subjectName}]) }. */
+export function xrTeacherWorkRows(exams, meta, dateSheets, syllabusData) {
   const rows = [];
-  exams.filter((ex) => !examId || String(ex.id) === examId).forEach((ex) => {
+  const assignments = meta?.assignments || [];
+  exams.forEach((ex) => {
     xrClassList(ex).forEach((cls) => {
-      if (classFilter && cls.name !== classFilter) return;
-      xrRealPending(ex, cls, dateSheets, syllabusData, resultPacks)
-        .filter((task) => !workType || task.type === workType)
-        .forEach((task) => rows.push({ class: cls.name, task: task.label, exam: ex.name }));
+      const mine = xrAssignmentsFor(assignments, cls);
+      if (!mine.length) return;
+      const ds = xrFindEntries(dateSheets, ex.id, 'cls', cls);
+      const syl = xrFindEntries(syllabusData, ex.id, 'scls', cls);
+      const clsSubs = (meta?.classSubjects || {})[`${cls.classID}_${cls.sectionID}`] || [];
+      /* ID ↔ naam class subjects se pura karo — date sheet me sirf naam, assignment me ID bhi. */
+      const canon = (id, name) => {
+        let hit = null;
+        if (id != null) hit = clsSubs.find((s) => String(s.subjectId) === String(id));
+        if (!hit && xrNorm(name)) hit = clsSubs.find((s) => xrNorm(s.subjectName) === xrNorm(name));
+        return { id: id ?? hit?.subjectId ?? null, name: name || hit?.subjectName || '' };
+      };
+      const find = (list, subj) => (list || []).find((e) => e && xrSameSubject(canon(xrSubId(e), xrSubName(e)), subj)) || null;
+
+      const seen = new Set();
+      mine.forEach((a) => {
+        const subj = canon(a.subjectId, a.subject);
+        if (!xrNorm(subj.name) && subj.id == null) return;
+        const k = `${a.teacher}|${subj.id ?? xrNorm(subj.name)}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        const base = { teacher: a.teacher, class: cls.name, subject: subj.name || `Subject ${subj.id}`, exam: ex.name, term: xrExamTerm(ex) };
+        if (ds) {
+          const e = find(ds, subj);
+          if (!e || !e.date) rows.push({ ...base, type: 'datesheet', task: 'Date Sheet not prepared' });
+        }
+        if (syl) {
+          const e = find(syl, subj);
+          if (!e || !xrHasContent(e.content)) rows.push({ ...base, type: 'syllabus', task: 'Syllabus not uploaded' });
+        }
+      });
     });
   });
-  const classNames = Array.from(new Set(exams.flatMap((e) => xrClassList(e).map((c) => c.name)))).sort();
+  return rows;
+}
+
+/* HR teachers + class subjects (5 min cache) — tab aur Dashboard card dono. */
+function useTeacherWorkMeta(exams) {
+  const [meta, setMeta] = useState(null);
+  const sig = exams.map((e) => e.id).join(',');
+  useEffect(() => {
+    let alive = true;
+    loadTeacherWorkMeta(exams, { fallbackAssignments: getAcademicsTeacherAssignments })
+      .then((m) => { if (alive) setMeta(m); })
+      .catch(() => { if (alive) setMeta({ assignments: [], classSubjects: {} }); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
+  return meta;
+}
+
+// eslint-disable-next-line no-unused-vars -- tab abhi commented hai (XR_TABS), component wapas lane ke liye rakha hai
+function XrTeacherPendingWork({ exams, dateSheets, syllabusData, onExport }) {
+  const [workType, setWorkType] = useState('');
+  const [examId, setExamId] = useState('');
+  const [teacherFilter, setTeacherFilter] = useState('');
+  const meta = useTeacherWorkMeta(exams);
+
+  const allRows = meta ? xrTeacherWorkRows(exams, meta, dateSheets, syllabusData) : [];
+  /* Teacher dropdown: HR me jin ki koi bhi subject assignment hai (pending ho ya na ho). */
+  const teacherNames = Array.from(new Set((meta?.assignments || []).map((a) => a.teacher).filter(Boolean))).sort();
+  const rows = allRows.filter((r) => (!workType || r.type === workType)
+    && (!examId || r.exam === examId)
+    && (!teacherFilter || r.teacher === teacherFilter));
+  const examNames = Array.from(new Set(exams.map((e) => e.name).filter(Boolean)));
   const workTypeLabel = XR_WORK_TYPES.find((w) => w.id === workType)?.label || 'Overall Pending Work';
-  const examLabel = exams.find((e) => String(e.id) === examId)?.name || 'All Exams';
 
   const exportSpec = () => ({
-    title: 'Pending Work Report',
-    subtitle: `${workTypeLabel} · ${classFilter || 'All Classes'}`,
+    title: 'Teacher Pending Work Report',
+    subtitle: `${workTypeLabel}${teacherFilter ? ` · ${teacherFilter}` : ''}`,
     columns: [
-      { key: 'class', label: 'Class', width: '28%' },
-      { key: 'task', label: 'Pending Task', width: '44%' },
-      { key: 'exam', label: 'Exam', width: '28%' },
+      { key: 'teacher', label: 'Teacher Name', width: '22%' },
+      { key: 'class', label: 'Class', width: '20%' },
+      { key: 'subject', label: 'Subject', width: '16%' },
+      { key: 'task', label: 'Pending Task', width: '22%' },
+      { key: 'exam', label: 'Exam', width: '20%' },
     ],
     rows,
-    filename: 'Exam-Pending-Work-Report.xlsx',
-    metaLine: `Term: ${term || 'All'}  ·  ${workTypeLabel}  ·  Class: ${classFilter || 'All'}  ·  Exam: ${examLabel}  ·  ${rows.length} pending items`,
+    filename: 'Teacher-Pending-Work-Report.xlsx',
+    metaLine: `Teacher: ${teacherFilter || 'All'}  ·  ${workTypeLabel}  ·  Exam: ${examId || 'All'}  ·  ${rows.length} pending task${rows.length === 1 ? '' : 's'}`,
   });
 
   return (
     <div className="section-card">
       <div className="xr-card-head">
-        <div className="xr-card-title"><i className="fa-solid fa-chalkboard-user"></i> Pending Work Report</div>
-        <button type="button" className="export-btn pdf" onClick={() => onExport(exportSpec())}><i className="fa-solid fa-download"></i> Export</button>
+        <div className="xr-card-title"><i className="fa-solid fa-chalkboard-user"></i> Teacher Pending Work Report</div>
+        <button type="button" className="export-btn pdf" onClick={() => onExport(exportSpec())} disabled={!rows.length}><i className="fa-solid fa-download"></i> Export</button>
       </div>
       <div className="xr-filter-bar">
-        <XrTermSelect terms={terms} value={term} onChange={(v) => { setTerm(v); setExamId(''); }} />
-        <div className="xr-field"><label>Class</label>
-          <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)}>
-            <option value="">All Classes</option>{classNames.map((n) => <option key={n} value={n}>{n}</option>)}
+        <div className="xr-field"><label>Teacher</label>
+          <select value={teacherFilter} onChange={(e) => setTeacherFilter(e.target.value)} disabled={!meta}>
+            <option value="">{meta ? 'All Teachers' : 'Loading…'}</option>
+            {teacherNames.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
         <div className="xr-field"><label>Work Type</label>
@@ -709,17 +828,25 @@ function XrTeacherPendingWork({ exams: allExams, terms, dateSheets, syllabusData
         </div>
         <div className="xr-field"><label>Exam</label>
           <select value={examId} onChange={(e) => setExamId(e.target.value)}>
-            <option value="">All Exams</option>{exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            <option value="">All Exams</option>{examNames.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
       </div>
       <div className="xr-table-wrap">
         <table className="xr-table">
-          <thead><tr><th>Class</th><th>Pending Task</th><th>Exam</th></tr></thead>
+          <thead><tr><th>Teacher Name</th><th>Class</th><th>Subject</th><th>Pending Task</th><th>Exam</th></tr></thead>
           <tbody>
-            {rows.length === 0 ? <tr><td colSpan={3} className="xr-empty">No pending work found for these filters.</td></tr> : rows.map((r, i) => (
+            {!meta ? (
+              <tr><td colSpan={5} className="xr-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading teacher assignments…</td></tr>
+            ) : !meta.assignments.length ? (
+              <tr><td colSpan={5} className="xr-empty">No subject assignments found. Assign subjects to teachers in Human Resource → Employee → Assignments.</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={5} className="xr-empty">No pending work found for these filters.</td></tr>
+            ) : rows.map((r, i) => (
               <tr key={i}>
-                <td style={{ fontWeight: 700 }}>{r.class}</td>
+                <td style={{ fontWeight: 700 }}>{r.teacher}</td>
+                <td>{r.class}</td>
+                <td>{r.subject}</td>
                 <td><span className="xr-status-pill pending">{r.task}</span></td>
                 <td>{r.exam}</td>
               </tr>
@@ -727,7 +854,7 @@ function XrTeacherPendingWork({ exams: allExams, terms, dateSheets, syllabusData
           </tbody>
         </table>
       </div>
-      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Lists classes whose date sheet, syllabus, or result marks upload is still incomplete. Generated {xrToday()}.</div>
+      <div className="xr-note"><i className="fa-solid fa-circle-info"></i> Based on each teacher's class and subject assignments in Human Resource → Employee → Assignments. A row appears when that subject's date sheet or syllabus is not yet prepared for an exam of that class. Generated {xrToday()}.</div>
     </div>
   );
 }
@@ -769,6 +896,8 @@ const XR_CSS = `
 .xr-table td { padding: 10px; border-bottom: 1px solid var(--border-light); color: var(--text-primary); vertical-align: middle; }
 .xr-table tbody tr:hover td { background: rgba(var(--brand-dark-rgb), .03); }
 .xr-empty { text-align: center; padding: 30px; color: var(--text-muted); font-size: 12.5px; }
+.xr-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 260px; padding: 40px 20px; border: 1px solid var(--border-light); border-radius: 16px; background: var(--bg-card, #fff); color: var(--text-muted); font-size: 13px; font-weight: 600; text-align: center; }
+.xr-loading .fa-spinner { font-size: 28px; color: #1E40AF; }
 .xr-chip-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
 .xr-chip { display: inline-block; padding: 2px 9px; border-radius: 99px; background: #EFF6FF; color: var(--brand-solid, #1E40AF); font-size: 10px; font-weight: 700; border: 1px solid #BFDBFE; }
 [data-theme="dark"] .xr-chip { background: rgba(96,165,250,.12); border-color: rgba(96,165,250,.25); }
@@ -795,6 +924,7 @@ const XR_CSS = `
 .xr-kpi--red .xr-kpi-ic { background: rgba(220,38,38,.1); color: #DC2626; }
 .xr-kpi-val { font-size: 22px; font-weight: 800; color: var(--text-primary); }
 .xr-kpi-lbl { font-size: 11.5px; color: var(--text-muted); font-weight: 600; margin-top: 4px; }
+.xr-kpi-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 3px; opacity: .85; }
 .xr-class-block { margin: 0 18px 16px; border: 1.5px solid var(--border-light); border-radius: 12px; overflow: hidden; }
 .xr-class-block-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 11px 14px; background: var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#1E40AF)); }
 .xr-class-block-name { font-size: 13px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 7px; }

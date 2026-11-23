@@ -310,7 +310,10 @@ function loadAssignmentsBundle() {
         employees.forEach((emp) => (emp.assignments || []).forEach((a) => (
           addAssignment(emp, a.gradeId, a.sectionId, a.subjectId, a.subjectName)
         )));
-      } else {
+      }
+      /* List me field tha magar koi row is branch ki class-section se match na hui → khali
+         assignments (Exam Reports me "0 teachers"). Us surat me bhi per-section fallback chalao. */
+      if (!assignments.length) {
         const jobs = employees.flatMap((emp) => sectionsFlat.map((x) => ({ emp, x })));
         await mapLimited(jobs, 8, async ({ emp, x }) => {
           const subs = await fetchEmployeeSubjects(x.g.gradeId, x.s.sectionId, emp.empId);
@@ -346,7 +349,9 @@ function loadAssignmentsBundle() {
         subjects: Array.from(subs),
       }));
 
-      return { assignments, cells, classes };
+      /* Branch ki HAR class-section (subjects ho ya na hon) — report filters me sab classes dikhen. */
+      const allClasses = sectionsFlat.map((x) => x.cls);
+      return { assignments, cells, classes, allClasses };
     } catch (e) {
       console.error('Academics reports: assignments load failed', e);
       return empty;
@@ -397,6 +402,15 @@ export async function getSubNbData() {
 }
 export async function getAcademicsTeacherAssignments() {
   return clone((await loadAssignmentsBundle()).assignments);
+}
+/* Report filters ka catalog: branch ki saari classes (grades API) + har class ke
+   subjects (LaunchSetup get-subjects) — sirf data wali classes nahi. */
+export async function getAcademicsFilterCatalog() {
+  const b = await loadAssignmentsBundle();
+  return clone({
+    classes: b.allClasses || [],
+    records: (b.cells || []).map((c) => ({ class: c.className, subject: c.subjectName, teacher: c.teacher })),
+  });
 }
 export async function getAcademicsClasses() {
   return clone((await loadAssignmentsBundle()).classes);

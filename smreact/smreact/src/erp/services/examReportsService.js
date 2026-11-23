@@ -74,7 +74,10 @@ async function fetchSyllabus(ex, cls) {
     const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
     if (dk && seen.has(dk)) return acc;
     if (dk) seen.add(dk);
-    acc.push({ subject: r.subjectDisplayName || r.subjectName || '', content: r.subjectDetails || '', updatedAt: r.updatedAt || r.UpdatedOn || '—' });
+    acc.push({
+      subjectID: r.subjectID ?? r.subjectId ?? r.SubjectID ?? null,
+      subject: r.subjectDisplayName || r.subjectName || '', content: r.subjectDetails || '', updatedAt: r.updatedAt || r.UpdatedOn || '—',
+    });
     return acc;
   }, []);
 }
@@ -91,6 +94,71 @@ async function fetchResultPack(ex, cls) {
   ]);
   if (!students) return null;
   return { students, subjects, marks };
+}
+
+/* ─── Teacher Pending Work meta ───────────────────────────────────────
+   Teachers: HR ki employee list (get-employees-by-branch?isActive=true) — har employee
+   ke saath uske subject assignments (grade/section/subject, naam samet) aate hain; wahi
+   jo Human Resource → employee → Subjects me dikhte hain. Branch-grades se filter NAHI
+   (pehle Academics bundle grade IDs match na hone par sab assignments gira deta tha).
+   Class subjects: LaunchSetup get-subjects/{class}/{section} — subject ID → naam, taake
+   date sheet / syllabus ke subject (kabhi sirf naam, kabhi sirf ID) ek hi row banen. */
+const pickA = (o, ...keys) => { for (const k of keys) if (o && o[k] != null && o[k] !== '') return o[k]; return undefined; };
+
+async function fetchHrTeacherAssignments() {
+  const json = await getJson(`/api/LaunchSetup/get-employees-by-branch/${ss('branchID')}?isActive=true`);
+  const out = [];
+  asList(json).forEach((e) => {
+    const name = pickA(e, 'employeeName', 'fullName', 'name')
+      || `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim();
+    if (!name) return;
+    const rows = e.assignments ?? e.subjectAssignments ?? e.employeeSubjects ?? e.subjects;
+    (Array.isArray(rows) ? rows : []).forEach((a) => {
+      const gradeId = pickA(a, 'gradeId', 'gradeID', 'grade_id', 'classID', 'classId');
+      const sectionId = pickA(a, 'sectionId', 'sectionID', 'section_id');
+      const subjectId = pickA(a, 'subjectId', 'subjectID', 'subject_id');
+      const className = pickA(a, 'className', 'gradeName', 'grade') || '';
+      const sectionName = pickA(a, 'sectionName', 'section') || '';
+      out.push({
+        teacher: name, gradeId, sectionId, subjectId,
+        subject: pickA(a, 'subjectName', 'subject') || '',
+        class: sectionName ? `${className} - ${sectionName}` : className,
+      });
+    });
+  });
+  return out;
+}
+
+async function fetchClassSubjectList(classID, sectionID) {
+  const json = await getJson(`/api/LaunchSetup/get-subjects/${classID}/${sectionID}`).catch(() => []);
+  return asList(json)
+    .map((s) => ({ subjectId: pickA(s, 'subjectID', 'subjectId', 'id'), subjectName: pickA(s, 'subjectName', 'name') || '' }))
+    .filter((s) => s.subjectId != null);
+}
+
+const _metaCache = { key: '', at: 0, promise: null };
+/** @returns { assignments:[{teacher,gradeId,sectionId,subjectId,subject,class}], classSubjects:{'<classID>_<sectionID>':[{subjectId,subjectName}]} } */
+export function loadTeacherWorkMeta(exams, { fallbackAssignments } = {}) {
+  const pairs = new Map();
+  (exams || []).forEach((ex) => (ex.classes || []).forEach((c) => {
+    if (c && c.classID != null && c.sectionID != null) pairs.set(`${c.classID}_${c.sectionID}`, c);
+  }));
+  const key = `${ss('branchID')}|${Array.from(pairs.keys()).sort().join(',')}`;
+  /* Chhota cache (30s) — Dashboard + tab ek hi call share karein, magar HR me assignment save
+     karke report kholo to naya data aaye. */
+  if (_metaCache.promise && _metaCache.key === key && Date.now() - _metaCache.at < 30 * 1000) return _metaCache.promise;
+  const promise = (async () => {
+    let assignments = await fetchHrTeacherAssignments().catch(() => []);
+    if (!assignments.length && fallbackAssignments) assignments = await fallbackAssignments().catch(() => []) || [];
+    const classSubjects = {};
+    await Promise.all(Array.from(pairs.entries()).map(async ([k, c]) => {
+      classSubjects[k] = await fetchClassSubjectList(c.classID, c.sectionID);
+    }));
+    return { assignments, classSubjects };
+  })();
+  Object.assign(_metaCache, { key, at: Date.now(), promise });
+  promise.catch(() => { if (_metaCache.promise === promise) _metaCache.promise = null; });
+  return promise;
 }
 
 async function pool(jobs, size, run, isCancelled) {

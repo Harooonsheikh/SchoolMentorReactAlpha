@@ -191,9 +191,10 @@ function inRange(dateStr, from, to) {
 /* Cascading Class → Subject → Teacher options. Records = assignments + report
    rows (jin cells ka teacher assign nahi wo bhi filter me aayen). Class chuno to
    sirf usi class ke subjects; class+subject chuno to sirf unke teachers. */
-function useCascadingFilters(records, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers) {
+function useCascadingFilters(records, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers, allClasses = []) {
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)));
-  const classList = useMemo(() => uniq(records.map(r => r.class)), [records]);
+  /* Branch ki saari classes (API) + jo records me hain — sirf data wali classes nahi. */
+  const classList = useMemo(() => uniq([...allClasses, ...records.map(r => r.class)]), [records, allClasses]);
   const subjectList = useMemo(() => uniq(records
     .filter(r => !fClasses.length || fClasses.includes(r.class))
     .filter(r => !fTeachers.length || fTeachers.includes(r.teacher))
@@ -212,6 +213,13 @@ function useCascadingFilters(records, fClasses, fSubjects, fTeachers, setFSubjec
   }, [teacherList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { classList, subjectList, teacherList };
+}
+
+/* Filter catalog: saari classes + har class ke subjects (grades + get-subjects API). */
+const EMPTY_CATALOG = { classes: [], records: [] };
+function useFilterCatalog() {
+  const { data, loading } = useAsync(academicsService.getAcademicsFilterCatalog, []);
+  return { catalog: data || EMPTY_CATALOG, catalogLoading: loading };
 }
 
 /* Row teacher filter: row ka apna teacher YA koi bhi chuna hua teacher jo us
@@ -321,9 +329,10 @@ function LessonPlanReportPanel() {
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
-  const filterRecords = useMemo(() => [...teacherAssignments, ...lpData], [teacherAssignments, lpData]);
+  const { catalog, catalogLoading } = useFilterCatalog();
+  const filterRecords = useMemo(() => [...catalog.records, ...teacherAssignments, ...lpData], [catalog, teacherAssignments, lpData]);
   const { classList, subjectList, teacherList } = useCascadingFilters(
-    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers,
+    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers, catalog.classes,
   );
   const [fStatus, setFStatus] = useState('all');
   const [fFrom, setFFrom] = useState('');
@@ -371,7 +380,7 @@ function LessonPlanReportPanel() {
     emptyText: 'No lesson plans match the selected filters.',
   });
 
-  if (lpLoading || assignLoading) {
+  if (lpLoading || assignLoading || catalogLoading) {
     return <ReportDataLoading label="Loading lesson plan submissions…" />;
   }
 
@@ -434,9 +443,10 @@ function NotebookPlanReportPanel() {
   const [fClasses, setFClasses] = useState([]);
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
-  const filterRecords = useMemo(() => [...teacherAssignments, ...nbData], [teacherAssignments, nbData]);
+  const { catalog, catalogLoading } = useFilterCatalog();
+  const filterRecords = useMemo(() => [...catalog.records, ...teacherAssignments, ...nbData], [catalog, teacherAssignments, nbData]);
   const { classList, subjectList, teacherList } = useCascadingFilters(
-    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers,
+    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers, catalog.classes,
   );
   const [fStatus, setFStatus] = useState('all');
   const [granularity, setGranularity] = useState('unit'); // 'unit' | 'item'
@@ -508,7 +518,7 @@ function NotebookPlanReportPanel() {
     emptyText: 'No question bank units match the selected filters.',
   });
 
-  if (nbLoading || assignLoading) {
+  if (nbLoading || assignLoading || catalogLoading) {
     return <ReportDataLoading label="Loading question bank submissions…" />;
   }
 
@@ -573,8 +583,10 @@ function TeacherWorkloadReportPanel() {
   const [fSubjects, setFSubjects] = useState([]);
   const [fTeachers, setFTeachers] = useState([]);
   /* Workload sirf assigned teachers ka — options bhi assignments se, cascading. */
+  const { catalog, catalogLoading } = useFilterCatalog();
+  const filterRecords = useMemo(() => [...catalog.records, ...teacherAssignments], [catalog, teacherAssignments]);
   const { classList, subjectList, teacherList } = useCascadingFilters(
-    teacherAssignments, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers,
+    filterRecords, fClasses, fSubjects, fTeachers, setFSubjects, setFTeachers, catalog.classes,
   );
   const [includeLp, setIncludeLp] = useState(true);
   const [includeNb, setIncludeNb] = useState(true);
@@ -630,7 +642,7 @@ function TeacherWorkloadReportPanel() {
     emptyText: 'No teachers match the selected filters.',
   });
 
-  if (lpLoading || nbLoading || assignLoading) {
+  if (lpLoading || nbLoading || assignLoading || catalogLoading) {
     return <ReportDataLoading label="Loading teacher workload…" />;
   }
 

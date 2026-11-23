@@ -898,13 +898,19 @@ function rcObtTot(opt, obt, tot) {
   if (opt['Show Obtained Marks']) return `${obt}`;
   return `/${tot}`;
 }
-function RcWatermark({ logo, half, pageBreak }) {
+function RcWatermark({ logo, half, pageBreak, show = true }) {
   let on = true;
   try {
     const raw = window.localStorage.getItem(RC_WATERMARK_PREF_KEY);
     on = raw == null ? true : JSON.parse(raw) !== false;
   } catch { /* storage band ho to default ON */ }
-  if (!on) return null;
+  /* `show` = Visibility Options → Show School Logo. Off ho to logo watermark bhi na dikhao
+     (sirf page-break marker rakho taake Portfolio PDF ka page 2 alag rahe). */
+  if (!on || !show) {
+    return pageBreak
+      ? <div className="rc-wm" aria-hidden="true" data-rc-page-break="1" style={{ position: 'absolute', inset: '50% 0 0 0', pointerEvents: 'none' }} />
+      : null;
+  }
   /* Do-page card (Portfolio) ka watermark har page ka apna hota hai: `half` = 'top' / 'bottom'
      screen par card ka aadha hissa gherta hai; PDF/print me .rc-seg (har page) relative hai aur
      RC_PRINT_CSS `.rc-wm{inset:0}` lagati hai, to har page ke beech me ek logo. `pageBreak` wala
@@ -1074,6 +1080,7 @@ function dsMapApiRow(item) {
   }
   return {
     id: item.id ?? item.ID ?? 0,
+    subjectID: item.subjectID ?? item.subjectId ?? item.SubjectID ?? null,
     subject: dsPickField(item, 'subjectName', 'subject', 'SubjectName', 'Subject'),
     date: dsDateToYmd(rawDate),
     timeFrom: rawFrom ? dsTimeFromInput(rawFrom) : '',
@@ -10873,7 +10880,7 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
 
   return (
     <div className="rc-card rc-card-classic" style={{ position: 'relative', isolation: 'isolate', fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
-      <RcWatermark logo={school?.logo} />
+      <RcWatermark show={!!opt['Show School Logo']} logo={school?.logo} />
       {/* Header */}
      <div style={{ background: hdrBg, padding: '8px 14px',display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {/* Visibility Options: showSchoolLogo false → logo bilkul na dikhao (single/bulk/combined). */}
@@ -11210,7 +11217,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 
   return (
     <div style={{ position: 'relative', isolation: 'isolate', fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto', boxShadow: '0 4px 24px rgba(0,0,0,.08)', border: isColor ? 'none' : '1px solid #D1D5DB' }}>
-      <RcWatermark logo={school?.logo} />
+      <RcWatermark show={!!opt['Show School Logo']} logo={school?.logo} />
       {/* Header */}
       <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         {opt['Show School Logo'] && (
@@ -11523,7 +11530,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
   return (
     <div style={{ position: 'relative', isolation: 'isolate', fontFamily: "'Plus Jakarta Sans',sans-serif", background: '#fff', width: '100%', maxWidth: 700, margin: '0 auto' }}>
-      <RcWatermark logo={school?.logo} half="top" />
+      <RcWatermark show={!!opt['Show School Logo']} logo={school?.logo} half="top" />
       {/* ── PAGE 1 ── */}
       {/* Cover header */}
       <div style={{ background: C.p1bg, padding: 0, position: 'relative', overflow: 'hidden', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
@@ -11693,7 +11700,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
       </div>
 
       {/* ── PAGE 2 ── */}
-      <RcWatermark logo={school?.logo} half="bottom" pageBreak />
+      <RcWatermark show={!!opt['Show School Logo']} logo={school?.logo} half="bottom" pageBreak />
       <div data-rc-page-break="1" style={{ background: C.p2hdr, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isColor ? 'none' : '1px solid #D1D5DB' }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.hdrText, letterSpacing: '-.01em' }}>Performance Analytics</div>
