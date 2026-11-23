@@ -235,10 +235,8 @@ useEffect(() => {
           <div className="card-header">
             <div><div className="card-title"><i className="fa-solid fa-sack-dollar" /> Transaction Revenue</div><div className="card-sub" style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 3 }}>School Mentor's margin · {period.label}</div></div>
             <div className="card-header-right">
-              <button {...P.lock('fee_analytics', 'edit', { className: 'btn-secondary', style: { height: 34, padding: '0 12px', fontSize: 12 }, 'data-tip': 'Configure transaction rates', 'data-tip-pos': 'left' })} onClick={() => { if (P.guard('fee_analytics', 'edit', toast)) setShowRateConfig(true); }}>
-                <i className="fa-solid fa-gear" /> Rates
-              </button>
-              <button {...P.lock('fee_analytics', 'download', { className: 'btn-info', style: { height: 34, padding: '0 14px', fontSize: 12 }, 'data-tip': 'Download the revenue report', 'data-tip-pos': 'left' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) setShowRevReport(true); }}>
+                         {/* Rates button hidden */}
+                       <button {...P.lock('fee_analytics', 'download', { className: 'btn-info', style: { height: 34, padding: '0 14px', fontSize: 12 }, 'data-tip': 'Download the revenue report', 'data-tip-pos': 'left' })} onClick={() => { if (P.guard('fee_analytics', 'download', toast)) setShowRevReport(true); }}>
                 <i className="fa-solid fa-download" /> Revenue Report
               </button>
             </div>
