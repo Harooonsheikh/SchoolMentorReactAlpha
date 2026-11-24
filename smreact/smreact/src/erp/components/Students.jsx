@@ -5127,7 +5127,7 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
   const fromCls = cls?.cls || '';
   const fromSec = cls?.sec || '';
   const [grades, setGrades]   = useState([]);   // school ki proper-sequence classes + unke sections
-  const [toClass, setToClass] = useState(PROMOTE_NEXT[fromCls] || fromCls || '');
+  const [toGradeId, setToGradeId] = useState('');   // selected TO-class row (id) — same-name classes alag rows hoti hain
   const [toSec, setToSec]     = useState(fromSec);
   const [session, setSession] = useState('');   // active session NAME (read-only) — Settings se change hota hai
   const [sessionId, setSessionId] = useState(0); // active session ID → API ka sessionYearID
@@ -5145,15 +5145,27 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
 
   /* To Class ke options = school-order classes (fallback: purani classList prop).
      To Section = us SELECTED class ke against sections (fallback: sectionList prop). */
-  const classOptions = grades.length ? grades.map(g => g.name) : (classList || []);
-  const selGrade = grades.find(g => g.name === toClass);
-  const sectionOptions = selGrade ? selGrade.sections.map(s => s.name) : (sectionList || []);
+  /* Selection class ki ROW (id) par hai, naam par nahi — STEP-2 ki do rows ho to jo select ho
+     usi ke sections dikhein. */
+  const selGrade = grades.find(g => String(g.id) === String(toGradeId));
+  const toClass = selGrade?.name || '';
+  const sectionOptions = selGrade ? selGrade.sections.map(s => s.name) : [];
 
-  /* To Class badle to section list refresh — agar current section us class me na ho to pehli par set. */
+  /* Grades load hon to default To Class: agle class ki pehli row (ya same class ho to isi row). */
   useEffect(() => {
-    if (sectionOptions.length && !sectionOptions.includes(toSec)) setToSec(sectionOptions[0]);
+    if (!grades.length || toGradeId !== '') return;
+    const want = PROMOTE_NEXT[fromCls] || fromCls;
+    const same = grades.find(g => g.name === want && String(g.id) === String(cls?._gradeId));
+    const g = same || grades.find(x => x.name === want);
+    if (g) setToGradeId(g.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toClass, grades]);
+  }, [grades]);
+
+  /* To Class badle to section list refresh — agar current section us class me na ho to pehli par set (ya khaali). */
+  useEffect(() => {
+    if (!sectionOptions.includes(toSec)) setToSec(sectionOptions[0] || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toGradeId, grades]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -5206,9 +5218,9 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
               <input className="stu-finput" value={fromSec} readOnly />
             </Field>
             <Field label="To Class *">
-              <select className="stu-finput" value={toClass} onChange={(e) => setToClass(e.target.value)}>
+              <select className="stu-finput" value={toGradeId} onChange={(e) => setToGradeId(e.target.value)}>
                 <option value="">Select</option>
-                {classOptions.map(c => <option key={c}>{c}</option>)}
+                {grades.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </Field>
             <Field label="To Section *">
@@ -5281,7 +5293,7 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
             disabled={count === 0 || !toClass || !toSec}
             onClick={() => {
               /* Har selected student ke liye promote payload banao (IDs resolve karke). */
-              const newGrade   = grades.find(g => g.name === toClass);
+              const newGrade   = selGrade;
               const newSection = newGrade?.sections.find(s => s.name === toSec);
               const promotions = (cls?.students || [])
                 .filter(s => selected[s._id])
