@@ -9030,7 +9030,7 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
   const canRcvDelete = can('Fee', 'Fee Receiving', 'Delete');
   const canRcvDownload = can('Fee', 'Fee Receiving', 'Download');
   const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
-  const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  const { data: studentsMap = {}, loading: studentsLoading } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} } = useAsync(feeService.getFeeSettings, []);
   const { data: serverReceipts = [] } = useAsync(feeService.getReceipts, []);
@@ -9496,7 +9496,9 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
   const handledFocusRef = useRef(0);
   useEffect(() => {
     if (!focusLedgerId || handledFocusRef.current === focusLedgerId) return;
-    if (!classes.length || !Object.keys(studentsMap || {}).length) return;   // roster abhi load ho raha hai
+    /* Roster load ho raha ho to wait. Load fail ya khali ho to bhi lookup chalta hai —
+       wrong Ledger ID par "Challan not found" toast zaroor aaye. */
+    if (classesLoading || studentsLoading) return;
     handledFocusRef.current = focusLedgerId;
     let opened = false;
     (async () => {
@@ -9512,7 +9514,7 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
           const rows = await feeService.getLedgerRange(from.getMonth() + 1, from.getFullYear(), now.getMonth() + 1, now.getFullYear());
           rec = (rows || []).find(r => Number(r.id) === focusLedgerId) || null;
         }
-        if (!rec) { toast(`Challan #${focusLedgerId} not found`, 'error'); return; }
+        if (!rec) { toast(`Challan not found (Ledger ID ${focusLedgerId})`, 'error'); return; }
         const studentID = Number(rec.studentID ?? rec.studentId) || 0;
         if (focusStudentId && studentID && focusStudentId !== studentID) {
           toast(`Challan #${focusLedgerId} does not belong to student #${focusStudentId}`, 'error'); return;
@@ -9552,7 +9554,7 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
         if (!opened && modalOnly) onModalClose?.();
       }
     })();
-  }, [focusLedgerId, focusStudentId, classes, studentsMap, headsMap, pendingByStudent, settings]);
+  }, [focusLedgerId, focusStudentId, classes, classesLoading, studentsLoading, studentsMap, headsMap, pendingByStudent, settings]);
 
   /* Overlay mode: receive modal (aur uska slip) khulne ke baad band hote hi overlay band. */
   const quickOpenedRef = useRef(false);
