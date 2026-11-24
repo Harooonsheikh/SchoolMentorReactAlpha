@@ -5139,7 +5139,7 @@ function StuPromoteModal({ cls, onClose, onSubmit, toast }) {
   useEffect(() => {
     if (!gradesFetched.current) {
       gradesFetched.current = true;
-      studentService.getStuGrades()
+      studentService.getStuGrades({ quiet: true })
         .then(g => setGrades(Array.isArray(g) ? g : []))
         .catch(() => toast && toast('Classes could not be loaded, please try again.', 'error'));
     }
@@ -5154,12 +5154,14 @@ function StuPromoteModal({ cls, onClose, onSubmit, toast }) {
      usi ke sections dikhein. */
   const selGrade = grades.find(g => String(g.id) === String(toGradeId));
   const toClass = selGrade?.name || '';
-  const sectionOptions = selGrade ? selGrade.sections.map(s => s.name) : [];
-
   /* Same-class validation (class ID se compare, naam se nahi). */
   const sameClass = !!selGrade && String(selGrade.id) === String(cls?._gradeId);
-  const sameMsg = !sameClass ? ''
-    : (toSec === fromSec ? 'Cannot promote student to the same class and section.' : 'Cannot promote student to the same class.');
+  const sameMsg = sameClass ? 'Cannot promote student to the same class.' : '';
+
+  /* From Section ko To Section list se hata do (jab To Class wahi class ho). */
+  const sectionOptions = selGrade
+    ? selGrade.sections.map(s => s.name).filter(n => !(sameClass && n === fromSec))
+    : [];
 
   /* Grades load hon to default To Class: agle class ki pehli row (ya same class ho to isi row). */
   useEffect(() => {
