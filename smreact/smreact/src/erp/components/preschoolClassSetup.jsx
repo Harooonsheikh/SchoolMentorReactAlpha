@@ -6,8 +6,8 @@
    Nursery or KG). Every other class is Grade 1-12. Preschool classes
    are meant to be left out of Combined Assessment Result.
 
-   Persistence: LOCAL-ONLY for now (see services/preschoolClassSetupStore.js
-   — no backend endpoint for a school-wide mapping exists yet).
+   Persistence: POST /api/exam-preschool-class (get / save) — one row per
+   class-section (see services/preschoolClassSetupStore.js).
    Class list: live (get-classlist-sectionlist-studentlist-by-branch).
    Edit gate: existing 'Examination' › 'Result Setup' › 'Edit' permission,
    the Examination module read-only flag and the session guard.
@@ -257,12 +257,14 @@ export default function PreschoolClassSetup({ pLevels = [], toast = () => {}, on
     if (!guardEdit()) return;
     setSaving(true);
     try {
-      const fresh = await savePreschoolClassSetup(draft);
+      const fresh = await savePreschoolClassSetup(draft, saved);
       setSaved(fresh);
       setDraft(fresh);
       const n = Object.keys(fresh).length;
-      toast(`${n} class${n === 1 ? '' : 'es'} set as Preschool / Montessori (saved on this device)`, 'success');
+      toast(`Saved — ${n} class${n === 1 ? '' : 'es'} set as Preschool / Montessori`, 'success');
     } catch (e) {
+      /* Jo rows save ho gayin wo server se taza; baqi draft me rehne do. */
+      if (e.fresh) { setSaved(e.fresh); setDraft(d => ({ ...e.fresh, ...d })); }
       toast(e.message || 'Save failed, please try again', 'error');
     } finally {
       setSaving(false);
@@ -280,11 +282,6 @@ export default function PreschoolClassSetup({ pLevels = [], toast = () => {}, on
           These classes are assessed with Preschool skills in <strong>Single Assessment Result</strong> and are left out of <strong>Combined Assessment Result</strong>.
           All other classes use Grade 1-12 marks.
         </span>
-      </div>
-
-      <div className="psc-warn">
-        <i className="fa-solid fa-triangle-exclamation"></i>
-        <span>This list is saved on this device only for now (per branch). It is not yet stored on the server.</span>
       </div>
 
       {lockReason && (

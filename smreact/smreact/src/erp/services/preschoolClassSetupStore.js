@@ -2,7 +2,11 @@
    PRESCHOOL CLASS SETUP STORE — Result Setup → Preschool / Montessori
    → "Setup Preschool Classes".
 
-   ⚠️ LOCAL-ONLY (no backend yet). The backend has NO school-wide
+   ✅ NOW LIVE: POST /api/exam-preschool-class (actions get/save/delete)
+   — see getPreschoolClassSetup / savePreschoolClassSetup. localStorage
+   below is only a cache for the sync readers.
+
+   (Old note) The backend had NO school-wide
    "this class-section is Preschool at level X" endpoint. The only live
    preschool flag is PER EXAM (`addexam-preschooling-crud`, read back
    through getclassesinexam's isPreSchooling / preLevelName), which the
@@ -38,6 +42,9 @@ export const PRESCHOOL_CLASS_SETUP_EVENT = 'sm:preschool-class-setup-changed';
    `changePreSchoolingClassName`. */
 const API_LEVEL_NAME = { pg: 'PlayGroup/Pre1', nur: 'Nursery/Pre2', kg: 'KG/Pre3' };
 
+/* levelId (pg/nur/kg) → API string; '' agar level nahi. */
+export const preschoolApiClassName = (levelId) => API_LEVEL_NAME[levelId] || '';
+
 const storageKey = () => `sm.exam.preschoolClassSetup.v1.b${getBranchId()}`;
 
 export const preschoolClassKey = (classID, sectionID) => `${classID ?? ''}_${sectionID ?? ''}`;
@@ -52,24 +59,109 @@ function readMap() {
   }
 }
 
-/* { "<classID>_<sectionID>": levelId } for the current branch. */
-export async function getPreschoolClassSetup() {
-  return { ...readMap() };
+/* ── Live API: POST /api/exam-preschool-class ──
+   { action: 'get' | 'save' | 'delete', id, branchID, classID, sectionID,
+     isPreSchoolingBit, preSchoolingClassName, userID }
+   Har class-section ki apni row (classID + sectionID). localStorage ab
+   sirf cache hai taake sync readers (excludePreschoolClasses waghera)
+   chalte rahein. */
+const API_ENDPOINT = 'exam-preschool-class';
+const pickField = (r, ...ks) => { for (const k of ks) if (r && r[k] !== undefined && r[k] !== null) return r[k]; return undefined; };
+/* "<classID>_<sectionID>" → server row id (save par update ke liye). */
+let _rowIds = {};
+
+const levelIdFromName = (name) => {
+  const k = String(name || '').toLowerCase().replace(/[\s/]+/g, '');
+  if (!k) return '';
+  if (k.includes('playgroup') || k.includes('pre1')) return 'pg';
+  if (k.includes('nursery') || k.includes('pre2')) return 'nur';
+  if (k.includes('kg') || k.includes('pre3')) return 'kg';
+  return '';
+};
+const isTrue = v => v === true || v === 1 || String(v).toLowerCase() === 'true' || String(v) === '1';
+const currentUserId = () => {
+  try { return Number(sessionStorage.getItem('UserID') || sessionStorage.getItem('userID') || sessionStorage.getItem('employee_ID')) || 0; } catch { return 0; }
+};
+
+function writeCache(map) {
+  try { localStorage.setItem(storageKey(), JSON.stringify(map)); } catch { /* storage unavailable — ignore */ }
+  try { window.dispatchEvent(new CustomEvent(PRESCHOOL_CLASS_SETUP_EVENT, { detail: { ...map } })); } catch { /* ignore */ }
 }
 
-/* Replaces the whole map for the current branch. Returns the saved map. */
-export async function savePreschoolClassSetup(map) {
-  const clean = {};
-  Object.entries(map || {}).forEach(([k, v]) => { if (k && v) clean[k] = String(v); });
+/* { "<classID>_<sectionID>": levelId } for the current branch (server se). */
+export async function getPreschoolClassSetup() {
+  let res;
   try {
-    localStorage.setItem(storageKey(), JSON.stringify(clean));
+    res = await apiPost(API_ENDPOINT, {
+      action: 'get', id: 0, branchID: getBranchId(), classID: 0, sectionID: 0,
+      isPreSchoolingBit: false, preSchoolingClassName: '', userID: currentUserId(),
+    });
   } catch (e) {
-    throw new Error('Could not save on this device (browser storage is unavailable).');
+    console.warn('[preschool-class-setup] get failed — using cached copy', e);
+    return { ...readMap() };
   }
-  try {
-    window.dispatchEvent(new CustomEvent(PRESCHOOL_CLASS_SETUP_EVENT, { detail: { ...clean } }));
-  } catch { /* old browsers — ignore */ }
-  return { ...clean };
+  const list = Array.isArray(res?.data) ? res.data : Array.isArray(res?.Data) ? res.Data : Array.isArray(res) ? res : [];
+  const map = {};
+  const ids = {};
+  list.forEach(r => {
+    const c = pickField(r, 'classID', 'ClassID', 'classId');
+    const s = pickField(r, 'sectionID', 'SectionID', 'sectionId');
+    if (c == null || s == null) return;
+    const key = preschoolClassKey(c, s);
+    const id = Number(pickField(r, 'id', 'ID', 'Id')) || 0;
+    if (id) ids[key] = id;
+    if (!isTrue(pickField(r, 'isPreSchoolingBit', 'IsPreSchoolingBit', 'isPreSchooling'))) return;
+    const lvl = levelIdFromName(pickField(r, 'preSchoolingClassName', 'PreSchoolingClassName'));
+    if (lvl) map[key] = lvl;
+  });
+  _rowIds = ids;
+  writeCache(map);
+  return map;
+}
+
+/* Sirf badli hui class-sections server par save hoti hain — har ek apni
+   classID/sectionID ke against. Off ki gayi class → isPreSchoolingBit false.
+   `prev` = pichla saved map (diff ke liye). Returns the fresh server map. */
+export async function savePreschoolClassSetup(map, prev = {}) {
+  const next = {};
+  Object.entries(map || {}).forEach(([k, v]) => { if (k && v) next[k] = String(v); });
+  const keys = new Set([...Object.keys(next), ...Object.keys(prev || {})]);
+  const changed = [...keys].filter(k => (next[k] || '') !== ((prev || {})[k] || ''));
+  const branchID = getBranchId();
+  const userID = currentUserId();
+
+  const failed = [];
+  for (const key of changed) {
+    const [classID, sectionID] = key.split('_').map(Number);
+    if (!classID || !sectionID) continue;
+    const levelId = next[key] || '';
+    const payload = {
+      action: 'save',
+      id: _rowIds[key] || 0,
+      branchID,
+      classID,
+      sectionID,
+      isPreSchoolingBit: !!levelId,
+      preSchoolingClassName: levelId ? (API_LEVEL_NAME[levelId] || '') : '',
+      userID,
+    };
+    try {
+      const res = await apiPost(API_ENDPOINT, payload);
+      const newId = Number(res?.id ?? res?.data?.id ?? res?.data?.ID) || 0;
+      if (newId) _rowIds[key] = newId;
+    } catch (e) {
+      failed.push(e.message || key);
+    }
+  }
+
+  /* Server ki asal halat wapas padho (ids bhi taza ho jati hain). */
+  const fresh = await getPreschoolClassSetup();
+  if (failed.length) {
+    const err = new Error(`Could not save ${failed.length} class${failed.length === 1 ? '' : 'es'}: ${failed[0]}`);
+    err.fresh = fresh;
+    throw err;
+  }
+  return fresh;
 }
 
 /* Synchronous read for render-time filters. */
