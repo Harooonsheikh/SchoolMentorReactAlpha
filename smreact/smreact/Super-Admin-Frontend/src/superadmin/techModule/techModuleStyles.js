@@ -105,10 +105,30 @@ export const TM_CSS = `
 .tm-card-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:11px;color:var(--tm);margin-bottom:10px}
 .tm-card-meta i{color:var(--brand);margin-right:4px}
 .tm-card-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;border-top:1px solid var(--bl);padding-top:11px;margin-top:2px}
+/* Permission tooltips on right-edge buttons (card actions, header "Create New"):
+   open leftward from the button's right edge so they stay inside the card. */
+.sa-root .tm-card-actions [data-tip]::after,.sa-root .tm-body-hd [data-tip]::after{left:auto;right:0;transform:translateY(4px);width:max-content;max-width:240px;white-space:normal;text-align:left;line-height:1.35}
+.sa-root .tm-card-actions [data-tip]:hover::after,.sa-root .tm-card-actions [data-tip]:focus-visible::after,.sa-root .tm-body-hd [data-tip]:hover::after,.sa-root .tm-body-hd [data-tip]:focus-visible::after{transform:translateY(0)}
 .tm-empty{text-align:center;padding:52px 20px;color:var(--tm)}
 .tm-empty i{font-size:28px;opacity:.18;display:block;margin-bottom:12px}
 .tm-empty div:first-of-type{font-size:13px;font-weight:700;color:var(--t2);margin-bottom:3px}
 
 /* ── Detail modal sections — last one drops its divider/spacing. ── */
 .tm-modal-body .tm-detail-section:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+
+/* TmDropdown — downward-only select (TmDropdown.jsx). */
+.sa-root .tm-sel{display:flex;align-items:center;gap:8px;text-align:left;cursor:pointer}
+.sa-root .tm-sel:disabled{cursor:not-allowed;opacity:.6}
+.sa-root .tm-sel.open{border-color:var(--brand);box-shadow:0 0 0 3px rgba(30,58,138,.09)}
+.sa-root .tm-sel-val{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sa-root .tm-sel-val.ph{color:var(--tm)}
+.sa-root .tm-sel-chev{font-size:11px;color:var(--tm);transition:transform .15s ease}
+.sa-root .tm-sel.open .tm-sel-chev{transform:rotate(180deg)}
+.sa-root .tm-sel-menu{position:fixed;z-index:1400;overflow-y:auto;background:var(--card);border:1.5px solid var(--bl);border-radius:var(--r-md);box-shadow:var(--s-lg);padding:4px;font-family:var(--font);animation:tmSelIn .12s ease-out both}
+@keyframes tmSelIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.sa-root .tm-sel-opt{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:7px;font-size:13px;color:var(--t1);cursor:pointer}
+.sa-root .tm-sel-opt.ph{color:var(--tm)}
+.sa-root .tm-sel-opt.act{background:rgba(30,58,138,.07)}
+.sa-root .tm-sel-opt.sel{font-weight:700;color:var(--brand)}
+.sa-root .tm-sel-opt .fa-check{font-size:11px}
 `;

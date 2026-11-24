@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as techTicketsApi from '../api/services/techTickets';
+import { useDownwardMenu } from './TmDropdown';
 
 /* ═══════════════════════════════════════════════════════════════════
    SchoolPicker — the server's school list (README §7 ?action=schools).
@@ -71,10 +72,14 @@ export default function SchoolPicker({ value, onChange }) {
   }, [all, q]);
 
   const selected = value ? findSchool(value) : null;
+  /* Menu always opens below the field (portalled, never clipped by the modal). */
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const { pos, portal } = useDownwardMenu({ open, onClose: () => { setOpen(false); setQ(''); }, triggerRef, menuRef, maxHeight: 300 });
 
   return (
     <div style={{ position: 'relative' }}>
-      <div className="um-input" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', height: 'auto', minHeight: 38, padding: '6px 13px' }} onClick={() => setOpen((o) => !o)}>
+      <div ref={triggerRef} className={`um-input${open ? ' tm-sel open' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', height: 'auto', minHeight: 38, padding: '6px 13px' }} onClick={() => setOpen((o) => !o)}>
         <i className="fa-solid fa-school" style={{ color: 'var(--tm)' }} />
         {selected ? (
           <div style={{ flex: 1 }}>
@@ -85,8 +90,8 @@ export default function SchoolPicker({ value, onChange }) {
         <i className={`fa-solid fa-chevron-${open ? 'up' : 'down'}`} style={{ fontSize: 11, color: 'var(--tm)' }} />
       </div>
 
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, background: 'var(--card)', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', boxShadow: 'var(--s-lg)', marginTop: 4, maxHeight: 280, overflow: 'auto' }}>
+      {portal(
+        <div ref={menuRef} className="tm-sel-menu" style={{ top: pos?.top, left: pos?.left, width: pos?.width, maxHeight: pos?.maxHeight, padding: 0 }}>
           <div style={{ padding: 8, borderBottom: '1px solid var(--bl)', position: 'sticky', top: 0, background: 'var(--card)' }}>
             <div className="search-box"><i className="fa-solid fa-magnifying-glass" /><input className="search-input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search school name…" /></div>
           </div>
@@ -105,7 +110,7 @@ export default function SchoolPicker({ value, onChange }) {
               </div>
             </div>
           ))}
-        </div>
+        </div>,
       )}
     </div>
   );

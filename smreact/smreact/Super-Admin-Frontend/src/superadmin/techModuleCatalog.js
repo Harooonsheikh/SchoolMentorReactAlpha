@@ -19,6 +19,7 @@ export const PLATFORMS = [
   },
   { id: 'erp', label: 'ERP', subPlatforms: [] },
   { id: 'chain_school', label: 'Chain School', subPlatforms: [] },
+  { id: 'super_admin', label: 'Super Admin', subPlatforms: [] },
 ];
 
 export const MODULES_BY_PLATFORM = {
@@ -82,6 +83,24 @@ export const MODULES_BY_PLATFORM = {
     { id: 'consolidated_reports', label: 'Consolidated Reports' },
     { id: 'central_admissions', label: 'Central Admissions' },
     { id: 'other', label: 'Other' },
+  ],
+  /* Super Admin console modules (SuperAdminShell NAV). */
+  super_admin: [
+    { id: 'Dashboard', label: 'Dashboard' },
+    { id: 'E-Tube', label: 'E-Tube' },
+    { id: 'Network Permissions', label: 'Network Permissions' },
+    { id: 'School Permissions', label: 'School Permissions' },
+    { id: 'Schools Progress', label: 'Schools Progress' },
+    { id: 'Schools Payment', label: 'Schools Payment' },
+    { id: 'Policy Manuals', label: 'Policy Manuals' },
+    { id: 'Mentor AI', label: 'Mentor AI' },
+    { id: 'Support', label: 'Support' },
+    { id: 'Tech Module', label: 'Tech Module' },
+    { id: 'Teachers Training', label: 'Teachers Training' },
+    { id: 'Quiz Content', label: 'Quiz Content' },
+    { id: 'Notifications', label: 'Notifications' },
+    { id: 'User Management', label: 'User Management' },
+    { id: 'Other', label: 'Other' },
   ],
 };
 
