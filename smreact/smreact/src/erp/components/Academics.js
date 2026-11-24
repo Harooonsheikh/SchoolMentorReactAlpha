@@ -3403,14 +3403,14 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
     }
   };
 
-  const viewFile = r => { if (r.fileUrl) window.open(r.fileUrl, '_blank', 'noopener'); else toast('No file attached to preview', 'info'); };
-  const downloadFile = r => {
-    if (!r.fileUrl) { toast('No file attached to download', 'info'); return; }
-    const a = document.createElement('a');
-    a.href = r.fileUrl; a.download = r.fileName || 'resource.pdf';
-    a.target = '_blank'; a.rel = 'noopener';
-    document.body.appendChild(a); a.click(); a.remove();
-  };
+ const viewFile = r => { if (r.fileUrl) window.open(resolveMediaUrl(r.fileUrl), '_blank', 'noopener'); else toast('No file attached to preview', 'info'); };
+const downloadFile = r => {
+  if (!r.fileUrl) { toast('No file attached to download', 'info'); return; }
+  const a = document.createElement('a');
+  a.href = resolveMediaUrl(r.fileUrl); a.download = r.fileName || 'resource.pdf';
+  a.target = '_blank'; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+};
   const removeRes = r => openConfirm({
     title: 'Delete Resource?',
     message: `"<strong>${r.title}</strong>" will be permanently removed. This cannot be undone.`,
@@ -4371,7 +4371,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
                     </div>
                     <div className="ho-item-actions">
                       <button className="rl-act" onClick={() => setPreview({ kind: 'resource', item: res })}><i className="fa-solid fa-eye"></i> View</button>
-                      <button className="rl-act" onClick={() => res.fileUrl ? window.open(res.fileUrl, '_blank') : toast('Demo file — no PDF attached', 'info')}><i className="fa-solid fa-download"></i> Download</button>
+                     <button className="rl-act" onClick={() => res.fileUrl ? window.open(resolveMediaUrl(res.fileUrl), '_blank') : toast('Demo file — no PDF attached', 'info')}><i className="fa-solid fa-download"></i> Download</button>
                       {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'resource', item: res })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
                     </div>
                   </div>
@@ -6448,26 +6448,31 @@ const ACADEMICS_CSS = `
 .rl-card-top { display:flex; align-items:flex-start; gap:11px; }
 .rl-card-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
 .rl-card-headings { flex:1; min-width:0; }
-.rl-card-title { font-size:14px; font-weight:800; color:var(--text-primary); line-height:1.35; margin-bottom:5px; }
+.rl-card-title { font-size:14px; font-weight:800; color:var(--text-primary); line-height:1.35; margin-bottom:5px; word-break:break-word; overflow-wrap:anywhere; }
 .rl-card-meta { display:flex; flex-wrap:wrap; gap:10px; font-size:11px; color:var(--text-muted); font-weight:600; }
 .rl-card-meta i { margin-right:3px; opacity:.8; }
 .rl-badge { flex-shrink:0; font-size:10px; font-weight:800; padding:4px 9px; border-radius:var(--radius-full); white-space:nowrap; }
-.rl-card-desc { font-size:12px; color:var(--text-secondary); line-height:1.5; margin:11px 0 0; }
+.rl-card-desc { font-size:12px; color:var(--text-secondary); line-height:1.5; margin:11px 0 0; word-break:break-word; overflow-wrap:anywhere; }
 .rl-card-file {
   display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
   margin-top:12px; padding-top:11px; border-top:1px dashed var(--border-light);
   font-size:11.5px; color:var(--text-muted);
 }
-.rl-card-fname { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.rl-card-fname {
+  display:inline-flex; align-items:center; gap:6px; min-width:0; flex:1;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600;
+}
 .rl-card-fname i { color:#DC2626; }
 .rl-card-fname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; font-weight:600; }
 .rl-card-date { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
 .rl-card-actions { display:flex; gap:7px; margin-top:13px; flex-wrap:wrap; }
 .rl-act {
-  flex:1; min-width:64px; display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  flex:1; display:inline-flex; align-items:center; justify-content:center; gap:5px;
   height:33px; padding:0 8px; font-size:11.5px; font-weight:700; font-family:var(--font-body);
   border:1.5px solid var(--border-light); border-radius:var(--radius-md);
   background:var(--bg-card); color:var(--text-secondary); cursor:pointer; transition:all .18s ease;
+  white-space:nowrap;
+  flex-shrink:0;
 }
 .rl-act:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(var(--brand-primary-rgb, 30,58,138), .05); }
 .rl-act-danger:hover { border-color:#DC2626; color:#DC2626; background:rgba(220,38,38,.05); }
