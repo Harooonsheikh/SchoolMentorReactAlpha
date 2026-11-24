@@ -14,6 +14,7 @@ import UserManagement from './UserManagement';
 import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
 import TechModule from './TechModule';
+import TechAssignmentListener from './techModule/TechAssignmentListener';
 import { PermissionsProvider } from './adminPermissions/AdminPermissionsContext';
 import { SaPermsProvider, useSaPerms } from './saPerms';
 import { effectivePermsFromRows, isHeadUser } from './permissionModel';
@@ -225,10 +226,10 @@ export default function SuperAdminShell({ user, onLogout }) {
     if (first) setActive(first.id);
   }, [navAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toast = (msg, type = 'info') => {
+  const toast = (msg, type = 'info', ms = 3200) => {
     const id = seq.current++;
     setToasts((t) => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), ms);
   };
 
   /* Remember the theme choice across reloads. */
@@ -295,6 +296,8 @@ const onNav = (id) => {
   enabled={true}
   onUnreadChange={setSupportUnreadCount}
 />
+      {/* Naya Bug / New Development assign ho → sound + toast + browser notification. */}
+      <TechAssignmentListener enabled={canSee('techModule')} toast={toast} onOpen={() => setActive('techModule')} />
       <style>{SA_CSS}</style>
 <style>{SA_CSS}</style>
 

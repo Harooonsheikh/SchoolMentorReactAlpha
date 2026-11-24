@@ -3,6 +3,7 @@ import { PLATFORMS, BUG_TYPES, SOURCES, modulesFor } from '../techModuleCatalog'
 import useTechDevelopers from './useTechDevelopers';
 import { findSchool } from './SchoolPicker';
 import SchoolPicker from './SchoolPicker';
+import TmSelect from './TmDropdown';
 import { useSaPerms } from '../saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -117,41 +118,34 @@ export default function TicketCreateForm({
           <div className="tm-grid">
             <div className="um-field">
               <label className="um-label">Type <span className="tm-req">*</span></label>
-              <select className="um-input" value={f.type} disabled={lockType} onChange={(e) => set('type', e.target.value)}>
-                {BUG_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-              </select>
+              <TmSelect value={f.type} disabled={lockType} onChange={(v) => set('type', v)}
+                options={BUG_TYPES.map((t) => ({ value: t.id, label: t.label }))} />
             </div>
             <div className="um-field">
               <label className="um-label">Platform <span className="tm-req">*</span></label>
-              <select className="um-input" value={f.platform} onChange={(e) => { set('platform', e.target.value); set('subPlatform', ''); set('module', ''); }}>
-                {PLATFORMS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+              <TmSelect value={f.platform} onChange={(v) => { if (v === f.platform) return; set('platform', v); set('subPlatform', ''); set('module', ''); }}
+                options={PLATFORMS.map((p) => ({ value: p.id, label: p.label }))} />
             </div>
           </div>
 
           <div className="um-field" style={{ marginBottom: 14 }}>
             <label className="um-label">Source <span className="tm-req">*</span></label>
-            <select className="um-input" value={f.source} onChange={(e) => set('source', e.target.value)}>
-              {SOURCES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
+            <TmSelect value={f.source} onChange={(v) => set('source', v)}
+              options={SOURCES.map((s) => ({ value: s.id, label: s.label }))} />
           </div>
 
           {platform.subPlatforms.length > 0 && (
             <div className="um-field" style={{ marginBottom: 14 }}>
               <label className="um-label">Sub-Platform <span className="tm-req">*</span></label>
-              <select className="um-input" value={f.subPlatform} onChange={(e) => { set('subPlatform', e.target.value); set('module', ''); }}>
-                <option value="">Select…</option>
-                {platform.subPlatforms.map((sp) => <option key={sp.id} value={sp.id}>{sp.label}</option>)}
-              </select>
+              <TmSelect value={f.subPlatform} placeholder="Select…" onChange={(v) => { if (v === f.subPlatform) return; set('subPlatform', v); set('module', ''); }}
+                options={platform.subPlatforms.map((sp) => ({ value: sp.id, label: sp.label }))} />
             </div>
           )}
 
           <div className="um-field" style={{ marginBottom: 14 }}>
             <label className="um-label">Module <span className="tm-req">*</span></label>
-            <select className="um-input" value={f.module} onChange={(e) => set('module', e.target.value)} disabled={platform.subPlatforms.length > 0 && !f.subPlatform}>
-              <option value="">Select…</option>
-              {modules.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
+            <TmSelect value={f.module} placeholder="Select…" onChange={(v) => set('module', v)} disabled={platform.subPlatforms.length > 0 && !f.subPlatform}
+              options={modules.map((m) => ({ value: m.id, label: m.label }))} />
           </div>
 
           <div className="tm-form-section-lbl c-purple"><i className="fa-solid fa-file-lines" /> Details</div>
@@ -201,10 +195,8 @@ export default function TicketCreateForm({
               <div className="tm-form-section-lbl c-amber"><i className="fa-solid fa-user-gear" /> Assignment</div>
               <div className="um-field">
                 <label className="um-label">Assign To Tech Team <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(optional — leave blank to triage later)</span></label>
-                <select {...P.lock('bugs_new_dev', 'assign', { className: 'um-input' })} value={canAssign ? f.assignedTo : ''} onChange={(e) => { if (canAssign) set('assignedTo', e.target.value); }}>
-                  <option value="">Unassigned</option>
-                  {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
+                <TmSelect triggerProps={P.lock('bugs_new_dev', 'assign')} value={canAssign ? f.assignedTo : ''} placeholder="Unassigned" onChange={(v) => { if (canAssign) set('assignedTo', v); }}
+                  options={devs.map((d) => ({ value: d.id, label: d.name }))} />
               </div>
               {!canAssign && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-lock" /> You don't have <b>Assigned To</b> permission — the ticket will be created unassigned.</div>}
               {canAssign && f.assignedTo && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-circle-info" /> Assigning now will move this ticket straight to <b>In Progress</b>.</div>}

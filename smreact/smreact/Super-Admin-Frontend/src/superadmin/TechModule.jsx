@@ -12,6 +12,7 @@ import { usePermissionsStore } from './adminPermissions/AdminPermissionsContext'
 import { findRole } from './adminPermissions/adminPermissionsData';
 import { useSaPerms, denyMessage } from './saPerms';
 import { currentUserId } from './api/services/auth';
+import { isHeadUser } from './permissionModel';
 
 /* ═══════════════════════════════════════════════════════════════════
    TECH MODULE — 5-tab bug/new-development lifecycle: Bugs, New
@@ -30,10 +31,10 @@ import { currentUserId } from './api/services/auth';
 /* Tab id → User Permission screen id (permissionModel MODULE_SCREENS.techModule). */
 const TAB_SCREEN = { bugs: 'bugs_new_dev', new_dev: 'bugs_new_dev', in_progress: 'in_progress', qa_review: 'qa_review', ready_for_release: 'ready_for_release' };
 
-/* Stage tabs after intake (In Progress, QA, Release) show only the logged-in
-   user's own tasks — tickets assigned to them. Bugs / New Development stay
-   unfiltered (shared intake queue). No session id (0) = no filter, so the
-   screen behaves exactly as before. */
+/* In Progress shows only the logged-in user's own tasks — tickets assigned to
+   them. All other tabs (Bugs, New Development, QA, Release) show every ticket.
+   Admin (Head, isAdmin) sees every ticket everywhere. No session id (0) = no
+   filter, so the screen behaves exactly as before. */
 const isMine = (t, me) => !me || Number(t.assignedTo?.id) === me;
 const mineOnly = (ts, me) => ts.filter((t) => isMine(t, me));
 
@@ -41,8 +42,8 @@ const TAB_DEFS = [
   { id: 'bugs',              label: 'Bugs',                   icon: 'fa-bug',               filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'bug') },
   { id: 'new_dev',           label: 'New Development',        icon: 'fa-code-branch',       filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'improvement') },
   { id: 'in_progress',       label: 'In Progress',            icon: 'fa-spinner',           filter: (ts, me) => mineOnly(ts, me).filter((t) => t.stage === 'in_progress') },
-  { id: 'qa_review',         label: 'Review & Testing (QA)',  icon: 'fa-vial-circle-check', filter: (ts, me) => mineOnly(ts, me).filter((t) => t.stage === 'qa_review') },
-  { id: 'ready_for_release', label: 'Ready for Release',      icon: 'fa-box-open',          filter: (ts, me) => mineOnly(ts, me).filter((t) => t.stage === 'ready_for_release' || t.stage === 'released') },
+  { id: 'qa_review',         label: 'Review & Testing (QA)',  icon: 'fa-vial-circle-check', filter: (ts) => ts.filter((t) => t.stage === 'qa_review') },
+  { id: 'ready_for_release', label: 'Ready for Release',      icon: 'fa-box-open',          filter: (ts) => ts.filter((t) => t.stage === 'ready_for_release' || t.stage === 'released') },
 ];
 
 /* Legacy status deep-links (Dashboard's byStatus cards) → tab id. */
@@ -56,7 +57,15 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   const [tabState, setTab] = useState('bugs');
   const [detailId, setDetailId] = useState(null);
   /* Logged-in user's id (login identity, else sessionStorage 'superadminid'). */
-  const me = currentUserId();
+  const myId = currentUserId();
+  /* Admin (login isAdmin, else the users list) → no "my tasks" filter. */
+  const isAdmin = useMemo(() => {
+    let flag = null;
+    try { flag = sessionStorage.getItem('superadminisadmin'); } catch { /* ignore */ }
+    if (String(flag).toLowerCase() === 'true') return true;
+    return isHeadUser(users.find((u) => Number(u.id) === myId));
+  }, [users, myId]);
+  const me = isAdmin ? 0 : myId;
   const { roles, roleAssignments, permsForUser, viewingAsUserId, setViewingAsUserId } = usePermissionsStore();
   /* Logged-in user's User Permission matrix — layered on top of the role-based "Viewing as" gate below. */
   const P = useSaPerms('techModule');
@@ -113,7 +122,14 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
 
   const createTicket = (payload) => {
     if (!P.guard('bugs_new_dev', 'create', toast)) return Promise.reject(new Error(denyMessage('create')));
-    return techTicketsApi.createTicketFromReport(payload).then((t) => { load(); toast?.(`Ticket ${t.ticketNumber} created`, 'success'); return t; });
+    /* Show the new ticket right away (server returns it), together with the
+       toast — then refresh the list + stats quietly in the background. */
+    return techTicketsApi.createTicketFromReport(payload).then((t) => {
+      if (t?.id != null) setTickets((prev) => [t, ...prev.filter((x) => x.id !== t.id)]);
+      toast?.(`Ticket ${t.ticketNumber} created`, 'success');
+      load();
+      return t;
+    });
   };
   const assignTicket = (id, developerId) => {
     if (!P.guard('bugs_new_dev', 'assign', toast)) return Promise.resolve(false);

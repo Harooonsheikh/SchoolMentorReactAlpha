@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { TYPE_LABEL, TYPE_BADGE, SOURCE_LABEL, SOURCE_BADGE } from '../techTicketsData';
 import useTechDevelopers from './useTechDevelopers';
 import TicketCreateForm from './TicketCreateForm';
+import TmSelect from './TmDropdown';
 import LockedCard from '../adminPermissions/LockedCard';
 import { useSaPerms } from '../saPerms';
 
@@ -120,11 +121,8 @@ function AssignDeveloperModal({ ticket, devs, canAssign, toast, onClose, onAssig
         <div className="tm-modal-body">
           <div className="um-field">
             <label className="um-label">Assign To Tech Team <span className="tm-req">*</span></label>
-            <select className="um-input" value={devId} disabled={!canAssign || busy} onChange={(e) => setDevId(e.target.value)}
-              style={!canAssign ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
-              <option value="">Select developer…</option>
-              {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <TmSelect value={devId} disabled={!canAssign || busy} onChange={(v) => setDevId(v)} placeholder="Select developer…"
+              options={devs.map((d) => ({ value: d.id, label: d.name }))} />
           </div>
           {!canAssign
             ? <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-lock" /> You don't have <b>Assigned To</b> permission.</div>
