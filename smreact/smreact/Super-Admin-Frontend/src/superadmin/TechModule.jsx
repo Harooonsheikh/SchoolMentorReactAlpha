@@ -11,6 +11,7 @@ import AnalyticsCards from './techModule/AnalyticsCards';
 import { usePermissionsStore } from './adminPermissions/AdminPermissionsContext';
 import { findRole } from './adminPermissions/adminPermissionsData';
 import { useSaPerms, denyMessage } from './saPerms';
+import { currentUserId } from './api/services/auth';
 
 /* ═══════════════════════════════════════════════════════════════════
    TECH MODULE — 5-tab bug/new-development lifecycle: Bugs, New
@@ -29,12 +30,19 @@ import { useSaPerms, denyMessage } from './saPerms';
 /* Tab id → User Permission screen id (permissionModel MODULE_SCREENS.techModule). */
 const TAB_SCREEN = { bugs: 'bugs_new_dev', new_dev: 'bugs_new_dev', in_progress: 'in_progress', qa_review: 'qa_review', ready_for_release: 'ready_for_release' };
 
+/* Stage tabs after intake (In Progress, QA, Release) show only the logged-in
+   user's own tasks — tickets assigned to them. Bugs / New Development stay
+   unfiltered (shared intake queue). No session id (0) = no filter, so the
+   screen behaves exactly as before. */
+const isMine = (t, me) => !me || Number(t.assignedTo?.id) === me;
+const mineOnly = (ts, me) => ts.filter((t) => isMine(t, me));
+
 const TAB_DEFS = [
   { id: 'bugs',              label: 'Bugs',                   icon: 'fa-bug',               filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'bug') },
   { id: 'new_dev',           label: 'New Development',        icon: 'fa-code-branch',       filter: (ts) => ts.filter((t) => t.stage === 'bugs_new_dev' && t.type === 'improvement') },
-  { id: 'in_progress',       label: 'In Progress',            icon: 'fa-spinner',           filter: (ts) => ts.filter((t) => t.stage === 'in_progress') },
-  { id: 'qa_review',         label: 'Review & Testing (QA)',  icon: 'fa-vial-circle-check', filter: (ts) => ts.filter((t) => t.stage === 'qa_review') },
-  { id: 'ready_for_release', label: 'Ready for Release',      icon: 'fa-box-open',          filter: (ts) => ts.filter((t) => t.stage === 'ready_for_release' || t.stage === 'released') },
+  { id: 'in_progress',       label: 'In Progress',            icon: 'fa-spinner',           filter: (ts, me) => mineOnly(ts, me).filter((t) => t.stage === 'in_progress') },
+  { id: 'qa_review',         label: 'Review & Testing (QA)',  icon: 'fa-vial-circle-check', filter: (ts, me) => mineOnly(ts, me).filter((t) => t.stage === 'qa_review') },
+  { id: 'ready_for_release', label: 'Ready for Release',      icon: 'fa-box-open',          filter: (ts, me) => mineOnly(ts, me).filter((t) => t.stage === 'ready_for_release' || t.stage === 'released') },
 ];
 
 /* Legacy status deep-links (Dashboard's byStatus cards) → tab id. */
@@ -47,6 +55,8 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
   const [loading, setLoading] = useState(true);
   const [tabState, setTab] = useState('bugs');
   const [detailId, setDetailId] = useState(null);
+  /* Logged-in user's id (login identity, else sessionStorage 'superadminid'). */
+  const me = currentUserId();
   const { roles, roleAssignments, permsForUser, viewingAsUserId, setViewingAsUserId } = usePermissionsStore();
   /* Logged-in user's User Permission matrix — layered on top of the role-based "Viewing as" gate below. */
   const P = useSaPerms('techModule');
@@ -97,9 +107,9 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
 
   const counts = useMemo(() => {
     const c = {};
-    TAB_DEFS.forEach((d) => { c[d.id] = d.filter(tickets).length; });
+    TAB_DEFS.forEach((d) => { c[d.id] = d.filter(tickets, me).length; });
     return c;
-  }, [tickets]);
+  }, [tickets, me]);
 
   const createTicket = (payload) => {
     if (!P.guard('bugs_new_dev', 'create', toast)) return Promise.reject(new Error(denyMessage('create')));
@@ -190,23 +200,23 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
       ) : (
         <>
           {tab === 'bugs' && (
-            <BugsNewDevTab kind="bug" tickets={TAB_DEFS[0].filter(tickets)} onCreate={createTicket} onAssign={assignTicket} onViewDetails={openDetails} toast={toast}
+            <BugsNewDevTab kind="bug" tickets={TAB_DEFS[0].filter(tickets, me)} onCreate={createTicket} onAssign={assignTicket} onViewDetails={openDetails} toast={toast}
               canCreate={can('techmodule.bugs_new_dev', 'create')} canAssign={can('techmodule.bugs_new_dev', 'assign')} />
           )}
           {tab === 'new_dev' && (
-            <BugsNewDevTab kind="improvement" tickets={TAB_DEFS[1].filter(tickets)} onCreate={createTicket} onAssign={assignTicket} onViewDetails={openDetails} toast={toast}
+            <BugsNewDevTab kind="improvement" tickets={TAB_DEFS[1].filter(tickets, me)} onCreate={createTicket} onAssign={assignTicket} onViewDetails={openDetails} toast={toast}
               canCreate={can('techmodule.bugs_new_dev', 'create')} canAssign={can('techmodule.bugs_new_dev', 'assign')} />
           )}
           {tab === 'in_progress' && (
-            <InProgressTab tickets={TAB_DEFS[2].filter(tickets)} onSubmitAndSendForQa={submitReportAndSendForQa} onViewDetails={openDetails} toast={toast}
+            <InProgressTab tickets={TAB_DEFS[2].filter(tickets, me)} onSubmitAndSendForQa={submitReportAndSendForQa} onViewDetails={openDetails} toast={toast}
               canEdit={can('techmodule.in_progress', 'edit')} />
           )}
           {tab === 'qa_review' && (
-            <QaReviewTab tickets={TAB_DEFS[3].filter(tickets)} onReview={submitReview} onViewDetails={openDetails} toast={toast}
+            <QaReviewTab tickets={TAB_DEFS[3].filter(tickets, me)} onReview={submitReview} onViewDetails={openDetails} toast={toast}
               canApprove={can('techmodule.qa_review', 'approve')} />
           )}
           {tab === 'ready_for_release' && (
-            <ReadyForReleaseTab tickets={TAB_DEFS[4].filter(tickets)} onRelease={release} onViewDetails={openDetails} toast={toast}
+            <ReadyForReleaseTab tickets={TAB_DEFS[4].filter(tickets, me)} onRelease={release} onViewDetails={openDetails} toast={toast}
               canRelease={can('techmodule.ready_for_release', 'approve')} />
           )}
         </>
