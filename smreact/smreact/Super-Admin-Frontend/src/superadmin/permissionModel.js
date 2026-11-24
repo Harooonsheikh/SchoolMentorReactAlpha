@@ -6,8 +6,13 @@ import { MODULE_ACCESS_FIELDS } from './api/services/userModuleAccess';
    logged-in user). Module keys = MODULE_ACCESS_FIELDS keys.
    ═══════════════════════════════════════════════════════════════════ */
 
-export const ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'download'];
-export const ACTION_LABELS = { view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete', approve: 'Approve', download: 'Download' };
+export const ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'download', 'assign'];
+export const ACTION_LABELS = { view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete', approve: 'Approve', download: 'Download', assign: 'Assigned To' };
+/* Matrix me ye columns hamesha dikhte hain; baqi (e.g. 'assign') sirf us
+   module me jahan koi screen unhe use karti ho. */
+export const BASE_ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'download'];
+export const actionsForModule = (mod) =>
+  ACTIONS.filter((a) => BASE_ACTIONS.includes(a) || mod?.screens?.some((s) => s.actions.includes(a)));
 
 const V = ['view'];
 const CRUD = ['view', 'create', 'edit', 'delete'];
@@ -60,7 +65,7 @@ export const MODULE_SCREENS = {
     { id: 'inbox',    label: 'Agent Inbox', actions: ['view', 'create', 'edit'] },
   ] },
   techModule: { icon: 'fa-list-check', screens: [
-    { id: 'bugs_new_dev',      label: 'Bugs & New Development', actions: ['view', 'create', 'edit', 'delete'] },
+    { id: 'bugs_new_dev',      label: 'Bugs & New Development', actions: ['view', 'create', 'edit', 'delete', 'assign'] },   // assign = "Assigned To" (developer assign button)
     { id: 'in_progress',       label: 'In Progress',            actions: ['view', 'edit'] },
     { id: 'qa_review',         label: 'Review & Testing (QA)',  actions: ['view', 'edit', 'approve'] },
     { id: 'ready_for_release', label: 'Ready for Release',      actions: ['view', 'approve', 'download'] },

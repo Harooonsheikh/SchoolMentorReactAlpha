@@ -106,9 +106,11 @@ export default function TechModule({ toast, users = [], initialFilter, onConsume
     return techTicketsApi.createTicketFromReport(payload).then((t) => { load(); toast?.(`Ticket ${t.ticketNumber} created`, 'success'); return t; });
   };
   const assignTicket = (id, developerId) => {
-    if (!P.guard('bugs_new_dev', 'edit', toast)) return;
-    techTicketsApi.assignTicket(id, developerId).then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); })
-      .catch((e) => toast?.(e?.message || 'Could not assign the ticket', 'warn'));
+    if (!P.guard('bugs_new_dev', 'assign', toast)) return Promise.resolve(false);
+    /* Resolves true on success so the Assign modal closes only when it worked. */
+    return Promise.resolve(techTicketsApi.assignTicket(id, developerId))
+      .then(() => { load(); toast?.('Ticket assigned — moved to In Progress', 'success'); return true; })
+      .catch((e) => { toast?.(e?.message || 'Could not assign the ticket', 'warn'); return false; });
   };
   /* Submitting the Developer Testing Report and sending the ticket for
      QA Testing are now one action (In Progress tab's single "Send for

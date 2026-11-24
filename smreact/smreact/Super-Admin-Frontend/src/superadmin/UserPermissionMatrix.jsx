@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { moduleAccessApi } from './api';
-import { ACTIONS, ACTION_LABELS, PERM_MODULES, TOTAL_PERMS, pkey, isOn, permsToApiList, apiListToPerms, setModule, buildInitialPerms, moduleStat, overallStats, isHeadUser, roleLabel } from './permissionModel';
+import { ACTIONS, ACTION_LABELS, actionsForModule, PERM_MODULES, TOTAL_PERMS, pkey, isOn, permsToApiList, apiListToPerms, setModule, buildInitialPerms, moduleStat, overallStats, isHeadUser, roleLabel } from './permissionModel';
 import { useSaPerms, lockTip } from './saPerms';
 
 export { ACTIONS, PERM_MODULES };
@@ -328,7 +328,7 @@ function PermissionMatrixModal({ user, record, onClose, onSaved, toast }) {
               <table className="upm-matrix">
                 <thead><tr>
                   <th className="l">Screen / Section</th>
-                  {ACTIONS.map((a) => <th key={a}>{ACTION_LABELS[a]}</th>)}
+                  {actionsForModule(mod).map((a) => <th key={a}>{ACTION_LABELS[a]}</th>)}
                   <th className="r" />
                 </tr></thead>
                 <tbody>
@@ -337,7 +337,7 @@ function PermissionMatrixModal({ user, record, onClose, onSaved, toast }) {
                     return (
                       <tr key={s.id}>
                         <td className="l">{s.label}</td>
-                        {ACTIONS.map((a) => {
+                        {actionsForModule(mod).map((a) => {
                           const ok = s.actions.includes(a);
                           return (
                             <td key={a} className={ok ? '' : 'na'} title={ok ? `${ACTION_LABELS[a]} — ${s.label}` : 'Not applicable for this screen'}>

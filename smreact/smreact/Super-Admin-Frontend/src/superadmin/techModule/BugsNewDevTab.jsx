@@ -21,6 +21,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
   const devs = useTechDevelopers();
   const P = useSaPerms('techModule');
   const kindLabel = kind === 'bug' ? 'bug' : 'new development request';
+  const assigningTicket = assigningId ? tickets.find((x) => x.id === assigningId) : null;
 
   return (
     <div className="tm-body-card">
@@ -58,17 +59,7 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
                 <div className="tm-card-actions">
                   <button className="btn-sm" onClick={() => onViewDetails?.(t.id)}><i className="fa-solid fa-eye" /> View Details</button>
                   {canAssign ? (
-                    assigningId === t.id ? (
-                      <>
-                        <select {...P.lock('bugs_new_dev', 'edit', { className: 'um-input', style: { height: 32, width: 200 } })} defaultValue="" onChange={(e) => { const v = e.target.value; if (!v) return; const name = devs.find((d) => String(d.id) === String(v))?.name || 'this developer'; if (window.confirm(`Assign ${t.ticketNumber} to ${name}?`)) onAssign(t.id, v); setAssigningId(null); }}>
-                          <option value="" disabled>Select developer…</option>
-                          {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                        </select>
-                        <button className="btn-sm" onClick={() => setAssigningId(null)}>Cancel</button>
-                      </>
-                    ) : (
-                      <button {...P.lock('bugs_new_dev', 'edit', { className: 'btn-sm' })} onClick={() => { if (P.guard('bugs_new_dev', 'edit', toast)) setAssigningId(t.id); }}><i className="fa-solid fa-user-plus" /> Assign</button>
-                    )
+                    <button {...P.lock('bugs_new_dev', 'assign', { className: 'btn-sm' })} onClick={() => { if (P.guard('bugs_new_dev', 'assign', toast)) setAssigningId(t.id); }}><i className="fa-solid fa-user-plus" /> Assign</button>
                   ) : <LockedCard compact title="No access to assign" />}
                 </div>
               </div>
@@ -76,6 +67,17 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
           </div>
         )}
       </div>
+
+      {assigningTicket && (
+        <AssignDeveloperModal
+          ticket={assigningTicket}
+          devs={devs}
+          canAssign={P.can('bugs_new_dev', 'assign')}
+          toast={toast}
+          onClose={() => setAssigningId(null)}
+          onAssign={(devId) => Promise.resolve(onAssign(assigningTicket.id, devId)).then((ok) => { if (ok !== false) setAssigningId(null); })}
+        />
+      )}
 
       {showCreate && (
         <TicketCreateForm
@@ -85,6 +87,56 @@ export default function BugsNewDevTab({ tickets, kind = 'bug', onCreate, onAssig
           onCreate={(payload) => onCreate(payload)}
         />
       )}
+    </div>
+  );
+}
+
+/* Assign modal — developer pick + confirm, gated by the "Assigned To"
+   permission (Tech Module → Bugs & New Development). No browser alert:
+   result is shown as a toast by TechModule.assignTicket. */
+function AssignDeveloperModal({ ticket, devs, canAssign, toast, onClose, onAssign }) {
+  const [devId, setDevId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const devName = devs.find((d) => String(d.id) === String(devId))?.name;
+
+  const submit = () => {
+    if (!canAssign) { toast?.('You don\'t have Assigned To permission. Ask an admin to enable it in User Permission.', 'warn'); return; }
+    if (!devId) { toast?.('Please select a developer to assign', 'warn'); return; }
+    setBusy(true);
+    Promise.resolve(onAssign(devId)).finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="tm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <div className="tm-modal" style={{ maxWidth: 480 }}>
+        <div className="tm-modal-hd" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}>
+          <div className="tm-modal-hd-ic"><i className="fa-solid fa-user-plus" /></div>
+          <div style={{ flex: 1 }}>
+            <div className="tm-modal-hd-tt">Assign Ticket</div>
+            <div className="tm-modal-hd-sb">{ticket.ticketNumber} — {ticket.title}</div>
+          </div>
+          <button className="pm-close" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark" /></button>
+        </div>
+        <div className="tm-modal-body">
+          <div className="um-field">
+            <label className="um-label">Assign To Tech Team <span className="tm-req">*</span></label>
+            <select className="um-input" value={devId} disabled={!canAssign || busy} onChange={(e) => setDevId(e.target.value)}
+              style={!canAssign ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
+              <option value="">Select developer…</option>
+              {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          {!canAssign
+            ? <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-lock" /> You don't have <b>Assigned To</b> permission.</div>
+            : devName && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-circle-info" /> {ticket.ticketNumber} will be assigned to <b>{devName}</b> and moved to <b>In Progress</b>.</div>}
+        </div>
+        <div className="tm-modal-ft">
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-primary" onClick={submit} disabled={!canAssign || !devId || busy}>
+            <i className="fa-solid fa-user-plus" /> {busy ? 'Assigning…' : 'Assign'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

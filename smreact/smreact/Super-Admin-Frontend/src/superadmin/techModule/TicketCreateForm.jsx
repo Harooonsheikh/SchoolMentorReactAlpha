@@ -3,6 +3,7 @@ import { PLATFORMS, BUG_TYPES, SOURCES, modulesFor } from '../techModuleCatalog'
 import useTechDevelopers from './useTechDevelopers';
 import { findSchool } from './SchoolPicker';
 import SchoolPicker from './SchoolPicker';
+import { useSaPerms } from '../saPerms';
 
 /* ═══════════════════════════════════════════════════════════════════
    TicketCreateForm — shared Bug / New Development creation modal.
@@ -48,6 +49,9 @@ export default function TicketCreateForm({
   const MAX_FILES = 10;
   const MAX_BYTES = 15 * 1024 * 1024;
   const devs = useTechDevelopers();
+  /* User Permission → Tech Module → Bugs & New Development → "Assigned To". */
+  const P = useSaPerms('techModule');
+  const canAssign = P.can('bugs_new_dev', 'assign');
 
   const platform = PLATFORMS.find((p) => p.id === f.platform);
   const modules = modulesFor(f.platform, f.subPlatform);
@@ -85,7 +89,7 @@ export default function TicketCreateForm({
       expectedBehaviour: f.expectedBehaviour.trim(),
       actualBehaviour: f.actualBehaviour.trim(),
       school, attachments: f.attachments,
-      assignedTo: hideAssignment ? null : (f.assignedTo || null),
+      assignedTo: hideAssignment || !canAssign ? null : (f.assignedTo || null),
       reportedBy,
       supportConversationId,
       });
@@ -197,12 +201,13 @@ export default function TicketCreateForm({
               <div className="tm-form-section-lbl c-amber"><i className="fa-solid fa-user-gear" /> Assignment</div>
               <div className="um-field">
                 <label className="um-label">Assign To Tech Team <span style={{ color: 'var(--tm)', fontWeight: 400 }}>(optional — leave blank to triage later)</span></label>
-                <select className="um-input" value={f.assignedTo} onChange={(e) => set('assignedTo', e.target.value)}>
+                <select {...P.lock('bugs_new_dev', 'assign', { className: 'um-input' })} value={canAssign ? f.assignedTo : ''} onChange={(e) => { if (canAssign) set('assignedTo', e.target.value); }}>
                   <option value="">Unassigned</option>
                   {devs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
-              {f.assignedTo && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-circle-info" /> Assigning now will move this ticket straight to <b>In Progress</b>.</div>}
+              {!canAssign && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-lock" /> You don't have <b>Assigned To</b> permission — the ticket will be created unassigned.</div>}
+              {canAssign && f.assignedTo && <div className="tm-banner tm-banner-info" style={{ marginTop: 12 }}><i className="fa-solid fa-circle-info" /> Assigning now will move this ticket straight to <b>In Progress</b>.</div>}
             </>
           )}
         </div>
