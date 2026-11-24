@@ -5156,7 +5156,6 @@ function StuPromoteModal({ cls, onClose, onSubmit, toast }) {
   const toClass = selGrade?.name || '';
   /* Same-class validation (class ID se compare, naam se nahi). */
   const sameClass = !!selGrade && String(selGrade.id) === String(cls?._gradeId);
-  const sameMsg = sameClass ? 'Cannot promote student to the same class.' : '';
 
   /* From Section ko To Section list se hata do (jab To Class wahi class ho). */
   const sectionOptions = selGrade
@@ -5261,12 +5260,6 @@ function StuPromoteModal({ cls, onClose, onSubmit, toast }) {
             </div>
           </div>
 
-          {sameMsg && (
-            <div role="alert" style={{ color: '#B91C1C', fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>
-              <i className="fa-solid fa-circle-exclamation" style={{ marginRight: 6 }}></i>{sameMsg}
-            </div>
-          )}
-
           <div className="stu-promo-tablewrap">
             <table className="stu-promo-table">
               <thead>
@@ -5308,9 +5301,8 @@ function StuPromoteModal({ cls, onClose, onSubmit, toast }) {
           <button
             className="stu-btn-primary"
             style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }}
-            disabled={count === 0 || !toClass || !toSec || sameClass}
+            disabled={count === 0 || !toClass || !toSec}
             onClick={() => {
-              if (sameClass) return;
               /* Har selected student ke liye promote payload banao (IDs resolve karke). */
               const newGrade   = selGrade;
               const newSection = newGrade?.sections.find(s => s.name === toSec);
