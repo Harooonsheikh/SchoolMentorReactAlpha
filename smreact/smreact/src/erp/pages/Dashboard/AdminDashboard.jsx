@@ -15,7 +15,7 @@ import DailyReceivingReportModal, { DailyAdvancePaymentReportModal, DailyAdvance
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
 import InactiveFeeImpactCard from './InactiveFeeImpactCard';
 import { buildDiscountMap } from './feeDashboardExtra';
-import { useLedgerReportData, ledgerInstallmentReceipts } from '../../components/Fee';
+import { useLedgerReportData, ledgerInstallmentReceipts, QuickChallanReceive } from '../../components/Fee';
 import * as feeService from '../../services/feeService';
 import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser, MODULE_TREE } from '../UserPermissions/permissionsData';
@@ -1034,10 +1034,11 @@ const canSeeCard = useCallback(
     toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
   };
 
-  /* Challan lookup box (scan / Ledger ID) → Fee Receiving me us challan ka receive modal. */
+  /* Challan lookup box (scan / Ledger ID) → us challan ka receive modal, dashboard ke upar overlay.
+     Fee page/tab nahi khulta; modal band karne par dashboard par hi wapas. */
+  const [quickReceive, setQuickReceive] = useState(null);
   const openChallanFromLookup = ({ ledgerId, studentId }) => {
-    navigate('fee', { feeLedgerId: ledgerId, feeStudentId: studentId || null });
-    toast(`Opening challan #${ledgerId}…`, 'info');
+    setQuickReceive({ feeLedgerId: ledgerId, feeStudentId: studentId || null });
   };
 
   /* ─── Existing top sections (kept) ──────────────────────────── */
@@ -1323,6 +1324,13 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
         />
       </div>
       <LedgerScanBar onOpenChallan={openChallanFromLookup} toast={toast} />
+      {quickReceive && (
+        <QuickChallanReceive
+          focus={quickReceive}
+          toast={toast}
+          onClose={() => setQuickReceive(null)}
+        />
+      )}
 
       {/* ═════════ 1. HERO GREETING (Page Header — kept) ═════════ */}
       <div className="dash-hero">

@@ -160,9 +160,8 @@ const STRUCTURE_SEGS = [
   { id: 'settings', icon: 'fa-sliders', label: 'Fee Challan Settings' },
 ];
 
-export default function Fee({ toast = () => { }, focus = null, onFocusHandled = () => { } }) {
-  /* Dashboard ke scan / Ledger-ID box se aaye ho to seedha Fee Receiving tab khule. */
-  const [tab, setTab] = useState(() => (focus?.feeLedgerId ? 'receipts' : 'structure'));
+export default function Fee({ toast = () => { } }) {
+  const [tab, setTab] = useState('structure');
   const [structSeg, setStructSeg] = useState('student');
   const [tutorialOpen, setTutorialOpen] = useState(false);
   /* Tab body loader: stays until the Fee data preload finishes. Runs again on every
@@ -274,7 +273,7 @@ export default function Fee({ toast = () => { }, focus = null, onFocusHandled = 
       ) : tab === 'challans' ? (
         <FeeChallansTab toast={toast} />
       ) : tab === 'receipts' ? (
-        <FeeReceivingTab toast={toast} focus={focus} onFocusHandled={onFocusHandled} />
+        <FeeReceivingTab toast={toast} />
       ) : tab === 'history' ? (
         <FeeHistoryTab toast={toast} />
       ) : tab === 'reports' ? (
@@ -8960,7 +8959,7 @@ function summaryChips({ total, paid, unpaid, onelink = 0 }) {
   );
 }
 
-function FeeReceivingTab({ toast, focus = null, onFocusHandled = () => { } }) {
+function FeeReceivingTab({ toast }) {
   const [seg, setSeg] = useState('individual');
   return (
     <>
@@ -8978,7 +8977,7 @@ function FeeReceivingTab({ toast, focus = null, onFocusHandled = () => { } }) {
       </div>
 
       {seg === 'individual'
-        ? <FeeReceivingIndividual toast={toast} focus={focus} onFocusHandled={onFocusHandled} />
+        ? <FeeReceivingIndividual toast={toast} />
         : <FamilyTreeReceiving toast={toast} />}
     </>
   );
@@ -9011,7 +9010,21 @@ function pendingFromResp(resp, fallbackMsg = 'Request sent for approval') {
   };
 }
 
-function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { } }) {
+/* Dashboard se challan kholne ka overlay: sirf receive modal dikhta hai (Fee page/tab nahi).
+   List hidden wrapper me chalti hai; receive modal createPortal se body par render hota hai,
+   isliye wo dikhta rahta hai. Modal (aur uska slip) band hone par onClose. */
+export function QuickChallanReceive({ focus, toast = () => { }, onClose = () => { } }) {
+  return (
+    <>
+      <style>{FEE_CSS}</style>
+      <div style={{ display: 'none' }} aria-hidden="true">
+        <FeeReceivingIndividual toast={toast} focus={focus} modalOnly onModalClose={onClose} />
+      </div>
+    </>
+  );
+}
+
+function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { }, modalOnly = false, onModalClose = null }) {
   const { can } = usePermissions();
   const canRcvCreate = can('Fee', 'Fee Receiving', 'Create');
   const canRcvDelete = can('Fee', 'Fee Receiving', 'Delete');
@@ -9485,6 +9498,7 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
     if (!focusLedgerId || handledFocusRef.current === focusLedgerId) return;
     if (!classes.length || !Object.keys(studentsMap || {}).length) return;   // roster abhi load ho raha hai
     handledFocusRef.current = focusLedgerId;
+    let opened = false;
     (async () => {
       try {
         let rec = null;
@@ -9529,13 +9543,24 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
           settings,
           pendingMode: true,
         });
+        opened = true;
       } catch (e) {
         toast(e?.message || `Could not open challan #${focusLedgerId}`, 'error');
       } finally {
         onFocusHandled?.();
+        /* Overlay mode me modal na khule (not found / error) to overlay wahin band. */
+        if (!opened && modalOnly) onModalClose?.();
       }
     })();
   }, [focusLedgerId, focusStudentId, classes, studentsMap, headsMap, pendingByStudent, settings]);
+
+  /* Overlay mode: receive modal (aur uska slip) khulne ke baad band hote hi overlay band. */
+  const quickOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!modalOnly) return;
+    if (receiveCtx || slipCtx) { quickOpenedRef.current = true; return; }
+    if (quickOpenedRef.current) { quickOpenedRef.current = false; onModalClose?.(); }
+  }, [modalOnly, receiveCtx, slipCtx, onModalClose]);
 
   const openReceive = async (c, s, viewOnly = false) => {
     /* A locked month can still be viewed — only taking money is barred. */
