@@ -35,6 +35,7 @@ const INITIAL_FORM = {
   objDuration: 20, objMarks: 20, objCount: 20, objInstructions: '',
   subjDuration: 40, subjMarks: 30, subjCount: 10, subjInstructions: '',
   includeAnswerKey: false, includeAnswerSheet: false, includeBranding: true,
+  autoMarks: 50, autoMins: 60, autoDesc: '', answerLines: 'auto',
 };
 
 /* Server ka asli error dikhao. DRF validation errors { field: ["msg"] } ki shakl me
@@ -73,7 +74,7 @@ const QP_CSS = `
 .msai-qpp-page { background:#fff; color:#111; border:1px solid var(--border-light); border-top:5px solid var(--brand-primary); border-radius:var(--radius-md); box-shadow:var(--shadow-sm); padding:28px 32px; font-family:'Segoe UI',Arial,Helvetica,sans-serif; -webkit-font-smoothing:antialiased; }
 .msai-qpp-head { display:flex; align-items:center; gap:16px; border-bottom:2.5px solid #111; padding-bottom:12px; margin-bottom:14px; }
 .msai-qpp-htxt { flex:1; min-width:0; text-align:center; }
-.msai-qpp-school { font:700 13px/1.25 'Segoe UI',Arial,Helvetica,sans-serif; letter-spacing:.08em; text-transform:uppercase; color:var(--brand-primary); margin-bottom:3px; }
+.msai-qpp-school { font:800 22px/1.2 'Segoe UI',Arial,Helvetica,sans-serif; letter-spacing:.05em; text-transform:uppercase; color:var(--brand-primary); margin-bottom:5px; }
 .msai-qpp-logo { width:68px; height:68px; flex-shrink:0; border-radius:50%; object-fit:cover; background:#fff; border:2px solid var(--brand-primary); padding:2px; box-sizing:border-box; }
 .msai-qpp-title { font-size:21px; font-weight:800; line-height:1.25; color:#000; }
 .msai-qpp-sub { font-size:13px; color:#444; margin-top:2px; }
@@ -94,6 +95,9 @@ const QP_CSS = `
 .msai-qpp-wb { margin-top:4px; font-size:12px; color:#444; background:#f6f6f6; border:1px dashed #bbb; padding:3px 8px; border-radius:4px; }
 .msai-qpp-line { border-bottom:1px solid #888; height:24px; }
 @media (max-width:560px) { .msai-qpp-opts { grid-template-columns:1fr; } .msai-qpp-page { padding:18px; } }
+.msai-qpp-passage { background:#f8fafc; border-left:3px solid var(--brand-primary); padding:8px 12px; margin-bottom:8px; font-size:13px; line-height:1.55; border-radius:0 4px 4px 0; }
+.msai-qpp-bub { display:flex; gap:10px; flex-wrap:wrap; }
+.msai-qpp-bub span { min-width:26px; height:26px; padding:0 6px; border:1.5px solid #555; border-radius:13px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
 .msai-qpp-end { text-align:center; font-weight:700; font-size:12px; letter-spacing:.2em; margin-top:10px; }
 `;
 
@@ -115,7 +119,7 @@ function splitInlineOptions(text) {
 }
 
 /* Server ka paper (pageContent + optional structured sections) → saaf display model. */
-function buildPaperModel(paper) {
+function buildPaperModel(paper, noLines = false) {
   const structured = new Map();
   (Array.isArray(paper?.sections) ? paper.sections : []).forEach((sec) => (sec?.questions || []).forEach((q) => structured.set(String(q?.number ?? q?.no), q)));
   return (Array.isArray(paper?.pageContent) ? paper.pageContent : []).map((page, pi) => ({
@@ -139,16 +143,16 @@ function buildPaperModel(paper) {
         if (!options.length) { const sp = splitInlineOptions(text); text = sp.stem || text; options = sp.options; }
         const long = /long|essay|detail|descriptive/i.test(title);
         const written = !options.length && !wordBank && /short|long|subjective|essay|descriptive|answer|explain|write/i.test(title);
-        const lines = Number(st?.answer_lines) || (written ? (long ? 5 : 2) : 0);
-        return { no: q?.no, text: text.trim(), marks, options, wordBank, lines };
+        const lines = noLines ? 0 : (Number(st?.answer_space_lines) || Number(st?.answer_lines) || (written ? (long ? 5 : 2) : 0));
+        return { no: q?.no, text: text.trim(), marks, options, wordBank, lines, passage: String(st?.passage || '').trim() };
       });
       return { title, instruction, questions };
     }),
   }));
 }
 
-export function QuestionPaperPages({ paper, meta, brand }) {
-  const pages = buildPaperModel(paper);
+export function QuestionPaperPages({ paper, meta, brand, noLines }) {
+  const pages = buildPaperModel(paper, noLines);
   const title = paper?.title || 'Question Paper';
   const school = brand?.name || '';
   return (
@@ -179,6 +183,7 @@ export function QuestionPaperPages({ paper, meta, brand }) {
                 <div key={q.no ?? qi} className="msai-qpp-q">
                   <div className="msai-qpp-qno">{q.no ?? qi + 1}.</div>
                   <div className="msai-qpp-qbody">
+                    {q.passage && <div className="msai-qpp-passage"><b>Passage</b><div>{q.passage}</div></div>}
                     <div className="msai-qpp-qtext"><InlineMarkdown text={q.text} /></div>
                     {q.wordBank && <div className="msai-qpp-wb"><b>Word bank:</b> {q.wordBank}</div>}
                     {q.options.length > 0 && (
@@ -201,6 +206,83 @@ export function QuestionPaperPages({ paper, meta, brand }) {
   );
 }
 
+/* ─── Answer sheet + answer key ─── */
+function flatQuestions(paper) {
+  const fromSections = (Array.isArray(paper?.sections) ? paper.sections : []).flatMap((sc) => (sc?.questions || []));
+  const norm = (q, space) => ({ no: q.number ?? q.no, kind: String(q.kind || '').toLowerCase(), options: q.options || [], space });
+  if (fromSections.length) return fromSections.map((q) => norm(q, Number(q.answer_space_lines || q.answer_lines) || 0));
+  const out = [];
+  (paper?.pageContent || []).forEach((pg) => (pg?.sections || []).forEach((sc) => (sc?.questions || []).forEach((q) => out.push(norm(q, 0)))));
+  return out;
+}
+/* lines: 'auto' (server ke answer_space_lines) | '2' | '4' */
+function sheetRows(paper, lines) {
+  return flatQuestions(paper).map((q) => {
+    const n = lines === '2' ? 2 : lines === '4' ? 4 : (q.space || (/long|essay/.test(q.kind) ? 6 : 3));
+    if (q.options.length || /mcq/.test(q.kind)) return { no: q.no, type: 'mcq', letters: Array.from({ length: q.options.length || 4 }, (_, i) => String.fromCharCode(65 + i)) };
+    if (/true/.test(q.kind)) return { no: q.no, type: 'tf' };
+    if (/fill|blank|one_word|oneword/.test(q.kind)) return { no: q.no, type: 'lines', n: 1 };
+    return { no: q.no, type: 'lines', n };
+  });
+}
+function SheetHead({ paper, meta, brand, label }) {
+  return (
+    <>
+      <div className="msai-qpp-head">
+        {brand?.logo && <img className="msai-qpp-logo" src={brand.logo} alt="School logo" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
+        <div className="msai-qpp-htxt">
+          {brand?.name && <div className="msai-qpp-school">{brand.name}</div>}
+          <div className="msai-qpp-title">{paper?.title || 'Question Paper'}</div>
+          <div className="msai-qpp-sub">{label}</div>
+        </div>
+      </div>
+      <div className="msai-qpp-meta">{meta.map(([k, v]) => (v ? <div key={k}><b>{k}:</b> {v}</div> : null))}</div>
+    </>
+  );
+}
+export function AnswerSheetPages({ paper, meta, brand, lines }) {
+  const rows = sheetRows(paper, lines);
+  return (
+    <div className="msai-qpp">
+      <div className="msai-qpp-page">
+        <SheetHead paper={paper} meta={meta} brand={brand} label="Answer Sheet" />
+        <div className="msai-qpp-student"><span>Name:</span><span>Roll No:</span><span>Date:</span></div>
+        {rows.map((r, i) => (
+          <div key={i} className="msai-qpp-q">
+            <div className="msai-qpp-qno">{r.no ?? i + 1}.</div>
+            <div className="msai-qpp-qbody">
+              {r.type === 'mcq' && <div className="msai-qpp-bub">{r.letters.map((l) => <span key={l}>{l}</span>)}</div>}
+              {r.type === 'tf' && <div className="msai-qpp-bub"><span>True</span><span>False</span></div>}
+              {r.type === 'lines' && Array.from({ length: r.n }).map((_, li) => <div key={li} className="msai-qpp-line" />)}
+            </div>
+          </div>
+        ))}
+        <div className="msai-qpp-end">— END OF ANSWER SHEET —</div>
+      </div>
+    </div>
+  );
+}
+export function AnswerKeyPages({ paper, meta, brand }) {
+  const keys = paper?.answerKey || [];
+  return (
+    <div className="msai-qpp">
+      <div className="msai-qpp-page">
+        <SheetHead paper={paper} meta={meta} brand={brand} label="Answer Key (Teacher copy)" />
+        {keys.map((k, i) => (
+          <div key={i} className="msai-qpp-q">
+            <div className="msai-qpp-qno">{k.no || i + 1}.</div>
+            <div className="msai-qpp-qbody">
+              <div className="msai-qpp-qtext" style={{ whiteSpace: 'pre-line' }}>{k.answer}</div>
+              {k.explanation && <div className="msai-qpp-inst" style={{ marginLeft: 0 }}><b>Marking:</b> {k.explanation}</div>}
+            </div>
+          </div>
+        ))}
+        <div className="msai-qpp-end">— END OF ANSWER KEY —</div>
+      </div>
+    </div>
+  );
+}
+
 /* Library item (server se aaya ho ya local save) → header ki meta rows. Marks sawalon ka jod. */
 export function libraryPaperMeta(c = {}) {
   const m = c.meta || {};
@@ -214,13 +296,13 @@ export function libraryPaperMeta(c = {}) {
   ];
 }
 
-export function openQuestionPaperPrintWindow(paper, meta, brand) {
-  const pages = buildPaperModel(paper);
-  if (!pages.length) return false;
+export function openQuestionPaperPrintWindow(paper, meta, brand, opts = {}) {
+  const pages = buildPaperModel(paper, !!opts.sheet);
+  if (!pages.length && !opts.only) return false;
   const title = escH(paper?.title || 'Question Paper');
   const school = escH(brand?.name || '');
   const logo = brand?.logo ? `<img class="logo" src="${escH(brand.logo)}" alt="">` : '';
-  const body = pages.map((page, i) => `
+  const paperBody = opts.only ? '' : pages.map((page, i) => `
     <section class="pg">
       ${i === 0 ? `<div class="head">${logo}<div class="htxt">${school ? `<div class="sch">${school}</div>` : ''}<h1>${title}</h1></div></div>
         <div class="meta">${meta.filter(([, v]) => v).map(([k, v]) => `<div><b>${escH(k)}:</b> ${escH(v)}</div>`).join('')}</div>
@@ -229,6 +311,7 @@ export function openQuestionPaperPrintWindow(paper, meta, brand) {
         ${sec.title ? `<div class="sh">${escH(sec.title)}</div>` : ''}
         ${sec.instruction ? `<div class="si">${escH(sec.instruction)}</div>` : ''}
         ${sec.questions.map((q, qi) => `<div class="q"><div class="qn">${escH(q.no ?? qi + 1)}.</div><div class="qb">
+          ${q.passage ? `<div class="pas">${escH(q.passage)}</div>` : ''}
           <div>${escH(plain(q.text))}</div>
           ${q.wordBank ? `<div class="wb"><b>Word bank:</b> ${escH(q.wordBank)}</div>` : ''}
           ${q.options.length ? `<div class="opts">${q.options.map((o, oi) => `<div><b>(${String.fromCharCode(65 + oi)})</b> ${escH(plain(o))}</div>`).join('')}</div>` : ''}
@@ -236,12 +319,26 @@ export function openQuestionPaperPrintWindow(paper, meta, brand) {
         </div>${q.marks != null ? `<div class="mk">[${escH(q.marks)}]</div>` : ''}</div>`).join('')}`).join('')}
       ${i === pages.length - 1 ? '<div class="end">— END OF PAPER —</div>' : ''}
     </section>`).join('');
+  const headBlock = (label) => `<div class="head">${logo}<div class="htxt">${school ? `<div class="sch">${school}</div>` : ''}<h1>${title}</h1><div class="sub">${escH(label)}</div></div></div>
+        <div class="meta">${meta.filter(([, v]) => v).map(([k, v]) => `<div><b>${escH(k)}:</b> ${escH(v)}</div>`).join('')}</div>`;
+  const sheetBody = (opts.sheet || opts.only === 'sheet') ? `<section class="pg">${headBlock('Answer Sheet')}<div class="stu"><span>Name:</span><span>Roll No:</span><span>Date:</span></div>
+      ${sheetRows(paper, opts.lines).map((r, i) => `<div class="q"><div class="qn">${escH(r.no ?? i + 1)}.</div><div class="qb">${
+        r.type === 'mcq' ? `<div class="bub">${r.letters.map((l) => `<span>${l}</span>`).join('')}</div>`
+          : r.type === 'tf' ? '<div class="bub"><span>True</span><span>False</span></div>'
+            : Array.from({ length: r.n }).map(() => '<div class="ln"></div>').join('')}</div></div>`).join('')}
+      <div class="end">— END OF ANSWER SHEET —</div></section>` : '';
+  const keyBody = opts.only === 'key' ? `<section class="pg">${headBlock('Answer Key (Teacher copy)')}
+      ${(paper?.answerKey || []).map((k, i) => `<div class="q"><div class="qn">${escH(k.no || i + 1)}.</div><div class="qb"><div style="white-space:pre-line">${escH(k.answer)}</div>${k.explanation ? `<div class="si" style="margin-left:0"><b>Marking:</b> ${escH(k.explanation)}</div>` : ''}</div></div>`).join('')}
+      <div class="end">— END OF ANSWER KEY —</div></section>` : '';
+  const body = paperBody + sheetBody + keyBody;
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>
+    .sub { font-size:13px; color:#444; margin-top:2px; } .pas { background:#f8fafc; border-left:3px solid #1E3A8A; padding:6px 10px; margin-bottom:6px; font-size:12.5px; }
+    .bub { display:flex; gap:10px; } .bub span { min-width:26px; height:26px; padding:0 6px; border:1.5px solid #555; border-radius:13px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
     @page { size:A4; margin:15mm; }
     body { font-family:'Segoe UI',Arial,Helvetica,sans-serif; color:#111; font-size:13.5px; line-height:1.6; }
     .pg { page-break-after:always; } .pg:last-child { page-break-after:auto; }
     .head { display:flex; align-items:center; gap:16px; border-bottom:2.5px solid #111; padding-bottom:10px; margin-bottom:12px; } .htxt { flex:1; text-align:center; }
-    .sch { font:700 13px Arial,sans-serif; letter-spacing:.08em; text-transform:uppercase; color:#4f46e5; }
+    .sch { font:800 22px Arial,sans-serif; letter-spacing:.05em; text-transform:uppercase; color:#1E3A8A; }
     .logo { width:68px; height:68px; flex-shrink:0; border-radius:50%; object-fit:cover; border:2px solid #4f46e5; padding:2px; box-sizing:border-box; }
     h1 { font-size:21px; font-weight:800; margin:2px 0; }
     .meta { display:flex; flex-wrap:wrap; gap:4px 28px; border:1.5px solid #111; border-radius:6px; padding:7px 12px; margin-bottom:8px; font-size:12.5px; }
@@ -276,6 +373,15 @@ function Field({ label, children }) {
   return <div className="msai-field"><label>{label}</label>{children}</div>;
 }
 
+function AnswerLinesPick({ value, onChange }) {
+  return (
+    <div className="msai-field"><label>Answer space on the answer sheet</label>
+      <div className="msai-chip-row">{[['auto', 'Auto (recommended)'], ['2', '2 lines'], ['4', '4 lines']].map(([k, l]) => (
+        <button key={k} type="button" className={`msai-chip${value === k ? ' msai-chip--active' : ''}`} onClick={() => onChange(k)}>{l}</button>
+      ))}</div>
+    </div>
+  );
+}
 function Toggle({ label, checked, onChange }) {
   return (
     <label className="msai-toggle-row">
@@ -302,6 +408,9 @@ export default function QuestionPapers({ toast, onConsumed }) {
   const { canCreate, canEdit, canDownload, canDelete, deny } = useMentorAIActions('questionpapers', toast);
   const [view, setView] = useState('form');            // form | generating | result | list
   const [f, setF] = useState(INITIAL_FORM);
+  const [mode, setMode] = useState(null);              // null (choose) | manual | auto
+  const [pickMode, setPickMode] = useState('manual');
+  const [resultTab, setResultTab] = useState('paper');
   const [sel, setSel] = useState({ cls: '', clsId: '', sectionId: '', subject: '', subjectId: '' });
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -354,25 +463,37 @@ export default function QuestionPapers({ toast, onConsumed }) {
     if (!f.title.trim()) { toast?.('Please enter an exam title.'); return; }
     if (job.running) return;
 
+    let ff = f;
+    if (mode === 'auto') {
+      /* Automatic: marks / time ko Mentor AI objective + subjective me khud baant leta hai. */
+      const total = Math.max(1, Number(f.autoMarks) || 1), mins = Math.max(1, Number(f.autoMins) || 1);
+      const both = f.paperType === 'mixed';
+      const objM = f.paperType === 'objective' ? total : both ? Math.round(total * 0.4) : 0;
+      const subM = total - objM;
+      const objT = f.paperType === 'objective' ? mins : both ? Math.round(mins * 0.35) : 0;
+      ff = { ...f, objMarks: objM, objCount: Math.max(1, objM), objDuration: objT, subjMarks: subM, subjCount: Math.max(1, Math.round(subM / 5)), subjDuration: mins - objT,
+        objInstructions: f.autoDesc.trim(), subjInstructions: f.autoDesc.trim() };
+      setF(ff);
+    }
     setView('generating');
     const signal = job.start(STAGE_SETS.worksheet);
     const opts = { signal, onProgress: job.report };
     try {
       const response = await qpService.generateQuestionPaper({
-        grade: sel.cls, subject: sel.subject, ...f,
+        grade: sel.cls, subject: sel.subject, ...ff,
         title: f.title,
         /* Server dono sections ki instructions ZAROORI maangta hai (khali par 400). Khali ho to
            title / count se ek default bana kar bhejte hain. */
-        objInstructions: f.objInstructions.trim()
-          || `Generate ${f.objCount} objective questions (MCQs) on ${f.title.trim()} for ${sel.cls} ${sel.subject}.`,
-        subjInstructions: f.subjInstructions.trim()
-          || `Generate ${f.subjCount} subjective questions (short and long answer) on ${f.title.trim()} for ${sel.cls} ${sel.subject}.`,
+        objInstructions: ff.objInstructions.trim()
+          || `Generate ${ff.objCount} objective questions (MCQs) on ${f.title.trim()} for ${sel.cls} ${sel.subject}.`,
+        subjInstructions: ff.subjInstructions.trim()
+          || `Generate ${ff.subjCount} subjective questions (short and long answer) on ${f.title.trim()} for ${sel.cls} ${sel.subject}.`,
       }, opts);
       console.log('Question paper generate response:', response);
       const result = await qpService.resolvePaper(response, null, opts);
       job.report({ stage: 'finalizing' });
       job.complete();
-      setPaper(result); setUndoPaper(null); setEditing(false); setFromList(false);
+      setPaper(result); setResultTab('paper'); setUndoPaper(null); setEditing(false); setFromList(false);
       setView('result');
       onConsumed?.();
     } catch (error) {
@@ -397,7 +518,7 @@ export default function QuestionPapers({ toast, onConsumed }) {
   const openPaper = async (item) => {
     try {
       const full = await qpService.getQuestionPaperById(item.id);
-      setPaper({ ...item, ...full }); setUndoPaper(null); setEditing(false); setFromList(true);
+      setPaper({ ...item, ...full }); setResultTab('paper'); setUndoPaper(null); setEditing(false); setFromList(true);
       setView('result');
     } catch (error) { toast?.(errMessage(error)); }
   };
@@ -413,7 +534,7 @@ export default function QuestionPapers({ toast, onConsumed }) {
     } catch (error) { toast?.(errMessage(error)); }
   };
 
-  const startOver = () => { job.reset(); setPaper(null); setUndoPaper(null); setEditing(false); setView('form'); };
+  const startOver = () => { setMode(null); job.reset(); setPaper(null); setUndoPaper(null); setEditing(false); setView('form'); };
   const showObjective = f.paperType !== 'subjective';
   const showSubjective = f.paperType !== 'objective';
   const brand = f.includeBranding ? { name: branchHeader?.branchName || '', logo: branchHeader?.branchLogo || '' } : null;
@@ -426,6 +547,10 @@ export default function QuestionPapers({ toast, onConsumed }) {
     ['Max Marks', totalMarks || ''],
     ['Type', String(paper?.paper_type || f.paperType || '').replace(/^./, (c) => c.toUpperCase())],
   ];
+  const sheetOn = !!(paper?.includeAnswerSheet ?? (!fromList && f.includeAnswerSheet));
+  const keyOn = (paper?.answerKey || []).length > 0;
+  const tabs = [['paper', 'Question Paper'], ...(sheetOn ? [['sheet', 'Answer Sheet']] : []), ...(keyOn ? [['key', 'Answer Key']] : [])];
+  const tab = tabs.some(([k]) => k === resultTab) ? resultTab : 'paper';
   const paperTitle = paper?.title || [sel.cls, sel.subject, 'Question Paper'].filter(Boolean).join(' · ');
 
   return (
@@ -443,13 +568,93 @@ export default function QuestionPapers({ toast, onConsumed }) {
         </button>
       )}
 
-      {view === 'form' && (
+      {view === 'form' && mode === null && (
         <div className="msai-card msai-ws-step">
           <div className="msai-lp-result-head">
-            <div className="msai-step-title">Question Paper Generator</div>
+            <div className="msai-step-title">New Question Paper — how do you want to create it?</div>
             <button type="button" className="msai-btn-secondary" onClick={() => setView('list')}>
               <i className="fa-solid fa-folder-open" aria-hidden="true" /> My Papers
             </button>
+          </div>
+          <div className="msai-content-type-grid">
+            {[{ id: 'manual', icon: 'fa-sliders', name: 'Manual Setup', d: 'You design the paper structure: sections, number of questions, marks and time.' },
+              { id: 'auto', icon: 'fa-wand-magic-sparkles', name: 'Automatic (AI builds it)', d: 'Describe the paper and Mentor AI builds it for you.' }].map(o => (
+              <button key={o.id} type="button" className={`msai-content-type-card${pickMode === o.id ? ' selected' : ''}`} onClick={() => setPickMode(o.id)}>
+                <div className="msai-ctc-title"><i className={`fa-solid ${o.icon}`} aria-hidden="true" /> {o.name}{pickMode === o.id && <i className="fa-solid fa-circle-check" style={{ marginLeft: 8 }} aria-hidden="true" />}</div>
+                <div className="msai-ctc-desc">{o.d}</div>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} onClick={() => setMode(pickMode)}>
+            Continue <i className="fa-solid fa-arrow-right" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {view === 'form' && mode === 'auto' && (
+        <div className="msai-card msai-ws-step">
+          <div className="msai-lp-result-head">
+            <div className="msai-step-title">Automatic — AI builds your paper</div>
+            <button type="button" className="msai-btn-secondary" onClick={() => setMode(null)}><i className="fa-solid fa-repeat" aria-hidden="true" /> Change method</button>
+          </div>
+          <div className="msai-field"><label>Select Class</label>
+            <div className="msai-chip-row">{classes.map(c => (
+              <button key={c.id} type="button" className={`msai-chip${sel.clsId === c.id ? ' msai-chip--active' : ''}`} onClick={() => pickClass(c.id)}>{c.name}</button>
+            ))}</div>
+          </div>
+          <div className="msai-field"><label>Select Subject</label>
+            <div className="msai-chip-row">{subjects.map(s => (
+              <button key={s.id} type="button" className={`msai-chip${sel.subjectId === s.id ? ' msai-chip--active' : ''}`}
+                onClick={() => setSel(p => ({ ...p, subject: s.subject_name || s.name, subjectId: s.id }))}>{s.subject_name || s.name}</button>
+            ))}</div>
+          </div>
+          <Field label="Question Paper Title">
+            <input type="text" value={f.title} onChange={e => set({ title: e.target.value })} placeholder="e.g. Chemical Bonding — Monthly Test" />
+          </Field>
+          <div className="msai-field"><label>Sections to include</label>
+            <div className="msai-content-type-grid">
+              {QP_TYPES.map(t => (
+                <button key={t.id} type="button" className={`msai-content-type-card msai-content-type-card--sm${f.paperType === t.id ? ' selected' : ''}`} onClick={() => set({ paperType: t.id })}>
+                  <div className="msai-ctc-title">{t.name}</div>
+                  <div className="msai-ctc-desc">{t.description}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="msai-form-grid">
+            <Field label="Total Marks"><Stepper value={f.autoMarks} step={5} max={500} onChange={v => set({ autoMarks: v })} /></Field>
+            <Field label="Total Time (minutes)"><Stepper value={f.autoMins} step={5} max={300} onChange={v => set({ autoMins: v })} /></Field>
+          </div>
+          <div className="msai-field"><label>Difficulty</label>
+            <div className="msai-chip-row">{QP_DIFFICULTIES.map(d => (
+              <button key={d.id} type="button" className={`msai-chip${f.difficulty === d.id ? ' msai-chip--active' : ''}`} onClick={() => set({ difficulty: d.id })}>{d.name}</button>
+            ))}</div>
+          </div>
+          <Field label="Describe the paper you want">
+            <div className="msai-field-voice-wrap">
+              <textarea rows={4} value={f.autoDesc} onChange={e => set({ autoDesc: e.target.value })} placeholder="e.g. Mostly application questions from chapters 3 and 4, one diagram-based long question, simple language." />
+              <VoiceDictationButton onResult={t => set({ autoDesc: f.autoDesc.trim() ? `${f.autoDesc.trim()} ${t}` : t })} />
+            </div>
+          </Field>
+          <div className="msai-form-grid">
+            <Field label="Language"><select value={f.language} onChange={e => set({ language: e.target.value })}>{QP_LANGUAGES.map(l => <option key={l}>{l}</option>)}</select></Field>
+          </div>
+          <Toggle label="Include Answer Key" checked={f.includeAnswerKey} onChange={v => set({ includeAnswerKey: v })} />
+          <Toggle label="Include Answer Sheet" checked={f.includeAnswerSheet} onChange={v => set({ includeAnswerSheet: v })} />
+          {f.includeAnswerSheet && <AnswerLinesPick value={f.answerLines} onChange={v => set({ answerLines: v })} />}
+          <Toggle label="Include School Name & Logo" checked={f.includeBranding} onChange={v => set({ includeBranding: v })} />
+          <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} disabled={!canCreate || !f.title.trim()} onClick={runGenerate}>
+            <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Generate Question Paper
+          </button>
+          <div className="msai-hint-text">Mentor AI splits the marks and time between sections for you.</div>
+        </div>
+      )}
+
+      {view === 'form' && mode === 'manual' && (
+        <div className="msai-card msai-ws-step">
+          <div className="msai-lp-result-head">
+            <div className="msai-step-title">Manual Setup</div>
+            <button type="button" className="msai-btn-secondary" onClick={() => setMode(null)}><i className="fa-solid fa-repeat" aria-hidden="true" /> Change method</button>
           </div>
 
           <div className="msai-field"><label>Select Class</label>
@@ -529,6 +734,7 @@ export default function QuestionPapers({ toast, onConsumed }) {
 
           <Toggle label="Include Answer Key" checked={f.includeAnswerKey} onChange={v => set({ includeAnswerKey: v })} />
           <Toggle label="Include Answer Sheet" checked={f.includeAnswerSheet} onChange={v => set({ includeAnswerSheet: v })} />
+          {f.includeAnswerSheet && <AnswerLinesPick value={f.answerLines} onChange={v => set({ answerLines: v })} />}
           <Toggle label="Include School Name & Logo" checked={f.includeBranding} onChange={v => set({ includeBranding: v })} />
 
           <button type="button" className="msai-btn-primary" style={{ alignSelf: 'flex-end' }} disabled={!canCreate || !f.title.trim()} onClick={runGenerate}>
@@ -592,21 +798,42 @@ export default function QuestionPapers({ toast, onConsumed }) {
             <VersionBadge version={paper.version} />
           </div>
 
-          {paper.pdfUrl || paper.pageContent.length
-            ? (paper.pageContent.length ? <QuestionPaperPages paper={paper} meta={paperMeta} brand={brand} /> : <WorksheetPages worksheet={paper} />)
-            : <div className="msai-empty-state">The question paper was created, but the server did not return a PDF or page content to preview yet.</div>}
+          {tabs.length > 1 && (
+            <div className="msai-chip-row" style={{ marginBottom: 12 }}>{tabs.map(([k, l]) => (
+              <button key={k} type="button" className={`msai-chip${tab === k ? ' msai-chip--active' : ''}`} onClick={() => setResultTab(k)}>{l}</button>
+            ))}</div>
+          )}
+          {tab === 'sheet' && (
+            <>
+              <AnswerLinesPick value={f.answerLines} onChange={v => set({ answerLines: v })} />
+              <AnswerSheetPages paper={paper} meta={paperMeta} brand={brand} lines={f.answerLines} />
+            </>
+          )}
+          {tab === 'key' && <AnswerKeyPages paper={paper} meta={paperMeta} brand={brand} />}
+          {tab === 'paper' && (paper.pdfUrl || paper.pageContent.length
+            ? (paper.pageContent.length ? <QuestionPaperPages paper={paper} meta={paperMeta} brand={brand} noLines={sheetOn} /> : <WorksheetPages worksheet={paper} />)
+            : <div className="msai-empty-state">The question paper was created, but the server did not return a PDF or page content to preview yet.</div>)}
 
           {!(editing && canEdit) ? (
             <div className="msai-result-actions">
               {paper.pdfUrl ? (
                 <a className="msai-btn-primary" href={paper.pdfUrl} target="_blank" rel="noreferrer"><i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF</a>
               ) : (paper.pageContent.length > 0 && (
-                <button type="button" className="msai-btn-primary" onClick={() => { if (!openQuestionPaperPrintWindow(paper, paperMeta, brand)) toast?.('Please allow pop-ups to view the paper.'); }}>
+                <button type="button" className="msai-btn-primary" onClick={() => { if (!openQuestionPaperPrintWindow(paper, paperMeta, brand, { sheet: sheetOn, lines: f.answerLines })) toast?.('Please allow pop-ups to view the paper.'); }}>
                   <i className="fa-regular fa-file-pdf" aria-hidden="true" /> View PDF
                 </button>
               ))}
               {paper.answerKeyUrl && (
                 <a className="msai-btn-secondary" href={paper.answerKeyUrl} target="_blank" rel="noreferrer"><i className="fa-solid fa-key" aria-hidden="true" /> Answer Key</a>
+              )}
+              {keyOn && !paper.answerKeyUrl && (
+                <button type="button" className="msai-btn-secondary" onClick={() => { if (!openQuestionPaperPrintWindow(paper, paperMeta, brand, { only: 'key' })) toast?.('Please allow pop-ups.'); }}><i className="fa-solid fa-key" aria-hidden="true" /> Answer Key</button>
+              )}
+              {sheetOn && !paper.answerSheetUrl && (
+                <button type="button" className="msai-btn-secondary" onClick={() => { if (!openQuestionPaperPrintWindow(paper, paperMeta, brand, { only: 'sheet', lines: f.answerLines })) toast?.('Please allow pop-ups.'); }}><i className="fa-solid fa-file-pen" aria-hidden="true" /> Answer Sheet</button>
+              )}
+              {paper.answerSheetUrl && (
+                <a className="msai-btn-secondary" href={paper.answerSheetUrl} target="_blank" rel="noreferrer"><i className="fa-solid fa-file-pen" aria-hidden="true" /> Answer Sheet</a>
               )}
               {canEdit && paper.id != null && (
                 <button type="button" className="msai-btn-secondary" onClick={() => setEditing(true)}><i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" /> Edit via AI</button>
@@ -618,7 +845,7 @@ export default function QuestionPapers({ toast, onConsumed }) {
               )}
               {canDownload && (
                 <button type="button" className="msai-btn-secondary" disabled={!paper.pdfUrl && !paper.pageContent.length}
-                  onClick={() => (paper.pdfUrl ? downloadFile(paper.pdfUrl, `${paperTitle}.pdf`) : (openQuestionPaperPrintWindow(paper, paperMeta, brand) || toast?.('Please allow pop-ups to download the paper.')))}>
+                  onClick={() => (paper.pdfUrl ? downloadFile(paper.pdfUrl, `${paperTitle}.pdf`) : (openQuestionPaperPrintWindow(paper, paperMeta, brand, { sheet: sheetOn, lines: f.answerLines }) || toast?.('Please allow pop-ups to download the paper.')))}>
                   <i className="fa-solid fa-download" aria-hidden="true" /> Download PDF
                 </button>
               )}

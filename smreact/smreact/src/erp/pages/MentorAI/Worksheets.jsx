@@ -22,7 +22,7 @@ export default function Worksheets({ toast, onConsumed }) {
   sectionId: '',
   subject: '',
   subjectId: '',
-  type: WS_TYPES[0].id
+  type: 'custom'
 });
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -304,11 +304,14 @@ if (
             <div className="msai-chip-row">{classes.map(c => <button key={c.id} type="button" className={`msai-chip${form1.clsId === c.id ? ' msai-chip--active' : ''}`} onClick={() => handleClassChange(c.id)}>{c.name}</button>)}</div>
           </div>
           <div className="msai-field"><label>Select Subject</label>
-            <div className="msai-chip-row">{subjects.map(s => <button key={s.id} type="button" className={`msai-chip${form1.subjectId === s.id ? ' msai-chip--active' : ''}`} onClick={() => setForm1(prev => ({ ...prev, subject: s.subject_name || s.name, subjectId: s.id }))}>{s.subject_name || s.name}</button>)}</div>
+            {subjects.length === 0
+              ? <div className="msai-hint-text">{form1.clsId ? 'Loading subjects…' : 'Please select a class first.'}</div>
+              : <div className="msai-chip-row">{subjects.map(s => <button key={s.id} type="button" className={`msai-chip${form1.subjectId === s.id ? ' msai-chip--active' : ''}`} onClick={() => setForm1(prev => ({ ...prev, subject: s.subject_name || s.name, subjectId: s.id }))}>{s.subject_name || s.name}</button>)}</div>
+            }
           </div>
           <div className="msai-field"><label>Worksheet Type</label>
             <div className="msai-content-type-grid">
-              {WS_TYPES.map(t => (
+{[...WS_TYPES].sort((a, b) => (a.id === 'custom' ? -1 : b.id === 'custom' ? 1 : 0)).map(t => (
                 <button key={t.id} type="button" className={`msai-content-type-card msai-content-type-card--sm${form1.type === t.id ? ' selected' : ''}`} onClick={() => setForm1(f => ({ ...f, type: t.id }))}>
                   <div className="msai-ctc-title">{t.name}</div>
                   <div className="msai-ctc-desc">{t.description}</div>
@@ -323,6 +326,16 @@ if (
       {step === 'step2' && (
         <div className="msai-card msai-ws-step">
           <div className="msai-step-title">Worksheet Generator <span className="msai-step-pill">Step 2 of 2</span></div>
+          {/* Grade + Subject selectors always visible in Step 2 */}
+          <div className="msai-field"><label>Class</label>
+            <div className="msai-chip-row">{classes.map(c => <button key={c.id} type="button" className={`msai-chip${form1.clsId === c.id ? ' msai-chip--active' : ''}`} onClick={() => handleClassChange(c.id)}>{c.name}</button>)}</div>
+          </div>
+          <div className="msai-field"><label>Subject</label>
+            {subjects.length === 0
+              ? <div className="msai-hint-text">{form1.clsId ? 'Loading subjects…' : 'Please select a class first.'}</div>
+              : <div className="msai-chip-row">{subjects.map(s => <button key={s.id} type="button" className={`msai-chip${form1.subjectId === s.id ? ' msai-chip--active' : ''}`} onClick={() => setForm1(prev => ({ ...prev, subject: s.subject_name || s.name, subjectId: s.id }))}>{s.subject_name || s.name}</button>)}</div>
+            }
+          </div>
           {/* Custom type: sirf instructions / branding / reference pictures (API ye hi leti hai). */}
           {form1.type !== 'custom' && (
             <>

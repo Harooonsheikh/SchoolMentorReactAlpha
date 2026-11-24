@@ -20,11 +20,10 @@ function fmtDate(iso) {
 }
 
 const PLAN_THEMES = {
-  basic:   { gradient: 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%)' }, // light blue
-  pro:     { gradient: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)' }, // dark blue
-  premium: { gradient: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)' }, // purple
+  basic:   { gradient: 'linear-gradient(135deg, #93C5FD 0%, #2563EB 100%)' }, // light blue
+  premium: { gradient: 'linear-gradient(135deg, #2563EB 0%, #1E40AF 100%)' }, // dark blue
 };
-const themeFor = (id) => PLAN_THEMES[id] || PLAN_THEMES.pro;
+const themeFor = (id) => PLAN_THEMES[id] || PLAN_THEMES.premium;
 
 const PLAN_PRICE_OVERRIDE = { premium: 7000 };
 const priceFor = (p) => PLAN_PRICE_OVERRIDE[p?.id] ?? p?.price;
@@ -116,7 +115,7 @@ export default function Wallet({ goTo }) {
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Basic → Pro, Pro → Premium (next plan up from the one on screen).
+  /* Basic → Premium (next plan up from the one on screen).
      Viewing a lower plan than the current one: offer the next plan above
      the current one instead. Nothing above → no upgrade button. */
   const upgradeTarget = (() => {
@@ -291,7 +290,7 @@ export default function Wallet({ goTo }) {
                 display: 'flex', gap: 8, alignItems: 'flex-start', padding: '10px 12px',
                 borderRadius: 10, background: 'rgba(139,92,246,0.08)', fontSize: 12.5, lineHeight: 1.5, margin: '12px 0'
               }}>
-                <i className="fa-solid fa-circle-info" aria-hidden="true" style={{ marginTop: 3, color: '#7c3aed' }} />
+                <i className="fa-solid fa-circle-info" aria-hidden="true" style={{ marginTop: 3, color: '#1D4ED8' }} />
                 <span>Once purchased, your upgraded limits will appear here the next time you open the Wallet.</span>
               </div>
               {payNote && <div style={{ fontSize: 12.5, lineHeight: 1.5, margin: '0 0 12px' }}>{payNote}</div>}

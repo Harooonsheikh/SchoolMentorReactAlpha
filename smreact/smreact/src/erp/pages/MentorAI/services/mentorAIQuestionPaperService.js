@@ -153,12 +153,23 @@ export function normalizeQuestionPaper(raw) {
   /* Worksheet v2 ki tarah: PDF na ho to `sections` (sawal + page number) se on-screen pages banao. */
   if (!pages.length && Array.isArray(p.sections)) pages = sectionsToPages(p.sections);
   if (!pages.length) { const qs = findQuestionList(p); if (qs.length) pages = questionsToPages(qs); }
+  /* Server answer_key = [{ q_id, answer, explanation }] — q_id ko sawal ke number se jodo. */
+  const allQs = (Array.isArray(p.sections) ? p.sections : []).flatMap((s) => (s?.questions || []));
+  const byId = new Map(allQs.map((q) => [String(q.q_id), q]));
+  const answerKey = (Array.isArray(p.answer_key) ? p.answer_key : []).map((k) => ({
+    no: byId.get(String(k?.q_id))?.number ?? k?.number ?? k?.q_id ?? '',
+    answer: String(k?.answer ?? ''), explanation: String(k?.explanation ?? ''),
+  }));
+  const meta = raw?.metadata || p.metadata || {};
   return {
     ...p,
+    answerKey,
+    includeAnswerSheet: meta.include_answer_sheet ?? p.include_answer_sheet,
     id: p.id ?? p.question_paper_id ?? p.paper_id ?? null,
     title: p.exam_title || p.title || '',
     pdfUrl: secureMentorUrl(p.pdf_url || p.pdfUrl || p.file_url || p.file || p.document_url) || null,
     answerKeyUrl: secureMentorUrl(p.answer_key_pdf_url || p.answer_key_url || p.answerKeyUrl) || null,
+    answerSheetUrl: secureMentorUrl(p.answer_sheet_pdf_url || p.answer_sheet_url || p.answerSheetUrl || p.answer_sheet_file || (typeof p.answer_sheet === 'string' ? p.answer_sheet : '')) || null,
     pageContent: pages,
   };
 }

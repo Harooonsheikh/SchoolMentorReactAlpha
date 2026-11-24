@@ -293,6 +293,7 @@ const SECTION_DEFS = [
   { key: 'slo', title: 'Student Learning Objectives (SLOs)', numbered: 'always', aliases: ['student_learning_objective', 'student_learning_objectives', 'learning_objectives', 'learning_objective', 'objectives', 'slo', 'slos'] },
   { key: 'intro', title: 'Lesson Introduction', aliases: ['lesson_introduction', 'introduction', 'lesson_intro', 'warm_up', 'warmup'] },
   { key: 'activity', title: 'Development', aliases: ['development', 'teaching_steps', 'main_activity', 'main_teaching_activity'] },
+  { key: 'resmat', title: 'Resource Material', aliases: ['resource_material', 'resource_materials'] },
   { key: 'teacher', title: 'Teacher Activities', aliases: ['teacher_activities', 'teacher_activity'] },
   { key: 'student', title: 'Student Activities', aliases: ['student_activities', 'student_activity'] },
   { key: 'assessment', title: 'Assessment', aliases: ['assessment', 'check_for_understanding', 'evaluation'] },
@@ -367,7 +368,7 @@ function toSection(def, value) {
   }
   // Backend "## Learning Objectives" jaisi heading content mein bhejta hai — hata do
   if (typeof content === 'string') {
-    content = content.replace(/^\s*#{1,6}\s+.*$/gm, '').replace(/\*\*/g, '').trim();
+    content = content.replace(/^\s*#{1,6}\s+.*$/gm, '').replace(/(^|\s)#{2,6}(?=\s)/g, '$1').replace(/\*\*/g, '').trim();
   }
   const list = splitListItems(content);
   const mins = parseMinutes(time);
@@ -382,22 +383,44 @@ function toSection(def, value) {
 
 /* raw backend plan body → UI plan. ctx: { cls, section, subject, duration,
    index, documentId, version, id } */
-export function mapPlan(raw, ctx = {}) {
+/* Backend "Resource Material" ko Development ke content ke andar "### Resource Material"
+   heading ke saath bhejta hai — use Development se alag nikaal kar apni heading wala section banao. */
+function splitResourceMaterial(raw) {
+  const devKey = Object.keys(raw).find((k) => SECTION_DEFS[2].aliases.includes(normKey(k)));
+  if (!devKey || Object.keys(raw).some((k) => normKey(k) === 'resource_material')) return raw;
+  const dev = raw[devKey];
+  const text = typeof dev === 'string' ? dev : (isObj(dev) && typeof dev.content === 'string' ? dev.content : null);
+  if (!text) return raw;
+  const m = /(?:^|\n)[ \t]*#{1,6}[ \t]*\**Resource Materials?\**[ \t]*:?[ \t]*\n/i.exec(text);
+  if (!m) return raw;
+  const before = text.slice(0, m.index).trim();
+  const after = text.slice(m.index + m[0].length).trim();
+  if (!after) return raw;
+  return {
+    ...raw,
+    [devKey]: isObj(dev) ? { ...dev, content: before } : before,
+    resource_material: after,
+  };
+}
+
+export function mapPlan(rawIn, ctx = {}) {
+  const raw = rawIn;
+  const src = splitResourceMaterial(rawIn);
   const claimed = new Set();
   const sections = [];
 
   SECTION_DEFS.forEach((def) => {
-    const foundKey = Object.keys(raw).find((k) => def.aliases.includes(normKey(k)) && !claimed.has(k));
+    const foundKey = Object.keys(src).find((k) => def.aliases.includes(normKey(k)) && !claimed.has(k));
     if (!foundKey) return;
     claimed.add(foundKey);
-    const sec = toSection(def, raw[foundKey]);
+    const sec = toSection(def, src[foundKey]);
     if (sec) sections.push(sec);
   });
 
   // Generic fallback: any other non-metadata block the backend adds later.
-  Object.keys(raw).forEach((k) => {
+  Object.keys(src).forEach((k) => {
     if (claimed.has(k) || META_KEYS.has(normKey(k)) || SECTION_DEFS.some((d) => d.aliases.includes(normKey(k)))) return;
-    const v = raw[k];
+    const v = src[k];
     if (v == null || (typeof v === 'object' && !Array.isArray(v) && !('content' in v) && !('text' in v))) return;
     const sec = toSection({ key: `x_${normKey(k)}`, title: humanize(k) }, v);
     if (sec) sections.push(sec);

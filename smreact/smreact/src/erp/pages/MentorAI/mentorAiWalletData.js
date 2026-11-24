@@ -19,8 +19,6 @@
 export const WALLET_PLANS = [
   { id: 'basic', name: 'Basic', tagline: 'Essential AI tools to get started', price: null,
     totals: { chatTokens: 1000000, screens: 100, worksheets: 25, designPosts: 15 } },
-  { id: 'pro', name: 'Pro', tagline: 'Advanced tools for established schools', price: 5000,
-    totals: { chatTokens: 5000000, screens: 300, worksheets: 70, designPosts: 50 } },
   { id: 'premium', name: 'Premium', tagline: 'Full power for large, multi-campus schools', price: 12000,
     totals: { chatTokens: 10000000, screens: 600, worksheets: 150, designPosts: 100 } },
 ];

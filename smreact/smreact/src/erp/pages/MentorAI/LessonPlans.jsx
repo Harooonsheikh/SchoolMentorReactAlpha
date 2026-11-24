@@ -17,7 +17,7 @@ import { toLessonPlanError, summarizeChanges } from './services/lessonPlanMapper
 
 const mapGroupTemplate = mentorAiStudioService.mapTypeToTemplate;
 
-const EMPTY_SETUP = { unit: '', unitNumber: 1, unitMedium: 'english', count: 2, duration: 40, instructions: '', teachingApproach: '', insertLink: false, suggestHomework: false, region: '', curriculum: '' };
+const EMPTY_SETUP = { unit: '', unitNumber: 1, unitMedium: 'english', count: 2, duration: 40, instructions: '', teachingApproach: 'smart_choice', insertLink: false, suggestHomework: false, region: '', curriculum: '' };
 
 /* Server error → saaf text. HTML error page (Django "Not Found" waghera) seedha na dikhao. */
 const apiErrText = (e) => {
@@ -42,15 +42,32 @@ const docIdFromBody = (b) => {
   return null;
 };
 
-/* Teaching approach (API: teaching_approach). '' = not sent → Mentor AI's own default. */
+/* Teaching approach (API: teaching_approach). Default: Mentor AI Smart Choice. */
 const TEACHING_APPROACHES = [
-  { id: '', label: 'Default (Mentor AI decides)' },
-  { id: 'smart_choice', label: 'Smart Choice' },
-  { id: 'inquiry_discovery', label: 'Inquiry & Discovery' },
-  { id: 'project_hands_on', label: 'Project / Hands-on' },
-  { id: 'story_interactive', label: 'Story & Interactive' },
-  { id: 'structured_mastery', label: 'Structured Mastery' },
+  { id: 'smart_choice', label: 'Mentor AI Smart Choice', icon: 'fa-wand-magic-sparkles', hint: 'Mentor AI picks the best approach for this unit and class.' },
+  { id: 'inquiry_discovery', label: 'Learn by Asking & Exploring', icon: 'fa-magnifying-glass', hint: 'Questions, curiosity and discovery lead the lesson.' },
+  { id: 'project_hands_on', label: 'Learn by Doing & Making', icon: 'fa-hammer', hint: 'Hands-on activities, experiments and projects.' },
+  { id: 'story_interactive', label: 'Learn through Stories & Interaction', icon: 'fa-book-open-reader', hint: 'Stories, role-play, discussion and interactive moments.' },
+  { id: 'structured_mastery', label: 'Learn Step by Step', icon: 'fa-stairs', hint: 'Clear, structured steps with practice at each stage.' },
 ];
+const LPS_CSS = `
+.msai-lps-sec { display:flex; flex-direction:column; gap:10px; }
+.msai-lps-sec-h { display:flex; align-items:center; gap:10px; font:800 14px/1.2 var(--font-body); color:var(--text-primary); }
+.msai-lps-num { width:22px; height:22px; border-radius:50%; background:var(--brand-primary); color:#fff; font:800 11px/22px var(--font-body); text-align:center; flex-shrink:0; }
+.msai-lps-approaches { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; }
+.msai-lps-approach, .msai-lps-extra { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1.5px solid var(--border-light); border-radius:var(--radius-md); background:var(--bg-card); text-align:left; cursor:pointer; transition:var(--tr); font-family:var(--font-body); color:inherit; }
+.msai-lps-approach:hover, .msai-lps-extra:hover { border-color:var(--brand-primary); box-shadow:var(--shadow-sm); }
+.msai-lps-approach.is-on, .msai-lps-extra.is-on { border-color:var(--brand-primary); background:var(--brand-light); }
+.msai-lps-ic { width:38px; height:38px; border-radius:10px; background:var(--brand-light); color:var(--brand-primary); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+.msai-lps-approach.is-on .msai-lps-ic { background:var(--brand-primary); color:#fff; }
+.msai-lps-txt { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.msai-lps-t { font:700 13px/1.3 var(--font-body); color:var(--text-primary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.msai-lps-t em { font:700 9.5px/1 var(--font-body); font-style:normal; text-transform:uppercase; letter-spacing:.05em; background:var(--brand-primary); color:#fff; padding:3px 6px; border-radius:99px; }
+.msai-lps-d { font:500 11.5px/1.4 var(--font-body); color:var(--text-muted); }
+.msai-lps-check { color:var(--brand-primary); font-size:17px; opacity:0; transition:var(--tr); }
+.msai-lps-approach.is-on .msai-lps-check { opacity:1; }
+.msai-lps-extras { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; }
+`;
 const unitKey = (u) => `${u.unitNo}__${u.unitName}`;
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -71,7 +88,6 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
   const [units, setUnits] = useState([]);           // units from the ERP portal for class + section + subject
   const [savingPortal, setSavingPortal] = useState(false);
   const [savingLib, setSavingLib] = useState(false);           // Save to Mentor AI Library
-  const [showAdvanced, setShowAdvanced] = useState(false);     // Region / Curriculum ids
   const [extracting, setExtracting] = useState(false);         // extract-document in flight
   const [extractDocId, setExtractDocId] = useState(null);      // document id returned by extract-document
   const [lpResult, setLpResult] = useState(null);
@@ -586,7 +602,10 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
       {/* ── LESSON PLAN: Setup ── */}
       {step === 'setup' && (
         <div className="msai-card msai-lp-step">
+          <style>{LPS_CSS}</style>
           <div className="msai-step-title">Lesson Plans Setup</div>
+          <div className="msai-step-sub">Tell Mentor AI what to teach and how — it builds the plan from this.</div>
+          <div className="msai-lps-sec-h" style={{ marginBottom: -4 }}><span className="msai-lps-num">1</span> Lesson details</div>
           <div className="msai-form-grid">
             {renderUnitSelect()}
                    <Field label="Number of Lesson Plans">
@@ -603,40 +622,42 @@ export default function LessonPlans({ toast, onConsumed, goTo }) {
                 <button type="button" aria-label="Increase" onClick={() => setSetupForm(f => ({ ...f, duration: Math.min(90, f.duration + 5) }))}>+</button>
               </div>
             </Field>
-            <Field label="Teaching Approach">
-              <select value={setupForm.teachingApproach} onChange={e => setSetupForm(f => ({ ...f, teachingApproach: e.target.value }))}>
-                {TEACHING_APPROACHES.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
-              </select>
-            </Field>
           </div>
-          <label className="msai-toggle-row">
-            <span>Insert helpful links &amp; resources</span>
-            <span className="msai-toggle-wrap">
-              <input type="checkbox" className="msai-toggle-input" checked={setupForm.insertLink} onChange={e => setSetupForm(f => ({ ...f, insertLink: e.target.checked }))} />
-              <span className="msai-toggle-track"><span className="msai-toggle-knob" /></span>
-            </span>
-          </label>
-          <label className="msai-toggle-row">
-            <span>Suggest homework</span>
-            <span className="msai-toggle-wrap">
-              <input type="checkbox" className="msai-toggle-input" checked={setupForm.suggestHomework} onChange={e => setSetupForm(f => ({ ...f, suggestHomework: e.target.checked }))} />
-              <span className="msai-toggle-track"><span className="msai-toggle-knob" /></span>
-            </span>
-          </label>
-          <div className="msai-field">
-            <button type="button" className="msai-back-link" onClick={() => setShowAdvanced(v => !v)} aria-expanded={showAdvanced}>
-              <i className={`fa-solid fa-chevron-${showAdvanced ? 'down' : 'right'}`} aria-hidden="true" /> Advanced options
-            </button>
-            {showAdvanced && (
-              <div className="msai-form-grid">
-                <Field label="Region ID (optional)">
-                  <input type="number" min="0" inputMode="numeric" value={setupForm.region} onChange={e => setSetupForm(f => ({ ...f, region: e.target.value }))} placeholder="e.g. 1" />
-                </Field>
-                <Field label="Curriculum ID (optional)">
-                  <input type="number" min="0" inputMode="numeric" value={setupForm.curriculum} onChange={e => setSetupForm(f => ({ ...f, curriculum: e.target.value }))} placeholder="e.g. 1" />
-                </Field>
-              </div>
-            )}
+          <div className="msai-lps-sec">
+            <div className="msai-lps-sec-h"><span className="msai-lps-num">2</span> Choose your teaching approach</div>
+            <div className="msai-lps-approaches" role="radiogroup" aria-label="Teaching approach">
+              {TEACHING_APPROACHES.map(a => {
+                const on = setupForm.teachingApproach === a.id;
+                return (
+                  <button key={a.id} type="button" role="radio" aria-checked={on} className={`msai-lps-approach${on ? ' is-on' : ''}`} onClick={() => setSetupForm(f => ({ ...f, teachingApproach: a.id }))}>
+                    <span className="msai-lps-ic"><i className={`fa-solid ${a.icon}`} aria-hidden="true" /></span>
+                    <span className="msai-lps-txt">
+                      <span className="msai-lps-t">{a.label}{a.id === 'smart_choice' && <em>Recommended</em>}</span>
+                      <span className="msai-lps-d">{a.hint}</span>
+                    </span>
+                    <span className="msai-lps-check"><i className="fa-solid fa-circle-check" aria-hidden="true" /></span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="msai-lps-sec">
+            <div className="msai-lps-sec-h"><span className="msai-lps-num">3</span> Extras</div>
+            <div className="msai-lps-extras">
+              {[
+                { key: 'insertLink', icon: 'fa-brands fa-youtube', color: '#DC2626', title: 'Include YouTube resources', desc: 'Add relevant videos for the unit.' },
+                { key: 'suggestHomework', icon: 'fa-solid fa-house-laptop', color: 'var(--brand-primary)', title: 'Suggest homework', desc: 'Add a homework task to each plan.' },
+              ].map(x => (
+                <label key={x.key} className={`msai-lps-extra${setupForm[x.key] ? ' is-on' : ''}`}>
+                  <span className="msai-lps-ic" style={{ color: x.color }}><i className={x.icon} aria-hidden="true" /></span>
+                  <span className="msai-lps-txt"><span className="msai-lps-t">{x.title}</span><span className="msai-lps-d">{x.desc}</span></span>
+                  <span className="msai-toggle-wrap">
+                    <input type="checkbox" className="msai-toggle-input" checked={!!setupForm[x.key]} onChange={e => setSetupForm(f => ({ ...f, [x.key]: e.target.checked }))} />
+                    <span className="msai-toggle-track"><span className="msai-toggle-knob" /></span>
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
           <Field label="Additional Instructions (optional)">
             <div className="msai-field-voice-wrap">

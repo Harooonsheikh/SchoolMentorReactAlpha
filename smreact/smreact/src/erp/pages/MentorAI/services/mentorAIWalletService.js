@@ -237,7 +237,9 @@ if (Array.isArray(d?.plans) && d.plans.some(p => p?.totals)) {
 export function normalizePlans(raw) {
     const list = Array.isArray(raw) ? raw : (raw?.results || raw?.plans || raw?.data || []);
     if (!Array.isArray(list) || !list.length) return WALLET_PLANS;
-    const out = list.map(pl => {
+    /* Pro plan removed — sirf Basic aur Premium dikhte hain. */
+    const isPro = (pl) => /(^|[^a-z])pro([^a-z]|$)/i.test(String(pl?.plan_code ?? pl?.code ?? pl?.slug ?? pl?.name ?? ""));
+    const out = list.filter(pl => !isPro(pl)).map(pl => {
         const code = String(pl?.plan_code ?? pl?.code ?? pl?.slug ?? pl?.id ?? pl?.name ?? "").toLowerCase();
         const local = WALLET_PLANS.find(w => code === w.id || code.includes(w.id) || String(pl?.name || "").toLowerCase() === w.name.toLowerCase());
         const src = pl?.limits || pl?.features || pl?.quota || pl;
