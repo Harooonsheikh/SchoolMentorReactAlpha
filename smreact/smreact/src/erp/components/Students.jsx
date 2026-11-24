@@ -3120,8 +3120,6 @@ function ActiveStudents({ loading = false, classes, setClasses, inactive, setIna
       {promoteCfg && (
         <StuPromoteModal
           cls={list.find(c => c.key === promoteCfg.cKey)}
-          classList={classListLookup}
-          sectionList={sectionList}
           onClose={() => setPromoteCfg(null)}
           onSubmit={handlePromote}
           toast={toast}
@@ -5123,7 +5121,7 @@ const PROMOTE_NEXT = {
   'Class 9': 'Class 10',
 };
 
-function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast }) {
+function StuPromoteModal({ cls, onClose, onSubmit, toast }) {
   const fromCls = cls?.cls || '';
   const fromSec = cls?.sec || '';
   const [grades, setGrades]   = useState([]);   // school ki proper-sequence classes + unke sections
@@ -5135,21 +5133,33 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
   const [selected, setSelected] = useState({});
   const [selAll, setSelAll]     = useState(false);
 
-  /* Mount par: (1) proper-order classes + sections, (2) active session (name + id) fetch. */
+  /* Mount par: (1) proper-order classes + sections, (2) active session (name + id) fetch.
+     gradesFetched ref: StrictMode / re-mount par get-grades-by-branch dobara call na ho. */
+  const gradesFetched = useRef(false);
   useEffect(() => {
+    if (!gradesFetched.current) {
+      gradesFetched.current = true;
+      studentService.getStuGrades()
+        .then(g => setGrades(Array.isArray(g) ? g : []))
+        .catch(() => toast && toast('Classes could not be loaded, please try again.', 'error'));
+    }
     let alive = true;
-    studentService.getStuGrades().then(g => { if (alive) setGrades(Array.isArray(g) ? g : []); }).catch(() => {});
     studentService.getStuActiveSession().then(s => { if (alive) { setSession(s?.name || ''); setSessionId(s?.id || 0); } }).catch(() => {});
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* To Class ke options = school-order classes (fallback: purani classList prop).
-     To Section = us SELECTED class ke against sections (fallback: sectionList prop). */
+  /* To Class ke options = school-order classes (API). To Section = us SELECTED class ke sections. */
   /* Selection class ki ROW (id) par hai, naam par nahi — STEP-2 ki do rows ho to jo select ho
      usi ke sections dikhein. */
   const selGrade = grades.find(g => String(g.id) === String(toGradeId));
   const toClass = selGrade?.name || '';
   const sectionOptions = selGrade ? selGrade.sections.map(s => s.name) : [];
+
+  /* Same-class validation (class ID se compare, naam se nahi). */
+  const sameClass = !!selGrade && String(selGrade.id) === String(cls?._gradeId);
+  const sameMsg = !sameClass ? ''
+    : (toSec === fromSec ? 'Cannot promote student to the same class and section.' : 'Cannot promote student to the same class.');
 
   /* Grades load hon to default To Class: agle class ki pehli row (ya same class ho to isi row). */
   useEffect(() => {
@@ -5249,6 +5259,12 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
             </div>
           </div>
 
+          {sameMsg && (
+            <div role="alert" style={{ color: '#B91C1C', fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>
+              <i className="fa-solid fa-circle-exclamation" style={{ marginRight: 6 }}></i>{sameMsg}
+            </div>
+          )}
+
           <div className="stu-promo-tablewrap">
             <table className="stu-promo-table">
               <thead>
@@ -5290,8 +5306,9 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast
           <button
             className="stu-btn-primary"
             style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }}
-            disabled={count === 0 || !toClass || !toSec}
+            disabled={count === 0 || !toClass || !toSec || sameClass}
             onClick={() => {
+              if (sameClass) return;
               /* Har selected student ke liye promote payload banao (IDs resolve karke). */
               const newGrade   = selGrade;
               const newSection = newGrade?.sections.find(s => s.name === toSec);
