@@ -106,6 +106,10 @@ export const MODULE_TREE = [
             Lesson Plans, Notebook Plans and Resource Library. */
       { id: 'academics.horeleases',   label: 'Releases from Head Office' },
 
+      /* ── Resource Library — ResourceLibrary component (Academics.js),
+            the "rl" L1 tab. */
+      { id: 'academics.rl',           label: 'Resource Library' },
+
       /* ── Reports — AcademicsReports.js, the Academics module's own
             "Reports" L1 tab (Academics.js gates it with
             can('Academics', 'Reports', 'View')). */
@@ -126,6 +130,10 @@ export const MODULE_TREE = [
       { id: 'exam.singleresult',   label: 'Single Assessment',     group: 'Results' },
       { id: 'exam.combinedresult', label: 'Combined Assessment',   group: 'Results' },
       { id: 'exam.history',        label: 'Result History',        group: 'Results' },
+      /* ── Pre-Schooling — Result Setup → Preschool / Montessori (Setup
+            Preschool Classes, Assessment Setup, Result Card Options) +
+            Preschool assessment entry / result card in Single Assessment. */
+      { id: 'exam.preschool',      label: 'Pre-Schooling',         group: 'Results' },
     ] },
   { id: 'papers',      label: 'Paper Generator',   icon: 'fa-scroll',
     children: [
@@ -534,6 +542,12 @@ export const MODULE_PERMISSIONS = {
      Office, the school can only view and import it. */
   'academics.horeleases':  ['view', 'import'],
 
+  /* Academics → Resource Library (ResourceLibrary in Academics.js)
+     Real buttons: View (opens tab + file preview), Add Resource (create),
+                   Edit (edit), Delete (delete), Download file (download).
+     Head Office releases ka "Save to Portal" (resource) bhi Create maangta hai. */
+  'academics.rl':          ['view', 'create', 'edit', 'delete', 'download'],
+
   /* Academics → Reports (AcademicsReports.js). View opens the tab;
      Download enables the Generate buttons (PDF / Word / Excel). */
   'academics.reports':     ['view', 'download'],
@@ -595,6 +609,16 @@ export const MODULE_PERMISSIONS = {
                    comparison / attendance reports).
      History is read-only — no Create, no Edit, no Delete, no Approve. */
   'exam.history':        ['view', 'download'],
+
+  /* Results → Pre-Schooling (PreschoolExam.jsx + preschoolClassSetup.jsx)
+     View     = Preschool / Montessori tab dikhe.
+     Create   = Learning Areas / PSD fields / SLO "Add", Copy SLOs, naya
+                Preschool assessment enter karna.
+     Edit     = rename/Save Changes, Grading scale, Setup Preschool Classes,
+                Result Card Options, maujooda assessment update.
+     Delete   = Learning Area / PSD field / SLO remove.
+     Download = Preschool result card PDF. */
+  'exam.preschool':      ['view', 'create', 'edit', 'delete', 'download'],
 
   /* ─── PAPER GENERATOR — derived from real buttons in
          PaperGenerator.jsx (audited 2026-05-31). The module has

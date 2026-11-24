@@ -1128,7 +1128,10 @@ export default function Examination({ toast = () => { } }) {
   const showSetupTab = examView('Exam Setup');
   const showDatesheetTab = examView('Date Sheet');
   const showSyllabusTab = examView('Syllabus');
-  const showResultsTab = ['Result Setup', 'Result Card Options', 'Single Assessment', 'Combined Assessment', 'Result History'].some(examView);
+  const showResultsTab = ['Result Setup', 'Result Card Options', 'Single Assessment', 'Combined Assessment', 'Result History', 'Pre-Schooling'].some(examView);
+  /* User Permission → Examination → Pre-Schooling → View = Preschool / Montessori tab. */
+  const showPreschool = examView('Pre-Schooling');
+  const showGradeSetup = examView('Result Setup') || examView('Result Card Options');
 
   /* Date Sheet screen actions */
   const canDsCreate = can('Examination', 'Date Sheet', 'Create');
@@ -1201,6 +1204,9 @@ export default function Examination({ toast = () => { } }) {
      Result Setup tab). */
   const isPreschoolBranch = true;
   const [pResultType, setPResultType] = useState('grade');
+  /* Permission ke hisaab se asal tab: Pre-Schooling View nahi → hamesha Grade;
+     sirf Pre-Schooling ho (Grade setup ka View nahi) → hamesha Preschool. */
+  const effResultType = !showPreschool ? 'grade' : (!showGradeSetup ? 'preschool' : pResultType);
   const [pRsL2, setPRsL2] = useState('setup');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
   const { data: pGradingScale = [], setData: setPGradingScale } = useAsync(preschoolService.getGradingScale, []);
@@ -5743,7 +5749,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
           {/* ── Level-1 sub-tabs ── (sirf woh screens jinka View permission hai) */}
           <div className="ds-tabs">
             {[
-              { k: 'resultsetup', l: 'Result Setup', icon: 'fa-sliders', show: examView('Result Setup') || examView('Result Card Options') },
+              { k: 'resultsetup', l: 'Result Setup', icon: 'fa-sliders', show: showGradeSetup || (isPreschoolBranch && showPreschool) },
               { k: 'singleassessment', l: 'Single Assessment Result', icon: 'fa-file-lines', show: examView('Single Assessment') },
               { k: 'combinedassessment', l: 'Combined Assessment Result', icon: 'fa-layer-group', show: examView('Combined Assessment') },
               { k: 'resulthistory', l: 'Result History', icon: 'fa-clock-rotate-left', show: examView('Result History') },
@@ -5761,19 +5767,21 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
           {/* ── Result Setup sub-panel ── */}
           {rsTab === 'resultsetup' && (
             <>
-              {isPreschoolBranch && (
+              {isPreschoolBranch && showPreschool && (
                 <div className="ds-switcher">
                   <div className="ds-switcher-group">
-                    <button className={`ds-switcher-tab${pResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
-                      <i className="fa-solid fa-graduation-cap"></i> Grade 1-12
-                    </button>
-                    <button className={`ds-switcher-tab${pResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
+                    {showGradeSetup && (
+                      <button className={`ds-switcher-tab${effResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
+                        <i className="fa-solid fa-graduation-cap"></i> Grade 1-12
+                      </button>
+                    )}
+                    <button className={`ds-switcher-tab${effResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
                       <i className="fa-solid fa-shapes"></i> Preschool / Montessori
                     </button>
                   </div>
                 </div>
               )}
-              {isPreschoolBranch && pResultType === 'preschool' ? (
+              {isPreschoolBranch && effResultType === 'preschool' ? (
                 <PreschoolResultSetup
                   pRsL2={pRsL2} setPRsL2={setPRsL2}
                   pLearningAreas={pLearningAreas} setPLearningAreas={setPLearningAreas}

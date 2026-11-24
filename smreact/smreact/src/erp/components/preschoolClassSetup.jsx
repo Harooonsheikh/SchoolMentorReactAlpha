@@ -9,7 +9,7 @@
    Persistence: POST /api/exam-preschool-class (get / save) — one row per
    class-section (see services/preschoolClassSetupStore.js).
    Class list: live (get-classlist-sectionlist-studentlist-by-branch).
-   Edit gate: existing 'Examination' › 'Result Setup' › 'Edit' permission,
+   Edit gate: 'Examination' › 'Pre-Schooling' › 'Edit' permission,
    the Examination module read-only flag and the session guard.
 
    All CSS is scoped under `.preschool-setup` (and
@@ -19,6 +19,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePermissions } from '../context/PermissionsContext';
+import Tooltip from './Tooltip';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import {
   getPreschoolClassSetup,
@@ -102,7 +103,7 @@ const PSC_CSS = `
   border-radius:999px; border:none; padding:0; cursor:pointer;
   background:#CBD5E1; transition:background .18s ease;
 }
-.preschool-setup .psc-switch:disabled { cursor:not-allowed; opacity:.5; }
+.preschool-setup .psc-switch:disabled { cursor:not-allowed; opacity:.45; filter:grayscale(1); }
 .preschool-setup .psc-switch-knob {
   position:absolute; top:3px; left:3px; width:16px; height:16px;
   border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25);
@@ -190,7 +191,9 @@ export default function PreschoolClassSetup({ pLevels = [], toast = () => {}, on
   const { can } = usePermissions();
   const moduleReadOnly = useModuleReadOnly('exam');
   const lockReason = moduleReadOnly ? 'Examination is view-only for your account.' : examSessionLockReason();
-  const canEdit = can('Examination', 'Result Setup', 'Edit') && !lockReason;
+  /* User Permission → Examination → Pre-Schooling → Edit. */
+  const canEditPerm = can('Examination', 'Pre-Schooling', 'Edit');
+  const canEdit = canEditPerm && !lockReason;
 
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -242,7 +245,7 @@ export default function PreschoolClassSetup({ pLevels = [], toast = () => {}, on
 
   const guardEdit = () => {
     if (lockReason) { toast(lockReason, 'error'); return false; }
-    if (!can('Examination', 'Result Setup', 'Edit')) { toast('You do not have permission to edit Result Setup', 'error'); return false; }
+    if (!canEditPerm) { toast('You do not have Edit permission for Pre-Schooling', 'error'); return false; }
     return true;
   };
 
@@ -331,18 +334,24 @@ export default function PreschoolClassSetup({ pLevels = [], toast = () => {}, on
               <div className="psc-cls">{r.className}</div>
               <div>{r.sectionName ? <span className="psc-sec">{r.sectionName}</span> : <span className="psc-tag">—</span>}</div>
               <div className="psc-type">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={on}
-                  aria-label={`Mark ${r.name} as Preschool`}
-                  className="psc-switch"
-                  disabled={!canEdit}
-                  title={!canEdit ? (lockReason || 'You do not have permission to edit Result Setup') : undefined}
-                  onClick={() => { if (guardEdit()) setConfirmRow({ key: r.key, row: r, name: r.name, toPreschool: !on }); }}
-                >
-                  <span className="psc-switch-knob" />
-                </button>
+                {/* View-only → switch disabled + hover tooltip. Disabled button hover
+                    event nahi deta, is liye pointer-events none aur span par tooltip. */}
+                <Tooltip text={!canEdit ? (lockReason || 'No permission of Pre-Schooling') : (on ? 'Change to Grade 1-12' : 'Mark as Preschool')}>
+                  <span style={{ display: 'inline-flex', cursor: canEdit ? 'pointer' : 'not-allowed' }}>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={`Mark ${r.name} as Preschool`}
+                      className="psc-switch"
+                      disabled={!canEdit}
+                      style={!canEdit ? { pointerEvents: 'none' } : undefined}
+                      onClick={() => { if (guardEdit()) setConfirmRow({ key: r.key, row: r, name: r.name, toPreschool: !on }); }}
+                    >
+                      <span className="psc-switch-knob" />
+                    </button>
+                  </span>
+                </Tooltip>
                 <span className={`psc-badge ${on ? 'preschool' : 'grade'}`}>
                   <i className={`fa-solid ${on ? 'fa-shapes' : 'fa-graduation-cap'}`}></i>
                   {on ? 'Preschool' : 'Grade 1-12'}

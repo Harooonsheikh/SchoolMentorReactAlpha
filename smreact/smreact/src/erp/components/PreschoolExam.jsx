@@ -383,7 +383,19 @@ function PreschoolTemplateHero({ id, large = false }) {
 /* ─── Generic "editable list" card body — used for Learning Areas and
    Personal & Social Development fields (identical shape: id+label,
    add/rename/delete, one Save button). ─────────────────────────────── */
+/* ─── User Permission → Examination → Pre-Schooling ───────────────────
+   Jo action off ho us ka button DIKHTA hai magar disabled (greyed). */
+export function usePreschoolPerms() {
+  const { can } = usePermissions();
+  const p = a => can('Examination', 'Pre-Schooling', a);
+  return { view: p('View'), create: p('Create'), edit: p('Edit'), del: p('Delete'), download: p('Download') };
+}
+export const PS_LOCKED = { opacity: .45, cursor: 'not-allowed' };
+const psDeny = (toast, what) => { toast?.(`You do not have ${what} permission for Pre-Schooling`, 'error'); };
+
 function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, showIcons }) {
+  const pp = usePreschoolPerms();
+  const canSave = pp.create || pp.edit || pp.del;
   const [draft, setDraft] = useState(items || []);
   const [newLabel, setNewLabel] = useState('');
   const [removedDbIds, setRemovedDbIds] = useState([]);
@@ -392,6 +404,7 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
   const rename = (id, name) => setDraft(d => d.map(x => (x.id === id ? { ...x, name } : x)));
   const relabel = (id, label) => setDraft(d => d.map(x => (x.id === id ? { ...x, label } : x)));
   const remove = id => {
+    if (!pp.del) { psDeny(toast, 'Delete'); return; }
     setDraft(d => {
       const item = d.find(x => x.id === id);
       if (item?.dbId) setRemovedDbIds(r => [...r, item.dbId]);
@@ -400,14 +413,16 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
   };
   const newItem = v => (showIcons ? { id: `la_${Date.now()}`, name: v, icon: 'fa-book' } : { id: `psd_${Date.now()}`, label: v });
   const add = () => {
+    if (!pp.create) { psDeny(toast, 'Create'); return; }
     const v = newLabel.trim();
     if (!v) { toast(showIcons ? 'Type a learning area name in the box before clicking Add' : 'Type a field name in the box before clicking Add', 'info'); return; }
     setDraft(d => [...d, newItem(v)]);
     setNewLabel('');
   };
   const save = async () => {
+    if (!canSave) { psDeny(toast, 'Edit'); return; }
     /* Add box me likha hua naam (Add dabaye baghair) bhi save me shamil karo. */
-    const pending = newLabel.trim();
+    const pending = pp.create ? newLabel.trim() : '';
     const list = pending ? [...draft, newItem(pending)] : draft;
     if (list.some(x => !String((showIcons ? x.name : x.label) || '').trim())) {
       toast('A row is empty — type a name or remove it before saving', 'error');
@@ -439,10 +454,11 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
             <input
               className="rs-input"
               value={showIcons ? item.name : item.label}
+              readOnly={!pp.edit && !!item.dbId}
               onChange={e => (showIcons ? rename(item.id, e.target.value) : relabel(item.id, e.target.value))}
             />
-            <Tooltip text="Remove">
-              <button type="button" className="exam-del-btn" onClick={() => remove(item.id)}><i className="fa-solid fa-trash-can"></i></button>
+            <Tooltip text={pp.del ? 'Remove' : 'You do not have Delete permission'}>
+              <button type="button" className="exam-del-btn" disabled={!pp.del} style={!pp.del ? PS_LOCKED : undefined} onClick={() => remove(item.id)}><i className="fa-solid fa-trash-can"></i></button>
             </Tooltip>
           </div>
         ))}
@@ -452,13 +468,14 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
             className="rs-input"
             placeholder={showIcons ? 'Add a new learning area…' : 'Add a new field…'}
             value={newLabel}
+            disabled={!pp.create}
             onChange={e => setNewLabel(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') add(); }}
           />
-          <button type="button" className="exam-add-btn" onClick={add}><i className="fa-solid fa-plus"></i> Add</button>
+          <button type="button" className="exam-add-btn" disabled={!pp.create} style={!pp.create ? PS_LOCKED : undefined} onClick={add}><i className="fa-solid fa-plus"></i> Add</button>
         </div>
         <div className="pms-save-row">
-          <button type="button" className="exam-submit-btn" onClick={save}><i className="fa-solid fa-floppy-disk"></i> Save Changes</button>
+          <button type="button" className="exam-submit-btn" disabled={!canSave} style={!canSave ? PS_LOCKED : undefined} onClick={save}><i className="fa-solid fa-floppy-disk"></i> Save Changes</button>
         </div>
       </div>
     </div>
@@ -468,6 +485,7 @@ function PEditableListCard({ icon, title, sub, items, onSaved, service, toast, s
 /* ─── Assessment Criteria / Grading Scale editor — 4 fixed codes,
    customizable label + colour. ─────────────────────────────────────── */
 function PGradingScaleCard({ gradingScale, onSaved, toast }) {
+  const pp = usePreschoolPerms();
   const [draft, setDraft] = useState(gradingScale || []);
   /* Rows whose code the admin has typed into directly — once touched,
      that row's code stops auto-following its label (an explicit
@@ -488,6 +506,7 @@ function PGradingScaleCard({ gradingScale, onSaved, toast }) {
   const setField = (idx, key, val) => setDraft(d => d.map((g, i) => (i === idx ? { ...g, [key]: val } : g)));
 
   const save = async () => {
+    if (!pp.edit) { psDeny(toast, 'Edit'); return; }
     const codes = draft.map(g => (g.code || '').trim());
     if (codes.some(c => !c)) { toast('Every grading level needs a code — rename the label to generate one', 'error'); return; }
     if (new Set(codes).size !== codes.length) { toast('Two grading levels generated the same code — adjust a label or code to make them unique', 'error'); return; }
@@ -529,15 +548,16 @@ function PGradingScaleCard({ gradingScale, onSaved, toast }) {
               maxLength={6}
               placeholder="Code"
               value={g.code}
+              disabled={!pp.edit}
               onChange={e => setCode(idx, e.target.value)}
             />
-            <input className="rs-input" value={g.label} onChange={e => setLabel(idx, e.target.value)} />
-            <input className="rs-input" style={{ maxWidth: 130 }} placeholder="e.g. 90% - 100%" value={g.range || ''} onChange={e => setField(idx, 'range', e.target.value)} />
-            <input type="color" value={g.color} onChange={e => setField(idx, 'color', e.target.value)} style={{ width: 34, height: 30, border: '1.5px solid var(--border-light)', borderRadius: 6, padding: 2, cursor: 'pointer' }} />
+            <input className="rs-input" value={g.label} disabled={!pp.edit} onChange={e => setLabel(idx, e.target.value)} />
+            <input className="rs-input" style={{ maxWidth: 130 }} placeholder="e.g. 90% - 100%" value={g.range || ''} disabled={!pp.edit} onChange={e => setField(idx, 'range', e.target.value)} />
+            <input type="color" value={g.color} disabled={!pp.edit} onChange={e => setField(idx, 'color', e.target.value)} style={{ width: 34, height: 30, border: '1.5px solid var(--border-light)', borderRadius: 6, padding: 2, cursor: pp.edit ? 'pointer' : 'not-allowed' }} />
           </div>
         ))}
         <div className="pms-save-row">
-          <button type="button" className="exam-submit-btn" onClick={save}><i className="fa-solid fa-floppy-disk"></i> Save Changes</button>
+          <button type="button" className="exam-submit-btn" disabled={!pp.edit} style={!pp.edit ? PS_LOCKED : undefined} onClick={save}><i className="fa-solid fa-floppy-disk"></i> Save Changes</button>
         </div>
       </div>
     </div>
@@ -550,6 +570,8 @@ function PGradingScaleCard({ gradingScale, onSaved, toast }) {
    even in the same Learning Area, so statements are scoped by level
    (mockSloStatements[levelId][laId]), not one shared list. ─────────── */
 function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo, pActiveLA, setPActiveLA, onSaved, toast }) {
+  const pp = usePreschoolPerms();
+  const canSave = pp.create || pp.edit || pp.del;
   const activeLevel = pActiveLevel || pLevels[0]?.id;
   const activeId = pActiveLA || pLearningAreas[0]?.id;
   const levelSlo = pSlo[activeLevel] || {};
@@ -568,6 +590,7 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
 
   const change = (id, text) => setDraft(d => d.map(s => (s.id === id ? { ...s, text } : s)));
   const remove = id => {
+    if (!pp.del) { psDeny(toast, 'Delete'); return; }
     setDraft(d => {
       const item = d.find(s => s.id === id);
       if (item?.dbId) setRemovedDbIds(r => [...r, item.dbId]);
@@ -575,14 +598,16 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
     });
   };
   const add = () => {
+    if (!pp.create) { psDeny(toast, 'Create'); return; }
     const v = newText.trim();
     if (!v) { toast('Type an assessment statement in the box before clicking Add', 'info'); return; }
     setDraft(d => [...d, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: v }]);
     setNewText('');
   };
   const save = async () => {
+    if (!canSave) { psDeny(toast, 'Edit'); return; }
     try {
-      const pending = newText.trim();
+      const pending = pp.create ? newText.trim() : '';
       const list = pending ? [...draft, { id: `slo_${activeLevel}_${activeId}_${Date.now()}`, text: pending }] : draft;
       if (list.some(s => !String(s.text || '').trim())) { toast('A statement is empty — type it or remove it before saving', 'error'); return; }
       const fresh = await preschoolService.saveSloStatements(activeLevel, activeId, list, removedDbIds);
@@ -597,6 +622,7 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
   };
   const copyFromPrevious = async () => {
     if (!prevLevel) return;
+    if (!pp.create) { psDeny(toast, 'Create'); return; }
     const hasExisting = Object.values(levelSlo).some(list => list?.length);
     if (hasExisting && !window.confirm(`Copy every learning area's SLOs from "${prevLevel.name}" into "${activeLevelObj.name}"? This replaces everything currently set up for ${activeLevelObj.name}.`)) return;
     try {
@@ -618,7 +644,7 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
         </div>
         {prevLevel && (
           <Tooltip text={`Copy every learning area's SLOs from ${prevLevel.name}`}>
-            <button type="button" className="acc-link-btn" onClick={copyFromPrevious}>
+            <button type="button" className="acc-link-btn" disabled={!pp.create} style={!pp.create ? PS_LOCKED : undefined} onClick={copyFromPrevious}>
               <i className="fa-solid fa-clone"></i> Copy from {prevLevel.name}
             </button>
           </Tooltip>
@@ -638,17 +664,17 @@ function PSloCard({ pLevels, pActiveLevel, setPActiveLevel, pLearningAreas, pSlo
         {draft.map(s => (
           <div key={s.id} className="pms-list-row">
             <i className="fa-solid fa-circle-dot" style={{ color: '#1E40AF', fontSize: 6, width: 16, flexShrink: 0 }}></i>
-            <input className="rs-input" value={s.text} onChange={e => change(s.id, e.target.value)} />
-            <Tooltip text="Remove"><button type="button" className="exam-del-btn" onClick={() => remove(s.id)}><i className="fa-solid fa-trash-can"></i></button></Tooltip>
+            <input className="rs-input" value={s.text} readOnly={!pp.edit && !!s.dbId} onChange={e => change(s.id, e.target.value)} />
+            <Tooltip text={pp.del ? 'Remove' : 'You do not have Delete permission'}><button type="button" className="exam-del-btn" disabled={!pp.del} style={!pp.del ? PS_LOCKED : undefined} onClick={() => remove(s.id)}><i className="fa-solid fa-trash-can"></i></button></Tooltip>
           </div>
         ))}
         {draft.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>No assessment points yet for this learning area.</div>}
         <div className="pms-add-row">
-          <input className="rs-input" placeholder="e.g. Counts objects with one-to-one correspondence" value={newText} onChange={e => setNewText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} />
-          <button type="button" className="exam-add-btn" onClick={add}><i className="fa-solid fa-plus"></i> Add</button>
+          <input className="rs-input" placeholder="e.g. Counts objects with one-to-one correspondence" value={newText} disabled={!pp.create} onChange={e => setNewText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} />
+          <button type="button" className="exam-add-btn" disabled={!pp.create} style={!pp.create ? PS_LOCKED : undefined} onClick={add}><i className="fa-solid fa-plus"></i> Add</button>
         </div>
         <div className="pms-save-row">
-          <button type="button" className="exam-submit-btn" onClick={save}><i className="fa-solid fa-floppy-disk"></i> Save Changes</button>
+          <button type="button" className="exam-submit-btn" disabled={!canSave} style={!canSave ? PS_LOCKED : undefined} onClick={save}><i className="fa-solid fa-floppy-disk"></i> Save Changes</button>
         </div>
       </div>
     </div>
@@ -696,7 +722,9 @@ function PreschoolResultSetup({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const pp = usePreschoolPerms();
   const savePrefs = async () => {
+    if (!pp.edit) { psDeny(toast, 'Edit'); return; }
     setPRcoSaving(true);
     try {
       const s = await preschoolService.savePRco(pRco, pReportType, pRcoId);
@@ -786,11 +814,11 @@ function PreschoolResultSetup({
                 className="rct-card"
                 style={{
                   '--rct-accent': t.accent, '--rct-accent-light': `${t.accent}22`, '--rct-accent-bg': `${t.accent}14`,
-                  cursor: 'pointer',
+                  cursor: pp.edit ? 'pointer' : 'default',
                   border: pReportType === t.id ? `2px solid ${t.accent}` : '2px solid transparent',
                   borderRadius: 12,
                 }}
-                onClick={() => setPReportType(t.id)}
+                onClick={() => { if (pp.edit) setPReportType(t.id); }}
               >
                 <div className="rct-preview"><PreschoolTemplateHero id={t.id} /></div>
                 <div className="rct-body">
@@ -832,10 +860,12 @@ function PreschoolResultSetup({
                       <i className={`fa-solid ${item.icon}`} style={{ color: '#1E40AF', width: 14 }}></i>
                       {item.label}
                     </span>
-                    <Tooltip text={item.on ? `Hide "${item.label}" on report card` : `Show "${item.label}" on report card`}>
+                    <Tooltip text={!pp.edit ? 'You do not have Edit permission' : item.on ? `Hide "${item.label}" on report card` : `Show "${item.label}" on report card`}>
                       <button
                         className={`rco-toggle${item.on ? ' on' : ''}`}
-                        onClick={() => setPRco(g => g.map((it, i) => (i === idx ? { ...it, on: !it.on } : it)))}
+                        disabled={!pp.edit}
+                        style={!pp.edit ? PS_LOCKED : undefined}
+                        onClick={() => { if (pp.edit) setPRco(g => g.map((it, i) => (i === idx ? { ...it, on: !it.on } : it))); }}
                         aria-pressed={item.on}
                       >
                         <span className="rco-dot"></span>
@@ -849,7 +879,7 @@ function PreschoolResultSetup({
                   <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
                   Applies to Monthly, Term &amp; Annual Preschool report cards.
                 </div>
-                <button className="rco-save-btn" onClick={savePrefs} disabled={pRcoSaving}>
+                <button className="rco-save-btn" onClick={savePrefs} disabled={pRcoSaving || !pp.edit} style={!pp.edit ? PS_LOCKED : undefined}>
                   <i className="fa-solid fa-floppy-disk"></i> {pRcoSaving ? 'Saving…' : 'Save Preferences'}
                 </button>
               </div>
@@ -1143,13 +1173,20 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
   /* shouldClose lets the footer tell onSave whether this was "Save & Next"
      (stay open, just move tabs) or "Save & Close" (dismiss the modal). Save par
      pehle SLO ratings API (action:insert) jati hain, phir onSave. */
+  /* Pehli dafa enter = Create, maujooda assessment update = Edit. */
+  const pp = usePreschoolPerms();
+  const canSaveAssess = existing ? pp.edit : pp.create;
   const saveAndNext = async () => {
+    if (!canSaveAssess) { psDeny(toast, existing ? 'Edit' : 'Create'); return; }
     const ok = await flushSloAssessments();
     if (!ok) return;
     onSave(buildPayload(), false);
     if (tabIdx < areaTabs.length - 1) setTabIdx(tabIdx + 1);
   };
-  const saveAndClose = async () => { const ok = await flushSloAssessments(); if (ok) onSave(buildPayload(), true); };
+  const saveAndClose = async () => {
+    if (!canSaveAssess) { psDeny(toast, existing ? 'Edit' : 'Create'); return; }
+    const ok = await flushSloAssessments(); if (ok) onSave(buildPayload(), true);
+  };
 
   return createPortal(
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -1351,9 +1388,9 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
         <div className="exam-modal-footer">
           <button className="exam-cancel-btn" onClick={onClose}>Cancel</button>
           {tabIdx < areaTabs.length - 1 && (
-            <button className="exam-cancel-btn" disabled={!!sloSaving.__all} onClick={saveAndNext}>Save &amp; Next <i className="fa-solid fa-arrow-right"></i></button>
+            <button className="exam-cancel-btn" disabled={!!sloSaving.__all || !canSaveAssess} style={!canSaveAssess ? PS_LOCKED : undefined} onClick={saveAndNext}>Save &amp; Next <i className="fa-solid fa-arrow-right"></i></button>
           )}
-          <button className="exam-submit-btn" disabled={!!sloSaving.__all} onClick={saveAndClose}>
+          <button className="exam-submit-btn" disabled={!!sloSaving.__all || !canSaveAssess} style={!canSaveAssess ? PS_LOCKED : undefined} onClick={saveAndClose}>
             <i className={`fa-solid ${sloSaving.__all ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {sloSaving.__all ? 'Saving…' : 'Save & Close'}
           </button>
         </div>
@@ -1666,17 +1703,30 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
           </div>
         )}
 
-        {sigs && sigs.length > 0 && (
-          <div style={{ display: 'flex', gap: 18, marginTop: 20, paddingTop: 14, borderTop: '1px solid #E2E8F0' }}>
-            {sigs.map(s => (
-              <div key={s.id} style={{ flex: 1, textAlign: 'center' }}>
-                <div style={{ borderBottom: '1.5px solid #94A3B8', height: 28 }}></div>
-                <div style={{ fontSize: 10.5, fontWeight: 800, marginTop: 5 }}>{s.name}</div>
-                <div style={{ fontSize: 9, color: textMut }}>{s.desig}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Result Setup → Signatures toggle OFF → signatures nahi dikhte. */}
+        {/* Grade 1-12 card jaisa: selected signatures (max 2) — image line ke upar,
+            designation neeche — aur hamesha ek PARENTS line. */}
+        {opt['Show Signatures'] !== false && sigs && sigs.length > 0 && (() => {
+          const anySel = sigs.some(s => s.on !== undefined);
+          const picked = (anySel ? sigs.filter(s => s.on) : sigs).slice(0, 2);
+          const cols = [
+            ...picked.map(s => ({ img: s.img, label: s.desig || s.name })),
+            { img: '', label: 'Parents' },
+          ];
+          return (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginTop: 20, paddingTop: 14, borderTop: '1px solid #E2E8F0' }}>
+              {cols.map((c, i) => (
+                <div key={i} style={{ textAlign: 'center', minWidth: 0 }}>
+                  <div style={{ height: 30, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                    {c.img && <img src={c.img} alt="" style={{ maxHeight: 30, maxWidth: '90%', objectFit: 'contain' }} />}
+                  </div>
+                  <div style={{ borderTop: '1px solid #334155', margin: '2px 8px 5px' }}></div>
+                  <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '.5px', textTransform: 'uppercase', color: textMut }}>{c.label}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{ padding: '8px 18px', background: accentBg, borderTop: `1px solid ${accentBdr}`, display: 'flex', justifyContent: 'space-between', fontSize: 9, color: textMut, flexWrap: 'wrap', gap: 5 }}>
@@ -1696,6 +1746,7 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
   const [allJob, setAllJob] = useState(null); // { win, items } while building
   const [allBusy, setAllBusy] = useState(false);
 
+  // eslint-disable-next-line no-unused-vars -- button abhi commented out hai
   const downloadAll = async () => {
     if (!canDownload || allBusy) return;
     const win = window.open('', '_blank', 'width=960,height=820');
@@ -1727,7 +1778,9 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
 
   const t = P_TEMPLATES.find(x => x.id === template) || P_TEMPLATES[0];
 
+  const pp = usePreschoolPerms();
   const printPdf = () => {
+    if (!pp.download) { psDeny(toast, 'Download'); return; }
     const node = cardRef.current;
     if (!node) return;
     pPrintPreschoolCard(node.innerHTML, student.name, toast);
@@ -1747,6 +1800,7 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            {/* Download All Cards — abhi ke liye hide (commented out).
             {canDownload && (
               <Tooltip text="Progress Summary + every published Preschool card of this session, in one PDF">
                 <button type="button" onClick={downloadAll} disabled={allBusy} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, background: 'transparent', border: '1.5px solid rgba(124,58,237,.45)', color: '#7C3AED', fontSize: 12.5, fontWeight: 700, cursor: allBusy ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: allBusy ? 0.6 : 1 }}>
@@ -1754,7 +1808,8 @@ function PreschoolResultCardViewer({ assessment, cls, student, ad, template, pRc
                 </button>
               </Tooltip>
             )}
-            <button type="button" onClick={printPdf} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+            */}
+            <button type="button" onClick={printPdf} disabled={!pp.download} title={pp.download ? undefined : 'You do not have Download permission'} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 9, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', border: 'none', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', ...(!pp.download ? PS_LOCKED : {}) }}>
               <i className="fa-solid fa-file-pdf"></i> PDF
             </button>
             <button type="button" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

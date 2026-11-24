@@ -3347,6 +3347,9 @@ const RL_CATEGORIES = [
 const rlCat = k => RL_CATEGORIES.find(c => c.key === k) || RL_CATEGORIES[3];
 const rlFmtDate = d => { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
 
+/* Permission-less button: visible but greyed out. */
+const RL_LOCKED = { opacity: .45, cursor: 'not-allowed' };
+
 function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3357,6 +3360,12 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
   const [fSubject, setFSubject] = useState('all');
   const [fCat, setFCat] = useState('all');
   const [modal, setModal] = useState(null); // { mode:'add' } | { mode:'edit', resource }
+  /* User Permission → Academics → Resource Library (School Head = sab true). */
+  const { can } = usePermissions();
+  const rlCreate   = can('Academics', 'Resource Library', 'Create');
+  const rlEdit     = can('Academics', 'Resource Library', 'Edit');
+  const rlDelete   = can('Academics', 'Resource Library', 'Delete');
+  const rlDownload = can('Academics', 'Resource Library', 'Download');
 
   const reload = React.useCallback(async () => {
     setLoading(true);
@@ -3399,6 +3408,7 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
 
   const save = async payload => {
     const isEdit = modal?.mode === 'edit';
+    if (isEdit ? !rlEdit : !rlCreate) { toast(`You do not have permission to ${isEdit ? 'edit' : 'add'} resources`, 'error'); return; }
     setBusy(true);
     try {
       await saveBranchResource({ ...payload, id: isEdit ? modal.resource.id : 0 });
@@ -3414,13 +3424,14 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
 
  const viewFile = r => { if (r.fileUrl) window.open(resolveMediaUrl(r.fileUrl), '_blank', 'noopener'); else toast('No file attached to preview', 'info'); };
 const downloadFile = r => {
+  if (!rlDownload) { toast('You do not have permission to download resources', 'error'); return; }
   if (!r.fileUrl) { toast('No file attached to download', 'info'); return; }
   const a = document.createElement('a');
   a.href = resolveMediaUrl(r.fileUrl); a.download = r.fileName || 'resource.pdf';
   a.target = '_blank'; a.rel = 'noopener';
   document.body.appendChild(a); a.click(); a.remove();
 };
-  const removeRes = r => openConfirm({
+  const removeRes = r => !rlDelete ? toast('You do not have permission to delete resources', 'error') : openConfirm({
     title: 'Delete Resource?',
     message: `"<strong>${r.title}</strong>" will be permanently removed. This cannot be undone.`,
     hint: `${r.className} · ${r.subjectName}`,
@@ -3448,8 +3459,8 @@ const downloadFile = r => {
           <div className="rl-head-title"><i className="fa-solid fa-folder-open"></i> Resource Library</div>
           <div className="rl-head-sub">Upload class-wise and subject-wise academic resources for your school.</div>
         </div>
-        <Tooltip text="Upload a new resource">
-          <button className="btn btn-primary" disabled={loading || busy} onClick={() => setModal({ mode: 'add' })}>
+        <Tooltip text={rlCreate ? 'Upload a new resource' : 'You do not have Create permission'}>
+          <button className="btn btn-primary" disabled={loading || busy || !rlCreate} style={!rlCreate ? RL_LOCKED : undefined} onClick={() => { if (rlCreate) setModal({ mode: 'add' }); }}>
             <i className="fa-solid fa-plus"></i> Add Resource
           </button>
         </Tooltip>
@@ -3537,9 +3548,10 @@ const downloadFile = r => {
                 </div>
                 <div className="rl-card-actions">
                   <Tooltip text="View file"><button className="rl-act" onClick={() => viewFile(r)}><i className="fa-solid fa-eye"></i> View</button></Tooltip>
-                  <Tooltip text="Download file"><button className="rl-act" onClick={() => downloadFile(r)}><i className="fa-solid fa-download"></i> Download</button></Tooltip>
-                  <Tooltip text="Edit resource"><button className="rl-act" disabled={busy} onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen"></i> Edit</button></Tooltip>
-                  <Tooltip text="Delete resource"><button className="rl-act rl-act-danger" disabled={busy} onClick={() => removeRes(r)}><i className="fa-solid fa-trash"></i> Delete</button></Tooltip>
+                  {/* Permission na ho to button dikhta hai magar disabled. */}
+                  <Tooltip text={rlDownload ? 'Download file' : 'You do not have Download permission'}><button className="rl-act" disabled={!rlDownload} style={!rlDownload ? RL_LOCKED : undefined} onClick={() => downloadFile(r)}><i className="fa-solid fa-download"></i> Download</button></Tooltip>
+                  <Tooltip text={rlEdit ? 'Edit resource' : 'You do not have Edit permission'}><button className="rl-act" disabled={busy || !rlEdit} style={!rlEdit ? RL_LOCKED : undefined} onClick={() => { if (rlEdit) setModal({ mode: 'edit', resource: r }); }}><i className="fa-solid fa-pen"></i> Edit</button></Tooltip>
+                  <Tooltip text={rlDelete ? 'Delete resource' : 'You do not have Delete permission'}><button className="rl-act rl-act-danger" disabled={busy || !rlDelete} style={!rlDelete ? RL_LOCKED : undefined} onClick={() => removeRes(r)}><i className="fa-solid fa-trash"></i> Delete</button></Tooltip>
                 </div>
               </div>
             );
@@ -4210,6 +4222,9 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
   const canActAdd = acp.can('activity', 'add');
   const canLpAdd = acp.can('lesson', 'add');
   const canNbAdd = acp.can('notebook', 'add');
+  /* Resource "Save to Portal" = school ki Resource Library me add → Create permission. */
+  const { can: canPerm } = usePermissions();
+  const canRlAdd = canPerm('Academics', 'Resource Library', 'Create');
   const [tab, setTab] = useState('activities');
   const [mapping, setMapping] = useState(null); // { kind, item }
   const [preview, setPreview] = useState(null); // { kind, item }
@@ -4382,7 +4397,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
                     <div className="ho-item-actions">
                       <button className="rl-act" onClick={() => setPreview({ kind: 'resource', item: res })}><i className="fa-solid fa-eye"></i> View</button>
                      <button className="rl-act" onClick={() => res.fileUrl ? window.open(resolveMediaUrl(res.fileUrl), '_blank') : toast('Demo file — no PDF attached', 'info')}><i className="fa-solid fa-download"></i> Download</button>
-                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'resource', item: res })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
+                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" disabled={!canRlAdd} style={!canRlAdd ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!canRlAdd) return; setMapping({ kind: 'resource', item: res }); }}><i className="fa-solid fa-download"></i> Save to Portal</button>}
                     </div>
                   </div>
                 );

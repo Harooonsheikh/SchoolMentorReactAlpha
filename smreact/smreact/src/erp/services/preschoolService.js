@@ -473,6 +473,24 @@ const PRCO_FIELD_MAP = [
 
 let _prcoDbId = 0;
 
+/* "Show Signatures" — Result Setup → Assessment Setup → Signatures card ka
+   toggle. preschooling-resultcard-crud me abhi iska column NAHI hai, is liye
+   payload me `showSignatures` bhejte hain (backend add kare to khud chalega)
+   aur branch-wise localStorage me bhi rakhte hain. Default ON. */
+export const PRCO_SIGNATURE_LABEL = 'Show Signatures';
+const sigKey = () => `sm.exam.preschoolShowSignatures.b${getBranchId()}`;
+function readLocalSig() {
+  try { const v = localStorage.getItem(sigKey()); return v == null ? null : v === 'true'; } catch { return null; }
+}
+function writeLocalSig(on) {
+  try { localStorage.setItem(sigKey(), on ? 'true' : 'false'); } catch { /* ignore */ }
+}
+const sigItem = (row) => {
+  const api = row && (row.showSignatures ?? row.ShowSignatures);
+  const on = api !== undefined && api !== null ? !!api : (readLocalSig() ?? true);
+  return { label: PRCO_SIGNATURE_LABEL, icon: 'fa-signature', on };
+};
+
 export async function getPRcoState() {
   const res = await apiGetOrEmpty('preschooling-resultcard-crud', {
     id: 0, branchID: getBranchId(), action: 'get',
@@ -481,7 +499,7 @@ export async function getPRcoState() {
   /* API fail / koi saved row nahi → mock toggles (sab ON) dikhao. */
   if (!row || typeof row !== 'object') {
     _prcoDbId = 0;
-    return { id: 0, list: clone(mockPRco), reportType: 'monthly' };
+    return { id: 0, list: [...clone(mockPRco), sigItem(null)], reportType: 'monthly' };
   }
   _prcoDbId = row.id || 0;
 
@@ -500,6 +518,7 @@ export async function getPRcoState() {
   const list = PRCO_FIELD_MAP.map(({ label, field }) => ({
     label, icon: iconByLabel[label], on: !!row[field],
   }));
+  list.push(sigItem(row));
 
   return { id: _prcoDbId, list: clone(list), reportType: row.reportType || 'monthly' };
 }
@@ -521,6 +540,9 @@ export async function savePRco(list, reportType, id) {
     action: 'save',
   };
   PRCO_FIELD_MAP.forEach(({ label, field }) => { payload[field] = !!byLabel[label]; });
+  const sigOn = byLabel[PRCO_SIGNATURE_LABEL] !== false;
+  payload.showSignatures = sigOn;
+  writeLocalSig(sigOn);
 
   const res = await apiPost('preschooling-resultcard-crud', payload);
   const newId = res?.id ?? res?.Id ?? payload.id;
