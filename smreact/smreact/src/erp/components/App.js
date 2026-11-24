@@ -897,7 +897,7 @@ if (navId === 'mentorai') {
             )} */}
             {active === 'fee' && (
               <Suspense fallback={null}>
-                <Fee toast={pushToast} />
+                <Fee toast={pushToast} focus={navFocus} onFocusHandled={() => setNavFocus(null)} />
               </Suspense>
             )}
             {active === 'accounts' && (

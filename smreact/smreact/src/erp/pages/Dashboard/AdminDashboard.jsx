@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import MentorAISearchBar from './MentorAISearchBar';
+import LedgerScanBar from './LedgerScanBar';
 import {
   AreaChart, Area, Line, BarChart, Bar, ComposedChart, Cell,
   PieChart, Pie, Legend,
@@ -1033,6 +1034,12 @@ const canSeeCard = useCallback(
     toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
   };
 
+  /* Challan lookup box (scan / Ledger ID) → Fee Receiving me us challan ka receive modal. */
+  const openChallanFromLookup = ({ ledgerId, studentId }) => {
+    navigate('fee', { feeLedgerId: ledgerId, feeStudentId: studentId || null });
+    toast(`Opening challan #${ledgerId}…`, 'info');
+  };
+
   /* ─── Existing top sections (kept) ──────────────────────────── */
   /* LIVE module snapshot tiles — get-dashboard se. Jin modules ka get-dashboard
      me koi count nahi (CRM leads / exams / audit), un tiles ko mock se bharne
@@ -1315,6 +1322,7 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
           ctx={{ role: 'admin', sessionId: session?.id || null }}
         />
       </div>
+      <LedgerScanBar onOpenChallan={openChallanFromLookup} toast={toast} />
 
       {/* ═════════ 1. HERO GREETING (Page Header — kept) ═════════ */}
       <div className="dash-hero">

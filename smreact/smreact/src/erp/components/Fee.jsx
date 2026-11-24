@@ -16,6 +16,7 @@ import { runAdvanceAdjust, reverseAdvanceAdjust, isAdvanceAdjustReceipt, splitRe
 import { downloadDocxFromHtml } from '../../utils/docx';
 import { qrSvg } from '../../utils/qr';
 import { code128BSvg } from '../../utils/barcode';
+import { challanBarcodeValue } from '../services/challanBarcode';
 import { usePermissions } from '../context/PermissionsContext';
 import { useModules } from '../context/ModuleContext';
 import { rankedMatches } from '../utils/studentSearch';
@@ -159,8 +160,9 @@ const STRUCTURE_SEGS = [
   { id: 'settings', icon: 'fa-sliders', label: 'Fee Challan Settings' },
 ];
 
-export default function Fee({ toast = () => { } }) {
-  const [tab, setTab] = useState('structure');
+export default function Fee({ toast = () => { }, focus = null, onFocusHandled = () => { } }) {
+  /* Dashboard ke scan / Ledger-ID box se aaye ho to seedha Fee Receiving tab khule. */
+  const [tab, setTab] = useState(() => (focus?.feeLedgerId ? 'receipts' : 'structure'));
   const [structSeg, setStructSeg] = useState('student');
   const [tutorialOpen, setTutorialOpen] = useState(false);
   /* Tab body loader: stays until the Fee data preload finishes. Runs again on every
@@ -272,7 +274,7 @@ export default function Fee({ toast = () => { } }) {
       ) : tab === 'challans' ? (
         <FeeChallansTab toast={toast} />
       ) : tab === 'receipts' ? (
-        <FeeReceivingTab toast={toast} />
+        <FeeReceivingTab toast={toast} focus={focus} onFocusHandled={onFocusHandled} />
       ) : tab === 'history' ? (
         <FeeHistoryTab toast={toast} />
       ) : tab === 'reports' ? (
@@ -6364,8 +6366,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
           const giveInRem = (cfg.challan || histFoldedSeed) ? 0 : hist;
           const paidPos = Math.max(0, paidSeed);
           const remainingNow = Math.max(0, owedSeed - giveInRem - paidPos);
-          /* Branch 1/15: Received default 0 (sirf already-paid), user khud type/adjust kare. */
-          seed[h.name] = isAdvanceAdjustBranch() ? paidPos : paidPos + remainingNow;
+          /* Pay Now me har head ka poora baqaya pehle se bhara hota hai (paid + remaining),
+             jaise Fine ka row. Advance adjust tick karne par allocateAdvance amounts khud overwrite karta hai. */
+          seed[h.name] = paidPos + remainingNow;
         }
       } else {
         seed[h.name] = paidSeed;
@@ -6769,7 +6772,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
       allocateAdvance(maxAdvanceAdjust);
     } else {
       const reset = {};
-      rows.forEach(r => { reset[r.name] = r.paid; });
+      /* Untick par advance wala allocation hatao — har head ka poora baqaya wapas (paid + remaining). */
+      rows.forEach(r => { reset[r.name] = r.paid + Math.max(0, r.owed - r.paid); });
       setPerHeadInput(prev => ({ ...prev, ...reset }));
     }
   };
@@ -8956,7 +8960,7 @@ function summaryChips({ total, paid, unpaid, onelink = 0 }) {
   );
 }
 
-function FeeReceivingTab({ toast }) {
+function FeeReceivingTab({ toast, focus = null, onFocusHandled = () => { } }) {
   const [seg, setSeg] = useState('individual');
   return (
     <>
@@ -8974,7 +8978,7 @@ function FeeReceivingTab({ toast }) {
       </div>
 
       {seg === 'individual'
-        ? <FeeReceivingIndividual toast={toast} />
+        ? <FeeReceivingIndividual toast={toast} focus={focus} onFocusHandled={onFocusHandled} />
         : <FamilyTreeReceiving toast={toast} />}
     </>
   );
@@ -9007,7 +9011,7 @@ function pendingFromResp(resp, fallbackMsg = 'Request sent for approval') {
   };
 }
 
-function FeeReceivingIndividual({ toast }) {
+function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { } }) {
   const { can } = usePermissions();
   const canRcvCreate = can('Fee', 'Fee Receiving', 'Create');
   const canRcvDelete = can('Fee', 'Fee Receiving', 'Delete');
@@ -9469,6 +9473,69 @@ function FeeReceivingIndividual({ toast }) {
       pendingMode: true,
     });
   };
+
+  /* ── Dashboard scan / Ledger-ID lookup ──
+     Dashboard ke box (barcode scan ya Ledger ID type) se aaya challan: pehle pending list,
+     phir pichhle 24 mahine ka branch ledger me us ka record dhoondo. Student + class roster
+     se nikaalo aur usi challan ka Receiving modal khol do (pendingMode → save usi challan par). */
+  const focusLedgerId = Number(focus?.feeLedgerId) || 0;
+  const focusStudentId = Number(focus?.feeStudentId) || 0;
+  const handledFocusRef = useRef(0);
+  useEffect(() => {
+    if (!focusLedgerId || handledFocusRef.current === focusLedgerId) return;
+    if (!classes.length || !Object.keys(studentsMap || {}).length) return;   // roster abhi load ho raha hai
+    handledFocusRef.current = focusLedgerId;
+    (async () => {
+      try {
+        let rec = null;
+        for (const list of Object.values(pendingByStudent || {})) {
+          const hit = (list || []).find(p => Number(p.ledgerId) === focusLedgerId);
+          if (hit) { rec = { ...hit, id: focusLedgerId }; break; }
+        }
+        if (!rec) {
+          const now = new Date();
+          const from = new Date(now.getFullYear(), now.getMonth() - 23, 1);
+          const rows = await feeService.getLedgerRange(from.getMonth() + 1, from.getFullYear(), now.getMonth() + 1, now.getFullYear());
+          rec = (rows || []).find(r => Number(r.id) === focusLedgerId) || null;
+        }
+        if (!rec) { toast(`Challan #${focusLedgerId} not found`, 'error'); return; }
+        const studentID = Number(rec.studentID ?? rec.studentId) || 0;
+        if (focusStudentId && studentID && focusStudentId !== studentID) {
+          toast(`Challan #${focusLedgerId} does not belong to student #${focusStudentId}`, 'error'); return;
+        }
+        let c = null; let s = null;
+        for (const cls of classes) {
+          const hit = (studentsMap[cls.key] || []).find(x => Number(x.studentID) === studentID);
+          if (hit) { c = cls; s = hit; break; }
+        }
+        if (!c || !s) { toast(`Student of challan #${focusLedgerId} not found in this branch`, 'error'); return; }
+        const sm = Number(rec.startMonth || rec.month) || 1;
+        const sy = Number(rec.startYear || rec.year) || new Date().getFullYear();
+        const lock = challanMonthLock(sm - 1, sy, settings);
+        if (lock) { toast(lock, 'warning'); return; }
+        const challan = await loadPriorChallan(s, { ledgerId: focusLedgerId, startMonth: sm, startYear: sy });
+        if (!challan) { toast(`Could not load challan #${focusLedgerId}`, 'error'); return; }
+        const payments = feeService.installmentsToPayments(challan);
+        const m = recStudentModel({
+          student: s, headsForClass: headsMap[c.key] || [], generated: true, classDisc: {},
+          payments, challan, prevOverride: null,
+        });
+        setReceiveCtx({
+          classMeta: c, student: s, model: m, payments, challan,
+          prevFine: carriedFineInto(challan, priorByStudent[String(s.studentID)] || [], settings),
+          period: ledgerMonthLabel(challan),
+          monthIdx: sm - 1,
+          viewOnly: false,
+          settings,
+          pendingMode: true,
+        });
+      } catch (e) {
+        toast(e?.message || `Could not open challan #${focusLedgerId}`, 'error');
+      } finally {
+        onFocusHandled?.();
+      }
+    })();
+  }, [focusLedgerId, focusStudentId, classes, studentsMap, headsMap, pendingByStudent, settings]);
 
   const openReceive = async (c, s, viewOnly = false) => {
     /* A locked month can still be viewed — only taking money is barred. */
@@ -20081,9 +20148,10 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   const lateDays = feeService.daysLate(dueISO, localTodayISO());
   /* Is challan ka apna PSID — BranchLedger record se. */
   const psidPlain = psidOf(student?._challan);
-  /* Barcode ki base = backend ka Student ID (applicantsID), Admn/reg No nahi —
-     scanner se seedha wahi ID milti hai jis par fee APIs kaam karti hain. */
-  const barcodeId = String(student?.applicantsID ?? student?.studentID ?? '');
+  /* Challan barcode = "<ledgerId>-<studentId>" — ledgerId = is challan ki BranchLedger id
+     (_challan.id), studentId = student.studentID. Dashboard ka scanner box isi se challan
+     kholta hai. Saved challan na ho to barcode nahi chhapta. */
+  const challanBc = challanBarcodeValue({ ledgerId: student?._challan?.id, studentId: student?.studentID });
 
   return `
 <div class="slip">
@@ -20142,6 +20210,8 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       <div class="step-row"><div class="sn">3</div><div class="st">Enter PSID — <strong>amount auto-fills</strong></div></div>
       <div class="step-row"><div class="sn">4</div><div class="st"><strong>Confirm &amp; pay</strong> — save your SMS receipt</div></div>
     </div>` : ''}
+    ${challanBc ? `
+    <div class="barcode-area" style="opacity:1;border-top-color:#94A3B8;">${code128BSvg(challanBc, { width: 190, height: 30, color: '#000' })}<div class="psid-tiny" style="color:#000;">Ledger ID: ${escHtml(String(student?._challan?.id ?? ''))} · Student ID: ${escHtml(String(student?.studentID ?? ''))}</div></div>` : ''}
   
 
   
