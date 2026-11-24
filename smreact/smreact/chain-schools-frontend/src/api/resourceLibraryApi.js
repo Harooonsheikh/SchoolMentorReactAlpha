@@ -64,7 +64,16 @@ export const NETWORK_SECTION_ID = 0
    apna origin. */
 const UPLOAD_FOLDERS = /\/(ResourceLibrary|Uploads|UploadedFiles|UploadedImages|UploadedDocuments|Resources)\/.*/i
 const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[?::1\]?)$/i
-
+function sanitizeFileName(name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > -1 ? name.slice(0, dot) : name;
+  const ext = dot > -1 ? name.slice(dot) : '';
+  const safeBase = base
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')   // space ya koi bhi special character → ek hi underscore
+    .replace(/^_+|_+$/g, '');          // shuru/aakhir ki underscores hata dein
+  return (safeBase || 'file') + ext;
+}
 /* DB me file ka RELATIVE path hota hai; API parhte waqt us par apna base URL
    chipka deti hai. Is liye update par poora URL wapas bhejna ghalat hai —
    backend usay dobara prefix kar deta hai aur path kharab ho jata hai:
@@ -228,7 +237,7 @@ function form(action, r = {}, networkId = currentNetworkId()) {
   fd.append('ResourceDescription', r.desc ?? '')
   /* Nayi file chuni ho to wahi bhejo; warna purana path bhej kar file jaisi
      hai waisi rehne do (warna edit par PDF gum ho jata hai). */
-  if (r.pdfFile instanceof File) fd.append('PdfFile', r.pdfFile, r.pdfFile.name)
+if (r.pdfFile instanceof File) fd.append('PdfFile', r.pdfFile, sanitizeFileName(r.pdfFile.name))
   fd.append('UploadedPDF', r.filePath ?? '')
   fd.append('ClassName', r.clsName ?? '')
   fd.append('SubjectName', r.subName ?? '')

@@ -20,11 +20,20 @@ import { useSaPerms } from './saPerms';
 const NETWORK_SETUP_BASE = `${SA_API_HOST}/SchoolmentorChainManagementAPI/api/Network_Setup`;
 
 const branchCredentialApi = {
-  save: async ({ branchId, username, password, createdBy = 0 }) => {
+  save: async ({ branchId, username, password, createdBy = 0, modifiedBy = 0, customerTransactionCharge = 0, costPerTransaction = 0, effectiveFrom }) => {
     const res = await fetch(`${NETWORK_SETUP_BASE}/AddBranchCredential`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branchId, username, password, createdBy }),
+      body: JSON.stringify({
+        branchId,
+        username,
+        password,
+        createdBy,
+        modifiedBy,
+        customerTransactionCharge: Number(customerTransactionCharge) || 0,
+        costPerTransaction: Number(costPerTransaction) || 0,
+        effectiveFrom: effectiveFrom || new Date().toISOString(),
+      }),
     });
     if (!res.ok) throw new Error('Could not save branch credential');
     return res.json().catch(() => ({}));
@@ -35,7 +44,6 @@ const branchCredentialApi = {
     return res.json().catch(() => null);
   },
 };
-
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOLS PAYMENT (Payment Status) — Super Admin module
 
@@ -2018,28 +2026,38 @@ const [showCostPass, setShowCostPass] = useState(false);
   useEffect(() => {
     let alive = true;
     setLoadingSummary(true);
-    paymentsApi.getPaymentSummary(s.id)
-      .then((live) => {
-        if (!alive || !live) return;
-        setSummary(live);
-        if (!dirty.current) setF({ ...live, oneLink: { ...defaultOneLink(), ...(live.oneLink || {}) }, lateSurcharge: live.lateSurcharge ?? 0 });
-      })
-      .catch(() => { /* strip optional — form phir bhi bhara ja sakta hai */ })
-      .finally(() => { if (alive) setLoadingSummary(false); });
-
+paymentsApi.getPaymentSummary(s.id)
+  .then((live) => {
+    if (!alive || !live) return;
+    setSummary(live);
+    if (!dirty.current) {
+      setF((prev) => ({
+        ...prev,
+        ...live,
+        oneLink: { ...defaultOneLink(), ...(live.oneLink || {}) },
+        lateSurcharge: live.lateSurcharge ?? 0,
+      }));
+    }
+  })
+  .catch(() => { /* strip optional — form phir bhi bhara ja sakta hai */ })
+  .finally(() => { if (alive) setLoadingSummary(false); });
     setCredLoading(true);
-    branchCredentialApi.getByBranch(s.id)
+     branchCredentialApi.getByBranch(s.id)
       .then((cred) => {
         if (!alive || !cred) return;
+        const c = Array.isArray(cred) ? cred[0] : cred;
+        if (!c) return;
         if (!dirty.current) {
           setF((prev) => ({
             ...prev,
-            oneLinkUserName: cred.username || prev.oneLinkUserName || '',
-            oneLinkPassword: cred.password || prev.oneLinkPassword || '',
+            oneLinkUserName: c.username || c.Username || prev.oneLinkUserName || '',
+            oneLinkPassword: c.password || c.Password || prev.oneLinkPassword || '',
+            customerTransactionCharge: c.customerTransactionCharge ?? c.CustomerTransactionCharge ?? prev.customerTransactionCharge ?? '',
+            costPerTransaction: c.costPerTransaction ?? c.CostPerTransaction ?? prev.costPerTransaction ?? '',
           }));
         }
       })
-      .catch(() => { /* credential optional */ })
+      .catch((e) => { console.error('getByBranch failed:', e); })
       .finally(() => { if (alive) setCredLoading(false); });
 
     return () => { alive = false; };
@@ -2051,15 +2069,23 @@ const [showCostPass, setShowCostPass] = useState(false);
     if (f.formula === 'perstudent' && !f.perStudentRate) { toast?.('Please enter the per student rate', 'warn'); return; }
     if (f.freeTrial && !f.trialDays) { toast?.('Please enter trial duration in days', 'warn'); return; }
     /* id saath jata hai — mojood ho to UPDATE, warna ADD (branchID+type unique). */
-    if ((f.oneLinkUserName || '').trim() || (f.oneLinkPassword || '').trim()) {
+        const hasCredData =
+      (f.oneLinkUserName || '').trim() || (f.oneLinkPassword || '').trim() ||
+      (f.customerTransactionCharge !== '' && f.customerTransactionCharge != null) ||
+      (f.costPerTransaction !== '' && f.costPerTransaction != null);
+    if (hasCredData) {
       branchCredentialApi.save({
         branchId: s.id,
         username: (f.oneLinkUserName || '').trim(),
         password: (f.oneLinkPassword || '').trim(),
         createdBy: 0,
-      }).catch(() => { /* non-blocking — main setup still saves */ });
+        modifiedBy: 0,
+        customerTransactionCharge: Number(f.customerTransactionCharge) || 0,
+        costPerTransaction: Number(f.costPerTransaction) || 0,
+        effectiveFrom: new Date().toISOString(),
+     }).catch((e) => { console.error('save credential failed:', e); toast?.('Could not save payment credentials: ' + e.message, 'error'); });
     }
-    onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(), oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
+      onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(), oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
   };
   return (
     <Ov cls="pay-ov" onClose={onClose} wrap="pay-modal">
@@ -2130,7 +2156,7 @@ const [showCostPass, setShowCostPass] = useState(false);
             <input
               className="pay-input"
               type="number"
-              value={f.customerTransactionCharge || ''}
+              value={f.customerTransactionCharge??''}
               onChange={(e) => set('customerTransactionCharge', e.target.value)}
               placeholder="e.g. 25"
             />
@@ -2143,7 +2169,7 @@ const [showCostPass, setShowCostPass] = useState(false);
             <input
               className="pay-input"
               type="number"
-              value={f.costPerTransaction || ''}
+              value={f.costPerTransaction ?? ''}
               onChange={(e) => set('costPerTransaction', e.target.value)}
               placeholder="e.g. 10"
             />

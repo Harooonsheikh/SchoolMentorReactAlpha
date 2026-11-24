@@ -57,7 +57,16 @@ let acadClassesCache = [];
 
 /* Academics › Reports L1 tab. Ab dikh raha hai — chhupana ho to false kar dein. */
 const ACADEMICS_REPORTS_TAB_VISIBLE = true;
-
+function sanitizeFileName(name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > -1 ? name.slice(0, dot) : name;
+  const ext = dot > -1 ? name.slice(dot) : '';
+  const safeBase = base
+    .trim()
+    .replace(/\s+/g, '_')          // spaces → underscore
+    .replace(/[^a-zA-Z0-9_-]/g, ''); // baaki risky characters hata dein
+  return (safeBase || 'file') + ext;
+}
 /* ═══════════════════════════════════════════════════════════════════
    MAIN ACADEMICS SHELL
    ═══════════════════════════════════════════════════════════════════ */
@@ -3598,13 +3607,14 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
     return () => { alive = false; };
   }, [open, classId, classesData]);
 
-  const onFile = e => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { setErr('Please upload a PDF file.'); return; }
-    setErr(''); setFileName(f.name); setPdfFile(f);
-  };
-
+ const onFile = e => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { setErr('Please upload a PDF file.'); return; }
+  const safeName = sanitizeFileName(f.name);
+  const safeFile = new File([f], safeName, { type: f.type || 'application/pdf' });
+  setErr(''); setFileName(safeName); setPdfFile(safeFile);
+};
   const submit = () => {
     if (!classId) { setErr('Please select a class.'); return; }
     if (!subjectId) { setErr('Please select a subject.'); return; }

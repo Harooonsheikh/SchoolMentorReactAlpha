@@ -70,7 +70,16 @@ function storagePath(raw) {
   if (m) return m[0];
   try { return new URL(u).pathname; } catch { return u.startsWith('/') ? u : `/${u}`; }
 }
-
+function sanitizeFileName(name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > -1 ? name.slice(0, dot) : name;
+  const ext = dot > -1 ? name.slice(dot) : '';
+  const safeBase = base
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')   // space ya koi bhi special character → ek hi underscore
+    .replace(/^_+|_+$/g, '');          // shuru/aakhir ki underscores hata dein
+  return (safeBase || 'file') + ext;
+}
 /* Stamped host kabhi bhi kaam ka nahi hota (wo API ka apna host hai —
    aksar localhost proxy ke peeche), is liye baqi uploads ki tarah ye bhi
    resolveMediaUrl se guzarta hai. */
@@ -193,7 +202,7 @@ function form(action, r = {}, branchId = currentBranchId()) {
   fd.append('ResourceDescription', r.description ?? '');
   /* Nayi file chuni ho to wahi bhejo; warna purana path bhej kar file jaisi
      hai waisi rehne do (warna edit par PDF gum ho jati hai). */
-  if (r.pdfFile instanceof File) fd.append('PdfFile', r.pdfFile, r.pdfFile.name);
+if (r.pdfFile instanceof File) fd.append('PdfFile', r.pdfFile, sanitizeFileName(r.pdfFile.name));
   fd.append('UploadedPDF', r.filePath ?? '');
   fd.append('ClassName', r.className ?? '');
   fd.append('SubjectName', r.subjectName ?? '');

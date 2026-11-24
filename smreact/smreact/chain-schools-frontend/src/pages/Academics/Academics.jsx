@@ -808,6 +808,16 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
       })),
     }))
   }
+  function sanitizeFileName(name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > -1 ? name.slice(0, dot) : name;
+  const ext = dot > -1 ? name.slice(dot) : '';
+  const safeBase = base
+    .trim()
+    .replace(/\s+/g, '_')          // spaces → underscore
+    .replace(/[^a-zA-Z0-9_-]/g, ''); // baaki risky characters hata dein
+  return (safeBase || 'file') + ext;
+}
   const lessonTree = useMemo(() => buildPlanTree(content.lessons), [content])
   const notebookTree = useMemo(() => buildPlanTree(content.notebooks), [content])
   const resourceTree = useMemo(() => {
@@ -2762,20 +2772,19 @@ function ResourceModal({ a, live, classes, loadSubjects, busy, modal, onClose, o
     return () => { alive = false }
   }, [classId, live, a, loadSubjects])
 
-  const onFile = (e) => {
-    const f = e.target.files?.[0]; if (!f) return
-    if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { onToast('Please select a PDF file', 'warn'); return }
-    setFileName(f.name)
-    setPdfFile(f)
-    /* Snapshot mode file ko inline data URI ki shakal me rakhta hai; live
-       mode me asli File upload hoti hai, is liye wahan padhne ki zaroorat
-       nahi (aur baray PDF par ye mehnga bhi hai). */
-    if (live) { setFileData(null); return }
-    const reader = new FileReader()
-    reader.onload = () => setFileData(reader.result)
-    reader.onerror = () => onToast('Could not read the file', 'warn')
-    reader.readAsDataURL(f)
-  }
+const onFile = (e) => {
+  const f = e.target.files?.[0]; if (!f) return
+  if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { onToast('Please select a PDF file', 'warn'); return }
+  const safeName = sanitizeFileName(f.name)
+  const safeFile = new File([f], safeName, { type: f.type || 'application/pdf' })
+  setFileName(safeName)
+  setPdfFile(safeFile)
+  if (live) { setFileData(null); return }
+  const reader = new FileReader()
+  reader.onload = () => setFileData(reader.result)
+  reader.onerror = () => onToast('Could not read the file', 'warn')
+  reader.readAsDataURL(safeFile)
+}
   const save = () => {
     if (!classId) return onToast('Select a class', 'warn')
     if (!subjectId) return onToast('Select a subject', 'warn')
