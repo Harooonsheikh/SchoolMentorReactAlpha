@@ -813,10 +813,445 @@ const SAMPLE_RC_COMBINED = {
   grandTotal: 235, grandObt: 165.65, ovPct: 70.49,
   mainExName: 'Term Examination', mainTotal: 200, mainObt: 138,
   subBreakdown: [
-    { name: 'Monthly Test', origT: 100, subObt: 82, weight: 20, conv: 16.4 },
-    { name: 'Mid Term', origT: 100, subObt: 75, weight: 15, conv: 11.25 },
+    { name: 'Monthly Test', origT: 100, subObt: 82, weight: 20, conv: 16.4,
+      subjectTotals: { English: 10, Urdu: 10, Mathematics: 10, Science: 10, Islamiyat: 10, Computer: 10, 'Social Studies': 10, Quran: 10, 'Art & Craft': 10, 'Physical Education': 10 },
+      subjectObtained: { English: 9, Urdu: 8, Mathematics: 9, Science: 8, Islamiyat: 8, Computer: 9, 'Social Studies': 7, Quran: 8, 'Art & Craft': 8, 'Physical Education': 8 } },
+    { name: 'Mid Term', origT: 100, subObt: 75, weight: 15, conv: 11.25,
+      subjectTotals: { English: 10, Urdu: 10, Mathematics: 10, Science: 10, Islamiyat: 10, Computer: 10, 'Social Studies': 10, Quran: 10, 'Art & Craft': 10, 'Physical Education': 10 },
+      subjectObtained: { English: 8, Urdu: 7, Mathematics: 8, Science: 7, Islamiyat: 7, Computer: 8, 'Social Studies': 7, Quran: 7, 'Art & Craft': 7, 'Physical Education': 9 } },
   ],
 };
+
+/* ═══════════════════════════════════════════════════════════════════
+   COMBINED ASSESSMENT — RESULT CARD SETUP
+   layout 'summary'     Main exam as a full subject table (DMC) and each
+                        sub exam as one total line. (Original layout.)
+   layout 'subjectwise' Every subject shows Total / Obtained for the main
+                        exam AND every sub exam, then that subject's
+                        overall marks, %, grade and teacher remark. The
+                        footer gives each exam's totals and % and the
+                        grand (cumulative) total and %.
+   calc 'aggregate'     Overall = all marks at face value:
+                        Grand Total = Σ exam totals, Grand Obtained =
+                        Σ exam obtained, Cumulative % = Obtained ÷ Total.
+   calc 'weighted'      Sub exams count by the weightage set when the
+                        combined result was created:
+                        counted = Obtained ÷ Out of × Weightage
+                        (same rule as the Summary layout and ranking).
+   ═══════════════════════════════════════════════════════════════════ */
+const CBR_CARD_DEFAULT = { layout: 'summary', calc: 'aggregate' };
+const cbrRound2 = n => Math.round(n * 100) / 100;
+/* 23.5 -> "23.5", 20 -> "20", 9.8 -> "9.8" */
+const cbrFmt = n => (Number.isInteger(n) ? String(n) : String(cbrRound2(n)));
+
+/* Subject × exam matrix for the subject-wise combined card. One source of
+   truth for all three templates, so their numbers always agree.
+   An absent subject counts as 0 out of its total in "zero" mode and is
+   left out of totals otherwise — the same rule the single card uses. */
+function cbrBuildSubjectMatrix({ cb, subjects, mainTotals, mainObtained, absentSet = {}, useZeroMode, calc }) {
+  const weighted = calc === 'weighted';
+  /* Needs real per-subject marks for every sub exam; otherwise the caller uses the Summary layout. */
+  if ((cb.subBreakdown || []).some(sb => !sb.subjectObtained || !sb.subjectTotals)) return null;
+  const exams = [
+    {
+      name: cb.mainExName, role: 'main', factor: 1,
+      totals: subjects.reduce((o, s) => { o[s] = mainTotals[s] ?? 20; return o; }, {}),
+      obtained: mainObtained || {}, absent: absentSet,
+    },
+    ...(cb.subBreakdown || []).map((sb, i) => {
+      const totals = sb.subjectTotals;
+      const absent = {};
+      (sb.absentSubjects || []).forEach(s => { absent[s] = true; });
+      return {
+        name: sb.name, role: 'sub', weight: sb.weight, origT: sb.origT,
+        factor: weighted && sb.origT ? sb.weight / sb.origT : 1,
+        totals,
+        obtained: sb.subjectObtained,
+        absent,
+      };
+    }),
+  ];
+
+  const rows = subjects.map(s => {
+    let ovT = 0, ovO = 0;
+    const cells = exams.map(e => {
+      const abs = !!e.absent[s];
+      const tot = e.totals[s] ?? 0;
+      const obt = abs ? 0 : (e.obtained[s] || 0);
+      if (!abs || useZeroMode) { ovT += tot * e.factor; ovO += obt * e.factor; }
+      return { tot, obt, abs };
+    });
+    ovT = cbrRound2(ovT); ovO = cbrRound2(ovO);
+    const allAbs = cells.every(c => c.abs);
+    const pct = ovT ? Math.round((ovO / ovT) * 100) : 0;
+    const g = (!allAbs && ovT && ovO > 0) ? rcGetGrade(ovO, ovT) : null;
+    return { s, cells, ovT, ovO, pct, g, allAbs, comment: allAbs ? 'Absent' : (g ? g.comment : '') };
+  });
+
+  const examSums = exams.map((e, ei) => {
+    let t = 0, o = 0;
+    rows.forEach(r => { const c = r.cells[ei]; if (!c.abs || useZeroMode) { t += c.tot; o += c.obt; } });
+    return { ...e, total: t, obt: o, pct: t ? cbrRound2((o / t) * 100) : 0, counted: cbrRound2(o * e.factor), countedOf: cbrRound2(t * e.factor) };
+  });
+
+  const grandTotal = cbrRound2(rows.reduce((a, r) => a + r.ovT, 0));
+  const grandObt   = cbrRound2(rows.reduce((a, r) => a + r.ovO, 0));
+  const pct        = grandTotal ? Math.min(100, cbrRound2((grandObt / grandTotal) * 100)) : 0;
+  return { exams: examSums, rows, grandTotal, grandObt, pct, grade: rcGetGrade(grandObt, grandTotal), weighted };
+}
+
+/* The matrix for a card, or null when the card is not a subject-wise combined card. */
+function cbrMatrixForCard({ isCombined, cb, subjects, rd, st, absentSet, useZeroMode }) {
+  if (!isCombined || !cb || cb.layout !== 'subjectwise') return null;
+  return cbrBuildSubjectMatrix({
+    cb, subjects, mainTotals: rd.totalMarks || {}, mainObtained: st.obtained,
+    absentSet, useZeroMode, calc: cb.calc,
+  });
+}
+
+/* "1st" / "2nd" … */
+const cbrOrdinal = n => `${n}${(n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th')}`;
+
+/* Class position for every student of one combined result under the
+   chosen calculation, so the card's position matches its own score.
+   Weighted = the stored rank basis (grandObt); aggregate = all raw marks. */
+function cbrRankMap(students, setup) {
+  const aggregate = setup && setup.layout === 'subjectwise' && setup.calc === 'aggregate';
+  const score = st => aggregate
+    ? (st.mainObt || 0) + (st.subs || []).reduce((a, sb) => a + (sb.subObt || 0), 0)
+    : (st.grandObt || 0);
+  const sorted = [...students].sort((a, b) => score(b) - score(a));
+  const map = {};
+  students.forEach(st => {
+    /* ties share the better position */
+    map[st.rollNo] = sorted.findIndex(x => score(x) === score(st)) + 1;
+  });
+  return map;
+}
+
+/* Subject-wise combined marks table, shared by the Classic and Portfolio
+   cards. Fixed table layout with computed column widths so headers and
+   numbers never overlap; with 4+ exams each exam collapses to one
+   "Obtained/Total" column so the table still fits the A4 width. */
+function CbrSubjectMatrixTable({ m, opt, P }) {
+  const compact  = m.exams.length >= 4;
+  const showName = opt['Show Subject-wise Marks'];
+  const showT    = !!opt['Show Total Marks'];
+  const showO    = !!opt['Show Obtained Marks'] || !showT;
+  const showPct  = !!opt['Show Percentage'];
+  const showGr   = !!opt['Show Grade'];
+  const markCols = compact ? 1 : (showT ? 1 : 0) + (showO ? 1 : 0);
+  const ovCols   = markCols + (showPct ? 1 : 0) + (showGr ? 1 : 0);
+  const numCols  = m.exams.length * markCols + ovCols;
+  const lead     = 1 + (showName ? 1 : 0);
+
+  const wSn = 4, wSub = showName ? 16 : 0, wRem = 14;
+  const wNum = (100 - wSn - wSub - wRem) / numCols;
+
+  const bdr  = `1px solid ${P.bdr}`;
+  const th   = { padding: '4px 3px', fontSize: 8.5, fontWeight: 700, color: P.head, textTransform: 'uppercase', letterSpacing: '.3px', textAlign: 'center', verticalAlign: 'middle', border: bdr, lineHeight: 1.2, wordBreak: 'break-word' };
+  const td   = { padding: '4px 3px', fontSize: 10, textAlign: 'center', verticalAlign: 'middle', border: bdr, whiteSpace: 'nowrap' };
+  const ftd  = { ...td, fontWeight: 800, color: P.accent, background: P.headBg };
+  const tag  = (txt, col) => (
+    <span style={{ display: 'inline-block', marginTop: 2, fontSize: 7, fontWeight: 800, letterSpacing: '.3px', padding: '1px 5px', borderRadius: 999, color: col, border: `1px solid ${col}55`, background: `${col}12`, whiteSpace: 'nowrap' }}>{txt}</span>
+  );
+  const ab = <span style={{ fontSize: 8.5, fontWeight: 700, color: P.abs }}>AB</span>;
+  const markCells = (tot, obt, abs, k, style = td, strong = false) => {
+    if (compact) {
+      return [<td key={`${k}c`} style={style}>{abs ? ab : <><strong style={{ color: strong ? P.accent : P.text }}>{cbrFmt(obt)}</strong><span style={{ color: P.muted }}>/{cbrFmt(tot)}</span></>}</td>];
+    }
+    const out = [];
+    if (showT) out.push(<td key={`${k}t`} style={{ ...style, color: style === td ? P.muted : style.color }}>{abs ? '—' : cbrFmt(tot)}</td>);
+    if (showO) out.push(<td key={`${k}o`} style={{ ...style, fontWeight: 700, color: style === td ? (strong ? P.accent : P.text) : style.color }}>{abs ? ab : cbrFmt(obt)}</td>);
+    return out;
+  };
+
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: 10, border: bdr }}>
+      <colgroup>
+        <col style={{ width: `${wSn}%` }} />
+        {showName && <col style={{ width: `${wSub}%` }} />}
+        {Array.from({ length: numCols }).map((_, i) => <col key={i} style={{ width: `${wNum}%` }} />)}
+        <col style={{ width: `${wRem}%` }} />
+      </colgroup>
+      <thead>
+        <tr style={{ background: P.headBg }}>
+          <th rowSpan={2} style={th}>Sn.</th>
+          {showName && <th rowSpan={2} style={{ ...th, textAlign: 'left', paddingLeft: 6 }}>Subject</th>}
+          {m.exams.map((e, i) => (
+            <th key={i} colSpan={markCols} style={{ ...th, textTransform: 'none', fontSize: 9, color: e.role === 'main' ? P.main : P.sub }}>
+              {e.name}
+              <div>{tag(e.role === 'main' ? 'MAIN' : (m.weighted ? `SUB · ${cbrFmt(e.weight)} MARKS` : 'SUB'), e.role === 'main' ? P.main : P.sub)}</div>
+            </th>
+          ))}
+          <th colSpan={ovCols} style={{ ...th, fontSize: 9, color: P.ok }}>
+            Overall
+            <div>{tag(m.weighted ? 'WEIGHTED' : 'CUMULATIVE', P.ok)}</div>
+          </th>
+          <th rowSpan={2} style={{ ...th, textAlign: 'left', paddingLeft: 6 }}>Remark</th>
+        </tr>
+        <tr style={{ background: P.headBg }}>
+          {m.exams.map((e, i) => compact
+            ? <th key={i} style={th}>Obt / Total</th>
+            : [showT && <th key={`${i}t`} style={th}>Total</th>, showO && <th key={`${i}o`} style={th}>Obt.</th>])}
+          {compact ? <th style={th}>Obt / Total</th> : [showT && <th key="ovt" style={th}>Total</th>, showO && <th key="ovo" style={th}>Obt.</th>]}
+          {showPct && <th style={th}>%</th>}
+          {showGr && <th style={th}>Grade</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {m.rows.map((r, i) => (
+          <tr key={r.s} style={{ background: i % 2 === 0 ? '#fff' : P.rowAlt }}>
+            <td style={{ ...td, fontWeight: 700, color: P.muted }}>{i + 1}</td>
+            {showName && (
+              <td style={{ ...td, textAlign: 'left', paddingLeft: 6, fontWeight: 600, color: r.allAbs ? P.abs : P.text, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.25 }}>{r.s}</td>
+            )}
+            {r.cells.map((c, ci) => markCells(c.tot, c.obt, c.abs, `${r.s}${ci}`))}
+            {markCells(r.ovT, r.ovO, r.allAbs, `${r.s}ov`, td, true)}
+            {showPct && <td style={{ ...td, fontWeight: 700, color: r.allAbs ? P.muted : P.pctCol(r.pct) }}>{r.allAbs ? '—' : `${r.pct}%`}</td>}
+            {showGr && (
+              <td style={td}>
+                {r.g ? <span style={{ fontWeight: 800, color: P.gradeCol(r.g) }}>{r.g.grade}</span> : <span style={{ color: P.muted }}>—</span>}
+              </td>
+            )}
+            <td style={{ ...td, textAlign: 'left', paddingLeft: 6, fontSize: 8.5, color: r.allAbs ? P.abs : P.muted, whiteSpace: 'normal', lineHeight: 1.25, fontStyle: 'italic' }}>{r.comment}</td>
+          </tr>
+        ))}
+
+        {/* Totals: each exam's total/obtained, then the grand total. */}
+        <tr>
+          <td colSpan={lead} style={{ ...ftd, textAlign: 'left', paddingLeft: 6, borderTop: `2px solid ${P.bdrStrong}` }}>Total</td>
+          {m.exams.map((e, i) => markCells(e.total, e.obt, false, `tot${i}`, { ...ftd, borderTop: `2px solid ${P.bdrStrong}` }))}
+          {markCells(m.grandTotal, m.grandObt, false, 'grand', { ...ftd, color: P.ok, borderTop: `2px solid ${P.bdrStrong}` })}
+          {showPct && <td style={{ ...ftd, color: P.ok, borderTop: `2px solid ${P.bdrStrong}` }}>{m.pct}%</td>}
+          {showGr && <td style={{ ...ftd, color: P.ok, borderTop: `2px solid ${P.bdrStrong}` }}>{m.grade ? m.grade.grade : '—'}</td>}
+          <td style={{ ...ftd, textAlign: 'left', paddingLeft: 6, fontSize: 8, fontWeight: 700, color: P.muted, whiteSpace: 'normal', borderTop: `2px solid ${P.bdrStrong}` }}>Grand Total</td>
+        </tr>
+
+        {/* Percentages: each exam on its own, then cumulative. */}
+        <tr>
+          <td colSpan={lead} style={{ ...ftd, textAlign: 'left', paddingLeft: 6 }}>Percentage</td>
+          {m.exams.map((e, i) => (
+            <td key={i} colSpan={markCols} style={{ ...ftd, color: e.role === 'main' ? P.main : P.sub }}>{e.pct}%</td>
+          ))}
+          <td colSpan={ovCols} style={{ ...ftd, color: P.ok, fontSize: 11 }}>{m.pct}%</td>
+          <td style={{ ...ftd, textAlign: 'left', paddingLeft: 6, fontSize: 8, fontWeight: 700, color: P.muted, whiteSpace: 'normal' }}>{m.weighted ? 'Weighted %' : 'Cumulative %'}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
+/* One-line explanation under the subject-wise table. */
+function cbrMatrixNote(m) {
+  if (m.weighted) {
+    const parts = m.exams.filter(e => e.role === 'sub').map(e => `${e.name} ${cbrFmt(e.obt)}/${cbrFmt(e.total)} → ${cbrFmt(e.counted)}/${cbrFmt(e.countedOf)}`);
+    return `Sub exams count by weightage (Obtained ÷ Out of × Weightage): ${parts.join(' · ')}. Overall ${cbrFmt(m.grandObt)}/${cbrFmt(m.grandTotal)} = ${m.pct}%.`;
+  }
+  const parts = m.exams.map(e => `${cbrFmt(e.obt)}/${cbrFmt(e.total)}`);
+  return `Grand Total = ${parts.join(' + ')} = ${cbrFmt(m.grandObt)}/${cbrFmt(m.grandTotal)} · Cumulative % = ${m.pct}%`;
+}
+
+
+/* A4 page rules, shared by the printed page (.wrap) and the on-screen
+   preview (.rc-sheet, the same page drawn at A4 proportions — see RcSheet),
+   so what the school sees on screen is what prints.
+
+   Every template fills its A4 page whatever the subject count: the card
+   (or each Portfolio page) is a full-height flex column, and the left-over
+   height goes ONLY into flex-grow "gap" spacers between sections — rows and
+   tables always keep their natural height. Gap order on every template:
+     school header ─hdr─ student details ─tbl─ marks block ─sum─
+     grand total / summary ─rem─ final remarks ─sig─ signatures · footer
+   The weights put a little more air under the header and the most above
+   the signatures, so they sit near the bottom of the page. Each gap keeps a
+   small minimum so sections never touch when a page is full. */
+const rcA4Rules = p => `
+${p} .rc-card{flex:1;display:flex;flex-direction:column;box-shadow:none!important}
+${p} .rc-card-body{flex:1;display:flex;flex-direction:column;justify-content:space-between}
+${p} .rc-card-classic .rc-card-body,
+${p} .rc-card-insight .rc-card-body{justify-content:flex-start}
+${p} .rc-gap{min-height:6px;overflow:hidden}
+${p} .rc-gap-hdr{flex:1.3 0 0}
+${p} .rc-gap-tbl{flex:1 0 0}
+${p} .rc-gap-sum{flex:.8 0 0}
+${p} .rc-gap-rem{flex:.7 0 0}
+${p} .rc-gap-sig{flex:1.8 0 0}
+${p} .rc-card-portfolio{flex:1;display:flex;flex-direction:column;max-width:none!important}
+${p} .rc-pf-page{display:flex;flex-direction:column}
+`;
+
+const RC_CARD_BY_TEMPLATE = { classic: ClassicResultCard, insight: InsightResultCard, portfolio: PortfolioResultCard };
+
+/* On-screen A4 page: the card drawn at A4 proportions (210 × 297) with the
+   print margins (12 mm ≈ 5.714% of the width), using the same page rules as
+   print, so the preview shows exactly how the page fills. Portfolio gets
+   one sheet per page. A page whose content is taller than A4 simply grows. */
+const RC_SHEET_CSS = `
+.rc-sheet,.rc-sheet-pf .rc-pf-page{box-sizing:border-box;width:100%;aspect-ratio:210/297;padding:5.714%;background:#fff;box-shadow:0 8px 32px rgba(0,0,0,.14);border-radius:4px}
+.rc-sheet{max-width:794px;margin:0 auto;display:flex;flex-direction:column}
+.rc-sheet *,.rc-sheet-pf *{box-sizing:border-box}
+${rcA4Rules('.rc-sheet')}
+${rcA4Rules('.rc-sheet-pf')}
+.rc-sheet-pf{max-width:794px;margin:0 auto}
+.rc-sheet-pf .rc-card-portfolio{display:block;background:transparent!important}
+.rc-sheet-pf .rc-pf-page + .rc-pf-page{margin-top:24px}
+`;
+function RcSheet({ template, children }) {
+  return (
+    <>
+      <style>{RC_SHEET_CSS}</style>
+      <div className={template === 'portfolio' ? 'rc-sheet-pf' : 'rc-sheet'}>{children}</div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   COMBINED ASSESSMENT — RESULT CARD SETUP MODAL
+   Layout (Summary / Subject-wise) and, for subject-wise, how the overall
+   is calculated (Cumulative / Weighted). Live preview of the selected
+   template with sample data, so the school sees the card before saving.
+   ═══════════════════════════════════════════════════════════════════ */
+function CbrCardSetupModal({ value, onSave, onClose, template, rcoGeneral, rcoSig, rsSigs, rsAbsentMode }) {
+  const [layout, setLayout] = useState(value.layout);
+  const [calc, setCalc]     = useState(value.calc);
+  const [pv, setPv]         = useState(template || 'classic');
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const Card = RC_CARD_BY_TEMPLATE[pv] || ClassicResultCard;
+  const previewStudent = {
+    ...SAMPLE_RC_STUDENT,
+    _combined: { ...SAMPLE_RC_COMBINED, rank: 1, rankSfx: 'st', layout, calc },
+  };
+
+  const label = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.8px', color: 'var(--text-muted)', marginBottom: 8 };
+  const choice = (on, color = '#7C3AED') => ({
+    flex: '1 1 240px', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+    padding: '12px 14px', borderRadius: 12, background: on ? `${color}10` : 'var(--bg-card)',
+    border: `1.5px solid ${on ? color : 'var(--border-light)'}`, color: 'var(--text-primary)',
+  });
+  const dot = on => (
+    <span style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, border: `2px solid ${on ? '#7C3AED' : 'var(--border-med, #CBD5E1)'}`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+      {on && <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#7C3AED' }} />}
+    </span>
+  );
+  /* a tiny column sketch of each layout */
+  const sketch = cols => (
+    <div style={{ display: 'flex', gap: 3, marginTop: 9, flexWrap: 'wrap' }}>
+      {cols.map((c, i) => (
+        <span key={i} style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 5, background: c.bg, color: c.col, whiteSpace: 'nowrap' }}>{c.t}</span>
+      ))}
+    </div>
+  );
+  const B = { bg: 'rgba(30,64,175,.1)', col: '#1E40AF' };
+  const P = { bg: 'rgba(124,58,237,.1)', col: '#7C3AED' };
+  const G = { bg: 'rgba(22,163,74,.1)', col: '#16A34A' };
+
+  return createPortal(
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 9800, background: 'rgba(10,22,40,.65)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div style={{ background: 'var(--bg-card)', borderRadius: 20, width: '100%', maxWidth: 860, maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(0,0,0,.35)', animation: 'fadeSlide .22s ease', overflow: 'hidden' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: 'linear-gradient(135deg,#1E40AF,#7C3AED)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>
+              <i className="fa-solid fa-sliders"></i>
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>Combined Result Card Setup</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 1 }}>Applies to every combined result card, its downloads and Result History</div>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close"
+            style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>
+            <i className="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+          <label style={label}><i className="fa-solid fa-table-columns" style={{ color: '#7C3AED', marginRight: 5 }}></i>Result Card Layout</label>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+            <button type="button" style={choice(layout === 'summary')} onClick={() => setLayout('summary')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800 }}>{dot(layout === 'summary')} Summary</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.5 }}>
+                Main exam with full subject-wise marks (DMC). Each sub exam appears as one total line, then the combined total.
+              </div>
+              {sketch([{ t: 'Subject', ...B }, { t: 'Main T/O', ...B }, { t: 'Sub exams: totals only', ...P }, { t: 'Combined', ...G }])}
+            </button>
+            <button type="button" style={choice(layout === 'subjectwise')} onClick={() => setLayout('subjectwise')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800 }}>{dot(layout === 'subjectwise')} Subject-wise (all exams)</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.5 }}>
+                Every subject shows Total / Obtained in the main exam and each sub exam, then its overall %, grade and remark. Footer shows each exam's % and the cumulative %.
+              </div>
+              {sketch([{ t: 'Subject', ...B }, { t: 'Main T/O', ...B }, { t: 'Sub 1 T/O', ...P }, { t: 'Sub 2 T/O', ...P }, { t: 'Overall % · Grade', ...G }])}
+            </button>
+          </div>
+
+          {layout === 'subjectwise' && (
+            <>
+              <label style={label}><i className="fa-solid fa-calculator" style={{ color: '#7C3AED', marginRight: 5 }}></i>Overall Calculation</label>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+                <button type="button" style={choice(calc === 'aggregate', '#16A34A')} onClick={() => setCalc('aggregate')}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800 }}>{dot(calc === 'aggregate')} Cumulative (all marks)</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.5 }}>
+                    Grand Total = Main + Sub 1 + Sub 2 totals. Cumulative % = Grand Obtained ÷ Grand Total × 100. Position is ranked on the same total.
+                  </div>
+                </button>
+                <button type="button" style={choice(calc === 'weighted', '#16A34A')} onClick={() => setCalc('weighted')}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800 }}>{dot(calc === 'weighted')} Weighted (as set on creation)</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.5 }}>
+                    Each sub exam counts by its weightage: Obtained ÷ Out of × Weightage. Raw marks are still shown for every exam.
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
+
+          {layout === 'subjectwise' && (
+            <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+              <i className="fa-solid fa-circle-info" style={{ color: '#7C3AED', marginRight: 5 }}></i>
+              Subject-wise needs every sub exam's marks per subject from the server. Where those are missing, that card shows the Summary layout.
+            </div>
+          )}
+          {/* Live preview */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <label style={{ ...label, marginBottom: 0 }}><i className="fa-solid fa-eye" style={{ color: '#7C3AED', marginRight: 5 }}></i>Preview (sample student)</label>
+            <div style={{ display: 'flex', gap: 4, marginLeft: 'auto', background: 'var(--bg-muted)', padding: 3, borderRadius: 9 }}>
+              {RC_TEMPLATES.map(t => (
+                <button key={t.id} type="button" onClick={() => setPv(t.id)}
+                  style={{ padding: '5px 10px', borderRadius: 7, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', background: pv === t.id ? t.accent : 'transparent', color: pv === t.id ? '#fff' : 'var(--text-muted)' }}>
+                  {t.name.replace(/ (Result Card|Report)$/, '')}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ background: '#E2E8F0', borderRadius: 12, padding: 16 }}>
+            <RcSheet template={pv}>
+              <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
+                mode="combined" student={previewStudent} rd={SAMPLE_RC_RD} ex={SAMPLE_RC_EX} isColor />
+            </RcSheet>
+          </div>
+        </div>
+
+        <div className="exam-modal-footer">
+          <button className="exam-cancel-btn" type="button" onClick={onClose}><i className="fa-solid fa-xmark"></i> Cancel</button>
+          <button className="exam-submit-btn" type="button" onClick={() => onSave({ layout, calc })}>
+            <i className="fa-solid fa-check"></i> Save Setup
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 const RC_TEMPLATES = [
   {
@@ -1661,6 +2096,9 @@ export default function Examination({ toast = () => { } }) {
   const [cbrConfirmPublish, setCbrConfirmPublish] = useState(null); // { classId, className, published }
   const [cbrConfirmDelete, setCbrConfirmDelete] = useState(null); // { classId, className }
   const [cbrCreateOpen, setCbrCreateOpen] = useState(false);
+  /* Combined result card layout + overall calculation (see CBR_CARD_DEFAULT). */
+  const [cbrCardSetup, setCbrCardSetup] = useState(CBR_CARD_DEFAULT);
+  const [cbrSetupOpen, setCbrSetupOpen] = useState(false);
   const [cbrReportReq, setCbrReportReq] = useState(null); // { classId, className }
 
   /* When a class row expands, lazy-load its students (card-per-student). */
@@ -1891,6 +2329,30 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
   const [rhHighlightId, setRhHighlightId] = useState(null);
   const [rhCardCtx, setRhCardCtx] = useState(null); // { student, result }
   const [rhAllBusy, setRhAllBusy] = useState(false); // Download All Cards in progress
+  const [rhAllPicker, setRhAllPicker] = useState(null); // { student } — Colorful / Colorless picker for Download All
+  /* Download All Cards for one student, in the colour the school picked. */
+  const rhRunDownloadAll = async (student, isColor) => {
+    if (rhAllBusy) return;
+    setRhAllBusy(true);
+    try {
+      await examDownloadAllCards({
+        student,
+        results: student.results,
+        sessionLabel: rhSessionLabel(activeSessionName()) || activeSessionName() || '',
+        isColor,
+        gradeFn: rcGetGrade,
+        finalRemarkFn: pct => rcRemarkByScale(pct, rsRemarks),
+        branch: branchSchool || undefined,
+        useAutoComment: rcUseAutoComment(),
+        onEmpty: () => toast('No published result cards found for this session.', 'info'),
+      });
+    } catch (e) {
+      console.error('Download All Cards failed', e);
+      toast('Could not build the result cards. Please try again.', 'error');
+    } finally {
+      setRhAllBusy(false);
+    }
+  };
   const [rhReportReq, setRhReportReq] = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
   const [rhExams, setRhExams] = useState([]);   // student-click par fetched exams (examName/termName)
   const [rhExamsLoading, setRhExamsLoading] = useState(false);
@@ -6912,6 +7374,19 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                       <i className="fa-solid fa-plus"></i> Create New
                     </button>
                   </Tooltip>
+                  <Tooltip text="Choose how combined result cards show the main and sub exams">
+                    <button
+                      className="cbr-tab"
+                      type="button"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => setCbrSetupOpen(true)}
+                    >
+                      <i className="fa-solid fa-sliders"></i> Result Card Setup
+                      <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, padding: '1px 8px', borderRadius: 999, background: 'rgba(124,58,237,.1)', color: '#7C3AED' }}>
+                        {cbrCardSetup.layout === 'subjectwise' ? `Subject-wise · ${cbrCardSetup.calc === 'weighted' ? 'Weighted' : 'Cumulative'}` : 'Summary'}
+                      </span>
+                    </button>
+                  </Tooltip>
                 </div>
 
                 {/* Filter row */}
@@ -7387,27 +7862,7 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                       type="button"
                                       className="rh-all-btn"
                                       disabled={rhAllBusy}
-                                      onClick={async () => {
-                                        if (rhAllBusy) return;
-                                        setRhAllBusy(true);
-                                        try {
-                                          await examDownloadAllCards({
-                                            student: st,
-                                            results: st.results,
-                                            sessionLabel: rhSessionLabel(activeSessionName()) || activeSessionName() || '',
-                                            gradeFn: rcGetGrade,
-                                            finalRemarkFn: pct => rcRemarkByScale(pct, rsRemarks),
-                                            branch: branchSchool || undefined,
-                                            useAutoComment: rcUseAutoComment(),
-                                            onEmpty: () => toast('No published result cards found for this session.', 'info'),
-                                          });
-                                        } catch (e) {
-                                          console.error('Download All Cards failed', e);
-                                          toast('Could not build the result cards. Please try again.', 'error');
-                                        } finally {
-                                          setRhAllBusy(false);
-                                        }
-                                      }}
+                                      onClick={() => { if (!rhAllBusy) setRhAllPicker({ student: st }); }}
                                     >
                                       <i className={`fa-solid ${rhAllBusy ? 'fa-spinner fa-spin' : 'fa-file-zipper'}`}></i> Download All Cards
                                       <span className="rh-all-count">{st.results.length}</span>
@@ -7594,38 +8049,62 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                             </div>
                           )}
 
-                          {/* Downloads & Reports — full width, 4-up grid */}
+                          {/* Downloads & Reports — report book (featured) and report tiles; each tile opens a preview. */}
                           <div className="rh-side-card" style={{ gridArea: 'dl' }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <i className="fa-solid fa-download" style={{ color: 'var(--brand-solid, #1E40AF)' }}></i> Downloads &amp; Reports
+                            <div className="rh-dl-head">
+                              <div>
+                                <div className="rh-dl-title"><i className="fa-solid fa-download"></i> Downloads &amp; Reports</div>
+                                <div className="rh-dl-sub">Open any report to preview it, then download as PDF, Word or Excel.</div>
+                              </div>
                             </div>
-                            <div className="rh-dl-grid">
-                              {[
-                                { key: 'history', label: 'Full Academic History', icon: 'fa-file-invoice', desc: 'All exam results across classes & sessions', col: '#1E40AF', bg: 'rgba(30,64,175,.07)' },
-                                { key: 'progress', label: 'Progress Report', icon: 'fa-chart-line', desc: 'Performance trend & subject improvement', col: '#7C3AED', bg: 'rgba(124,58,237,.07)' },
-                                { key: 'comparison', label: 'Comparison Report', icon: 'fa-code-compare', desc: 'Exam vs exam comparison & grade movement', col: '#D97706', bg: 'rgba(217,119,6,.07)' },
-                                { key: 'attendance', label: 'Attendance Summary', icon: 'fa-calendar-check', desc: 'Monthly attendance breakdown & status', col: '#16A34A', bg: 'rgba(22,163,74,.07)' },
-                              ].map(item => (
-                                <div key={item.key} className="rh-report-card">
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
-                                    <div style={{ width: 30, height: 30, borderRadius: 8, background: item.bg, color: item.col, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
-                                      <i className={`fa-solid ${item.icon}`}></i>
-                                    </div>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{item.label}</div>
-                                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{item.desc}</div>
-                                    </div>
-                                  </div>
-                                  <Tooltip text={`Download ${item.label}`}>
-                                    <button
-                                      className="rh-report-btn"
-                                      style={{ '--acc': item.col }}
-                                      onClick={() => setRhReportReq({ student: st, type: item.key })}
-                                    >
-                                      <i className="fa-solid fa-download" style={{ fontSize: 10 }}></i> Download
-                                    </button>
-                                  </Tooltip>
+                            {!rhExamsLoading && st.results.length > 0 && (
+                              <div className="rh-book">
+                                <div className="rh-book-art" aria-hidden="true">
+                                  <i className="fa-solid fa-book-open"></i>
+                                  <span className="rh-book-spark s1">✦</span><span className="rh-book-spark s2">✦</span>
                                 </div>
+                                <div className="rh-book-body">
+                                  <div className="rh-book-kicker"><i className="fa-solid fa-wand-magic-sparkles"></i> Featured</div>
+                                  <div className="rh-book-title">Session Report Book · {rhSessionLabel(activeSessionName()) || activeSessionName() || 'This session'}</div>
+                                  <div className="rh-book-desc">One print-ready PDF for parents — a progress summary first, then every published result card of the session.</div>
+                                  <div className="rh-book-chips">
+                                    <span><i className="fa-solid fa-id-card"></i> {st.results.length} result card{st.results.length === 1 ? '' : 's'}</span>
+                                    <span><i className="fa-solid fa-chart-line"></i> Progress summary</span>
+                                    <span><i className="fa-solid fa-print"></i> Ready to print</span>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="rh-book-cta"
+                                  disabled={rhAllBusy}
+                                  onClick={() => { if (!rhAllBusy) setRhAllPicker({ student: st }); }}
+                                >
+                                  <i className={`fa-solid ${rhAllBusy ? 'fa-spinner fa-spin' : 'fa-download'}`}></i> Get Report Book
+                                </button>
+                              </div>
+                            )}
+                            <div className="rh-rpt-grid">
+                              {[
+                                { key: 'history', label: 'Full Academic History', icon: 'fa-file-invoice', desc: 'Every exam result across classes and sessions in one place.', col: '#1E40AF', bg: 'rgba(30,64,175,.09)' },
+                                { key: 'progress', label: 'Progress Report', icon: 'fa-chart-line', desc: 'Score trend over the year and subject-wise improvement.', col: '#7C3AED', bg: 'rgba(124,58,237,.09)' },
+                                { key: 'comparison', label: 'Comparison Report', icon: 'fa-code-compare', desc: 'Exam vs exam, subject by subject — easy for parents to read.', col: '#D97706', bg: 'rgba(217,119,6,.10)' },
+                                { key: 'attendance', label: 'Attendance Summary', icon: 'fa-calendar-check', desc: 'Month-by-month attendance with overall status.', col: '#16A34A', bg: 'rgba(22,163,74,.10)' },
+                              ].map(item => (
+                                <button
+                                  key={item.key}
+                                  type="button"
+                                  className="rh-rpt-tile"
+                                  style={{ '--acc': item.col, '--acc-bg': item.bg }}
+                                  onClick={() => setRhReportReq({ student: st, type: item.key })}
+                                >
+                                  <span className="rh-rpt-icon"><i className={`fa-solid ${item.icon}`}></i></span>
+                                  <span className="rh-rpt-name">{item.label}</span>
+                                  <span className="rh-rpt-desc">{item.desc}</span>
+                                  <span className="rh-rpt-foot">
+                                    <span className="rh-rpt-formats">PDF · Word · Excel</span>
+                                    <span className="rh-rpt-open">Open <i className="fa-solid fa-arrow-right"></i></span>
+                                  </span>
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -8253,6 +8732,21 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         );
       })()}
 
+      {/* ── Combined Assessment — Result card setup ── */}
+      {cbrSetupOpen && (
+        <CbrCardSetupModal
+          value={cbrCardSetup}
+          template={rcTemplate}
+          rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
+          onClose={() => setCbrSetupOpen(false)}
+          onSave={v => {
+            setCbrCardSetup(v);
+            setCbrSetupOpen(false);
+            toast(v.layout === 'subjectwise' ? 'Combined cards now show every subject across all exams' : 'Combined cards set to Summary layout', 'success');
+          }}
+        />
+      )}
+
       {/* ── Combined Assessment — Create New modal ── */}
       {cbrCreateOpen && (
         <CbrCreateModal
@@ -8267,6 +8761,22 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         />
       )}
 
+      {/* ── Result History — Download All Cards: Colorful / Colorless ── */}
+      {rhAllPicker && (
+        <StandardReportPicker
+          open
+          title="Download All Result Cards"
+          subtitle={`${rhAllPicker.student.name} · ${rhSessionLabel(activeSessionName()) || activeSessionName() || ''} — one A4 page per card`}
+          formats={['pdf']}
+          onClose={() => setRhAllPicker(null)}
+          onGenerate={style => {
+            const s = rhAllPicker.student;
+            setRhAllPicker(null);
+            rhRunDownloadAll(s, style === 'color');
+          }}
+        />
+      )}
+
       {/* ── Combined Assessment — Card viewer ── */}
       {cbrCardCtx && (() => {
         const grp = cbrResults.find(g => g.id === cbrCardCtx.classId);
@@ -8274,8 +8784,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
         const st = grp.students.find(s => s.rollNo === cbrCardCtx.studentRollNo);
         if (!st) return null;
         // Rank na ho to card par "—" (pehle `|| 1` se "1th" chhap jata tha).
-        const rankNum = parseInt(st.rank, 10) || '—';
-        const rankSfx = Number.isFinite(rankNum) ? ((String(st.rank).match(/[a-z]+$/i) || ['th'])[0]) : '';
+        /* Position under the chosen calculation, so it matches the card's score. */
+        const rankNum = cbrRankMap(grp.students, cbrCardSetup)[st.rollNo] || parseInt(st.rank, 10) || '—';
+        const rankSfx = Number.isFinite(rankNum) ? cbrOrdinal(rankNum).replace(/^\d+/, '') : '';
         const cardStudent = {
           id: st.rollNo,
           rollNo: st.rollNo,
@@ -8295,6 +8806,8 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
             subBreakdown: st.subs,
             rank: rankNum,
             rankSfx: rankSfx,
+            layout: cbrCardSetup.layout,
+            calc: cbrCardSetup.calc,
           },
         };
         const cardRd = {
@@ -10841,10 +11354,14 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
-  const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+  /* Subject-wise combined card: every number comes from the matrix (real per-subject marks). */
+  const absentSet = {};
+  subjects.forEach(s => { if (rcCardIsAbsent(st, s, rsAbsentMode)) absentSet[s] = true; });
+  const m = cbrMatrixForCard({ isCombined, cb, subjects, rd, st, absentSet, useZeroMode });
+  const ovPct = m ? m.pct : (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
     ? cb.ovPct
     : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
+  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : (m ? m.grade : rcGetGrade(obtAll, totalAll));
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
   // ye ovPct ke barabar hota hai.
@@ -10869,6 +11386,14 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
     if (g.grade === 'B') return '#1D4ED8';
     if (g.grade === 'C') return '#B45309';
     return '#B91C1C';
+  };
+
+  const matrixPalette = {
+    head: textSec, headBg: accentBg, bdr: accentBdr, bdrStrong: accentBdr, rowAlt,
+    text: textPri, muted: textMut, accent, main: accent, sub: isColor ? '#7C3AED' : '#374151',
+    ok: successCol, abs: absCol,
+    pctCol: p => (!isColor ? '#111827' : p >= 80 ? '#16A34A' : p >= 60 ? '#D97706' : '#DC2626'),
+    gradeCol: gradeChipColor,
   };
 
   const thBase = {
@@ -10948,8 +11473,14 @@ const position = opt['Show Position in Class'] ? (ovGrade?.grade === 'F' ? '—'
         </div>
       </div>
 
-      {/* Marks table */}
-      {hasSubjTable && (
+      {/* Marks table — subject-wise combined card uses the matrix; otherwise the normal table. */}
+      {hasSubjTable && m && (
+        <div style={{ padding: '6px 18px 2px' }}>
+          <CbrSubjectMatrixTable m={m} opt={opt} P={matrixPalette} />
+          <div style={{ fontSize: 8.5, color: textMut, marginTop: 4, lineHeight: 1.4 }}>{cbrMatrixNote(m)}</div>
+        </div>
+      )}
+      {hasSubjTable && !m && (
         <div style={{ padding: '6px 18px 2px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', border: `1px solid ${accentBdr}`, fontSize: 11 }}>
             <thead>
@@ -11182,10 +11713,16 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
-  const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+  /* Subject-wise combined card: every number comes from the matrix (real per-subject marks). */
+  const absentSet = {};
+  subjects.forEach(s => { if (rcCardIsAbsent(st, s, rsAbsentMode)) absentSet[s] = true; });
+  const m = cbrMatrixForCard({ isCombined, cb, subjects, rd, st, absentSet, useZeroMode });
+  const ovPct = m ? m.pct : (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
     ? cb.ovPct
     : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
+  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : (m ? m.grade : rcGetGrade(obtAll, totalAll));
+  const marksW = m ? 54 : 36;
+  const subCol = isColor ? '#7C3AED' : '#374151';
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
   // ye ovPct ke barabar hota hai.
@@ -11198,7 +11735,10 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const barPalette = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#DC2626', '#0891B2', '#EA580C', '#059669', '#9333EA', '#B45309'];
-  const subjData = subjects.map((s, i) => {
+  const subjData = m ? m.rows.map((r, i) => ({
+    s: r.s, tot: cbrFmt(r.ovT), obt: cbrFmt(r.ovO), pct: r.pct, g: r.g, isAbs: r.allAbs,
+    col: barPalette[i % barPalette.length], pctCol: r.allAbs ? textMut : r.pct >= 80 ? grn : r.pct >= 60 ? amb : red, cells: r.cells,
+  })) : subjects.map((s, i) => {
     const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
@@ -11295,7 +11835,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       {/* Combined — exam-wise breakdown of the final score (live st._combined).
           Replaces the old one-line chip strip, which only showed converted
           marks and hid the obtained / out-of / weightage behind them. */}
-      {isCombined && cb && (
+      {isCombined && cb && !m && (
         <div style={{ borderBottom: `1px solid ${accentBdr}` }}>
           <ExamCombinedBreakdown
             cb={cb}
@@ -11307,14 +11847,45 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         </div>
       )}
 
+      {/* Subject-wise combined: every exam's total and %, then cumulative. */}
+      {m && (
+        <div style={{ padding: '7px 20px', background: isColor ? 'rgba(124,58,237,.06)' : '#F9FAFB', borderBottom: `1px solid ${isColor ? 'rgba(124,58,237,.2)' : '#D1D5DB'}`, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'stretch' }}>
+          {m.exams.map((e, i) => {
+            const col = e.role === 'main' ? accent : subCol;
+            return (
+              <div key={i} style={{ flex: '1 1 110px', minWidth: 0, padding: '5px 8px', borderRadius: 8, background: '#fff', border: `1px solid ${col}33` }}>
+                <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '.3px', color: col, textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {e.role === 'main' ? 'Main' : 'Sub'} · {e.name}
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: textPri, marginTop: 1, whiteSpace: 'nowrap' }}>
+                  {cbrFmt(e.obt)}<span style={{ color: textMut, fontWeight: 600 }}>/{cbrFmt(e.total)}</span>
+                  <span style={{ color: col, marginLeft: 5 }}>{e.pct}%</span>
+                </div>
+                {m.weighted && e.role === 'sub' && (
+                  <div style={{ fontSize: 8, color: textMut, marginTop: 1, whiteSpace: 'nowrap' }}>counts {cbrFmt(e.counted)}/{cbrFmt(e.countedOf)}</div>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ flex: '1 1 120px', minWidth: 0, padding: '5px 8px', borderRadius: 8, background: isColor ? '#F0FDF4' : '#fff', border: `1px solid ${isColor ? '#BBF7D0' : '#D1D5DB'}` }}>
+            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '.3px', color: grn, textTransform: 'uppercase' }}>{m.weighted ? 'Weighted Total' : 'Cumulative'}</div>
+            <div style={{ fontSize: 11, fontWeight: 900, color: grn, marginTop: 1, whiteSpace: 'nowrap' }}>
+              {cbrFmt(m.grandObt)}<span style={{ color: textMut, fontWeight: 600 }}>/{cbrFmt(m.grandTotal)}</span>
+              <span style={{ marginLeft: 5 }}>{m.pct}%</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Subject performance bars — "Show Subject-wise Marks" off ho to poora block band
           (Classic/Portfolio me bhi yahi toggle subject-wise table ka hai). */}
       {opt['Show Subject-wise Marks'] && <div style={{ padding: '12px 20px 8px' }}>
         <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 8 }}>
-          Subject Performance
+          {m ? `Subject Performance · Overall across ${m.exams.length} exams` : 'Subject Performance'}
         </div>
         {subjData.map((d, idx) => (
-          <div key={`bar-${idx}-${d.s}`} data-rc-row="1" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+          <div key={`bar-${idx}-${d.s}`} data-rc-row="1" style={{ padding: m ? '3px 0 4px' : '4px 0', borderBottom: m ? '1px dashed #E2E8F0' : 'none' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
             <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${d.isAbs ? 0 : d.pct}%`, background: d.isAbs ? 'rgba(217,119,6,.3)' : d.col, borderRadius: 4 }} />
@@ -11323,7 +11894,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
               {d.isAbs ? 'AB' : `${d.pct}%`}
             </div>
             {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
-              <div style={{ width: 36, textAlign: 'right', fontSize: 10, color: textMut, flexShrink: 0 }}>
+              <div style={{ width: marksW, textAlign: 'right', fontSize: 10, color: textMut, flexShrink: 0, whiteSpace: 'nowrap' }}>
                 {d.isAbs ? '—' : rcObtTot(opt, d.obt, d.tot)}
               </div>
             )}
@@ -11337,18 +11908,32 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
               </div>
             )}
           </div>
+          {m && d.cells && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', paddingLeft: 110, marginTop: 2 }}>
+              {d.cells.map((c, ci) => {
+                const e = m.exams[ci];
+                return (
+                  <span key={ci} style={{ fontSize: 8.5, color: textMut, whiteSpace: 'nowrap' }}>
+                    <span style={{ fontWeight: 700, color: e.role === 'main' ? accent : subCol }}>{e.name}</span>{' '}
+                    {c.abs ? <strong style={{ color: amb }}>AB</strong> : <><strong style={{ color: textPri }}>{cbrFmt(c.obt)}</strong>/{cbrFmt(c.tot)}</>}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          </div>
         ))}
 
         {/* Grand total bar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', marginTop: 4, borderTop: `1.5px solid ${accentBdr}` }}>
-          <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 800, color: accent }}>{isCombined ? 'Main Exam Total' : 'Grand Total'}</div>
+          <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 800, color: accent }}>{m ? (m.weighted ? 'Weighted Total' : 'Cumulative') : (isCombined ? 'Main Exam Total' : 'Grand Total')}</div>
           <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#EFF6FF', overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${Math.max(2, Math.round(ovPct))}%`, background: accent, borderRadius: 4 }} />
           </div>
-          <div style={{ width: 30, textAlign: 'right', fontSize: 10.5, fontWeight: 800, color: accent, flexShrink: 0 }}>{gtPct}%</div>
+          <div style={{ width: 30, textAlign: 'right', fontSize: 10.5, fontWeight: 800, color: accent, flexShrink: 0 }}>{m ? m.pct : gtPct}%</div>
           {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
-            <div style={{ width: 36, textAlign: 'right', fontSize: 10, fontWeight: 700, color: accent, flexShrink: 0 }}>
-              {rcObtTot(opt, obtAll, totalAll)}
+            <div style={{ width: marksW, textAlign: 'right', fontSize: 10, fontWeight: 700, color: accent, flexShrink: 0, whiteSpace: 'nowrap' }}>
+              {m ? rcObtTot(opt, cbrFmt(m.grandObt), cbrFmt(m.grandTotal)) : rcObtTot(opt, obtAll, totalAll)}
             </div>
           )}
           {opt['Show Grade'] && <div style={{ width: 22, flexShrink: 0 }} />}
@@ -11463,10 +12048,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
       : subjectsAll);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !rcCardIsAbsent(st, s, rsAbsentMode)) ? a + (Number(rd.totalMarks[s]) || 0) : a, 0);
   const obtAll = subjects.reduce((a, s) => rcCardIsAbsent(st, s, rsAbsentMode) ? a : a + (Number(st.obtained[s]) || 0), 0);
-  const ovPct = (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
+  /* Subject-wise combined card: tables, bars and analysis all use the matrix (real per-subject marks). */
+  const absentSet = {};
+  subjects.forEach(s => { if (rcCardIsAbsent(st, s, rsAbsentMode)) absentSet[s] = true; });
+  const m = cbrMatrixForCard({ isCombined, cb, subjects, rd, st, absentSet, useZeroMode });
+  const ovPct = m ? m.pct : (isCombined && rsAbsentMode !== 'zero' && rsAbsentMode !== 'exclude')
     ? cb.ovPct
     : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
+  const ovGrade = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : (m ? m.grade : rcGetGrade(obtAll, totalAll));
   // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
   // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
   // ye ovPct ke barabar hota hai.
@@ -11476,7 +12065,10 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
   // hardcoded text, na getremarksbystudentfilters).
   /* Student ka saved final remark (getremarksbystudentfilters) HAMESHA pehle — auto-comment branch me bhi; na ho to % band. */ const manualFinal = String(st.finalRemarks || '').trim(); const finalRem = manualFinal || rcRemarkByScale(ovPct, remarks);
-  const subjData = subjects.map((s, i) => {
+  const subjData = m ? m.rows.map((r, i) => ({
+    s: r.s, tot: cbrFmt(r.ovT), obt: cbrFmt(r.ovO), pct: r.pct, g: r.g, isAbs: r.allAbs,
+    mc: (r.comment || '').slice(0, 40), col: C.bars[i % C.bars.length], cells: r.cells,
+  })) : subjects.map((s, i) => {
     const isAbs = rcCardIsAbsent(st, s, rsAbsentMode);
     const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
@@ -11532,6 +12124,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
   const initials = String(st.name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
   const span = 1 + (opt['Show Subject-wise Marks'] ? 1 : 0);
+
+  const matrixPalette = {
+    head: C.blu, headBg: C.bluL, bdr: C.bluBdr, bdrStrong: C.bluBdr, rowAlt: C.rowB,
+    text: C.textP, muted: C.textM, accent: C.blu, main: C.blu, sub: C.pur, ok: C.grn,
+    abs: isColor ? '#B45309' : '#374151',
+    pctCol: p => (p >= 80 ? C.grn : p >= 60 ? C.acc : C.red),
+    gradeCol: g => (!isColor || !g ? '#94A3B8' : ({ 'A+': '#16A34A', 'A': '#15803D', 'B': '#1D4ED8', 'C': '#B45309', 'D': '#EA580C', 'F': '#DC2626' }[g.grade] || '#475569')),
+  };
 
   const thBase = { padding: '5px 8px', fontSize: 9, fontWeight: 700, color: C.blu, textAlign: 'left', textTransform: 'uppercase', letterSpacing: '.4px', borderBottom: `2px solid ${C.bluBdr}` };
   const thC = { ...thBase, textAlign: 'center' };
@@ -11632,6 +12232,13 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             </span>
           )}
         </div>
+        {m && (
+          <>
+            <CbrSubjectMatrixTable m={m} opt={opt} P={matrixPalette} />
+            <div style={{ fontSize: 8.5, color: C.textM, marginTop: 4, lineHeight: 1.4 }}>{cbrMatrixNote(m)}</div>
+          </>
+        )}
+        {!m && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, border: `1px solid ${C.bluBdr}` }}>
           <thead>
             <tr style={{ background: C.bluL }}>
@@ -11699,6 +12306,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             </tr>
           </tbody>
         </table>
+        )}
       </div>
 
       {/* Page 1 footer */}
@@ -11721,7 +12329,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
       {/* Combined — exam-wise breakdown of the final score (reference
           Portfolio design). Score + grade come from the live combined result
           (st._combined: grandObt / grandTotal / ovPct, grade by the branch scale). */}
-      {isCombined && cb && (
+      {isCombined && cb && !m && (
         <div style={{ borderBottom: `1px solid ${C.bdr}` }}>
           <ExamCombinedBreakdown
             cb={cb}
@@ -11775,14 +12383,14 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
           })}
           {/* Grand total bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, paddingTop: 8, borderTop: `2px solid ${C.bluBdr}` }}>
-            <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 800, color: C.blu }}>{isCombined ? 'Main Exam Total' : 'Grand Total'}</div>
+            <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 800, color: C.blu }}>{m ? (m.weighted ? 'Weighted Total' : 'Cumulative') : (isCombined ? 'Main Exam Total' : 'Grand Total')}</div>
             <div style={{ flex: 1, height: 10, borderRadius: 5, background: '#EFF6FF', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${Math.max(2, Math.round(ovPct))}%`, background: `linear-gradient(90deg,${C.blu},${C.pur})`, borderRadius: 5 }} />
             </div>
             {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
               <div style={{ width: 36, textAlign: 'right', fontSize: 9.5, fontWeight: 700, color: C.blu, flexShrink: 0 }}>{obtAll}/{totalAll}</div>
             )}
-            <div style={{ width: 32, textAlign: 'right', fontSize: 11, fontWeight: 900, color: C.grn, flexShrink: 0 }}>{gtPct}%</div>
+            <div style={{ width: 32, textAlign: 'right', fontSize: 11, fontWeight: 900, color: C.grn, flexShrink: 0 }}>{m ? m.pct : gtPct}%</div>
             {opt['Show Grade'] && <div style={{ width: 24, flexShrink: 0 }} />}
           </div>
         </div>
@@ -19810,6 +20418,94 @@ body.dark .rh-timeline-row:hover { background:rgba(30,64,175,.08); }
 .rh-insight--warn .rh-insight-title { color:#D97706; }
 .rh-insight--bad  .rh-insight-title { color:#DC2626; }
 .rh-insight-sub { font-size:12px; color:var(--text-primary); font-weight:600; margin-top:2px; }
+
+/* Result History — report book and report tiles */
+/* "Session Report Book" — the featured bundle download */
+.rh-all-btn--book {
+  position:relative; overflow:hidden;
+  background:linear-gradient(135deg,#7C3AED 0%,#2563EB 55%,#0EA5E9 100%);
+  box-shadow:0 6px 18px rgba(124,58,237,.28);
+}
+.rh-all-btn--book::after {
+  content:''; position:absolute; top:0; left:-60%; width:40%; height:100%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.45),transparent);
+  transform:skewX(-20deg); animation:rhShine 3.2s ease-in-out infinite;
+}
+@keyframes rhShine { 0%,60% { left:-60%; } 100% { left:130%; } }
+@media (prefers-reduced-motion: reduce) { .rh-all-btn--book::after { animation:none; display:none; } }
+
+.rh-dl-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.rh-dl-title { font-size:14px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:8px; }
+.rh-dl-title i { color:var(--brand-solid, #1E40AF); }
+.rh-dl-sub { font-size:11.5px; color:var(--text-muted); margin-top:3px; }
+
+.rh-book {
+  display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  padding:16px 18px; margin-bottom:14px; border-radius:14px;
+  background:linear-gradient(120deg,#1E1B4B 0%,#312E81 45%,#1E40AF 100%);
+  color:#fff; position:relative; overflow:hidden;
+}
+.rh-book::before {
+  content:''; position:absolute; right:-60px; top:-60px; width:200px; height:200px; border-radius:50%;
+  background:radial-gradient(circle,rgba(14,165,233,.35),transparent 70%);
+}
+.rh-book-art {
+  position:relative; width:58px; height:58px; flex-shrink:0; border-radius:16px;
+  display:flex; align-items:center; justify-content:center; font-size:26px;
+  background:linear-gradient(135deg,#F59E0B,#EC4899); box-shadow:0 8px 20px rgba(236,72,153,.35);
+}
+.rh-book-spark { position:absolute; color:#FDE68A; font-size:12px; }
+.rh-book-spark.s1 { top:-6px; right:-6px; }
+.rh-book-spark.s2 { bottom:-4px; left:-6px; font-size:9px; }
+.rh-book-body { flex:1; min-width:240px; position:relative; }
+.rh-book-kicker { font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:#FDE68A; display:flex; align-items:center; gap:6px; }
+.rh-book-title { font-size:16px; font-weight:900; margin-top:3px; letter-spacing:-.01em; }
+.rh-book-desc { font-size:12px; line-height:1.55; color:rgba(255,255,255,.78); margin-top:4px; max-width:620px; }
+.rh-book-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+.rh-book-chips span {
+  display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px;
+  font-size:10.5px; font-weight:700; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2);
+}
+.rh-book-cta {
+  position:relative; display:inline-flex; align-items:center; gap:8px; flex-shrink:0;
+  height:42px; padding:0 20px; border-radius:11px; border:none; cursor:pointer;
+  background:#fff; color:#312E81; font-family:inherit; font-size:13px; font-weight:800;
+  box-shadow:0 8px 20px rgba(0,0,0,.25); transition:all .18s ease;
+}
+.rh-book-cta:hover { transform:translateY(-2px); box-shadow:0 12px 26px rgba(0,0,0,.3); }
+
+.rh-rpt-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.rh-rpt-tile {
+  display:flex; flex-direction:column; align-items:flex-start; gap:6px; text-align:left;
+  padding:14px; border-radius:12px; cursor:pointer; font-family:inherit;
+  background:var(--bg-card); border:1.5px solid var(--border-light);
+  transition:all .18s ease; min-height:150px;
+}
+.rh-rpt-tile:hover { border-color:var(--acc); transform:translateY(-2px); box-shadow:0 10px 24px rgba(15,23,42,.08); }
+.rh-rpt-tile:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+.rh-rpt-icon {
+  width:38px; height:38px; border-radius:11px; margin-bottom:2px;
+  display:inline-flex; align-items:center; justify-content:center; font-size:16px;
+  background:var(--acc-bg); color:var(--acc);
+}
+.rh-rpt-name { font-size:13px; font-weight:800; color:var(--text-primary); }
+.rh-rpt-desc {
+  font-size:11px; line-height:1.5; color:var(--text-muted);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:33px;
+}
+.rh-rpt-foot {
+  margin-top:auto; width:100%; padding-top:9px; border-top:1px dashed var(--border-light);
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+}
+.rh-rpt-formats { font-size:10px; font-weight:600; color:var(--text-muted); }
+.rh-rpt-open { font-size:11.5px; font-weight:800; color:var(--acc); display:inline-flex; align-items:center; gap:5px; }
+.rh-rpt-tile:hover .rh-rpt-open i { transform:translateX(2px); }
+.rh-rpt-open i { transition:transform .18s ease; font-size:10px; }
+@media (max-width:1200px) { .rh-rpt-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:560px) {
+  .rh-rpt-grid { grid-template-columns:minmax(0,1fr); }
+  .rh-book-cta { width:100%; justify-content:center; }
+}
 
 /* Download Report cards */
 .rh-report-card {

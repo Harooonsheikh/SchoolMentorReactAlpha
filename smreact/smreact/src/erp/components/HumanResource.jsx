@@ -28,6 +28,8 @@ import {
   generateHrDeptSummary,
   generateHrLeaveRegister,
   generateHrPayrollSummary,
+  generateHrSecurityRetentionReport,
+  generateHrSecurityRetentionEmployeeReport,
 } from './hrReports';
 import AnnualLeaveSummaryReport from './AnnualLeaveSummaryReport';
 import { fetchReportHeader } from '../../utils/pdfReports';
@@ -147,6 +149,28 @@ export default function HumanResource({ toast = () => { } }) {
   const [nextDesigId, setNextDesigId] = useState(null);
   const [nextEmpId, setNextEmpId] = useState(null);
 
+  /* Security Retention payroll transactions — one record per employee +
+     payroll month, upserted (never pushed) so re-saving the same month can
+     never create a duplicate. Session-local until the backend stores it. */
+  const [retentionTxns, setRetentionTxns] = useState([]);
+  const upsertRetentionTxn = (emp, mKey, patch) => {
+    const today = new Date().toISOString().slice(0, 10);
+    setRetentionTxns(prev => {
+      const idx = prev.findIndex(t => t.empId === emp.id && t.monthKey === mKey);
+      if (idx === -1) {
+        return [...prev, {
+          id: `${emp.id}-${mKey}`, empId: emp.id, monthKey: mKey,
+          type: patch.type, configuredAmount: patch.configuredAmount, actualDeducted: patch.actualDeducted,
+          payrollRef: `PR-${emp.id}-${mKey}`, date: today, notes: patch.notes || '',
+          status: emp.securityRetention?.status || 'active',
+        }];
+      }
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...patch, date: today };
+      return next;
+    });
+  };
+
   useEffect(() => { if (serverDepts.length && depts == null) setDepts(serverDepts); }, [serverDepts, depts]);
   useEffect(() => { if (serverDesigs.length && desigs == null) setDesigs(serverDesigs); }, [serverDesigs, desigs]);
   useEffect(() => { if (serverEmps.length && emps == null) setEmps(serverEmps); }, [serverEmps, emps]);
@@ -169,6 +193,7 @@ export default function HumanResource({ toast = () => { } }) {
   return (
     <>
       <style>{HR_CSS}</style>
+      <style>{RETENTION_CSS}</style>
 
       {/* Page header */}
       <div className="page-header">
@@ -250,6 +275,7 @@ export default function HumanResource({ toast = () => { } }) {
         <Financials
           loading={empsLoading}
           emps={empList}
+          upsertRetentionTxn={upsertRetentionTxn}
           depts={deptList}
           desigs={desigList}
           toast={toast}
@@ -263,6 +289,7 @@ export default function HumanResource({ toast = () => { } }) {
       {tab === 'reports' && (
         <HrReports
           emps={empList}
+          retentionTxns={retentionTxns}
           depts={deptList}
           desigs={desigList}
           toast={toast}
@@ -1197,10 +1224,11 @@ const HR_REPORT_META = {
   'dept-summary': { title: 'Department Summary', sub: 'Headcount, designations & salary cost per dept', icon: 'fa-building', gradFrom: 'rgba(2,132,199,.1)', gradTo: 'rgba(2,132,199,.18)', iconColor: '#0284C7', period: false, chips: ['Headcount', 'Cost Analysis', 'Dept-wise'], desc: 'Headcount, designations, salary cost & breakdown per department' },
   'leave-register': { title: 'Leave & Attendance Register', sub: 'Leave entitlements, balances & deduction policy', icon: 'fa-plane-departure', gradFrom: 'rgba(139,92,246,.1)', gradTo: 'rgba(139,92,246,.18)', iconColor: '#7C3AED', period: false, chips: ['Leave Balance', 'Policy', 'Deductions'], desc: 'Leave balances, entitlements, deductions & attendance policy per employee' },
   'payroll-summary': { title: 'Payroll Summary Report', sub: 'Month-wise payroll totals, deductions & status for all staff', icon: 'fa-chart-pie', gradFrom: 'rgba(15,118,110,.1)', gradTo: 'rgba(15,118,110,.18)', iconColor: '#0F766E', period: true, chips: ['Monthly', 'All Staff', 'Totals & Status'], desc: 'Month-wise payroll totals — gross pay, deductions, net payable & payment status overview' },
+  'security-retention': { title: 'Security Retention Report', sub: 'Employee-wise monthly security deductions & retained balances', icon: 'fa-shield-halved', gradFrom: 'rgba(var(--brand-primary-rgb), .1)', gradTo: 'rgba(37,99,235,.18)', iconColor: '#1E40AF', period: false, chips: ['Employee-wise', 'Monthly', 'Retained Balance'], desc: 'Employee-wise monthly security deductions, retained balances and transaction history.' },
   'annual-leave-summary': { title: 'Annual Leave Summary', sub: 'Annual leave entitlements, leaves, absenteeism & applicable salary deductions, per employee or for the whole school, for the active academic session', icon: 'fa-calendar-check', gradFrom: 'rgba(59,130,246,.1)', gradTo: 'rgba(59,130,246,.18)', iconColor: '#3B82F6', period: false, chips: ['Annual Leave Only', 'Session-wise', 'Deductions'], desc: 'Annual leave entitlements, leaves, absenteeism & applicable salary deductions, per employee or for the whole school, for the active academic session' },
 };
 
-function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
+function HrReports({ emps, depts, desigs, toast, canDownload = true, retentionTxns = [] }) {
   const deptMap = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
   const getDeptName = (id) => deptMap.get(id)?.name || '—';
@@ -1208,6 +1236,7 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
   const branchId = Number(sessionStorage.getItem('branchID')) || 1;
 
   const [picker, setPicker] = useState(null); // { type }
+  const [secRetOpen, setSecRetOpen] = useState(false);
   const [reportMonth, setReportMonth] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -1334,6 +1363,22 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
     setPicker(null);
   };
 
+  if (secRetOpen) {
+    return (
+      <SecurityRetentionReport
+        emps={emps}
+        depts={depts}
+        desigs={desigs}
+        retentionTxns={retentionTxns}
+        getDeptName={getDeptName}
+        getDesigName={getDesigName}
+        toast={toast}
+        canDownload={canDownload}
+        onBack={() => setSecRetOpen(false)}
+      />
+    );
+  }
+
   return (
     <div className="hrb-root">
       <div className="section-card">
@@ -1344,8 +1389,8 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
               className="hr-rpt-card"
               role="button"
               tabIndex={0}
-              onClick={() => setPicker({ type })}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setPicker({ type }); }}
+              onClick={() => (type === 'security-retention' ? setSecRetOpen(true) : setPicker({ type }))}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') (type === 'security-retention' ? setSecRetOpen(true) : setPicker({ type })); }}
             >
               <div
                 className="hr-rpt-icon"
@@ -1405,6 +1450,429 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
       )}
     </div>
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECURITY RETENTION REPORT — HR Reports → Security Retention Report.
+   A persistent in-page screen (KPIs, live filters, table, employee
+   drill-down), the same pattern as the Annual Leave Summary screen.
+   ═══════════════════════════════════════════════════════════════════ */
+const RTN_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function fmtMonthKey(k) {
+  if (!k) return '—';
+  const [y, m] = k.split('-');
+  return `${RTN_MONTH_NAMES[parseInt(m, 10)] || m} ${y}`;
+}
+function retentionStatusLabel(s) {
+  if (!s) return '—';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function SecurityRetentionReport({ emps, depts, desigs, retentionTxns, getDeptName, getDesigName, toast, onBack, canDownload = true }) {
+  const [monthFilter, setMonthFilter] = useState('all');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [empFilter, setEmpFilter] = useState('all');
+  const [deptFilter, setDeptFilter] = useState('all');
+  const [desigFilter, setDesigFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [detailEmpId, setDetailEmpId] = useState(null);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+
+  const empMap = useMemo(() => new Map(emps.map(e => [e.id, e])), [emps]);
+  const uniqueMonths = useMemo(
+    () => Array.from(new Set(retentionTxns.map(t => t.monthKey))).sort(),
+    [retentionTxns]
+  );
+
+  const resetFilters = () => {
+    setMonthFilter('all'); setFromDate(''); setToDate('');
+    setEmpFilter('all'); setDeptFilter('all'); setDesigFilter('all');
+    setTypeFilter('all'); setStatusFilter('all');
+  };
+
+  const filteredRows = useMemo(() => {
+    return retentionTxns
+      .filter(t => {
+        const e = empMap.get(t.empId);
+        if (!e) return false;
+        if (monthFilter !== 'all' && t.monthKey !== monthFilter) return false;
+        if (fromDate && t.date < fromDate) return false;
+        if (toDate && t.date > toDate) return false;
+        if (empFilter !== 'all' && String(e.id) !== String(empFilter)) return false;
+        if (deptFilter !== 'all' && String(e.dId) !== String(deptFilter)) return false;
+        if (desigFilter !== 'all' && String(e.desId) !== String(desigFilter)) return false;
+        if (typeFilter !== 'all' && t.type !== typeFilter) return false;
+        if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+        return true;
+      })
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey) || a.empId - b.empId);
+  }, [retentionTxns, empMap, monthFilter, fromDate, toDate, empFilter, deptFilter, desigFilter, typeFilter, statusFilter]);
+
+  /* Running cumulative retained total per employee over the filtered rows,
+     in chronological order. */
+  const rowsWithCumulative = useMemo(() => {
+    const running = {};
+    return filteredRows.map(t => {
+      running[t.empId] = (running[t.empId] || 0) + (Number(t.actualDeducted) || 0);
+      return { ...t, cumulative: running[t.empId] };
+    });
+  }, [filteredRows]);
+
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const kpis = useMemo(() => {
+    const employeesSet = new Set(filteredRows.map(r => r.empId));
+    return {
+      employees:     employeesSet.size,
+      totalRetained: filteredRows.reduce((s, r) => s + (Number(r.actualDeducted) || 0), 0),
+      currentMonth:  filteredRows.filter(r => r.monthKey === currentMonthKey).reduce((s, r) => s + (Number(r.actualDeducted) || 0), 0),
+      oneTimeTotal:  filteredRows.filter(r => r.type === 'onetime').reduce((s, r) => s + (Number(r.actualDeducted) || 0), 0),
+      monthlyTotal:  filteredRows.filter(r => r.type === 'monthly').reduce((s, r) => s + (Number(r.actualDeducted) || 0), 0),
+    };
+  }, [filteredRows, currentMonthKey]);
+
+  const downloadReport = (style, format) => {
+    const filterSpans = [
+      monthFilter !== 'all'  ? `<span><b>Month:</b> ${fmtMonthKey(monthFilter)}</span>` : '',
+      fromDate               ? `<span><b>From:</b> ${fromDate}</span>` : '',
+      toDate                 ? `<span><b>To:</b> ${toDate}</span>` : '',
+      empFilter !== 'all'    ? `<span><b>Employee:</b> ${empMap.get(Number(empFilter)) ? getFullName(empMap.get(Number(empFilter))) : '—'}</span>` : '',
+      deptFilter !== 'all'   ? `<span><b>Department:</b> ${getDeptName(Number(deptFilter))}</span>` : '',
+      desigFilter !== 'all'  ? `<span><b>Designation:</b> ${getDesigName(Number(desigFilter))}</span>` : '',
+      typeFilter !== 'all'   ? `<span><b>Type:</b> ${typeFilter === 'onetime' ? 'One-Time' : 'Monthly'}</span>` : '',
+      statusFilter !== 'all' ? `<span><b>Status:</b> ${retentionStatusLabel(statusFilter)}</span>` : '',
+    ].filter(Boolean).join('');
+
+    const rows = rowsWithCumulative.map(r => {
+      const e = empMap.get(r.empId);
+      return {
+        ...r,
+        empName:   e ? getFullName(e) : '—',
+        eid:       e?.eid || '—',
+        deptName:  getDeptName(e?.dId),
+        desigName: getDesigName(e?.desId),
+      };
+    });
+    const html = generateHrSecurityRetentionReport({ rows, kpis, filtersHtml: filterSpans, style, format });
+
+    if (format === 'word') {
+      downloadReportAsWord(html, `${reportFileName('Security-Retention-Report')}.doc`);
+      toast('Security Retention Report downloaded as Word document', 'success');
+      setExportModalOpen(false);
+      return;
+    }
+    if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${reportFileName('Security-Retention-Report')}.xls`);
+      toast('Security Retention Report downloaded as Excel spreadsheet', 'success');
+      setExportModalOpen(false);
+      return;
+    }
+    const w = window.open('', '_blank');
+    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    toast(`Security Retention Report (${style === 'bw' ? 'Colorless' : 'Colorful'}) ready — Print or Save as PDF`, 'success');
+    setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 400);
+    setExportModalOpen(false);
+  };
+
+  return (
+    <div className="hrb-root">
+      <button type="button" className="rtn-back-btn" onClick={onBack}>
+        <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Reports
+      </button>
+
+      <div className="rtn-kpis">
+        <div className="rtn-kpi k-blue">
+          <div className="rtn-kpi-label">Employees with Retention</div>
+          <div className="rtn-kpi-val">{kpis.employees}</div>
+        </div>
+        <div className="rtn-kpi k-green">
+          <div className="rtn-kpi-label">Total Security Retained</div>
+          <div className="rtn-kpi-val">PKR {fmtMoney(kpis.totalRetained)}</div>
+        </div>
+        <div className="rtn-kpi k-amber">
+          <div className="rtn-kpi-label">Current Month Retention</div>
+          <div className="rtn-kpi-val">PKR {fmtMoney(kpis.currentMonth)}</div>
+        </div>
+        <div className="rtn-kpi k-purple">
+          <div className="rtn-kpi-label">One-Time Retention Total</div>
+          <div className="rtn-kpi-val">PKR {fmtMoney(kpis.oneTimeTotal)}</div>
+        </div>
+        <div className="rtn-kpi k-teal">
+          <div className="rtn-kpi-label">Monthly Retention Total</div>
+          <div className="rtn-kpi-val">PKR {fmtMoney(kpis.monthlyTotal)}</div>
+        </div>
+      </div>
+
+      <div className="rtn-filters">
+        <div className="rtn-field">
+          <label>Payroll Month</label>
+          <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+            <option value="all">All Months</option>
+            {uniqueMonths.map(m => <option key={m} value={m}>{fmtMonthKey(m)}</option>)}
+          </select>
+        </div>
+        <div className="rtn-field">
+          <label>From Date</label>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </div>
+        <div className="rtn-field">
+          <label>To Date</label>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </div>
+        <div className="rtn-field">
+          <label>Employee</label>
+          <select value={empFilter} onChange={(e) => setEmpFilter(e.target.value)}>
+            <option value="all">All Employees</option>
+            {emps.map(e => <option key={e.id} value={e.id}>{getFullName(e)}</option>)}
+          </select>
+        </div>
+        <div className="rtn-field">
+          <label>Department</label>
+          <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+            <option value="all">All Departments</option>
+            {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+        <div className="rtn-field">
+          <label>Designation</label>
+          <select value={desigFilter} onChange={(e) => setDesigFilter(e.target.value)}>
+            <option value="all">All Designations</option>
+            {desigs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+        <div className="rtn-field">
+          <label>Retention Type</label>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="all">All</option>
+            <option value="onetime">One-Time</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div className="rtn-field">
+          <label>Status</label>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="completed">Completed</option>
+            <option value="paused">Paused</option>
+            <option value="disabled">Disabled</option>
+          </select>
+        </div>
+        <button type="button" className="btn-secondary" onClick={resetFilters}>
+          <i className="fa-solid fa-rotate-left" aria-hidden="true"></i> Reset Filters
+        </button>
+        {canDownload && (
+          <div className="rtn-actions">
+            <button type="button" className="btn-primary" onClick={() => setExportModalOpen(true)}>
+              <i className="fa-solid fa-download" aria-hidden="true"></i> Export Report
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="rtn-table-wrap">
+        <table className="rtn-table">
+          <thead>
+            <tr>
+              <th>S.No.</th><th>Employee Name</th><th>Employee ID</th><th>Department</th><th>Designation</th>
+              <th>Retention Type</th><th>Payroll Month</th><th className="num">Configured Amount</th>
+              <th className="num">Actual Deducted</th><th className="num">Total Retained</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowsWithCumulative.length === 0 ? (
+              <tr><td colSpan="12" style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No security retention records match the selected filters.</td></tr>
+            ) : rowsWithCumulative.map((r, i) => {
+              const e = empMap.get(r.empId);
+              return (
+                <tr key={`${r.empId}-${r.monthKey}`}>
+                  <td>{i + 1}</td>
+                  <td style={{ fontWeight: 700, color: 'var(--t1)' }}>{e ? getFullName(e) : '—'}</td>
+                  <td>{e?.eid || '—'}</td>
+                  <td>{getDeptName(e?.dId)}</td>
+                  <td>{getDesigName(e?.desId)}</td>
+                  <td>{r.type === 'onetime' ? 'One-Time' : 'Monthly'}</td>
+                  <td>{fmtMonthKey(r.monthKey)}</td>
+                  <td className="num">PKR {fmtMoney(r.configuredAmount)}</td>
+                  <td className="num">PKR {fmtMoney(r.actualDeducted)}</td>
+                  <td className="num" style={{ fontWeight: 800, color: 'var(--brand)' }}>PKR {fmtMoney(r.cumulative)}</td>
+                  <td><span className={`pay-status ${r.status || 'active'}`}>{retentionStatusLabel(r.status)}</span></td>
+                  <td>
+                    <Tooltip text="View employee retention history">
+                      <button
+                        type="button"
+                        className="btn-edit"
+                        onClick={() => setDetailEmpId(r.empId)}
+                        aria-label={`View retention history for ${e ? getFullName(e) : ''}`}
+                      >
+                        <i className="fa-solid fa-eye" aria-hidden="true"></i>
+                      </button>
+                    </Tooltip>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {detailEmpId != null && empMap.get(detailEmpId) && (
+        <RetentionEmployeeDetailModal
+          emp={empMap.get(detailEmpId)}
+          deptName={getDeptName(empMap.get(detailEmpId).dId)}
+          desigName={getDesigName(empMap.get(detailEmpId).desId)}
+          txns={retentionTxns.filter(t => t.empId === detailEmpId).sort((a, b) => a.monthKey.localeCompare(b.monthKey))}
+          canDownload={canDownload}
+          toast={toast}
+          onClose={() => setDetailEmpId(null)}
+        />
+      )}
+
+      {exportModalOpen && (
+        <StandardReportPicker
+          open
+          title="Export Security Retention Report"
+          subtitle="Both versions reflect the filters currently applied to the report."
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setExportModalOpen(false)}
+          onGenerate={(style, format) => downloadReport(style, format)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── Employee-wise retention drill-down (Actions column) ─── */
+function RetentionEmployeeDetailModal({ emp, deptName, desigName, txns, canDownload = true, toast, onClose }) {
+  const [reportOpen, setReportOpen] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
+
+  const r = emp.securityRetention || {};
+  const totalRetained = txns.reduce((s, t) => s + (Number(t.actualDeducted) || 0), 0);
+  const firstDate  = txns.length ? txns[0].date : null;
+  const latestDate = txns.length ? txns[txns.length - 1].date : null;
+
+  const downloadEmployeeReport = (style, format) => {
+    const html = generateHrSecurityRetentionEmployeeReport({
+      emp, deptName, desigName, txns, totalRetained, firstDate, latestDate, style, format,
+    });
+    const filename = reportFileName(`Security-Retention-${emp.eid || emp.id}`);
+    if (format === 'word') {
+      downloadReportAsWord(html, `${filename}.doc`);
+      toast('Employee retention statement downloaded as Word document', 'success');
+    } else if (format === 'excel') {
+      downloadReportHtmlAsExcel(html, `${filename}.xls`);
+      toast('Employee retention statement downloaded as Excel spreadsheet', 'success');
+    } else {
+      const w = window.open('', '_blank');
+      if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+      w.document.write(html);
+      w.document.close();
+      setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 400);
+      toast(`Employee retention statement (${style === 'bw' ? 'Colorless' : 'Colorful'}) sent to print`, 'success');
+    }
+    setReportOpen(false);
+  };
+
+  return createPortal((
+    <div className="ov open" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" style={{ maxWidth: 760 }}>
+        <div className="modal-head">
+          <div className="modal-head-left">
+            <div className="modal-head-icon" style={{ background: 'rgba(var(--brand-primary-rgb), .12)', color: 'var(--brand-solid, #1E40AF)' }}>
+              <i className="fa-solid fa-shield-halved" aria-hidden="true"></i>
+            </div>
+            <div>
+              <div className="modal-title">Security Retention — {getFullName(emp)}</div>
+              <div className="modal-sub">{emp.eid} · {deptName} · {desigName}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="modal-body">
+          <ProfSection title="Current Configuration" icon="fa-sliders">
+            <ProfKv k="Status" v={retentionStatusLabel(r.status)} highlight />
+            <ProfKv k="Retention Type" v={r.type === 'onetime' ? 'One-Time' : 'Monthly'} />
+            <ProfKv k="Configured Amount" v={`PKR ${fmtMoney(r.amount)}`} highlight />
+            {r.type === 'onetime' ? (
+              <ProfKv k="Deduction Month" v={fmtMonthKey(r.oneTimeMonth)} />
+            ) : (
+              <>
+                <ProfKv k="Start Month" v={fmtMonthKey(r.startMonth)} />
+                <ProfKv k="End Month" v={r.endMonth ? fmtMonthKey(r.endMonth) : 'Ongoing'} />
+              </>
+            )}
+            <ProfKv k="Notes" v={r.notes} span={3} />
+          </ProfSection>
+
+          <ProfSection title="Retention Summary" icon="fa-chart-line">
+            <ProfKv k="Total Amount Retained" v={`PKR ${fmtMoney(totalRetained)}`} highlight />
+            <ProfKv k="First Deduction" v={firstDate ? fmtDate(firstDate) : '—'} />
+            <ProfKv k="Latest Deduction" v={latestDate ? fmtDate(latestDate) : '—'} />
+          </ProfSection>
+
+          <div className="prof-section">
+            <div className="prof-section-title"><i className="fa-solid fa-list-ul" aria-hidden="true"></i> Month-Wise Deductions</div>
+            <div className="rtn-table-wrap" style={{ marginTop: 8 }}>
+              <table className="rtn-table">
+                <thead>
+                  <tr><th>Payroll Month</th><th className="num">Configured</th><th className="num">Deducted</th><th>Notes</th></tr>
+                </thead>
+                <tbody>
+                  {txns.length === 0 ? (
+                    <tr><td colSpan="4" style={{ textAlign: 'center', padding: 18, color: 'var(--tm)' }}>No deductions recorded yet.</td></tr>
+                  ) : txns.map(t => (
+                    <tr key={t.monthKey}>
+                      <td>{fmtMonthKey(t.monthKey)}</td>
+                      <td className="num">PKR {fmtMoney(t.configuredAmount)}</td>
+                      <td className="num">PKR {fmtMoney(t.actualDeducted)}</td>
+                      <td>{t.notes || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-foot" style={{ flexWrap: 'wrap', gap: 10 }}>
+          <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+          {canDownload && (
+            <button type="button" className="btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setReportOpen(true)}>
+              <i className="fa-solid fa-download" aria-hidden="true"></i> Download Report
+            </button>
+          )}
+        </div>
+      </div>
+      {reportOpen && (
+        <StandardReportPicker
+          open
+          title={`Security Retention — ${getFullName(emp)}`}
+          subtitle="Choose style and format, then generate."
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setReportOpen(false)}
+          onGenerate={downloadEmployeeReport}
+        />
+      )}
+    </div>
+  ), document.body);
 }
 
 /* ── Annual Leave Summary Report modal wrapper ── */
@@ -1636,6 +2104,19 @@ function getEmpStdDeductions(e) {
   return (e.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
 }
 
+/* Configured Security Retention amount for a payroll month ('YYYY-MM'), or 0
+   when retention is disabled, the employee is inactive, the month is outside
+   the one-time / monthly window, or the recurring end month has passed. The
+   per-month deduction can still be edited in Payroll Setup. */
+function getSecurityRetentionAmount(emp, mKey) {
+  const r = emp?.securityRetention;
+  if (!r || !r.enabled || emp.status !== 'Active') return 0;
+  if (r.type === 'onetime') return r.oneTimeMonth === mKey ? (Number(r.amount) || 0) : 0;
+  if (r.startMonth && mKey < r.startMonth) return 0;
+  if (r.endMonth && mKey > r.endMonth) return 0;
+  return Number(r.amount) || 0;
+}
+
 /* Delete-payroll confirmation popup — replaces the browser window.confirm.
    Two modes:
      • 'confirm' — first ask: "delete this month's payroll + payments?"
@@ -1712,7 +2193,7 @@ function DeletePayrollModal({ open, mode = 'confirm', empName, month, year, mess
   ), document.body);
 }
 
-function Financials({ loading = false, emps, depts = [], desigs, toast, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
+function Financials({ loading = false, emps, depts = [], desigs, toast, upsertRetentionTxn, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
   const now = new Date();
   const [month, setMonth] = useState(PAY_MONTHS[now.getMonth()]);
   const [year, setYear] = useState(String(now.getFullYear()));
@@ -2380,9 +2861,20 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, canCreat
           rec={getRec(prFor.id)}
           loanRemaining={getLoanRemaining(prFor.id)}
           monthlyLoanDeduct={getMonthlyLoanDeduct(prFor.id)}
+          configuredRetentionDeduct={getSecurityRetentionAmount(prFor, monthKey(month, year))}
           prevMonthDue={getPrevMonthDue(prFor.id)}
           onClose={() => setPrFor(null)}
-          onSaveSetup={(rec) => upsertRec(prFor.id, month, year, rec)}
+          onSaveSetup={(rec) => {
+            upsertRec(prFor.id, month, year, rec);
+            if (upsertRetentionTxn && prFor.securityRetention?.enabled) {
+              upsertRetentionTxn(prFor, monthKey(month, year), {
+                type: prFor.securityRetention.type,
+                configuredAmount: getSecurityRetentionAmount(prFor, monthKey(month, year)),
+                actualDeducted: Number(rec.securityRetentionDeduct) || 0,
+                notes: rec.securityRetentionComment || '',
+              });
+            }
+          }}
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
           onDelete={() => { removeRec(prFor.id, month, year); setPrFor(null); }}
           onPaymentPending={setPaymentPendingMap}
@@ -2666,6 +3158,7 @@ function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
         <PdItem k="Fine Deduction" v={`PKR ${fmtMoney(rec.fineDeduct || 0)}`} valClass={cls(rec.fineDeduct || 0)} />
         <PdItem k="Leave Deduction" v={`PKR ${fmtMoney(rec.leaveDeduct || 0)}`} valClass={cls(rec.leaveDeduct || 0)} />
         <PdItem k="Absent Deduction" v={`PKR ${fmtMoney(rec.absentDeduct || 0)}`} valClass={cls(rec.absentDeduct || 0)} />
+        <PdItem k="Security Retention" v={`PKR ${fmtMoney(rec.securityRetentionDeduct || 0)}`} valClass={cls(rec.securityRetentionDeduct || 0)} />
         <PdItem k="Custom Loan Deduction" v={`PKR ${fmtMoney(rec.customLoan || 0)}`} valClass={cls(rec.customLoan || 0)} />
         <PdItem k="Total Deductions" v={`PKR ${fmtMoney(totalDeduct)}`} valClass={cls(totalDeduct)} />
         <div className="pay-detail-item">
@@ -2741,6 +3234,7 @@ function PayRollModal({
   emp, month, year, rec: existingRec,
   loanRemaining = 0, monthlyLoanDeduct = 0,
   prevMonthDue = { total: 0, key: '' },
+  configuredRetentionDeduct = 0,
   onClose, onSaveSetup, onRecordPayment, onDelete, onPaymentPending, toast,
   canCreate = true, canApprove = true, canDelete = true,
 }) {
@@ -2792,6 +3286,10 @@ function PayRollModal({
   const [absentCount, setAbsentCount] = useState(seed.absentCount || 0);
   const [absentDeduct, setAbsentDeduct] = useState(seed.absentDeduct || 0);
   const [absentComment, setAbsentComment] = useState(seed.absentComment || '');
+  const [securityRetentionDeduct, setSecurityRetentionDeduct] = useState(
+    seed.securityRetentionDeduct !== undefined ? seed.securityRetentionDeduct : configuredRetentionDeduct
+  );
+  const [securityRetentionComment, setSecurityRetentionComment] = useState(seed.securityRetentionComment || '');
 
   /* ── Make Payment form state ── */
   const [payAmount, setPayAmount] = useState('');
@@ -2843,7 +3341,8 @@ function PayRollModal({
     + effectiveLoanDeduct
     + Number(fineDeduct)
     + Number(leaveDeduct)
-    + Number(absentDeduct);
+    + Number(absentDeduct)
+    + Number(securityRetentionDeduct);
   const netPayable = totalGross - totalDeductions;
 
   /* Auto-calc chargeable leave/absent via the server. Absents have no quota
@@ -2967,7 +3466,17 @@ function PayRollModal({
       const key = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
       const serverRec = fresh?.[emp.id]?.[key];
       if (serverRec && serverRec.netPayable != null) {
-        onSaveSetup({ month, year, ...serverRec });
+        /* Backend has no security-retention field yet: keep the retention
+           deduction on the record and take it out of the server's net, so the
+           payable (and the Make Payment limit) reflects the withheld amount. */
+        const retentionDed = Number(securityRetentionDeduct) || 0;
+        onSaveSetup({
+          month, year, ...serverRec,
+          securityRetentionDeduct: retentionDed,
+          securityRetentionComment,
+          totalDeductions: (Number(serverRec.totalDeductions) || 0) + retentionDed,
+          netPayable: (Number(serverRec.netPayable) || 0) - retentionDed,
+        });
         toast('Payroll saved — proceed to Make Payment', 'success');
         setTab(1);
         return;
@@ -2995,6 +3504,8 @@ function PayRollModal({
       leaveCount: Number(leaveCount),
       absentCount: Number(absentCount),
       fineComment, leaveComment, absentComment,
+      securityRetentionDeduct: Number(securityRetentionDeduct) || 0,
+      securityRetentionComment,
       netPayable,
       payments: existingRec?.payments || [],
       paidAmount: (existingRec?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0),
@@ -3299,6 +3810,28 @@ function PayRollModal({
                     <label>Absent Comment</label>
                     <input type="text" placeholder="Notes about absents" value={absentComment} onChange={(e) => setAbsentComment(e.target.value)} />
                   </div>
+                  {emp.securityRetention?.enabled && (
+                    <>
+                      <div className="pr-field">
+                        <label>Security Retention ({emp.securityRetention.type === 'onetime' ? 'One-Time' : 'Monthly'})</label>
+                        <input
+                          type="number" min={0}
+                          value={securityRetentionDeduct}
+                          onChange={(e) => setSecurityRetentionDeduct(e.target.value)}
+                        />
+                        <div className="pr-field-hint">Configured: PKR {fmtMoney(configuredRetentionDeduct)} for {month} {year} — editable, set to 0 to skip this month</div>
+                      </div>
+                      <div className="pr-field pr-field-wide">
+                        <label>Security Retention Notes</label>
+                        <input
+                          type="text"
+                          placeholder="Optional note for this month's retention"
+                          value={securityRetentionComment}
+                          onChange={(e) => setSecurityRetentionComment(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -4213,6 +4746,7 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
         loadPending();
         return;
       }
+      hrService.setLocalRetentionSetup(payload.eid, payload.securityRetention);
       await reloadEmps();
       setSub((payload.status || 'Active') === 'Active' ? 'active' : 'inactive');
       toast(`${getFullName(payload)} added`, 'success');
@@ -4237,6 +4771,7 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
         markPending(payload.id, resp.pending, `${sectionLbl} for ${getFullName(payload)} sent for approval`);
         return;
       }
+      hrService.setLocalRetentionSetup(payload.eid, payload.securityRetention);
       await reloadEmps();
       toast(`${getFullName(payload)} updated`, 'success');
       setEditFor(null);
@@ -5243,6 +5778,11 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       balance: '', policy: 'Standard',
       deductEn: true, absentDed: '', unpaidDed: '',
     },
+    securityRetention: {
+      enabled: false, type: 'monthly', amount: '',
+      oneTimeMonth: '', startMonth: '', endMonth: '',
+      notes: '', status: 'disabled',
+    },
     stdDocs: {},
     docs: [],
     photo: '',
@@ -5257,6 +5797,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       leaves: { ...blank.leaves, ...(emp.leaves || {}) },
       salaryHeads: emp.salaryHeads ? emp.salaryHeads.map(h => ({ ...h })) : blank.salaryHeads,
       stdDocs: emp.stdDocs ? { ...emp.stdDocs } : {},
+      securityRetention: { ...blank.securityRetention, ...(emp.securityRetention || {}) },
       docs: Array.isArray(emp.docs) ? emp.docs.map(d => ({ ...d })) : [],
       subjects: emp.subjects ? JSON.parse(JSON.stringify(emp.subjects)) : {},
       attendance: Array.isArray(emp.attendance) ? [...emp.attendance] : [],
@@ -5402,6 +5943,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   /* ── Generic setters ── */
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const setLeave = (k, v) => setForm(f => ({ ...f, leaves: { ...f.leaves, [k]: v } }));
+  const setRetention = (k, v) => setForm(f => ({ ...f, securityRetention: { ...f.securityRetention, [k]: v } }));
 
   /* ── Salary heads helpers ── */
   const setHead = (i, patch) => setForm(f => ({
@@ -5537,6 +6079,24 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     if (!form.phone.trim()) { toast('Mobile number required', 'error'); setTab(0); return; }
     if (!form.dId || !form.desId) { toast('Department & Designation required', 'error'); setTab(1); return; }
 
+    /* Security Retention — validated only when enabled, then normalised
+       (amount as a number, status active / disabled). */
+    const ret = form.securityRetention || {};
+    if (ret.enabled) {
+      const amt = Number(ret.amount);
+      if (ret.amount === '' || Number.isNaN(amt) || amt <= 0) { toast('Security retention amount must be a positive number', 'error'); setTab(2); return; }
+      if (ret.type === 'onetime' && !ret.oneTimeMonth) { toast('Select a deduction month for one-time security retention', 'error'); setTab(2); return; }
+      if (ret.type === 'monthly') {
+        if (!ret.startMonth) { toast('Select a start month for monthly security retention', 'error'); setTab(2); return; }
+        if (ret.endMonth && ret.endMonth < ret.startMonth) { toast('End month cannot be before the start month', 'error'); setTab(2); return; }
+      }
+    }
+    const securityRetention = {
+      ...ret,
+      amount: ret.enabled ? (Number(ret.amount) || 0) : 0,
+      status: !ret.enabled ? 'disabled' : (ret.status && ret.status !== 'disabled' ? ret.status : 'active'),
+    };
+
     /* Documents the user picked this session (each carries a real File). Fixed
        slots map to their backend documentType; custom docs use their free-text
        name. These upload after the employee is saved. */
@@ -5564,6 +6124,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       leavesOriginal: isEdit ? leavesOriginalRef.current : null,
       docUploads,
       removedDocIds,
+      securityRetention,
       leaves: {
         ...form.leaves,
         annual: Number(form.leaves.annual) || 0,
@@ -5914,6 +6475,112 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                 <div className="sal-summary-item"><span className="sal-summary-label">Deductions</span><span className="sal-summary-value deduct">– PKR {fmtMoney(deductTotal)}</span></div>
                 <div className="sal-summary-item"><span className="sal-summary-label">Net Salary</span><span className="sal-summary-value net">PKR {fmtMoney(netSalary)}</span></div>
               </div>
+            </div>
+
+            <div className="m-section">
+              <div className="m-section-title">
+                <i className="fa-solid fa-shield-halved" aria-hidden="true"></i> Security Retention
+                <Tooltip text="Retain a one-time or recurring monthly amount from this employee's salary. This is separate from the flat Security Deposit amount.">
+                  <span className="tip-icon"><i className="fa-solid fa-info" aria-hidden="true"></i></span>
+                </Tooltip>
+              </div>
+
+              <div className="leave-toggle-row">
+                <div>
+                  <div className="leave-toggle-title">Enable Security Retention</div>
+                  <div className="leave-toggle-sub">When disabled, no security deduction is applied to this employee's payroll</div>
+                </div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={!!form.securityRetention.enabled}
+                    onChange={(e) => setRetention('enabled', e.target.checked)}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+
+              {form.securityRetention.enabled && (
+                <>
+                  <div className="retention-seg">
+                    <button
+                      type="button"
+                      className={`retention-seg-btn${form.securityRetention.type === 'onetime' ? ' active' : ''}`}
+                      onClick={() => setRetention('type', 'onetime')}
+                    >
+                      <i className="fa-solid fa-hand-holding-dollar" aria-hidden="true"></i> One-Time Retention
+                    </button>
+                    <button
+                      type="button"
+                      className={`retention-seg-btn${form.securityRetention.type === 'monthly' ? ' active' : ''}`}
+                      onClick={() => setRetention('type', 'monthly')}
+                    >
+                      <i className="fa-solid fa-calendar-check" aria-hidden="true"></i> Monthly Retention
+                    </button>
+                  </div>
+
+                  <div className="f-row">
+                    <div className="f-group">
+                      <label className="f-label">Security Amount (PKR) <span className="req">*</span></label>
+                      <div className="sal-head-bottom">
+                        <div className="sal-head-amt-prefix">PKR</div>
+                        <input
+                          type="number" min={0}
+                          className="sal-head-amt-input"
+                          placeholder="e.g. 5000"
+                          value={form.securityRetention.amount}
+                          onChange={(e) => setRetention('amount', e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    {form.securityRetention.type === 'onetime' ? (
+                      <div className="f-group">
+                        <label className="f-label">Deduction Month / Payroll Period <span className="req">*</span></label>
+                        <input
+                          type="month" className="f-input"
+                          value={form.securityRetention.oneTimeMonth}
+                          onChange={(e) => setRetention('oneTimeMonth', e.target.value)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="f-group">
+                        <label className="f-label">Start Month / Payroll Period <span className="req">*</span></label>
+                        <input
+                          type="month" className="f-input"
+                          value={form.securityRetention.startMonth}
+                          onChange={(e) => setRetention('startMonth', e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {form.securityRetention.type === 'monthly' && (
+                    <div className="f-row">
+                      <div className="f-group">
+                        <label className="f-label">End Month (optional)</label>
+                        <input
+                          type="month" className="f-input"
+                          value={form.securityRetention.endMonth}
+                          onChange={(e) => setRetention('endMonth', e.target.value)}
+                        />
+                        <small style={{ color: 'var(--tm)', fontSize: 11, marginTop: 4, display: 'block' }}>
+                          Leave blank to continue every month until this setup is disabled or updated.
+                        </small>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="f-group">
+                    <label className="f-label">Retention Notes (optional)</label>
+                    <textarea
+                      className="f-textarea"
+                      placeholder="e.g. Refundable security retained according to employment agreement."
+                      value={form.securityRetention.notes}
+                      onChange={(e) => setRetention('notes', e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -7934,6 +8601,103 @@ const PROFILE_PRINT_CSS = `
    All tokens are defined locally so the look stays identical to the
    HTML regardless of the surrounding app theme.
    ═══════════════════════════════════════════════════════════════════ */
+/* Security Retention styles (Salary Details type selector, Retention Report screen). */
+export const RETENTION_CSS = `
+/* Security Retention type selector (Salary Details) / style toggle
+   (Retention Report exports) — same track/pill look as .sub-tabs/
+   .sub-tab, cloned under its own names so it isn't coupled to the
+   Assignments tab's usage. Unscoped (not .modal-xl-only) so it also
+   works inside the smaller .modal used by the retention report
+   modals. */
+.retention-seg {
+  display: flex; gap: 6px;
+  flex-wrap: wrap;
+  background: var(--muted);
+  border: 1.5px solid var(--bl);
+  border-radius: var(--r-md);
+  padding: 4px;
+}
+.modal-xl .retention-seg { margin-bottom: 14px; }
+.retention-seg-btn {
+  flex: 1; min-width: 120px;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  font: 600 12.5px/1 var(--hr-font);
+  color: var(--tm);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: var(--tr);
+  white-space: nowrap;
+}
+.retention-seg-btn:hover:not(.active) { background: var(--card); color: var(--t1); }
+.retention-seg-btn.active             { background: var(--card); color: var(--brand); font-weight: 700; box-shadow: var(--s-xs); }
+.retention-seg-btn i { font-size: 11px; }
+/* Security Retention statuses reuse the same .pay-status pill shape */
+.pay-status.active    { background: rgba(22, 163, 74, .12);  color: #16A34A; border: 1px solid rgba(22, 163, 74, .25); }
+.pay-status.completed { background: rgba(2, 132, 199, .12);  color: #0284C7; border: 1px solid rgba(2, 132, 199, .25); }
+.pay-status.paused    { background: rgba(217, 119, 6, .12);  color: #D97706; border: 1px solid rgba(217, 119, 6, .25); }
+.pay-status.disabled  { background: rgba(100, 116, 139, .12); color: #64748B; border: 1px solid rgba(100, 116, 139, .25); }
+
+/* ─── Security Retention Report (HR Reports) ─── */
+.rtn-back-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px; margin-bottom: 16px;
+  border: 1.5px solid var(--bl); border-radius: var(--r-md);
+  background: var(--card); color: var(--t2);
+  font: 700 12.5px/1 var(--hr-font); cursor: pointer; transition: var(--tr);
+}
+.rtn-back-btn:hover { border-color: var(--bm); color: var(--brand); background: var(--muted); }
+
+.rtn-kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
+.rtn-kpi {
+  position: relative; overflow: hidden;
+  background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg);
+  padding: 14px 16px; box-shadow: var(--s-sm);
+}
+.rtn-kpi::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+.rtn-kpi.k-blue::before   { background: var(--brand-gradient, linear-gradient(90deg, #1E3A8A, #2563EB)); }
+.rtn-kpi.k-green::before  { background: linear-gradient(90deg, #16A34A, #22C55E); }
+.rtn-kpi.k-amber::before  { background: linear-gradient(90deg, #D97706, #F59E0B); }
+.rtn-kpi.k-purple::before { background: linear-gradient(90deg, #7C3AED, #A78BFA); }
+.rtn-kpi.k-teal::before   { background: linear-gradient(90deg, #0F766E, #14B8A6); }
+.rtn-kpi-label { font: 800 9.5px/1.3 var(--hr-font); text-transform: uppercase; letter-spacing: .4px; color: var(--tm); }
+.rtn-kpi-val   { font: 800 17px/1.2 var(--hr-font); color: var(--t1); margin-top: 8px; letter-spacing: -.01em; }
+
+.rtn-filters {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+  padding: 16px 18px; margin-bottom: 16px;
+  background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg);
+}
+.rtn-field { display: flex; flex-direction: column; gap: 6px; min-width: 150px; }
+.rtn-field label { font: 800 10px/1 var(--hr-font); text-transform: uppercase; letter-spacing: .4px; color: var(--tm); }
+.rtn-field select, .rtn-field input {
+  padding: 9px 12px; border: 1.5px solid var(--bl); border-radius: var(--r-md);
+  font: 700 12.5px/1 var(--hr-font); color: var(--t1); background: var(--card); cursor: pointer;
+}
+.rtn-field select:focus, .rtn-field input:focus { outline: none; border-color: var(--brand); box-shadow: var(--shadow-flatten, 0 0 0 3px rgba(var(--brand-primary-rgb), .1)); }
+.rtn-actions { display: flex; gap: 8px; margin-left: auto; }
+
+.rtn-table-wrap {
+  background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg);
+  overflow-x: auto; box-shadow: var(--s-sm); margin-bottom: 16px;
+}
+.rtn-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.rtn-table th {
+  background: linear-gradient(135deg, rgba(var(--brand-primary-rgb), .06), rgba(var(--brand-primary-rgb), .02));
+  color: var(--tm); font: 800 10px/1 var(--hr-font); text-transform: uppercase; letter-spacing: .4px;
+  padding: 11px 12px; text-align: left; border-bottom: 2px solid var(--bl); white-space: nowrap;
+}
+.rtn-table th.num, .rtn-table td.num { text-align: right; }
+.rtn-table td { padding: 10px 12px; border-bottom: 1px solid var(--bl); color: var(--t2); white-space: nowrap; }
+.rtn-table tbody tr:hover { background: rgba(var(--brand-primary-rgb), .03); }
+[data-theme="dark"] .rtn-table th { background: linear-gradient(135deg, rgba(59,130,246,.1), rgba(59,130,246,.03)); }
+
+@media (max-width: 1100px) { .rtn-kpis { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px)  { .rtn-filters { flex-direction: column; align-items: stretch; } .rtn-actions { margin-left: 0; } }
+`;
+
 export const HR_CSS = `
 :root,
 .hrb-root,

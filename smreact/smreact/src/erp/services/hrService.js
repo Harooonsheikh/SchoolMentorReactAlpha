@@ -243,6 +243,16 @@ export async function deleteHrDesig({ id }) {
   return json;
 }
 
+/* ─── Security Retention setup (session-local) ───
+   The live API has no retention fields yet, so each employee's retention
+   setup is kept here keyed by employee ID (eid) and merged into every
+   employee-list read. It lasts for the browser session until the backend
+   stores it. */
+const retentionSetupByEid = new Map();
+export function setLocalRetentionSetup(eid, setup) {
+  if (eid) retentionSetupByEid.set(String(eid), setup || null);
+}
+
 /* ─── Employee Management — real API (LaunchSetup) ─── */
 /* ─── Employee Management — real API (LaunchSetup) ───
    Backend requires isActive as a query param, so Active + Inactive
@@ -274,7 +284,10 @@ export async function getHrEmployees() {
     fetchByStatus(false),
   ]);
 
-  return [...activeList, ...inactiveList].map(mapApiEmployeeToEmp);
+  return [...activeList, ...inactiveList].map(mapApiEmployeeToEmp).map((e) => {
+    const setup = retentionSetupByEid.get(String(e.eid));
+    return setup ? { ...e, securityRetention: setup } : e;
+  });
 }
 export async function restoreHrEmployee({ id }) {
   const modifiedBy = Number(sessionStorage.getItem('UserID')) || 0;   // jis user ne restore kiya

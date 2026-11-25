@@ -328,3 +328,21 @@ export async function saveInvSale({ cart = [], buyer, discAmount = 0, discType =
   };
   return postJson('save', body, 'Could not save sale');
 }
+
+
+/* ─── POS student credit (session) ───
+   A sale billed to a student can be paid partly; the rest is that student's
+   credit, recovered later through credit receipts. The live sale API has no
+   paid / balance / student fields yet, so these are kept for this browser
+   session (like the Wallets port). Receipt ids are CRR-<n>. */
+const posSessionSaleMeta = {};
+const posSessionCreditReceipts = [];
+let posSessionNextCreditNo = 1;
+export function getPosSaleMeta() { return posSessionSaleMeta; }
+export function setPosSaleMeta(no, meta) { posSessionSaleMeta[no] = meta; }
+export function listInvCreditReceipts() { return [...posSessionCreditReceipts]; }
+export async function saveInvCreditReceipt(payload) {
+  const record = { ...payload, id: `CRR-${posSessionNextCreditNo++}`, createdAt: new Date().toISOString() };
+  posSessionCreditReceipts.unshift(record);
+  return { ...record };
+}

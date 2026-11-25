@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as inventoryService from '../services/inventoryService';
+import * as studentService from '../services/studentService';
+import * as accountsService from '../services/accountsService';
 import * as approvalsService from '../services/approvalsService';
 import { getPendingAdds, addPendingAdd, removePendingAdd, reconcilePendingAdds } from '../services/pendingAddsStore';
 import useAsync from '../hooks/useAsync';
@@ -1805,10 +1807,186 @@ function InvWithdrawDialog({ cfg, onConfirm, onClose }) {
      • Products       — manage shop products    (step 4)
      • Sales History  — receipts + reprint      (step 4)
    ═══════════════════════════════════════════════════════════════════ */
+const POS_WALLET_TYPE = { cash: 'Cash', bank: 'Bank', owner: 'Owner', other: 'Other' };
+const posActiveWallets = (accounts) => (accounts || []).filter(a => (a.status || 'active') === 'active');
+const posDefaultWallet = (accounts) => { const w = posActiveWallets(accounts); return w.find(a => a.isDefault) || w[0] || null; };
+const posWalletLabel = (a) => `${a.name} — ${POS_WALLET_TYPE[a.type] || 'Other'}`;
+/* A sensible wallet for a payment method: cash → the cash wallet,
+   anything else → the first bank wallet (the user can still change it). */
+const posWalletForMethod = (accounts, method, currentId) => {
+  const w = posActiveWallets(accounts);
+  const cur = w.find(a => a.id === currentId);
+  if (method === 'Cash') return (cur && cur.type === 'cash') ? cur.id : (w.find(a => a.type === 'cash') || posDefaultWallet(accounts) || {}).id;
+  return (cur && cur.type === 'bank') ? cur.id : (w.find(a => a.type === 'bank') || cur || {}).id;
+};
+
+/* "Received In" wallet picker — used at checkout and when receiving credit. */
+function PosWalletSelect({ accounts, value, onChange, label = 'Received In (Wallet)', hint }) {
+  const wallets = posActiveWallets(accounts);
+  const def = posDefaultWallet(accounts);
+  return (
+    <div className="fee-field">
+      <span className="fee-label"><i className="fa-solid fa-wallet" style={{ marginRight: 5 }}></i>{label}</span>
+      <div className="fee-select-wrap">
+        <select className="fee-select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+          {wallets.length === 0 && <option value="">No wallets set up in Accounts</option>}
+          {wallets.map(a => <option key={a.id} value={a.id}>{posWalletLabel(a)}{def && a.id === def.id ? ' (Default)' : ''}</option>)}
+        </select>
+        <i className="fa-solid fa-chevron-down"></i>
+      </div>
+      {hint && <div className="pos-wallet-hint"><i className="fa-solid fa-circle-info"></i> {hint}</div>}
+    </div>
+  );
+}
+const salePaid    = (s) => (s.paid == null ? s.total : s.paid);
+const saleBalance = (s) => Math.max(0, (s.total || 0) - salePaid(s));
+const posStudentLabel = (st) => `${st.name} — ${st.cls} ${st.sec}`;
+const posInitials = (name) => String(name || '').split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+const posDaysSince = (iso) => Math.max(0, Math.round((new Date(todayISO()) - new Date(iso)) / 86400000));
+
+/* Students module classes → one flat, searchable list. */
+function posFlattenStudents(classes) {
+  const out = [];
+  (classes || []).forEach(c => (c.students || []).forEach(s => out.push({
+    reg: s.reg, adm: s.adm, name: `${s.first} ${s.last}`.trim(), father: s.father || '',
+    cls: c.cls, sec: c.sec, mobile: s.mobile || '',
+  })));
+  return out;
+}
+
+/* Per-student credit position from sales + credit receipts.
+   Returns { rows, byReg, totals }. Each row:
+     student, invoices[] (oldest first, with settled / open / status),
+     receipts[] (newest first), entries[] (ledger, oldest first, with
+     running balance), creditGiven, received, outstanding,
+     lastDate, oldestOpenDate. */
+function posCreditLedger(sales, receipts) {
+  const byReg = {};
+  const rowFor = (student) => {
+    if (!byReg[student.reg]) byReg[student.reg] = { student, invoices: [], receipts: [], entries: [], creditGiven: 0, received: 0, outstanding: 0, lastDate: '', oldestOpenDate: '' };
+    return byReg[student.reg];
+  };
+  (sales || []).forEach(s => {
+    if (!s.student || saleBalance(s) <= 0) return;
+    const r = rowFor(s.student);
+    r.invoices.push({ no: s.no, date: s.date, total: s.total, paidAtSale: salePaid(s), balance: saleBalance(s), lines: s.lines || [] });
+  });
+  (receipts || []).forEach(rc => {
+    const r = byReg[rc.reg];
+    if (r) r.receipts.push(rc);
+  });
+
+  Object.values(byReg).forEach(r => {
+    r.invoices.sort((a, b) => (a.date === b.date ? (a.no < b.no ? -1 : 1) : a.date < b.date ? -1 : 1));
+    r.receipts.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    r.creditGiven = r.invoices.reduce((a, i) => a + i.balance, 0);
+    r.received    = r.receipts.reduce((a, x) => a + x.amount, 0);
+    r.outstanding = Math.max(0, r.creditGiven - r.received);
+
+    /* settle oldest invoices first */
+    let pool = r.received;
+    r.invoices.forEach(inv => {
+      inv.settled = Math.min(inv.balance, pool);
+      pool -= inv.settled;
+      inv.open = inv.balance - inv.settled;
+      inv.status = inv.open === 0 ? 'Cleared' : (inv.settled > 0 || inv.paidAtSale > 0) ? 'Partly paid' : 'Unpaid';
+    });
+    const firstOpen = r.invoices.find(i => i.open > 0);
+    r.oldestOpenDate = firstOpen ? firstOpen.date : '';
+
+    /* ledger: credit given (debit) / received (credit), running balance */
+    const ev = [
+      ...r.invoices.map(i => ({ date: i.date, kind: 'sale', ref: i.no, detail: `${i.lines.map(l => `${l.qty}× ${l.name}`).join(', ')} · Total Rs ${fmtMoney(i.total)}, paid Rs ${fmtMoney(i.paidAtSale)} at counter`, debit: i.balance, credit: 0 })),
+      ...r.receipts.map(x => ({ date: x.date, kind: 'receipt', ref: x.id, detail: `${x.method}${x.acctName ? ` → ${x.acctName}` : ''}${x.note ? ` · ${x.note}` : ''} · by ${x.receivedBy || '—'}`, debit: 0, credit: x.amount })),
+    ].sort((a, b) => (a.date === b.date ? (a.kind === 'sale' ? -1 : 1) : a.date < b.date ? -1 : 1));
+    let run = 0;
+    r.entries = ev.map(e => { run += e.debit - e.credit; return { ...e, balance: run }; });
+    r.lastDate = ev.length ? ev[ev.length - 1].date : '';
+  });
+
+  const rows = Object.values(byReg);
+  const totals = {
+    creditGiven: rows.reduce((a, r) => a + r.creditGiven, 0),
+    received:    rows.reduce((a, r) => a + r.received, 0),
+    outstanding: rows.reduce((a, r) => a + r.outstanding, 0),
+    withCredit:  rows.filter(r => r.outstanding > 0).length,
+  };
+  return { rows, byReg, totals };
+}
+
+/* A4 credit receipt (money received against a student's shop credit). */
+function buildCreditReceiptHTML(rec, student, before, after, school) {
+  const esc = (s) => String(s ?? '').replace(/[<>&"']/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[m]));
+  return `
+    <div class="rhead"><div class="rlogo">${schoolLogoSVG()}</div><div><div class="rname">${esc(school?.name || 'School')}</div><div class="rtitle">Credit Payment Receipt — School Shop</div></div></div>
+    <div class="rfilters">
+      <span><b>Receipt #:</b> ${esc(rec.id)}</span>
+      <span><b>Date:</b> ${invFmtDate(rec.date)}</span>
+      <span><b>Received by:</b> ${esc(rec.receivedBy || 'Front Desk')}</span>
+      ${rec.acctName ? `<span><b>Received in:</b> ${esc(rec.acctName)}</span>` : ''}
+    </div>
+    <div class="rfilters">
+      <span><b>Student:</b> ${esc(student.name)}</span>
+      <span><b>Father:</b> ${esc(student.father)}</span>
+      <span><b>Reg #:</b> ${esc(student.reg)}</span>
+      <span><b>Class:</b> ${esc(student.cls)} ${esc(student.sec)}</span>
+    </div>
+    <table class="tbl">
+      <thead><tr><th>Description</th><th class="r" style="width:140px">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Shop credit outstanding before this payment</td><td class="r">Rs ${fmtMoney(before)}</td></tr>
+        <tr><td>Amount received — ${esc(rec.method)}${rec.note ? ` (${esc(rec.note)})` : ''}</td><td class="r">– Rs ${fmtMoney(rec.amount)}</td></tr>
+      </tbody>
+      <tfoot><tr class="tot"><td>Remaining credit</td><td class="r">Rs ${fmtMoney(after)}</td></tr></tfoot>
+    </table>
+    <div style="margin-top:14px;font-size:11px;color:#555">${after === 0 ? 'The shop credit for this student is now fully cleared. Thank you.' : 'Thank you. Please keep this receipt for your records.'}</div>
+    <div class="rfoot">Generated on ${invFmtDate(todayISO())} · School Mentor ERP — POS Credit</div>`;
+}
+
+/* A4 credit statement for one student (ledger + invoices). */
+function buildCreditStatementHTML(row, school) {
+  const esc = (s) => String(s ?? '').replace(/[<>&"']/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[m]));
+  const st = row.student;
+  const ledger = row.entries.map(e => `
+    <tr>
+      <td>${invFmtDate(e.date)}</td>
+      <td>${e.kind === 'sale' ? 'Credit sale' : 'Payment received'}</td>
+      <td style="font-weight:700">${esc(e.ref)}</td>
+      <td style="font-size:10px;color:#475569">${esc(e.detail)}</td>
+      <td class="r">${e.debit ? `Rs ${fmtMoney(e.debit)}` : ''}</td>
+      <td class="r">${e.credit ? `Rs ${fmtMoney(e.credit)}` : ''}</td>
+      <td class="r" style="font-weight:700">Rs ${fmtMoney(e.balance)}</td>
+    </tr>`).join('');
+  return `
+    <div class="rhead"><div class="rlogo">${schoolLogoSVG()}</div><div><div class="rname">${esc(school?.name || 'School')}</div><div class="rtitle">Student Shop Credit Statement</div></div></div>
+    <div class="rfilters">
+      <span><b>Student:</b> ${esc(st.name)}</span>
+      <span><b>Father:</b> ${esc(st.father)}</span>
+      <span><b>Reg #:</b> ${esc(st.reg)}</span>
+      <span><b>Class:</b> ${esc(st.cls)} ${esc(st.sec)}</span>
+      <span><b>As of:</b> ${invFmtDate(todayISO())}</span>
+    </div>
+    <div class="rfilters">
+      <span><b>Credit given:</b> Rs ${fmtMoney(row.creditGiven)}</span>
+      <span><b>Received:</b> Rs ${fmtMoney(row.received)}</span>
+      <span><b>Outstanding:</b> Rs ${fmtMoney(row.outstanding)}</span>
+    </div>
+    <table class="tbl">
+      <thead><tr><th style="width:80px">Date</th><th style="width:100px">Type</th><th style="width:72px">Ref</th><th>Details</th><th class="r" style="width:80px">Credit Given</th><th class="r" style="width:80px">Received</th><th class="r" style="width:84px">Balance</th></tr></thead>
+      <tbody>${ledger || '<tr><td colspan="7" style="text-align:center;color:#94A3B8">No credit activity.</td></tr>'}</tbody>
+      <tfoot><tr class="tot"><td colspan="4">Outstanding</td><td class="r">Rs ${fmtMoney(row.creditGiven)}</td><td class="r">Rs ${fmtMoney(row.received)}</td><td class="r">Rs ${fmtMoney(row.outstanding)}</td></tr></tfoot>
+    </table>
+    <div class="rfoot">Generated on ${invFmtDate(todayISO())} · School Mentor ERP — POS Credit</div>`;
+}
+
+
+const POS_PAY_METHODS = ['Cash', 'Bank Transfer', 'Online', 'Cheque'];
+
 const POS_SUBTABS = [
   { id: 'sell',     icon: 'fa-cart-shopping', label: 'New Sale' },
   { id: 'products', icon: 'fa-box-open',      label: 'Products' },
   { id: 'sales',    icon: 'fa-receipt',       label: 'Sales History' },
+  { id: 'credits',  icon: 'fa-hand-holding-dollar', label: 'Student Credit' },
 ];
 
 function PointOfSale({ toast }) {
@@ -1827,7 +2005,16 @@ function PointOfSale({ toast }) {
   useEffect(() => { if (salesQ.data) setSales(salesQ.data); }, [salesQ.data]);
 
   const productList = useMemo(() => products || [], [products]);
-  const saleList    = useMemo(() => sales    || [], [sales]);
+  /* Sales show the session's student / paid / balance (POS credit is session-only). */
+  const saleList    = useMemo(() => (sales || []).map(s => ({ ...s, ...(inventoryService.getPosSaleMeta()[s.no] || {}) })), [sales]);
+
+  /* Wallets (Accounts) money is received into, students for Bill To, and the credit ledger. */
+  const { data: finAccounts = [] } = useAsync(accountsService.getFinAccounts, []);
+  const walletName = (id) => (finAccounts.find(a => a.id === id) || {}).name || '';
+  const { data: stuClasses = [] } = useAsync(studentService.getStuClasses, []);
+  const students = useMemo(() => posFlattenStudents(stuClasses), [stuClasses]);
+  const [creditReceipts, setCreditReceipts] = useState(() => inventoryService.listInvCreditReceipts());
+  const ledger = useMemo(() => posCreditLedger(saleList, creditReceipts), [saleList, creditReceipts]);
 
   /* Sub-tab state */
   const [sub, setSub] = useState('sell');
@@ -1843,9 +2030,37 @@ function PointOfSale({ toast }) {
 
   /* Sale handler — persist to API, re-fetch products (stock reduced
      server-side) + sales, then print the receipt. */
-  const finalizeSale = async ({ cart, buyer, discAmount, discType, discInput, fmt }) => {
+  /* Money received against a student's shop credit. */
+  const receiveCredit = async ({ student, amount, date, method, note, acctId, print }) => {
+    const before = ledger.byReg[student.reg]?.outstanding || 0;
+    const wallet = acctId || posDefaultWallet(finAccounts)?.id || '';
+    const rec = await inventoryService.saveInvCreditReceipt({
+      date, reg: student.reg, amount, method, note: note || '', receivedBy: 'Front Desk',
+      acctId: wallet, acctName: walletName(wallet),
+    });
+    setCreditReceipts(prev => [rec, ...(prev || [])]);
+    /* money in — same revenue head as shop sales, into the chosen wallet */
+    accountsService.saveAccTxn({
+      seg: 'rev', headNo: 222, head: 'Shop / POS Sales',
+      date, month: date.slice(0, 7),
+      detail: `POS Credit Recovery — ${rec.id} (${student.name}, ${student.reg}) · ${method}`,
+      amount, chqNo: '', chqDate: '',
+      acctId: wallet,
+      createdBy: 'Front Desk (POS)', createdAt: new Date().toISOString(),
+    }).catch(() => { /* the receipt itself is already recorded above */ });
+    const after = Math.max(0, before - amount);
+    toast(after === 0 ? `Rs ${fmtMoney(amount)} received — ${student.name}'s credit is cleared` : `Rs ${fmtMoney(amount)} received from ${student.name} — Rs ${fmtMoney(after)} still outstanding`, 'success');
+    if (print) openInvoicePrintWindow(`Credit Receipt ${rec.id}`, buildCreditReceiptHTML(rec, student, before, after, school), toast);
+    return rec;
+  };
+
+  /* Sale handler — persist to API, record any credit for this session, post the
+     money received now to the chosen wallet, then print the invoice / receipt. */
+  const finalizeSale = async ({ cart, buyer, student, paid, acctId, discAmount, discType, discInput, fmt }) => {
     const sub2  = cart.reduce((a, c) => a + c.price * c.qty, 0);
     const grand = sub2 - discAmount;
+    const paidNow = paid == null ? grand : Math.max(0, Math.min(grand, Number(paid) || 0));
+    const balance = grand - paidNow;
 
     let saleId;
     try {
@@ -1859,15 +2074,37 @@ function PointOfSale({ toast }) {
     }
 
     const no = saleId ? `RCP-${saleId}` : 'RCP';
+    const wallet = paidNow > 0 ? (acctId || posDefaultWallet(finAccounts)?.id || '') : '';
     const sale = {
-      no, date: todayISO(), buyer: buyer.trim() || 'Walk-in',
+      no, date: todayISO(), buyer: student ? posStudentLabel(student) : (buyer.trim() || 'Walk-in'),
       by: 'Front Desk',
+      ...(student ? { student } : {}),
       lines: cart.map(c => ({ name: c.name, qty: c.qty, price: c.price })),
       subtotal: sub2, discount: discAmount, discType, discInput,
-      total: grand,
+      total: grand, paid: paidNow, balance,
+      ...(wallet ? { acctId: wallet, acctName: walletName(wallet) } : {}),
     };
+    inventoryService.setPosSaleMeta(no, {
+      paid: paidNow, balance,
+      ...(student ? { student } : {}),
+      ...(wallet ? { acctId: wallet, acctName: walletName(wallet) } : {}),
+    });
 
-    toast(`Sale completed — receipt ${no}`, 'success');
+    /* Money received now is posted as revenue to the wallet, fire-and-forget. */
+    if (paidNow > 0) {
+      accountsService.saveAccTxn({
+        seg: 'rev', headNo: 222, head: 'Shop / POS Sales',
+        date: sale.date, month: sale.date.slice(0, 7),
+        detail: `POS Sale — ${no}${balance > 0 ? ` (Rs ${fmtMoney(balance)} on credit)` : ''}`,
+        amount: paidNow, chqNo: '', chqDate: '',
+        acctId: wallet,
+        createdBy: 'Front Desk (POS)', createdAt: new Date().toISOString(),
+      }).catch(() => { /* best-effort — the sale itself is already recorded */ });
+    }
+
+    toast(balance > 0
+      ? `Sale completed — ${no}. Rs ${fmtMoney(balance)} added to ${student.name}'s credit`
+      : `Sale completed — receipt ${no}`, 'success');
 
     /* Refresh from server: stock + the new sale row. */
     reloadProducts();
@@ -1877,7 +2114,6 @@ function PointOfSale({ toast }) {
     if (fmt === 'thermal') openThermalPrintWindow(sale, school, toast);
     else                   openInvoicePrintWindow(`Invoice ${no}`, buildA4InvoiceHTML(sale, school), toast);
   };
-
   return (
     <>
       {/* Overview banner */}
@@ -1935,6 +2171,9 @@ function PointOfSale({ toast }) {
       {sub === 'sell' ? (
         <PosSellView
           products={productList}
+          accounts={finAccounts}
+          students={students}
+          creditByReg={ledger.byReg}
           school={school}
           onFinalizeSale={finalizeSale}
           toast={toast}
@@ -1946,6 +2185,16 @@ function PointOfSale({ toast }) {
           onAdd={async (p) => { const r = await inventoryService.saveInvProduct(p); reloadProducts(); return r; }}
           onUpdate={async (p) => { const r = await inventoryService.saveInvProduct(p); reloadProducts(); return r; }}
           onDelete={async (p) => { const r = await inventoryService.deleteInvProduct(p); reloadProducts(); return r; }}
+          toast={toast}
+        />
+      ) : sub === 'credits' ? (
+        <PosCreditsView
+          ledger={ledger}
+          accounts={finAccounts}
+          sales={saleList}
+          receipts={creditReceipts}
+          school={school}
+          onReceive={receiveCredit}
           toast={toast}
         />
       ) : sub === 'sales' ? (
@@ -1965,7 +2214,7 @@ function PointOfSale({ toast }) {
 }
 
 /* ─── New Sale subtab ─── */
-function PosSellView({ products, school, onFinalizeSale, toast }) {
+function PosSellView({ products, accounts = [], students = [], creditByReg = {}, school, onFinalizeSale, toast }) {
   const [search, setSearch]     = useState('');
   /* Products added but still awaiting approval (no real row yet). They show
      in the search dropdown with a Pending tag so the seller can see them,
@@ -1980,6 +2229,9 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
   }, []);
   const [cart, setCart]         = useState([]);
   const [buyer, setBuyer]       = useState('');
+  /* Bill To — optional: a walk-in buyer, or a student from the Students module */
+  const [billTo, setBillTo]     = useState('walkin'); // walkin | student
+  const [student, setStudent]   = useState(null);
   const [discInput, setDiscInput] = useState(0);
   const [discType, setDiscType] = useState('rs');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -2032,7 +2284,7 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
   };
 
   const removeLine = (pid) => setCart(prev => prev.filter(c => c.id !== pid));
-  const clearCart  = () => { setCart([]); setDiscInput(0); setBuyer(''); };
+  const clearCart  = () => { setCart([]); setDiscInput(0); setBuyer(''); setStudent(null); setBillTo('walkin'); };
 
   /* Totals */
   const subtotal     = useMemo(() => cart.reduce((a, c) => a + c.price * c.qty, 0), [cart]);
@@ -2048,8 +2300,8 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
     if (!cart.length) { toast('Cart is empty — add a product first', 'error'); return; }
     setCheckoutOpen(true);
   };
-  const handleCheckout = (fmt) => {
-    onFinalizeSale({ cart, buyer, discAmount, discType, discInput, fmt });
+  const handleCheckout = (fmt, paid, acctId) => {
+    onFinalizeSale({ cart, buyer, student: billTo === 'student' ? student : null, paid, acctId, discAmount, discType, discInput, fmt });
     clearCart();
     setCheckoutOpen(false);
   };
@@ -2058,7 +2310,7 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
     <>
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span> Tap a product to add it to the cart, or search by name. Set the quantity, enter the buyer's name, then generate the receipt. Stock reduces automatically.</span>
+        <span> Tap a product to add it to the cart, or search by name. Set the quantity, optionally bill the sale to a student (search by name, father, reg no. or class) — a student sale can also be paid partly, with the rest kept as student credit. Stock reduces automatically.</span>
       </div>
 
       <div className="inv-pos-wrap">
@@ -2204,10 +2456,16 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
           </div>
 
           <div className="inv-cart-foot">
-            <div className="fee-field" style={{ marginBottom: 12 }}>
-              <span className="fee-label">Buyer Name (Student / Parent)</span>
-              <input className="fee-input" value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="e.g. Ahmed Raza — Class 5B" />
-            </div>
+            <PosBillTo
+              billTo={billTo}
+              setBillTo={(v) => { setBillTo(v); if (v === 'walkin') setStudent(null); }}
+              buyer={buyer}
+              setBuyer={setBuyer}
+              student={student}
+              setStudent={setStudent}
+              students={students}
+              creditByReg={creditByReg}
+            />
             <div className="fee-field" style={{ marginBottom: 12 }}>
               <span className="fee-label">Discount (optional)</span>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -2254,7 +2512,10 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
       {checkoutOpen && (
         <PosCheckoutModal
           cart={cart}
-          buyer={buyer.trim() || 'Walk-in'}
+          accounts={accounts}
+          buyer={billTo === 'student' && student ? posStudentLabel(student) : (buyer.trim() || 'Walk-in')}
+          student={billTo === 'student' ? student : null}
+          existingCredit={billTo === 'student' && student ? (creditByReg[student.reg]?.outstanding || 0) : 0}
           subtotal={subtotal}
           discAmount={discAmount}
           discType={discType}
@@ -2270,8 +2531,16 @@ function PosSellView({ products, school, onFinalizeSale, toast }) {
 }
 
 /* ─── Checkout modal (summary + A4/Thermal picker) ─── */
-function PosCheckoutModal({ cart, buyer, subtotal, discAmount, discType, discInput, total, itemCount, onClose, onConfirm }) {
+function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit = 0, subtotal, discAmount, discType, discInput, total, itemCount, onClose, onConfirm }) {
   const [fmt, setFmt] = useState('a4');
+  const [acctId, setAcctId] = useState(() => posDefaultWallet(accounts)?.id || '');
+  useEffect(() => { if (!acctId && accounts.length) setAcctId(posDefaultWallet(accounts)?.id || ''); }, [accounts, acctId]);
+  /* Payment: full, or partial with the rest as the student's credit */
+  const [payMode, setPayMode] = useState('full'); // full | credit
+  const [paidInput, setPaidInput] = useState('');
+  const paidNow  = payMode === 'credit' ? Math.max(0, Math.min(total, Number(paidInput) || 0)) : total;
+  const balance  = total - paidNow;
+  const creditInvalid = payMode === 'credit' && (paidInput === '' || Number(paidInput) < 0 || Number(paidInput) >= total);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2304,8 +2573,8 @@ function PosCheckoutModal({ cart, buyer, subtotal, discAmount, discType, discInp
         <div className="fee-modal-body">
           <div className="inv-co-sum">
             <div className="inv-co-line">
-              <span className="nm"><i className="fa-solid fa-user" style={{ marginRight: 6, color: 'var(--brand-primary)' }}></i> Buyer</span>
-              <span className="vl">{buyer}</span>
+              <span className="nm"><i className={`fa-solid ${student ? 'fa-user-graduate' : 'fa-user'}`} style={{ marginRight: 6, color: 'var(--brand-primary)' }}></i> {student ? 'Billed to' : 'Buyer'}</span>
+              <span className="vl">{buyer}{student ? <span style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Reg {student.reg} · Father {student.father}</span> : null}</span>
             </div>
             {cart.map(c => (
               <div key={c.id} className="inv-co-line">
@@ -2328,6 +2597,58 @@ function PosCheckoutModal({ cart, buyer, subtotal, discAmount, discType, discInp
               <span className="vl">Rs {fmtMoney(total)}</span>
             </div>
           </div>
+
+          <div className="fee-label" style={{ margin: '18px 0 8px' }}>Payment</div>
+          <div className="inv-fmt-grid">
+            <button type="button" className={`inv-fmt-opt${payMode === 'full' ? ' active' : ''}`} onClick={() => setPayMode('full')}>
+              <div className="inv-fmt-ic"><i className="fa-solid fa-money-bill-wave"></i></div>
+              <div className="inv-fmt-name">Full Payment</div>
+              <div className="inv-fmt-desc">Rs {fmtMoney(total)} received now</div>
+              <div className="inv-fmt-check"><i className="fa-solid fa-circle-check"></i></div>
+            </button>
+            <Tooltip text={student ? 'Receive part now; the rest is added to the student\'s credit' : 'Select a student under "Bill To" to sell on credit'}>
+              <button type="button" disabled={!student} style={!student ? { opacity: .5, cursor: 'not-allowed' } : undefined}
+                className={`inv-fmt-opt${payMode === 'credit' ? ' active' : ''}`} onClick={() => student && setPayMode('credit')}>
+                <div className="inv-fmt-ic"><i className="fa-solid fa-hand-holding-dollar"></i></div>
+                <div className="inv-fmt-name">Partial / Credit</div>
+                <div className="inv-fmt-desc">{student ? 'Rest goes to the student\'s shop credit' : 'Needs a student under Bill To'}</div>
+                <div className="inv-fmt-check"><i className="fa-solid fa-circle-check"></i></div>
+              </button>
+            </Tooltip>
+          </div>
+          {payMode === 'credit' && (
+            <div className="pos-credit-box">
+              <div className="fee-field" style={{ marginBottom: 0 }}>
+                <span className="fee-label">Amount received now (Rs)</span>
+                <input className="fee-input" type="number" min="0" max={total - 1} autoFocus value={paidInput}
+                  onChange={(e) => setPaidInput(e.target.value)} placeholder="e.g. 0 or 500" />
+              </div>
+              <div className="pos-credit-split">
+                <div><span>Total</span><strong>Rs {fmtMoney(total)}</strong></div>
+                <div><span>Paid now</span><strong>Rs {fmtMoney(paidNow)}</strong></div>
+                <div className="amber"><span>On credit</span><strong>Rs {fmtMoney(balance)}</strong></div>
+              </div>
+              {existingCredit > 0 && (
+                <div className="pos-credit-note">
+                  <i className="fa-solid fa-circle-info"></i> {student.name} already owes Rs {fmtMoney(existingCredit)}. After this sale: <strong>Rs {fmtMoney(existingCredit + balance)}</strong>.
+                </div>
+              )}
+              {creditInvalid && paidInput !== '' && (
+                <div className="pos-credit-note red"><i className="fa-solid fa-triangle-exclamation"></i> Amount received must be less than the total (Rs {fmtMoney(total)}). For full payment choose Full Payment.</div>
+              )}
+            </div>
+          )}
+
+          {paidNow > 0 && (
+            <div className="pos-wallet-box">
+              <PosWalletSelect
+                accounts={accounts}
+                value={acctId}
+                onChange={setAcctId}
+                hint={`Rs ${fmtMoney(paidNow)} received now is posted to this wallet in Accounts.`}
+              />
+            </div>
+          )}
 
           <div className="fee-label" style={{ margin: '18px 0 8px' }}>Select Invoice Format</div>
           <div className="inv-fmt-grid">
@@ -2353,11 +2674,592 @@ function PosCheckoutModal({ cart, buyer, subtotal, discAmount, discType, discInp
           <Tooltip text={fmt === 'thermal' ? 'Finalise sale & print thermal receipt' : 'Finalise sale & print A4 invoice'}>
             <button
               className="fee-btn fee-btn-primary inv-confirm-sale"
-              onClick={() => onConfirm(fmt)}
+              disabled={creditInvalid}
+              onClick={() => onConfirm(fmt, paidNow, acctId)}
             >
-              <i className="fa-solid fa-circle-check"></i> Confirm &amp; Print Invoice
+              <i className="fa-solid fa-circle-check"></i> {payMode === 'credit' ? `Confirm — Rs ${fmtMoney(balance)} on credit` : 'Confirm & Print Invoice'}
             </button>
           </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ─── Bill To (optional): walk-in buyer, or a student from the Students
+   module — search by name, father name, reg / admission no. or class. ─── */
+function PosBillTo({ billTo, setBillTo, buyer, setBuyer, student, setStudent, students, creditByReg }) {
+  const [q, setQ]       = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const results = useMemo(() => {
+    const t = q.toLowerCase().trim();
+    const list = t
+      ? students.filter(s => `${s.name} ${s.father} ${s.reg} ${s.adm} ${s.cls} ${s.sec} ${s.cls}-${s.sec} ${s.cls} ${s.sec}`.toLowerCase().includes(t))
+      : students;
+    return list.slice(0, 8);
+  }, [students, q]);
+
+  const owes = (reg) => creditByReg[reg]?.outstanding || 0;
+
+  return (
+    <div className="fee-field" style={{ marginBottom: 12 }}>
+      <span className="fee-label">Bill To <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></span>
+      <div className="pos-billto-seg" role="tablist">
+        <button type="button" className={billTo === 'walkin' ? 'active' : ''} onClick={() => setBillTo('walkin')}>
+          <i className="fa-solid fa-user"></i> Walk-in
+        </button>
+        <button type="button" className={billTo === 'student' ? 'active' : ''} onClick={() => setBillTo('student')}>
+          <i className="fa-solid fa-user-graduate"></i> Student
+        </button>
+      </div>
+
+      {billTo === 'walkin' ? (
+        <input className="fee-input" style={{ marginTop: 8 }} value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="Buyer name (optional) — e.g. Parent" />
+      ) : student ? (
+        <div className="pos-stu-card">
+          <div className="pos-stu-av">{posInitials(student.name)}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pos-stu-name">{student.name}</div>
+            <div className="pos-stu-sub">Father: {student.father}</div>
+            <div className="pos-stu-sub">Reg {student.reg} · {student.cls} – {student.sec}</div>
+            {owes(student.reg) > 0 && (
+              <span className="inv-pill inv-pill-amber" style={{ marginTop: 5, display: 'inline-block' }}>Existing credit Rs {fmtMoney(owes(student.reg))}</span>
+            )}
+          </div>
+          <Tooltip text="Choose a different student">
+            <button type="button" className="inv-cart-del" onClick={() => setStudent(null)} aria-label="Change student">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+      ) : (
+        <div ref={wrapRef} style={{ position: 'relative', marginTop: 8 }}>
+          <div className="fee-search-box">
+            <i className="fa-solid fa-magnifying-glass"></i>
+            <input
+              placeholder="Search name, father, reg no. or class"
+              value={q}
+              onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+              onFocus={() => setOpen(true)}
+              autoComplete="off"
+            />
+          </div>
+          {open && (
+            <div className="inv-pos-searchresults open pos-stu-results">
+              {results.length === 0 ? (
+                <div className="inv-pos-sr-item" style={{ cursor: 'default', color: 'var(--text-muted)' }}>No student found</div>
+              ) : results.map(st => (
+                <div key={st.reg} className="inv-pos-sr-item" onClick={() => { setStudent(st); setQ(''); setOpen(false); }}>
+                  <div className="pos-stu-av sm">{posInitials(st.name)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="inv-pos-sr-name">{st.name}</div>
+                    <div className="inv-pos-sr-sub">Father: {st.father}</div>
+                    <div className="inv-pos-sr-sub">Reg {st.reg} · {st.cls} – {st.sec}</div>
+                  </div>
+                  {owes(st.reg) > 0 && <span className="inv-pill inv-pill-amber" style={{ whiteSpace: 'nowrap' }}>Owes Rs {fmtMoney(owes(st.reg))}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   STUDENT CREDIT — one row per student with shop credit. Click a row
+   for the full credit history; receive a payment at any time; two
+   reports: Outstanding Credit and Credit Recovery (receipts).
+   ═══════════════════════════════════════════════════════════════════ */
+function PosCreditsView({ ledger, accounts = [], sales, receipts, school, onReceive, toast }) {
+  const [q, setQ]           = useState('');
+  const [cls, setCls]       = useState('');
+  const [status, setStatus] = useState('outstanding'); // outstanding | cleared | all
+  const [historyReg, setHistoryReg] = useState(null);
+  const [receiveReg, setReceiveReg] = useState(null);
+  const [report, setReport] = useState(null);           // pos_credit_out | pos_credit_rcv
+
+  const month = todayISO().slice(0, 7);
+  const monthReceipts = receipts.filter(r => r.date.slice(0, 7) === month);
+  const receivedThisMonth = monthReceipts.reduce((a, r) => a + r.amount, 0);
+
+  const classOpts = useMemo(() => Array.from(new Set(ledger.rows.map(r => `${r.student.cls} – ${r.student.sec}`))).sort(), [ledger.rows]);
+
+  const rows = useMemo(() => {
+    const t = q.toLowerCase().trim();
+    return ledger.rows
+      .filter(r => status === 'all' ? true : status === 'outstanding' ? r.outstanding > 0 : r.outstanding === 0)
+      .filter(r => !cls || `${r.student.cls} – ${r.student.sec}` === cls)
+      .filter(r => !t || `${r.student.name} ${r.student.father} ${r.student.reg} ${r.student.adm}`.toLowerCase().includes(t))
+      .sort((a, b) => (b.outstanding - a.outstanding) || a.student.name.localeCompare(b.student.name));
+  }, [ledger.rows, q, cls, status]);
+
+  /* reports use the same date pickers as the Reports tab */
+  const nowRef = useMemo(() => new Date(), []);
+  const iso = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+  const [rFrom, setRFrom] = useState(iso(new Date(nowRef.getFullYear(), nowRef.getMonth() - 2, 1)));
+  const [rTo, setRTo]     = useState(iso(nowRef));
+  const generateReport = (style, format) => {
+    let opts = {};
+    if (report === 'pos_credit_rcv') {
+      if (!rFrom || !rTo) { toast('Please select both dates', 'error'); return; }
+      if (rFrom > rTo)    { toast('"From" date must be before "To" date', 'error'); return; }
+      opts = { from: rFrom, to: rTo };
+    }
+    const title = INV_REPORT_TITLES[report];
+    const html = buildInvReportHtml({ title, isBW: style === 'bw', accent: '#1E3A8A', innerHtml: buildInvReportBody(report, opts, { sales, creditReceipts: receipts }), school, format });
+    openInvReportWindow(html, toast, format, `${reportFileName(title)}.doc`);
+    setReport(null);
+  };
+
+  const historyRow = historyReg ? ledger.byReg[historyReg] : null;
+  const receiveRow = receiveReg ? ledger.byReg[receiveReg] : null;
+
+  return (
+    <>
+      <div className="fee-kpis">
+        <div className="fee-kpi k-amber">
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Total Outstanding</span>
+            <span className="fee-kpi-ic" style={{ background: 'rgba(217,119,6,.12)', color: '#D97706' }}><i className="fa-solid fa-hand-holding-dollar"></i></span>
+          </div>
+          <div className="fee-kpi-val">Rs {fmtMoney(ledger.totals.outstanding)}</div>
+          <div className="fee-kpi-meta">owed by {ledger.totals.withCredit} student(s)</div>
+        </div>
+        <div className="fee-kpi k-green">
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Received This Month</span>
+            <span className="fee-kpi-ic" style={{ background: 'rgba(22,163,74,.12)', color: '#16A34A' }}><i className="fa-solid fa-sack-dollar"></i></span>
+          </div>
+          <div className="fee-kpi-val">Rs {fmtMoney(receivedThisMonth)}</div>
+          <div className="fee-kpi-meta">{monthReceipts.length} credit receipt(s)</div>
+        </div>
+        <div className="fee-kpi k-blue">
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Total Credit Given</span>
+            <span className="fee-kpi-ic" style={{ background: 'rgba(30,64,175,.10)', color: '#1E40AF' }}><i className="fa-solid fa-file-invoice"></i></span>
+          </div>
+          <div className="fee-kpi-val">Rs {fmtMoney(ledger.totals.creditGiven)}</div>
+          <div className="fee-kpi-meta">all time · Rs {fmtMoney(ledger.totals.received)} recovered</div>
+        </div>
+        <div className="fee-kpi k-red">
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Recovery Rate</span>
+            <span className="fee-kpi-ic" style={{ background: 'rgba(220,38,38,.10)', color: '#DC2626' }}><i className="fa-solid fa-chart-pie"></i></span>
+          </div>
+          <div className="fee-kpi-val">{ledger.totals.creditGiven ? Math.round((ledger.totals.received / ledger.totals.creditGiven) * 100) : 0}%</div>
+          <div className="fee-kpi-meta">of all credit given</div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon"><i className="fa-solid fa-hand-holding-dollar"></i></div>
+            <div>
+              <div className="fee-section-name">Student Credit</div>
+              <div className="fee-section-sub">One row per student · click a row for the full credit history</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <Tooltip text="Who owes how much, as of today — pick style and format">
+              <button className="fee-btn fee-btn-ghost fee-btn-sm acc-dlreport-btn" onClick={() => setReport('pos_credit_out')}>
+                <i className="fa-solid fa-file-export"></i> Outstanding Report
+              </button>
+            </Tooltip>
+            <Tooltip text="Credit payments received between two dates — pick style and format">
+              <button className="fee-btn fee-btn-ghost fee-btn-sm acc-dlreport-btn" onClick={() => setReport('pos_credit_rcv')}>
+                <i className="fa-solid fa-file-export"></i> Recovery Report
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="pos-credit-filters">
+          <div className="fee-search-box" style={{ flex: '1 1 260px' }}>
+            <i className="fa-solid fa-magnifying-glass"></i>
+            <input placeholder="Search student, father or reg no." value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+          <div className="fee-select-wrap" style={{ width: 180 }}>
+            <select className="fee-select" value={cls} onChange={(e) => setCls(e.target.value)}>
+              <option value="">All Classes</option>
+              {classOpts.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <i className="fa-solid fa-chevron-down"></i>
+          </div>
+          <div className="fee-select-wrap" style={{ width: 170 }}>
+            <select className="fee-select" value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="outstanding">Outstanding</option>
+              <option value="cleared">Cleared</option>
+              <option value="all">All Students</option>
+            </select>
+            <i className="fa-solid fa-chevron-down"></i>
+          </div>
+        </div>
+
+        <div className="inv-sales-tablewrap">
+          <table className="inv-sales-table pos-credit-table">
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Father Name</th>
+                <th>Class</th>
+                <th className="c">Credit Invoices</th>
+                <th className="r">Credit Given</th>
+                <th className="r">Received</th>
+                <th className="r">Outstanding</th>
+                <th>Last Activity</th>
+                <th className="c">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan="9" className="inv-sales-empty">
+                  {ledger.rows.length ? 'No students match these filters.' : 'No student credit yet. Sell to a student with "Partial / Credit" payment to start.'}
+                </td></tr>
+              ) : rows.map(r => {
+                const openInv = r.invoices.filter(i => i.open > 0).length;
+                return (
+                  <tr key={r.student.reg} className="pos-credit-row" onClick={() => setHistoryReg(r.student.reg)}>
+                    <td>
+                      <div className="pos-credit-stu">
+                        <div className="pos-stu-av sm">{posInitials(r.student.name)}</div>
+                        <div>
+                          <div className="pos-credit-name">{r.student.name}</div>
+                          <div className="pos-credit-reg">Reg {r.student.reg}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{r.student.father}</td>
+                    <td>{r.student.cls} – {r.student.sec}</td>
+                    <td className="c">{openInv ? <span className="inv-pill inv-pill-amber">{openInv} open</span> : null} <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>{r.invoices.length} total</span></td>
+                    <td className="r">Rs {fmtMoney(r.creditGiven)}</td>
+                    <td className="r" style={{ color: '#16A34A', fontWeight: 700 }}>Rs {fmtMoney(r.received)}</td>
+                    <td className="r">
+                      {r.outstanding > 0
+                        ? <span className="pos-credit-out">Rs {fmtMoney(r.outstanding)}</span>
+                        : <span className="inv-pill inv-pill-green">Cleared</span>}
+                    </td>
+                    <td>
+                      {invFmtDate(r.lastDate)}
+                      {r.oldestOpenDate && <div className="pos-credit-reg">oldest unpaid {posDaysSince(r.oldestOpenDate)} days</div>}
+                    </td>
+                    <td className="c" onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
+                        <Tooltip text={r.outstanding > 0 ? 'Receive a payment against this credit' : 'Nothing outstanding'}>
+                          <button className="fee-btn fee-btn-primary fee-btn-xs" disabled={r.outstanding <= 0} onClick={() => setReceiveReg(r.student.reg)}>
+                            <i className="fa-solid fa-money-bill-wave"></i> Receive
+                          </button>
+                        </Tooltip>
+                        <Tooltip text="Full credit history">
+                          <button className="fee-iconbtn" onClick={() => setHistoryReg(r.student.reg)} aria-label="Credit history">
+                            <i className="fa-solid fa-clock-rotate-left"></i>
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {historyRow && (
+        <PosCreditHistoryModal
+          row={historyRow}
+          school={school}
+          toast={toast}
+          onClose={() => setHistoryReg(null)}
+          onReceive={() => setReceiveReg(historyRow.student.reg)}
+        />
+      )}
+      {receiveRow && (
+        <PosReceiveCreditModal
+          row={receiveRow}
+          accounts={accounts}
+          onClose={() => setReceiveReg(null)}
+          onSubmit={async (payload) => { await onReceive({ student: receiveRow.student, ...payload }); setReceiveReg(null); }}
+        />
+      )}
+      {report && (
+        <StandardReportPicker
+          open
+          title={INV_REPORT_TITLES[report]}
+          formats={['pdf', 'word', 'excel']}
+          onClose={() => setReport(null)}
+          onGenerate={generateReport}
+          filters={report === 'pos_credit_rcv' ? (
+            <>
+              <div className="rp-section-label">Receipts Between</div>
+              <div className="inv-form-grid" style={{ marginBottom: 18 }}>
+                <div className="fee-field">
+                  <span className="fee-label">From</span>
+                  <input className="fee-input" type="date" value={rFrom} onChange={(e) => setRFrom(e.target.value)} />
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">To</span>
+                  <input className="fee-input" type="date" value={rTo} onChange={(e) => setRTo(e.target.value)} />
+                </div>
+              </div>
+            </>
+          ) : null}
+        />
+      )}
+    </>
+  );
+}
+
+/* ─── One student's credit history: ledger + invoices ─── */
+function PosCreditHistoryModal({ row, school, toast, onClose, onReceive }) {
+  const [view, setView] = useState('ledger'); // ledger | invoices | receipts
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const st = row.student;
+  const statusPill = (s) => <span className={`inv-pill ${s === 'Cleared' ? 'inv-pill-green' : s === 'Unpaid' ? 'inv-pill-red' : 'inv-pill-amber'}`}>{s}</span>;
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal pos-credit-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#D97706,#B45309)' }}>
+              <i className="fa-solid fa-clock-rotate-left"></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">Credit History — {st.name}</div>
+              <div className="fee-modal-sub">Every credit sale and every payment received, with a running balance</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          {/* Student */}
+          <div className="pos-ch-student">
+            <div className="pos-stu-av lg">{posInitials(st.name)}</div>
+            <div className="pos-ch-grid">
+              <div><span>Student</span><strong>{st.name}</strong></div>
+              <div><span>Father Name</span><strong>{st.father}</strong></div>
+              <div><span>Reg No.</span><strong>{st.reg}</strong></div>
+              <div><span>Admission No.</span><strong>{st.adm || '—'}</strong></div>
+              <div><span>Class / Section</span><strong>{st.cls} – {st.sec}</strong></div>
+              <div><span>Mobile</span><strong>{st.mobile || '—'}</strong></div>
+            </div>
+          </div>
+
+          {/* Summary */}
+          <div className="pos-ch-tiles">
+            <div className="blue"><span>Credit Given</span><strong>Rs {fmtMoney(row.creditGiven)}</strong><em>{row.invoices.length} invoice(s)</em></div>
+            <div className="green"><span>Received</span><strong>Rs {fmtMoney(row.received)}</strong><em>{row.receipts.length} payment(s)</em></div>
+            <div className={row.outstanding > 0 ? 'amber' : 'green'}><span>Outstanding</span><strong>Rs {fmtMoney(row.outstanding)}</strong><em>{row.oldestOpenDate ? `oldest unpaid since ${invFmtDate(row.oldestOpenDate)}` : 'fully cleared'}</em></div>
+          </div>
+
+          <div className="pos-ch-tabs">
+            {[['ledger', 'fa-list', 'Ledger'], ['invoices', 'fa-file-invoice', `Credit Invoices (${row.invoices.length})`], ['receipts', 'fa-money-bill-wave', `Payments (${row.receipts.length})`]].map(([k, ic, l]) => (
+              <button key={k} type="button" className={view === k ? 'active' : ''} onClick={() => setView(k)}><i className={`fa-solid ${ic}`}></i> {l}</button>
+            ))}
+          </div>
+
+          <div className="inv-sales-tablewrap">
+            {view === 'ledger' && (
+              <table className="inv-sales-table">
+                <thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>Details</th><th className="r">Credit Given</th><th className="r">Received</th><th className="r">Balance</th></tr></thead>
+                <tbody>
+                  {row.entries.map((e, i) => (
+                    <tr key={i}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{invFmtDate(e.date)}</td>
+                      <td>{e.kind === 'sale' ? <span className="inv-pill inv-pill-blue">Credit sale</span> : <span className="inv-pill inv-pill-green">Payment</span>}</td>
+                      <td className="inv-sales-no">{e.ref}</td>
+                      <td className="inv-sales-items">{e.detail}</td>
+                      <td className="r">{e.debit ? `Rs ${fmtMoney(e.debit)}` : ''}</td>
+                      <td className="r" style={{ color: '#16A34A', fontWeight: 700 }}>{e.credit ? `Rs ${fmtMoney(e.credit)}` : ''}</td>
+                      <td className="r" style={{ fontWeight: 800 }}>Rs {fmtMoney(e.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {view === 'invoices' && (
+              <table className="inv-sales-table">
+                <thead><tr><th>Invoice</th><th>Date</th><th>Items</th><th className="r">Total</th><th className="r">Paid at Counter</th><th className="r">On Credit</th><th className="r">Settled Later</th><th className="r">Open</th><th className="c">Status</th></tr></thead>
+                <tbody>
+                  {[...row.invoices].reverse().map(inv => (
+                    <tr key={inv.no}>
+                      <td className="inv-sales-no">{inv.no}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{invFmtDate(inv.date)}</td>
+                      <td className="inv-sales-items">{inv.lines.map(l => `${l.qty}× ${l.name}`).join(', ')}</td>
+                      <td className="r">Rs {fmtMoney(inv.total)}</td>
+                      <td className="r">Rs {fmtMoney(inv.paidAtSale)}</td>
+                      <td className="r">Rs {fmtMoney(inv.balance)}</td>
+                      <td className="r" style={{ color: '#16A34A' }}>Rs {fmtMoney(inv.settled)}</td>
+                      <td className="r" style={{ fontWeight: 800 }}>Rs {fmtMoney(inv.open)}</td>
+                      <td className="c">{statusPill(inv.status)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {view === 'receipts' && (
+              <table className="inv-sales-table">
+                <thead><tr><th>Receipt #</th><th>Date</th><th>Method</th><th>Received In</th><th>Received By</th><th>Note</th><th className="r">Amount</th></tr></thead>
+                <tbody>
+                  {row.receipts.length === 0
+                    ? <tr><td colSpan="7" className="inv-sales-empty">No payments received yet.</td></tr>
+                    : row.receipts.map(x => (
+                      <tr key={x.id}>
+                        <td className="inv-sales-no">{x.id}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{invFmtDate(x.date)}</td>
+                        <td>{x.method}</td>
+                        <td>{x.acctName ? <span className="inv-pill inv-pill-blue"><i className="fa-solid fa-wallet" style={{ marginRight: 4 }}></i>{x.acctName}</span> : '—'}</td>
+                        <td>{x.receivedBy || '—'}</td>
+                        <td className="inv-sales-items">{x.note || '—'}</td>
+                        <td className="r" style={{ color: '#16A34A', fontWeight: 800 }}>Rs {fmtMoney(x.amount)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="pos-credit-hint"><i className="fa-solid fa-circle-info"></i> Payments settle the oldest credit invoice first.</div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Print or save this student's credit statement">
+            <button className="fee-btn fee-btn-ghost" onClick={() => openInvoicePrintWindow(`Credit Statement — ${st.name}`, buildCreditStatementHTML(row, school), toast)}>
+              <i className="fa-solid fa-print"></i> Print Statement
+            </button>
+          </Tooltip>
+          <button className="fee-btn fee-btn-primary" disabled={row.outstanding <= 0} onClick={onReceive}>
+            <i className="fa-solid fa-money-bill-wave"></i> Receive Payment
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ─── Receive a payment against a student's credit ─── */
+function PosReceiveCreditModal({ row, accounts = [], onClose, onSubmit }) {
+  const st = row.student;
+  const [amount, setAmount] = useState(String(row.outstanding));
+  const [date, setDate]     = useState(todayISO());
+  const [method, setMethod] = useState('Cash');
+  const [acctId, setAcctId] = useState(() => posWalletForMethod(accounts, 'Cash', posDefaultWallet(accounts)?.id) || '');
+  useEffect(() => { if (!acctId && accounts.length) setAcctId(posWalletForMethod(accounts, 'Cash', posDefaultWallet(accounts)?.id) || ''); }, [accounts, acctId]);
+  const [note, setNote]     = useState('');
+  const [print, setPrint]   = useState(true);
+  const [busy, setBusy]     = useState(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const amt = Number(amount) || 0;
+  const invalid = amt <= 0 || amt > row.outstanding || !date;
+  const after = Math.max(0, row.outstanding - amt);
+  /* which open invoices this payment settles (oldest first) */
+  let pool = amt;
+  const settles = row.invoices.filter(i => i.open > 0).map(i => {
+    const take = Math.min(i.open, Math.max(0, pool)); pool -= take;
+    return { no: i.no, take, full: take === i.open };
+  }).filter(x => x.take > 0);
+
+  return createPortal(
+    <div className="fee-overlay open" style={{ zIndex: 10050 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal sm" style={{ maxWidth: 520 }}>
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }}>
+              <i className="fa-solid fa-money-bill-wave"></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">Receive Credit Payment</div>
+              <div className="fee-modal-sub">{st.name} · Reg {st.reg} · {st.cls} – {st.sec}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="pos-credit-split" style={{ marginTop: 0, marginBottom: 14 }}>
+            <div className="amber"><span>Outstanding now</span><strong>Rs {fmtMoney(row.outstanding)}</strong></div>
+            <div className="green"><span>After this payment</span><strong>Rs {fmtMoney(after)}</strong></div>
+          </div>
+
+          <div className="inv-form-grid">
+            <div className="fee-field">
+              <span className="fee-label">Amount Received (Rs)</span>
+              <input className="fee-input" type="number" min="1" max={row.outstanding} autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Date</span>
+              <input className="fee-input" type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Payment Method</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={method} onChange={(e) => { setMethod(e.target.value); setAcctId(posWalletForMethod(accounts, e.target.value, acctId) || acctId); }}>
+                  {POS_PAY_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Note (optional)</span>
+              <input className="fee-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Paid by father, bank ref" />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <PosWalletSelect accounts={accounts} value={acctId} onChange={setAcctId} hint="The payment is posted to this wallet in Accounts." />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+            <button type="button" className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => setAmount(String(row.outstanding))}>Full Rs {fmtMoney(row.outstanding)}</button>
+            {row.invoices.filter(i => i.open > 0).slice(0, 1).map(i => (
+              <button key={i.no} type="button" className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => setAmount(String(i.open))}>Oldest invoice {i.no} · Rs {fmtMoney(i.open)}</button>
+            ))}
+          </div>
+
+          {amt > row.outstanding && (
+            <div className="pos-credit-note red" style={{ marginTop: 12 }}><i className="fa-solid fa-triangle-exclamation"></i> Amount is more than the outstanding Rs {fmtMoney(row.outstanding)}.</div>
+          )}
+          {!invalid && settles.length > 0 && (
+            <div className="pos-credit-note" style={{ marginTop: 12 }}>
+              <i className="fa-solid fa-circle-info"></i> Settles {settles.map(x => `${x.no}${x.full ? ' (cleared)' : ` (Rs ${fmtMoney(x.take)})`}`).join(', ')}.
+            </div>
+          )}
+          <label className="pos-credit-check">
+            <input type="checkbox" checked={print} onChange={(e) => setPrint(e.target.checked)} /> Print a receipt for the parent
+          </label>
+        </div>
+
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" disabled={invalid || busy}
+            onClick={async () => { setBusy(true); try { await onSubmit({ amount: amt, date, method, note: note.trim(), acctId, print }); } finally { setBusy(false); } }}>
+            <i className="fa-solid fa-circle-check"></i> {busy ? 'Saving…' : `Receive Rs ${fmtMoney(amt)}`}
+          </button>
         </div>
       </div>
     </div>,
@@ -5378,4 +6280,69 @@ textarea.fee-input { height: auto; padding: 10px 14px; resize: vertical; line-he
 }
 /* Card ke andar pending badge + withdraw ki line */
 .inv-pend-row { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+/* ── POS: Bill To (walk-in / student) ── */
+.pos-billto-seg { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--bg-muted, #F1F5F9); border: 1px solid var(--border-light, #E2E8F0); }
+.pos-billto-seg button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-muted, #64748B); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.pos-billto-seg button.active { background: var(--bg-card, #fff); color: var(--brand-solid, #1E40AF); box-shadow: 0 1px 4px rgba(15,23,42,.12); }
+.pos-stu-results { top: auto !important; bottom: calc(100% + 6px); max-height: 300px; overflow-y: auto; z-index: 40; }
+.pos-stu-card { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; border: 1.5px solid rgba(var(--brand-primary-rgb, 59,130,246), .35); background: rgba(var(--brand-primary-rgb, 59,130,246), .06); }
+.pos-stu-av { width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #fff; background: var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); }
+.pos-stu-av.sm { width: 32px; height: 32px; font-size: 11.5px; }
+.pos-stu-av.lg { width: 54px; height: 54px; font-size: 18px; }
+.pos-stu-name { font-size: 13.5px; font-weight: 800; color: var(--text-primary, #0F172A); }
+.pos-stu-sub { font-size: 11.5px; color: var(--text-muted, #64748B); margin-top: 1px; }
+
+/* ── POS: checkout credit split ── */
+.pos-credit-box { margin-top: 12px; padding: 14px; border-radius: 12px; border: 1px dashed rgba(217,119,6,.45); background: rgba(217,119,6,.05); }
+.pos-credit-split { display: flex; gap: 8px; margin-top: 12px; }
+.pos-credit-split > div { flex: 1; padding: 9px 10px; border-radius: 10px; background: var(--bg-card, #fff); border: 1px solid var(--border-light, #E2E8F0); text-align: center; }
+.pos-credit-split span { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted, #64748B); }
+.pos-credit-split strong { display: block; font-size: 15px; font-weight: 800; color: var(--text-primary, #0F172A); margin-top: 2px; }
+.pos-credit-split .amber strong { color: #B45309; }
+.pos-credit-split .green strong { color: #15803D; }
+.pos-credit-note { display: flex; gap: 7px; align-items: flex-start; margin-top: 10px; font-size: 12px; line-height: 1.5; color: #92400E; background: rgba(217,119,6,.08); border-radius: 8px; padding: 8px 10px; }
+.pos-credit-note.red { color: #B91C1C; background: rgba(220,38,38,.08); }
+.pos-credit-check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 12.5px; font-weight: 600; color: var(--text-secondary, #334155); cursor: pointer; }
+
+/* ── POS: Student Credit list ── */
+.pos-credit-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border-light, #E2E8F0); }
+.pos-credit-row { cursor: pointer; }
+.pos-credit-stu { display: flex; align-items: center; gap: 10px; }
+.pos-credit-name { font-weight: 800; color: var(--text-primary, #0F172A); }
+.pos-credit-reg { font-size: 11px; color: var(--text-muted, #64748B); margin-top: 1px; }
+.pos-credit-table .pos-credit-reg, .pos-credit-table td:nth-child(3) { white-space: nowrap; }
+.pos-credit-out { font-weight: 800; color: #B45309; font-size: 13.5px; }
+.pos-credit-table td { vertical-align: middle; }
+.pos-credit-hint { margin-top: 10px; font-size: 11.5px; color: var(--text-muted, #64748B); }
+.pos-credit-hint i { margin-right: 5px; }
+
+/* ── POS: credit history modal ── */
+.fee-modal.pos-credit-modal { max-width: 1000px; }
+.pos-ch-student { display: flex; gap: 16px; align-items: center; padding: 14px 16px; border-radius: 14px; background: var(--bg-muted, #F8FAFC); border: 1px solid var(--border-light, #E2E8F0); }
+.pos-ch-grid { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 18px; }
+.pos-ch-grid span { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted, #64748B); }
+.pos-ch-grid strong { display: block; font-size: 13px; color: var(--text-primary, #0F172A); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-ch-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.pos-ch-tiles > div { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border-light, #E2E8F0); background: var(--bg-card, #fff); position: relative; overflow: hidden; }
+.pos-ch-tiles > div::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.pos-ch-tiles > .blue::before { background: #1E40AF; } .pos-ch-tiles > .green::before { background: #16A34A; } .pos-ch-tiles > .amber::before { background: #D97706; }
+.pos-ch-tiles span { display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted, #64748B); }
+.pos-ch-tiles strong { display: block; font-size: 18px; font-weight: 800; margin-top: 3px; color: var(--text-primary, #0F172A); }
+.pos-ch-tiles > .amber strong { color: #B45309; } .pos-ch-tiles > .green strong { color: #15803D; }
+.pos-ch-tiles em { display: block; font-style: normal; font-size: 11px; color: var(--text-muted, #64748B); margin-top: 2px; }
+.pos-ch-tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--border-light, #E2E8F0); }
+.pos-ch-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; background: transparent; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748B); cursor: pointer; border-bottom: 2.5px solid transparent; margin-bottom: -1px; }
+.pos-ch-tabs button.active { color: var(--brand-solid, #1E40AF); border-bottom-color: var(--brand-solid, #1E40AF); }
+@media (max-width: 720px) { .pos-ch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pos-ch-tiles { grid-template-columns: 1fr; } .pos-ch-student { flex-direction: column; align-items: flex-start; } }
+[data-theme="dark"] .pos-billto-seg button.active { background: rgba(255,255,255,.08); color: #93C5FD; }
+[data-theme="dark"] .pos-credit-note { color: #FCD34D; }
+[data-theme="dark"] .pos-credit-note.red { color: #FCA5A5; }
+
+/* ── POS: wallet picker ── */
+.pos-wallet-box { margin-top: 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(var(--brand-primary-rgb, 59,130,246), .25); background: rgba(var(--brand-primary-rgb, 59,130,246), .05); }
+.pos-wallet-box .fee-field { margin-bottom: 0; }
+.pos-wallet-hint { margin-top: 6px; font-size: 11.5px; color: var(--text-muted, #64748B); }
+.pos-wallet-hint i { margin-right: 4px; }
+
 `;

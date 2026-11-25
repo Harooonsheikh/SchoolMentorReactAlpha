@@ -470,6 +470,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
     if (rec.fineDeduct > 0)    remarks.push(`Fine deduction of PKR ${fmtMoney(rec.fineDeduct)} applied${rec.fineComment?` — "${rec.fineComment}"`:''}.`);
     if (rec.leaveCount > 0)    remarks.push(`${rec.leaveCount} unpaid leave day${rec.leaveCount>1?'s':''} adjusted${rec.leaveComment?` — "${rec.leaveComment}"`:''}.`);
     if (rec.absentCount > 0)   remarks.push(`${rec.absentCount} unauthorized absent day${rec.absentCount>1?'s':''} deducted from gross.`);
+    if ((rec.securityRetentionDeduct || 0) > 0) remarks.push(`Security retention of PKR ${fmtMoney(rec.securityRetentionDeduct)} withheld for this month${rec.securityRetentionComment?` — "${rec.securityRetentionComment}"`:''}.`);
     if (loanDeductedThisMonth > 0) remarks.push(`Monthly loan installment of PKR ${fmtMoney(loanDeductedThisMonth)} adjusted against the active loan ledger.`);
     if (rec.status === 'Paid')          remarks.push(`Net salary disbursed in full on ${fmtDate(rec.paidDate)} via ${payMethod}.`);
     else if (rec.status === 'Partially Paid') remarks.push(`Partial payment of PKR ${fmtMoney(totalPaid)} disbursed; PKR ${fmtMoney(remaining)} balance pending.`);
@@ -480,7 +481,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
        always reconciles even if the employee's deduction heads changed after generation. */
     const dedShownParts = stdDeducts.reduce((s, h) => s + (+h.amount || 0), 0)
       + (+rec.loanDeduct || 0) + (+rec.customLoan || 0) + (+rec.fineDeduct || 0)
-      + (+rec.leaveDeduct || 0) + (+rec.absentDeduct || 0);
+      + (+rec.leaveDeduct || 0) + (+rec.absentDeduct || 0) + (+rec.securityRetentionDeduct || 0);
     const dedResidual = (+rec.totalDeductions || 0) - dedShownParts;
 
     body = `
@@ -526,6 +527,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
           <div class="slip-field ded"><label>Fine${rec.fineComment?' *':''}</label><div class="v">PKR ${fmtMoney(rec.fineDeduct||0)}</div></div>
           <div class="slip-field ded"><label>Leave Deduction${rec.leaveCount?` (${rec.leaveCount}d)`:''}</label><div class="v">PKR ${fmtMoney(rec.leaveDeduct||0)}</div></div>
           <div class="slip-field ded"><label>Absent Deduction${rec.absentCount?` (${rec.absentCount}d)`:''}</label><div class="v">PKR ${fmtMoney(rec.absentDeduct||0)}</div></div>
+          ${(rec.securityRetentionDeduct || 0) > 0 ? `<div class="slip-field ded"><label>Security Retention${rec.securityRetentionComment?' *':''}</label><div class="v">PKR ${fmtMoney(rec.securityRetentionDeduct||0)}</div></div>` : ''}
           ${Math.abs(dedResidual) >= 1 ? `<div class="slip-field ded"><label>Other Deductions</label><div class="v">PKR ${fmtMoney(dedResidual)}</div></div>` : ''}
         </div>
         <div class="slip-subtotal"><span>Total Deductions</span><span class="v">PKR ${fmtMoney(rec.totalDeductions||0)}</span></div>
@@ -619,7 +621,7 @@ export function generatePayHistoryReportHTML(e, fromKey, toKey, style, ctx) {
     deduct:   s.deduct   + (r.totalDeductions || 0),
     loanRec:  s.loanRec  + (r.loanDeduct || 0) + (r.customLoan || 0),
     advRec:   s.advRec   + (r.advanceRecovery || 0),
-    otherDed: s.otherDed + (r.fineDeduct || 0) + (r.leaveDeduct || 0) + (r.absentDeduct || 0) + (r.stdDeductions || 0),
+    otherDed: s.otherDed + (r.fineDeduct || 0) + (r.leaveDeduct || 0) + (r.absentDeduct || 0) + (r.stdDeductions || 0) + (r.securityRetentionDeduct || 0),
     net:      s.net      + (r.netPayable || 0),
     paid:     s.paid     + (r.paidAmount || 0),
   }), { basic:0, allow:0, bonus:0, gross:0, deduct:0, loanRec:0, advRec:0, otherDed:0, net:0, paid:0 });
@@ -677,6 +679,7 @@ export function generatePayHistoryReportHTML(e, fromKey, toKey, style, ctx) {
         <th class="num">Std. Deductions</th><th class="num">Fine</th>
         <th class="num">Leave</th><th class="num">Absent</th>
         <th class="num">Adv. Recovery</th><th class="num">Loan Recovery</th>
+        <th class="num">Security Retention</th>
         <th class="num">Total Deduct</th>
       </tr></thead>
       <tbody>
@@ -688,6 +691,7 @@ export function generatePayHistoryReportHTML(e, fromKey, toKey, style, ctx) {
           <td class="num ${(r.absentDeduct||0)>0?'neg':''}">${fmtMoney(r.absentDeduct||0)}</td>
           <td class="num ${(r.advanceRecovery||0)>0?'neg':''}">${fmtMoney(r.advanceRecovery||0)}</td>
           <td class="num ${((r.loanDeduct||0)+(r.customLoan||0))>0?'neg':''}">${fmtMoney((r.loanDeduct||0)+(r.customLoan||0))}</td>
+          <td class="num ${(r.securityRetentionDeduct||0)>0?'neg':''}">${fmtMoney(r.securityRetentionDeduct||0)}</td>
           <td class="num" style="font-weight:800;color:${C.err}">${fmtMoney(r.totalDeductions||0)}</td>
         </tr>`).join('')}
         <tr class="subtotal">
@@ -698,6 +702,7 @@ export function generatePayHistoryReportHTML(e, fromKey, toKey, style, ctx) {
           <td class="num">${fmtMoney(records.reduce((s, r) => s + (r.absentDeduct|| 0), 0))}</td>
           <td class="num">${fmtMoney(totals.advRec)}</td>
           <td class="num">${fmtMoney(totals.loanRec)}</td>
+          <td class="num">${fmtMoney(records.reduce((s, r) => s + (r.securityRetentionDeduct || 0), 0))}</td>
           <td class="num">${fmtMoney(totals.deduct)}</td>
         </tr>
       </tbody>
@@ -1261,4 +1266,110 @@ export function generateHrPayrollSummary(ctx, monthKey) {
       </tfoot>
     </table>`;
   return hrBuildReportHTML(`Payroll Summary — ${monthName} ${yearVal}`, `Human Resource — Payroll Summary · ${monthName} ${yearVal}`, filters, inner, ctx);
+}
+
+/* ════════ 7. Security Retention Report — filtered, employee-wise ════════
+   Rows are pre-filtered & given a running cumulative total by the caller
+   (SecurityRetentionReport in HumanResource.jsx) — this function only
+   formats what it is handed. Style / format come from ctx like every
+   other generator here. */
+const HR_RTN_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function hrFmtMonthKey(k) {
+  if (!k) return '—';
+  const [y, m] = k.split('-');
+  return `${HR_RTN_MONTH_NAMES[parseInt(m, 10)] || m} ${y}`;
+}
+function hrRetentionStatusLabel(s) {
+  if (!s) return '—';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function getFullNameLike(e) {
+  return `${e.firstName || ''} ${e.lastName || ''}`.trim() || e.eid || '—';
+}
+
+export function generateHrSecurityRetentionReport({ rows, kpis, filtersHtml = '', style = 'color', format = 'pdf' }) {
+  const ctx = { style, format };
+  const bodyRows = rows.map((r, i) => `<tr>
+    <td>${i + 1}</td><td><b>${r.empName}</b></td><td>${r.eid}</td>
+    <td>${r.deptName || '—'}</td><td>${r.desigName || '—'}</td>
+    <td>${r.type === 'onetime' ? 'One-Time' : 'Monthly'}</td>
+    <td>${hrFmtMonthKey(r.monthKey)}</td>
+    <td class="r">${hrFmtMoney(r.configuredAmount)}</td>
+    <td class="r">${hrFmtMoney(r.actualDeducted)}</td>
+    <td class="r"><b>${hrFmtMoney(r.cumulative)}</b></td>
+    <td>${hrRetentionStatusLabel(r.status)}</td>
+  </tr>`).join('');
+
+  const configuredTotal = rows.reduce((s, r) => s + (Number(r.configuredAmount) || 0), 0);
+  const deductedTotal   = rows.reduce((s, r) => s + (Number(r.actualDeducted)   || 0), 0);
+
+  const filters = `<span><b>Employees:</b> ${kpis.employees}</span><span><b>Total Retained:</b> PKR ${hrFmtMoney(kpis.totalRetained)}</span><span><b>Current Month:</b> PKR ${hrFmtMoney(kpis.currentMonth)}</span><span><b>One-Time:</b> PKR ${hrFmtMoney(kpis.oneTimeTotal)}</span><span><b>Monthly:</b> PKR ${hrFmtMoney(kpis.monthlyTotal)}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>${filtersHtml}`;
+
+  const inner = `
+    <div class="rep-secttl">Security Retention Records${rows.length ? ` — ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}` : ''}</div>
+    <table class="rep-tbl">
+      <thead><tr>
+        <th>#</th><th>Employee</th><th>ID</th><th>Department</th><th>Designation</th>
+        <th>Type</th><th>Payroll Month</th><th class="r">Configured</th><th class="r">Deducted</th>
+        <th class="r">Total Retained</th><th>Status</th>
+      </tr></thead>
+      <tbody>${bodyRows || '<tr><td colspan="11" style="text-align:center;color:#94A3B8">No records match the selected filters.</td></tr>'}</tbody>
+      ${rows.length ? `<tfoot>
+        <tr class="rep-tot">
+          <td colspan="7">Totals</td>
+          <td class="r"><b>${hrFmtMoney(configuredTotal)}</b></td>
+          <td class="r"><b>${hrFmtMoney(deductedTotal)}</b></td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>` : ''}
+    </table>`;
+
+  return hrBuildReportHTML('Security Retention Report', 'Human Resource — Security Retention Report', filters, inner, ctx);
+}
+
+/* ════════ 8. Security Retention — single employee statement ════════ */
+export function generateHrSecurityRetentionEmployeeReport({ emp, deptName, desigName, txns, totalRetained, firstDate, latestDate, style = 'color', format = 'pdf' }) {
+  const ctx = { style, format };
+  const r = emp.securityRetention || {};
+  const rows = txns.map(t => `<tr>
+    <td>${hrFmtMonthKey(t.monthKey)}</td>
+    <td class="r">${hrFmtMoney(t.configuredAmount)}</td>
+    <td class="r">${hrFmtMoney(t.actualDeducted)}</td>
+    <td>${t.notes || '—'}</td>
+  </tr>`).join('');
+
+  const filters = `<span><b>Employee:</b> ${getFullNameLike(emp)}</span><span><b>ID:</b> ${emp.eid}</span><span><b>Department:</b> ${deptName || '—'}</span><span><b>Designation:</b> ${desigName || '—'}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
+
+  const inner = `
+    <div class="rep-secttl">Current Configuration</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Status</th><th>Type</th><th class="r">Configured Amount</th><th>${r.type === 'onetime' ? 'Deduction Month' : 'Start Month'}</th><th>${r.type === 'onetime' ? '' : 'End Month'}</th></tr></thead>
+      <tbody><tr>
+        <td>${hrRetentionStatusLabel(r.status)}</td>
+        <td>${r.type === 'onetime' ? 'One-Time' : 'Monthly'}</td>
+        <td class="r">${hrFmtMoney(r.amount)}</td>
+        <td>${r.type === 'onetime' ? hrFmtMonthKey(r.oneTimeMonth) : hrFmtMonthKey(r.startMonth)}</td>
+        <td>${r.type === 'onetime' ? '' : (r.endMonth ? hrFmtMonthKey(r.endMonth) : 'Ongoing')}</td>
+      </tr></tbody>
+    </table>
+    ${r.notes ? `<div class="rep-filters" style="margin-top:8px"><span><b>Notes:</b> ${r.notes}</span></div>` : ''}
+
+    <div class="rep-secttl" style="margin-top:16px">Retention Summary</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Total Amount Retained</th><th>First Deduction</th><th>Latest Deduction</th></tr></thead>
+      <tbody><tr>
+        <td class="r"><b>PKR ${hrFmtMoney(totalRetained)}</b></td>
+        <td>${firstDate ? hrFmtDate(firstDate) : '—'}</td>
+        <td>${latestDate ? hrFmtDate(latestDate) : '—'}</td>
+      </tr></tbody>
+    </table>
+
+    <div class="rep-secttl" style="margin-top:16px">Month-Wise Deductions</div>
+    <table class="rep-tbl">
+      <thead><tr><th>Payroll Month</th><th class="r">Configured</th><th class="r">Deducted</th><th>Notes</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:#94A3B8">No deductions recorded yet.</td></tr>'}</tbody>
+      ${txns.length ? `<tfoot><tr class="rep-tot"><td>Total</td><td class="r"><b>${hrFmtMoney(txns.reduce((s, t) => s + (Number(t.configuredAmount) || 0), 0))}</b></td><td class="r"><b>${hrFmtMoney(totalRetained)}</b></td><td></td></tr></tfoot>` : ''}
+    </table>`;
+
+  return hrBuildReportHTML(`Security Retention — ${getFullNameLike(emp)}`, `Security Retention Statement — ${getFullNameLike(emp)}`, filters, inner, ctx);
 }
