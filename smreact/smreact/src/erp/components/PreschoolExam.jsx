@@ -1706,9 +1706,15 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
         {/* Result Setup → Signatures toggle OFF → signatures nahi dikhte. */}
         {/* Grade 1-12 card jaisa: selected signatures (max 2) — image line ke upar,
             designation neeche — aur hamesha ek PARENTS line. */}
-        {opt['Show Signatures'] !== false && sigs && sigs.length > 0 && (() => {
-          const anySel = sigs.some(s => s.on !== undefined);
-          const picked = (anySel ? sigs.filter(s => s.on) : sigs).slice(0, 2);
+        {(() => {
+          /* Toggle (Show Deputy Supervisor Signature) sirf school signatures ko
+             control karta hai — PARENTS line hamesha dikhti hai.
+             `on` = Grade 1-12 Result Card Options mein selected (signature1/2);
+             agar wahan koi select nahi to pehli 2 configured signatures. */
+          const showSup = opt[preschoolService.PRCO_SIGNATURE_LABEL] !== false;
+          const list = showSup ? (sigs || []) : [];
+          const selected = list.filter(s => s.on);
+          const picked = (selected.length ? selected : list).slice(0, 2);
           const cols = [
             ...picked.map(s => ({ img: s.img, label: s.desig || s.name })),
             { img: '', label: 'Parents' },

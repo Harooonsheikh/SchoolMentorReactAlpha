@@ -477,7 +477,9 @@ let _prcoDbId = 0;
    toggle. preschooling-resultcard-crud me abhi iska column NAHI hai, is liye
    payload me `showSignatures` bhejte hain (backend add kare to khud chalega)
    aur branch-wise localStorage me bhi rakhte hain. Default ON. */
-export const PRCO_SIGNATURE_LABEL = 'Show Signatures';
+/* Sirf Deputy Supervisor (school) signatures is toggle se control hoti hain;
+   PARENTS line card par hamesha aati hai. */
+export const PRCO_SIGNATURE_LABEL = 'Show Deputy Supervisor Signature';
 const sigKey = () => `sm.exam.preschoolShowSignatures.b${getBranchId()}`;
 function readLocalSig() {
   try { const v = localStorage.getItem(sigKey()); return v == null ? null : v === 'true'; } catch { return null; }
