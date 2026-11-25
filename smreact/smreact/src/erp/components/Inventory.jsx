@@ -319,6 +319,8 @@ const INV_REPORT_TITLES = {
   pos_pvs:      'Purchase vs Sale Summary',
   pos_pnl:      'Profit & Loss Report',
   pos_invvalue: 'Current Asset Value Report',
+  pos_credit_out: 'Student Credit Outstanding Report',
+  pos_credit_rcv: 'Student Credit Recovery Report',
 };
 
 /* Per-product aggregation for the Profit & Loss / Purchase-vs-Sale reports.
@@ -604,6 +606,93 @@ function buildInvReportBody(type, opts, ctx) {
         <div class="kpi b"><div class="l">Assets Sale Value</div><div class="v">Rs ${fmtMoney(tSale)}</div><div class="m">at retail</div></div>
         <div class="kpi c"><div class="l">Expected Gross Profit</div><div class="v" style="color:${tGross >= 0 ? '#15803D' : '#B91C1C'}">Rs ${fmtMoney(tGross)}</div><div class="m">if all stock sells</div></div>
       </div>`;
+  }
+
+  /* Who owes how much, as of today — one row per student with an
+     outstanding balance, grouped by class, with ageing of the oldest
+     unpaid credit invoice. */
+  if (type === 'pos_credit_out') {
+    const L = posCreditLedger(sales, ctx.creditReceipts || []);
+    const list = L.rows.filter(r => r.outstanding > 0)
+      .sort((a, b) => `${a.student.cls} ${a.student.sec}`.localeCompare(`${b.student.cls} ${b.student.sec}`) || a.student.name.localeCompare(b.student.name));
+    const out  = list.reduce((a, r) => a + r.outstanding, 0);
+    const over30 = list.filter(r => r.oldestOpenDate && posDaysSince(r.oldestOpenDate) > 30);
+    const rows = list.map((r, i) => {
+      const openInv = r.invoices.filter(x => x.open > 0);
+      const days = r.oldestOpenDate ? posDaysSince(r.oldestOpenDate) : 0;
+      return `<tr>
+        <td class="c">${i + 1}</td>
+        <td class="mono">${esc(r.student.reg)}</td>
+        <td><b>${esc(r.student.name)}</b></td>
+        <td>${esc(r.student.father)}</td>
+        <td>${esc(r.student.cls)} – ${esc(r.student.sec)}</td>
+        <td class="items">${openInv.map(x => `${esc(x.no)} (Rs ${fmtMoney(x.open)})`).join(', ')}</td>
+        <td class="r">Rs ${fmtMoney(r.creditGiven)}</td>
+        <td class="r">Rs ${fmtMoney(r.received)}</td>
+        <td class="r"><b>Rs ${fmtMoney(r.outstanding)}</b></td>
+        <td class="c">${r.oldestOpenDate ? `${invFmtDate(r.oldestOpenDate)}<br><span style="color:${days > 30 ? '#B91C1C' : '#64748B'}">${days} days</span>` : '—'}</td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="rfilters"><span><b>As of:</b> ${invFmtDate(todayISO())}</span><span><b>Basis:</b> credit sales less credit payments received (oldest invoice settled first)</span></div>
+      <div class="kpi-row">
+        <div class="kpi a"><div class="l">Total Outstanding</div><div class="v">Rs ${fmtMoney(out)}</div><div class="m">${list.length} student(s)</div></div>
+        <div class="kpi b"><div class="l">Total Credit Given</div><div class="v">Rs ${fmtMoney(L.totals.creditGiven)}</div><div class="m">all time</div></div>
+        <div class="kpi c"><div class="l">Recovered So Far</div><div class="v">Rs ${fmtMoney(L.totals.received)}</div><div class="m">${L.totals.creditGiven ? Math.round((L.totals.received / L.totals.creditGiven) * 100) : 0}% of credit given</div></div>
+        <div class="kpi d"><div class="l">Unpaid over 30 days</div><div class="v">${over30.length}</div><div class="m">Rs ${fmtMoney(over30.reduce((a, r) => a + r.outstanding, 0))}</div></div>
+      </div>
+      <table class="tbl">
+        <thead><tr><th class="c" style="width:28px">#</th><th>Reg #</th><th>Student</th><th>Father</th><th>Class</th><th>Open Invoices</th><th class="r">Credit Given</th><th class="r">Received</th><th class="r">Outstanding</th><th class="c">Oldest Unpaid</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="10" class="empty">No outstanding student credit.</td></tr>'}</tbody>
+        <tfoot><tr class="tot"><td colspan="6">Total — ${list.length} student(s)</td><td class="r">Rs ${fmtMoney(list.reduce((a, r) => a + r.creditGiven, 0))}</td><td class="r">Rs ${fmtMoney(list.reduce((a, r) => a + r.received, 0))}</td><td class="r">Rs ${fmtMoney(out)}</td><td></td></tr></tfoot>
+      </table>`;
+  }
+
+  /* Credit payments received between two dates. */
+  if (type === 'pos_credit_rcv') {
+    const L = posCreditLedger(sales, ctx.creditReceipts || []);
+    const from = o.from || '0000-00-00';
+    const to   = o.to   || '9999-12-31';
+    const list = (ctx.creditReceipts || []).filter(r => r.date >= from && r.date <= to)
+      .sort((a, b) => (a.date === b.date ? (a.id < b.id ? -1 : 1) : a.date < b.date ? -1 : 1));
+    const total = list.reduce((a, r) => a + r.amount, 0);
+    const byMethod = {};
+    list.forEach(r => { byMethod[r.method] = (byMethod[r.method] || 0) + r.amount; });
+    const byWallet = {};
+    list.forEach(r => { const w = r.acctName || 'Not recorded'; byWallet[w] = (byWallet[w] || 0) + r.amount; });
+    const payers = new Set(list.map(r => r.reg)).size;
+    const rows = list.map((r, i) => {
+      const st = L.byReg[r.reg]?.student || { name: r.reg, father: '', cls: '', sec: '' };
+      return `<tr>
+        <td class="c">${i + 1}</td>
+        <td class="mono">${esc(r.id)}</td>
+        <td>${invFmtDate(r.date)}</td>
+        <td class="mono">${esc(r.reg)}</td>
+        <td><b>${esc(st.name)}</b><br><span style="color:#64748B;font-size:9.5px">${esc(st.father)}</span></td>
+        <td>${esc(st.cls)} ${st.sec ? `– ${esc(st.sec)}` : ''}</td>
+        <td>${esc(r.method)}</td>
+        <td>${esc(r.acctName || '—')}</td>
+        <td>${esc(r.receivedBy || '—')}</td>
+        <td class="items">${esc(r.note || '')}</td>
+        <td class="r"><b>Rs ${fmtMoney(r.amount)}</b></td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="rfilters"><span><b>Period:</b> ${invFmtDate(from)} – ${invFmtDate(to)}</span><span><b>Outstanding today:</b> Rs ${fmtMoney(L.totals.outstanding)}</span></div>
+      <div class="kpi-row">
+        <div class="kpi a"><div class="l">Total Received</div><div class="v">Rs ${fmtMoney(total)}</div><div class="m">${list.length} receipt(s)</div></div>
+        <div class="kpi b"><div class="l">Students Paid</div><div class="v">${payers}</div><div class="m">in this period</div></div>
+        ${Object.keys(byMethod).map(m => `<div class="kpi c"><div class="l">${esc(m)}</div><div class="v">Rs ${fmtMoney(byMethod[m])}</div><div class="m">${total ? Math.round((byMethod[m] / total) * 100) : 0}% of received</div></div>`).join('')}
+      </div>
+      <div class="secttl">Received by Wallet</div>
+      <div class="kpi-row">
+        ${Object.keys(byWallet).map(w => `<div class="kpi d"><div class="l">${esc(w)}</div><div class="v">Rs ${fmtMoney(byWallet[w])}</div><div class="m">${total ? Math.round((byWallet[w] / total) * 100) : 0}% of received</div></div>`).join('')}
+      </div>
+      <table class="tbl">
+        <thead><tr><th class="c" style="width:28px">#</th><th>Receipt #</th><th>Date</th><th>Reg #</th><th>Student</th><th>Class</th><th>Method</th><th>Received In</th><th>Received By</th><th>Note</th><th class="r">Amount</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="11" class="empty">No credit payments received in this period.</td></tr>'}</tbody>
+        <tfoot><tr class="tot"><td colspan="10">Total Received</td><td class="r">Rs ${fmtMoney(total)}</td></tr></tfoot>
+      </table>`;
   }
 
   return '';
@@ -4082,6 +4171,8 @@ const POS_REPORT_TILES = [
   { id: 'pos_pvs',      icon: 'fa-scale-balanced',       title: 'Purchase vs Sale Summary', desc: 'Cost, revenue & profit per product' },
   { id: 'pos_pnl',      icon: 'fa-money-bill-trend-up',  title: 'Profit & Loss Report',   desc: 'Sales, costing & profit between two dates', picker: 'range' },
   { id: 'pos_invvalue', icon: 'fa-warehouse',            title: 'Current Asset Value',    desc: 'Stock value at purchase & sale price' },
+  { id: 'pos_credit_out', icon: 'fa-hand-holding-dollar', title: 'Student Credit Outstanding', desc: 'Who owes how much today, with the oldest unpaid invoice' },
+  { id: 'pos_credit_rcv', icon: 'fa-sack-dollar',         title: 'Student Credit Recovery',    desc: 'Credit payments received between two dates', picker: 'range' },
 ];
 
 function InvReports({ toast }) {
