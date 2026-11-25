@@ -1,532 +1,420 @@
-  import React, { useEffect, useState, useRef } from 'react';
-  import { createPortal } from 'react-dom';
-  import Tooltip from './Tooltip';
-  import TutorialModal from './TutorialModal';
-  import * as paperService from '../services/paperService';
-  import useAsync from '../hooks/useAsync';
-  import { buildUrl, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
-  import Select from 'react-select';
-  import { deliverReport } from './reportDelivery';
-  import { useModuleReadOnly } from '../pages/Settings/settingsStore';
-  import { usePermissions } from '../context/PermissionsContext';
-  import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
-  import { PG_BOARD_LEVELS, pgBoardFind, pgBoardLevel, BoardHeader, BoardPicker, buildBoardHeaderHTML } from './paperBoardPattern';
-  import { addedOf, pgTypeApproved, livePaperEntries, reconcileOrder, orderEntries, LivePaperSection, PgxTypeDropdown } from './paperMakeModalParts';
-  import { PAPER_PGX_CSS } from './paperGeneratorStyles';
-  /* ═══════════════════════════════════════════════════════════════════
-    PAPER GENERATOR — module shell
-    Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
-    Choose Paper Template selection card.
-    Further sections to be ported incrementally.
-    ═══════════════════════════════════════════════════════════════════ */
+import React, { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import Tooltip from './Tooltip';
+import TutorialModal from './TutorialModal';
+import * as paperService from '../services/paperService';
+import useAsync from '../hooks/useAsync';
+import { buildUrl, resolveMediaUrl, storeSwitchedSession, readStoredActiveSession, hasStoredActiveSessionCheck } from '../../utils/apiConfig';
+import Select from 'react-select';
+import { deliverReport } from './reportDelivery';
+import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import { usePermissions } from '../context/PermissionsContext';
+import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
+/* ═══════════════════════════════════════════════════════════════════
+  PAPER GENERATOR — module shell
+  Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
+  Choose Paper Template selection card.
+  Further sections to be ported incrementally.
+  ═══════════════════════════════════════════════════════════════════ */
 
-  const TEMPLATES = [
-    { id: 1, name: 'Classic',       desc: 'Full-width navy header · 4-col marks grid · Centered layout' },
-    { id: 2, name: 'Modern',        desc: 'Logo + color-coded marks blocks · Clean accent underline' },
-    { id: 3, name: 'Formal',        desc: 'School seal · Board pattern · 5-col metadata grid · Premium' },
-    { id: 4, name: 'Board Pattern', desc: 'Matric & Intermediate board paper style' },
-  ];
+const TEMPLATES = [
+  { id: 1, name: 'Classic', desc: 'Full-width navy header · 4-col marks grid · Centered layout' },
+  { id: 2, name: 'Modern', desc: 'Logo + color-coded marks blocks · Clean accent underline' },
+  { id: 3, name: 'Formal', desc: 'School seal · Board pattern · 5-col metadata grid · Premium' },
+];
 
-  /* localStorage se last selected paper template (new tab / download pe use). */
-  function pgReadStoredTemplate(fallbackId = 1) {
-    const bid = String(typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('branchID') || '') : '').trim();
-    const tryKeys = [`pg_template_${bid || '0'}`];
-    try {
-      for (let i = 0; i < localStorage.length; i += 1) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith('pg_template_') && !tryKeys.includes(k)) tryKeys.push(k);
-      }
-    } catch { /* ignore */ }
-    for (const key of tryKeys) {
-      try {
-        const s = JSON.parse(localStorage.getItem(key) || 'null');
-        if (s && TEMPLATES.some(t => t.id === s.templateId)) {
-          return {
-            templateId: s.templateId,
-            boardId: s.boardId,
-            boardLevel: s.boardLevel,
-            boardGroup: s.boardGroup,
-          };
-        }
-      } catch { /* ignore */ }
+const PG_CLASSES_DATA = [
+  { name: 'class 1A', section: 'B', subjects: ['English', 'Urdu', 'Mathematics', 'Science', 'Social Studies'] },
+  { name: 'class 1A', section: 'C', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'class 1A', section: 'D', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'class 1A', section: 'Green f', subjects: ['English', 'Urdu'] },
+  { name: 'class 1A', section: 'New', subjects: ['English', 'Urdu'] },
+  { name: 'II-Pre', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'III-Pre', section: '2', subjects: ['English', 'Urdu', 'Mathematics', 'Science', 'Social Studies'] },
+  { name: 'I', section: 'White', subjects: ['English', 'Urdu'] },
+  { name: 'I', section: 'Green', subjects: ['English', 'Urdu'] },
+  { name: 'II', section: 'B', subjects: ['Mathematics', 'Science'] },
+  { name: 'II', section: 'A', subjects: ['Mathematics', 'Science'] },
+  { name: 'III', section: 'A', subjects: ['Urdu'] },
+  { name: 'IV', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science', 'Social Studies'] },
+  { name: 'V', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'VI', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'VII', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'VIII', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'IX', section: 'A', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'IX', section: 'B', subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'Pre-Year 1', section: 'A', subjects: ['English', 'Urdu'] },
+];
+const PG_SUBJ_ICON = {
+  English: 'fa-spell-check',
+  Urdu: 'fa-font',
+  Mathematics: 'fa-square-root-variable',
+  Science: 'fa-flask',
+  'Social Studies': 'fa-globe',
+};
+const PG_SUBJ_STRIP = {
+  English: 'eng', Urdu: 'urdu', Mathematics: 'math', Science: 'sci', 'Social Studies': 'sst',
+};
+const PG_SUBJ_TILE = {
+  English: { bg: '#EFF6FF', color: '#1E40AF' },
+  Urdu: { bg: '#FDF4FF', color: '#7E22CE' },
+  Mathematics: { bg: '#FFF7ED', color: '#C2410C' },
+  Science: { bg: '#F0FDF4', color: '#15803D' },
+  'Social Studies': { bg: '#FFFBEB', color: '#B45309' },
+};
+
+/* ── Paper Generation Setup API value mapping ──
+  UI uses fmt: 'with'|'without' and line: 'single'|'four'.
+  Backend stores paperFormate: 'WithSheet'|'NoSheet' and lineType: 'SingleLine'|'DoubleLine'. */
+const PG_FMT_TO_API = { with: 'WithSheet', without: 'NoSheet' };
+const PG_LINE_TO_API = { single: 'SingleLine', four: 'DoubleLine' };
+const pgApiToFmt = v => (v === 'NoSheet' || v === 'without' || v === 'A3' ? 'without' : 'with');
+const pgApiToLine = v => (v === 'DoubleLine' || v === 'FourLine' || v === 'four' ? 'four' : 'single');
+const pgSetupKey = (classID, sectionID, subjectID) => `${classID}-${sectionID}-${subjectID}`;
+/* Most frequent value in a list (used to derive a class-level chip from its subjects). */
+const pgMajority = arr => {
+  const counts = {};
+  let best = arr[0], bestN = 0;
+  arr.forEach(v => { counts[v] = (counts[v] || 0) + 1; if (counts[v] > bestN) { bestN = counts[v]; best = v; } });
+  return best;
+};
+
+/* Sample generated papers per class key — derived idiomatically from the HTML draft */
+function pgClassKey(cls) {
+  return cls.name.replace(/\s+/g, '') + '_' + cls.section;
+}
+
+/* Normalize a backend qpMaster record (getexamqpmasterbyids) into the card
+  shape PapersGrid renders. API uses different field names + string numbers. */
+function mapApiPaper(p) {
+  const created = String(p.createdDate || '').trim();
+
+  const [datePart = '', ...timeParts] = created.split(' ');
+  return {
+    ...p,
+    qpMasterID: p.id ?? p.qpMasterID ?? 0,
+    subj: p.subjectName || p.subj || '—',
+    title: p.paperTitle || p.title || 'Untitled Paper',
+    type: p.paperType || p.type || 'both',
+    format: p.paperFormate || p.format || 'with',
+    medium: (p.medium || 'english').toLowerCase(),
+    objMarks: +p.marksforobject || 0,
+    objTime: +p.timeforobject || 0,
+    subjMarks: +p.marksforsubjective || 0,
+    subjTime: +p.timeforsubjective || 0,
+    date: datePart || '—',
+    time: timeParts.join(' ') || '',
+    by: p.createdBy || p.by || 'Admin',
+  };
+}
+/* Generated papers now load via paperService (src/services/paperService.js).
+  Create/update/delete remain in-memory until backend wires the matching endpoints. */
+
+
+export default function PaperGenerator({ toast = () => { } }) {
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tab, setTab] = useState('setup');   // 'setup' | 'generator'
+
+  /* ── Per-user permissions (fail-open: true for School Head / unknown) ── */
+  const { can } = usePermissions();
+  const canSetupView = can('Paper Generator', 'Paper Setup', 'View');
+  const canSetupEdit = can('Paper Generator', 'Paper Setup', 'Edit');
+  const canGenView = can('Paper Generator', 'Paper Generator', 'View');
+  const canGenCreate = can('Paper Generator', 'Paper Generator', 'Create');
+  const canGenEdit = can('Paper Generator', 'Paper Generator', 'Edit');
+  const canGenDelete = can('Paper Generator', 'Paper Generator', 'Delete');
+  const canGenDownload = can('Paper Generator', 'Paper Generator', 'Download');
+
+  /* Snap to the first visible tab if the active one is not permitted. */
+  useEffect(() => {
+    const vis = [
+      canSetupView && 'setup',
+      canGenView && 'generator',
+    ].filter(Boolean);
+    if (vis.length && !vis.includes(tab)) {
+      setTab(vis[0]);
     }
-    return { templateId: fallbackId };
-  }
+  }, [canSetupView, canGenView, tab]);
 
-  const PG_CLASSES_DATA = [
-    { name:'class 1A',    section:'B',       subjects:['English','Urdu','Mathematics','Science','Social Studies'] },
-    { name:'class 1A',    section:'C',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'class 1A',    section:'D',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'class 1A',    section:'Green f', subjects:['English','Urdu'] },
-    { name:'class 1A',    section:'New',     subjects:['English','Urdu'] },
-    { name:'II-Pre',      section:'A',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'III-Pre',     section:'2',       subjects:['English','Urdu','Mathematics','Science','Social Studies'] },
-    { name:'I',           section:'White',   subjects:['English','Urdu'] },
-    { name:'I',           section:'Green',   subjects:['English','Urdu'] },
-    { name:'II',          section:'B',       subjects:['Mathematics','Science'] },
-    { name:'II',          section:'A',       subjects:['Mathematics','Science'] },
-    { name:'III',         section:'A',       subjects:['Urdu'] },
-    { name:'IV',          section:'A',       subjects:['English','Urdu','Mathematics','Science','Social Studies'] },
-    { name:'V',           section:'A',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'VI',          section:'A',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'VII',         section:'A',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'VIII',        section:'A',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'IX',          section:'A',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'IX',          section:'B',       subjects:['English','Urdu','Mathematics','Science'] },
-    { name:'Pre-Year 1',  section:'A',       subjects:['English','Urdu'] },
-  ];
-  const PG_SUBJ_ICON = {
-    English: 'fa-spell-check',
-    Urdu: 'fa-font',
-    Mathematics: 'fa-square-root-variable',
-    Science: 'fa-flask',
-    'Social Studies': 'fa-globe',
-  };
-  const PG_SUBJ_STRIP = {
-    English: 'eng', Urdu: 'urdu', Mathematics: 'math', Science: 'sci', 'Social Studies': 'sst',
-  };
-  const PG_SUBJ_TILE = {
-    English: { bg: '#EFF6FF', color: '#1E40AF' },
-    Urdu:    { bg: '#FDF4FF', color: '#7E22CE' },
-    Mathematics: { bg: '#FFF7ED', color: '#C2410C' },
-    Science: { bg: '#F0FDF4', color: '#15803D' },
-    'Social Studies': { bg: '#FFFBEB', color: '#B45309' },
-  };
-
-  /* ── Paper Generation Setup API value mapping ──
-    UI uses fmt: 'with'|'without' and line: 'single'|'four'.
-    Backend stores paperFormate: 'WithSheet'|'NoSheet' and lineType: 'SingleLine'|'DoubleLine'. */
-  const PG_FMT_TO_API  = { with: 'WithSheet', without: 'NoSheet' };
-  const PG_LINE_TO_API = { single: 'SingleLine', four: 'DoubleLine' };
-  const pgApiToFmt  = v => (v === 'NoSheet' || v === 'without' || v === 'A3' ? 'without' : 'with');
-  const pgApiToLine = v => (v === 'DoubleLine' || v === 'FourLine' || v === 'four' ? 'four' : 'single');
-  const pgSetupKey  = (classID, sectionID, subjectID) => `${classID}-${sectionID}-${subjectID}`;
-  /* Most frequent value in a list (used to derive a class-level chip from its subjects). */
-  const pgMajority = arr => {
-    const counts = {};
-    let best = arr[0], bestN = 0;
-    arr.forEach(v => { counts[v] = (counts[v] || 0) + 1; if (counts[v] > bestN) { bestN = counts[v]; best = v; } });
-    return best;
-  };
-
-  /* Sample generated papers per class key — derived idiomatically from the HTML draft */
-  function pgClassKey(cls) {
-    return cls.name.replace(/\s+/g, '') + '_' + cls.section;
-  }
-  /* QA C5: grade name aksar pehle se "Class II" hota hai → "Class Class II" na bane. */
-  function pgClassLabel(name) {
-    const n = String(name || '').trim();
-    return /^class\b/i.test(n) ? n : `Class ${n}`;
-  }
-  /* QA C10: demo "THE OXFORD SYSTEM" ki jagah is branch ka naam (login par
-     sessionStorage.branchName; report-header API ka branchName ho to wo upar se aata hai). */
-  function pgSchoolName() {
-    return sessionStorage.getItem('branchName') || 'School Name';
-  }
-  function pgSchoolLine(school) {
-    const name = school?.branchName || pgSchoolName();
-    return school?.address ? `${name} — ${school.address}` : name;
-  }
-  /* Header components ka data: live view (info) mein asal values / neutral
-     placeholders (QA C6); template preview (no info) mein sample paper data
-     lekin school naam/logo asal branch ka (QA C10). */
-  function pgHeaderData(info, school) {
-    const sc = school || {};
-    const logo = sc.branchLogo ? resolveMediaUrl(sc.branchLogo) : '';
-    if (!info) {
-      return { school: sc.branchName || pgSchoolName(), campus: sc.address || '', logo,
-        examTitle: 'Annual Examination 2026', subject: 'English (A)', className: 'IV', section: 'White' };
-    }
-    return { ...info, examTitle: info.examTitle || 'Paper Title', subject: info.subject || 'Subject' };
-  }
-
-  /* Normalize a backend qpMaster record (getexamqpmasterbyids) into the card
-    shape PapersGrid renders. API uses different field names + string numbers. */
-  function mapApiPaper(p) {
-    const created = String(p.createdDate || '').trim();
-    
-    const [datePart = '', ...timeParts] = created.split(' ');
-    return {
-      ...p,
-      qpMasterID: p.id ?? p.qpMasterID ?? 0,
-      subj:      p.subjectName  || p.subj   || '—',
-      title:     p.paperTitle   || p.title  || 'Untitled Paper',
-      type:      p.paperType    || p.type   || 'both',
-      format:    p.paperFormate || p.format || 'with',
-      medium:    (p.medium || 'english').toLowerCase(),
-      objMarks:  +p.marksforobject     || 0,
-      objTime:   +p.timeforobject      || 0,
-      subjMarks: +p.marksforsubjective || 0,
-      subjTime:  +p.timeforsubjective  || 0,
-      date:      datePart || '—',
-      time:      timeParts.join(' ') || '',
-      by:        p.createdBy || p.by || 'Admin',
-    };
-  }
-  /* Generated papers now load via paperService (src/services/paperService.js).
-    Create/update/delete remain in-memory until backend wires the matching endpoints. */
-
-
-  export default function PaperGenerator({ toast = () => {} }) {
-    const [tutorialOpen, setTutorialOpen] = useState(false);
-    const [tab, setTab]               = useState('setup');   // 'setup' | 'generator'
-
-    /* ── Per-user permissions (fail-open: true for School Head / unknown) ── */
-    const { can } = usePermissions();
-    const canSetupView    = can('Paper Generator', 'Paper Setup', 'View');
-    const canSetupEdit    = can('Paper Generator', 'Paper Setup', 'Edit');
-    const canGenView      = can('Paper Generator', 'Paper Generator', 'View');
-    const canGenCreate    = can('Paper Generator', 'Paper Generator', 'Create');
-    const canGenEdit      = can('Paper Generator', 'Paper Generator', 'Edit');
-    const canGenDelete    = can('Paper Generator', 'Paper Generator', 'Delete');
-    const canGenDownload  = can('Paper Generator', 'Paper Generator', 'Download');
-
-    /* Snap to the first visible tab if the active one is not permitted. */
-    useEffect(() => {
-      const vis = [
-        canSetupView && 'setup',
-        canGenView   && 'generator',
-      ].filter(Boolean);
-      if (vis.length && !vis.includes(tab)) {
-        setTab(vis[0]);
-      }
-    }, [canSetupView, canGenView, tab]);
-
-    /* QA C2: backend mein template ka koi field/endpoint nahi (paper_generation_setup
-       sirf paperFormate/lineType rakhta hai) — is liye selected template + board
-       per-branch localStorage mein persist hota hai (isi browser / new tab tak). */
-    const pgBranchId = () => String(sessionStorage.getItem('branchID') || '').trim();
-    const pgTmplKeyFor = (bid) => `pg_template_${bid || '0'}`;
-    const pgTmplKey = pgTmplKeyFor(pgBranchId());
-    const readSavedTmpl = (key = pgTmplKey) => {
-      try { return JSON.parse(localStorage.getItem(key) || 'null') || {}; } catch { return {}; }
-    };
-    const writeSavedTmpl = (payload, key = pgTmplKey) => {
-      try { localStorage.setItem(key, JSON.stringify(payload)); } catch { /* storage blocked */ }
-    };
-    const [savedTmpl] = useState(() => {
-      /* Branch key pehle; warna kisi bhi pg_template_* se last save (new tab / empty branch). */
-      const direct = readSavedTmpl(pgTmplKey);
-      if (direct.templateId != null) return direct;
-      try {
-        for (let i = 0; i < localStorage.length; i += 1) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith('pg_template_')) {
-            const v = readSavedTmpl(k);
-            if (v.templateId != null) return v;
-          }
-        }
-      } catch { /* ignore */ }
-      return {};
-    });
-    const [templateId, setTemplateId] = useState(() => (TEMPLATES.some(t => t.id === savedTmpl.templateId) ? savedTmpl.templateId : 1));
-    const [previewN, setPreviewN]     = useState(null);      // 1 | 2 | 3 | 4 | null
-
-    /* Board Pattern (Template 4) — selected Matric/Intermediate board, level & group.
-       Local UI state, same as templateId (no backend field for either). */
-    const [boardId, setBoardId]       = useState(savedTmpl.boardId || 'lhr');
-    const [boardLevel, setBoardLevelState] = useState(PG_BOARD_LEVELS[savedTmpl.boardLevel] ? savedTmpl.boardLevel : 'ssc2');
-    const [boardGroup, setBoardGroup] = useState(() => {
-      const lvl = PG_BOARD_LEVELS[savedTmpl.boardLevel] || PG_BOARD_LEVELS.ssc2;
-      return lvl.groups.includes(savedTmpl.boardGroup) ? savedTmpl.boardGroup : lvl.groups[0];
-    });
-    useEffect(() => {
-      writeSavedTmpl({ templateId, boardId, boardLevel, boardGroup }, pgTmplKey);
-    }, [pgTmplKey, templateId, boardId, boardLevel, boardGroup]);
-    /* QA C10: template thumbnails/preview ke liye branch naam + logo (report-header API). */
-    const [schoolHeader, setSchoolHeader] = useState(null);
-    useEffect(() => {
-      let alive = true;
-      fetchReportHeader().then(h => { if (alive) setSchoolHeader(h); });
-      return () => { alive = false; };
-    }, []);
-    const chooseTemplate = id => {
-      setTemplateId(id);
-      writeSavedTmpl({ templateId: id, boardId, boardLevel, boardGroup }, pgTmplKey);
-      toast(id === 4 ? `Board Pattern — ${pgBoardFind(boardId).sh} selected` : `${(TEMPLATES.find(t => t.id === id) || {}).name || 'Template'} template selected`, 'success');
-    };
-    const setBoardLevel = lvl => {
-      setBoardLevelState(lvl);
-      setBoardGroup(pgBoardLevel(lvl).groups[0]);
-    };
-    const boardCfg = { boardId, boardLevel, boardGroup };
+  const [templateId, setTemplateId] = useState(1);
+  const [previewN, setPreviewN] = useState(null);      // 1 | 2 | 3 | null
   const [examClasses, setExamClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
-const [hasActiveSession, setHasActiveSession] = useState(null);
-    const [sessionList, setSessionList] = useState([]);
-    const [branchSession, setBranchSession] = useState([]);
-    const [sessionId, setSessionId] = useState('');
-    const [start, setStart] = useState('');
-    const [end, setEnd] = useState('');
-    /* ── Class-wise Paper Format & Line Settings ── */
-    const [globalFmt, setGlobalFmt]   = useState('with');     // 'with' | 'without'
-    const [globalLine, setGlobalLine] = useState('single');   // 'single' | 'four'
-    const [classDefaults, setClassDefaults] = useState(() => pgBuildClassDefaults('with', 'single'));
-    const [subjDefaults, setSubjDefaults]   = useState(() => pgBuildSubjDefaults('with', 'single'));
-    const [openClassIdx, setOpenClassIdx]   = useState(null);
-    /* Saved paper-generation-setup records keyed by `${classID}-${sectionID}-${subjectID}`
-      → { id, fmt, line }. Drives insert-vs-update and pre-fills toggles from the backend. */
-    const [setupMap, setSetupMap] = useState({});
-    /* Paper Generator tab: which class row's dropdown is open */
-    const [openGenIdx, setOpenGenIdx]       = useState(null);
-    /* Make Paper modal: holds the active class index (null = closed) */
-    const [makeIdx, setMakeIdx]             = useState(null);
-    /* Optional pre-fill payload (Edit flow) */
-    const [editPaper, setEditPaper]         = useState(null);
+  const [hasActiveSession, setHasActiveSession] = useState(null);
+  const [sessionList, setSessionList] = useState([]);
+  const [branchSession, setBranchSession] = useState([]);
+  const [sessionId, setSessionId] = useState('');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  /* ── Class-wise Paper Format & Line Settings ── */
+  const [globalFmt, setGlobalFmt] = useState('with');     // 'with' | 'without'
+  const [globalLine, setGlobalLine] = useState('single');   // 'single' | 'four'
+  const [classDefaults, setClassDefaults] = useState(() => pgBuildClassDefaults('with', 'single'));
+  const [subjDefaults, setSubjDefaults] = useState(() => pgBuildSubjDefaults('with', 'single'));
+  const [openClassIdx, setOpenClassIdx] = useState(null);
+  /* Saved paper-generation-setup records keyed by `${classID}-${sectionID}-${subjectID}`
+    → { id, fmt, line }. Drives insert-vs-update and pre-fills toggles from the backend. */
+  const [setupMap, setSetupMap] = useState({});
+  /* Paper Generator tab: which class row's dropdown is open */
+  const [openGenIdx, setOpenGenIdx] = useState(null);
+  /* Make Paper modal: holds the active class index (null = closed) */
+  const [makeIdx, setMakeIdx] = useState(null);
+  /* Optional pre-fill payload (Edit flow) */
+  const [editPaper, setEditPaper] = useState(null);
 
-    /* Paper-card action modals */
-    const [viewPaper,     setViewPaper]     = useState(null);  // { paper, cls } | null
-    const [downloadPaper, setDownloadPaper] = useState(null);  // { paper, cls } | null
-    const [deletePaper,   setDeletePaper]   = useState(null);  // { paper, cls, key, index } | null
-    /* Local mutable copy of generated papers so cards can be removed.
-      Initial data comes from paperService.getAllPapers(); CRUD stays local. */
-    const { data: papersByKey = {}, setData: setPapersByKey } = useAsync(paperService.getAllPapers, []);
+  /* Paper-card action modals */
+  const [viewPaper, setViewPaper] = useState(null);  // { paper, cls } | null
+  const [downloadPaper, setDownloadPaper] = useState(null);  // { paper, cls } | null
+  const [deletePaper, setDeletePaper] = useState(null);  // { paper, cls, key, index } | null
+  /* Local mutable copy of generated papers so cards can be removed.
+    Initial data comes from paperService.getAllPapers(); CRUD stays local. */
+  const { data: papersByKey = {}, setData: setPapersByKey } = useAsync(paperService.getAllPapers, []);
 
-    /* Persist one subject's setup. Insert the first time, update afterwards
-      (decided by whether setupMap already holds an id for this class/section/subject). */
-     const SESSION_CHANGE_EVENT = 'sm-session-change';
-    const termsBranchID = () => Number(sessionStorage.getItem('branchID')) || 0;
-    const termsSessionYearID = () =>
-        sessionStorage.getItem('changeSessionId') ||
-        sessionStorage.getItem('SessionID') ||
-        sessionStorage.getItem('sessionID') ||
-        '';
+  /* Persist one subject's setup. Insert the first time, update afterwards
+    (decided by whether setupMap already holds an id for this class/section/subject). */
+  const SESSION_CHANGE_EVENT = 'sm-session-change';
+  const termsBranchID = () => Number(sessionStorage.getItem('branchID')) || 0;
+  const termsSessionYearID = () =>
+    sessionStorage.getItem('changeSessionId') ||
+    sessionStorage.getItem('SessionID') ||
+    sessionStorage.getItem('sessionID') ||
+    '';
 
-    const termsAuthHeaders = (extra = {}) => ({
-        Accept: '*/*',
-        Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
-        ...extra,
-    });
+  const termsAuthHeaders = (extra = {}) => ({
+    Accept: '*/*',
+    Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+    ...extra,
+  });
 
-    const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
+  const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
 
-    /* Paper Generator module checkbox OFF in the current session → view-only. */
-    const paperModuleReadOnly = useModuleReadOnly('paper');
+  /* Paper Generator module checkbox OFF in the current session → view-only. */
+  const paperModuleReadOnly = useModuleReadOnly('paper');
 
-    const isOtherSession = paperModuleReadOnly || (() => {
-        // 1️⃣ Session ID mismatch check
-        if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
-            return true;
-        }
+  const isOtherSession = paperModuleReadOnly || (() => {
+    // 1️⃣ Session ID mismatch check
+    if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
+      return true;
+    }
 
-        // 2️⃣ Session Status check
-        const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
-        if (sessionStatus !== 'Current') {
-            return true;
-        }
+    // 2️⃣ Session Status check
+    const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
+    if (sessionStatus !== 'Current') {
+      return true;
+    }
 
-        // 3️⃣ Date Range check
-        const now = new Date();
-        const startDate = new Date(sessionStorage.getItem('sessionStartDate'));
-        const endDate = new Date(sessionStorage.getItem('sessionEndDate'));
-        if (now < startDate || now > endDate) {
-            return true;
-        }
+    // 3️⃣ Date Range check
+    const now = new Date();
+    const startDate = new Date(sessionStorage.getItem('sessionStartDate'));
+    const endDate = new Date(sessionStorage.getItem('sessionEndDate'));
+    if (now < startDate || now > endDate) {
+      return true;
+    }
 
-        return false;
-    })();
+    return false;
+  })();
 
-    const loadSessionDates = async () => {
-        if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return; }
-        const row = readStoredActiveSession();
-        if (!row) { setHasActiveSession(false); return; }
-        setHasActiveSession(true);
-        setStart(row.StartDate || sessionStorage.getItem('sessionStartDate') || '');
-        setEnd(row.EndDate || sessionStorage.getItem('sessionEndDate') || '');
-    };
+  const loadSessionDates = async () => {
+    if (!hasStoredActiveSessionCheck()) { setHasActiveSession(false); return; }
+    const row = readStoredActiveSession();
+    if (!row) { setHasActiveSession(false); return; }
+    setHasActiveSession(true);
+    setStart(row.StartDate || sessionStorage.getItem('sessionStartDate') || '');
+    setEnd(row.EndDate || sessionStorage.getItem('sessionEndDate') || '');
+  };
 
-    const changeSession = async (id) => {
-        setSessionId(id);
-        /* id now, name as soon as the row arrives — see Academics.changeSession. */
-        storeSwitchedSession(id, sessionStorage.getItem('changeSessionName'));
-        try {
-            const branchID = sessionStorage.getItem('branchID');
-            const res = await fetch(
-                buildUrl(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
-                { headers: { Accept: '*/*' } }
-            );
-            const json = await res.json();
-            const sessions = json?.data || [];
-            const selected = sessions.find(s => String(s.ID) === String(id));
-            if (selected) {
-                sessionStorage.setItem('sessionStatus', selected.Status);
-                sessionStorage.setItem('sessionStartDate', selected.StartDate);
-                sessionStorage.setItem('sessionEndDate', selected.EndDate);
-                storeSwitchedSession(id, selected.SessionName);
-                return;
-            }
-        } catch (e) {
-            console.error('Error loading session details:', e);
-        }
-        window.dispatchEvent(new Event(SESSION_CHANGE_EVENT));
-    };
-
-    useEffect(() => {
-        loadSessionDates();
-    }, []);
-
-    useEffect(() => {
-        const reload = () => { loadSessionDates(); };
-        window.addEventListener(SESSION_CHANGE_EVENT, reload);
-        window.addEventListener('storage', reload);
-        return () => {
-            window.removeEventListener(SESSION_CHANGE_EVENT, reload);
-            window.removeEventListener('storage', reload);
-        };
-    }, []);
-    
-      const saveSetup = async (cls, subjectID, subjectName, fmt, line) => {
-      if (!cls || !subjectID) return;
-      const classID   = cls.gradeID ?? cls.classID;
-      const sectionID = cls.sectionID;
-      if (!classID || !sectionID) return;
+  const changeSession = async (id) => {
+    setSessionId(id);
+    /* id now, name as soon as the row arrives — see Academics.changeSession. */
+    storeSwitchedSession(id, sessionStorage.getItem('changeSessionName'));
+    try {
       const branchID = sessionStorage.getItem('branchID');
-      const token    = sessionStorage.getItem('token');
-      const key      = pgSetupKey(classID, sectionID, subjectID);
-      const existing = setupMap[key];
-      const payload = {
-        id: existing?.id || 0,
-        branchID: parseInt(branchID),
-        classID: parseInt(classID),
-        sectionID: parseInt(sectionID),
-        subjectID: parseInt(subjectID),
-        paperFormate: PG_FMT_TO_API[fmt] || PG_FMT_TO_API.with,
-        lineType: PG_LINE_TO_API[line] || PG_LINE_TO_API.single,
-        action: existing?.id ? 'update' : 'insert',
-        className: cls.name || '',
-        sectionName: cls.section || '',
-        subjectName: subjectName || '',
-      };
-      try {
-        const res = await fetch(buildUrl('/api/paper_generation_setup'), {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        const newId = data?.id ?? existing?.id;
-        setSetupMap(prev => ({ ...prev, [key]: { id: newId, fmt, line } }));
-      } catch (err) {
-        console.error('Failed to save paper generation setup', err);
-        toast('Failed to save setup', 'error');
+      const res = await fetch(
+        buildUrl(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
+        { headers: { Accept: '*/*' } }
+      );
+      const json = await res.json();
+      const sessions = json?.data || [];
+      const selected = sessions.find(s => String(s.ID) === String(id));
+      if (selected) {
+        sessionStorage.setItem('sessionStatus', selected.Status);
+        sessionStorage.setItem('sessionStartDate', selected.StartDate);
+        sessionStorage.setItem('sessionEndDate', selected.EndDate);
+        storeSwitchedSession(id, selected.SessionName);
+        return;
       }
-    };
+    } catch (e) {
+      console.error('Error loading session details:', e);
+    }
+    window.dispatchEvent(new Event(SESSION_CHANGE_EVENT));
+  };
 
-    /* Ensure a class's subjects (names + IDs) are loaded; returns the loaded list. */
-    const ensureSubjectsLoaded = async (ci) => {
-      const cls = examClasses[ci];
-      if (cls.subjects.length > 0 && cls.subjectIDs) {
-        return cls.subjects.map((name, i) => ({ subjectName: name, subjectID: cls.subjectIDs[i] }));
-      }
-      const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
-      const subjectNames = subs.map(s => s.subjectName);
-      const subjectIDs   = subs.map(s => s.subjectID);
-      setExamClasses(prev => prev.map((c, i) => i === ci ? { ...c, subjects: subjectNames, subjectIDs } : c));
-      return subs;
-    };
+  useEffect(() => {
+    loadSessionDates();
+  }, []);
 
-    /* Cascade helpers — apply locally and persist to every loaded subject. */
-// Update the cascadeFmt function
-const cascadeFmt = async f => {
-  if (isOtherSession) {
-    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-    return;
-  }
-  setGlobalFmt(f);
-  setClassDefaults(prev => prev.map(d => ({ ...d, fmt: f })));
-  setSubjDefaults(prev => prev.map(row => row.map(d => ({ ...d, fmt: f }))));
-  toast(`Global default set: ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
-  for (let ci = 0; ci < examClasses.length; ci++) {
+  useEffect(() => {
+    const reload = () => { loadSessionDates(); };
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
+
+  const saveSetup = async (cls, subjectID, subjectName, fmt, line) => {
+    if (!cls || !subjectID) return;
+    const classID = cls.gradeID ?? cls.classID;
+    const sectionID = cls.sectionID;
+    if (!classID || !sectionID) return;
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const key = pgSetupKey(classID, sectionID, subjectID);
+    const existing = setupMap[key];
+    const payload = {
+      id: existing?.id || 0,
+      branchID: parseInt(branchID),
+      classID: parseInt(classID),
+      sectionID: parseInt(sectionID),
+      subjectID: parseInt(subjectID),
+      paperFormate: PG_FMT_TO_API[fmt] || PG_FMT_TO_API.with,
+      lineType: PG_LINE_TO_API[line] || PG_LINE_TO_API.single,
+      action: existing?.id ? 'update' : 'insert',
+      className: cls.name || '',
+      sectionName: cls.section || '',
+      subjectName: subjectName || '',
+    };
+    try {
+      const res = await fetch(buildUrl('/api/paper_generation_setup'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      const newId = data?.id ?? existing?.id;
+      setSetupMap(prev => ({ ...prev, [key]: { id: newId, fmt, line } }));
+    } catch (err) {
+      console.error('Failed to save paper generation setup', err);
+      toast('Failed to save setup', 'error');
+    }
+  };
+
+  /* Ensure a class's subjects (names + IDs) are loaded; returns the loaded list. */
+  const ensureSubjectsLoaded = async (ci) => {
     const cls = examClasses[ci];
+    if (cls.subjects.length > 0 && cls.subjectIDs) {
+      return cls.subjects.map((name, i) => ({ subjectName: name, subjectID: cls.subjectIDs[i] }));
+    }
+    const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
+    const subjectNames = subs.map(s => s.subjectName);
+    const subjectIDs = subs.map(s => s.subjectID);
+    setExamClasses(prev => prev.map((c, i) => i === ci ? { ...c, subjects: subjectNames, subjectIDs } : c));
+    return subs;
+  };
+
+  /* Cascade helpers — apply locally and persist to every loaded subject. */
+  // Update the cascadeFmt function
+  const cascadeFmt = async f => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
+    setGlobalFmt(f);
+    setClassDefaults(prev => prev.map(d => ({ ...d, fmt: f })));
+    setSubjDefaults(prev => prev.map(row => row.map(d => ({ ...d, fmt: f }))));
+    toast(`Global default set: ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
+    for (let ci = 0; ci < examClasses.length; ci++) {
+      const cls = examClasses[ci];
+      const subs = await ensureSubjectsLoaded(ci);
+      for (let si = 0; si < subs.length; si++) {
+        await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, f, subjDefaults[ci]?.[si]?.line || globalLine);
+      }
+    }
+  };
+
+  // Update the cascadeLine function
+  const cascadeLine = async l => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
+    setGlobalLine(l);
+    setClassDefaults(prev => prev.map(d => ({ ...d, line: l })));
+    setSubjDefaults(prev => prev.map(row => row.map(d => ({ ...d, line: l }))));
+    toast(`Global default set: ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
+    for (let ci = 0; ci < examClasses.length; ci++) {
+      const cls = examClasses[ci];
+      const subs = await ensureSubjectsLoaded(ci);
+      for (let si = 0; si < subs.length; si++) {
+        await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
+      }
+    }
+  };
+
+  // Update the setClassFmt function
+  const setClassFmt = async (ci, f) => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
+    const cls = examClasses[ci];
+    setClassDefaults(prev => prev.map((d, i) => i === ci ? { ...d, fmt: f } : d));
+    setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map(d => ({ ...d, fmt: f })) : row));
+    toast(`${cls.name} · ${cls.section} → ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
     const subs = await ensureSubjectsLoaded(ci);
     for (let si = 0; si < subs.length; si++) {
       await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, f, subjDefaults[ci]?.[si]?.line || globalLine);
     }
-  }
-};
+  };
 
-// Update the cascadeLine function
-const cascadeLine = async l => {
-  if (isOtherSession) {
-    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-    return;
-  }
-  setGlobalLine(l);
-  setClassDefaults(prev => prev.map(d => ({ ...d, line: l })));
-  setSubjDefaults(prev => prev.map(row => row.map(d => ({ ...d, line: l }))));
-  toast(`Global default set: ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
-  for (let ci = 0; ci < examClasses.length; ci++) {
+  // Update the setClassLine function
+  const setClassLine = async (ci, l) => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
     const cls = examClasses[ci];
+    setClassDefaults(prev => prev.map((d, i) => i === ci ? { ...d, line: l } : d));
+    setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map(d => ({ ...d, line: l })) : row));
+    toast(`${cls.name} · ${cls.section} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
     const subs = await ensureSubjectsLoaded(ci);
     for (let si = 0; si < subs.length; si++) {
       await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
     }
-  }
-};
+  };
 
-// Update the setClassFmt function
-const setClassFmt = async (ci, f) => {
-  if (isOtherSession) {
-    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-    return;
-  }
-  const cls = examClasses[ci];
-  setClassDefaults(prev => prev.map((d, i) => i === ci ? { ...d, fmt: f } : d));
-  setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map(d => ({ ...d, fmt: f })) : row));
-  toast(`${cls.name} · ${cls.section} → ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
-  const subs = await ensureSubjectsLoaded(ci);
-  for (let si = 0; si < subs.length; si++) {
-    await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, f, subjDefaults[ci]?.[si]?.line || globalLine);
-  }
-};
+  // Update the setSubjFmt function
+  const setSubjFmt = (ci, si, f) => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
+    const cls = examClasses[ci];
+    const subjName = cls.subjects[si];
+    const subjectID = (cls.subjectIDs || [])[si];
+    setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, fmt: f } : d) : row));
+    toast(`${cls.name} · ${cls.section} — ${subjName} → ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
+    saveSetup(cls, subjectID, subjName, f, subjDefaults[ci]?.[si]?.line || globalLine);
+  };
 
-// Update the setClassLine function
-const setClassLine = async (ci, l) => {
-  if (isOtherSession) {
-    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-    return;
-  }
-  const cls = examClasses[ci];
-  setClassDefaults(prev => prev.map((d, i) => i === ci ? { ...d, line: l } : d));
-  setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map(d => ({ ...d, line: l })) : row));
-  toast(`${cls.name} · ${cls.section} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
-  const subs = await ensureSubjectsLoaded(ci);
-  for (let si = 0; si < subs.length; si++) {
-    await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
-  }
-};
-
-// Update the setSubjFmt function
-const setSubjFmt = (ci, si, f) => {
-  if (isOtherSession) {
-    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-    return;
-  }
-  const cls = examClasses[ci];
-  const subjName = cls.subjects[si];
-  const subjectID = (cls.subjectIDs || [])[si];
-  setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, fmt: f } : d) : row));
-  toast(`${cls.name} · ${cls.section} — ${subjName} → ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
-  saveSetup(cls, subjectID, subjName, f, subjDefaults[ci]?.[si]?.line || globalLine);
-};
-
-// Update the setSubjLine function
-const setSubjLine = (ci, si, l) => {
-  if (isOtherSession) {
-    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-    return;
-  }
-  const cls = examClasses[ci];
-  const subjName = cls.subjects[si];
-  const subjectID = (cls.subjectIDs || [])[si];
-  setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, line: l } : d) : row));
-  toast(`${cls.name} · ${cls.section} — ${subjName} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
-  saveSetup(cls, subjectID, subjName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
-};
+  // Update the setSubjLine function
+  const setSubjLine = (ci, si, l) => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
+    const cls = examClasses[ci];
+    const subjName = cls.subjects[si];
+    const subjectID = (cls.subjectIDs || [])[si];
+    setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, line: l } : d) : row));
+    toast(`${cls.name} · ${cls.section} — ${subjName} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
+    saveSetup(cls, subjectID, subjName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
+  };
   // getExamClasses fix — flatten to {name, section, subjects:[]}
   async function getExamClasses() {
     try {
@@ -555,7 +443,7 @@ const setSubjLine = (ci, si, l) => {
             name: grade.name,
             section: sec.sectionName,
             subjects: [],  // getSyllabusSubjects se fill hoga
-                  totalSubjectsCount: sec.totalSubjectsCount || 0,
+            totalSubjectsCount: sec.totalSubjectsCount || 0,
 
           });
         });
@@ -626,7 +514,7 @@ const setSubjLine = (ci, si, l) => {
       const cls = examClasses[ci];
       const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
       const subjectNames = subs.map(s => s.subjectName);
-      const subjectIDs   = subs.map(s => s.subjectID);
+      const subjectIDs = subs.map(s => s.subjectID);
 
       setExamClasses(prev => prev.map((c, i) =>
         i === ci ? { ...c, subjects: subjectNames, subjectIDs } : c
@@ -645,12 +533,12 @@ const setSubjLine = (ci, si, l) => {
   // MakePaperModal open karne se pehle subjects fetch karein
   const handleMakePaper = async (idx) => {
     const cls = examClasses[idx];
-    
+
     // Agar subjects nahi hain toh fetch karein
     if (cls.subjects.length === 0) {
       const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
       const subjectNames = subs.map(s => s.subjectName);
-      const subjectIDs   = subs.map(s => s.subjectID);
+      const subjectIDs = subs.map(s => s.subjectID);
 
       setExamClasses(prev => prev.map((c, i) =>
         i === idx ? { ...c, subjects: subjectNames, subjectIDs } : c
@@ -662,7 +550,7 @@ const setSubjLine = (ci, si, l) => {
         }) : row
       ));
     }
-    
+
     setMakeIdx(idx);
   };
 
@@ -685,288 +573,254 @@ const setSubjLine = (ci, si, l) => {
     return examClasses.map(() => ({ fmt: globalFmt, line: globalLine }));
   }
   const fetchPapersByClass = async (gradeId, sectionID) => {
-      try {
-        const branchID = sessionStorage.getItem('branchID');
-        const token = sessionStorage.getItem('token');
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
 
-        const url = buildUrl(`/api/getexamqpmasterbyids?branchID=${branchID}&gradeId=${gradeId}&sectionID=${sectionID}&pageNo=1`);
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-        });
-        const data = await response.json();
-        // API returns a bare array; tolerate { data: [...] } too.
-        return Array.isArray(data) ? data : (data?.data || []);
-      } catch (err) {
-        console.error('Error fetching papers:', err);
-        return [];
-      }
-    };
+      const url = buildUrl(`/api/getexamqpmasterbyids?branchID=${branchID}&gradeId=${gradeId}&sectionID=${sectionID}&pageNo=1`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      });
+      const data = await response.json();
+      // API returns a bare array; tolerate { data: [...] } too.
+      return Array.isArray(data) ? data : (data?.data || []);
+    } catch (err) {
+      console.error('Error fetching papers:', err);
+      return [];
+    }
+  };
 
-    // 👇 Button click handler
+  // 👇 Button click handler
   const handleFetchPapers = async () => {
     for (const cls of examClasses) {
       const papers = await fetchPapersByClass(cls.gradeID, cls.sectionID);
       if (papers.length > 0) {
         const key = pgClassKey(cls);
-        console.log(key , "key")
-        console.log(papers , "papers")
+        console.log(key, "key")
+        console.log(papers, "papers")
         const mapped = papers.map(mapApiPaper);
         setPapersByKey(prev => ({ ...prev, [key]: mapped }));
       }
     }
   };
-  
 
-    /* Load saved per-subject paper-generation setup for this branch. */
-    async function getPaperGenerationSetup() {
-      try {
-        const branchID = sessionStorage.getItem('branchID');
-        const token    = sessionStorage.getItem('token');
-        const res = await fetch(
-          buildUrl(`/api/getpapergenerationsetupbybranch?branchID=${branchID}`),
-          { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-        );
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : (data?.data || []);
-        const map = {};
-        list.forEach(r => {
-          const key = pgSetupKey(r.classID, r.sectionID, r.subjectID);
-          // Backend can hold multiple rows per subject — keep the most recent (highest id).
-          if (!map[key] || r.id > map[key].id) {
-            map[key] = {
-              id: r.id,
-              fmt: pgApiToFmt(r.paperFormate),
-              line: pgApiToLine(r.lineType),
-            };
-          }
-        });
-        setSetupMap(map);
-      } catch (err) {
-        console.error('Could not load paper generation setup', err);
-      }
+
+  /* Load saved per-subject paper-generation setup for this branch. */
+  async function getPaperGenerationSetup() {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(
+        buildUrl(`/api/getpapergenerationsetupbybranch?branchID=${branchID}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+      );
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (data?.data || []);
+      const map = {};
+      list.forEach(r => {
+        const key = pgSetupKey(r.classID, r.sectionID, r.subjectID);
+        // Backend can hold multiple rows per subject — keep the most recent (highest id).
+        if (!map[key] || r.id > map[key].id) {
+          map[key] = {
+            id: r.id,
+            fmt: pgApiToFmt(r.paperFormate),
+            line: pgApiToLine(r.lineType),
+          };
+        }
+      });
+      setSetupMap(map);
+    } catch (err) {
+      console.error('Could not load paper generation setup', err);
     }
+  }
 
-    // 👇 useEffect — defaults set karo + saved setup apply karo (existing rows preserve)
-    useEffect(() => {
-      if (examClasses.length > 0) {
-        setClassDefaults(prev => examClasses.map((cls, ci) => {
-          // Derive the class-level chip from this class+section's saved subject records.
-          const recs = Object.entries(setupMap)
-            .filter(([k]) => k.startsWith(`${cls.gradeID}-${cls.sectionID}-`))
-            .map(([, v]) => v);
-          if (recs.length) {
-            return { fmt: pgMajority(recs.map(r => r.fmt)), line: pgMajority(recs.map(r => r.line)) };
-          }
-          return prev[ci] || { fmt: globalFmt, line: globalLine };
-        }));
-        setSubjDefaults(prev => examClasses.map((cls, ci) => {
-          const existingRow = prev[ci] || [];
-          return (cls.subjects || []).map((name, si) => {
-            if (existingRow[si]) return existingRow[si];
-            const saved = setupMap[pgSetupKey(cls.gradeID, cls.sectionID, (cls.subjectIDs || [])[si])];
-            return saved ? { fmt: saved.fmt, line: saved.line } : { fmt: globalFmt, line: globalLine };
-          });
-        }));
-      }
-    }, [examClasses, setupMap]);
+  // 👇 useEffect — defaults set karo + saved setup apply karo (existing rows preserve)
+  useEffect(() => {
+    if (examClasses.length > 0) {
+      setClassDefaults(prev => examClasses.map((cls, ci) => {
+        // Derive the class-level chip from this class+section's saved subject records.
+        const recs = Object.entries(setupMap)
+          .filter(([k]) => k.startsWith(`${cls.gradeID}-${cls.sectionID}-`))
+          .map(([, v]) => v);
+        if (recs.length) {
+          return { fmt: pgMajority(recs.map(r => r.fmt)), line: pgMajority(recs.map(r => r.line)) };
+        }
+        return prev[ci] || { fmt: globalFmt, line: globalLine };
+      }));
+      setSubjDefaults(prev => examClasses.map((cls, ci) => {
+        const existingRow = prev[ci] || [];
+        return (cls.subjects || []).map((name, si) => {
+          if (existingRow[si]) return existingRow[si];
+          const saved = setupMap[pgSetupKey(cls.gradeID, cls.sectionID, (cls.subjectIDs || [])[si])];
+          return saved ? { fmt: saved.fmt, line: saved.line } : { fmt: globalFmt, line: globalLine };
+        });
+      }));
+    }
+  }, [examClasses, setupMap]);
 
   useEffect(() => { getExamClasses(); getPaperGenerationSetup(); }, []);
-    
-    if (hasActiveSession === false) {
-        return (
-            <>
-                <style>{PG_CSS}</style>
-                <div style={{
-                    minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-                }}>
-                    <div style={{
-                        maxWidth: 420, width: '100%', textAlign: 'center', background: '#fff',
-                        border: '1px solid #E2E8F0', borderRadius: 16, padding: '36px 32px',
-                        boxShadow: '0 10px 30px rgba(15,23,42,.08)',
-                    }}>
-                        <div style={{
-                            width: 64, height: 64, borderRadius: '50%', margin: '0 auto 18px',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: 'rgba(217,119,6,.12)', color: '#B45309', fontSize: 28,
-                        }}>
-                            <i className="fa-solid fa-calendar-xmark"></i>
-                        </div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', marginBottom: 8 }}>
-                            No Active Session
-                        </div>
-                        <div style={{ fontSize: 14, color: '#475569', lineHeight: 1.6 }}>
-                            Please set the session from Setting first.
-                        </div>
-                    </div>
-                </div>
-            </>
-        );
-    }
 
-  return (
+  if (hasActiveSession === false) {
+    return (
       <>
         <style>{PG_CSS}</style>
-        <style>{PAPER_PGX_CSS}</style>
-
-        {/* ── Page header ── */}
-        <div className="page-header">
-          <div className="page-title-row">
-            <div className="page-title-icon"><i className="fa-solid fa-scroll"></i></div>
-            <div>
-              <div className="page-title">Papers Generator</div>
-              <div className="page-sub">Create, manage &amp; download question papers for all classes</div>
+        <div style={{
+          minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+        }}>
+          <div style={{
+            maxWidth: 420, width: '100%', textAlign: 'center', background: '#fff',
+            border: '1px solid #E2E8F0', borderRadius: 16, padding: '36px 32px',
+            boxShadow: '0 10px 30px rgba(15,23,42,.08)',
+          }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: '50%', margin: '0 auto 18px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(217,119,6,.12)', color: '#B45309', fontSize: 28,
+            }}>
+              <i className="fa-solid fa-calendar-xmark"></i>
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', marginBottom: 8 }}>
+              No Active Session
+            </div>
+            <div style={{ fontSize: 14, color: '#475569', lineHeight: 1.6 }}>
+              Please set the session from Setting first.
             </div>
           </div>
-          <Tooltip text="Play a short tutorial for the Papers Generator">
-            <button
-              className="tutorial-btn page-tutorial-btn"
-              onClick={() => setTutorialOpen(true)}
-            >
-              <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
-              <span className="tutorial-label">Tutorial</span>
-            </button>
-          </Tooltip>
         </div>
+      </>
+    );
+  }
 
-        {/* ── Two inner tabs ── */}
-        <div className="pg-tabs-row">
-          {canSetupView && (
+  return (
+    <>
+      <style>{PG_CSS}</style>
+
+      {/* ── Page header ── */}
+      <div className="page-header">
+        <div className="page-title-row">
+          <div className="page-title-icon"><i className="fa-solid fa-scroll"></i></div>
+          <div>
+            <div className="page-title">Papers Generator</div>
+            <div className="page-sub">Create, manage &amp; download question papers for all classes</div>
+          </div>
+        </div>
+        <Tooltip text="Play a short tutorial for the Papers Generator">
+          <button
+            className="tutorial-btn page-tutorial-btn"
+            onClick={() => setTutorialOpen(true)}
+          >
+            <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
+            <span className="tutorial-label">Tutorial</span>
+          </button>
+        </Tooltip>
+      </div>
+
+      {/* ── Two inner tabs ── */}
+      <div className="pg-tabs-row">
+        {canSetupView && (
           <button
             className={`pg-tab${tab === 'setup' ? ' active' : ''}`}
             onClick={() => setTab('setup')}
           >
             <i className="fa-solid fa-sliders"></i> Paper Setup
           </button>
-          )}
-          {canGenView && (
+        )}
+        {canGenView && (
           <button
             className={`pg-tab${tab === 'generator' ? ' active' : ''}`}
-  onClick={() => {
+            onClick={() => {
               setTab('generator');
               handleFetchPapers(); // 👈 Yahan call ho raha hai
             }}        >
             <i className="fa-solid fa-wand-magic-sparkles"></i> Paper Generator
           </button>
-          )}
-        </div>
+        )}
+      </div>
 
-        {/* ── Paper Setup tab ── */}
-        {tab === 'setup' && canSetupView && (
-          <>
-            {/* Choose Paper Template */}
-            <div className="section-card" style={{ marginBottom: 16, overflow: 'hidden' }}>
-              <div className="pg-card-head">
-                <div className="pg-card-title">
-                  <i className="fa-solid fa-file-lines" style={{ color: '#1E40AF' }}></i> Choose Paper Template
-                </div>
-                <div className="pg-card-sub">Select a header layout for your question papers</div>
+      {/* ── Paper Setup tab ── */}
+      {tab === 'setup' && canSetupView && (
+        <>
+          {/* Choose Paper Template */}
+          <div className="section-card" style={{ marginBottom: 16, overflow: 'hidden' }}>
+            <div className="pg-card-head">
+              <div className="pg-card-title">
+                <i className="fa-solid fa-file-lines" style={{ color: '#1E40AF' }}></i> Choose Paper Template
               </div>
-              <div style={{ padding: 20 }}>
-                <div className="pg-tmpl-grid">
-                  {TEMPLATES.map(t => {
-                    const sel = templateId === t.id;
-                    return (
-                      <div
-                        key={t.id}
-                        className={`pg-tmpl-card${sel ? ' selected' : ''}`}
-                        onClick={() => { if (templateId !== t.id) chooseTemplate(t.id); }}
-                      >
-                        <div className="pg-tmpl-top-strip"></div>
-                        {sel && (
-                          <div className="pg-tmpl-badge">
-                            <i className="fa-solid fa-check" style={{ fontSize: 7 }}></i> Selected
-                          </div>
-                        )}
-                        <div className="pg-tmpl-body">
-                          <div className="pg-tmpl-num">{String(t.id).padStart(2, '0')}</div>
-                          <TemplatePreview id={t.id} boardCfg={boardCfg} school={schoolHeader} />
-                          <div>
-                            <div className="pg-tmpl-name">{t.name} <span className="pg-tmpl-name-bar"></span></div>
-                            <div className="pg-tmpl-desc">{t.id === 4 ? pgBoardFind(boardId).sh + ' · ' + pgBoardLevel(boardLevel).short : t.desc}</div>
-                          </div>
-                          <Tooltip text="Preview this paper template">
-                            <button
-                              className="pg-tmpl-prev-btn"
-                              onClick={e => {
-                                e.stopPropagation();
-                                /* Preview bhi selection save — new tab / reload par wahi template. */
-                                if (templateId !== t.id) chooseTemplate(t.id);
-                                else writeSavedTmpl({ templateId: t.id, boardId, boardLevel, boardGroup }, pgTmplKey);
-                                setPreviewN(t.id);
-                              }}
-                            >
-                              <i className="fa-solid fa-eye"></i> Preview
-                            </button>
-                          </Tooltip>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Board Pattern — board / level / group picker, shown once Template 4 is selected */}
-                {templateId === 4 && (
-                  <div className="pgx-bp">
-                    <div className="pgx-bp-h">
-                      <b>Board Pattern — choose your board</b>
-                      <small>Pick any Matric or Intermediate board of Pakistan. Its paper style is applied to your question papers.</small>
-                    </div>
-                    <BoardPicker
-                      className="pgx-bp-row"
-                      boardId={boardId} setBoardId={setBoardId}
-                      boardLevel={boardLevel} setBoardLevel={setBoardLevel}
-                      boardGroup={boardGroup} setBoardGroup={setBoardGroup}
+              <div className="pg-card-sub">Select a header layout for your question papers</div>
+            </div>
+            <div style={{ padding: 20 }}>
+              <div className="pg-tmpl-grid">
+                {TEMPLATES.map(t => {
+                  const sel = templateId === t.id;
+                  return (
+                    <div
+                      key={t.id}
+                      className={`pg-tmpl-card${sel ? ' selected' : ''}`}
+                      onClick={() => setTemplateId(t.id)}
                     >
-                      <div className="pgx-bp-btns">
-                        <Tooltip text="Preview this board's full paper style">
-                          <button className="pg-btn-secondary" onClick={() => setPreviewN(4)}>
+                      <div className="pg-tmpl-top-strip"></div>
+                      {sel && (
+                        <div className="pg-tmpl-badge">
+                          <i className="fa-solid fa-check" style={{ fontSize: 7 }}></i> Selected
+                        </div>
+                      )}
+                      <div className="pg-tmpl-body">
+                        <div className="pg-tmpl-num">{String(t.id).padStart(2, '0')}</div>
+                        <TemplatePreview id={t.id} />
+                        <div>
+                          <div className="pg-tmpl-name">{t.name} <span className="pg-tmpl-name-bar"></span></div>
+                          <div className="pg-tmpl-desc">{t.desc}</div>
+                        </div>
+                        <Tooltip text="Preview this paper template">
+                          <button
+                            className="pg-tmpl-prev-btn"
+                            onClick={e => { e.stopPropagation(); setPreviewN(t.id); }}
+                          >
                             <i className="fa-solid fa-eye"></i> Preview
                           </button>
                         </Tooltip>
                       </div>
-                    </BoardPicker>
-                    <div className="pgx-bp-sample">
-                      <BoardHeader board={pgBoardFind(boardId)} level={pgBoardLevel(boardLevel)} group={boardGroup} />
                     </div>
-                  </div>
-                )}
+                  );
+                })}
               </div>
             </div>
+          </div>
 
-            {/* Class-wise Paper Format & Line Settings */}
-            <div className="section-card" style={{ marginBottom: 16, overflow: 'hidden' }}>
-              <div className="pg-card-head">
-                <div className="pg-global-defaults-row">
-                  <div>
-                    <div className="pg-card-title">
-                      <i className="fa-solid fa-sliders" style={{ color: '#1E40AF' }}></i> Class-wise Paper Format &amp; Line Settings
-                    </div>
-                    <div className="pg-card-sub">Set paper format and answer line type per class and subject</div>
+          {/* Class-wise Paper Format & Line Settings */}
+          <div className="section-card" style={{ marginBottom: 16, overflow: 'hidden' }}>
+            <div className="pg-card-head">
+              <div className="pg-global-defaults-row">
+                <div>
+                  <div className="pg-card-title">
+                    <i className="fa-solid fa-sliders" style={{ color: '#1E40AF' }}></i> Class-wise Paper Format &amp; Line Settings
                   </div>
-                  {canSetupEdit && (
+                  <div className="pg-card-sub">Set paper format and answer line type per class and subject</div>
+                </div>
+                {canSetupEdit && (
                   <div className="pg-global-defaults-controls">
                     <span className="pg-global-lbl">Global Default:</span>
                     <div className="pg-seg">
                       <Tooltip text="Apply 'With Answer Sheet' to every class and subject">
-   <button
-      className={`pg-seg-btn${globalFmt === 'with' ? ' active' : ''}`}
-      onClick={() => cascadeFmt('with')}
-      disabled={isOtherSession}
-      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-    >
+                        <button
+                          className={`pg-seg-btn${globalFmt === 'with' ? ' active' : ''}`}
+                          onClick={() => cascadeFmt('with')}
+                          disabled={isOtherSession}
+                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                        >
                           <i className="fa-solid fa-file-lines"></i> With Sheet
                         </button>
                       </Tooltip>
                       <Tooltip text="Apply 'No Answer Sheet' to every class and subject">
-                          <button
-      className={`pg-seg-btn${globalFmt === 'without' ? ' active' : ''}`}
-      onClick={() => cascadeFmt('without')}
-      disabled={isOtherSession}
-      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-    >
+                        <button
+                          className={`pg-seg-btn${globalFmt === 'without' ? ' active' : ''}`}
+                          onClick={() => cascadeFmt('without')}
+                          disabled={isOtherSession}
+                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                        >
                           <i className="fa-regular fa-file"></i> No Sheet
                         </button>
                       </Tooltip>
@@ -974,125 +828,125 @@ const setSubjLine = (ci, si, l) => {
                     <div className="pg-seg-divider" />
                     <div className="pg-seg">
                       <Tooltip text="Apply single-line answer lines to every class and subject">
-   <button
-      className={`pg-seg-btn${globalLine === 'single' ? ' active' : ''}`}
-      onClick={() => cascadeLine('single')}
-      disabled={isOtherSession}
-      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-    >
+                        <button
+                          className={`pg-seg-btn${globalLine === 'single' ? ' active' : ''}`}
+                          onClick={() => cascadeLine('single')}
+                          disabled={isOtherSession}
+                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                        >
                           <i className="fa-solid fa-minus"></i> Single
                         </button>
                       </Tooltip>
                       <Tooltip text="Apply four-line (handwriting) answer lines to every class and subject">
-                       <button
-      className={`pg-seg-btn${globalLine === 'four' ? ' active' : ''}`}
-      onClick={() => cascadeLine('four')}
-      disabled={isOtherSession}
-      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-    >
+                        <button
+                          className={`pg-seg-btn${globalLine === 'four' ? ' active' : ''}`}
+                          onClick={() => cascadeLine('four')}
+                          disabled={isOtherSession}
+                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                        >
                           <i className="fa-solid fa-bars"></i> Four Line
                         </button>
                       </Tooltip>
                     </div>
                   </div>
-                  )}
-                </div>
+                )}
               </div>
+            </div>
 
-              <div style={{ padding: '16px 20px' }}>
-                {examClasses.map((cls, ci) => {
-  const cd = classDefaults[ci] || { fmt: globalFmt, line: globalLine };
-                  const isOpen = openClassIdx === ci;
-                  return (
-                    <div key={`${cls.name}-${cls.section}-${ci}`} className={`pg-subj-class-block${isOpen ? ' open' : ''}`}>
-                      <div
-                        className="pg-subj-class-header"
-    onClick={() => handleClassOpen(ci)}
-                      >
-                        <div className="pg-subj-class-header-top">
-                          <i className="fa-solid fa-school" style={{ color: '#1E40AF', fontSize: 13, flexShrink: 0 }}></i>
-                          <span className="pg-subj-class-name">{cls.name}</span>
-                          <span className="pg-subj-class-section">{cls.section}</span>
-  <span className="pg-subj-count-pill">
-    {cls.subjects.length > 0 ? cls.subjects.length : cls.totalSubjectsCount} subj
-  </span>                        <Tooltip text={isOpen ? 'Hide subjects' : 'Show subjects'}>
-                            <button
-                              className="pg-cls-chevron"
-  onClick={e => { e.stopPropagation(); handleClassOpen(ci); }}
-                              style={{ marginLeft: 'auto' }}
-                              aria-label="Toggle"
-                            >
-                              <i className="fa-solid fa-chevron-down"></i>
-                            </button>
-                          </Tooltip>
-                        </div>
-                        {canSetupEdit && (
+            <div style={{ padding: '16px 20px' }}>
+              {examClasses.map((cls, ci) => {
+                const cd = classDefaults[ci] || { fmt: globalFmt, line: globalLine };
+                const isOpen = openClassIdx === ci;
+                return (
+                  <div key={`${cls.name}-${cls.section}-${ci}`} className={`pg-subj-class-block${isOpen ? ' open' : ''}`}>
+                    <div
+                      className="pg-subj-class-header"
+                      onClick={() => handleClassOpen(ci)}
+                    >
+                      <div className="pg-subj-class-header-top">
+                        <i className="fa-solid fa-school" style={{ color: '#1E40AF', fontSize: 13, flexShrink: 0 }}></i>
+                        <span className="pg-subj-class-name">{cls.name}</span>
+                        <span className="pg-subj-class-section">{cls.section}</span>
+                        <span className="pg-subj-count-pill">
+                          {cls.subjects.length > 0 ? cls.subjects.length : cls.totalSubjectsCount} subj
+                        </span>                        <Tooltip text={isOpen ? 'Hide subjects' : 'Show subjects'}>
+                          <button
+                            className="pg-cls-chevron"
+                            onClick={e => { e.stopPropagation(); handleClassOpen(ci); }}
+                            style={{ marginLeft: 'auto' }}
+                            aria-label="Toggle"
+                          >
+                            <i className="fa-solid fa-chevron-down"></i>
+                          </button>
+                        </Tooltip>
+                      </div>
+                      {canSetupEdit && (
                         <div className="pg-cls-defaults" onClick={e => e.stopPropagation()}>
                           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>Default:</span>
                           <Tooltip text={`Apply 'With Sheet' to every subject in ${cls.name} (${cls.section})`}>
-                           <button
-    className={`pg-cls-chip${cd.fmt === 'with' ? ' active-fmt' : ''}`}
-    onClick={() => setClassFmt(ci, 'with')}
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-  >
+                            <button
+                              className={`pg-cls-chip${cd.fmt === 'with' ? ' active-fmt' : ''}`}
+                              onClick={() => setClassFmt(ci, 'with')}
+                              disabled={isOtherSession}
+                              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                            >
                               <i className="fa-solid fa-file-lines"></i> With Sheet
                             </button>
                           </Tooltip>
                           <Tooltip text={`Apply 'No Sheet' to every subject in ${cls.name} (${cls.section})`}>
-                          <button
-    className={`pg-cls-chip${cd.fmt === 'without' ? ' active-fmt' : ''}`}
-    onClick={() => setClassFmt(ci, 'without')}
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-  >
+                            <button
+                              className={`pg-cls-chip${cd.fmt === 'without' ? ' active-fmt' : ''}`}
+                              onClick={() => setClassFmt(ci, 'without')}
+                              disabled={isOtherSession}
+                              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                            >
                               <i className="fa-regular fa-file"></i> No Sheet
                             </button>
                           </Tooltip>
                           <div style={{ width: 1, height: 18, background: 'var(--border-light)', margin: '0 2px', flexShrink: 0 }} />
                           <Tooltip text={`Apply single-line answer lines to every subject in ${cls.name} (${cls.section})`}>
- <button
-    className={`pg-cls-chip${cd.line === 'single' ? ' active-line' : ''}`}
-    onClick={() => setClassLine(ci, 'single')}
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-  >
+                            <button
+                              className={`pg-cls-chip${cd.line === 'single' ? ' active-line' : ''}`}
+                              onClick={() => setClassLine(ci, 'single')}
+                              disabled={isOtherSession}
+                              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                            >
                               <i className="fa-solid fa-minus"></i> Single
                             </button>
                           </Tooltip>
                           <Tooltip text={`Apply four-line answer lines to every subject in ${cls.name} (${cls.section})`}>
-<button
-    className={`pg-cls-chip${cd.line === 'four' ? ' active-line' : ''}`}
-    onClick={() => setClassLine(ci, 'four')}
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-    title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-  >
+                            <button
+                              className={`pg-cls-chip${cd.line === 'four' ? ' active-line' : ''}`}
+                              onClick={() => setClassLine(ci, 'four')}
+                              disabled={isOtherSession}
+                              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                            >
 
                               <i className="fa-solid fa-bars"></i> Four
                             </button>
                           </Tooltip>
                         </div>
-                        )}
-                      </div>
+                      )}
+                    </div>
 
-                      {isOpen && (
-                        <div className="pg-subj-rows">
-                          {cls.subjects.map((s, si) => {
-  const sd = (subjDefaults[ci] || [])[si] || { fmt: globalFmt, line: globalLine };
-                            const icon = PG_SUBJ_ICON[s] || 'fa-book';
-                            return (
-                              <div key={s + si} className="pg-subj-row">
-                                <div className="pg-subj-row-left">
-                                  <div className="pg-subj-icon"><i className={`fa-solid ${icon}`}></i></div>
-                                  <span className="pg-subj-name">{s}</span>
-                                </div>
-  {/* 
+                    {isOpen && (
+                      <div className="pg-subj-rows">
+                        {cls.subjects.map((s, si) => {
+                          const sd = (subjDefaults[ci] || [])[si] || { fmt: globalFmt, line: globalLine };
+                          const icon = PG_SUBJ_ICON[s] || 'fa-book';
+                          return (
+                            <div key={s + si} className="pg-subj-row">
+                              <div className="pg-subj-row-left">
+                                <div className="pg-subj-icon"><i className={`fa-solid ${icon}`}></i></div>
+                                <span className="pg-subj-name">{s}</span>
+                              </div>
+                              {/* 
                                 <div className="pg-subj-toggle-col">
                                   <span className="pg-subj-toggle-lbl">
                                     <i className="fa-solid fa-file-lines" style={{ fontSize: 8, marginRight: 3 }}></i>Paper Format
@@ -1117,7 +971,7 @@ const setSubjLine = (ci, si, l) => {
                                   </div>
                                 </div> */}
 
-                                {canSetupEdit && (
+                              {canSetupEdit && (
                                 <div className="pg-subj-toggle-col">
                                   <span className="pg-subj-toggle-lbl">
                                     <i className="fa-solid fa-bars" style={{ fontSize: 8, marginRight: 3 }}></i>Line Type
@@ -1141,712 +995,709 @@ const setSubjLine = (ci, si, l) => {
                                     </Tooltip>
                                   </div>
                                 </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* ── Paper Generator tab ── */}
-        {tab === 'generator' && canGenView && (
-          <div className="section-card" style={{ animation: 'fadeSlide .2s ease both', padding: 0, overflow: 'hidden' }}>
-            <div className="pg-class-table-head">
-              <div>S. No.</div>
-              <div>Class</div>
-              <div>Section</div>
-              <div>Make Paper</div>
-              <div style={{ textAlign: 'center' }}>Generated</div>
-              <div style={{ textAlign: 'center' }}>Details</div>
-            </div>
-            {examClasses.map((cls, idx) => {
-            // Jahan papers fetch hote hain Generator tab mein
-  const key    = pgClassKey(cls);
-  const papers = papersByKey[key] || [];
-              const count  = papers.length;
-              const isOpen = openGenIdx === idx;
-              return (
-                <div key={`${cls.name}-${cls.section}-${idx}`}>
-                  <div className="pg-class-row">
-                    <div style={{ color: 'var(--text-muted)', fontWeight: 700 }}># {idx + 1}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <i className="fa-solid fa-school" style={{ color: '#1E40AF', fontSize: 12, flexShrink: 0 }}></i>
-                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{cls.name}</span>
-                      <span className="pg-section-badge-inline" style={{ fontSize: 10, fontWeight: 700, color: '#1E40AF', background: '#EFF6FF', border: '1px solid var(--border-med)', padding: '1px 6px', borderRadius: 99, flexShrink: 0 }}>{cls.section}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="fa-solid fa-sitemap" style={{ color: 'var(--text-muted)', fontSize: 12 }}></i>
-                      <span style={{ color: 'var(--text-secondary)' }}>{cls.section}</span>
-                    </div>
-                    <div>
-                      {canGenCreate && (
-                      <Tooltip text={`Generate a new paper for ${cls.name} · ${cls.section}`}>
-  <button
-    className="pg-make-paper-btn"
-    onClick={() => handleMakePaper(idx)}
-     disabled={isOtherSession}
-                    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                    title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-  >
-  <i className="fa-solid fa-wand-magic-sparkles"></i>
-    Make Paper
-  </button>
-
-                      </Tooltip>
-                      )}
-                    </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <Tooltip text={count === 0 ? 'No papers generated yet' : `${count} paper${count !== 1 ? 's' : ''} generated for this class`}>
-                        <span className={`pg-paper-count${count === 0 ? ' zero' : ''}`}>{count}</span>
-                      </Tooltip>
-                    </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <Tooltip text={isOpen ? 'Hide generated papers' : 'Show generated papers'}>
-                        <button
-                          className={`pg-chevron-btn${isOpen ? ' open' : ''}`}
-                          onClick={() => setOpenGenIdx(isOpen ? null : idx)}
-                          aria-label="Toggle papers"
-                        >
-                          <i className="fa-solid fa-chevron-down" style={{ fontSize: 11 }}></i>
-                        </button>
-                      </Tooltip>
-                    </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <div className={`pg-papers-dropdown${isOpen ? ' open' : ''}`}>
-                    <PapersGrid
-                      papers={papers}
-                      toast={toast}
-                      onView={p => setViewPaper({ paper: p, cls })}
-                      onDownload={p => setDownloadPaper({ paper: p, cls })}
-                      onDelete={(p, pi) => setDeletePaper({ paper: p, cls, key, index: pi })}
-                      onEdit={p => handleEditPaper(idx, p)}
-                        isOtherSession={isOtherSession}  // ← Add this line
-                      canEdit={canGenEdit}
-                      canDownload={canGenDownload}
-                      canDelete={canGenDelete}
-                    />
-
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ── Template Preview modal ── */}
-        {previewN && (
-          <TemplatePreviewModal
-            n={previewN}
-            school={schoolHeader}
-            onClose={() => setPreviewN(null)}
-            onSelect={id => {
-              setPreviewN(null);
-              chooseTemplate(id);
-            }}
-            boardId={boardId} setBoardId={setBoardId}
-            boardLevel={boardLevel} setBoardLevel={setBoardLevel}
-            boardGroup={boardGroup} setBoardGroup={setBoardGroup}
-          />
-        )}
-
-        {/* ── Make Paper modal ── */}
-        {makeIdx != null && (
-          <MakePaperModal
-            cls={examClasses[makeIdx]}
-         isOtherSession={isOtherSession}
-            defaultFmt={classDefaults[makeIdx]?.fmt || 'with'}
-            initialPaper={editPaper}
-            onClose={() => { setMakeIdx(null); setEditPaper(null); }}
-            onGenerated={async () => {
-              // Generate ke baad is class ki papers dobara fetch karke list update karo.
-              const c = examClasses[makeIdx];
-              if (!c) return;
-              const papers = await fetchPapersByClass(c.gradeID, c.sectionID);
-              setPapersByKey(prev => ({ ...prev, [pgClassKey(c)]: papers.map(mapApiPaper) }));
-            }}
-            toast={toast}
-                subjects={subjects} // 👈 YE ADD KAREIN
-            templateId={templateId}
-            boardCfg={boardCfg}
-          />
-        )}
-
-        {/* ── Paper View modal ── */}
-        {viewPaper && (
-          <PaperViewModal
-            paper={viewPaper.paper}
-            cls={viewPaper.cls}
-            templateId={templateId}
-            boardCfg={boardCfg}
-            onClose={() => setViewPaper(null)}
-            onDownload={() => { setDownloadPaper(viewPaper); setViewPaper(null); }}
-            canDownload={canGenDownload}
-            setupMap={setupMap}
-          />
-        )}
-
-        {/* ── Download modal ── */}
-        {downloadPaper && (
-          <DownloadModal
-            paper={downloadPaper.paper}
-            cls={downloadPaper.cls}
-            templateId={templateId}
-            boardCfg={boardCfg}
-            onClose={() => setDownloadPaper(null)}
-            toast={toast}
-            setupMap={setupMap}
-          />
-        )}
-
-        {/* ── Delete confirmation ── */}
-        {deletePaper && (
-          <DeleteConfirmDialog
-            paper={deletePaper.paper}
-            cls={deletePaper.cls}
-                toast={toast}  // ← Add this line
-
-            onClose={() => setDeletePaper(null)}
-            onConfirm={async () => {
-              const { key, index, paper, cls: delCls } = deletePaper;
-              const id = paper.qpMasterID ?? paper.id;
-              const removeLocal = () => setPapersByKey(prev => {
-                const next = { ...prev };
-                next[key] = (next[key] || []).filter((_, i) => i !== index);
-                return next;
-              });
-              /* QA C12: DELETE ka response non-OK / unreadable aaye lekin record
-                 waqai delete ho chuka ho → list dobara GET karke confirm karo,
-                 taake user ko sahi (success) toast mile. */
-              const confirmGone = async () => {
-                try {
-                  const list = await fetchPapersByClass(delCls.gradeID, delCls.sectionID);
-                  return !list.some(p => String(p.id ?? p.qpMasterID) === String(id));
-                } catch { return false; }
-              };
-              let ok = false, msg = '';
-              try {
-                const token = sessionStorage.getItem('token');
-                const params = new URLSearchParams({ id: String(id) });
-                const response = await fetch(
-                  buildUrl(`/api/deleteqpmasterrecord?${params.toString()}`),
-                  { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
                 );
-                const data = await response.json().catch(() => ({}));
-                ok = response.ok && data?.success !== false;
-                msg = data?.message || '';
-              } catch (error) {
-                console.error('Error deleting paper:', error);
-              }
-              if (!ok) ok = await confirmGone();
-              if (ok) {
-                removeLocal();
-                toast(`Paper "${paper.title}" deleted successfully`, 'success');
-              } else {
-                toast(msg || 'Failed to delete paper', 'error');
-              }
-              setDeletePaper(null);
-            }}
-          />
-        )}
+              })}
+            </div>
+          </div>
+        </>
+      )}
 
-        <TutorialModal
-          open={tutorialOpen}
-          moduleKey="paperGenerator"
-          onClose={() => setTutorialOpen(false)}
-          toast={toast}
-        />
-      </>
-    );
-  }
-
-  /* ═══════════════════════════════════════════════════════════════════
-    PAPERS GRID — list of generated papers under a class row
-    ═══════════════════════════════════════════════════════════════════ */
-  function PapersGrid({ papers, toast, onView, onDownload, onDelete, onEdit , isOtherSession, canEdit = true, canDownload = true, canDelete = true }) {
-    if (!papers.length) {
-      return (
-        <div style={{ textAlign: 'center', padding: '28px 20px', color: 'var(--text-muted)' }}>
-          <i className="fa-regular fa-file-lines" style={{ fontSize: 28, display: 'block', marginBottom: 10, opacity: .35 }}></i>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>No papers generated yet</div>
-          <div style={{ fontSize: 12 }}>Click <strong>Make Paper</strong> to create your first question paper</div>
-        </div>
-      );
-    }
-
-    const typeLabel = { objective: 'Objective', subjective: 'Subjective', both: 'Obj+Subj' };
-    const typeColor = { objective: '#1E40AF',   subjective: '#0E7490',    both: '#5B21B6' };
-    const typeBg    = { objective: '#EFF6FF',   subjective: '#ECFEFF',    both: '#F5F3FF' };
-    const fmtColor  = { with: '#16A34A', without: '#D97706' };
-    const fmtBg     = { with: '#F0FDF4',  without: '#FFFBEB' };
-
-    return (
-      <>
-        <div className="pg-pc-count">{papers.length} paper{papers.length !== 1 ? 's' : ''} generated</div>
-        <div className="pg-papers-grid-v2">
-          {papers.map((p, pi) => {
-            const sc       = PG_SUBJ_STRIP[p.subj] || 'eng';
-            const fa       = PG_SUBJ_ICON[p.subj]  || 'fa-file';
-            const tile     = PG_SUBJ_TILE[p.subj]  || { bg: '#EFF6FF', color: '#1E40AF' };
-            const fmt      = p.format || 'with';
-            const typ      = p.type   || 'both';
-            const fmtText  = fmt === 'with' ? 'With Answer Sheet' : 'Without Answer Sheet';
-            const fmtIcon  = fmt === 'with' ? 'fa-file-lines' : 'fa-file';
-
+      {/* ── Paper Generator tab ── */}
+      {tab === 'generator' && canGenView && (
+        <div className="section-card" style={{ animation: 'fadeSlide .2s ease both', padding: 0, overflow: 'hidden' }}>
+          <div className="pg-class-table-head">
+            <div>S. No.</div>
+            <div>Class</div>
+            <div>Section</div>
+            <div>Make Paper</div>
+            <div style={{ textAlign: 'center' }}>Generated</div>
+            <div style={{ textAlign: 'center' }}>Details</div>
+          </div>
+          {examClasses.map((cls, idx) => {
+            // Jahan papers fetch hote hain Generator tab mein
+            const key = pgClassKey(cls);
+            const papers = papersByKey[key] || [];
+            const count = papers.length;
+            const isOpen = openGenIdx === idx;
             return (
-              <div key={pi} className="pg-paper-card-v2">
-                <div className={`pg-pc-strip ${sc}`}></div>
-                <div className="pg-pc-body">
-                  <div className="pg-pc-subject-row">
-                    <div className="pg-pc-icon" style={{ background: tile.bg, color: tile.color }}>
-                      <i className={`fa-solid ${fa}`}></i>
-                    </div>
-                    <div className="pg-pc-subject" title={p.subj}>{p.subj}</div>
-                    <span className="pg-pc-type-badge" style={{ background: typeBg[typ], color: typeColor[typ] }}>{typeLabel[typ]}</span>
+              <div key={`${cls.name}-${cls.section}-${idx}`}>
+                <div className="pg-class-row">
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 700 }}># {idx + 1}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <i className="fa-solid fa-school" style={{ color: '#1E40AF', fontSize: 12, flexShrink: 0 }}></i>
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{cls.name}</span>
+                    <span className="pg-section-badge-inline" style={{ fontSize: 10, fontWeight: 700, color: '#1E40AF', background: '#EFF6FF', border: '1px solid var(--border-med)', padding: '1px 6px', borderRadius: 99, flexShrink: 0 }}>{cls.section}</span>
                   </div>
-
-                  <div className="pg-pc-title" title={p.title}>{p.title}</div>
-
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <i className="fa-solid fa-sitemap" style={{ color: 'var(--text-muted)', fontSize: 12 }}></i>
+                    <span style={{ color: 'var(--text-secondary)' }}>{cls.section}</span>
+                  </div>
                   <div>
-                    <span className="pg-pc-fmt-badge" style={{ background: fmtBg[fmt], color: fmtColor[fmt] }}>
-                      <i className={`fa-solid ${fmtIcon}`} style={{ fontSize: 9 }}></i> {fmtText}
-                    </span>
+                    {canGenCreate && (
+                      <Tooltip text={`Generate a new paper for ${cls.name} · ${cls.section}`}>
+                        <button
+                          className="pg-make-paper-btn"
+                          onClick={() => handleMakePaper(idx)}
+                          disabled={isOtherSession}
+                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                        >
+                          <i className="fa-solid fa-wand-magic-sparkles"></i>
+                          Make Paper
+                        </button>
+
+                      </Tooltip>
+                    )}
                   </div>
-
-                  {((p.objMarks || 0) > 0 || (p.subjMarks || 0) > 0) && (
-                    <div className="pg-pc-chips">
-                      {(p.objMarks || 0) > 0 && (
-                        <span className="pg-pc-chip" style={{ background: '#EFF6FF', color: '#1E40AF' }}>
-                          <i className="fa-solid fa-circle-dot" style={{ fontSize: 9 }}></i> Obj: {p.objMarks} Marks &middot; {p.objTime} min
-                        </span>
-                      )}
-                      {(p.subjMarks || 0) > 0 && (
-                        <span className="pg-pc-chip" style={{ background: '#ECFEFF', color: '#0E7490' }}>
-                          <i className="fa-solid fa-pencil" style={{ fontSize: 9 }}></i> Subj: {p.subjMarks} Marks &middot; {p.subjTime} min
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="pg-pc-meta">
-                    <span>
-                      <i className="fa-regular fa-calendar" style={{ fontSize: 9, marginRight: 3 }}></i>{p.date}
-                      &nbsp;<i className="fa-regular fa-clock" style={{ fontSize: 9, margin: '0 3px' }}></i>{p.time}
-                    </span>
-                    <span>
-                      <i className="fa-solid fa-user" style={{ fontSize: 9, marginRight: 3 }}></i>{p.by}
-                    </span>
+                  <div style={{ textAlign: 'center' }}>
+                    <Tooltip text={count === 0 ? 'No papers generated yet' : `${count} paper${count !== 1 ? 's' : ''} generated for this class`}>
+                      <span className={`pg-paper-count${count === 0 ? ' zero' : ''}`}>{count}</span>
+                    </Tooltip>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <Tooltip text={isOpen ? 'Hide generated papers' : 'Show generated papers'}>
+                      <button
+                        className={`pg-chevron-btn${isOpen ? ' open' : ''}`}
+                        onClick={() => setOpenGenIdx(isOpen ? null : idx)}
+                        aria-label="Toggle papers"
+                      >
+                        <i className="fa-solid fa-chevron-down" style={{ fontSize: 11 }}></i>
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
-                <div className="pg-pc-actions">
-                  <Tooltip text="Shuffle questions in this paper">
-                    <button className="pg-action-icon shuffle" onClick={() => toast(`Shuffling "${p.title}" — questions re-ordered`, 'info')}><i className="fa-solid fa-shuffle"></i></button>
-                  </Tooltip>
-{canEdit && (
-<Tooltip text="Edit this paper">
-  <button
-    className="pg-action-icon edit"
-    onClick={() => {
-      if (isOtherSession) {
-        toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-        return;
-      }
-      onEdit && onEdit(p);
-    }}
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-  >
-    <i className="fa-solid fa-pen"></i>
-  </button>
-</Tooltip>
-)}
-                  <Tooltip text="Preview this paper">
-                    <button className="pg-action-icon view" onClick={() => onView && onView(p)}><i className="fa-solid fa-eye"></i></button>
-                  </Tooltip>
-                  {canDownload && (
-                  <Tooltip text="Download as PDF or Word">
-                    <button className="pg-action-icon download" onClick={() => onDownload && onDownload(p)}><i className="fa-solid fa-download"></i></button>
-                  </Tooltip>
-                  )}
-                  {canDelete && (
-                  <Tooltip text="Delete this paper">
-                    <button className="pg-action-icon delete"  onClick={() => {
-        if (isOtherSession) {
-          toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error', 'error');
-          return;
-        }
-        onDelete && onDelete(p, pi);
-      }}
-      disabled={isOtherSession}
-      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-trash"></i></button>
-                  </Tooltip>
-                  )}
+                <div className={`pg-papers-dropdown${isOpen ? ' open' : ''}`}>
+                  <PapersGrid
+                    papers={papers}
+                    toast={toast}
+                    onView={p => setViewPaper({ paper: p, cls })}
+                    onDownload={p => setDownloadPaper({ paper: p, cls })}
+                    onDelete={(p, pi) => setDeletePaper({ paper: p, cls, key, index: pi })}
+                    onEdit={p => handleEditPaper(idx, p)}
+                    isOtherSession={isOtherSession}  // ← Add this line
+                    canEdit={canGenEdit}
+                    canDownload={canGenDownload}
+                    canDelete={canGenDelete}
+                  />
+
                 </div>
               </div>
             );
           })}
         </div>
-      </>
+      )}
+
+      {/* ── Template Preview modal ── */}
+      {previewN && (
+        <TemplatePreviewModal
+          n={previewN}
+          onClose={() => setPreviewN(null)}
+          onSelect={id => {
+            setTemplateId(id);
+            setPreviewN(null);
+            toast(`Template ${id} selected`, 'success');
+          }}
+        />
+      )}
+
+      {/* ── Make Paper modal ── */}
+      {makeIdx != null && (
+        <MakePaperModal
+          cls={examClasses[makeIdx]}
+          isOtherSession={isOtherSession}
+          defaultFmt={classDefaults[makeIdx]?.fmt || 'with'}
+          initialPaper={editPaper}
+          onClose={() => { setMakeIdx(null); setEditPaper(null); }}
+          onGenerated={async () => {
+            // Generate ke baad is class ki papers dobara fetch karke list update karo.
+            const c = examClasses[makeIdx];
+            if (!c) return;
+            const papers = await fetchPapersByClass(c.gradeID, c.sectionID);
+            setPapersByKey(prev => ({ ...prev, [pgClassKey(c)]: papers.map(mapApiPaper) }));
+          }}
+          toast={toast}
+          subjects={subjects} // 👈 YE ADD KAREIN
+
+        />
+      )}
+
+      {/* ── Paper View modal ── */}
+      {viewPaper && (
+        <PaperViewModal
+          paper={viewPaper.paper}
+          cls={viewPaper.cls}
+          templateId={templateId}
+          onClose={() => setViewPaper(null)}
+          onDownload={() => { setDownloadPaper(viewPaper); setViewPaper(null); }}
+          canDownload={canGenDownload}
+        />
+      )}
+
+      {/* ── Download modal ── */}
+      {downloadPaper && (
+        <DownloadModal
+          paper={downloadPaper.paper}
+          cls={downloadPaper.cls}
+          templateId={templateId}
+          onClose={() => setDownloadPaper(null)}
+          toast={toast}
+        />
+      )}
+
+      {/* ── Delete confirmation ── */}
+      {deletePaper && (
+        <DeleteConfirmDialog
+          paper={deletePaper.paper}
+          cls={deletePaper.cls}
+          toast={toast}  // ← Add this line
+
+          onClose={() => setDeletePaper(null)}
+          onConfirm={async () => {
+            const { key, index, paper } = deletePaper;
+            const id = paper.qpMasterID ?? paper.id;
+            try {
+              const token = sessionStorage.getItem('token');
+              const params = new URLSearchParams({ id: String(id) });
+              const response = await fetch(
+                buildUrl(`/api/deleteqpmasterrecord?${params.toString()}`),
+                { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+              );
+              const data = await response.json().catch(() => ({}));
+              if (response.ok) {
+                setPapersByKey(prev => {
+                  const next = { ...prev };
+                  next[key] = (next[key] || []).filter((_, i) => i !== index);
+                  return next;
+                });
+                toast(`Paper "${paper.title}" deleted successfully`, 'success');
+              } else {
+                toast(data.message || 'Failed to delete paper', 'error');
+              }
+            } catch (error) {
+              console.error('Error deleting paper:', error);
+              toast('Failed to delete paper', 'error');
+            }
+            setDeletePaper(null);
+          }}
+        />
+      )}
+
+      <TutorialModal
+        open={tutorialOpen}
+        moduleKey="paperGenerator"
+        onClose={() => setTutorialOpen(false)}
+        toast={toast}
+      />
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+  PAPERS GRID — list of generated papers under a class row
+  ═══════════════════════════════════════════════════════════════════ */
+function PapersGrid({ papers, toast, onView, onDownload, onDelete, onEdit, isOtherSession, canEdit = true, canDownload = true, canDelete = true }) {
+  if (!papers.length) {
+    return (
+      <div style={{ textAlign: 'center', padding: '28px 20px', color: 'var(--text-muted)' }}>
+        <i className="fa-regular fa-file-lines" style={{ fontSize: 28, display: 'block', marginBottom: 10, opacity: .35 }}></i>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>No papers generated yet</div>
+        <div style={{ fontSize: 12 }}>Click <strong>Make Paper</strong> to create your first question paper</div>
+      </div>
     );
   }
 
-  /* ═══════════════════════════════════════════════════════════════════
-    MAKE PAPER MODAL — configure & fetch flow
-    ═══════════════════════════════════════════════════════════════════ */
-  const PG_OBJ_TYPES = [
-    { key:'match_columns',  label:'Match Columns' },
-    { key:'true_false',     label:'True / False' },
-    { key:'mcq',            label:'Multiple Choice Questions' },
-    { key:'fill_blanks',    label:'Fill in the Blanks' },
-    { key:'circle_word',    label:'Circle the Correct Word' },
-    { key:'comprehension',  label:'Comprehension' },
-    { key:'word_sentences', label:'Word Sentences' },
-    { key:'word_opposite',  label:'Word Opposite' },
-    { key:'singular_plural',label:'Singular / Plural' },
-    { key:'word_synonyms',  label:'Word Synonyms' },
-    { key:'qa',             label:'Question & Answer' },
-    { key:'punctuation',    label:'Punctuation' },
-  ];
-  const PG_SUBJ_TYPES = [
-    { key:'long_q',         label:'Long Question' },
-    { key:'paragraph',      label:'Paragraph Writing' },
-    { key:'comprehension',  label:'Comprehension' },
-    { key:'letter',         label:'Letter' },
-    { key:'application',    label:'Application' },
-    { key:'stories',        label:'Stories' },
-    { key:'essays',         label:'Essays' },
-    { key:'word_sentences', label:'Word Sentences' },
-    { key:'word_opposite',  label:'Word Opposite' },
-    { key:'singular_plural',label:'Singular / Plural' },
-    { key:'word_synonyms',  label:'Word Synonyms' },
-    { key:'qa',             label:'Question & Answer' },
-    { key:'punctuation',    label:'Punctuation' },
-  ];
+  const typeLabel = { objective: 'Objective', subjective: 'Subjective', both: 'Obj+Subj' };
+  const typeColor = { objective: '#1E40AF', subjective: '#0E7490', both: '#5B21B6' };
+  const typeBg = { objective: '#EFF6FF', subjective: '#ECFEFF', both: '#F5F3FF' };
+  const fmtColor = { with: '#16A34A', without: '#D97706' };
+  const fmtBg = { with: '#F0FDF4', without: '#FFFBEB' };
 
-  /* Combined, de-duplicated list of EVERY question type. Both the Objective
-    and Subjective tabs render this same list so all types are visible in
-    each tab. (Obj/subj classification for saved-question prefill still uses
-    PG_OBJ_TYPES — see prefillSavedTabs.) */
-  const PG_ALL_TYPES = [
-    ...PG_OBJ_TYPES,
-    ...PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)),
-  ];
+  return (
+    <>
+      <div className="pg-pc-count">{papers.length} paper{papers.length !== 1 ? 's' : ''} generated</div>
+      <div className="pg-papers-grid-v2">
+        {papers.map((p, pi) => {
+          const sc = PG_SUBJ_STRIP[p.subj] || 'eng';
+          const fa = PG_SUBJ_ICON[p.subj] || 'fa-file';
+          const tile = PG_SUBJ_TILE[p.subj] || { bg: '#EFF6FF', color: '#1E40AF' };
+          const fmt = p.format || 'with';
+          const typ = p.type || 'both';
+          const fmtText = fmt === 'with' ? 'With Answer Sheet' : 'Without Answer Sheet';
+          const fmtIcon = fmt === 'with' ? 'fa-file-lines' : 'fa-file';
 
-  /* Question-type labels ka Urdu tarjuma — medium Urdu ho to modal ke block titles
-    aur tabs Urdu mein dikhein. */
-  const PG_TYPE_LABELS_UR = {
-    match_columns:  'کالم ملائیں',
-    true_false:     'درست / غلط',
-    mcq:            'کثیر الانتخابی سوالات',
-    fill_blanks:    'خالی جگہ پُر کریں',
-    circle_word:    'درست لفظ پر دائرہ لگائیں',
-    comprehension:  'فہمِ عبارت',
-    word_sentences: 'الفاظ کے جملے',
-    word_opposite:  'متضاد الفاظ',
-    singular_plural:'واحد / جمع',
-    word_synonyms:  'مترادف الفاظ',
-    qa:             'سوال و جواب',
-    punctuation:    'رموزِ اوقاف',
-    long_q:         'طویل سوال',
-    paragraph:      'پیراگراف نویسی',
-    letter:         'خط',
-    application:    'درخواست',
-    stories:        'کہانیاں',
-    essays:         'مضامین',
-  };
-  const pgTypeLabel = (key, fallback, isUrdu) => ((isUrdu && PG_TYPE_LABELS_UR[key]) || fallback);
+          return (
+            <div key={pi} className="pg-paper-card-v2">
+              <div className={`pg-pc-strip ${sc}`}></div>
+              <div className="pg-pc-body">
+                <div className="pg-pc-subject-row">
+                  <div className="pg-pc-icon" style={{ background: tile.bg, color: tile.color }}>
+                    <i className={`fa-solid ${fa}`}></i>
+                  </div>
+                  <div className="pg-pc-subject" title={p.subj}>{p.subj}</div>
+                  <span className="pg-pc-type-badge" style={{ background: typeBg[typ], color: typeColor[typ] }}>{typeLabel[typ]}</span>
+                </div>
 
-  /* ═══════════════════════════════════════════════════════════
-    RICH UNIT DATA — per subject, per unit, per question type
-    Each unit has: main questions (instructions) and item counts
-    ═══════════════════════════════════════════════════════════ */
-  const PG_UNIT_DATA = {
-    English: [
-      { name:'Stories of Kindness', qtypes:{
-        true_false:    [{ instr:'Write True or False in the box provided.', total:10, submitted:7 }],
-        mcq:           [{ instr:'Choose the correct answer by circling (A), (B), (C) or (D).', total:12, submitted:9 }],
-        fill_blanks:   [{ instr:'Fill in the Blanks with the correct word from the box.', total:10, submitted:8 }],
-        match_columns: [{ instr:'Match Column A with Column B.', total:8, submitted:6 }],
-        circle_word:   [{ instr:'Circle the correct word to complete each sentence.', total:7, submitted:5 }],
-        short_q:       [{ instr:'Answer the following Short Questions.', total:8, submitted:6 }, { instr:'Short Questions (With Answers).', total:8, submitted:6 }],
-        long_q:        [{ instr:'Answer the following Long Questions.', total:5, submitted:4 }],
-        comprehension: [{ instr:'Read the passage carefully and answer the questions.', total:4, submitted:3 }],
-        word_opposite: [{ instr:'Write the Opposite of the following words.', total:10, submitted:8 }],
-        word_sentences:[{ instr:'Make sentences using the following words.', total:6, submitted:5 }],
-        singular_plural:[{ instr:'Write the Singular or Plural of the following words.', total:8, submitted:6 }],
-        word_synonyms: [{ instr:'Write the Synonym of the following words.', total:9, submitted:7 }],
-        qa:            [{ instr:'Write Answers of the Following Short Questions.', total:5, submitted:4 }, { instr:'Write any 2 words that begin with these letters.', total:5, submitted:5 }],
-        punctuation:   [{ instr:'Punctuate the following sentences correctly.', total:8, submitted:6 }],
-        stories:       [{ instr:'Write a Story on ONE of the following topics.', total:3, submitted:2 }],
-        essays:        [{ instr:'Write an Essay on ONE of the following topics.', total:3, submitted:2 }],
-        letter:        [{ instr:'Write a Letter as directed.', total:3, submitted:2 }],
-        application:   [{ instr:'Write an Application as directed.', total:3, submitted:2 }],
-        paragraph:     [{ instr:'Write a Paragraph on ONE of the following topics.', total:4, submitted:3 }],
-      }},
-      { name:'The Science Fair', qtypes:{
-        true_false:    [{ instr:'Mark the statements as True or False.', total:8, submitted:6 }],
-        mcq:           [{ instr:'Circle the correct option.', total:10, submitted:8 }],
-        fill_blanks:   [{ instr:'Fill in the blanks with suitable words.', total:8, submitted:7 }],
-        match_columns: [{ instr:'Match the words in Column A with Column B.', total:6, submitted:5 }],
-        short_q:       [{ instr:'Answer in one or two sentences.', total:6, submitted:5 }],
-        long_q:        [{ instr:'Write detailed answers.', total:4, submitted:3 }],
-        word_opposite: [{ instr:'Write the antonym of each word.', total:8, submitted:6 }],
-        word_sentences:[{ instr:'Use each word in a sentence.', total:5, submitted:4 }],
-        qa:            [{ instr:'Short Questions.', total:5, submitted:4 }],
-      }},
-      { name:'The New Student', qtypes:{
-        true_false:    [{ instr:'Read the sentences and write True/False.', total:10, submitted:7 }],
-        mcq:           [{ instr:'Tick the correct answer.', total:8, submitted:6 }],
-        fill_blanks:   [{ instr:'Complete the sentences.', total:7, submitted:5 }],
-        short_q:       [{ instr:'Answer the following questions.', total:6, submitted:5 }, { instr:'Short Questions (With Answers).', total:6, submitted:4 }],
-        word_opposite: [{ instr:'Write opposites.', total:7, submitted:5 }],
-        qa:            [{ instr:'Write any five days of the following?', total:1, submitted:0 }],
-      }},
-      { name:"Fizza's Family", qtypes:{
-        true_false:    [{ instr:'Are these sentences True or False?', total:8, submitted:6 }],
-        mcq:           [{ instr:'Choose the best answer.', total:9, submitted:7 }],
-        fill_blanks:   [{ instr:'Fill in with words from the box.', total:8, submitted:6 }],
-        short_q:       [{ instr:'Write short answers.', total:5, submitted:4 }],
-        word_sentences:[{ instr:'Make sentences.', total:5, submitted:4 }],
-        qa:            [{ instr:'Write Answers of the Following Short Questions.', total:5, submitted:5 }],
-      }},
-      { name:'Creative School', qtypes:{
-        true_false:    [{ instr:'Write T for True and F for False.', total:7, submitted:5 }],
-        mcq:           [{ instr:'Select the right answer.', total:8, submitted:6 }],
-        fill_blanks:   [{ instr:'Fill in the blanks.', total:6, submitted:5 }],
-        short_q:       [{ instr:'Answer briefly.', total:5, submitted:4 }],
-        qa:            [{ instr:'Write any 2 words that begin with these letters.', total:5, submitted:5 }, { instr:'Write any five days of the following?', total:1, submitted:0 }],
-      }},
-      { name:'Ahmad testing', qtypes:{
-        true_false:    [{ instr:'Testing on 5th Aug.', total:1, submitted:0 }],
-        short_q:       [{ instr:'Short Questions.', total:5, submitted:0 }],
-        qa:            [{ instr:'Mentor AI.', total:5, submitted:0 }],
-      }},
-    ],
-    Urdu: [
-      { name:'سبق 1 – محنت', qtypes:{
-        true_false:  [{ instr:'درست یا غلط لکھیں', total:8, submitted:6 }],
-        fill_blanks: [{ instr:'خالی جگہیں پر کریں', total:7, submitted:5 }],
-        short_q:     [{ instr:'مختصر جوابات لکھیں', total:6, submitted:4 }],
-      }},
-      { name:'سبق 2 – صفائی', qtypes:{
-        mcq:         [{ instr:'درست جواب منتخب کریں', total:8, submitted:6 }],
-        short_q:     [{ instr:'سوالات کے جوابات دیں', total:5, submitted:4 }],
-      }},
-      { name:'سبق 3 – وطن', qtypes:{
-        true_false:  [{ instr:'صحیح یا غلط', total:6, submitted:5 }],
-        short_q:     [{ instr:'مختصر جوابات', total:5, submitted:3 }],
-      }},
-    ],
-    Mathematics: [
-      { name:'Unit 1 – Numbers', qtypes:{
-        mcq:         [{ instr:'Choose the correct answer.', total:12, submitted:10 }],
-        fill_blanks: [{ instr:'Fill in the blanks.', total:10, submitted:8 }],
-        true_false:  [{ instr:'Write True or False.', total:8, submitted:6 }],
-        short_q:     [{ instr:'Solve the following.', total:6, submitted:5 }],
-        long_q:      [{ instr:'Solve with full working.', total:5, submitted:4 }],
-      }},
-      { name:'Unit 2 – Fractions', qtypes:{
-        mcq:         [{ instr:'Tick the correct option.', total:10, submitted:8 }],
-        fill_blanks: [{ instr:'Complete each statement.', total:8, submitted:7 }],
-        short_q:     [{ instr:'Solve briefly.', total:5, submitted:4 }],
-      }},
-      { name:'Unit 3 – Geometry', qtypes:{
-        mcq:         [{ instr:'Select the right answer.', total:8, submitted:7 }],
-        short_q:     [{ instr:'Solve these problems.', total:6, submitted:5 }],
-        long_q:      [{ instr:'Solve with diagram.', total:4, submitted:3 }],
-      }},
-    ],
-    Science: [
-      { name:'Unit 1 – Plants', qtypes:{
-        mcq:         [{ instr:'Choose the correct answer.', total:10, submitted:8 }],
-        true_false:  [{ instr:'Write True or False.', total:8, submitted:6 }],
-        fill_blanks: [{ instr:'Fill in the blanks.', total:8, submitted:7 }],
-        short_q:     [{ instr:'Answer in 2-3 sentences.', total:6, submitted:5 }],
-        long_q:      [{ instr:'Write detailed answer.', total:4, submitted:3 }],
-      }},
-      { name:'Unit 2 – Animals', qtypes:{
-        mcq:         [{ instr:'Tick the best answer.', total:10, submitted:8 }],
-        true_false:  [{ instr:'Are these correct?', total:7, submitted:5 }],
-        short_q:     [{ instr:'Short answers.', total:5, submitted:4 }],
-      }},
-      { name:'Unit 3 – Earth', qtypes:{
-        mcq:         [{ instr:'Circle the correct option.', total:9, submitted:7 }],
-        fill_blanks: [{ instr:'Fill in with correct words.', total:7, submitted:6 }],
-        short_q:     [{ instr:'Write brief answers.', total:5, submitted:4 }],
-        long_q:      [{ instr:'Explain in detail.', total:3, submitted:2 }],
-      }},
-    ],
-    'Social Studies': [
-      { name:'Unit 1 – My Family', qtypes:{
-        mcq:         [{ instr:'Choose the correct answer.', total:8, submitted:6 }],
-        short_q:     [{ instr:'Short questions.', total:5, submitted:4 }],
-        fill_blanks: [{ instr:'Fill in the blanks.', total:6, submitted:5 }],
-      }},
-      { name:'Unit 2 – My City', qtypes:{
-        mcq:         [{ instr:'Select the best option.', total:8, submitted:7 }],
-        short_q:     [{ instr:'Answer briefly.', total:5, submitted:4 }],
-      }},
-    ],
-  };
+                <div className="pg-pc-title" title={p.title}>{p.title}</div>
 
-  /* Per-block / per-tab state lives inside MakePaperModal as React state.
-    Shape:
-    blocksState = {
-      [section]: {                      // 'obj' | 'subj'
-        [typeKey]: {
-          tabs: [
-            { entryId, label, saved,
-              unitSelections: { [unitName]: instrIdx },
-              instr, items, choices, marks, totalEligible
-            },
-          ],
-          activeTab: entryId | null,
-          open: bool,
-        },
+                <div>
+                  <span className="pg-pc-fmt-badge" style={{ background: fmtBg[fmt], color: fmtColor[fmt] }}>
+                    <i className={`fa-solid ${fmtIcon}`} style={{ fontSize: 9 }}></i> {fmtText}
+                  </span>
+                </div>
+
+                {((p.objMarks || 0) > 0 || (p.subjMarks || 0) > 0) && (
+                  <div className="pg-pc-chips">
+                    {(p.objMarks || 0) > 0 && (
+                      <span className="pg-pc-chip" style={{ background: '#EFF6FF', color: '#1E40AF' }}>
+                        <i className="fa-solid fa-circle-dot" style={{ fontSize: 9 }}></i> Obj: {p.objMarks} Marks &middot; {p.objTime} min
+                      </span>
+                    )}
+                    {(p.subjMarks || 0) > 0 && (
+                      <span className="pg-pc-chip" style={{ background: '#ECFEFF', color: '#0E7490' }}>
+                        <i className="fa-solid fa-pencil" style={{ fontSize: 9 }}></i> Subj: {p.subjMarks} Marks &middot; {p.subjTime} min
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="pg-pc-meta">
+                  <span>
+                    <i className="fa-regular fa-calendar" style={{ fontSize: 9, marginRight: 3 }}></i>{p.date}
+                    &nbsp;<i className="fa-regular fa-clock" style={{ fontSize: 9, margin: '0 3px' }}></i>{p.time}
+                  </span>
+                  <span>
+                    <i className="fa-solid fa-user" style={{ fontSize: 9, marginRight: 3 }}></i>{p.by}
+                  </span>
+                </div>
+              </div>
+              <div className="pg-pc-actions">
+                <Tooltip text="Shuffle questions in this paper">
+                  <button className="pg-action-icon shuffle" onClick={() => toast(`Shuffling "${p.title}" — questions re-ordered`, 'info')}><i className="fa-solid fa-shuffle"></i></button>
+                </Tooltip>
+                {canEdit && (
+                  <Tooltip text="Edit this paper">
+                    <button
+                      className="pg-action-icon edit"
+                      onClick={() => {
+                        if (isOtherSession) {
+                          toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+                          return;
+                        }
+                        onEdit && onEdit(p);
+                      }}
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    >
+                      <i className="fa-solid fa-pen"></i>
+                    </button>
+                  </Tooltip>
+                )}
+                <Tooltip text="Preview this paper">
+                  <button className="pg-action-icon view" onClick={() => onView && onView(p)}><i className="fa-solid fa-eye"></i></button>
+                </Tooltip>
+                {canDownload && (
+                  <Tooltip text="Download as PDF or Word">
+                    <button className="pg-action-icon download" onClick={() => onDownload && onDownload(p)}><i className="fa-solid fa-download"></i></button>
+                  </Tooltip>
+                )}
+                {canDelete && (
+                  <Tooltip text="Delete this paper">
+                    <button className="pg-action-icon delete" onClick={() => {
+                      if (isOtherSession) {
+                        toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error', 'error');
+                        return;
+                      }
+                      onDelete && onDelete(p, pi);
+                    }}
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-trash"></i></button>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+  MAKE PAPER MODAL — configure & fetch flow
+  ═══════════════════════════════════════════════════════════════════ */
+const PG_OBJ_TYPES = [
+  { key: 'match_columns', label: 'Match Columns' },
+  { key: 'true_false', label: 'True / False' },
+  { key: 'mcq', label: 'Multiple Choice Questions' },
+  { key: 'fill_blanks', label: 'Fill in the Blanks' },
+  { key: 'circle_word', label: 'Circle the Correct Word' },
+  { key: 'comprehension', label: 'Comprehension' },
+  { key: 'word_sentences', label: 'Word Sentences' },
+  { key: 'word_opposite', label: 'Word Opposite' },
+  { key: 'singular_plural', label: 'Singular / Plural' },
+  { key: 'word_synonyms', label: 'Word Synonyms' },
+  { key: 'qa', label: 'Question & Answer' },
+  { key: 'punctuation', label: 'Punctuation' },
+];
+const PG_SUBJ_TYPES = [
+  { key: 'long_q', label: 'Long Question' },
+  { key: 'paragraph', label: 'Paragraph Writing' },
+  { key: 'comprehension', label: 'Comprehension' },
+  { key: 'letter', label: 'Letter' },
+  { key: 'application', label: 'Application' },
+  { key: 'stories', label: 'Stories' },
+  { key: 'essays', label: 'Essays' },
+  { key: 'word_sentences', label: 'Word Sentences' },
+  { key: 'word_opposite', label: 'Word Opposite' },
+  { key: 'singular_plural', label: 'Singular / Plural' },
+  { key: 'word_synonyms', label: 'Word Synonyms' },
+  { key: 'qa', label: 'Question & Answer' },
+  { key: 'punctuation', label: 'Punctuation' },
+];
+
+/* Combined, de-duplicated list of EVERY question type. Both the Objective
+  and Subjective tabs render this same list so all types are visible in
+  each tab. (Obj/subj classification for saved-question prefill still uses
+  PG_OBJ_TYPES — see prefillSavedTabs.) */
+const PG_ALL_TYPES = [
+  ...PG_OBJ_TYPES,
+  ...PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)),
+];
+
+/* Question-type labels ka Urdu tarjuma — medium Urdu ho to modal ke block titles
+  aur tabs Urdu mein dikhein. */
+const PG_TYPE_LABELS_UR = {
+  match_columns: 'کالم ملائیں',
+  true_false: 'درست / غلط',
+  mcq: 'کثیر الانتخابی سوالات',
+  fill_blanks: 'خالی جگہ پُر کریں',
+  circle_word: 'درست لفظ پر دائرہ لگائیں',
+  comprehension: 'فہمِ عبارت',
+  word_sentences: 'الفاظ کے جملے',
+  word_opposite: 'متضاد الفاظ',
+  singular_plural: 'واحد / جمع',
+  word_synonyms: 'مترادف الفاظ',
+  qa: 'سوال و جواب',
+  punctuation: 'رموزِ اوقاف',
+  long_q: 'طویل سوال',
+  paragraph: 'پیراگراف نویسی',
+  letter: 'خط',
+  application: 'درخواست',
+  stories: 'کہانیاں',
+  essays: 'مضامین',
+};
+const pgTypeLabel = (key, fallback, isUrdu) => ((isUrdu && PG_TYPE_LABELS_UR[key]) || fallback);
+
+/* ═══════════════════════════════════════════════════════════
+  RICH UNIT DATA — per subject, per unit, per question type
+  Each unit has: main questions (instructions) and item counts
+  ═══════════════════════════════════════════════════════════ */
+const PG_UNIT_DATA = {
+  English: [
+    {
+      name: 'Stories of Kindness', qtypes: {
+        true_false: [{ instr: 'Write True or False in the box provided.', total: 10, submitted: 7 }],
+        mcq: [{ instr: 'Choose the correct answer by circling (A), (B), (C) or (D).', total: 12, submitted: 9 }],
+        fill_blanks: [{ instr: 'Fill in the Blanks with the correct word from the box.', total: 10, submitted: 8 }],
+        match_columns: [{ instr: 'Match Column A with Column B.', total: 8, submitted: 6 }],
+        circle_word: [{ instr: 'Circle the correct word to complete each sentence.', total: 7, submitted: 5 }],
+        short_q: [{ instr: 'Answer the following Short Questions.', total: 8, submitted: 6 }, { instr: 'Short Questions (With Answers).', total: 8, submitted: 6 }],
+        long_q: [{ instr: 'Answer the following Long Questions.', total: 5, submitted: 4 }],
+        comprehension: [{ instr: 'Read the passage carefully and answer the questions.', total: 4, submitted: 3 }],
+        word_opposite: [{ instr: 'Write the Opposite of the following words.', total: 10, submitted: 8 }],
+        word_sentences: [{ instr: 'Make sentences using the following words.', total: 6, submitted: 5 }],
+        singular_plural: [{ instr: 'Write the Singular or Plural of the following words.', total: 8, submitted: 6 }],
+        word_synonyms: [{ instr: 'Write the Synonym of the following words.', total: 9, submitted: 7 }],
+        qa: [{ instr: 'Write Answers of the Following Short Questions.', total: 5, submitted: 4 }, { instr: 'Write any 2 words that begin with these letters.', total: 5, submitted: 5 }],
+        punctuation: [{ instr: 'Punctuate the following sentences correctly.', total: 8, submitted: 6 }],
+        stories: [{ instr: 'Write a Story on ONE of the following topics.', total: 3, submitted: 2 }],
+        essays: [{ instr: 'Write an Essay on ONE of the following topics.', total: 3, submitted: 2 }],
+        letter: [{ instr: 'Write a Letter as directed.', total: 3, submitted: 2 }],
+        application: [{ instr: 'Write an Application as directed.', total: 3, submitted: 2 }],
+        paragraph: [{ instr: 'Write a Paragraph on ONE of the following topics.', total: 4, submitted: 3 }],
+      }
+    },
+    {
+      name: 'The Science Fair', qtypes: {
+        true_false: [{ instr: 'Mark the statements as True or False.', total: 8, submitted: 6 }],
+        mcq: [{ instr: 'Circle the correct option.', total: 10, submitted: 8 }],
+        fill_blanks: [{ instr: 'Fill in the blanks with suitable words.', total: 8, submitted: 7 }],
+        match_columns: [{ instr: 'Match the words in Column A with Column B.', total: 6, submitted: 5 }],
+        short_q: [{ instr: 'Answer in one or two sentences.', total: 6, submitted: 5 }],
+        long_q: [{ instr: 'Write detailed answers.', total: 4, submitted: 3 }],
+        word_opposite: [{ instr: 'Write the antonym of each word.', total: 8, submitted: 6 }],
+        word_sentences: [{ instr: 'Use each word in a sentence.', total: 5, submitted: 4 }],
+        qa: [{ instr: 'Short Questions.', total: 5, submitted: 4 }],
+      }
+    },
+    {
+      name: 'The New Student', qtypes: {
+        true_false: [{ instr: 'Read the sentences and write True/False.', total: 10, submitted: 7 }],
+        mcq: [{ instr: 'Tick the correct answer.', total: 8, submitted: 6 }],
+        fill_blanks: [{ instr: 'Complete the sentences.', total: 7, submitted: 5 }],
+        short_q: [{ instr: 'Answer the following questions.', total: 6, submitted: 5 }, { instr: 'Short Questions (With Answers).', total: 6, submitted: 4 }],
+        word_opposite: [{ instr: 'Write opposites.', total: 7, submitted: 5 }],
+        qa: [{ instr: 'Write any five days of the following?', total: 1, submitted: 0 }],
+      }
+    },
+    {
+      name: "Fizza's Family", qtypes: {
+        true_false: [{ instr: 'Are these sentences True or False?', total: 8, submitted: 6 }],
+        mcq: [{ instr: 'Choose the best answer.', total: 9, submitted: 7 }],
+        fill_blanks: [{ instr: 'Fill in with words from the box.', total: 8, submitted: 6 }],
+        short_q: [{ instr: 'Write short answers.', total: 5, submitted: 4 }],
+        word_sentences: [{ instr: 'Make sentences.', total: 5, submitted: 4 }],
+        qa: [{ instr: 'Write Answers of the Following Short Questions.', total: 5, submitted: 5 }],
+      }
+    },
+    {
+      name: 'Creative School', qtypes: {
+        true_false: [{ instr: 'Write T for True and F for False.', total: 7, submitted: 5 }],
+        mcq: [{ instr: 'Select the right answer.', total: 8, submitted: 6 }],
+        fill_blanks: [{ instr: 'Fill in the blanks.', total: 6, submitted: 5 }],
+        short_q: [{ instr: 'Answer briefly.', total: 5, submitted: 4 }],
+        qa: [{ instr: 'Write any 2 words that begin with these letters.', total: 5, submitted: 5 }, { instr: 'Write any five days of the following?', total: 1, submitted: 0 }],
+      }
+    },
+    {
+      name: 'Ahmad testing', qtypes: {
+        true_false: [{ instr: 'Testing on 5th Aug.', total: 1, submitted: 0 }],
+        short_q: [{ instr: 'Short Questions.', total: 5, submitted: 0 }],
+        qa: [{ instr: 'Mentor AI.', total: 5, submitted: 0 }],
+      }
+    },
+  ],
+  Urdu: [
+    {
+      name: 'سبق 1 – محنت', qtypes: {
+        true_false: [{ instr: 'درست یا غلط لکھیں', total: 8, submitted: 6 }],
+        fill_blanks: [{ instr: 'خالی جگہیں پر کریں', total: 7, submitted: 5 }],
+        short_q: [{ instr: 'مختصر جوابات لکھیں', total: 6, submitted: 4 }],
+      }
+    },
+    {
+      name: 'سبق 2 – صفائی', qtypes: {
+        mcq: [{ instr: 'درست جواب منتخب کریں', total: 8, submitted: 6 }],
+        short_q: [{ instr: 'سوالات کے جوابات دیں', total: 5, submitted: 4 }],
+      }
+    },
+    {
+      name: 'سبق 3 – وطن', qtypes: {
+        true_false: [{ instr: 'صحیح یا غلط', total: 6, submitted: 5 }],
+        short_q: [{ instr: 'مختصر جوابات', total: 5, submitted: 3 }],
+      }
+    },
+  ],
+  Mathematics: [
+    {
+      name: 'Unit 1 – Numbers', qtypes: {
+        mcq: [{ instr: 'Choose the correct answer.', total: 12, submitted: 10 }],
+        fill_blanks: [{ instr: 'Fill in the blanks.', total: 10, submitted: 8 }],
+        true_false: [{ instr: 'Write True or False.', total: 8, submitted: 6 }],
+        short_q: [{ instr: 'Solve the following.', total: 6, submitted: 5 }],
+        long_q: [{ instr: 'Solve with full working.', total: 5, submitted: 4 }],
+      }
+    },
+    {
+      name: 'Unit 2 – Fractions', qtypes: {
+        mcq: [{ instr: 'Tick the correct option.', total: 10, submitted: 8 }],
+        fill_blanks: [{ instr: 'Complete each statement.', total: 8, submitted: 7 }],
+        short_q: [{ instr: 'Solve briefly.', total: 5, submitted: 4 }],
+      }
+    },
+    {
+      name: 'Unit 3 – Geometry', qtypes: {
+        mcq: [{ instr: 'Select the right answer.', total: 8, submitted: 7 }],
+        short_q: [{ instr: 'Solve these problems.', total: 6, submitted: 5 }],
+        long_q: [{ instr: 'Solve with diagram.', total: 4, submitted: 3 }],
+      }
+    },
+  ],
+  Science: [
+    {
+      name: 'Unit 1 – Plants', qtypes: {
+        mcq: [{ instr: 'Choose the correct answer.', total: 10, submitted: 8 }],
+        true_false: [{ instr: 'Write True or False.', total: 8, submitted: 6 }],
+        fill_blanks: [{ instr: 'Fill in the blanks.', total: 8, submitted: 7 }],
+        short_q: [{ instr: 'Answer in 2-3 sentences.', total: 6, submitted: 5 }],
+        long_q: [{ instr: 'Write detailed answer.', total: 4, submitted: 3 }],
+      }
+    },
+    {
+      name: 'Unit 2 – Animals', qtypes: {
+        mcq: [{ instr: 'Tick the best answer.', total: 10, submitted: 8 }],
+        true_false: [{ instr: 'Are these correct?', total: 7, submitted: 5 }],
+        short_q: [{ instr: 'Short answers.', total: 5, submitted: 4 }],
+      }
+    },
+    {
+      name: 'Unit 3 – Earth', qtypes: {
+        mcq: [{ instr: 'Circle the correct option.', total: 9, submitted: 7 }],
+        fill_blanks: [{ instr: 'Fill in with correct words.', total: 7, submitted: 6 }],
+        short_q: [{ instr: 'Write brief answers.', total: 5, submitted: 4 }],
+        long_q: [{ instr: 'Explain in detail.', total: 3, submitted: 2 }],
+      }
+    },
+  ],
+  'Social Studies': [
+    {
+      name: 'Unit 1 – My Family', qtypes: {
+        mcq: [{ instr: 'Choose the correct answer.', total: 8, submitted: 6 }],
+        short_q: [{ instr: 'Short questions.', total: 5, submitted: 4 }],
+        fill_blanks: [{ instr: 'Fill in the blanks.', total: 6, submitted: 5 }],
+      }
+    },
+    {
+      name: 'Unit 2 – My City', qtypes: {
+        mcq: [{ instr: 'Select the best option.', total: 8, submitted: 7 }],
+        short_q: [{ instr: 'Answer briefly.', total: 5, submitted: 4 }],
+      }
+    },
+  ],
+};
+
+/* Per-block / per-tab state lives inside MakePaperModal as React state.
+  Shape:
+  blocksState = {
+    [section]: {                      // 'obj' | 'subj'
+      [typeKey]: {
+        tabs: [
+          { entryId, label, saved,
+            unitSelections: { [unitName]: instrIdx },
+            instr, items, choices, marks, totalEligible
+          },
+        ],
+        activeTab: entryId | null,
+        open: bool,
       },
-    }
-  */
+    },
+  }
+*/
 
-  /* Sum total marks across all saved/dirty tabs of a section.
-    total marks = (items − choices) × marks-per-item
-    (e.g. 10 items − 4 choices = 6, 6 × 2 = 12). */
-  function sectionUsedMarks(sectionState) {
-    if (!sectionState) return 0;
-    let total = 0;
-    Object.values(sectionState).forEach(block => {
-      (block.tabs || []).forEach(t => {
-        const eff = Math.max(0, (+t.items || 0) - (+t.choices || 0));
-        total += eff * (+t.marks || 0);
-      });
+/* Sum total marks across all saved/dirty tabs of a section.
+  total marks = (items − choices) × marks-per-item
+  (e.g. 10 items − 4 choices = 6, 6 × 2 = 12). */
+function sectionUsedMarks(sectionState) {
+  if (!sectionState) return 0;
+  let total = 0;
+  Object.values(sectionState).forEach(block => {
+    (block.tabs || []).forEach(t => {
+      const eff = Math.max(0, (+t.items || 0) - (+t.choices || 0));
+      total += eff * (+t.marks || 0);
     });
-    return total;
-  }
+  });
+  return total;
+}
 
-  /* Per-type aggregate badge — { items, marks, count } per typeKey within a section */
-  function typeAggregates(sectionState) {
-    const map = {};
-    if (!sectionState) return map;
-    Object.entries(sectionState).forEach(([typeKey, block]) => {
-      (block.tabs || []).forEach(t => {
-        const items   = +t.items   || 0;
-        const choices = +t.choices || 0;
-        const marks   = +t.marks   || 0;
-        const eff     = Math.max(0, items - choices);   // effective items = items − choices
-        const m = map[typeKey] || { items:0, marks:0, count:0 };
-        m.items += eff;
-        m.marks += eff * marks;     // total marks = (items − choices) × marks-per-item
-        m.count += items > 0 ? 1 : 0;
-        map[typeKey] = m;
-      });
+/* Per-type aggregate badge — { items, marks, count } per typeKey within a section */
+function typeAggregates(sectionState) {
+  const map = {};
+  if (!sectionState) return map;
+  Object.entries(sectionState).forEach(([typeKey, block]) => {
+    (block.tabs || []).forEach(t => {
+      const items = +t.items || 0;
+      const choices = +t.choices || 0;
+      const marks = +t.marks || 0;
+      const eff = Math.max(0, items - choices);   // effective items = items − choices
+      const m = map[typeKey] || { items: 0, marks: 0, count: 0 };
+      m.items += eff;
+      m.marks += eff * marks;     // total marks = (items − choices) × marks-per-item
+      m.count += items > 0 ? 1 : 0;
+      map[typeKey] = m;
     });
-    return map;
-  }
+  });
+  return map;
+}
 
-  let PG_ENTRY_COUNTER = 0;
-  const newEntryId = () => 'pgEntry-' + (++PG_ENTRY_COUNTER);
+let PG_ENTRY_COUNTER = 0;
+const newEntryId = () => 'pgEntry-' + (++PG_ENTRY_COUNTER);
 
-  /* Empty fresh tab template */
-  function freshTab(num) {
-    return {
-      entryId: newEntryId(),
-      label: 'Q No. ' + num,
-      saved: false,
-      unitSelections: {},  // API: { unitName: true } (multi-select) | static: { unitName: instrIdx }
-      instr: '',           // typed Main Instruction → changedMainQuestion
-      selectedMainQs: {},  // API: per-unit { unitName: [mainQ...] } (multi-select units)
-      items: 0,
-      choices: 0,
-      marks: 0,
-      totalEligible: 0,
-    };
-  }
-
-  // API response keys ko PG type keys se map karo
-  const API_KEY_MAP = {
-    mcq:            'mcQs',
-    fill_blanks:    'fillTheBlanks',
-    true_false:     'trueFalseQuestions',
-    qa:             'questionAnswers',
-    match_columns:  'matchColumns',
-    comprehension:  'comprehensionQuestions',
-    word_sentences: 'wordSentences',
-    letter:         'letters',
-    application:    'applications',
-    stories:        'stories',
-    essays:         'essays',
-    long_q:         'longQuestions',
-    paragraph:      'paragraphs',
-    word_synonyms:  'wordSynonyms',
-    word_opposite:  'wordOpposites',
-    singular_plural:'singularPlurals',
-    punctuation:    'punctuations',
-    circle_word:    'circleCorrectWords',
+/* Empty fresh tab template */
+function freshTab(num) {
+  return {
+    entryId: newEntryId(),
+    label: 'Q No. ' + num,
+    saved: false,
+    unitSelections: {},  // API: { unitName: true } (multi-select) | static: { unitName: instrIdx }
+    instr: '',           // typed Main Instruction → changedMainQuestion
+    selectedMainQs: {},  // API: per-unit { unitName: [mainQ...] } (multi-select units)
+    items: 0,
+    choices: 0,
+    marks: 0,
+    totalEligible: 0,
   };
+}
 
-  /* typeKey → backend recTitle value sent to qpquestionselection_crud. */
-  const PG_REC_TITLE = {
-    mcq:            'MCQs',
-    match_columns:  'MatchColume',
-    qa:             'QuestionAns',
-    comprehension:  'Comprehension',
-    word_sentences: 'WordSentences',
-    letter:         'letters',
-    application:    'application',
-    stories:        'stories',
-    essays:         'essays',
-    true_false:     'TrueFalse',
-    fill_blanks:    'FillintheBlank',
-    word_opposite:  'Wordopposite',
-    singular_plural:'Singularplural',
-    word_synonyms:  'wordSynonyms',
-    long_q:         'LongQuetion',
-    paragraph:      'Paragraph',
-    circle_word:    'CircleCorrectWord',
-    punctuation:    'Punctuation',
-  };
+// API response keys ko PG type keys se map karo
+const API_KEY_MAP = {
+  mcq: 'mcQs',
+  fill_blanks: 'fillTheBlanks',
+  true_false: 'trueFalseQuestions',
+  qa: 'questionAnswers',
+  match_columns: 'matchColumns',
+  comprehension: 'comprehensionQuestions',
+  word_sentences: 'wordSentences',
+  letter: 'letters',
+  application: 'applications',
+  stories: 'stories',
+  essays: 'essays',
+  long_q: 'longQuestions',
+  paragraph: 'paragraphs',
+  word_synonyms: 'wordSynonyms',
+  word_opposite: 'wordOpposites',
+  singular_plural: 'singularPlurals',
+  punctuation: 'punctuations',
+  circle_word: 'circleCorrectWords',
+};
+
+/* typeKey → backend recTitle value sent to qpquestionselection_crud. */
+const PG_REC_TITLE = {
+  mcq: 'MCQs',
+  match_columns: 'MatchColume',
+  qa: 'QuestionAns',
+  comprehension: 'Comprehension',
+  word_sentences: 'WordSentences',
+  letter: 'letters',
+  application: 'application',
+  stories: 'stories',
+  essays: 'essays',
+  true_false: 'TrueFalse',
+  fill_blanks: 'FillintheBlank',
+  word_opposite: 'Wordopposite',
+  singular_plural: 'Singularplural',
+  word_synonyms: 'wordSynonyms',
+  long_q: 'LongQuetion',
+  paragraph: 'Paragraph',
+  circle_word: 'CircleCorrectWord',
+  punctuation: 'Punctuation',
+};
 
 
-  function MakePaperModal({ cls, defaultFmt, initialPaper,isOtherSession, onClose, onGenerated, toast, subjects = [], templateId = 1, boardCfg }) {
-    const isEdit = !!initialPaper;
-    const [subject, setSubject] = useState(isEdit ? (initialPaper.subj || '') : '');
-    const [paperType, setPaperType] = useState(isEdit ? (initialPaper.type || '') : '');
-    const [paperFmt, setPaperFmt] = useState(isEdit ? (initialPaper.format || defaultFmt || '') : (defaultFmt || ''));
-    const [medium, setMedium] = useState(isEdit ? (initialPaper.medium || 'english') : 'english');
-    const [title, setTitle] = useState(isEdit ? (initialPaper.title || '') : '');
-    const [objMarks, setObjMarks] = useState(isEdit && initialPaper.objMarks ? String(initialPaper.objMarks) : '');
-    const [objTime, setObjTime] = useState(isEdit && initialPaper.objTime ? String(initialPaper.objTime) : '');
-    const [subjMarks, setSubjMarks] = useState(isEdit && initialPaper.subjMarks ? String(initialPaper.subjMarks) : '');
-    const [subjTime, setSubjTime] = useState(isEdit && initialPaper.subjTime ? String(initialPaper.subjTime) : '');
-    const [fetched, setFetched] = useState(false);
-    const [qTab, setQTab] = useState('obj');
-    /* ── Redesign UI state (pure UI — nothing here is sent to the backend) ── */
-    const [pane, setPane]         = useState('build');   // 'build' | 'preview' — mobile pane toggle
-    const [helpOpen, setHelpOpen] = useState(false);
-    /* Which question type each section is working on ('' = dropdown empty). */
-    const [curType, setCurType]   = useState({ obj: '', subj: '' });
-    /* Live-preview display order (entryIds), reordered with the ▲▼ buttons.
-       Preview only — the backend has no question-order field. */
-    const [ord, setOrd]           = useState({ obj: [], subj: [] });
-    /* Branch name / logo for the live-preview header (same live endpoint the
-       Paper Preview modal uses). */
-    const [previewHeader, setPreviewHeader] = useState(null);
-    useEffect(() => {
-      let alive = true;
-      (async () => { const h = await fetchReportHeader(); if (alive) setPreviewHeader(h); })();
-      return () => { alive = false; };
-    }, []);
+function MakePaperModal({ cls, defaultFmt, initialPaper, isOtherSession, onClose, onGenerated, toast, subjects = [] }) {
+  const isEdit = !!initialPaper;
+  const [subject, setSubject] = useState(isEdit ? (initialPaper.subj || '') : '');
+  const [paperType, setPaperType] = useState(isEdit ? (initialPaper.type || '') : '');
+  const [paperFmt, setPaperFmt] = useState(isEdit ? (initialPaper.format || defaultFmt || '') : (defaultFmt || ''));
+  const [medium, setMedium] = useState(isEdit ? (initialPaper.medium || 'english') : 'english');
+  const [title, setTitle] = useState(isEdit ? (initialPaper.title || '') : '');
+  const [objMarks, setObjMarks] = useState(isEdit && initialPaper.objMarks ? String(initialPaper.objMarks) : '');
+  const [objTime, setObjTime] = useState(isEdit && initialPaper.objTime ? String(initialPaper.objTime) : '');
+  const [subjMarks, setSubjMarks] = useState(isEdit && initialPaper.subjMarks ? String(initialPaper.subjMarks) : '');
+  const [subjTime, setSubjTime] = useState(isEdit && initialPaper.subjTime ? String(initialPaper.subjTime) : '');
+  const [fetched, setFetched] = useState(false);
+  const [qTab, setQTab] = useState('obj');
 
-    // 👇 States for units
-    const [units, setUnits] = useState([]);
-    const [selectedUnits, setSelectedUnits] = useState([]);
-      const [loading, setLoading] = useState(false); // 👈 Loading state for fetch
+  // 👇 States for units
+  const [units, setUnits] = useState([]);
+  const [selectedUnits, setSelectedUnits] = useState([]);
+  const [loading, setLoading] = useState(false); // 👈 Loading state for fetch
   /* Edit mode: modal khulte hi 3 APIs chalti hain (selection → submission detail →
      notebook details). Jab tak wo complete na hon, adha bhara form dikhta tha —
      is liye poore modal par blocking loader. Fresh (non-edit) modal me false. */
@@ -1854,59 +1705,52 @@ const setSubjLine = (ci, si, l) => {
 
   const [notebookDetails, setNotebookDetails] = useState(null);
 
-    /* blocksState = { obj: { typeKey: { open, activeTab, tabs:[...] } }, subj: {...} } */
-    const [blocksState, setBlocksState] = useState({ obj: {}, subj: {} });
+  /* blocksState = { obj: { typeKey: { open, activeTab, tabs:[...] } }, subj: {...} } */
+  const [blocksState, setBlocksState] = useState({ obj: {}, subj: {} });
   const [qpMasterID, setQpMasterID] = useState(isEdit ? (initialPaper.qpMasterID || 0) : 0);
-    /* Esc → requestClose (confirm + draft cleanup); ref taake hamesha taza closure mile. */
-    const closeRef = useRef(onClose);
-    useEffect(() => {
-      const onKey = e => { if (e.key === 'Escape') closeRef.current(); };
-      document.addEventListener('keydown', onKey);
-      return () => document.removeEventListener('keydown', onKey);
-    }, []);
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
-  
 
-    const showObj = paperType === 'objective' || paperType === 'both';
-    const showSubj = paperType === 'subjective' || paperType === 'both';
-    const showMarksRow = !!paperType;
 
-    // Validation: every required field for the chosen paperType must be filled
-    const objOk = !showObj || ((+objMarks > 0) && (+objTime > 0));
-    const subjOk = !showSubj || ((+subjMarks > 0) && (+subjTime > 0));
-    const baseOk = !!subject && !!paperType && !!paperFmt && !!title.trim() && objOk && subjOk;
-    const canFetch = baseOk;
+  const showObj = paperType === 'objective' || paperType === 'both';
+  const showSubj = paperType === 'subjective' || paperType === 'both';
+  const showMarksRow = !!paperType;
 
-    /* Live totals from saved + open tabs */
-    const objUsed = sectionUsedMarks(blocksState.obj);
-    const subjUsed = sectionUsedMarks(blocksState.subj);
-    const objTarget = +objMarks || 0;
-    const subjTarget = +subjMarks || 0;
-    const objStatus = !showObj ? 'na' : objUsed === objTarget && objTarget > 0 ? 'ok' : objUsed > objTarget ? 'over' : 'under';
-    const subjStatus = !showSubj ? 'na' : subjUsed === subjTarget && subjTarget > 0 ? 'ok' : subjUsed > subjTarget ? 'over' : 'under';
-    const validationOk = (!showObj || objStatus === 'ok') && (!showSubj || subjStatus === 'ok');
+  // Validation: every required field for the chosen paperType must be filled
+  const objOk = !showObj || ((+objMarks > 0) && (+objTime > 0));
+  const subjOk = !showSubj || ((+subjMarks > 0) && (+subjTime > 0));
+  const baseOk = !!subject && !!paperType && !!paperFmt && !!title.trim() && objOk && subjOk;
+  const canFetch = baseOk;
 
-    const canGenerate = baseOk && fetched && validationOk;
+  /* Live totals from saved + open tabs */
+  const objUsed = sectionUsedMarks(blocksState.obj);
+  const subjUsed = sectionUsedMarks(blocksState.subj);
+  const objTarget = +objMarks || 0;
+  const subjTarget = +subjMarks || 0;
+  const objStatus = !showObj ? 'na' : objUsed === objTarget && objTarget > 0 ? 'ok' : objUsed > objTarget ? 'over' : 'under';
+  const subjStatus = !showSubj ? 'na' : subjUsed === subjTarget && subjTarget > 0 ? 'ok' : subjUsed > subjTarget ? 'over' : 'under';
+  const validationOk = (!showObj || objStatus === 'ok') && (!showSubj || subjStatus === 'ok');
 
-    /* Which question types to render in each tab.
-      - objective / subjective only papers → saare 18 types (PG_ALL_TYPES).
-      - 'both' paper → har tab mein bhi saare 18 types (taake koi bhi type add ho sake),
-        sirf wo type hata do jo DUSRE section mein already save hai (taake objective tab
-        mein subjective-saved question na aaye aur vice versa). Fresh 'both' paper (koi
-        block save nahi) → dono tabs mein poore 18 dikhenge. */
-    const objBlockKeys  = new Set(Object.keys(blocksState.obj || {}));
-    const subjBlockKeys = new Set(Object.keys(blocksState.subj || {}));
-    /* QA C3: Objective tab mein sirf objective types (PG_OBJ_TYPES), Subjective
-       tab mein sirf subjective types (PG_SUBJ_TYPES). Jo type is section mein
-       pehle se saved hai (purana data) wo bhi dikhao taake reachable rahe. */
-    const sectionTypes = (base, ownKeys) => PG_ALL_TYPES.filter(t =>
-      base.some(b => b.key === t.key) || ownKeys.has(t.key));
-    const objTabTypes = paperType === 'both'
-      ? sectionTypes(PG_OBJ_TYPES, objBlockKeys).filter(t => !subjBlockKeys.has(t.key))
-      : sectionTypes(PG_OBJ_TYPES, objBlockKeys);
-    const subjTabTypes = paperType === 'both'
-      ? sectionTypes(PG_SUBJ_TYPES, subjBlockKeys).filter(t => !objBlockKeys.has(t.key))
-      : sectionTypes(PG_SUBJ_TYPES, subjBlockKeys);
+  const canGenerate = baseOk && fetched && validationOk;
+
+  /* Which question types to render in each tab.
+    - objective / subjective only papers → saare 18 types (PG_ALL_TYPES).
+    - 'both' paper → har tab mein bhi saare 18 types (taake koi bhi type add ho sake),
+      sirf wo type hata do jo DUSRE section mein already save hai (taake objective tab
+      mein subjective-saved question na aaye aur vice versa). Fresh 'both' paper (koi
+      block save nahi) → dono tabs mein poore 18 dikhenge. */
+  const objBlockKeys = new Set(Object.keys(blocksState.obj || {}));
+  const subjBlockKeys = new Set(Object.keys(blocksState.subj || {}));
+  const objTabTypes = paperType === 'both'
+    ? PG_ALL_TYPES.filter(t => !subjBlockKeys.has(t.key))
+    : PG_ALL_TYPES;
+  const subjTabTypes = paperType === 'both'
+    ? PG_ALL_TYPES.filter(t => !objBlockKeys.has(t.key))
+    : PG_ALL_TYPES;
 
   const qpMasterIDRef = useRef(isEdit ? (initialPaper.qpMasterID || 0) : 0);
   /* entryIds whose save is currently in flight — a synchronous double-click
@@ -1917,20 +1761,14 @@ const setSubjLine = (ci, si, l) => {
      existingMasterID=0 le kar jaate the aur utne hi naye papers insert ho jaate the.
      Ye synchronous ref guard pehli click ke baad baaki clicks ko rok deta hai. */
   const fetchingRef = useRef(false);
-  /* QA C1: naya master ab Fetch par nahi, pehle question-block save par banta hai
-     (qpquestionselection_crud ko qpMastID chahiye). Agar ye modal draft master
-     banaye aur user Generate kiye baghair band kare to draft delete hota hai. */
-  const draftCreatedRef = useRef(false);
-  const generatedRef    = useRef(false);
-  const masterPromiseRef = useRef(null);
 
-    /* Reset fetched state when settings change */
-    const resetOnChange = () => { 
-      if (fetched) { 
-        setFetched(false); 
-        setBlocksState({ obj: {}, subj: {} }); 
-      } 
-    };
+  /* Reset fetched state when settings change */
+  const resetOnChange = () => {
+    if (fetched) {
+      setFetched(false);
+      setBlocksState({ obj: {}, subj: {} });
+    }
+  };
   const fetchNotebookDetails = async (notebookIDs) => {
     try {
       const token = sessionStorage.getItem("token");
@@ -1984,10 +1822,10 @@ const setSubjLine = (ci, si, l) => {
         // agar wo na ho to static obj/subj classification fallback.
         const submType = (sec.qpSubmissionPaperType || '').toLowerCase();
         const section = paperType === 'objective' ? 'obj'
-                      : paperType === 'subjective' ? 'subj'
-                      : submType === 'objective' ? 'obj'
-                      : submType === 'subjective' ? 'subj'
-                      : (objKeys.has(typeKey) ? 'obj' : 'subj');
+          : paperType === 'subjective' ? 'subj'
+            : submType === 'objective' ? 'obj'
+              : submType === 'subjective' ? 'subj'
+                : (objKeys.has(typeKey) ? 'obj' : 'subj');
         const apiItems = (details && details[API_KEY_MAP[typeKey]]) || [];
         const unitName = apiItems[0]?.unitName;
 
@@ -2109,102 +1947,102 @@ const setSubjLine = (ci, si, l) => {
     return () => { alive = false; };
   }, []);
 
-    // 👇 API function to fetch units
-    //    Edit mode mein classID/sectionID override (saved record se) bhej sakte hain
-    //    taake cls prop pe depend na karna pade.
-    const fetchUnits = async (subjectId, classIdOverride, sectionIdOverride) => {
-      try {
-        const branchID = sessionStorage.getItem("branchID");
-        const token = sessionStorage.getItem("token");
+  // 👇 API function to fetch units
+  //    Edit mode mein classID/sectionID override (saved record se) bhej sakte hain
+  //    taake cls prop pe depend na karna pade.
+  const fetchUnits = async (subjectId, classIdOverride, sectionIdOverride) => {
+    try {
+      const branchID = sessionStorage.getItem("branchID");
+      const token = sessionStorage.getItem("token");
 
-        // classID/sectionID: override > cls prop
-        const classID = classIdOverride ?? (cls.gradeID || cls.id);
-        const sectionID = sectionIdOverride ?? (cls.sectionID || cls.section);
+      // classID/sectionID: override > cls prop
+      const classID = classIdOverride ?? (cls.gradeID || cls.id);
+      const sectionID = sectionIdOverride ?? (cls.sectionID || cls.section);
 
-        const url = buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectId}&pageNo=1`);
-        
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-          },
-        });
+      const url = buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectId}&pageNo=1`);
 
-        const data = await response.json();
-        
-        if (data && data.data && data.data.length > 0) {
-          // 👇 Map API response to unit options - using unitName as label
-          const unitList = data.data.map(unit => ({
-            value: unit.id, // using id as value
-            label: unit.unitName || `Unit ${unit.unitNo}`, // using unitName as label
-            unitNo: unit.unitNo,
-            unitName: unit.unitName,
-            // Store additional data if needed
-            ...unit
-          }));
-          setUnits(unitList);
-          return unitList;
-        } else {
-          setUnits([]);
-          toast('No units found for this subject', 'info');
-          return [];
-        }
-      } catch (err) {
-        console.error("Error fetching units:", err);
-        setUnits([]);
-        toast('Failed to load units', 'error');
-        return [];
-      }
-    };
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
 
-    // 👇 Effect to fetch units when subject changes
-    useEffect(() => {
-      if (subject) {
-        // Find subjectID from subjects array; Edit mode mein paper ka apna subjectID
-        // fallback rakho taake units API ko name ('Math') na jaye.
-        const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
-        const subjectId = selectedSubject?.subjectID || selectedSubject?.id || initialPaper?.subjectID || subject;
-        fetchUnits(subjectId);
+      const data = await response.json();
+
+      if (data && data.data && data.data.length > 0) {
+        // 👇 Map API response to unit options - using unitName as label
+        const unitList = data.data.map(unit => ({
+          value: unit.id, // using id as value
+          label: unit.unitName || `Unit ${unit.unitNo}`, // using unitName as label
+          unitNo: unit.unitNo,
+          unitName: unit.unitName,
+          // Store additional data if needed
+          ...unit
+        }));
+        setUnits(unitList);
+        return unitList;
       } else {
         setUnits([]);
-        setSelectedUnits([]);
+        toast('No units found for this subject', 'info');
+        return [];
       }
-      // Reset fetched state when subject changes
-      if (fetched) {
-        setFetched(false);
-        setBlocksState({ obj: {}, subj: {} });
-      }
-    }, [subject]);
+    } catch (err) {
+      console.error("Error fetching units:", err);
+      setUnits([]);
+      toast('Failed to load units', 'error');
+      return [];
+    }
+  };
 
-    // 👇 Unit options for React-Select
-    const unitOptions = units.map(unit => ({
-      value: unit.value,
-      label: unit.label
-    }));
+  // 👇 Effect to fetch units when subject changes
+  useEffect(() => {
+    if (subject) {
+      // Find subjectID from subjects array; Edit mode mein paper ka apna subjectID
+      // fallback rakho taake units API ko name ('Math') na jaye.
+      const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
+      const subjectId = selectedSubject?.subjectID || selectedSubject?.id || initialPaper?.subjectID || subject;
+      fetchUnits(subjectId);
+    } else {
+      setUnits([]);
+      setSelectedUnits([]);
+    }
+    // Reset fetched state when subject changes
+    if (fetched) {
+      setFetched(false);
+      setBlocksState({ obj: {}, subj: {} });
+    }
+  }, [subject]);
 
-    /* ── Block (accordion) helpers ── */
-    const ensureBlock = (state, section, typeKey) => {
-      const sec = { ...(state[section] || {}) };
-      if (!sec[typeKey]) sec[typeKey] = { open: false, activeTab: null, tabs: [] };
-      return { ...state, [section]: sec };
-    };
+  // 👇 Unit options for React-Select
+  const unitOptions = units.map(unit => ({
+    value: unit.value,
+    label: unit.label
+  }));
 
-    const toggleBlockOpen = (section, typeKey) => {
-      setBlocksState(prev => {
-        const next = ensureBlock(prev, section, typeKey);
-        const block = { ...next[section][typeKey], open: !next[section][typeKey].open };
-        return { ...next, [section]: { ...next[section], [typeKey]: block } };
-      });
-    };
+  /* ── Block (accordion) helpers ── */
+  const ensureBlock = (state, section, typeKey) => {
+    const sec = { ...(state[section] || {}) };
+    if (!sec[typeKey]) sec[typeKey] = { open: false, activeTab: null, tabs: [] };
+    return { ...state, [section]: sec };
+  };
+
+  const toggleBlockOpen = (section, typeKey) => {
+    setBlocksState(prev => {
+      const next = ensureBlock(prev, section, typeKey);
+      const block = { ...next[section][typeKey], open: !next[section][typeKey].open };
+      return { ...next, [section]: { ...next[section], [typeKey]: block } };
+    });
+  };
   const addTab = (section, typeKey) => {
     if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
     /* Block adding another question block once the section already holds its
        full marks — the save-time check only stops an over-limit save, so
        without this the user could keep piling on empty blocks. */
-    const sectionName   = section === 'obj' ? 'Objective' : 'Subjective';
+    const sectionName = section === 'obj' ? 'Objective' : 'Subjective';
     const sectionTarget = section === 'obj' ? objTarget : subjTarget;
-    const sectionUsed   = sectionUsedMarks(blocksState[section]);
+    const sectionUsed = sectionUsedMarks(blocksState[section]);
     if (sectionTarget > 0 && sectionUsed >= sectionTarget) {
       toast(`You can't add more questions — the ${sectionName} section already has its full ${sectionTarget} marks.`, 'error');
       return;
@@ -2220,7 +2058,7 @@ const setSubjLine = (ci, si, l) => {
       });
       return;
     }
-    
+
     // Static data check
     const subjUnits = (PG_UNIT_DATA[subject] || []).filter(u => u.qtypes[typeKey]);
     if (subjUnits.length === 0) {
@@ -2236,62 +2074,62 @@ const setSubjLine = (ci, si, l) => {
     });
   };
 
-    const switchTab = (section, typeKey, entryId) => {
-      setBlocksState(prev => {
-        const block = prev[section]?.[typeKey];
-        if (!block) return prev;
-        return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, activeTab: entryId } } };
-      });
-    };
+  const switchTab = (section, typeKey, entryId) => {
+    setBlocksState(prev => {
+      const block = prev[section]?.[typeKey];
+      if (!block) return prev;
+      return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, activeTab: entryId } } };
+    });
+  };
 
-    const removeTab = (section, typeKey, entryId) => {
-      setBlocksState(prev => {
-        const block = prev[section]?.[typeKey];
-        if (!block) return prev;
-        const tabs = block.tabs.filter(t => t.entryId !== entryId);
-        const activeTab = block.activeTab === entryId
-          ? (tabs.length ? tabs[tabs.length - 1].entryId : null)
-          : block.activeTab;
-        return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, tabs, activeTab } } };
-      });
-    };
+  const removeTab = (section, typeKey, entryId) => {
+    setBlocksState(prev => {
+      const block = prev[section]?.[typeKey];
+      if (!block) return prev;
+      const tabs = block.tabs.filter(t => t.entryId !== entryId);
+      const activeTab = block.activeTab === entryId
+        ? (tabs.length ? tabs[tabs.length - 1].entryId : null)
+        : block.activeTab;
+      return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, tabs, activeTab } } };
+    });
+  };
 
-    const updateTab = (section, typeKey, entryId, patch) => {
-      setBlocksState(prev => {
-        const block = prev[section]?.[typeKey];
-        if (!block) return prev;
-        const tabs = block.tabs.map(t => t.entryId === entryId ? { ...t, ...patch } : t);
-        return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, tabs } } };
-      });
-    };
+  const updateTab = (section, typeKey, entryId, patch) => {
+    setBlocksState(prev => {
+      const block = prev[section]?.[typeKey];
+      if (!block) return prev;
+      const tabs = block.tabs.map(t => t.entryId === entryId ? { ...t, ...patch } : t);
+      return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, tabs } } };
+    });
+  };
 
-    // Saved question block ko backend se delete (/api/deleteqpsubmission/{id}) + local se remove.
-    const deleteTab = async (section, typeKey, entryId) => {
-      if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
-      const block = blocksState[section]?.[typeKey];
-      const tab = block?.tabs.find(t => t.entryId === entryId);
-      if (!tab) return;
-      const subId = tab.savedId;
-      // Agar backend mein save hi nahi hua (sirf local) to seedha hata do.
-      if (!subId) { removeTab(section, typeKey, entryId); toast('Question block removed', 'info'); return; }
-      try {
-        const token = sessionStorage.getItem('token');
-        const res = await fetch(buildUrl(`/api/deleteqpsubmission/${subId}`), {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.success !== false) {
-          removeTab(section, typeKey, entryId);
-          toast('Question block deleted', 'success');
-        } else {
-          toast(data.message || 'Failed to delete question block', 'error');
-        }
-      } catch (err) {
-        console.error('Error deleting question block:', err);
-        toast('Error deleting question block', 'error');
+  // Saved question block ko backend se delete (/api/deleteqpsubmission/{id}) + local se remove.
+  const deleteTab = async (section, typeKey, entryId) => {
+    if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
+    const block = blocksState[section]?.[typeKey];
+    const tab = block?.tabs.find(t => t.entryId === entryId);
+    if (!tab) return;
+    const subId = tab.savedId;
+    // Agar backend mein save hi nahi hua (sirf local) to seedha hata do.
+    if (!subId) { removeTab(section, typeKey, entryId); toast('Question block removed', 'info'); return; }
+    try {
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(buildUrl(`/api/deleteqpsubmission/${subId}`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success !== false) {
+        removeTab(section, typeKey, entryId);
+        toast('Question block deleted', 'success');
+      } else {
+        toast(data.message || 'Failed to delete question block', 'error');
       }
-    };
+    } catch (err) {
+      console.error('Error deleting question block:', err);
+      toast('Error deleting question block', 'error');
+    }
+  };
 
   const saveTab = async (section, typeKey, entryId) => {
     if (isOtherSession) { toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error'); return; }
@@ -2307,27 +2145,27 @@ const setSubjLine = (ci, si, l) => {
     }
 
     const items = +tab.items || 0;
-  if (items < 1) { toast('No. of items cannot be 0 — please enter number of items', 'warning'); return; }
+    if (items < 1) { toast('No. of items cannot be 0 — please enter number of items', 'warning'); return; }
 
-  const marksVal = +tab.marks || 0;
-  /* Any positive value is valid — fractional marks (0.5, 2.5, …) included. */
-  if (marksVal <= 0) { toast('Marks per item cannot be 0 — please enter the marks', 'warning'); return; }
+    const marksVal = +tab.marks || 0;
+    /* Any positive value is valid — fractional marks (0.5, 2.5, …) included. */
+    if (marksVal <= 0) { toast('Marks per item cannot be 0 — please enter the marks', 'warning'); return; }
 
-  const choicesVal = +tab.choices || 0;
-  if (choicesVal >= items) {
-    toast(`No. of choices (${choicesVal}) must be less than no. of items (${items})`, 'warning');
-    return;
-  }
+    const choicesVal = +tab.choices || 0;
+    if (choicesVal >= items) {
+      toast(`No. of choices (${choicesVal}) must be less than no. of items (${items})`, 'warning');
+      return;
+    }
 
-  if (items > tab.totalEligible && tab.totalEligible > 0) {
+    if (items > tab.totalEligible && tab.totalEligible > 0) {
       toast('Items exceed available count (' + tab.totalEligible + ')', 'warning');
       return;
     }
 
     // Section total (incl. this block's current values) must not exceed the configured limit.
-    const sectionName   = section === 'obj' ? 'Objective' : 'Subjective';
+    const sectionName = section === 'obj' ? 'Objective' : 'Subjective';
     const sectionTarget = section === 'obj' ? objTarget : subjTarget;
-    const sectionUsed   = sectionUsedMarks(blocksState[section]);
+    const sectionUsed = sectionUsedMarks(blocksState[section]);
     if (sectionTarget > 0 && sectionUsed > sectionTarget) {
       toast(`You can't add more questions — the ${sectionName} section is limited to ${sectionTarget} marks (this would make it ${sectionUsed}).`, 'error');
       return;
@@ -2346,28 +2184,26 @@ const setSubjLine = (ci, si, l) => {
       const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
       const classID = cls.gradeID || cls.id;
       const sectionID = cls.sectionID || cls.section;
-  let mainQuestions = [];
-  if (notebookDetails) {
-    // mainQuestion = API se selected main questions. selectedMainQs ab per-unit object hai
-    // ({ unitName: [mq...] }) → saare units ke mainQ flatten karo. (Array bhi handle karo = old data.)
-    const smq = tab.selectedMainQs || {};
-    mainQuestions = Array.isArray(smq) ? smq : Object.values(smq).flat();
-  } else {
-    // static mode — same as before
-    Object.entries(tab.unitSelections).forEach(([unitName, instrIdx]) => {
-      const unitObj = (PG_UNIT_DATA[subject] || []).find(u => u.name === unitName);
-      if (!unitObj) return;
-      const instrs = unitObj.qtypes[typeKey] || [];
-      const chosen = instrs[instrIdx];
-      if (chosen?.instr) mainQuestions.push(chosen.instr);
-    });
-  }
+      let mainQuestions = [];
+      if (notebookDetails) {
+        // mainQuestion = API se selected main questions. selectedMainQs ab per-unit object hai
+        // ({ unitName: [mq...] }) → saare units ke mainQ flatten karo. (Array bhi handle karo = old data.)
+        const smq = tab.selectedMainQs || {};
+        mainQuestions = Array.isArray(smq) ? smq : Object.values(smq).flat();
+      } else {
+        // static mode — same as before
+        Object.entries(tab.unitSelections).forEach(([unitName, instrIdx]) => {
+          const unitObj = (PG_UNIT_DATA[subject] || []).find(u => u.name === unitName);
+          if (!unitObj) return;
+          const instrs = unitObj.qtypes[typeKey] || [];
+          const chosen = instrs[instrIdx];
+          if (chosen?.instr) mainQuestions.push(chosen.instr);
+        });
+      }
 
-    // Fresh qpMasterID lives in the ref (state can be stale → 0 in this closure).
-    // QA C1: naye paper ka master pehli block-save par banta hai (Fetch par nahi).
-    const qpMastId = qpMasterIDRef.current || qpMasterID || await ensureMaster();
-    if (!qpMastId) return; // createQuestionPaper ne error toast de diya
-    console.log('Saving with qpMastID:', qpMastId);
+      // Fresh qpMasterID lives in the ref (state can be stale → 0 in this closure).
+      const qpMastId = qpMasterIDRef.current || qpMasterID;
+      console.log('Saving with qpMastID:', qpMastId);
 
       // Pehle se saved question (edit/prefill ya pehle insert ho chuka) → update, warna insert.
       const isExisting = !!tab.existing;
@@ -2406,19 +2242,6 @@ const setSubjLine = (ci, si, l) => {
         // Mark existing so the next save updates (not re-inserts); keep any returned record id.
         updateTab(section, typeKey, entryId, { saved: true, existing: true, savedId: data.id ?? data.recordId ?? tab.savedId ?? 0 });
         toast('Question block saved!', 'success');
-
-        /* Redesign: back to the empty question-type dropdown, ready for the next type. */
-        setCurType(prev => ({ ...prev, [section]: '' }));
-        /* 'both' paper: once this section is full, move to the other one if it
-           still needs marks (the Objective→Subjective tab guard allows it, since
-           this section is no longer 'under'). */
-        const otherSec    = section === 'obj' ? 'subj' : 'obj';
-        const otherTarget = otherSec === 'obj' ? objTarget : subjTarget;
-        const otherUsed   = sectionUsedMarks(blocksState[otherSec]);
-        if (paperType === 'both' && sectionTarget > 0 && sectionUsed >= sectionTarget && otherUsed < otherTarget) {
-          setQTab(otherSec);
-          toast(`${sectionName} marks complete — now add the ${otherSec === 'obj' ? 'Objective' : 'Subjective'} part`, 'success');
-        }
       } else {
         toast(data.message || 'Failed to save question block', 'error');
       }
@@ -2431,131 +2254,98 @@ const setSubjLine = (ci, si, l) => {
     }
   };
 
-    const editTab = (section, typeKey, entryId) =>
-      updateTab(section, typeKey, entryId, { saved: false });
-    // 👇 NEW: API function to create question paper
-    /* silent: draft-master / Generate-time header save — success toast aur
-       fetched/tab state change nahi (sirf id return). */
-    const createQuestionPaper = async ({ silent = false } = {}) => {
-      try {
-        // NOTE: `loading` ab onFetch manage karta hai (poori fetch sequence ke liye).
-        const branchID = sessionStorage.getItem("branchID");
-        const token = sessionStorage.getItem("token");
-        
-        // Find subjectID
-        const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
-        const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
-        
-        // Get classID and sectionID
-        const classID = cls.gradeID || cls.id;
-        const sectionID = cls.sectionID || cls.section;
-
-        // Existing master id (edit mode OR a paper we already inserted in this session) →
-        // update instead of inserting a duplicate every time Fetch is clicked.
-        const existingMasterID = qpMasterIDRef.current || qpMasterID || (isEdit ? (initialPaper.qpMasterID || 0) : 0);
-
-        // Prepare payload
-        const payload = {
-          qpMasterID: existingMasterID,
-          action: existingMasterID ? "update" : "insert",
-          paperType: paperType,
-          paperFormate: paperFmt,
-          timeForSubjective: String(subjTime) || String(0),
-          timeForObject: String(objTime) || String(0),
-          marksForObject: String(objMarks) || String(0),
-          marksForSubjective: String(subjMarks) || String(0),
-          paperTitle: title,
-          branchID: parseInt(branchID),
-          gradeID: parseInt(classID),
-          sectionID: parseInt(sectionID),
-          subjectID: parseInt(subjectId),
-          // Local wall-clock time (NOT UTC). toISOString() converts to UTC which shifts the
-          // hour by the timezone offset (+5 in PKT) and flips AM/PM on the cards.
-          createdDate: (() => {
-            const now = new Date();
-            return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-              .toISOString()
-              .slice(0, -1); // drop the trailing 'Z' so it reads as local time
-          })(),
-          notebookIDs: selectedUnits, // Selected unit IDs
-          medium: medium, // 'english' | 'urdu' — paper ka language medium
-        };
-
-        const url = buildUrl(`/api/qpmaster_crud`);
-        
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-  const data = await response.json();
-  console.log('QP Master CRUD Response:', data); // debug ke liye
-
-  if (data && (data.qpMasterID || data.qpMasterID === 0)) {
-    const newID = data.qpMasterID;
-    if (!silent) toast(existingMasterID ? 'Question paper updated successfully!' : 'Question paper created successfully!', 'success');
-    setQpMasterID(newID);
-    qpMasterIDRef.current = newID;
-    console.log('qpMasterIDRef set to:', qpMasterIDRef.current); // confirm
-    if (!silent) {
-      setFetched(true);
-      setQTab(showObj ? 'obj' : 'subj');
-    }
-    return newID;
-  } else {
-    toast(data.message || 'Failed to create question paper', 'error');
-    if (!silent) setFetched(false);
-    return false;
-  }
-      } catch (err) {
-        console.error("Error creating question paper:", err);
-        toast('Error creating question paper', 'error');
-        if (!silent) setFetched(false);
-            return false; // 👈 return false on error
-
-      }
-    };
-  /* QA C1: draft master on-demand banao (ek hi baar — parallel saves same promise share karte hain). */
-  const ensureMaster = async () => {
-    if (qpMasterIDRef.current) return qpMasterIDRef.current;
-    if (!masterPromiseRef.current) {
-      masterPromiseRef.current = createQuestionPaper({ silent: true }).then(id => {
-        if (id) { if (!isEdit) draftCreatedRef.current = true; }
-        else masterPromiseRef.current = null;
-        return id;
-      });
-    }
-    return masterPromiseRef.current;
-  };
-
-  /* QA C1: Generate kiye baghair band → is modal ka banaya hua draft master delete. */
-  const discardDraftMaster = async () => {
-    const id = qpMasterIDRef.current;
-    if (!draftCreatedRef.current || generatedRef.current || !id) return;
-    draftCreatedRef.current = false;
+  const editTab = (section, typeKey, entryId) =>
+    updateTab(section, typeKey, entryId, { saved: false });
+  // 👇 NEW: API function to create question paper
+  const createQuestionPaper = async () => {
     try {
-      const token = sessionStorage.getItem('token');
-      await fetch(buildUrl(`/api/deleteqpmasterrecord?${new URLSearchParams({ id: String(id) }).toString()}`), {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      // NOTE: `loading` ab onFetch manage karta hai (poori fetch sequence ke liye).
+      const branchID = sessionStorage.getItem("branchID");
+      const token = sessionStorage.getItem("token");
+
+      // Find subjectID
+      const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
+      const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
+
+      // Get classID and sectionID
+      const classID = cls.gradeID || cls.id;
+      const sectionID = cls.sectionID || cls.section;
+
+      // Existing master id (edit mode OR a paper we already inserted in this session) →
+      // update instead of inserting a duplicate every time Fetch is clicked.
+      const existingMasterID = qpMasterIDRef.current || qpMasterID || (isEdit ? (initialPaper.qpMasterID || 0) : 0);
+
+      // Prepare payload
+      const payload = {
+        qpMasterID: existingMasterID,
+        action: existingMasterID ? "update" : "insert",
+        paperType: paperType,
+        paperFormate: paperFmt,
+        timeForSubjective: String(subjTime) || String(0),
+        timeForObject: String(objTime) || String(0),
+        marksForObject: String(objMarks) || String(0),
+        marksForSubjective: String(subjMarks) || String(0),
+        paperTitle: title,
+        branchID: parseInt(branchID),
+        gradeID: parseInt(classID),
+        sectionID: parseInt(sectionID),
+        subjectID: parseInt(subjectId),
+        // Local wall-clock time (NOT UTC). toISOString() converts to UTC which shifts the
+        // hour by the timezone offset (+5 in PKT) and flips AM/PM on the cards.
+        createdDate: (() => {
+          const now = new Date();
+          return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+            .toISOString()
+            .slice(0, -1); // drop the trailing 'Z' so it reads as local time
+        })(),
+        notebookIDs: selectedUnits, // Selected unit IDs
+        medium: medium, // 'english' | 'urdu' — paper ka language medium
+      };
+
+      const url = buildUrl(`/api/qpmaster_crud`);
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
       });
+      const data = await response.json();
+      console.log('QP Master CRUD Response:', data); // debug ke liye
+
+      if (data && (data.qpMasterID || data.qpMasterID === 0)) {
+        const newID = data.qpMasterID;
+        toast(existingMasterID ? 'Question paper updated successfully!' : 'Question paper created successfully!', 'success');
+        setQpMasterID(newID);
+        qpMasterIDRef.current = newID;
+        console.log('qpMasterIDRef set to:', qpMasterIDRef.current); // confirm
+        setFetched(true);
+        setQTab(showObj ? 'obj' : 'subj');
+        return newID;
+      } else {
+        toast(data.message || 'Failed to create question paper', 'error');
+        setFetched(false);
+        return false;
+      }
     } catch (err) {
-      console.error('Could not discard draft paper', err);
+      console.error("Error creating question paper:", err);
+      toast('Error creating question paper', 'error');
+      setFetched(false);
+      return false; // 👈 return false on error
+
     }
   };
-
   // API response keys ko PG type keys se map karo
 
   // notebookDetails se ek subject ka PG_UNIT_DATA jaisa structure banao
   const buildUnitDataFromAPI = (details) => {
     if (!details) return {};
-    
+
     const qtypes = {};
-    
+
     Object.entries(API_KEY_MAP).forEach(([pgKey, apiKey]) => {
       const items = details[apiKey];
       if (items && items.length > 0) {
@@ -2566,7 +2356,7 @@ const setSubjLine = (ci, si, l) => {
           if (!grouped[mainQ]) grouped[mainQ] = [];
           grouped[mainQ].push(item);
         });
-        
+
         // Har mainQuestion group ko ek instruction card banao
         qtypes[pgKey] = Object.entries(grouped).map(([mainQ, groupItems]) => ({
           instr: mainQ,
@@ -2576,7 +2366,7 @@ const setSubjLine = (ci, si, l) => {
         }));
       }
     });
-    
+
     return {
       // Single "unit" — API se loaded
       unitName: 'Fetched Questions',
@@ -2605,9 +2395,9 @@ const setSubjLine = (ci, si, l) => {
     // Double-click guard: pehli fetch complete hone se pehle dobara insert na ho.
     if (fetchingRef.current) return;
     if (isOtherSession) {
-            toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-            return;
-        }
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
+    }
     if (!canFetch) {
       toast('Please fill all the fields before fetching', 'warning');
       return;
@@ -2621,11 +2411,8 @@ const setSubjLine = (ci, si, l) => {
     fetchingRef.current = true;
     setLoading(true);
     try {
-      /* QA C1: Fetch ab koi paper record save/insert NAHI karta — sirf questions
-         load. Master pehli block-save par (ensureMaster) banta hai aur header
-         (title/marks/time/units) Generate par save hota hai. */
-      setFetched(true);
-      setQTab(showObj ? 'obj' : 'subj');
+      const newQpMasterID = await createQuestionPaper(); // 👈 naam badlo
+      if (!newQpMasterID) return;
       const details = await fetchNotebookDetails(selectedUnits);
       // qpMasterID ke against jo questions pehle save the unhe dobara dikhao.
       await reloadSavedTabs(details);
@@ -2635,593 +2422,363 @@ const setSubjLine = (ci, si, l) => {
     }
   };
 
-    const onGenerate = async () => {
-              if (isOtherSession) {
-            toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-            return;
-        }
-      if (!baseOk) {
-        toast('Please fill all the fields before generating', 'warning');
-        return;
-      }
-      if (!fetched) {
-        toast('Press Fetch Questions and add questions before generating the paper', 'warning');
-        return;
-      }
-      /* Generate validates only the section of the ACTIVE tab — the button
-         works for whichever tab you're on. For a single-type paper that's the
-         only section shown; for a 'both' paper it's the tab currently open. */
-      const validateSection = (status, target, name) => {
-        if (status === 'over') {
-          toast(`Total ${name} Marks should not exceed the defined limit (${target}).`, 'error');
-          return false;
-        }
-        if (status !== 'ok') {
-          toast(`Please complete all ${name} Marks (${target}) before saving the paper.`, 'warning');
-          return false;
-        }
-        return true;
-      };
-      const activeSection = paperType === 'both' ? qTab : (showObj ? 'obj' : 'subj');
-      const activeOk = activeSection === 'obj'
-        ? validateSection(objStatus, objTarget, 'Objective')
-        : validateSection(subjStatus, subjTarget, 'Subjective');
-      if (!activeOk) return;
-
-      /* QA C1: Generate par hi paper header (title/marks/time) final save hota hai. */
-      if (fetchingRef.current) return;
-      fetchingRef.current = true;
-      const savedId = await createQuestionPaper({ silent: true });
-      fetchingRef.current = false;
-      if (!savedId) return;
-      generatedRef.current = true;
-      draftCreatedRef.current = false;
-
-      toast('Paper generated', 'success');
-      // Parent ki papers list dobara GET API se refresh karo (count + naya card turant update,
-      // bina screen refresh ke).
-      onGenerated?.();
-      onClose();
-    };
-
-    /* ═══ Redesign (School-Mentor-Front-end 141f4ef) — view-only helpers ═══ */
-    const isUrdu = medium === 'urdu';
-
-    /* Pick a question type from the dropdown — shows its workspace, starting a
-       fresh question block (via the ERP addTab, with all its guards) the first
-       time this type is opened. */
-    const selectType = (section, key) => {
-      setCurType(prev => ({ ...prev, [section]: key }));
-      if (!key) return;
-      const block = blocksState[section]?.[key];
-      if (!block || block.tabs.length === 0) {
-        addTab(section, key);
-      } else if (!block.activeTab) {
-        switchTab(section, key, block.tabs[0].entryId);
-      }
-    };
-
-    /* QA C8: Esc / overlay / X / Cancel — data bhara ho to pehle confirm.
-       QA C1: band karte waqt Generate na hua ho to draft master delete. */
-    /* "Discard changes?" confirm band (user ki request) — modal seedha band hota hai. */
-    const requestClose = () => {
-      discardDraftMaster();
-      onClose();
-    };
-    closeRef.current = requestClose;
-
-    /* Fetch / Refresh — the ERP onFetch (qpmaster_crud + notebook details +
-       saved-block reload) unchanged; only the dropdown is cleared first. */
-    const runFetch = () => {
-      setCurType({ obj: '', subj: '' });
-      onFetch();
-    };
-
-    /* Footer status line — mirrors the existing marks-balance checks in words */
-    let statusMsg, statusClass = '';
-    if (!subject || !paperType) {
-      statusMsg = 'Choose a subject and paper type to begin';
-    } else if (!title.trim() || !paperFmt) {
-      statusMsg = 'Fill in the paper title';
-    } else if (!objOk || !subjOk) {
-      statusMsg = 'Set the total marks and time for each part';
-    } else if (!fetched) {
-      statusMsg = selectedUnits.length ? 'Press Fetch Questions to load submitted items' : 'Choose units, then press Fetch Questions';
-    } else {
-      const parts = []; let ok = true;
-      const chk = (name, u, tg) => {
-        if (!(tg > 0)) { parts.push(`Set ${name} total marks`); ok = false; }
-        else if (u < tg) { parts.push(`${name}: ${tg - u} marks left`); ok = false; }
-        else if (u > tg) { parts.push(`${name}: ${u - tg} marks too many`); ok = false; }
-      };
-      if (showObj) chk('Objective', objUsed, objTarget);
-      if (showSubj) chk('Subjective', subjUsed, subjTarget);
-      if (ok) { statusMsg = '✓ Marks are balanced — ready to generate'; statusClass = 'ok'; }
-      else { statusMsg = parts.join(' · '); statusClass = 'warn'; }
+  const onGenerate = () => {
+    if (isOtherSession) {
+      toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+      return;
     }
-
-    /* Live preview — the Paper Setup template/board header filled with this
-       paper's own data, plus a read-only render of the question blocks. */
-    const liveObjMarks  = showObj  ? objTarget  : 0;
-    const liveSubjMarks = showSubj ? subjTarget : 0;
-    const liveObjTime   = showObj  ? (+objTime  || 0) : 0;
-    const liveSubjTime  = showSubj ? (+subjTime || 0) : 0;
-    const liveInfo = {
-      school:     previewHeader?.branchName || pgSchoolName(),
-      campus:     previewHeader?.address || '',
-      logo:       resolveMediaUrl(previewHeader?.branchLogo),
-      examTitle:  title.trim(),
-      subject:    subject || '',
-      className:  cls?.name || '',
-      section:    cls?.section || '',
-      time:       (liveObjTime + liveSubjTime) ? `${liveObjTime + liveSubjTime} Min` : '—',
-      objTime:    liveObjTime,
-      subjTime:   liveSubjTime,
-      objMarks:   liveObjMarks,
-      subjMarks:  liveSubjMarks,
-      totalMarks: liveObjMarks + liveSubjMarks,
-      showObj,
-      showSubj,
+    if (!baseOk) {
+      toast('Please fill all the fields before generating', 'warning');
+      return;
+    }
+    /* Generate validates only the section of the ACTIVE tab — the button
+       works for whichever tab you're on. For a single-type paper that's the
+       only section shown; for a 'both' paper it's the tab currently open. */
+    const validateSection = (status, target, name) => {
+      if (status === 'over') {
+        toast(`Total ${name} Marks should not exceed the defined limit (${target}).`, 'error');
+        return false;
+      }
+      if (status !== 'ok') {
+        toast(`Please complete all ${name} Marks (${target}) before saving the paper.`, 'warning');
+        return false;
+      }
+      return true;
     };
-    const makeStored = pgReadStoredTemplate(templateId || 1);
-    const effTemplateId = makeStored.templateId || templateId || 1;
-    const makeBoardCfg = boardCfg || {
-      boardId: makeStored.boardId,
-      boardLevel: makeStored.boardLevel,
-      boardGroup: makeStored.boardGroup,
-    };
-    let headerEl;
-    if (effTemplateId === 4) headerEl = <BoardHeader board={pgBoardFind(makeBoardCfg?.boardId)} level={pgBoardLevel(makeBoardCfg?.boardLevel)} group={makeBoardCfg?.boardGroup} info={liveInfo} />;
-    else if (effTemplateId === 2) headerEl = <ModernHeader info={liveInfo} />;
-    else if (effTemplateId === 3) headerEl = <FormalHeader info={liveInfo} />;
-    else headerEl = <ClassicHeader info={liveInfo} />;
-    const templateName = { 1: 'Classic', 2: 'Modern', 3: 'Formal', 4: 'Board Pattern' }[effTemplateId] || 'Classic';
+    const activeSection = paperType === 'both' ? qTab : (showObj ? 'obj' : 'subj');
+    const activeOk = activeSection === 'obj'
+      ? validateSection(objStatus, objTarget, 'Objective')
+      : validateSection(subjStatus, subjTarget, 'Subjective');
+    if (!activeOk) return;
 
-    const typeLabelOf = tDef => pgTypeLabel(tDef.key, tDef.label, isUrdu);
-    /* Live preview ke asal questions: is block ke chune units + main questions ke
-       fetched (eligible) items. Static/demo mode me kuch nahi → purani lines. */
-    const liveSampleOf = (typeKey, tab) => {
-      const rows = notebookDetails ? (notebookDetails[API_KEY_MAP[typeKey]] || []) : [];
-      if (!rows.length) return null;
-      const units = tab.unitSelections || {};
-      const smq = tab.selectedMainQs || {};
-      return rows.filter(r => {
-        const u = r.unitName || 'Unit';
-        if (!(u in units)) return false;
-        const mqs = Array.isArray(smq) ? smq : smq[u];
-        return !mqs || mqs.includes(r.mainQuestion || 'Section A');
-      });
-    };
-    const objEntriesRaw  = livePaperEntries(PG_ALL_TYPES, blocksState.obj);
-    const subjEntriesRaw = livePaperEntries(PG_ALL_TYPES, blocksState.subj);
-    const objOrder  = reconcileOrder(ord.obj,  objEntriesRaw.map(e => e.tab.entryId));
-    const subjOrder = reconcileOrder(ord.subj, subjEntriesRaw.map(e => e.tab.entryId));
-    const objEntries  = orderEntries(objEntriesRaw, objOrder);
-    const subjEntries = orderEntries(subjEntriesRaw, subjOrder);
-    const hasObjEntries = objEntries.length > 0;
-    const hasAnyEntries = hasObjEntries || subjEntries.length > 0;
+    toast(`Paper generated — "${title}"`, 'success');
+    // Parent ki papers list dobara GET API se refresh karo (count + naya card turant update,
+    // bina screen refresh ke).
+    onGenerated?.();
+    onClose();
+  };
 
-    /* ▲▼ — swap a question with its neighbour in the live preview order */
-    const moveQuestion = (section, order, entryId, dir) => {
-      const i = order.indexOf(entryId);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= order.length) return;
-      const next = [...order];
-      [next[i], next[j]] = [next[j], next[i]];
-      setOrd(prev => ({ ...prev, [section]: next }));
-    };
+  return createPortal(
+    <div
+      className="pg-modal-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="pg-modal" style={{ maxWidth: 900 }} aria-busy={editLoading || undefined}>
+        {/* Edit mode: saved paper ki APIs load hone tak blocking loader */}
+        {editLoading && (
+          <div className="pg-modal-loading" role="status" aria-live="polite">
+            <div className="pg-modal-loading-spinner" />
+            <div className="pg-modal-loading-text">
+              {medium === 'urdu' ? 'محفوظ شدہ پرچہ لوڈ ہو رہا ہے…' : 'Loading saved paper…'}
+            </div>
+            <div className="pg-modal-loading-sub">
+              {medium === 'urdu'
+                ? 'سوالات اور ترتیبات حاصل کی جا رہی ہیں'
+                : 'Fetching questions and settings'}
+            </div>
+          </div>
+        )}
+        <div className="pg-modal-header">
+          <div>
+            <div className="pg-modal-title">Make Paper — {cls.name} ({cls.section})</div>
+            <div className="pg-modal-sub">{cls.name} · Section {cls.section}</div>
+          </div>
+          <Tooltip text="Close">
+            <button className="pg-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
 
-    /* One section's "pick a question type → configure → save → next" flow.
-       The dropdown replaces the always-visible accordion list; only the
-       selected type's ERP QBlockAccordion body renders (hideHeader). */
-    const renderTypeSection = (section, typeDefs) => {
-      const sectionState = blocksState[section] || {};
-      const options = typeDefs.map(tDef => {
-        const apiItems = notebookDetails ? notebookDetails[API_KEY_MAP[tDef.key]] : null;
-        const sum = pgTypeApproved(apiItems, PG_UNIT_DATA[subject], tDef.key);
-        const added = addedOf(sectionState, tDef.key);
-        return {
-          key: tDef.key,
-          label: typeLabelOf(tDef),
-          disabled: sum.total === 0,
-          countText: isUrdu
-            ? `${sum.total} منظور شدہ · ${sum.units} یونٹ`
-            : `${sum.total} approved · ${sum.units} unit${sum.units !== 1 ? 's' : ''}`,
-          added: added.n,
-          marks: added.m,
-        };
-      });
-      const chips = options.filter(o => o.added > 0);
-      const curKey = curType[section];
-      const curDef = typeDefs.find(tDef => tDef.key === curKey);
-      return (
-        <div dir={isUrdu ? 'rtl' : undefined}>
-          <div className="pgx-typebar">
-            <label className="pgx-l">{isUrdu ? 'سوال کی قسم' : 'Question type'}</label>
-            <PgxTypeDropdown
-              options={options}
-              value={curKey}
-              onSelect={key => selectType(section, key)}
-              placeholder={isUrdu ? 'سوال کی قسم منتخب کریں' : 'Choose a question type'}
-              noneText={isUrdu ? 'ابھی کوئی آئٹم نہیں' : 'No items yet'}
-            />
-            {chips.length > 0 && (
-              <div className="pgx-added">
-                <span>{isUrdu ? 'اب تک شامل:' : 'Added so far:'}</span>
-                {chips.map(c => (
-                  <button key={c.key} type="button" className="pgx-chip" onClick={() => selectType(section, c.key)}>
-                    {c.label} <b>{c.added}</b> · {c.marks} {isUrdu ? 'نمبر' : 'marks'}
-                  </button>
-                ))}
+        <div className="pg-modal-body" style={{ padding: '16px 20px' }}>
+          {/* Info notice */}
+          <div className="pg-info-notice">
+            <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', fontSize: 14, flexShrink: 0, marginTop: 1 }}></i>
+            <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+              <strong style={{ color: '#1E40AF' }}>How paper generation works:</strong> This paper is generated from <strong>teacher-submitted notebook items only</strong>. Unsubmitted items will not appear in paper generation. Fill all fields below, fetch questions, then configure each question type.
+            </div>
+          </div>
+
+          {/* Settings */}
+          <div className="pg-settings-compact">
+            <div className="pg-settings-row">
+              <div className="pg-sc-field">
+                <div className="pg-field-label">Subject</div>
+                <select
+                  className="pg-select"
+                  value={subject}
+                  onChange={e => {
+                    setSubject(e.target.value);
+                    setSelectedUnits([]); // Clear selected units when subject changes
+                  }}
+                >
+                  <option value="">— Choose —</option>
+                  {subjects.map(s => (
+                    <option key={s.subjectID || s} value={s.subjectName || s}>
+                      {s.subjectName || s}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
-            {!curKey && (
-              <div className="pgx-pick-hint">
-                <i className="fa-regular fa-hand-pointer"></i>
-                {isUrdu ? 'پرچے میں سوالات شامل کرنے کے لیے اوپر سے سوال کی قسم منتخب کریں۔' : 'Pick a question type above to start adding questions to your paper.'}
+
+              <div className="pg-sc-field">
+                <div className="pg-field-label">
+                  Units
+                </div>
+                <Select
+                  isMulti
+                  options={unitOptions}
+                  value={unitOptions.filter(o => selectedUnits.includes(o.value))}
+                  onChange={(selected) => {
+                    setSelectedUnits(selected ? selected.map(x => x.value) : []);
+                    // Reset fetched state when units change
+                    if (fetched) {
+                      setFetched(false);
+                      setBlocksState({ obj: {}, subj: {} });
+                    }
+                  }}
+                  placeholder={medium === 'urdu' ? 'یونٹس منتخب کریں…' : 'Select units...'}
+                  isDisabled={!subject}
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      minHeight: '38px',
+                      borderColor: 'var(--border-light)',
+                      borderRadius: 'var(--radius-md)',
+                    })
+                  }}
+                />
+                {subject && units.length === 0 && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                    <i className="fa-solid fa-info-circle"></i> No units available for this subject
+                  </div>
+                )}
+              </div>
+
+              <div className="pg-sc-field">
+                <div className="pg-field-label">Paper Type</div>
+                <select className="pg-select" value={paperType} onChange={e => { setPaperType(e.target.value); resetOnChange(); }}>
+                  <option value="">— Choose —</option>
+                  <option value="objective">Objective</option>
+                  <option value="subjective">Subjective</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+
+              <div className="pg-sc-field">
+                <div className="pg-field-label">Medium</div>
+                <select className="pg-select" value={medium} onChange={e => { setMedium(e.target.value); resetOnChange(); }}>
+                  <option value="english">English</option>
+                  <option value="urdu">Urdu</option>
+                </select>
+              </div>
+
+              {/* <div className="pg-sc-field">
+                  <div className="pg-field-label">Paper Format</div>
+                  <select className="pg-select" value={paperFmt} onChange={e => { setPaperFmt(e.target.value); resetOnChange(); }}>
+                    <option value="">— Choose —</option>
+                    <option value="with">With Answer Sheet</option>
+                    <option value="without">Without Answer Sheet</option>
+                  </select>
+                </div> */}
+
+              <div className="pg-sc-field pg-sc-field--wide">
+                <div className="pg-field-label">Paper Title</div>
+                <input className="pg-input" type="text" value={title} onChange={e => setTitle(e.target.value)}
+                  dir={medium === 'urdu' ? 'rtl' : undefined}
+                  placeholder={medium === 'urdu' ? 'مثلاً: ماہانہ ٹیسٹ 1' : 'e.g. Monthly Test 1'} />
+              </div>
+            </div>
+
+            {showMarksRow && (
+              <div className="pg-marks-compact-row">
+                {showObj && (
+                  <>
+                    <div className="pg-sc-field">
+                      <div className="pg-field-label">Obj. Time (min)</div>
+                      <input className="pg-input" type="number" min="1" value={objTime} onChange={e => { setObjTime(e.target.value); resetOnChange(); }} placeholder="30" />
+                    </div>
+                    <div className="pg-sc-field">
+                      <div className="pg-field-label">Obj. Marks</div>
+                      <input className="pg-input" type="number" min="1" value={objMarks} onChange={e => { setObjMarks(e.target.value); resetOnChange(); }} placeholder="20" />
+                    </div>
+                  </>
+                )}
+                {showSubj && (
+                  <>
+                    <div className="pg-sc-field">
+                      <div className="pg-field-label">Subj. Time (min)</div>
+                      <input className="pg-input" type="number" min="1" value={subjTime} onChange={e => { setSubjTime(e.target.value); resetOnChange(); }} placeholder="70" />
+                    </div>
+                    <div className="pg-sc-field">
+                      <div className="pg-field-label">Subj. Marks</div>
+                      <input className="pg-input" type="number" min="1" value={subjMarks} onChange={e => { setSubjMarks(e.target.value); resetOnChange(); }} placeholder="80" />
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
-          {curDef && (
-            <QBlockAccordion
-              key={curDef.key}
-              hideHeader
-              typeDef={curDef}
-              isUrdu={isUrdu}
-              section={section}
-              subject={subject}
-              block={sectionState[curDef.key]}
-              typeAgg={typeAggregates(sectionState)[curDef.key]}
-              notebookDetails={notebookDetails}
-              apiKeyMap={API_KEY_MAP}
-              onToggleOpen={() => toggleBlockOpen(section, curDef.key)}
-              onAddTab={() => addTab(section, curDef.key)}
-              onSwitchTab={entryId => switchTab(section, curDef.key, entryId)}
-              onRemoveTab={entryId => removeTab(section, curDef.key, entryId)}
-              onUpdateTab={(entryId, patch) => updateTab(section, curDef.key, entryId, patch)}
-              onSaveTab={entryId => saveTab(section, curDef.key, entryId)}
-              onEditTab={entryId => editTab(section, curDef.key, entryId)}
-              onDeleteTab={entryId => deleteTab(section, curDef.key, entryId)}
-            />
+
+          {/* Hint */}
+          <div className="pg-fetch-hint">
+            <i className="fa-solid fa-lightbulb" style={{ color: '#F59E0B', fontSize: 12, flexShrink: 0 }}></i>
+            <span>
+              Select a subject, paper type, format, and title above, then click <strong>Fetch Questions</strong> to load available submitted items.
+            </span>
+          </div>
+
+          {/* Fetch button */}
+          <div style={{ textAlign: 'center', margin: '6px 0 14px' }}>
+            <Tooltip text={canFetch ? 'Load questions for the selected class and subject' : 'Pick a class and subject first'}>
+              <button className="pg-fetch-btn" onClick={onFetch} disabled={!canFetch || isOtherSession || loading}
+                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' }
+                  : loading ? { opacity: .6, cursor: 'wait' } : undefined}>
+                {loading ? (
+                  <><i className="fa-solid fa-spinner fa-spin"></i> {medium === 'urdu' ? 'سوالات لوڈ ہو رہے ہیں…' : 'Fetching…'}</>
+                ) : (
+                  <><i className="fa-solid fa-magnifying-glass"></i> Fetch Questions</>
+                )}
+              </button>
+            </Tooltip>
+          </div>
+
+          {/* Question builder (after fetch) */}
+          {fetched && (
+            <div>
+              {/* Marks tracker */}
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, padding: '6px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)' }}>
+                  <i className="fa-solid fa-chart-bar" style={{ color: '#1E40AF', fontSize: 11 }}></i>
+                  <span>{medium === 'urdu'
+                    ? <><strong>نمبر ٹریکر:</strong> پرچہ بنانے سے پہلے استعمال شدہ نمبر لازمی طور پر مطلوبہ نمبروں کے برابر ہونے چاہئیں۔ توازن کے لیے اشیاء کی تعداد یا فی آئٹم نمبر ایڈجسٹ کریں۔</>
+                    : <><strong>Marks tracker:</strong> Used marks must exactly match the required marks before you can generate the paper. Adjust item counts or marks per item to balance.</>}</span>
+                </div>
+                {showObj && (
+                  <MarksBar status={objStatus} label="Objective" isUrdu={medium === 'urdu'} iconColor="#1E40AF" iconClass="fa-circle-dot" used={objUsed} target={objTarget} />
+                )}
+                {showSubj && (
+                  <MarksBar status={subjStatus} label="Subjective" isUrdu={medium === 'urdu'} iconColor="#0891B2" iconClass="fa-pencil" used={subjUsed} target={subjTarget} style={{ marginTop: 6 }} />
+                )}
+              </div>
+
+              {/* Obj/Subj tabs */}
+              {paperType === 'both' && (
+                <div className="pg-qtype-tabs" style={{ marginBottom: 10 }}>
+                  <Tooltip text="Edit the objective section (MCQs, fill in the blanks, etc.)">
+                    <button className={`pg-qtype-tab${qTab === 'obj' ? ' active' : ''}`} onClick={() => {
+                      /* Same rule the other way: block only while Subjective is still under target. */
+                      if (qTab === 'subj' && subjStatus === 'under') {
+                        toast(`Please complete all Subjective Marks (${subjTarget}) before switching to Objective section.`, 'warning');
+                        return;
+                      }
+                      setQTab('obj');
+                    }}>
+                      <i className="fa-solid fa-circle-dot"></i> {medium === 'urdu' ? 'معروضی' : 'Objective'}
+                    </button>
+                  </Tooltip>
+                  <Tooltip text="Edit the subjective section (short / long questions)">
+                    <button className={`pg-qtype-tab${qTab === 'subj' ? ' active' : ''}`} onClick={() => {
+                      /* Only block while the Objective section is still short of
+                         its target. Once it's complete (or over), the marks are
+                         filled, so let the user move on. */
+                      if (objStatus === 'under') {
+                        toast(`Please complete all Objective Marks (${objTarget}) before proceeding to the Subjective section.`, 'warning');
+                        return;
+                      }
+                      setQTab('subj');
+                    }}>
+                      <i className="fa-solid fa-pencil"></i> {medium === 'urdu' ? 'انشائی' : 'Subjective'}
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
+
+              {/* Question type blocks */}
+              {(showObj && (paperType === 'objective' || qTab === 'obj')) && (
+                <div dir={medium === 'urdu' ? 'rtl' : undefined}>
+                  <div className="pg-section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>{medium === 'urdu' ? 'معروضی سوالات کی اقسام' : 'Objective Question Types'}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>
+                      {medium === 'urdu' ? 'مرکزی سوالات منتخب کریں · فی قسم اشیاء و انتخاب مقرر کریں' : 'Select main questions · set items & choices per type'}
+                    </span>
+                  </div>
+                  {objTabTypes.map(t => (
+                    <QBlockAccordion
+                      key={t.key}
+                      typeDef={t}
+                      isUrdu={medium === 'urdu'}
+                      section="obj"
+                      subject={subject}
+                      block={blocksState.obj[t.key]}
+                      typeAgg={typeAggregates(blocksState.obj)[t.key]}
+                      notebookDetails={notebookDetails}       // 👈 ADD
+                      apiKeyMap={API_KEY_MAP}                 // 👈 ADD
+                      onToggleOpen={() => toggleBlockOpen('obj', t.key)}
+                      onAddTab={() => addTab('obj', t.key)}
+                      onSwitchTab={entryId => switchTab('obj', t.key, entryId)}
+                      onRemoveTab={entryId => removeTab('obj', t.key, entryId)}
+                      onUpdateTab={(entryId, patch) => updateTab('obj', t.key, entryId, patch)}
+                      onSaveTab={entryId => saveTab('obj', t.key, entryId)}
+                      onEditTab={entryId => editTab('obj', t.key, entryId)}
+                      onDeleteTab={entryId => deleteTab('obj', t.key, entryId)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {(showSubj && (paperType === 'subjective' || qTab === 'subj')) && (
+                <div dir={medium === 'urdu' ? 'rtl' : undefined}>
+                  <div className="pg-section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>{medium === 'urdu' ? 'انشائی سوالات کی اقسام' : 'Subjective Question Types'}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>
+                      {medium === 'urdu' ? 'مرکزی سوالات منتخب کریں · فی قسم اشیاء و نمبر مقرر کریں' : 'Select main questions · set items & marks per type'}
+                    </span>
+                  </div>
+                  {subjTabTypes.map(t => (
+                    <QBlockAccordion
+                      key={t.key}
+                      typeDef={t}
+                      isUrdu={medium === 'urdu'}
+                      section="subj"
+                      subject={subject}
+                      block={blocksState.subj[t.key]}
+                      typeAgg={typeAggregates(blocksState.subj)[t.key]}
+                      notebookDetails={notebookDetails}       // 👈 ADD
+                      apiKeyMap={API_KEY_MAP}                 // 👈 ADD
+                      onToggleOpen={() => toggleBlockOpen('subj', t.key)}
+                      onAddTab={() => addTab('subj', t.key)}
+                      onSwitchTab={entryId => switchTab('subj', t.key, entryId)}
+                      onRemoveTab={entryId => removeTab('subj', t.key, entryId)}
+                      onUpdateTab={(entryId, patch) => updateTab('subj', t.key, entryId, patch)}
+                      onSaveTab={entryId => saveTab('subj', t.key, entryId)}
+                      onEditTab={entryId => editTab('subj', t.key, entryId)}
+                      onDeleteTab={entryId => deleteTab('subj', t.key, entryId)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
-      );
-    };
 
-    /* QA C4: tooltip mein wo field batao jo abhi missing hai. */
-    const fetchMissing = [
-      !subject && 'Subject',
-      !title.trim() && 'Paper title',
-      !paperType && 'Paper type',
-      !paperFmt && 'Paper format',
-      showObj && !(+objMarks > 0) && 'Objective total marks',
-      showObj && !(+objTime > 0) && 'Objective time',
-      showSubj && !(+subjMarks > 0) && 'Subjective total marks',
-      showSubj && !(+subjTime > 0) && 'Subjective time',
-    ].filter(Boolean);
-    const fetchMissingMsg = fetchMissing.length ? `Please fill: ${fetchMissing.join(', ')}` : 'Fill the paper details first';
-
-    const fetchBtn = (
-      <Tooltip text={canFetch ? 'Load questions for the selected class and subject' : fetchMissingMsg}>
-        <button className="pg-fetch-btn" onClick={runFetch} disabled={!canFetch || isOtherSession || loading}
-          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' }
-            : loading ? { opacity: .6, cursor: 'wait' } : undefined}>
-          {loading ? (
-            <><i className="fa-solid fa-spinner fa-spin"></i> {isUrdu ? 'سوالات لوڈ ہو رہے ہیں…' : 'Fetching…'}</>
-          ) : (
-            <><i className="fa-solid fa-magnifying-glass"></i> Fetch Questions</>
-          )}
-        </button>
-      </Tooltip>
-    );
-
-    return createPortal(
-      <div
-        className="pg-modal-overlay open"
-        onClick={e => { if (e.target === e.currentTarget) requestClose(); }}
-      >
-        <div className={`pg-modal pgx${pane === 'preview' ? ' show-preview' : ''}`} aria-busy={editLoading || undefined}>
-          {/* Edit mode: saved paper ki APIs load hone tak blocking loader */}
-          {editLoading && (
-            <div className="pg-modal-loading" role="status" aria-live="polite">
-              <div className="pg-modal-loading-spinner" />
-              <div className="pg-modal-loading-text">
-                {isUrdu ? 'محفوظ شدہ پرچہ لوڈ ہو رہا ہے…' : 'Loading saved paper…'}
-              </div>
-              <div className="pg-modal-loading-sub">
-                {isUrdu
-                  ? 'سوالات اور ترتیبات حاصل کی جا رہی ہیں'
-                  : 'Fetching questions and settings'}
-              </div>
+        <div className="pg-modal-footer">
+          <Tooltip text="Discard changes and close">
+            <button className="pg-btn-secondary" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>
+              <i className="fa-solid fa-lock" style={{ fontSize: 9, marginRight: 3 }}></i>
+              Generate is enabled only when all marks validations are complete
             </div>
-          )}
-          <div className="pg-modal-header">
-            <div>
-              <div className="pg-modal-title">{isEdit ? 'Edit Paper' : 'Make Paper'} — {cls.name} ({cls.section})</div>
-              <div className="pg-modal-sub">Configure and generate a question paper</div>
-            </div>
-            <div className="pgx-head-actions">
-              <div className="pgx-pane-toggle">
-                <button type="button" className={pane === 'build' ? 'active' : ''} onClick={() => setPane('build')}>Build</button>
-                <button type="button" className={pane === 'preview' ? 'active' : ''} onClick={() => setPane('preview')}>Preview</button>
-              </div>
-              <Tooltip text="Close">
-                <button className="pg-modal-close" onClick={requestClose} aria-label="Close">
-                  <i className="fa-solid fa-xmark"></i>
-                </button>
-              </Tooltip>
-            </div>
-          </div>
-
-          <div className="pgx-body">
-            {/* ───────── LEFT: build ───────── */}
-            <div className="pgx-left">
-
-              {/* STEP 1 */}
-              <section className="pgx-step">
-                <div className="pgx-step-h">
-                  <span className="pgx-n">1</span>
-                  <div className="pgx-step-t"><b>Paper details</b><small>Tell us what kind of paper you want</small></div>
-                  <button type="button" className="pgx-link" onClick={() => setHelpOpen(o => !o)}>
-                    <i className="fa-regular fa-circle-question"></i> How does this work?
-                  </button>
-                </div>
-
-                {helpOpen && (
-                  <div className="pgx-help">
-                    <ol>
-                      <li><b>Fill the paper details</b> below (subject, units, type, marks) and press <b>Fetch Questions</b>.</li>
-                      <li><b>Add questions</b> — pick a question type, tick the units, say how many questions you want, press <b>Save</b>.</li>
-                      <li>Watch the <b>paper on the right</b> fill up. When the marks bar turns green, press <b>Generate Paper</b>.</li>
-                    </ol>
-                    <p>This paper is generated from <b>teacher-submitted notebook items only</b>. Unsubmitted items will not appear.</p>
-                  </div>
-                )}
-
-                <div className="pgx-grid">
-                  <div className="pgx-f">
-                    <label className="pgx-l">Subject</label>
-                    <select
-                      className="pg-select"
-                      value={subject}
-                      onChange={e => {
-                        setSubject(e.target.value);
-                        setSelectedUnits([]); // Clear selected units when subject changes
-                      }}
-                    >
-                      <option value="">— Choose —</option>
-                      {subjects.map(s => (
-                        <option key={s.subjectID || s} value={s.subjectName || s}>
-                          {s.subjectName || s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="pgx-f">
-                    <label className="pgx-l">Paper title</label>
-                    <input className="pg-input" type="text" value={title} onChange={e => setTitle(e.target.value)}
-                      dir={isUrdu ? 'rtl' : undefined}
-                      placeholder={isUrdu ? 'مثلاً: ماہانہ ٹیسٹ 1' : 'e.g. Monthly Test 1'} />
-                  </div>
-
-                  <div className="pgx-f pgx-f--wide">
-                    <label className="pgx-l">Units</label>
-                    <Select
-                      isMulti
-                      options={unitOptions}
-                      value={unitOptions.filter(o => selectedUnits.includes(o.value))}
-                      onChange={(selected) => {
-                        setSelectedUnits(selected ? selected.map(x => x.value) : []);
-                        // Reset fetched state when units change
-                        if (fetched) {
-                          setFetched(false);
-                          setBlocksState({ obj: {}, subj: {} });
-                        }
-                      }}
-                      placeholder={isUrdu ? 'یونٹس منتخب کریں…' : 'Select units...'}
-                      isDisabled={!subject}
-                      styles={{
-                        control: (base) => ({
-                          ...base,
-                          minHeight: '42px',
-                          borderColor: 'var(--border-light)',
-                          borderRadius: 10,
-                        })
-                      }}
-                    />
-                    {subject && units.length === 0 && (
-                      <small className="pgx-hint">
-                        <i className="fa-solid fa-info-circle"></i> No units available for this subject
-                      </small>
-                    )}
-                  </div>
-
-                  <div className="pgx-f">
-                    <span className="pgx-l">Paper type</span>
-                    <div className="pgx-seg">
-                      <Tooltip text="MCQ, True/False, Fill in the Blanks…">
-                        <button type="button" className={paperType === 'objective' ? 'on' : ''} onClick={() => { setPaperType('objective'); resetOnChange(); }}>Objective</button>
-                      </Tooltip>
-                      <Tooltip text="Short / long written answers">
-                        <button type="button" className={paperType === 'subjective' ? 'on' : ''} onClick={() => { setPaperType('subjective'); resetOnChange(); }}>Subjective</button>
-                      </Tooltip>
-                      <Tooltip text="Both an objective and a subjective section">
-                        <button type="button" className={paperType === 'both' ? 'on' : ''} onClick={() => { setPaperType('both'); resetOnChange(); }}>Both</button>
-                      </Tooltip>
-                    </div>
-                    <small className="pgx-hint">Objective = MCQ, True/False… · Subjective = written answers</small>
-                  </div>
-                  <div className="pgx-f">
-                    <span className="pgx-l">Medium</span>
-                    <div className="pgx-seg">
-                      <Tooltip text="English paper (left-to-right)">
-                        <button type="button" className={medium === 'english' ? 'on' : ''} onClick={() => { setMedium('english'); resetOnChange(); }}>English</button>
-                      </Tooltip>
-                      <Tooltip text="Urdu paper (right-to-left)">
-                        <button type="button" className={medium === 'urdu' ? 'on' : ''} onClick={() => { setMedium('urdu'); resetOnChange(); }}>Urdu</button>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </div>
-
-                {showMarksRow && (
-                  <div className="pgx-marks">
-                    {showObj && (
-                      <>
-                        <div className="pgx-f">
-                          <label className="pgx-l">Objective — total marks</label>
-                          <input className="pg-input" type="number" min="1" value={objMarks} onChange={e => { setObjMarks(e.target.value); resetOnChange(); }} placeholder="e.g. 20" />
-                        </div>
-                        <div className="pgx-f">
-                          <label className="pgx-l">Objective — time (min)</label>
-                          <input className="pg-input" type="number" min="1" value={objTime} onChange={e => { setObjTime(e.target.value); resetOnChange(); }} placeholder="e.g. 30" />
-                        </div>
-                      </>
-                    )}
-                    {showSubj && (
-                      <>
-                        <div className="pgx-f">
-                          <label className="pgx-l">Subjective — total marks</label>
-                          <input className="pg-input" type="number" min="1" value={subjMarks} onChange={e => { setSubjMarks(e.target.value); resetOnChange(); }} placeholder="e.g. 80" />
-                        </div>
-                        <div className="pgx-f">
-                          <label className="pgx-l">Subjective — time (min)</label>
-                          <input className="pg-input" type="number" min="1" value={subjTime} onChange={e => { setSubjTime(e.target.value); resetOnChange(); }} placeholder="e.g. 70" />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {!fetched && (
-                  <div className="pgx-fetch-row">
-                    <small className="pgx-hint">
-                      <i className="fa-solid fa-lightbulb" style={{ color: '#F59E0B', marginRight: 4 }}></i>
-                      Fill the details and choose units, then press <b>Fetch Questions</b> to load submitted items.
-                    </small>
-                    {fetchBtn}
-                  </div>
-                )}
-              </section>
-
-              {/* STEP 2 */}
-              <section className="pgx-step">
-                <div className="pgx-step-h">
-                  <span className="pgx-n">2</span>
-                  <div className="pgx-step-t">
-                    <b>Add questions</b>
-                    <small>{fetched ? 'Pick a question type, tick units, set how many, then Save' : 'Fetch questions first, then add them to the paper'}</small>
-                  </div>
-                  {fetched && (
-                    <Tooltip text="Load the latest submitted items again">
-                      <button type="button" className="pgx-link" onClick={runFetch} disabled={!canFetch || isOtherSession || loading}>
-                        <i className={`fa-solid fa-rotate${loading ? ' fa-spin' : ''}`}></i> Refresh
-                      </button>
-                    </Tooltip>
-                  )}
-                </div>
-
-                {!fetched ? (
-                  <div className="pgx-empty">
-                    <i className="fa-regular fa-file-lines"></i>
-                    <div><b>Fill the paper details and press Fetch Questions</b><br />Your question types will appear here.</div>
-                  </div>
-                ) : (
-                  <div>
-                    {/* Marks tracker — Objective and Subjective side by side */}
-                    <div className="pgx-marks-row">
-                      {showObj && (
-                        <MarksBar status={objStatus} label="Objective" isUrdu={isUrdu} iconColor="#1E40AF" iconClass="fa-circle-dot" used={objUsed} target={objTarget} />
-                      )}
-                      {showSubj && (
-                        <MarksBar status={subjStatus} label="Subjective" isUrdu={isUrdu} iconColor="#0891B2" iconClass="fa-pencil" used={subjUsed} target={subjTarget} />
-                      )}
-                    </div>
-
-                    {/* Obj/Subj tabs */}
-                    {paperType === 'both' && (
-                      <div className="pg-qtype-tabs" style={{ marginBottom: 10 }}>
-                        <Tooltip text="Edit the objective section (MCQs, fill in the blanks, etc.)">
-                          <button className={`pg-qtype-tab${qTab === 'obj' ? ' active' : ''}`} onClick={() => {
-                            /* Same rule the other way: block only while Subjective is still under target. */
-                            if (qTab === 'subj' && subjStatus === 'under') {
-                              toast(`Please complete all Subjective Marks (${subjTarget}) before switching to Objective section.`, 'warning');
-                              return;
-                            }
-                            setQTab('obj');
-                          }}>
-                            <i className="fa-solid fa-circle-dot"></i> {isUrdu ? 'معروضی' : 'Objective'}
-                          </button>
-                        </Tooltip>
-                        <Tooltip text="Edit the subjective section (short / long questions)">
-                          <button className={`pg-qtype-tab${qTab === 'subj' ? ' active' : ''}`} onClick={() => {
-                            /* Only block while the Objective section is still short of
-                               its target. Once it's complete (or over), the marks are
-                               filled, so let the user move on. */
-                            if (objStatus === 'under') {
-                              toast(`Please complete all Objective Marks (${objTarget}) before proceeding to the Subjective section.`, 'warning');
-                              return;
-                            }
-                            setQTab('subj');
-                          }}>
-                            <i className="fa-solid fa-pencil"></i> {isUrdu ? 'انشائی' : 'Subjective'}
-                          </button>
-                        </Tooltip>
-                      </div>
-                    )}
-
-                    {/* Question type — one at a time, picked from a dropdown */}
-                    {(showObj && (paperType === 'objective' || qTab === 'obj')) && renderTypeSection('obj', objTabTypes)}
-                    {(showSubj && (paperType === 'subjective' || qTab === 'subj')) && renderTypeSection('subj', subjTabTypes)}
-                  </div>
-                )}
-              </section>
-            </div>
-
-            {/* ───────── RIGHT: live preview ───────── */}
-            <aside className="pgx-right">
-              <div className="pgx-prev-head">
-                <div><b>Live preview</b><small>Updates as you add questions · Header: <b>{templateName}</b> template</small></div>
-                <span className="pgx-total">{objUsed + subjUsed} marks</span>
-              </div>
-              <div className="pgx-prev-scroll">
-                <div className="pgx-paper">
-                  {headerEl}
-                  {!hasAnyEntries ? (
-                    <div className="pgx-p-empty">
-                      <i className="fa-regular fa-file-lines"></i>
-                      Your paper will appear here.<br />Add a question on the left and watch it build.
-                    </div>
-                  ) : (
-                    <div dir={isUrdu ? 'rtl' : undefined}>
-                      <LivePaperSection letter="A" name="Objective" entries={objEntries} used={objUsed} target={objTarget} labelOf={typeLabelOf} sampleOf={liveSampleOf}
-                        onMove={(id, dir) => moveQuestion('obj', objOrder, id, dir)} />
-                      <LivePaperSection letter={hasObjEntries ? 'B' : 'A'} name="Subjective" entries={subjEntries} used={subjUsed} target={subjTarget} labelOf={typeLabelOf} sampleOf={liveSampleOf}
-                        onMove={(id, dir) => moveQuestion('subj', subjOrder, id, dir)} />
-                      <div className="pgx-p-foot">
-                        <span>{paperFmt === 'with' ? 'Answer sheet included' : paperFmt === 'without' ? 'No answer sheet' : ''}</span>
-                        <span>Total: {objUsed + subjUsed}{(liveObjMarks + liveSubjMarks) ? ` / ${liveObjMarks + liveSubjMarks}` : ''} marks</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </aside>
-          </div>
-
-          <div className="pg-modal-footer pgx-foot">
-            <Tooltip text="Close">
-              <button className="pg-btn-secondary" onClick={requestClose}>Cancel</button>
-            </Tooltip>
-            <div className={`pgx-status${statusClass ? ' ' + statusClass : ''}`}>{statusMsg}</div>
-            {/* QA C7: incomplete ho to button saaf disabled dikhe (click par onGenerate toast deta hai) + tooltip mein wajah */}
-            <Tooltip text={canGenerate ? 'Generate the paper' : statusMsg}>
-              <button
-                className="pg-btn-primary"
+            <Tooltip text={canGenerate ? 'Generate the paper' : 'Complete all marks validations first'}>
+              <button className="pg-btn-primary"
                 onClick={onGenerate}
-                disabled={isOtherSession}
-                aria-disabled={!canGenerate || undefined}
-                style={isOtherSession || !canGenerate ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                disabled={!canGenerate || isOtherSession}
+                style={{
+                  ...(!canGenerate ? { opacity: .6 } : {}),
+                  ...(isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : {})
+                }}
                 title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
               >
                 <i className="fa-solid fa-wand-magic-sparkles"></i> Generate Paper
@@ -3229,120 +2786,117 @@ const setSubjLine = (ci, si, l) => {
             </Tooltip>
           </div>
         </div>
-      </div>,
-      document.body
-    );
-  }
-
-  /* Marks tracker bar with color-coded status */
-  function MarksBar({ status, label, iconColor, iconClass, used, target, style, isUrdu = false }) {
-    const t = (en, ur) => (isUrdu ? ur : en);
-    const cls = target > 0 ? status : '';
-    const remain = target - used;
-    const U = t('Used', 'استعمال شدہ'), T = t('Target', 'ہدف');
-    const lbl = label === 'Objective' ? t('Objective', 'معروضی')
-      : label === 'Subjective' ? t('Subjective', 'انشائی') : label;
-    let body;
-    if (status === 'ok') {
-      body = <>{U}: <strong>{used}</strong> / {T}: {target} ✓</>;
-    } else if (status === 'over') {
-      body = <>{U}: <strong style={{ color: 'var(--error,#DC2626)' }}>{used}</strong> / {T}: {target} <span style={{ fontSize: 10 }}>(+{used - target} {t('over', 'زائد')})</span></>;
-    } else {
-      body = <>{U}: <strong>{used}</strong> / {T}: {target} <span style={{ fontSize: 10 }}>({target > 0 ? (isUrdu ? `${remain} باقی` : `${remain} remaining`) : t('set marks above', 'اوپر نمبر مقرر کریں')})</span></>;
-    }
-    return (
-      <div className={`pg-marks-bar ${cls}`} style={style}>
-        <span className="pg-marks-label">
-          <i className={`fa-solid ${iconClass}`} style={{ color: iconColor }}></i> {lbl}
-        </span>
-        <span className={`pg-marks-status ${status}`}>{body}</span>
-        <div className="pgx-track"><i style={{ width: `${target > 0 ? Math.min(100, used * 100 / target) : 0}%` }}></i></div>
       </div>
-    );
+    </div>,
+    document.body
+  );
+}
+
+/* Marks tracker bar with color-coded status */
+function MarksBar({ status, label, iconColor, iconClass, used, target, style, isUrdu = false }) {
+  const t = (en, ur) => (isUrdu ? ur : en);
+  const cls = target > 0 ? status : '';
+  const remain = target - used;
+  const U = t('Used', 'استعمال شدہ'), T = t('Target', 'ہدف');
+  const lbl = label === 'Objective' ? t('Objective', 'معروضی')
+    : label === 'Subjective' ? t('Subjective', 'انشائی') : label;
+  let body;
+  if (status === 'ok') {
+    body = <>{U}: <strong>{used}</strong> / {T}: {target} ✓</>;
+  } else if (status === 'over') {
+    body = <>{U}: <strong style={{ color: 'var(--error,#DC2626)' }}>{used}</strong> / {T}: {target} <span style={{ fontSize: 10 }}>(+{used - target} {t('over', 'زائد')})</span></>;
+  } else {
+    body = <>{U}: <strong>{used}</strong> / {T}: {target} <span style={{ fontSize: 10 }}>({target > 0 ? (isUrdu ? `${remain} باقی` : `${remain} remaining`) : t('set marks above', 'اوپر نمبر مقرر کریں')})</span></>;
+  }
+  return (
+    <div className={`pg-marks-bar ${cls}`} style={style}>
+      <span className="pg-marks-label">
+        <i className={`fa-solid ${iconClass}`} style={{ color: iconColor }}></i> {lbl}
+      </span>
+      <span className={`pg-marks-status ${status}`}>{body}</span>
+    </div>
+  );
+}
+
+/* Per-question-type accordion. Holds tabs (Question No. 1/2/...) and
+  inside each tab a workspace where the user picks units, instruction,
+  items / choices / marks. */
+function QBlockAccordion({ typeDef, isUrdu = false, section, subject, block, typeAgg,
+  onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab, onDeleteTab,
+  notebookDetails, apiKeyMap
+}) {
+  const typeLabel = pgTypeLabel(typeDef.key, typeDef.label, isUrdu);
+  const t = (en, ur) => (isUrdu ? ur : en);
+
+  const getApiItems = () => {
+    if (!notebookDetails || !apiKeyMap) return null;
+    const apiKey = apiKeyMap[typeDef.key];
+    if (!apiKey) return null;
+    const items = notebookDetails[apiKey];
+    return items && Array.isArray(items) && items.length > 0 ? items : null;
+  };
+
+  const apiItems = getApiItems();
+
+  // Static data fallback
+  const unitData = PG_UNIT_DATA[subject] || [];
+
+  let totalSubmitted = 0, unitCount = 0;
+
+  // API se unit-wise submitted count calculate karo
+  let unitSummary = []; // [{ unitName, submitted, total }]
+
+  if (apiItems) {
+    // Group by unitName → fir mainQuestion ke groups. submittedCount/notebookTotalCount
+    // per-mainQuestion-group hote hain, is liye unit ka submitted/total un groups ka SUM hai.
+    const unitMap = {};
+    apiItems.forEach(item => {
+      const uName = item.unitName || 'Unit';
+      const mq = item.mainQuestion || 'Section A';
+      if (!unitMap[uName]) unitMap[uName] = { unitName: uName, groups: {} };
+      if (!unitMap[uName].groups[mq]) {
+        unitMap[uName].groups[mq] = {
+          submitted: item.submittedCount || 0,
+          total: item.notebookTotalCount || 0,
+        };
+      }
+    });
+    unitSummary = Object.values(unitMap).map(u => {
+      const groups = Object.values(u.groups);
+      return {
+        unitName: u.unitName,
+        submitted: groups.reduce((s, g) => s + g.submitted, 0), // sab mainQ ka approved
+        total: groups.reduce((s, g) => s + g.total, 0),      // sab mainQ ka total
+      };
+    });
+    // Total submitted = sum of all units' (= sab mainQ ka) submitted
+    totalSubmitted = unitSummary.reduce((sum, u) => sum + u.submitted, 0);
+    unitCount = unitSummary.length;
+  } else {
+    unitData.forEach(u => {
+      const qt = u.qtypes[typeDef.key];
+      if (qt) { unitCount++; qt.forEach(q => { totalSubmitted += q.submitted; }); }
+    });
   }
 
-  /* Per-question-type accordion. Holds tabs (Question No. 1/2/...) and
-    inside each tab a workspace where the user picks units, instruction,
-    items / choices / marks. */
-  function QBlockAccordion({ typeDef, isUrdu = false, section, subject, block, typeAgg, hideHeader = false,
-    onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab, onDeleteTab,
-    notebookDetails, apiKeyMap
-  }) {
-    const typeLabel = pgTypeLabel(typeDef.key, typeDef.label, isUrdu);
-    const t = (en, ur) => (isUrdu ? ur : en);
+  const hasApproved = totalSubmitted > 0;
 
-    const getApiItems = () => {
-      if (!notebookDetails || !apiKeyMap) return null;
-      const apiKey = apiKeyMap[typeDef.key];
-      if (!apiKey) return null;
-      const items = notebookDetails[apiKey];
-      return items && Array.isArray(items) && items.length > 0 ? items : null;
-    };
+  const open = !!block?.open;
+  const tabs = block?.tabs || [];
+  const activeTab = block?.activeTab;
+  const activeIdx = tabs.findIndex(t => t.entryId === activeTab);
 
-    const apiItems = getApiItems();
+  // Badge ka approved = SIRF active (jo abhi add/edit ho raha) tab ke SELECTED main questions
+  // ka approved (us tab ka totalEligible). Baqi tabs ka sum NAHI — warna naya question add karte
+  // waqt sab ka jama dikhta tha. Check/uncheck par totalEligible badalta hai → badge live update.
+  // Agar active tab mein koi selection nahi, to available total dikhao.
+  const activeTabObj = activeIdx >= 0 ? tabs[activeIdx] : null;
+  const _smqA = activeTabObj?.selectedMainQs || {};
+  const anySelection = Array.isArray(_smqA) ? _smqA.length > 0 : Object.values(_smqA).some(a => (a || []).length > 0);
+  const selectedApprov = +(activeTabObj?.totalEligible) || 0;
+  const badgeApproved = (apiItems && anySelection) ? selectedApprov : totalSubmitted;
 
-    // Static data fallback
-    const unitData = PG_UNIT_DATA[subject] || [];
-    
-    let totalSubmitted = 0, unitCount = 0;
-
-    // API se unit-wise submitted count calculate karo
-    let unitSummary = []; // [{ unitName, submitted, total }]
-
-    if (apiItems) {
-      // Group by unitName → fir mainQuestion ke groups. submittedCount/notebookTotalCount
-      // per-mainQuestion-group hote hain, is liye unit ka submitted/total un groups ka SUM hai.
-      const unitMap = {};
-      apiItems.forEach(item => {
-        const uName = item.unitName || 'Unit';
-        const mq = item.mainQuestion || 'Section A';
-        if (!unitMap[uName]) unitMap[uName] = { unitName: uName, groups: {} };
-        if (!unitMap[uName].groups[mq]) {
-          unitMap[uName].groups[mq] = {
-            submitted: item.submittedCount || 0,
-            total: item.notebookTotalCount || 0,
-          };
-        }
-      });
-      unitSummary = Object.values(unitMap).map(u => {
-        const groups = Object.values(u.groups);
-        return {
-          unitName: u.unitName,
-          submitted: groups.reduce((s, g) => s + g.submitted, 0), // sab mainQ ka approved
-          total:     groups.reduce((s, g) => s + g.total, 0),      // sab mainQ ka total
-        };
-      });
-      // Total submitted = sum of all units' (= sab mainQ ka) submitted
-      totalSubmitted = unitSummary.reduce((sum, u) => sum + u.submitted, 0);
-      unitCount = unitSummary.length;
-    } else {
-      unitData.forEach(u => {
-        const qt = u.qtypes[typeDef.key];
-        if (qt) { unitCount++; qt.forEach(q => { totalSubmitted += q.submitted; }); }
-      });
-    }
-
-    const hasApproved = totalSubmitted > 0;
-
-    /* In the Make Paper question-type-dropdown flow (hideHeader) only the
-       selected type renders, so its body is always open — the dropdown
-       replaces this accordion's own header/toggle. */
-    const open      = hideHeader || !!block?.open;
-    const tabs      = block?.tabs || [];
-    const activeTab = block?.activeTab;
-    const activeIdx = tabs.findIndex(t => t.entryId === activeTab);
-
-    // Badge ka approved = SIRF active (jo abhi add/edit ho raha) tab ke SELECTED main questions
-    // ka approved (us tab ka totalEligible). Baqi tabs ka sum NAHI — warna naya question add karte
-    // waqt sab ka jama dikhta tha. Check/uncheck par totalEligible badalta hai → badge live update.
-    // Agar active tab mein koi selection nahi, to available total dikhao.
-    const activeTabObj   = activeIdx >= 0 ? tabs[activeIdx] : null;
-    const _smqA          = activeTabObj?.selectedMainQs || {};
-    const anySelection   = Array.isArray(_smqA) ? _smqA.length > 0 : Object.values(_smqA).some(a => (a || []).length > 0);
-    const selectedApprov = +(activeTabObj?.totalEligible) || 0;
-    const badgeApproved  = (apiItems && anySelection) ? selectedApprov : totalSubmitted;
-
-    // Badge: unit summary dikhao
+  // Badge: unit summary dikhao
   const badge = apiItems ? (
     hasApproved ? (
       <span className="pg-qblock-badge" >
@@ -3356,361 +2910,332 @@ const setSubjLine = (ci, si, l) => {
   ) : (
     totalSubmitted > 0
       ? <span className="pg-qblock-badge" >
-          {totalSubmitted} {t(`question${totalSubmitted !== 1 ? 's' : ''} available`, 'سوالات دستیاب')}
-        </span>
+        {totalSubmitted} {t(`question${totalSubmitted !== 1 ? 's' : ''} available`, 'سوالات دستیاب')}
+      </span>
       : <span className="pg-qblock-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
-          {t('No items', 'کوئی آئٹم نہیں')}
-        </span>
+        {t('No items', 'کوئی آئٹم نہیں')}
+      </span>
   );
 
-    return (
-      <div className={`pg-qblock${hideHeader ? ' pgx-cur' : ''}`}>
-        {!hideHeader && (
-        <div className="pg-qblock-header" onClick={onToggleOpen} style={{ cursor: 'pointer' }}>
+  return (
+    <div className="pg-qblock">
+      <div className="pg-qblock-header" onClick={onToggleOpen} style={{ cursor: 'pointer' }}>
 
-          <div className="pg-qblock-title">{typeLabel}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            {badge}
-            {typeAgg && typeAgg.count > 0 && (
-              <span className="pg-type-config-badge">
-                <i className="fa-solid fa-check-circle" style={{ fontSize: 9 }}></i>
-                {' '}{typeAgg.count} {t(`Question${typeAgg.count !== 1 ? 's' : ''}`, 'سوال')}
-              </span>
-            )}
-            {/* Chevron sirf tab dikhao jab approved items hain */}
-          <i className="fa-solid fa-chevron-down" style={{
-    fontSize: 11, color: 'var(--text-muted)',
-    transition: 'transform .2s',
-    transform: open ? 'rotate(180deg)' : 'none',
-    marginLeft: 2
-  }}></i>
-          </div>
-        </div>
-        )}
-
-        {/* Block sirf tab open ho jab approved items hain */}
-        {open  && (
-          <div className="pg-qblock-body open">
-            <div className="pg-qtab-nav">
-              {tabs.length === 0 ? (
-              <>
-            <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', padding: '2px 4px' }}>
-              {t('No question blocks yet.', 'ابھی کوئی سوال بلاک نہیں۔')}
+        <div className="pg-qblock-title">{typeLabel}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {badge}
+          {typeAgg && typeAgg.count > 0 && (
+            <span className="pg-type-config-badge">
+              <i className="fa-solid fa-check-circle" style={{ fontSize: 9 }}></i>
+              {' '}{typeAgg.count} {t(`Question${typeAgg.count !== 1 ? 's' : ''}`, 'سوال')}
             </span>
-            <Tooltip text={!hasApproved ? 'No approved items for this question type' : 'Add a question block of this type'}>
-              <button
-                className="pg-qtab-add-btn"
-                onClick={hasApproved ? onAddTab : undefined}
-                disabled={!hasApproved}
-                style={!hasApproved ? { opacity: 0.4, cursor: 'not-allowed', borderStyle: 'solid' } : {}}
-              >
-                <i className="fa-solid fa-plus"></i> {t('Add Question Block', 'سوال بلاک شامل کریں')}
-              </button>
-            </Tooltip>
-          </>
-              ) : (
-                <>
-                  {tabs.map(t => {
-                    const isActive = t.entryId === activeTab;
-                    const effQ    = Math.max(0, (+t.items || 0) - (+t.choices || 0));  // effective items = items − choices
-                    const totalMk = effQ * (+t.marks || 0);                            // (items − choices) × marks-per-item
-                    const hasData = (+t.items || 0) > 0;
-                    return (
-                      <Tooltip key={t.entryId} text={hasData ? `${t.label} · ${effQ} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}` : `${t.label}${t.saved ? ' (saved)' : ''}`}>
-                        <button
-                          className={`pg-qtab-pill${isActive ? ' active' : ''}${t.saved ? ' saved' : ''}`}
-                          onClick={() => onSwitchTab(t.entryId)}
-                        >
-                          {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
-                          {isUrdu ? typeLabel : t.label}
-                          {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}></span>}
-                          {/* Cross sirf UNSAVED tab par — saved question ko cross se delete na ho (uske liye Delete button hai). */}
-                          {tabs.length > 1 && !t.saved && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
-                        </button>
-                      </Tooltip>
-                    );
-                  })}
-                  <Tooltip text="Add another tab of this question type">
-                    <button className="pg-qtab-add-btn" onClick={onAddTab}>
-                      <i className="fa-solid fa-plus"></i> {t('Add', 'شامل کریں')}
-                    </button>
-                  </Tooltip>
-                </>
-              )}
-            </div>
-
-            {activeIdx >= 0 && (
-        <div className="pg-qworkspace">
-          {tabs[activeIdx].saved ? (
-            <QSavedCard tab={tabs[activeIdx]} isUrdu={isUrdu} onEdit={() => onEditTab(tabs[activeIdx].entryId)} />
-          ) : (
-            <QWorkspacePanel
-              tab={tabs[activeIdx]}
-              typeKey={typeDef.key}
-              isUrdu={isUrdu}
-              subject={subject}
-              onUpdate={patch => onUpdateTab(tabs[activeIdx].entryId, patch)}
-              onSave={() => onSaveTab(tabs[activeIdx].entryId)}
-              onDelete={() => onDeleteTab(tabs[activeIdx].entryId)}
-              apiItems={apiItems}
-            />
           )}
-        </div>
-      )}
-
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  /* Saved-state summary card shown inside a tab once user clicks Save */
-  function QSavedCard({ tab, onEdit, isUrdu = false }) {
-    const t = (en, ur) => (isUrdu ? ur : en);
-    const items   = +tab.items   || 0;
-    const choices = +tab.choices || 0;
-    const marks   = +tab.marks   || 0;
-    const eff     = Math.max(0, items - choices);   // effective items = items − choices
-    const unitNames = Object.keys(tab.unitSelections || {});
-    return (
-      <div className="pg-qws-panel">
-        <div className="pg-qws-saved-card">
-          <div className="pg-qws-saved-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-              <div className="pg-qws-saved-icon"><i className="fa-solid fa-check"></i></div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{tab.instr || t('(no instruction)', '(کوئی ہدایت نہیں)')}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{unitNames.join(' · ')}</div>
-              </div>
-            </div>
-            <Tooltip text="Edit this question block">
-              <button className="pg-qws-edit-btn" onClick={onEdit}>
-                <i className="fa-solid fa-pen"></i> {t('Edit', 'ترمیم')}
-              </button>
-            </Tooltip>
-          </div>
-          <div className="pg-qws-saved-chips">
-            <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {eff} {t('items', 'اشیاء')}</span>
-            <span className="pg-qws-chip teal"><i className="fa-solid fa-eye-slash" style={{ fontSize: 9 }}></i> {choices} {t('choices', 'انتخاب')}</span>
-            <span className="pg-qws-chip green"><i className="fa-solid fa-star" style={{ fontSize: 9 }}></i> {marks} {t(`mark${marks !== 1 ? 's' : ''}/item`, 'نمبر/آئٹم')}</span>
-            <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {eff * marks} {t('total marks', 'کل نمبر')}</span>
-            <span className="pg-qws-chip gray"><i className="fa-solid fa-database" style={{ fontSize: 9 }}></i> {tab.totalEligible} {t('eligible', 'اہل')}</span>
-          </div>
+          {/* Chevron sirf tab dikhao jab approved items hain */}
+          <i className="fa-solid fa-chevron-down" style={{
+            fontSize: 11, color: 'var(--text-muted)',
+            transition: 'transform .2s',
+            transform: open ? 'rotate(180deg)' : 'none',
+            marginLeft: 2
+          }}></i>
         </div>
       </div>
-    );
-  }
-  function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, onDelete, apiItems, isUrdu = false }) {
-    const t = (en, ur) => (isUrdu ? ur : en);
-    const useApiData = !!apiItems && apiItems.length > 0;
 
-    /* Save/Update is an async API call. The in-flight flag lives on the tab
-       (parent state) so it survives re-renders and only spins during the actual
-       network call — saveTab manages it, plus a synchronous ref guard blocks
-       repeat clicks. */
-    const saving = !!tab.saving;
-
-    /* "Let students choose some questions (optional)" — the No. of Choices
-       field stays collapsed behind this toggle unless the tab already has
-       choices>0 (e.g. re-opening a saved block). Resets per tab. */
-    const [choicesOpen, setChoicesOpen] = useState((+tab.choices || 0) > 0);
-    useEffect(() => { setChoicesOpen((+tab.choices || 0) > 0); }, [tab.entryId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    const unitData = PG_UNIT_DATA[subject] || [];
-    const unitsWithType = useApiData ? [] : unitData.filter(u => u.qtypes[typeKey]);
-
-    const selectedUnits = tab.unitSelections || {};
-    const selCount = Object.keys(selectedUnits).length;
-
-    // API mode: group by unitName → har unit ke andar mainQuestion ke groups.
-    // notebookTotalCount / submittedCount per-mainQuestion-group hote hain, is liye
-    // unit ka Total/Approved un groups ka SUM hai (sab mainQ ka total/approved).
-    const apiUnitMap = useApiData ? (() => {
-      const map = {};
-      apiItems.forEach(item => {
-        const uName = item.unitName || 'Unit';
-        if (!map[uName]) map[uName] = { unitName: uName, items: [], groups: {} };
-        map[uName].items.push(item);
-        const mq = item.mainQuestion || 'Section A';
-        if (!map[uName].groups[mq]) {
-          map[uName].groups[mq] = {
-            mainQ: mq,
-            total: item.notebookTotalCount || 0,     // is mainQ group ka total
-            approved: item.submittedCount || 0,       // is mainQ group ka approved
-            items: [],
-          };
-        }
-        map[uName].groups[mq].items.push(item);
-      });
-      // unit-level Total/Approved = saare mainQ groups ka sum
-      Object.values(map).forEach(u => {
-        const groups = Object.values(u.groups);
-        u.total     = groups.reduce((s, g) => s + g.total, 0);
-        u.submitted = groups.reduce((s, g) => s + g.approved, 0);
-      });
-      return map;
-    })() : {};
-
-    const apiUnits = Object.values(apiUnitMap);
-
-    // API mode: jitne bhi units checkbox se selected hain unke naam (multi-select).
-    const selectedUnitNames = useApiData ? Object.keys(selectedUnits) : [];
-    // selectedMainQs ab PER-UNIT object hai: { unitName: [mainQ...] }
-    const selMainMap = useApiData ? (tab.selectedMainQs || {}) : {};
-
-    // Helper: ek unit ke selected main questions ka total/approved jodo
-    const unitSelectedSum = (uName, field) => {
-      const grp = apiUnitMap[uName]?.groups || {};
-      return (selMainMap[uName] || []).reduce((s, mq) => s + (grp[mq]?.[field] || 0), 0);
-    };
-
-    const totalEligible = useApiData
-      ? selectedUnitNames.reduce((s, uName) => s + unitSelectedSum(uName, 'approved'), 0)
-      : (() => {
-          let t = 0;
-          Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
-            const unitObj = unitData.find(u => u.name === unitName);
-            if (!unitObj) return;
-            const instrs = unitObj.qtypes[typeKey] || [];
-            const chosen = instrs[instrIdx];
-            if (chosen) t += chosen.submitted;
-          });
-          return t;
-        })();
-
-    const breakdown = useApiData
-      ? selectedUnitNames.flatMap(uName => {
-          const grp = apiUnitMap[uName]?.groups || {};
-          return (selMainMap[uName] || []).map(mq => `${uName} · ${mq}: ${grp[mq]?.approved || 0}`);
-        })
-      : (() => {
-          const bd = [];
-          Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
-            const unitObj = unitData.find(u => u.name === unitName);
-            if (!unitObj) return;
-            const instrs = unitObj.qtypes[typeKey] || [];
-            const chosen = instrs[instrIdx];
-            if (chosen) bd.push(`${unitName}: ${chosen.submitted}`);
-          });
-          return bd;
-        })();
-
-    useEffect(() => {
-      if (tab.totalEligible !== totalEligible) {
-        onUpdate({ totalEligible });
-      }
-    }, [totalEligible]);
-
-    // API mode: auto-select first unit
-
-
-    const items   = +tab.items   || 0;
-    const choices = +tab.choices || 0;
-    const marks   = +tab.marks   || 0;
-    // Paper par dikhne wale effective items = input items − choices (jaise 5 items − 2 choices = 3)
-    const shownItems = Math.max(0, items - choices);
-    const overflow = items > totalEligible && totalEligible > 0;
-
-    return (
-      <div className="pg-qws-panel">
-        <div className="pg-qws-inner">
-          {/* LEFT */}
-          <div className="pg-qws-left">
-            <div className="pg-qws-section-label">
-              <i className="fa-solid fa-layer-group" style={{ color: '#1E40AF' }}></i>
-              {useApiData ? t('Select Unit', 'یونٹ منتخب کریں') : t('Select Units', 'یونٹس منتخب کریں')}
-              <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
-                {useApiData
-                  ? t(`(${apiUnits.length} unit${apiUnits.length !== 1 ? 's' : ''} available)`, `(${apiUnits.length} یونٹ دستیاب)`)
-                  : t('(click to toggle)', '(منتخب کرنے کے لیے کلک کریں)')}
-              </span>
-              {useApiData && apiUnits.length > 1 && (
-                <Tooltip text="Select every unit (and all its main questions) at once">
+      {/* Block sirf tab open ho jab approved items hain */}
+      {open && (
+        <div className="pg-qblock-body open">
+          <div className="pg-qtab-nav">
+            {tabs.length === 0 ? (
+              <>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', padding: '2px 4px' }}>
+                  {t('No question blocks yet.', 'ابھی کوئی سوال بلاک نہیں۔')}
+                </span>
+                <Tooltip text={!hasApproved ? 'No approved items for this question type' : 'Add a question block of this type'}>
                   <button
-                    type="button"
-                    className="pgx-link pgx-selall"
-                    onClick={() => {
-                      /* Same patch as ticking each unpicked unit by hand. */
-                      const nextUnits = { ...selectedUnits };
-                      const nextMain  = { ...(tab.selectedMainQs || {}) };
-                      apiUnits.forEach(u => {
-                        if (u.unitName in nextUnits) return;
-                        nextUnits[u.unitName] = true;
-                        nextMain[u.unitName] = [...new Set(u.items.map(it => it.mainQuestion).filter(Boolean))];
-                      });
-                      onUpdate({ unitSelections: nextUnits, selectedMainQs: nextMain });
-                    }}
+                    className="pg-qtab-add-btn"
+                    onClick={hasApproved ? onAddTab : undefined}
+                    disabled={!hasApproved}
+                    style={!hasApproved ? { opacity: 0.4, cursor: 'not-allowed', borderStyle: 'solid' } : {}}
                   >
-                    {t('Select all', 'سب منتخب کریں')}
+                    <i className="fa-solid fa-plus"></i> {t('Add Question Block', 'سوال بلاک شامل کریں')}
                   </button>
                 </Tooltip>
+              </>
+            ) : (
+              <>
+                {tabs.map(t => {
+                  const isActive = t.entryId === activeTab;
+                  const effQ = Math.max(0, (+t.items || 0) - (+t.choices || 0));  // effective items = items − choices
+                  const totalMk = effQ * (+t.marks || 0);                            // (items − choices) × marks-per-item
+                  const hasData = (+t.items || 0) > 0;
+                  return (
+                    <Tooltip key={t.entryId} text={hasData ? `${t.label} · ${effQ} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}` : `${t.label}${t.saved ? ' (saved)' : ''}`}>
+                      <button
+                        className={`pg-qtab-pill${isActive ? ' active' : ''}${t.saved ? ' saved' : ''}`}
+                        onClick={() => onSwitchTab(t.entryId)}
+                      >
+                        {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
+                        {isUrdu ? typeLabel : t.label}
+                        {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}></span>}
+                        {/* Cross sirf UNSAVED tab par — saved question ko cross se delete na ho (uske liye Delete button hai). */}
+                        {tabs.length > 1 && !t.saved && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
+                      </button>
+                    </Tooltip>
+                  );
+                })}
+                <Tooltip text="Add another tab of this question type">
+                  <button className="pg-qtab-add-btn" onClick={onAddTab}>
+                    <i className="fa-solid fa-plus"></i> {t('Add', 'شامل کریں')}
+                  </button>
+                </Tooltip>
+              </>
+            )}
+          </div>
+
+          {activeIdx >= 0 && (
+            <div className="pg-qworkspace">
+              {tabs[activeIdx].saved ? (
+                <QSavedCard tab={tabs[activeIdx]} isUrdu={isUrdu} onEdit={() => onEditTab(tabs[activeIdx].entryId)} />
+              ) : (
+                <QWorkspacePanel
+                  tab={tabs[activeIdx]}
+                  typeKey={typeDef.key}
+                  isUrdu={isUrdu}
+                  subject={subject}
+                  onUpdate={patch => onUpdateTab(tabs[activeIdx].entryId, patch)}
+                  onSave={() => onSaveTab(tabs[activeIdx].entryId)}
+                  onDelete={() => onDeleteTab(tabs[activeIdx].entryId)}
+                  apiItems={apiItems}
+                />
               )}
             </div>
+          )}
 
-            {useApiData ? (
-              <div>
-                {/* Hint box */}
-                <div style={{
-                  fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8,
-                  lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
-                  borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
-                }}>
-                  {isUrdu
-                    ? <>نیچے سے ایک یونٹ منتخب کریں۔ صرف <strong>جمع کرائی گئی اور تصدیق شدہ</strong> اشیاء ہی پرچہ سازی کے لیے دستیاب ہوں گی۔</>
-                    : <>Select a unit below. Only <strong>submitted &amp; acknowledged</strong> items from the selected unit will be available for paper generation.</>}
-                </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
-                {/* Unit rows */}
-                <div className="pg-unit-rows-container" style={{ marginBottom: 8 }}>
-                  {apiUnits.map((u, ui) => {
-                    // Units ab CHECKBOX (multi-select). isChecked = ye unit selected hai ya nahi.
-                    const isChecked = u.unitName in selectedUnits;
-                    return (
-                      <div key={ui} className="pg-unit-row-wrap">
-                        <div
-                          className={`pg-unit-row${isChecked ? ' active' : ''}`}
-                          onClick={() => {
-                            const nextUnits = { ...selectedUnits };
-                            const nextMain  = { ...(tab.selectedMainQs || {}) };
-                            if (isChecked) {
-                              // uncheck → unit aur uske main questions hata do
-                              delete nextUnits[u.unitName];
-                              delete nextMain[u.unitName];
-                            } else {
-                              // check → unit add + uske saare main questions auto-select
-                              nextUnits[u.unitName] = true;
-                              nextMain[u.unitName] = [...new Set(u.items.map(it => it.mainQuestion).filter(Boolean))];
-                            }
-                            onUpdate({ unitSelections: nextUnits, selectedMainQs: nextMain });
-                          }}
-                        >
-                          {/* checkbox box (pehle radio dot tha) */}
-                          <div style={{
-                            width: 15, height: 15, borderRadius: 3, flexShrink: 0,
-                            border: isChecked ? '2px solid #1E40AF' : '2px solid var(--border-med)',
-                            background: isChecked ? '#1E40AF' : 'transparent',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            {isChecked && <i className="fa-solid fa-check" style={{ fontSize: 9, color: '#fff' }}></i>}
-                          </div>
-                          <div className="pg-unit-row-name">{u.unitName}</div>
-                          <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-                            <span className="pg-q-info-chip total" style={{ padding: '2px 7px', fontSize: 10 }}>
-                              {/* Checked unit par sirf uske selected mainQ ka sum (check/uncheck par live) */}
-                              {t('Total', 'کل')}: {isChecked ? unitSelectedSum(u.unitName, 'total') : u.total}
-                            </span>
-                            <span className="pg-q-info-chip available" style={{ padding: '2px 7px', fontSize: 10 }}>
-                              {t('Approved', 'منظور شدہ')}: {isChecked ? unitSelectedSum(u.unitName, 'approved') : u.submitted}
-                            </span>
-                          </div>
+/* Saved-state summary card shown inside a tab once user clicks Save */
+function QSavedCard({ tab, onEdit, isUrdu = false }) {
+  const t = (en, ur) => (isUrdu ? ur : en);
+  const items = +tab.items || 0;
+  const choices = +tab.choices || 0;
+  const marks = +tab.marks || 0;
+  const eff = Math.max(0, items - choices);   // effective items = items − choices
+  const unitNames = Object.keys(tab.unitSelections || {});
+  return (
+    <div className="pg-qws-panel">
+      <div className="pg-qws-saved-card">
+        <div className="pg-qws-saved-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+            <div className="pg-qws-saved-icon"><i className="fa-solid fa-check"></i></div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{tab.instr || t('(no instruction)', '(کوئی ہدایت نہیں)')}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{unitNames.join(' · ')}</div>
+            </div>
+          </div>
+          <Tooltip text="Edit this question block">
+            <button className="pg-qws-edit-btn" onClick={onEdit}>
+              <i className="fa-solid fa-pen"></i> {t('Edit', 'ترمیم')}
+            </button>
+          </Tooltip>
+        </div>
+        <div className="pg-qws-saved-chips">
+          <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {eff} {t('items', 'اشیاء')}</span>
+          <span className="pg-qws-chip teal"><i className="fa-solid fa-eye-slash" style={{ fontSize: 9 }}></i> {choices} {t('choices', 'انتخاب')}</span>
+          <span className="pg-qws-chip green"><i className="fa-solid fa-star" style={{ fontSize: 9 }}></i> {marks} {t(`mark${marks !== 1 ? 's' : ''}/item`, 'نمبر/آئٹم')}</span>
+          <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {eff * marks} {t('total marks', 'کل نمبر')}</span>
+          <span className="pg-qws-chip gray"><i className="fa-solid fa-database" style={{ fontSize: 9 }}></i> {tab.totalEligible} {t('eligible', 'اہل')}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, onDelete, apiItems, isUrdu = false }) {
+  const t = (en, ur) => (isUrdu ? ur : en);
+  const useApiData = !!apiItems && apiItems.length > 0;
+
+  /* Save/Update is an async API call. The in-flight flag lives on the tab
+     (parent state) so it survives re-renders and only spins during the actual
+     network call — saveTab manages it, plus a synchronous ref guard blocks
+     repeat clicks. */
+  const saving = !!tab.saving;
+
+  const unitData = PG_UNIT_DATA[subject] || [];
+  const unitsWithType = useApiData ? [] : unitData.filter(u => u.qtypes[typeKey]);
+
+  const selectedUnits = tab.unitSelections || {};
+  const selCount = Object.keys(selectedUnits).length;
+
+  // API mode: group by unitName → har unit ke andar mainQuestion ke groups.
+  // notebookTotalCount / submittedCount per-mainQuestion-group hote hain, is liye
+  // unit ka Total/Approved un groups ka SUM hai (sab mainQ ka total/approved).
+  const apiUnitMap = useApiData ? (() => {
+    const map = {};
+    apiItems.forEach(item => {
+      const uName = item.unitName || 'Unit';
+      if (!map[uName]) map[uName] = { unitName: uName, items: [], groups: {} };
+      map[uName].items.push(item);
+      const mq = item.mainQuestion || 'Section A';
+      if (!map[uName].groups[mq]) {
+        map[uName].groups[mq] = {
+          mainQ: mq,
+          total: item.notebookTotalCount || 0,     // is mainQ group ka total
+          approved: item.submittedCount || 0,       // is mainQ group ka approved
+          items: [],
+        };
+      }
+      map[uName].groups[mq].items.push(item);
+    });
+    // unit-level Total/Approved = saare mainQ groups ka sum
+    Object.values(map).forEach(u => {
+      const groups = Object.values(u.groups);
+      u.total = groups.reduce((s, g) => s + g.total, 0);
+      u.submitted = groups.reduce((s, g) => s + g.approved, 0);
+    });
+    return map;
+  })() : {};
+
+  const apiUnits = Object.values(apiUnitMap);
+
+  // API mode: jitne bhi units checkbox se selected hain unke naam (multi-select).
+  const selectedUnitNames = useApiData ? Object.keys(selectedUnits) : [];
+  // selectedMainQs ab PER-UNIT object hai: { unitName: [mainQ...] }
+  const selMainMap = useApiData ? (tab.selectedMainQs || {}) : {};
+
+  // Helper: ek unit ke selected main questions ka total/approved jodo
+  const unitSelectedSum = (uName, field) => {
+    const grp = apiUnitMap[uName]?.groups || {};
+    return (selMainMap[uName] || []).reduce((s, mq) => s + (grp[mq]?.[field] || 0), 0);
+  };
+
+  const totalEligible = useApiData
+    ? selectedUnitNames.reduce((s, uName) => s + unitSelectedSum(uName, 'approved'), 0)
+    : (() => {
+      let t = 0;
+      Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
+        const unitObj = unitData.find(u => u.name === unitName);
+        if (!unitObj) return;
+        const instrs = unitObj.qtypes[typeKey] || [];
+        const chosen = instrs[instrIdx];
+        if (chosen) t += chosen.submitted;
+      });
+      return t;
+    })();
+
+  const breakdown = useApiData
+    ? selectedUnitNames.flatMap(uName => {
+      const grp = apiUnitMap[uName]?.groups || {};
+      return (selMainMap[uName] || []).map(mq => `${uName} · ${mq}: ${grp[mq]?.approved || 0}`);
+    })
+    : (() => {
+      const bd = [];
+      Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
+        const unitObj = unitData.find(u => u.name === unitName);
+        if (!unitObj) return;
+        const instrs = unitObj.qtypes[typeKey] || [];
+        const chosen = instrs[instrIdx];
+        if (chosen) bd.push(`${unitName}: ${chosen.submitted}`);
+      });
+      return bd;
+    })();
+
+  useEffect(() => {
+    if (tab.totalEligible !== totalEligible) {
+      onUpdate({ totalEligible });
+    }
+  }, [totalEligible]);
+
+  // API mode: auto-select first unit
+
+
+  const items = +tab.items || 0;
+  const choices = +tab.choices || 0;
+  const marks = +tab.marks || 0;
+  // Paper par dikhne wale effective items = input items − choices (jaise 5 items − 2 choices = 3)
+  const shownItems = Math.max(0, items - choices);
+  const overflow = items > totalEligible && totalEligible > 0;
+
+  return (
+    <div className="pg-qws-panel">
+      <div className="pg-qws-inner">
+        {/* LEFT */}
+        <div className="pg-qws-left">
+          <div className="pg-qws-section-label">
+            <i className="fa-solid fa-layer-group" style={{ color: '#1E40AF' }}></i>
+            {useApiData ? t('Select Unit', 'یونٹ منتخب کریں') : t('Select Units', 'یونٹس منتخب کریں')}
+            <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
+              {useApiData
+                ? t(`(${apiUnits.length} unit${apiUnits.length !== 1 ? 's' : ''} available)`, `(${apiUnits.length} یونٹ دستیاب)`)
+                : t('(click to toggle)', '(منتخب کرنے کے لیے کلک کریں)')}
+            </span>
+          </div>
+
+          {useApiData ? (
+            <div>
+              {/* Hint box */}
+              <div style={{
+                fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8,
+                lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
+                borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
+              }}>
+                {isUrdu
+                  ? <>نیچے سے ایک یونٹ منتخب کریں۔ صرف <strong>جمع کرائی گئی اور تصدیق شدہ</strong> اشیاء ہی پرچہ سازی کے لیے دستیاب ہوں گی۔</>
+                  : <>Select a unit below. Only <strong>submitted &amp; acknowledged</strong> items from the selected unit will be available for paper generation.</>}
+              </div>
+
+              {/* Unit rows */}
+              <div className="pg-unit-rows-container" style={{ marginBottom: 8 }}>
+                {apiUnits.map((u, ui) => {
+                  // Units ab CHECKBOX (multi-select). isChecked = ye unit selected hai ya nahi.
+                  const isChecked = u.unitName in selectedUnits;
+                  return (
+                    <div key={ui} className="pg-unit-row-wrap">
+                      <div
+                        className={`pg-unit-row${isChecked ? ' active' : ''}`}
+                        onClick={() => {
+                          const nextUnits = { ...selectedUnits };
+                          const nextMain = { ...(tab.selectedMainQs || {}) };
+                          if (isChecked) {
+                            // uncheck → unit aur uske main questions hata do
+                            delete nextUnits[u.unitName];
+                            delete nextMain[u.unitName];
+                          } else {
+                            // check → unit add + uske saare main questions auto-select
+                            nextUnits[u.unitName] = true;
+                            nextMain[u.unitName] = [...new Set(u.items.map(it => it.mainQuestion).filter(Boolean))];
+                          }
+                          onUpdate({ unitSelections: nextUnits, selectedMainQs: nextMain });
+                        }}
+                      >
+                        {/* checkbox box (pehle radio dot tha) */}
+                        <div style={{
+                          width: 15, height: 15, borderRadius: 3, flexShrink: 0,
+                          border: isChecked ? '2px solid #1E40AF' : '2px solid var(--border-med)',
+                          background: isChecked ? '#1E40AF' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {isChecked && <i className="fa-solid fa-check" style={{ fontSize: 9, color: '#fff' }}></i>}
                         </div>
+                        <div className="pg-unit-row-name">{u.unitName}</div>
+                        <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+                          <span className="pg-q-info-chip total" style={{ padding: '2px 7px', fontSize: 10 }}>
+                            {/* Checked unit par sirf uske selected mainQ ka sum (check/uncheck par live) */}
+                            {t('Total', 'کل')}: {isChecked ? unitSelectedSum(u.unitName, 'total') : u.total}
+                          </span>
+                          <span className="pg-q-info-chip available" style={{ padding: '2px 7px', fontSize: 10 }}>
+                            {t('Approved', 'منظور شدہ')}: {isChecked ? unitSelectedSum(u.unitName, 'approved') : u.submitted}
+                          </span>
+                        </div>
+                      </div>
 
-                        {/* Checked unit ke mainQuestions (har unit ke apne) */}
-                        {isChecked && (
-                          <div className="pg-unit-instr-list">
-                            {Object.entries(u.groups).map(([mainQ, g], mi) => {
-                              const checked = (selMainMap[u.unitName] || []).includes(mainQ);
-                              return (
+                      {/* Checked unit ke mainQuestions (har unit ke apne) */}
+                      {isChecked && (
+                        <div className="pg-unit-instr-list">
+                          {Object.entries(u.groups).map(([mainQ, g], mi) => {
+                            const checked = (selMainMap[u.unitName] || []).includes(mainQ);
+                            return (
                               <div
                                 key={mi}
                                 className={`pg-instr-card${checked ? ' active' : ''}`}
@@ -3744,962 +3269,935 @@ const setSubjLine = (ci, si, l) => {
                                 </div>
                               </div>
                             );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Eligible bar */}
-                <div className="pg-eligible-bar">
-                  {totalEligible > 0 ? (
-                    <>
-                      <i className="fa-solid fa-check-circle" style={{ color: '#16A34A', fontSize: 13 }}></i>
-                      <div style={{ flex: 1 }}>
-                        <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
-                          {totalEligible} {t('Eligible Items', 'اہل اشیاء')}
-                        </span>
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
-                          ({breakdown.join(' + ')})
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
-                      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        {t('Select a unit to see eligible items', 'اہل اشیاء دیکھنے کے لیے یونٹ منتخب کریں')}
-                      </span>
-                    </>
-                  )}
-                </div>
-
-                {/* Eligible footnote */}
-                <div style={{
-                  fontSize: 10, color: 'var(--text-muted)', marginTop: 6,
-                  display: 'flex', alignItems: 'center', gap: 4
-                }}>
-                  <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
-                  {t('Eligible = teacher-submitted & principal-acknowledged items only.', 'اہل = صرف استاد کی جمع کرائی گئی اور پرنسپل کی تصدیق شدہ اشیاء۔')}
-                </div>
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
-            ) : (
-              // Static Unit View
-              <>
-                <div style={{
-                  fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8,
-                  lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
-                  borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
-                }}>
-                  Select the units to include. Only <strong>submitted &amp; acknowledged</strong> items
-                  from selected units will be available.
-                </div>
-                <div className="pg-unit-rows-container">
-                  {unitsWithType.length === 0 ? (
-                    <div style={{ padding: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-                      No approved items for this type.
+              {/* Eligible bar */}
+              <div className="pg-eligible-bar">
+                {totalEligible > 0 ? (
+                  <>
+                    <i className="fa-solid fa-check-circle" style={{ color: '#16A34A', fontSize: 13 }}></i>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+                        {totalEligible} {t('Eligible Items', 'اہل اشیاء')}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
+                        ({breakdown.join(' + ')})
+                      </span>
                     </div>
-                  ) : unitsWithType.map(u => {
-                    const isActive = u.name in selectedUnits;
-                    const totalSub = u.qtypes[typeKey].reduce((s, q) => s + q.submitted, 0);
-                    const instrs = u.qtypes[typeKey] || [];
-                    const sel = isActive ? selectedUnits[u.name] : -1;
-                    return (
-                      <div key={u.name} className="pg-unit-row-wrap">
-                        <div
-                          className={`pg-unit-row${isActive ? ' active' : ''}`}
-                          onClick={() => {
-                            const next = { ...selectedUnits };
-                            if (u.name in next) delete next[u.name]; else next[u.name] = 0;
-                            onUpdate({ unitSelections: next });
-                          }}
-                        >
-                          <div className={`pg-unit-row-dot${isActive ? ' active' : ''}`}></div>
-                          <div className="pg-unit-row-name">{u.name}</div>
-                          <span className="pg-unit-chip-count">{totalSub} approved</span>
-                        </div>
-                        {isActive && (
-                          <div className="pg-unit-instr-list">
-                            {instrs.map((q, qi) => (
-                              <div
-                                key={qi}
-                                className={`pg-instr-card${sel === qi ? ' active' : ''}`}
-                                onClick={() => onUpdate({ unitSelections: { ...selectedUnits, [u.name]: qi } })}
-                              >
-                                <div className="pg-instr-card-radio"></div>
-                                <div className="pg-instr-card-body">
-                                  <div className="pg-instr-card-text">{q.instr}</div>
-                                  <div className="pg-instr-card-meta">
-                                    <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>
-                                      Total: {q.total}
-                                    </span>
-                                    <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>
-                                      Approved: {q.submitted}
-                                    </span>
-                                  </div>
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      {t('Select a unit to see eligible items', 'اہل اشیاء دیکھنے کے لیے یونٹ منتخب کریں')}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* Eligible footnote */}
+              <div style={{
+                fontSize: 10, color: 'var(--text-muted)', marginTop: 6,
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>
+                <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
+                {t('Eligible = teacher-submitted & principal-acknowledged items only.', 'اہل = صرف استاد کی جمع کرائی گئی اور پرنسپل کی تصدیق شدہ اشیاء۔')}
+              </div>
+            </div>
+
+          ) : (
+            // Static Unit View
+            <>
+              <div style={{
+                fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8,
+                lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
+                borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
+              }}>
+                Select the units to include. Only <strong>submitted &amp; acknowledged</strong> items
+                from selected units will be available.
+              </div>
+              <div className="pg-unit-rows-container">
+                {unitsWithType.length === 0 ? (
+                  <div style={{ padding: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+                    No approved items for this type.
+                  </div>
+                ) : unitsWithType.map(u => {
+                  const isActive = u.name in selectedUnits;
+                  const totalSub = u.qtypes[typeKey].reduce((s, q) => s + q.submitted, 0);
+                  const instrs = u.qtypes[typeKey] || [];
+                  const sel = isActive ? selectedUnits[u.name] : -1;
+                  return (
+                    <div key={u.name} className="pg-unit-row-wrap">
+                      <div
+                        className={`pg-unit-row${isActive ? ' active' : ''}`}
+                        onClick={() => {
+                          const next = { ...selectedUnits };
+                          if (u.name in next) delete next[u.name]; else next[u.name] = 0;
+                          onUpdate({ unitSelections: next });
+                        }}
+                      >
+                        <div className={`pg-unit-row-dot${isActive ? ' active' : ''}`}></div>
+                        <div className="pg-unit-row-name">{u.name}</div>
+                        <span className="pg-unit-chip-count">{totalSub} approved</span>
+                      </div>
+                      {isActive && (
+                        <div className="pg-unit-instr-list">
+                          {instrs.map((q, qi) => (
+                            <div
+                              key={qi}
+                              className={`pg-instr-card${sel === qi ? ' active' : ''}`}
+                              onClick={() => onUpdate({ unitSelections: { ...selectedUnits, [u.name]: qi } })}
+                            >
+                              <div className="pg-instr-card-radio"></div>
+                              <div className="pg-instr-card-body">
+                                <div className="pg-instr-card-text">{q.instr}</div>
+                                <div className="pg-instr-card-meta">
+                                  <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>
+                                    Total: {q.total}
+                                  </span>
+                                  <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>
+                                    Approved: {q.submitted}
+                                  </span>
                                 </div>
                               </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="pg-eligible-bar">
-                  {selCount === 0 ? (
-                    <>
-                      <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
-                      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        Select units to see eligible items
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="pg-eligible-bar">
+                {selCount === 0 ? (
+                  <>
+                    <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      Select units to see eligible items
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-check-circle" style={{ color: 'var(--success,#16A34A)', fontSize: 13 }}></i>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+                        {totalEligible} Eligible Items
                       </span>
-                    </>
-                  ) : (
-                    <>
-                      <i className="fa-solid fa-check-circle" style={{ color: 'var(--success,#16A34A)', fontSize: 13 }}></i>
-                      <div style={{ flex: 1 }}>
-                        <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
-                          {totalEligible} Eligible Items
-                        </span>
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
-                          ({breakdown.join(' + ')})
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div style={{
-                  fontSize: 10, color: 'var(--text-muted)', marginTop: 6,
-                  display: 'flex', alignItems: 'center', gap: 4
-                }}>
-                  <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
-                  {t('Eligible = teacher-submitted & principal-acknowledged items only.', 'اہل = صرف استاد کی جمع کرائی گئی اور پرنسپل کی تصدیق شدہ اشیاء۔')}
-                </div>
-              </>
-            )}
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
+                        ({breakdown.join(' + ')})
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{
+                fontSize: 10, color: 'var(--text-muted)', marginTop: 6,
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>
+                <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
+                {t('Eligible = teacher-submitted & principal-acknowledged items only.', 'اہل = صرف استاد کی جمع کرائی گئی اور پرنسپل کی تصدیق شدہ اشیاء۔')}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* RIGHT - Configure */}
+        {useApiData && selectedUnitNames.length === 0 ? (
+          <div className="pg-qws-right pg-qws-right-empty">
+            <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
+              {t('Select a unit to configure', 'ترتیب دینے کے لیے یونٹ منتخب کریں')}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {t('Click any unit on the left to begin', 'شروع کرنے کے لیے بائیں طرف کوئی یونٹ منتخب کریں')}
+            </div>
           </div>
-
-          {/* RIGHT - Configure */}
-          {useApiData && selectedUnitNames.length === 0 ? (
-            <div className="pg-qws-right pg-qws-right-empty">
-              <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
-                {t('Select a unit to configure', 'ترتیب دینے کے لیے یونٹ منتخب کریں')}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                {t('Click any unit on the left to begin', 'شروع کرنے کے لیے بائیں طرف کوئی یونٹ منتخب کریں')}
-              </div>
+        ) : !useApiData && selCount === 0 ? (
+          <div className="pg-qws-right pg-qws-right-empty">
+            <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
+              Select units to configure
             </div>
-          ) : !useApiData && selCount === 0 ? (
-            <div className="pg-qws-right pg-qws-right-empty">
-              <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
-                Select units to configure
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                Click any unit on the left to begin
-              </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Click any unit on the left to begin
             </div>
-          ) : (
-            <div className="pg-qws-right">
-              <div className="pg-qws-section-label">
-                <i className="fa-solid fa-sliders" style={{ color: '#1E40AF' }}></i>
-                {t('How should it appear in the paper?', 'سوال ترتیب دیں')}
-              </div>
+          </div>
+        ) : (
+          <div className="pg-qws-right">
+            <div className="pg-qws-section-label">
+              <i className="fa-solid fa-sliders" style={{ color: '#1E40AF' }}></i>
+              {t('Configure Question', 'سوال ترتیب دیں')}
+            </div>
 
-              <div style={{ marginBottom: 10 }}>
-                <div className="pg-q-field-label" style={{ marginBottom: 4 }}>
-                  {t('Main Instruction', 'بنیادی ہدایت')}{' '}
-                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)' }}>
-                    {t('(shown on paper)', '(پرچے پر ظاہر ہوگی)')}
-                  </span>
-                </div>
+            <div style={{ marginBottom: 10 }}>
+              <div className="pg-q-field-label" style={{ marginBottom: 4 }}>
+                {t('Main Instruction', 'بنیادی ہدایت')}{' '}
+                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)' }}>
+                  {t('(shown on paper)', '(پرچے پر ظاہر ہوگی)')}
+                </span>
+              </div>
               <input
-    className="pg-q-instruction"
-    type="text"
-    value={tab.instr || ''}
-    onChange={e => onUpdate({ instr: e.target.value })}
-    dir={isUrdu ? 'rtl' : undefined}
-    placeholder={t('e.g. Write the Opposite of the following words', 'مثلاً: درج ذیل الفاظ کے متضاد لکھیں')}
-    style={{ borderRadius: 'var(--radius-sm)', fontSize: 12.5 }}
-  />
-                <div style={{
-                  fontSize: 10, color: 'var(--text-muted)', marginTop: 4,
-                  display: 'flex', alignItems: 'center', gap: 4
-                }}>
-                  <i className="fa-solid fa-lightbulb" style={{ color: '#F59E0B', fontSize: 10 }}></i>
-                  {useApiData
-                    ? t('This instruction will appear as the question heading on the paper.', 'یہ ہدایت پرچے پر سوال کی سرخی کے طور پر ظاہر ہوگی۔')
-                    : t('Main questions may differ per unit even if the question type is the same.', 'سوال کی قسم ایک جیسی ہونے کے باوجود مرکزی سوالات ہر یونٹ میں مختلف ہو سکتے ہیں۔')}
+                className="pg-q-instruction"
+                type="text"
+                value={tab.instr || ''}
+                onChange={e => onUpdate({ instr: e.target.value })}
+                dir={isUrdu ? 'rtl' : undefined}
+                placeholder={t('e.g. Write the Opposite of the following words', 'مثلاً: درج ذیل الفاظ کے متضاد لکھیں')}
+                style={{ borderRadius: 'var(--radius-sm)', fontSize: 12.5 }}
+              />
+              <div style={{
+                fontSize: 10, color: 'var(--text-muted)', marginTop: 4,
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>
+                <i className="fa-solid fa-lightbulb" style={{ color: '#F59E0B', fontSize: 10 }}></i>
+                {useApiData
+                  ? t('This instruction will appear as the question heading on the paper.', 'یہ ہدایت پرچے پر سوال کی سرخی کے طور پر ظاہر ہوگی۔')
+                  : t('Main questions may differ per unit even if the question type is the same.', 'سوال کی قسم ایک جیسی ہونے کے باوجود مرکزی سوالات ہر یونٹ میں مختلف ہو سکتے ہیں۔')}
+              </div>
+            </div>
+
+            <div className="pg-qws-fields">
+              <div>
+                <div className="pg-q-field-label">{t('No. of Items', 'اشیاء کی تعداد')}</div>
+                <input
+                  className="pg-q-input" type="number" min={1}
+                  value={items || ''} placeholder={t('e.g. 5', 'مثلاً 5')}
+                  onChange={e => onUpdate({ items: Math.max(0, +e.target.value || 0) })}
+                />
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  {t('Max', 'زیادہ سے زیادہ')} = {totalEligible}
                 </div>
               </div>
-
-              <div className="pg-qws-fields">
-                <div>
-                  <div className="pg-q-field-label">{t('No. of Items', 'اشیاء کی تعداد')}</div>
-                  <input
-                    className="pg-q-input" type="number" min={1}
-                    value={items || ''} placeholder={t('e.g. 5', 'مثلاً 5')}
-                    onChange={e => onUpdate({ items: Math.max(0, +e.target.value || 0) })}
-                  />
-                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    {t('Max = Total Eligible', 'زیادہ سے زیادہ = کل اہل')} ({totalEligible})
-                    {useApiData ? t(' · approved questions', ' · منظور شدہ سوالات') : ''}
-                  </div>
+              <div>
+                <div className="pg-q-field-label">{t('No. of Choices', 'انتخاب کی تعداد')}</div>
+                <input
+                  className="pg-q-input" type="number" min={0}
+                  value={choices}
+                  onChange={e => onUpdate({ choices: Math.max(0, +e.target.value || 0) })}
+                />
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  {t('Choices = extra options; reduces compulsory items', 'انتخاب = اضافی اختیارات؛ لازمی اشیاء کم کرتے ہیں')}
                 </div>
-                <div>
-                  <div className="pg-q-field-label">{t('Marks / Item', 'نمبر / آئٹم')}</div>
-                  {/* Decimal marks (e.g. 2.5) must be typeable — a number input
+              </div>
+              <div>
+                <div className="pg-q-field-label">{t('Marks / Item', 'نمبر / آئٹم')}</div>
+                {/* Decimal marks (e.g. 2.5) must be typeable — a number input
                       wipes the value at the intermediate "2." keystroke, so use a
                       text field with a decimal filter and keep the raw string.
                       Every consumer coerces with +marks, so a string is safe. */}
-                  <input
-                    className="pg-q-input" type="text" inputMode="decimal"
-                    /* Bind to the RAW string, not the coerced `marks` number —
-                       otherwise "1." collapses to 1 mid-type and the dot is lost. */
-                    value={tab.marks == null ? '' : tab.marks}
-                    onChange={e => {
-                      const v = e.target.value;
-                      if (v === '' || /^\d*\.?\d*$/.test(v)) onUpdate({ marks: v });
-                    }}
-                  />
-                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    {t('Auto-calculates total marks · decimals allowed (e.g. 2.5)', 'کل نمبر خودکار شمار ہوتے ہیں · اعشاریہ نمبر بھی (مثلاً 2.5)')}
-                  </div>
+                <input
+                  className="pg-q-input" type="text" inputMode="decimal"
+                  /* Bind to the RAW string, not the coerced `marks` number —
+                     otherwise "1." collapses to 1 mid-type and the dot is lost. */
+                  value={tab.marks == null ? '' : tab.marks}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === '' || /^\d*\.?\d*$/.test(v)) onUpdate({ marks: v });
+                  }}
+                />
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  {t('Auto-calculates total marks · decimals allowed (e.g. 2.5)', 'کل نمبر خودکار شمار ہوتے ہیں · اعشاریہ نمبر بھی (مثلاً 2.5)')}
                 </div>
               </div>
-
-              {!choicesOpen ? (
-                <Tooltip text="Mark some items as optional/extra choices for the student">
-                  <button type="button" className="pgx-adv-link" onClick={() => setChoicesOpen(true)}>
-                    {t('+ Let students choose some questions (optional)', '+ طلباء کو کچھ سوالات کا انتخاب دیں (اختیاری)')}
-                  </button>
-                </Tooltip>
-              ) : (
-                <>
-                  <Tooltip text="Hide the choice option and reset it to 0">
-                    <button
-                      type="button"
-                      className="pgx-adv-link"
-                      onClick={() => { setChoicesOpen(false); onUpdate({ choices: 0 }); }}
-                    >
-                      {t('– Hide choice option', '– انتخاب کا آپشن چھپائیں')}
-                    </button>
-                  </Tooltip>
-                  <div className="pg-qws-fields" style={{ maxWidth: 220 }}>
-                    <div>
-                      <div className="pg-q-field-label">{t('No. of Choices', 'انتخاب کی تعداد')}</div>
-                      <input
-                        className="pg-q-input" type="number" min={0}
-                        value={choices}
-                        onChange={e => onUpdate({ choices: Math.max(0, +e.target.value || 0) })}
-                      />
-                      <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                        {t('Choices = extra options; reduces compulsory items', 'انتخاب = اضافی اختیارات؛ لازمی اشیاء کم کرتے ہیں')}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div className="pg-q-calc">
-                {items > 0
-                  ? (isUrdu
-                      ? <><strong>{shownItems} اشیاء</strong> · <strong>{choices} انتخاب</strong> · <strong>{marks} نمبر/آئٹم</strong></>
-                      : <><strong>{shownItems} item{shownItems !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{marks} marks/item{marks !== 1 ? 's' : ''}</strong></>)
-                  : t('Set items & choices to see layout preview', 'خاکہ دیکھنے کے لیے اشیاء اور انتخاب مقرر کریں')}
-              </div>
-
-              {overflow && (
-                <div className="pg-q-warn">
-                  <i className="fa-solid fa-triangle-exclamation"></i>
-                  {isUrdu
-                    ? <>{items} اشیاء درکار ہیں لیکن صرف {totalEligible} منظور شدہ دستیاب ہیں۔</>
-                    : <>{items} items requested but only {totalEligible} approved available.</>}
+              <div>
+                <div className="pg-q-field-label">{t('Total Eligible', 'کل اہل')}</div>
+                <input
+                  className="pg-q-input" type="number"
+                  value={totalEligible} readOnly
+                  style={{ background: 'var(--bg-card)', fontWeight: 700, color: '#1E40AF', cursor: 'default' }}
+                />
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  {useApiData ? t('Approved questions', 'منظور شدہ سوالات') : t('From selected units', 'منتخب یونٹس سے')}
                 </div>
-              )}
+              </div>
+            </div>
 
-              <div style={{
-                display: 'flex', justifyContent: 'flex-end', gap: 8,
-                marginTop: 12, paddingTop: 10,
-                borderTop: '1px solid var(--border-light)'
-              }}>
-                {/* Delete sirf tab dikhao jab block backend mein save/insert ho chuka ho. */}
-                {tab.existing && onDelete && (
-                  <Tooltip text="Delete this saved question block">
-                    <button
-                      type="button"
-                      onClick={onDelete}
-                      style={{
-                        padding: '8px 18px', fontSize: 12.5, fontWeight: 700,
-                        borderRadius: 8, border: '1px solid rgba(220,38,38,.3)',
-                        background: 'rgba(220,38,38,.08)', color: '#DC2626', cursor: 'pointer',
-                        display: 'inline-flex', alignItems: 'center', gap: 6,
-                      }}
-                    >
-                      <i className="fa-solid fa-trash"></i> {t('Delete', 'حذف کریں')}
-                    </button>
-                  </Tooltip>
-                )}
-                <Tooltip text={tab.existing ? 'Update this saved question block' : 'Save this question block'}>
+            <div className="pg-q-calc">
+              {items > 0
+                ? (isUrdu
+                  ? <><strong>{shownItems} اشیاء</strong> · <strong>{choices} انتخاب</strong> · <strong>{marks} نمبر/آئٹم</strong></>
+                  : <><strong>{shownItems} item{shownItems !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{marks} marks/item{marks !== 1 ? 's' : ''}</strong></>)
+                : t('Set items & choices to see layout preview', 'خاکہ دیکھنے کے لیے اشیاء اور انتخاب مقرر کریں')}
+            </div>
+
+            {overflow && (
+              <div className="pg-q-warn">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                {isUrdu
+                  ? <>{items} اشیاء درکار ہیں لیکن صرف {totalEligible} منظور شدہ دستیاب ہیں۔</>
+                  : <>{items} items requested but only {totalEligible} approved available.</>}
+              </div>
+            )}
+
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 8,
+              marginTop: 12, paddingTop: 10,
+              borderTop: '1px solid var(--border-light)'
+            }}>
+              {/* Delete sirf tab dikhao jab block backend mein save/insert ho chuka ho. */}
+              {tab.existing && onDelete && (
+                <Tooltip text="Delete this saved question block">
                   <button
                     type="button"
-                    className="pg-btn-primary"
-                    disabled={saving}
-                    style={{ padding: '8px 20px', fontSize: 12.5, ...(saving ? { opacity: 0.6, cursor: 'wait' } : {}) }}
-                    onClick={onSave}
+                    onClick={onDelete}
+                    style={{
+                      padding: '8px 18px', fontSize: 12.5, fontWeight: 700,
+                      borderRadius: 8, border: '1px solid rgba(220,38,38,.3)',
+                      background: 'rgba(220,38,38,.08)', color: '#DC2626', cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                    }}
                   >
-                    {saving ? (
-                      <><i className="fa-solid fa-spinner fa-spin"></i> {t('Saving…', 'محفوظ ہو رہا ہے…')}</>
-                    ) : (
-                      <><i className="fa-solid fa-floppy-disk"></i> {tab.existing ? t('Update', 'اپ ڈیٹ کریں') : t('Save', 'محفوظ کریں')}</>
-                    )}
+                    <i className="fa-solid fa-trash"></i> {t('Delete', 'حذف کریں')}
                   </button>
                 </Tooltip>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  /* Report header (branch name + logo + address) for the paper header. */
-  async function fetchReportHeader() {
-    const token = sessionStorage.getItem('token');
-    const branchID = sessionStorage.getItem('branchID');
-    try {
-      const res = await fetch(buildUrl(`/report-header/${branchID}`), {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      });
-      const data = await res.json();
-      return data?.data || null;
-    } catch (err) {
-      console.error('Could not load report header', err);
-      return null;
-    }
-  }
-
-  /* ═══════════════════════════════════════════════════════════════════
-    SAVED-SUBMISSION DETAIL — shared by Preview, Download (and Edit).
-    GET /api/getexamqpsubmissiondetail?ID&branchID&gradeID&sectionID
-    Response: [{ parentData, specificTableData }, ...] grouped per recTitle.
-    ═══════════════════════════════════════════════════════════════════ */
-  async function fetchQpSubmissionDetail({ id, branchID, gradeID, sectionID }) {
-    const token = sessionStorage.getItem('token');
-    const params = new URLSearchParams({
-      ID: String(id),
-      branchID: String(branchID),
-      gradeID: String(gradeID),
-      sectionID: String(sectionID),
-    });
-    const res = await fetch(buildUrl(`/api/getexamqpsubmissiondetail?${params.toString()}`), {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
-    const data = await res.json();
-    return Array.isArray(data) ? data : (data?.data || []);
-  }
-
-  /* Turn the raw blocks into ordered, render-ready sections.
-    paperFormate / lineType come from AHM_PaperGenerationSetup via parentData and
-    drive how answer space is rendered:
-      • fmt  'with'  → answer sheet/lines shown, 'without' → questions only
-      • line 'single' → 1 answer line per question, 'four' → 4 lines. */
-  /* Class + section + subject par user ne jo line (single / four) chuni wo paper_generation_setup me
-    save hoti hai (lineType "DoubleLine" = four). Submission-detail API ka `lineType` purana
-    ("SingleLine") reh sakta hai, is liye setup milne par wahi line lo jo user ne select ki thi. */
-  function pgLineWithSetup(detail, setupMap) {
-    const par = detail?.parent || {};
-    const saved = setupMap && setupMap[pgSetupKey(par.gradeID, par.sectionID, par.subjectID)];
-    return saved?.line || detail.line;
-  }
-
-  function normalizeQpDetail(list) {
-    const blocks = Array.isArray(list) ? list : [];
-    const parent = blocks[0]?.parentData || null;
-    return {
-      parent,
-      fmt:  pgApiToFmt(parent?.paperFormate),
-      line: pgApiToLine(parent?.lineType),
-      medium: String(parent?.medium || 'english').toLowerCase(),
-      sections: blocks.map(b => ({
-        recTitle: b.parentData?.recTitle || '',
-        mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
-        // Pipe-separated SELECTED main questions (jo user ne tab mein checkbox se chune the).
-        selectedMainRaw: b.parentData?.mainQuestion || '',
-        // Update/delete ke liye selection record id — parentData.id (changed-main-question block id).
-        recordId: b.specificTableData?.[0]?.id || 0,
-        // Delete API (deleteqpsubmission/{id}) ke liye parentData ki id alag se rakho.
-        parentId: b.parentData?.id || 0,
-        // Saved config (items / choices / marks-per-item) so the edit modal prefills correctly.
-        noOfQuestions: +b.parentData?.noOfQuestions || 0,
-        noOfChoices:   +b.parentData?.noOfChoices   || 0,
-        marks:         +b.parentData?.marks         || 0,
-        // Which section ('objective' | 'subjective') this question was saved under — used to
-        // place it in the correct tab for 'both' papers (a type may appear in either tab).
-        qpSubmissionPaperType: b.parentData?.qpSubmissionPaperType || '',
-        rows: Array.isArray(b.specificTableData) ? b.specificTableData : [],
-      })),
-    };
-  }
-
-  /* ═══════════════════════════════════════════════════════════════════
-    SAVED QUESTION-SELECTION (per-block config) — Edit modal ke liye.
-    GET /api/getqpquestionselectionbymasterid?masterId={qpMasterID}
-    Response: [{ id, recTitle, changedMainQuestion, noOfItem, marksPerItem,
-    noOfChoices, paperType, formatePaper, mainQuestion:[...] }, ...]
-    Har record ek saved block hai (rows nahi, sirf config + selected main Qs).
-    ═══════════════════════════════════════════════════════════════════ */
-  async function fetchQpSelectionByMaster(masterId) {
-    const token = sessionStorage.getItem('token');
-    const params = new URLSearchParams({ qpMastID: String(masterId) });
-    const res = await fetch(buildUrl(`/api/getqpquestionselectionbymasterid?${params.toString()}`), {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
-    const data = await res.json();
-    return Array.isArray(data) ? data : (data?.data || []);
-  }
-
-  /* Selection records ko prefill-ready "sections" mein badlo (normalizeQpDetail jaisa shape). */
-  function mapSelectionToSections(records) {
-    const recs = Array.isArray(records) ? records : [];
-    // formatePaper = poore paper ka type (both / objective / subjective).
-    const overallType = recs[0]?.formatePaper || 'both';
-    return {
-      overallType,
-      sections: recs.map(r => ({
-        recTitle: r.recTitle || '',
-        mainQuestion: r.changedMainQuestion || r.recTitle || '',   // instr (typed)
-        // Selected main questions — array → pipe-separated (prefill '|' par split karta hai).
-        selectedMainRaw: Array.isArray(r.mainQuestion)
-          ? r.mainQuestion.join('|')
-          : String(r.mainQuestion || ''),
-        // Is API mein har block ki apni unique id hai → update aur delete dono isi se.
-        recordId: r.id || 0,
-        parentId: r.id || 0,
-        noOfQuestions: +r.noOfItem || 0,
-        noOfChoices:   +r.noOfChoices || 0,
-        marks:         +r.marksPerItem || 0,
-        // Kis section ('objective' | 'subjective') mein save hua tha (both papers ke liye).
-        qpSubmissionPaperType: r.paperType || '',
-        rows: [],
-      })),
-    };
-  }
-
-  const pgRecKey = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
-  const pgRoman = n => (['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii','xiii','xiv','xv','xvi','xvii','xviii','xix','xx'][n] || String(n + 1));
-  const pgEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-  /* API se question rich-text (HTML) aa sakta hai → tags hata kar plain text banao (preview/download). */
-  const pgStripHtml = s => String(s == null ? '' : s)
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<\/(p|div|h[1-6]|li)>/gi, ' ')
-    .replace(/<[^>]*>/g, '')                 // baqi saare tags hatao
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&apos;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-  /* QA C9: khaali MCQ option ('', '-', 'null', sirf HTML tags) print/preview mein na dikhao. */
-  const pgHasOpt = v => { const t = pgStripHtml(v); return !!t && !/^[-–—_.\s]+$/.test(t) && !/^(null|undefined|n\/a)$/i.test(t); };
-  /* The most likely "question text" field for a row, across all types. (HTML → plain text) */
-  const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.subject || r.punctuation || r.mainQuestion || '');
-
-  /* A Match-Columns cell can hold either plain text or an <img> (base64 data
-     URI). Pull just the src out of the stored markup so we render a clean,
-     size-controlled image instead of injecting the source's own inline styles
-     (which set width:25% etc. and blow up the column). */
-  const pgCellImgSrc = v => {
-    const m = String(v == null ? '' : v).match(/<img[^>]+src=["']([^"']+)["']/i);
-    return m ? m[1] : null;
-  };
-  /* React (preview): image if the cell holds one, else stripped text. */
-  const pgRenderCell = v => {
-    const src = pgCellImgSrc(v);
-    return src
-      ? <img src={src} alt="" style={{ maxWidth: 90, maxHeight: 60, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
-      : pgStripHtml(v);
-  };
-  /* Download (HTML string): same, as an escaped-text or <img> string. */
-  const pgCellHtml = v => {
-    const src = pgCellImgSrc(v);
-    return src
-      ? `<img src="${src}" alt="" style="max-width:90px;max-height:60px;object-fit:contain;display:block;margin:0 auto" />`
-      : pgEsc(pgStripHtml(v));
-  };
-
-  /* ── Marks helpers for saved (API) sections ──────────────────────────────
-     Per-item marks = marks-per-item (parentData.marks). Section total marks =
-     (items − choices) × marks-per-item — same formula the workspace uses
-     (sectionUsedMarks / typeAggregates). `choices` are the optional/skippable
-     questions, so only (items − choices) are counted; with no choice it's just
-     items × marks. Floats like "1.00" collapse to plain numbers. */
-  const pgFmtMk    = n => String(+n || 0);
-  const pgSecItems = sec => (+sec.noOfQuestions || (Array.isArray(sec.rows) ? sec.rows.length : 0));
-  /* Effective (skippable) choices. Convention: jab koi choice nahi hoti (sab
-     compulsory / "attempt all") to backend `noOfChoices` ko `noOfQuestions` ke
-     BARABAR store karta hai — is case ko 0 samjho, warna (items − items) = 0
-     hone se total marks galti se 0 aa jaata hai. */
-  const pgSecEffChoices = sec => {
-    const ch = +sec.noOfChoices || 0;
-    return ch >= pgSecItems(sec) ? 0 : ch;
-  };
-  const pgSecTotalMarks = sec => Math.max(0, pgSecItems(sec) - pgSecEffChoices(sec)) * (+sec.marks || 0);
-
-  /* Match-the-Columns: Column B ko shuffle karo taa-ke sahi jawab apni hi Column A question ke
-     saamne na aaye (asli match exercise). Shuffle DETERMINISTIC hai (Column B ke text se seed
-     hota hai) — is liye preview aur download dono me bilkul same order aata hai. n>=2 par koi bhi
-     entry apni asli row par nahi rehti (derangement). */
-  const pgShuffleColumnB = (rows) => {
-    /* Keep the RAW cell (so an image survives); seed only from its stripped
-       text, so the deterministic order is identical in preview and download. */
-    const raw = rows.map(r => r.columnB || r.option2 || '');
-    const bs = raw.map(v => pgStripHtml(v));
-    const n = raw.length;
-    if (n < 2) return raw;
-    let seed = 0;
-    const src = bs.join('|') || 'match';
-    for (let i = 0; i < src.length; i++) { seed = (Math.imul(seed, 131) + src.charCodeAt(i)) >>> 0; }
-    if (!seed) seed = 1;
-    const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-    const order = bs.map((_, i) => i);
-    for (let i = n - 1; i > 0; i--) {
-      const j = Math.floor(rand() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
-    }
-    // Derangement fix: jo entry apni asli jagah par reh gayi use next se swap karo.
-    for (let i = 0; i < n; i++) {
-      if (order[i] === i) {
-        const k = (i + 1) % n;
-        [order[i], order[k]] = [order[k], order[i]];
-      }
-    }
-    return order.map(i => raw[i]);
-  };
-
-  /* subjective-only type keys (in PG_SUBJ_TYPES but not PG_OBJ_TYPES) */
-  const PG_SUBJ_ONLY_KEYS = PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)).map(s => s.key);
-  /* Objective vs subjective for a saved section. Uses the API's qpSubmissionPaperType
-    first; if empty, falls back to the static type category (subj-only types → subj,
-    everything else → obj). */
-  function pgSectionKind(sec) {
-    const t = (sec.qpSubmissionPaperType || '').toLowerCase();
-    if (t === 'objective') return 'obj';
-    if (t === 'subjective') return 'subj';
-    const recKey = pgRecKey(sec.recTitle);
-    const typeKey = Object.keys(PG_REC_TITLE).find(k => pgRecKey(PG_REC_TITLE[k]) === recKey);
-    return (typeKey && PG_SUBJ_ONLY_KEYS.includes(typeKey)) ? 'subj' : 'obj';
-  }
-
-  /* ── React renderer (Preview) — one block per saved section, by recTitle ── */
-  /* Static UI labels (column headers, section titles, "Total Marks") — English ya
-    Urdu medium ke hisaab se. Question ki apni heading to API se (Urdu) aati hi hai;
-    yahan sirf fixed labels translate hote hain taake Urdu paper poora Urdu lage. */
-  const PG_UI_LABELS = {
-    en: { word:'Word', synonym:'Synonym', opposite:'Opposite', singular:'Singular', plural:'Plural',
-      marks:'Marks', colA:'Column A', colB:'Column B', answer:'Answer', statement:'Statement',
-      tru:'True', fls:'False', totalMarks:'Total Marks',
-      secObj:'Section A — Objective Questions', secSubj:'Section B — Subjective Questions' },
-    ur: { word:'لفظ', synonym:'مترادف', opposite:'متضاد', singular:'واحد', plural:'جمع',
-      marks:'نمبر', colA:'کالم الف', colB:'کالم ب', answer:'جواب', statement:'بیان',
-      tru:'درست', fls:'غلط', totalMarks:'کل نمبر',
-      secObj:'حصہ الف — معروضی سوالات', secSubj:'حصہ ب — انشائی سوالات' },
-  };
-  const pgLabels = (isUrdu) => (isUrdu ? PG_UI_LABELS.ur : PG_UI_LABELS.en);
-
-  function ApiPaperSections({ sections, isBW, paperType, fmt = 'with', line = 'single', medium = 'english' }) {
-    const isUrdu = String(medium).toLowerCase() === 'urdu';
-    const L = pgLabels(isUrdu);
-    if (!sections || !sections.length) {
-      return <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>No saved questions found for this paper.</div>;
-    }
-    /* Answer space per the class+subject setup: no sheet → none; with sheet →
-      1 line (single) or 4 lines (four) after each written-answer question. */
-    const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
-    const AnswerLines = () => (lineCount === 0 ? null : (
-      <div style={{ margin: '6px 0 10px' }}>
-        {Array.from({ length: lineCount }).map((_, i) => (
-          <div key={i} style={{ height: 18, borderBottom: '1px solid #cbd5e1', marginBottom: 6 }} />
-        ))}
-      </div>
-    ));
-    const accent = isBW ? '#111111' : '#1E40AF';
-    const tdBorder = '1px solid #e2e8f0';
-    const thBg = isBW ? '#FFFFFF' : '#EFF6FF';
-    const thBorder = `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`;
-    // Urdu (RTL) → header bhi right-align ho taake body words ke saath match kare.
-    const th = { padding: '5px 8px', border: thBorder, textAlign: isUrdu ? 'right' : 'left' };
-    const td = { padding: '6px 8px', border: tdBorder, textAlign: isUrdu ? 'right' : undefined };
-    const blank = '___________';
-
-    const twoCol = (rows, leftKey, leftLabel, rightLabel, mk) => (
-      <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-        <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgStripHtml(r[leftKey]) || pgRowText(r)}</td><td style={td}>{blank}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
-          ))}
-        </tbody>
-      </table>
-    );
-
-    const renderRows = (sec) => {
-      const { rows } = sec;
-      const k = pgRecKey(sec.recTitle);
-      /* Per-item marks — same for every item in the section (marks-per-item). */
-      const mk = pgFmtMk(sec.marks);
-      // Urdu (RTL) → marks left side par (line ke end), warna English mein right par.
-      const mkTag = (
-        <span style={{ float: isUrdu ? 'left' : 'right', fontWeight: 700, ...(isUrdu ? { marginRight: 8 } : { marginLeft: 8 }) }}>[{mk}]</span>
-      );
-      if (k === 'mcqs') {
-        return rows.map((r, i) => (
-          <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
-            <div>{mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}</div>
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 3, paddingLeft: 14 }}>
-              {['option1','option2','option3','option4'].map((o, oi) => pgHasOpt(r[o]) ? (
-                <span key={oi} style={{ border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: 11.5 }}>
-                  ({String.fromCharCode(65 + oi)}) {pgStripHtml(r[o])}
-                </span>
-              ) : null)}
+              )}
+              <Tooltip text={tab.existing ? 'Update this saved question block' : 'Save this question block'}>
+                <button
+                  type="button"
+                  className="pg-btn-primary"
+                  disabled={saving}
+                  style={{ padding: '8px 20px', fontSize: 12.5, ...(saving ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+                  onClick={onSave}
+                >
+                  {saving ? (
+                    <><i className="fa-solid fa-spinner fa-spin"></i> {t('Saving…', 'محفوظ ہو رہا ہے…')}</>
+                  ) : (
+                    <><i className="fa-solid fa-floppy-disk"></i> {tab.existing ? t('Update', 'اپ ڈیٹ کریں') : t('Save', 'محفوظ کریں')}</>
+                  )}
+                </button>
+              </Tooltip>
             </div>
           </div>
-        ));
-      }
-      if (k === 'wordsynonyms') return twoCol(rows, 'word', L.word, L.synonym, mk);
-      if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', L.word, L.opposite, mk);
-      if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', L.singular, L.plural, mk);
-      if (k === 'matchcolume' || k === 'matchcolumns') {
-        const shufB = pgShuffleColumnB(rows);   // Column B shuffled (sahi jawab saamne na aaye)
-        return (
-          <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-            <thead><tr style={{ background: thBg }}><th style={th}>{L.colA}</th><th style={th}>{L.answer}</th><th style={th}>{L.colB}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
-            <tbody>
-              {/* Match Columns shows ONLY Column A / Column B (text or image).
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Report header (branch name + logo + address) for the paper header. */
+async function fetchReportHeader() {
+  const token = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID');
+  try {
+    const res = await fetch(buildUrl(`/report-header/${branchID}`), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    const data = await res.json();
+    return data?.data || null;
+  } catch (err) {
+    console.error('Could not load report header', err);
+    return null;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+  SAVED-SUBMISSION DETAIL — shared by Preview, Download (and Edit).
+  GET /api/getexamqpsubmissiondetail?ID&branchID&gradeID&sectionID
+  Response: [{ parentData, specificTableData }, ...] grouped per recTitle.
+  ═══════════════════════════════════════════════════════════════════ */
+async function fetchQpSubmissionDetail({ id, branchID, gradeID, sectionID }) {
+  const token = sessionStorage.getItem('token');
+  const params = new URLSearchParams({
+    ID: String(id),
+    branchID: String(branchID),
+    gradeID: String(gradeID),
+    sectionID: String(sectionID),
+  });
+  const res = await fetch(buildUrl(`/api/getexamqpsubmissiondetail?${params.toString()}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data?.data || []);
+}
+
+/* Turn the raw blocks into ordered, render-ready sections.
+  paperFormate / lineType come from AHM_PaperGenerationSetup via parentData and
+  drive how answer space is rendered:
+    • fmt  'with'  → answer sheet/lines shown, 'without' → questions only
+    • line 'single' → 1 answer line per question, 'four' → 4 lines. */
+function normalizeQpDetail(list) {
+  const blocks = Array.isArray(list) ? list : [];
+  const parent = blocks[0]?.parentData || null;
+  return {
+    parent,
+    fmt: pgApiToFmt(parent?.paperFormate),
+    line: pgApiToLine(parent?.lineType),
+    medium: String(parent?.medium || 'english').toLowerCase(),
+    sections: blocks.map(b => ({
+      recTitle: b.parentData?.recTitle || '',
+      mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
+      // Pipe-separated SELECTED main questions (jo user ne tab mein checkbox se chune the).
+      selectedMainRaw: b.parentData?.mainQuestion || '',
+      // Update/delete ke liye selection record id — parentData.id (changed-main-question block id).
+      recordId: b.specificTableData?.[0]?.id || 0,
+      // Delete API (deleteqpsubmission/{id}) ke liye parentData ki id alag se rakho.
+      parentId: b.parentData?.id || 0,
+      // Saved config (items / choices / marks-per-item) so the edit modal prefills correctly.
+      noOfQuestions: +b.parentData?.noOfQuestions || 0,
+      noOfChoices: +b.parentData?.noOfChoices || 0,
+      marks: +b.parentData?.marks || 0,
+      // Which section ('objective' | 'subjective') this question was saved under — used to
+      // place it in the correct tab for 'both' papers (a type may appear in either tab).
+      qpSubmissionPaperType: b.parentData?.qpSubmissionPaperType || '',
+      rows: Array.isArray(b.specificTableData) ? b.specificTableData : [],
+    })),
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+  SAVED QUESTION-SELECTION (per-block config) — Edit modal ke liye.
+  GET /api/getqpquestionselectionbymasterid?masterId={qpMasterID}
+  Response: [{ id, recTitle, changedMainQuestion, noOfItem, marksPerItem,
+  noOfChoices, paperType, formatePaper, mainQuestion:[...] }, ...]
+  Har record ek saved block hai (rows nahi, sirf config + selected main Qs).
+  ═══════════════════════════════════════════════════════════════════ */
+async function fetchQpSelectionByMaster(masterId) {
+  const token = sessionStorage.getItem('token');
+  const params = new URLSearchParams({ qpMastID: String(masterId) });
+  const res = await fetch(buildUrl(`/api/getqpquestionselectionbymasterid?${params.toString()}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data?.data || []);
+}
+
+/* Selection records ko prefill-ready "sections" mein badlo (normalizeQpDetail jaisa shape). */
+function mapSelectionToSections(records) {
+  const recs = Array.isArray(records) ? records : [];
+  // formatePaper = poore paper ka type (both / objective / subjective).
+  const overallType = recs[0]?.formatePaper || 'both';
+  return {
+    overallType,
+    sections: recs.map(r => ({
+      recTitle: r.recTitle || '',
+      mainQuestion: r.changedMainQuestion || r.recTitle || '',   // instr (typed)
+      // Selected main questions — array → pipe-separated (prefill '|' par split karta hai).
+      selectedMainRaw: Array.isArray(r.mainQuestion)
+        ? r.mainQuestion.join('|')
+        : String(r.mainQuestion || ''),
+      // Is API mein har block ki apni unique id hai → update aur delete dono isi se.
+      recordId: r.id || 0,
+      parentId: r.id || 0,
+      noOfQuestions: +r.noOfItem || 0,
+      noOfChoices: +r.noOfChoices || 0,
+      marks: +r.marksPerItem || 0,
+      // Kis section ('objective' | 'subjective') mein save hua tha (both papers ke liye).
+      qpSubmissionPaperType: r.paperType || '',
+      rows: [],
+    })),
+  };
+}
+
+const pgRecKey = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+const pgRoman = n => (['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx'][n] || String(n + 1));
+const pgEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+/* API se question rich-text (HTML) aa sakta hai → tags hata kar plain text banao (preview/download). */
+const pgStripHtml = s => String(s == null ? '' : s)
+  .replace(/<br\s*\/?>/gi, ' ')
+  .replace(/<\/(p|div|h[1-6]|li)>/gi, ' ')
+  .replace(/<[^>]*>/g, '')                 // baqi saare tags hatao
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&apos;/gi, "'")
+  .replace(/\s+/g, ' ')
+  .trim();
+/* The most likely "question text" field for a row, across all types. (HTML → plain text) */
+const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.subject || r.punctuation || r.mainQuestion || '');
+
+/* A Match-Columns cell can hold either plain text or an <img> (base64 data
+   URI). Pull just the src out of the stored markup so we render a clean,
+   size-controlled image instead of injecting the source's own inline styles
+   (which set width:25% etc. and blow up the column). */
+const pgCellImgSrc = v => {
+  const m = String(v == null ? '' : v).match(/<img[^>]+src=["']([^"']+)["']/i);
+  return m ? m[1] : null;
+};
+/* React (preview): image if the cell holds one, else stripped text. */
+const pgRenderCell = v => {
+  const src = pgCellImgSrc(v);
+  return src
+    ? <img src={src} alt="" style={{ maxWidth: 90, maxHeight: 60, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
+    : pgStripHtml(v);
+};
+/* Download (HTML string): same, as an escaped-text or <img> string. */
+const pgCellHtml = v => {
+  const src = pgCellImgSrc(v);
+  return src
+    ? `<img src="${src}" alt="" style="max-width:90px;max-height:60px;object-fit:contain;display:block;margin:0 auto" />`
+    : pgEsc(pgStripHtml(v));
+};
+
+/* ── Marks helpers for saved (API) sections ──────────────────────────────
+   Per-item marks = marks-per-item (parentData.marks). Section total marks =
+   (items − choices) × marks-per-item — same formula the workspace uses
+   (sectionUsedMarks / typeAggregates). `choices` are the optional/skippable
+   questions, so only (items − choices) are counted; with no choice it's just
+   items × marks. Floats like "1.00" collapse to plain numbers. */
+const pgFmtMk = n => String(+n || 0);
+const pgSecItems = sec => (+sec.noOfQuestions || (Array.isArray(sec.rows) ? sec.rows.length : 0));
+/* Effective (skippable) choices. Convention: jab koi choice nahi hoti (sab
+   compulsory / "attempt all") to backend `noOfChoices` ko `noOfQuestions` ke
+   BARABAR store karta hai — is case ko 0 samjho, warna (items − items) = 0
+   hone se total marks galti se 0 aa jaata hai. */
+const pgSecEffChoices = sec => {
+  const ch = +sec.noOfChoices || 0;
+  return ch >= pgSecItems(sec) ? 0 : ch;
+};
+const pgSecTotalMarks = sec => Math.max(0, pgSecItems(sec) - pgSecEffChoices(sec)) * (+sec.marks || 0);
+
+/* Match-the-Columns: Column B ko shuffle karo taa-ke sahi jawab apni hi Column A question ke
+   saamne na aaye (asli match exercise). Shuffle DETERMINISTIC hai (Column B ke text se seed
+   hota hai) — is liye preview aur download dono me bilkul same order aata hai. n>=2 par koi bhi
+   entry apni asli row par nahi rehti (derangement). */
+const pgShuffleColumnB = (rows) => {
+  /* Keep the RAW cell (so an image survives); seed only from its stripped
+     text, so the deterministic order is identical in preview and download. */
+  const raw = rows.map(r => r.columnB || r.option2 || '');
+  const bs = raw.map(v => pgStripHtml(v));
+  const n = raw.length;
+  if (n < 2) return raw;
+  let seed = 0;
+  const src = bs.join('|') || 'match';
+  for (let i = 0; i < src.length; i++) { seed = (Math.imul(seed, 131) + src.charCodeAt(i)) >>> 0; }
+  if (!seed) seed = 1;
+  const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+  const order = bs.map((_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  // Derangement fix: jo entry apni asli jagah par reh gayi use next se swap karo.
+  for (let i = 0; i < n; i++) {
+    if (order[i] === i) {
+      const k = (i + 1) % n;
+      [order[i], order[k]] = [order[k], order[i]];
+    }
+  }
+  return order.map(i => raw[i]);
+};
+
+/* subjective-only type keys (in PG_SUBJ_TYPES but not PG_OBJ_TYPES) */
+const PG_SUBJ_ONLY_KEYS = PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)).map(s => s.key);
+/* Objective vs subjective for a saved section. Uses the API's qpSubmissionPaperType
+  first; if empty, falls back to the static type category (subj-only types → subj,
+  everything else → obj). */
+function pgSectionKind(sec) {
+  const t = (sec.qpSubmissionPaperType || '').toLowerCase();
+  if (t === 'objective') return 'obj';
+  if (t === 'subjective') return 'subj';
+  const recKey = pgRecKey(sec.recTitle);
+  const typeKey = Object.keys(PG_REC_TITLE).find(k => pgRecKey(PG_REC_TITLE[k]) === recKey);
+  return (typeKey && PG_SUBJ_ONLY_KEYS.includes(typeKey)) ? 'subj' : 'obj';
+}
+
+/* ── React renderer (Preview) — one block per saved section, by recTitle ── */
+/* Static UI labels (column headers, section titles, "Total Marks") — English ya
+  Urdu medium ke hisaab se. Question ki apni heading to API se (Urdu) aati hi hai;
+  yahan sirf fixed labels translate hote hain taake Urdu paper poora Urdu lage. */
+const PG_UI_LABELS = {
+  en: {
+    word: 'Word', synonym: 'Synonym', opposite: 'Opposite', singular: 'Singular', plural: 'Plural',
+    marks: 'Marks', colA: 'Column A', colB: 'Column B', answer: 'Answer', statement: 'Statement',
+    tru: 'True', fls: 'False', totalMarks: 'Total Marks',
+    secObj: 'Section A — Objective Questions', secSubj: 'Section B — Subjective Questions'
+  },
+  ur: {
+    word: 'لفظ', synonym: 'مترادف', opposite: 'متضاد', singular: 'واحد', plural: 'جمع',
+    marks: 'نمبر', colA: 'کالم الف', colB: 'کالم ب', answer: 'جواب', statement: 'بیان',
+    tru: 'درست', fls: 'غلط', totalMarks: 'کل نمبر',
+    secObj: 'حصہ الف — معروضی سوالات', secSubj: 'حصہ ب — انشائی سوالات'
+  },
+};
+const pgLabels = (isUrdu) => (isUrdu ? PG_UI_LABELS.ur : PG_UI_LABELS.en);
+
+function ApiPaperSections({ sections, isBW, paperType, fmt = 'with', line = 'single', medium = 'english' }) {
+  const isUrdu = String(medium).toLowerCase() === 'urdu';
+  const L = pgLabels(isUrdu);
+  if (!sections || !sections.length) {
+    return <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>No saved questions found for this paper.</div>;
+  }
+  /* Answer space per the class+subject setup: no sheet → none; with sheet →
+    1 line (single) or 4 lines (four) after each written-answer question. */
+  const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
+  const AnswerLines = () => (lineCount === 0 ? null : (
+    <div style={{ margin: '6px 0 10px' }}>
+      {Array.from({ length: lineCount }).map((_, i) => (
+        <div key={i} style={{ height: 18, borderBottom: '1px solid #cbd5e1', marginBottom: 6 }} />
+      ))}
+    </div>
+  ));
+  const accent = isBW ? '#111111' : '#1E40AF';
+  const tdBorder = '1px solid #e2e8f0';
+  const thBg = isBW ? '#FFFFFF' : '#EFF6FF';
+  const thBorder = `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`;
+  // Urdu (RTL) → header bhi right-align ho taake body words ke saath match kare.
+  const th = { padding: '5px 8px', border: thBorder, textAlign: isUrdu ? 'right' : 'left' };
+  const td = { padding: '6px 8px', border: tdBorder, textAlign: isUrdu ? 'right' : undefined };
+  const blank = '___________';
+
+  const twoCol = (rows, leftKey, leftLabel, rightLabel, mk) => (
+    <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+      <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgStripHtml(r[leftKey]) || pgRowText(r)}</td><td style={td}>{blank}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderRows = (sec) => {
+    const { rows } = sec;
+    const k = pgRecKey(sec.recTitle);
+    /* Per-item marks — same for every item in the section (marks-per-item). */
+    const mk = pgFmtMk(sec.marks);
+    // Urdu (RTL) → marks left side par (line ke end), warna English mein right par.
+    const mkTag = (
+      <span style={{ float: isUrdu ? 'left' : 'right', fontWeight: 700, ...(isUrdu ? { marginRight: 8 } : { marginLeft: 8 }) }}>[{mk}]</span>
+    );
+    if (k === 'mcqs') {
+      return rows.map((r, i) => (
+        <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
+          <div>{mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}</div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 3, paddingLeft: 14 }}>
+            {['option1', 'option2', 'option3', 'option4'].map((o, oi) => r[o] ? (
+              <span key={oi} style={{ border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: 11.5 }}>
+                ({String.fromCharCode(65 + oi)}) {pgStripHtml(r[o])}
+              </span>
+            ) : null)}
+          </div>
+        </div>
+      ));
+    }
+    if (k === 'wordsynonyms') return twoCol(rows, 'word', L.word, L.synonym, mk);
+    if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', L.word, L.opposite, mk);
+    if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', L.singular, L.plural, mk);
+    if (k === 'matchcolume' || k === 'matchcolumns') {
+      const shufB = pgShuffleColumnB(rows);   // Column B shuffled (sahi jawab saamne na aaye)
+      return (
+        <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+          <thead><tr style={{ background: thBg }}><th style={th}>{L.colA}</th><th style={th}>{L.answer}</th><th style={th}>{L.colB}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
+          <tbody>
+            {/* Match Columns shows ONLY Column A / Column B (text or image).
                   No pgRowText fallback on Column A — its chain includes
                   mainQuestion, which otherwise leaked the question text into an
                   empty Column A cell. */}
-              {rows.map((r, i) => (
-                <tr key={i}><td style={td}>{pgRenderCell(r.columnA || r.option1)}</td><td style={td}>______</td><td style={td}>{pgRenderCell(shufB[i])}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
-              ))}
-            </tbody>
-          </table>
-        );
-      }
-      if (k === 'comprehension') {
-        const passage = pgStripHtml(rows[0]?.comprehensionStatement);
-        return (
-          <>
-            {passage && <div style={{ background: isBW ? '#FFF' : '#F8FAFF', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`, borderRadius: 4, padding: '8px 12px', fontSize: 11.5, marginBottom: 8, lineHeight: 1.6 }}>{passage}</div>}
             {rows.map((r, i) => (
-              <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>
-                {mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}
-                <AnswerLines />
-              </div>
+              <tr key={i}><td style={td}>{pgRenderCell(r.columnA || r.option1)}</td><td style={td}>______</td><td style={td}>{pgRenderCell(shufB[i])}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
             ))}
-          </>
-        );
-      }
-      if (k === 'truefalse') {
-        return (
-          <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-            <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{L.statement}</th><th style={th}>{L.tru}</th><th style={th}>{L.fls}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgRowText(r)}</td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
-              ))}
-            </tbody>
-          </table>
-        );
-      }
-      if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
-        return rows.map((r, i) => (
-          <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{mkTag}{pgRoman(i)}. {pgRowText(r)}</div>
-        ));
-      }
-      if (k === 'paragraph') {
-        /* Paragraph rows me DO fields: `topic` (title) aur `paragraph` (body).
-           pgRowText sirf topic uthata tha; body kabhi dikhta hi nahi tha. Ab
-           dono dikhao — title line, uske neeche paragraph body. Agar dono same
-           hon (test data jaisa "asdf"/"asdf") to body repeat na karo. */
-        return rows.map((r, i) => {
-          const title = pgStripHtml(r.topic || r.title || r.question || r.mainQuestion);
-          const bodyText = pgStripHtml(r.paragraph);
-          return (
-            <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
-              {mkTag}{pgRoman(i)}. {title}
-              {bodyText && bodyText !== title && (
-                <div style={{ marginTop: 4, lineHeight: 1.6 }}>{bodyText}</div>
-              )}
-              <AnswerLines />
-            </div>
-          );
-        });
-      }
-      /* Generic: essays, stories, letters, applications, wordSentences,
-        questionAns, longQuestions, punctuation, circleCorrectWord, fallback. */
-      return rows.map((r, i) => (
-        <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
-          {mkTag}{pgRoman(i)}. {pgRowText(r)}
-          <AnswerLines />
-        </div>
-      ));
-    };
-
-    const sectionHeading = (label) => (
-      <div style={{
-        background: isBW ? '#FFFFFF' : '#1E3A8A', color: isBW ? '#0F172A' : '#FFFFFF',
-        border: isBW ? '1px solid #0F172A' : 'none', padding: '6px 14px', fontSize: 12,
-        fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
-        margin: '16px 0 10px', borderRadius: 4,
-      }}>{label}</div>
-    );
-    const renderBlock = (sec, num) => (
-      <div key={`${num}-${sec.recTitle}`} style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: '#334155', marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-          <span><strong>{isUrdu ? `سوال نمبر ${num}` : `Q.${num}`}</strong> {sec.mainQuestion}</span>
-          <strong style={{ whiteSpace: 'nowrap' }}>[{L.totalMarks}: {pgSecTotalMarks(sec)}]</strong>
-        </div>
-        {renderRows(sec)}
-      </div>
-    );
-
-    // 'both' paper → Objective section pehle, phir Subjective section.
-    if (paperType === 'both') {
-      const objSecs  = sections.filter(s => pgSectionKind(s) === 'obj');
-      const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
-      let n = 0;
+          </tbody>
+        </table>
+      );
+    }
+    if (k === 'comprehension') {
+      const passage = pgStripHtml(rows[0]?.comprehensionStatement);
       return (
         <>
-          {objSecs.length > 0 && sectionHeading(L.secObj)}
-          {objSecs.map(sec => renderBlock(sec, ++n))}
-          {subjSecs.length > 0 && sectionHeading(L.secSubj)}
-          {subjSecs.map(sec => renderBlock(sec, ++n))}
+          {passage && <div style={{ background: isBW ? '#FFF' : '#F8FAFF', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`, borderRadius: 4, padding: '8px 12px', fontSize: 11.5, marginBottom: 8, lineHeight: 1.6 }}>{passage}</div>}
+          {rows.map((r, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>
+              {mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}
+              <AnswerLines />
+            </div>
+          ))}
         </>
       );
     }
-    return <>{sections.map((sec, si) => renderBlock(sec, si + 1))}</>;
-  }
-
-  /* ── HTML builder (Download) — mirrors ApiPaperSections using paper CSS classes ── */
-  function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single', medium = 'english') {
-    if (!sections || !sections.length) {
-      return '<div style="text-align:center;color:#64748B;font-size:12px;padding:20px">No saved questions found for this paper.</div>';
+    if (k === 'truefalse') {
+      return (
+        <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+          <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{L.statement}</th><th style={th}>{L.tru}</th><th style={th}>{L.fls}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgRowText(r)}</td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
+            ))}
+          </tbody>
+        </table>
+      );
     }
-    const isUrdu = String(medium).toLowerCase() === 'urdu';
-    const L = pgLabels(isUrdu);
-    const blank = '___________';
-    /* Answer space per the class+subject setup: no sheet → none; with sheet →
-      1 line (single) or 4 lines (four) after each written-answer question. */
-    const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
-    const ansLines = () => (lineCount === 0 ? ''
-      : `<div class="write-lines">${'<div class="line-rule">&nbsp;</div>'.repeat(lineCount)}</div>`);
-    const renderOne = (sec, num) => {
-      const k = pgRecKey(sec.recTitle);
-      const rows = sec.rows || [];
-      /* Per-item marks + section total marks. Urdu → left side, English → right.
-        Float use karte hain (Word/PDF dono mein reliable; flex Word mein nahi chalta).
-        Total-marks span pehle rakha (float ke liye source order). */
-      const mk = pgFmtMk(sec.marks);
-      const mkFloat = isUrdu ? 'left' : 'right';
-      const mkMargin = isUrdu ? 'margin-right:8px' : 'margin-left:8px';
-      const mkTag = `<span style="float:${mkFloat};font-weight:700;${mkMargin}">[${mk}]</span>`;
-      const qLabel = isUrdu ? `سوال نمبر ${num}` : `Q.${num}`;
-      const header = `<div class="q-header"><span class="q-marks">[${L.totalMarks}: ${pgSecTotalMarks(sec)}]</span><span><b>${qLabel}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
-      let body = '';
-      const twoCol = (leftKey, leftLabel, rightLabel) =>
-        `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
-        rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgStripHtml(r[leftKey]) || pgRowText(r))}</td><td>${blank}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
-
-      if (k === 'mcqs') {
-        body = rows.map((r, i) => {
-          const opts = ['option1','option2','option3','option4'].map((o, oi) => pgHasOpt(r[o]) ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
-          return `<div class="mcq-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
-        }).join('');
-      } else if (k === 'wordsynonyms') body = twoCol('word', L.word, L.synonym);
-      else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', L.word, L.opposite);
-      else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', L.singular, L.plural);
-      else if (k === 'matchcolume' || k === 'matchcolumns') {
-        const shufB = pgShuffleColumnB(rows);   // Column B shuffled (preview jaisा hi deterministic order)
-        body = `<table><tr><th>${L.colA}</th><th>${L.answer}</th><th>${L.colB}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
-          rows.map((r, i) => `<tr><td>${pgCellHtml(r.columnA || r.option1)}</td><td>______</td><td>${pgCellHtml(shufB[i])}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
-      } else if (k === 'comprehension') {
-        const passage = pgStripHtml(rows[0]?.comprehensionStatement);
-        body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
-          rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}${ansLines()}</div>`).join('');
-      } else if (k === 'truefalse') {
-        body = `<table class="tf-table"><tr><th>#</th><th>${L.statement}</th><th>${L.tru}</th><th>${L.fls}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
-          rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
-      } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
-        body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}</div>`).join('');
-      } else if (k === 'paragraph') {
-        /* Preview jaisa hi: har paragraph item ka topic (title) + paragraph (body). */
-        body = rows.map((r, i) => {
-          const title = pgStripHtml(r.topic || r.title || r.question || r.mainQuestion);
-          const bodyText = pgStripHtml(r.paragraph);
-          const bodyHtml = (bodyText && bodyText !== title)
-            ? `<div style="margin-top:4px;line-height:1.6">${pgEsc(bodyText)}</div>` : '';
-          return `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(title)}${bodyHtml}${ansLines()}</div>`;
-        }).join('');
-      } else {
-        body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
-      }
-      return `<div class="q-block">${header}${body}</div>`;
-    };
-
-    // 'both' paper → Objective section pehle, phir Subjective section.
-    if (paperType === 'both') {
-      const objSecs  = sections.filter(s => pgSectionKind(s) === 'obj');
-      const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
-      let n = 0;
-      let html = '';
-      if (objSecs.length)  html += `<div class="section-title">${L.secObj}</div>`  + objSecs.map(s => renderOne(s, ++n)).join('');
-      if (subjSecs.length) html += `<div class="section-title">${L.secSubj}</div>` + subjSecs.map(s => renderOne(s, ++n)).join('');
-      return html;
+    if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
+      return rows.map((r, i) => (
+        <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{mkTag}{pgRoman(i)}. {pgRowText(r)}</div>
+      ));
     }
-    return sections.map((sec, si) => renderOne(sec, si + 1)).join('');
-  }
-
-  /* ═══════════════════════════════════════════════════════════════════
-    PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
-    ═══════════════════════════════════════════════════════════════════ */
-  function PaperViewModal({ paper, cls, templateId = 1, boardCfg, onClose, onDownload, canDownload = true, setupMap }) {
-    const [tone, setTone] = useState('color'); // 'color' | 'bw'
-    const [sections, setSections] = useState([]);
-    /* Answer-space config from the class+subject setup (API submission detail). */
-    const [meta, setMeta] = useState({ fmt: paper.format || 'with', line: paper.line || 'single', medium: paper.medium || 'english' });
-    const [loadingDetail, setLoadingDetail] = useState(true);
-    const [reportHeader, setReportHeader] = useState(null); // { branchName, branchLogo, address }
-
-    useEffect(() => {
-      const onKey = e => { if (e.key === 'Escape') onClose(); };
-      document.addEventListener('keydown', onKey);
-      return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
-    /* Branch name + logo for the paper header. */
-    useEffect(() => {
-      let alive = true;
-      (async () => { const h = await fetchReportHeader(); if (alive) setReportHeader(h); })();
-      return () => { alive = false; };
-    }, []);
-
-    /* Load the saved questions for this paper from getexamqpsubmissiondetail. */
-    useEffect(() => {
-      let alive = true;
-      (async () => {
-        try {
-          setLoadingDetail(true);
-          const list = await fetchQpSubmissionDetail({
-            id: paper.qpMasterID ?? paper.id,
-            branchID: sessionStorage.getItem('branchID'),
-            gradeID: cls?.gradeID ?? paper.gradeID,
-            sectionID: cls?.sectionID ?? paper.sectionID,
-          });
-          if (alive) {
-            const detail = normalizeQpDetail(list);
-            setSections(detail.sections);
-            // Medium API se aaye to wahi, warna paper ka apna medium (fallback english).
-            setMeta({ fmt: detail.fmt, line: pgLineWithSetup(detail, setupMap), medium: detail.medium || paper.medium || 'english' });
-          }
-        } catch (err) {
-          console.error('Could not load paper detail', err);
-          if (alive) setSections([]);
-        } finally {
-          if (alive) setLoadingDetail(false);
-        }
-      })();
-      return () => { alive = false; };
-    }, [paper, cls]);
-
-    const isBW = tone === 'bw';
-    // Urdu paper → RTL layout (questions right-to-left, Urdu-friendly font).
-    const isUrdu = String(meta.medium || paper.medium || 'english').toLowerCase() === 'urdu';
-    const objMarks  = paper.objMarks  || 0;
-    const subjMarks = paper.subjMarks || 0;
-    const totalMk   = (objMarks + subjMarks) || 100;
-    const totalMin  = ((paper.objTime || 0) + (paper.subjTime || 0)) || 100;
-    const showObj   = paper.type === 'objective'  || paper.type === 'both';
-    const showSubj  = paper.type === 'subjective' || paper.type === 'both';
-    const storedTmpl = pgReadStoredTemplate(templateId || 1);
-    const viewTemplateId = storedTmpl.templateId || templateId || 1;
-    const viewBoardCfg = boardCfg || {
-      boardId: storedTmpl.boardId,
-      boardLevel: storedTmpl.boardLevel,
-      boardGroup: storedTmpl.boardGroup,
-    };
-
-    /* Real paper data fed into the selected template's header design so the view
-      matches the template the user picked (Classic / Modern / Formal). */
-    const headerInfo = {
-      school:     reportHeader?.branchName || pgSchoolName(),
-      campus:     reportHeader?.address || '',
-      logo:       resolveMediaUrl(reportHeader?.branchLogo),
-      examTitle:  paper.title || '',
-      subject:    paper.subj || '',
-      className:  cls?.name || '',
-      section:    cls?.section || '',
-      time:       `${totalMin} Min`,
-      objTime:    paper.objTime || 0,
-      subjTime:   paper.subjTime || 0,
-      objMarks,
-      subjMarks,
-      totalMarks: totalMk,
-      showObj,
-      showSubj,
-    };
-    const templateHeader = () => {
-      if (viewTemplateId === 4) return <BoardHeader board={pgBoardFind(viewBoardCfg?.boardId)} level={pgBoardLevel(viewBoardCfg?.boardLevel)} group={viewBoardCfg?.boardGroup} info={headerInfo} isBW={isBW} />;
-      if (viewTemplateId === 2) return <ModernHeader info={headerInfo} />;
-      if (viewTemplateId === 3) return <FormalHeader info={headerInfo} />;
-      return <ClassicHeader info={headerInfo} />;
-    };
-
-    return createPortal(
-      <div
-        className="pg-modal-overlay open"
-        onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-      >
-        <div className="pg-modal" style={{ maxWidth: 780 }}>
-          <div className="pg-modal-header">
-            <div>
-              <div className="pg-modal-title">
-                <i className="fa-solid fa-eye" style={{ marginRight: 6 }}></i> Paper Preview
-              </div>
-              <div className="pg-modal-sub">Preview of the generated question paper</div>
-            </div>
-            <Tooltip text="Close"><button className="pg-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+    if (k === 'paragraph') {
+      /* Paragraph rows me DO fields: `topic` (title) aur `paragraph` (body).
+         pgRowText sirf topic uthata tha; body kabhi dikhta hi nahi tha. Ab
+         dono dikhao — title line, uske neeche paragraph body. Agar dono same
+         hon (test data jaisa "asdf"/"asdf") to body repeat na karo. */
+      return rows.map((r, i) => {
+        const title = pgStripHtml(r.topic || r.title || r.question || r.mainQuestion);
+        const bodyText = pgStripHtml(r.paragraph);
+        return (
+          <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
+            {mkTag}{pgRoman(i)}. {title}
+            {bodyText && bodyText !== title && (
+              <div style={{ marginTop: 4, lineHeight: 1.6 }}>{bodyText}</div>
+            )}
+            <AnswerLines />
           </div>
+        );
+      });
+    }
+    /* Generic: essays, stories, letters, applications, wordSentences,
+      questionAns, longQuestions, punctuation, circleCorrectWord, fallback. */
+    return rows.map((r, i) => (
+      <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
+        {mkTag}{pgRoman(i)}. {pgRowText(r)}
+        <AnswerLines />
+      </div>
+    ));
+  };
 
-          <div className="pg-modal-body" style={{ padding: 0 }}>
-            <div style={{ background: '#F8FAFF', padding: 20, borderBottom: '1px solid var(--border-light)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Tooltip text="Preview the paper as a Colorful Report">
-                <button
-                  className={`pg-toggle-btn${tone === 'color' ? ' active' : ''}`}
-                  style={{ fontSize: 12, padding: '6px 14px' }}
-                  onClick={() => setTone('color')}
-                  aria-pressed={tone === 'color'}
-                >
-                  <i className="fa-solid fa-palette"></i> Colorful
-                </button>
-              </Tooltip>
-              <Tooltip text="Preview the paper as a low-ink Colorless Report">
-                <button
-                  className={`pg-toggle-btn${tone === 'bw' ? ' active' : ''}`}
-                  style={{ fontSize: 12, padding: '6px 14px' }}
-                  onClick={() => setTone('bw')}
-                  aria-pressed={tone === 'bw'}
-                >
-                  <i className="fa-solid fa-circle-half-stroke"></i> Colorless
-                </button>
-              </Tooltip>
-              {canDownload && (
+  const sectionHeading = (label) => (
+    <div style={{
+      background: isBW ? '#FFFFFF' : '#1E3A8A', color: isBW ? '#0F172A' : '#FFFFFF',
+      border: isBW ? '1px solid #0F172A' : 'none', padding: '6px 14px', fontSize: 12,
+      fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+      margin: '16px 0 10px', borderRadius: 4,
+    }}>{label}</div>
+  );
+  const renderBlock = (sec, num) => (
+    <div key={`${num}-${sec.recTitle}`} style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: '#334155', marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+        <span><strong>{isUrdu ? `سوال نمبر ${num}` : `Q.${num}`}</strong> {sec.mainQuestion}</span>
+        <strong style={{ whiteSpace: 'nowrap' }}>[{L.totalMarks}: {pgSecTotalMarks(sec)}]</strong>
+      </div>
+      {renderRows(sec)}
+    </div>
+  );
+
+  // 'both' paper → Objective section pehle, phir Subjective section.
+  if (paperType === 'both') {
+    const objSecs = sections.filter(s => pgSectionKind(s) === 'obj');
+    const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
+    let n = 0;
+    return (
+      <>
+        {objSecs.length > 0 && sectionHeading(L.secObj)}
+        {objSecs.map(sec => renderBlock(sec, ++n))}
+        {subjSecs.length > 0 && sectionHeading(L.secSubj)}
+        {subjSecs.map(sec => renderBlock(sec, ++n))}
+      </>
+    );
+  }
+  return <>{sections.map((sec, si) => renderBlock(sec, si + 1))}</>;
+}
+
+/* ── HTML builder (Download) — mirrors ApiPaperSections using paper CSS classes ── */
+function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single', medium = 'english') {
+  if (!sections || !sections.length) {
+    return '<div style="text-align:center;color:#64748B;font-size:12px;padding:20px">No saved questions found for this paper.</div>';
+  }
+  const isUrdu = String(medium).toLowerCase() === 'urdu';
+  const L = pgLabels(isUrdu);
+  const blank = '___________';
+  /* Answer space per the class+subject setup: no sheet → none; with sheet →
+    1 line (single) or 4 lines (four) after each written-answer question. */
+  const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
+  const ansLines = () => (lineCount === 0 ? ''
+    : `<div class="write-lines">${'<div class="line-rule">&nbsp;</div>'.repeat(lineCount)}</div>`);
+  const renderOne = (sec, num) => {
+    const k = pgRecKey(sec.recTitle);
+    const rows = sec.rows || [];
+    /* Per-item marks + section total marks. Urdu → left side, English → right.
+      Float use karte hain (Word/PDF dono mein reliable; flex Word mein nahi chalta).
+      Total-marks span pehle rakha (float ke liye source order). */
+    const mk = pgFmtMk(sec.marks);
+    const mkFloat = isUrdu ? 'left' : 'right';
+    const mkMargin = isUrdu ? 'margin-right:8px' : 'margin-left:8px';
+    const mkTag = `<span style="float:${mkFloat};font-weight:700;${mkMargin}">[${mk}]</span>`;
+    const qLabel = isUrdu ? `سوال نمبر ${num}` : `Q.${num}`;
+    const header = `<div class="q-header"><span class="q-marks">[${L.totalMarks}: ${pgSecTotalMarks(sec)}]</span><span><b>${qLabel}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
+    let body = '';
+    const twoCol = (leftKey, leftLabel, rightLabel) =>
+      `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
+      rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgStripHtml(r[leftKey]) || pgRowText(r))}</td><td>${blank}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
+
+    if (k === 'mcqs') {
+      body = rows.map((r, i) => {
+        const opts = ['option1', 'option2', 'option3', 'option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
+        return `<div class="mcq-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
+      }).join('');
+    } else if (k === 'wordsynonyms') body = twoCol('word', L.word, L.synonym);
+    else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', L.word, L.opposite);
+    else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', L.singular, L.plural);
+    else if (k === 'matchcolume' || k === 'matchcolumns') {
+      const shufB = pgShuffleColumnB(rows);   // Column B shuffled (preview jaisा hi deterministic order)
+      body = `<table><tr><th>${L.colA}</th><th>${L.answer}</th><th>${L.colB}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
+        rows.map((r, i) => `<tr><td>${pgCellHtml(r.columnA || r.option1)}</td><td>______</td><td>${pgCellHtml(shufB[i])}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
+    } else if (k === 'comprehension') {
+      const passage = pgStripHtml(rows[0]?.comprehensionStatement);
+      body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
+        rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}${ansLines()}</div>`).join('');
+    } else if (k === 'truefalse') {
+      body = `<table class="tf-table"><tr><th>#</th><th>${L.statement}</th><th>${L.tru}</th><th>${L.fls}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
+        rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
+    } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
+      body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}</div>`).join('');
+    } else if (k === 'paragraph') {
+      /* Preview jaisa hi: har paragraph item ka topic (title) + paragraph (body). */
+      body = rows.map((r, i) => {
+        const title = pgStripHtml(r.topic || r.title || r.question || r.mainQuestion);
+        const bodyText = pgStripHtml(r.paragraph);
+        const bodyHtml = (bodyText && bodyText !== title)
+          ? `<div style="margin-top:4px;line-height:1.6">${pgEsc(bodyText)}</div>` : '';
+        return `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(title)}${bodyHtml}${ansLines()}</div>`;
+      }).join('');
+    } else {
+      body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
+    }
+    return `<div class="q-block">${header}${body}</div>`;
+  };
+
+  // 'both' paper → Objective section pehle, phir Subjective section.
+  if (paperType === 'both') {
+    const objSecs = sections.filter(s => pgSectionKind(s) === 'obj');
+    const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
+    let n = 0;
+    let html = '';
+    if (objSecs.length) html += `<div class="section-title">${L.secObj}</div>` + objSecs.map(s => renderOne(s, ++n)).join('');
+    if (subjSecs.length) html += `<div class="section-title">${L.secSubj}</div>` + subjSecs.map(s => renderOne(s, ++n)).join('');
+    return html;
+  }
+  return sections.map((sec, si) => renderOne(sec, si + 1)).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+  PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
+  ═══════════════════════════════════════════════════════════════════ */
+function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload, canDownload = true }) {
+  const [tone, setTone] = useState('color'); // 'color' | 'bw'
+  const [sections, setSections] = useState([]);
+  /* Answer-space config from the class+subject setup (API submission detail). */
+  const [meta, setMeta] = useState({ fmt: paper.format || 'with', line: paper.line || 'single', medium: paper.medium || 'english' });
+  const [loadingDetail, setLoadingDetail] = useState(true);
+  const [reportHeader, setReportHeader] = useState(null); // { branchName, branchLogo, address }
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  /* Branch name + logo for the paper header. */
+  useEffect(() => {
+    let alive = true;
+    (async () => { const h = await fetchReportHeader(); if (alive) setReportHeader(h); })();
+    return () => { alive = false; };
+  }, []);
+
+  /* Load the saved questions for this paper from getexamqpsubmissiondetail. */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setLoadingDetail(true);
+        const list = await fetchQpSubmissionDetail({
+          id: paper.qpMasterID ?? paper.id,
+          branchID: sessionStorage.getItem('branchID'),
+          gradeID: cls?.gradeID ?? paper.gradeID,
+          sectionID: cls?.sectionID ?? paper.sectionID,
+        });
+        if (alive) {
+          const detail = normalizeQpDetail(list);
+          setSections(detail.sections);
+          // Medium API se aaye to wahi, warna paper ka apna medium (fallback english).
+          setMeta({ fmt: detail.fmt, line: detail.line, medium: detail.medium || paper.medium || 'english' });
+        }
+      } catch (err) {
+        console.error('Could not load paper detail', err);
+        if (alive) setSections([]);
+      } finally {
+        if (alive) setLoadingDetail(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [paper, cls]);
+
+  const isBW = tone === 'bw';
+  // Urdu paper → RTL layout (questions right-to-left, Urdu-friendly font).
+  const isUrdu = String(meta.medium || paper.medium || 'english').toLowerCase() === 'urdu';
+  const objMarks = paper.objMarks || 0;
+  const subjMarks = paper.subjMarks || 0;
+  const totalMk = (objMarks + subjMarks) || 100;
+  const totalMin = ((paper.objTime || 0) + (paper.subjTime || 0)) || 100;
+  const showObj = paper.type === 'objective' || paper.type === 'both';
+  const showSubj = paper.type === 'subjective' || paper.type === 'both';
+
+  /* Real paper data fed into the selected template's header design so the view
+    matches the template the user picked (Classic / Modern / Formal). */
+  const headerInfo = {
+    school: reportHeader?.branchName || 'The Oxford System',
+    campus: reportHeader?.address || '',
+    logo: resolveMediaUrl(reportHeader?.branchLogo),
+    examTitle: paper.title || '',
+    subject: paper.subj || '',
+    className: cls?.name || '',
+    section: cls?.section || '',
+    time: `${totalMin} Min`,
+    objTime: paper.objTime || 0,
+    subjTime: paper.subjTime || 0,
+    objMarks,
+    subjMarks,
+    totalMarks: totalMk,
+    showObj,
+    showSubj,
+  };
+  const templateHeader = () => {
+    if (templateId === 2) return <ModernHeader info={headerInfo} />;
+    if (templateId === 3) return <FormalHeader info={headerInfo} />;
+    return <ClassicHeader info={headerInfo} />;
+  };
+
+  return createPortal(
+    <div
+      className="pg-modal-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="pg-modal" style={{ maxWidth: 780 }}>
+        <div className="pg-modal-header">
+          <div>
+            <div className="pg-modal-title">
+              <i className="fa-solid fa-eye" style={{ marginRight: 6 }}></i> Paper Preview
+            </div>
+            <div className="pg-modal-sub">Preview of the generated question paper</div>
+          </div>
+          <Tooltip text="Close"><button className="pg-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="pg-modal-body" style={{ padding: 0 }}>
+          <div style={{ background: '#F8FAFF', padding: 20, borderBottom: '1px solid var(--border-light)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <Tooltip text="Preview the paper as a Colorful Report">
+              <button
+                className={`pg-toggle-btn${tone === 'color' ? ' active' : ''}`}
+                style={{ fontSize: 12, padding: '6px 14px' }}
+                onClick={() => setTone('color')}
+                aria-pressed={tone === 'color'}
+              >
+                <i className="fa-solid fa-palette"></i> Colorful
+              </button>
+            </Tooltip>
+            <Tooltip text="Preview the paper as a low-ink Colorless Report">
+              <button
+                className={`pg-toggle-btn${tone === 'bw' ? ' active' : ''}`}
+                style={{ fontSize: 12, padding: '6px 14px' }}
+                onClick={() => setTone('bw')}
+                aria-pressed={tone === 'bw'}
+              >
+                <i className="fa-solid fa-circle-half-stroke"></i> Colorless
+              </button>
+            </Tooltip>
+            {canDownload && (
               <Tooltip text="Open download options">
                 <button
                   className="pg-btn-primary"
@@ -4709,59 +4207,59 @@ const setSubjLine = (ci, si, l) => {
                   <i className="fa-solid fa-download"></i> Download
                 </button>
               </Tooltip>
-              )}
-            </div>
-
-            <div style={{ padding: 24, background: '#fff', minHeight: 400, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
-              {/* Template-specific header (Classic / Modern / Formal) — includes the
-                exam title, student fields and marks grid for that design. */}
-              <div style={{ marginBottom: 16 }}>{templateHeader()}</div>
-
-              {loadingDetail ? (
-                <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>
-                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading questions…
-                </div>
-              ) : (
-                <div
-                  dir={isUrdu ? 'rtl' : 'ltr'}
-                  style={isUrdu ? { textAlign: 'right', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Segoe UI',sans-serif" } : undefined}
-                >
-                  <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} fmt={meta.fmt} line={meta.line} medium={meta.medium} />
-                </div>
-              )}
-
-              <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B' }}>
-                <span>Examiner: _____________________</span>
-                <span>Checker: _____________________</span>
-                <span>Re-Checker: _____________________</span>
-              </div>
-            </div>
+            )}
           </div>
 
-          <div className="pg-modal-footer">
-            <Tooltip text="Close preview">
-              <button className="pg-btn-secondary" onClick={onClose}>Close</button>
-            </Tooltip>
-            {canDownload && (
+          <div style={{ padding: 24, background: '#fff', minHeight: 400, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+            {/* Template-specific header (Classic / Modern / Formal) — includes the
+                exam title, student fields and marks grid for that design. */}
+            <div style={{ marginBottom: 16 }}>{templateHeader()}</div>
+
+            {loadingDetail ? (
+              <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading questions…
+              </div>
+            ) : (
+              <div
+                dir={isUrdu ? 'rtl' : 'ltr'}
+                style={isUrdu ? { textAlign: 'right', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Segoe UI',sans-serif" } : undefined}
+              >
+                <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} fmt={meta.fmt} line={meta.line} medium={meta.medium} />
+              </div>
+            )}
+
+            <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B' }}>
+              <span>Examiner: _____________________</span>
+              <span>Checker: _____________________</span>
+              <span>Re-Checker: _____________________</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="pg-modal-footer">
+          <Tooltip text="Close preview">
+            <button className="pg-btn-secondary" onClick={onClose}>Close</button>
+          </Tooltip>
+          {canDownload && (
             <Tooltip text="Open download options">
               <button className="pg-btn-primary" onClick={onDownload}>
                 <i className="fa-solid fa-download"></i> Download Paper
               </button>
             </Tooltip>
-            )}
-          </div>
+          )}
         </div>
-      </div>,
-      document.body
-    );
-  }
+      </div>
+    </div>,
+    document.body
+  );
+}
 
-  /* ═══════════════════════════════════════════════════════════════════
-    FULL PAPER PDF BUILDER — produces a complete printable HTML document.
-    Opens in a new window so the user can print / save as PDF.
-    ═══════════════════════════════════════════════════════════════════ */
-  function buildObjSection() {
-    return `
+/* ═══════════════════════════════════════════════════════════════════
+  FULL PAPER PDF BUILDER — produces a complete printable HTML document.
+  Opens in a new window so the user can print / save as PDF.
+  ═══════════════════════════════════════════════════════════════════ */
+function buildObjSection() {
+  return `
     <div class="section-title">Section A — Objective Questions</div>
 
     <div class="q-block">
@@ -4850,12 +4348,12 @@ const setSubjLine = (ci, si, l) => {
       <div class="write-item">iv. fiza her brother and her mother went to the park [2]</div>
       <div class="write-item">v. no said the duck i am too busy to help [2]</div>
     </div>`;
-  }
+}
 
-  function buildSubjSection() {
-    const fourLines = '<div class="line-rule">&nbsp;</div>'.repeat(4);
-    const eightLines = '<div class="line-rule">&nbsp;</div>'.repeat(8);
-    return `
+function buildSubjSection() {
+  const fourLines = '<div class="line-rule">&nbsp;</div>'.repeat(4);
+  const eightLines = '<div class="line-rule">&nbsp;</div>'.repeat(8);
+  return `
     <div class="section-title">Section B — Subjective Questions</div>
 
     <div class="q-block">
@@ -4888,69 +4386,66 @@ const setSubjLine = (ci, si, l) => {
       <div class="write-item">ii. What type of books did Omar like the most? [2] <div class="ans-line">&nbsp;</div></div>
       <div class="write-item">iii. What did Omar decide after reading the book about space? [2] <div class="ans-line">&nbsp;</div></div>
     </div>`;
-  }
+}
 
-  /* Paper ke body HTML se har sawal ka label nikaalo ("Q.1", "Q.2", … ya Urdu
-    me "سوال نمبر 1"). Har question block theek ek `class="q-header"` deta hai
-    aur uske andar pehla <b> label hota hai — API sections aur static sample
-    dono me. Isi liye ye ginti hamesha wohi hoti hai jo paper me chhapti hai. */
-  function pgExtractQuestionLabels(bodyHTML) {
-    const labels = [];
-    const re = /class="q-header"[\s\S]*?<b>([\s\S]*?)<\/b>/g;
-    let m;
-    while ((m = re.exec(bodyHTML || '')) !== null) labels.push(m[1].trim());
-    return labels;
-  }
+/* Paper ke body HTML se har sawal ka label nikaalo ("Q.1", "Q.2", … ya Urdu
+  me "سوال نمبر 1"). Har question block theek ek `class="q-header"` deta hai
+  aur uske andar pehla <b> label hota hai — API sections aur static sample
+  dono me. Isi liye ye ginti hamesha wohi hoti hai jo paper me chhapti hai. */
+function pgExtractQuestionLabels(bodyHTML) {
+  const labels = [];
+  const re = /class="q-header"[\s\S]*?<b>([\s\S]*?)<\/b>/g;
+  let m;
+  while ((m = re.exec(bodyHTML || '')) !== null) labels.push(m[1].trim());
+  return labels;
+}
 
-  /* Answer sheet me utne hi cells jitne paper me sawal hain, unhi numbers ke
-    saath. Pehle yahan 13 hardcoded thay, is liye 20 ya 50 sawal wale paper par
-    bhi sirf 13 cells (hamesha Q.1–Q.13) aate thay. */
-  function buildAnswerSheetSection(questionLabels) {
-    const labels = Array.isArray(questionLabels) ? questionLabels : [];
-    if (!labels.length) return '';        // koi sawal nahi → khali sheet mat lagao
-    const cells = labels.map((label) =>
-      `<div class="ans-cell"><div class="qnum">${pgEsc(label)}</div><div class="aline" style="border-bottom:1px solid #94A3B8;margin-top:18px">&nbsp;</div></div>`
-    ).join('');
-    return (
-      '<div class="ans-sheet">' +
-        '<div class="ans-sheet-title">&#10022; Answer Sheet &#10022;</div>' +
-        '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">' + cells + '</div>' +
-      '</div>'
-    );
-  }
+/* Answer sheet me utne hi cells jitne paper me sawal hain, unhi numbers ke
+  saath. Pehle yahan 13 hardcoded thay, is liye 20 ya 50 sawal wale paper par
+  bhi sirf 13 cells (hamesha Q.1–Q.13) aate thay. */
+function buildAnswerSheetSection(questionLabels) {
+  const labels = Array.isArray(questionLabels) ? questionLabels : [];
+  if (!labels.length) return '';        // koi sawal nahi → khali sheet mat lagao
+  const cells = labels.map((label) =>
+    `<div class="ans-cell"><div class="qnum">${pgEsc(label)}</div><div class="aline" style="border-bottom:1px solid #94A3B8;margin-top:18px">&nbsp;</div></div>`
+  ).join('');
+  return (
+    '<div class="ans-sheet">' +
+    '<div class="ans-sheet-title">&#10022; Answer Sheet &#10022;</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">' + cells + '</div>' +
+    '</div>'
+  );
+}
 
-  /* ── Download-side template headers ──────────────────────────────────────
-    HTML mirrors of the on-screen ClassicHeader / ModernHeader / FormalHeader so
-    the downloaded (PDF/Word) paper header matches the "Choose Paper Template"
-    design the user selected. `isBW` = colorless (low-ink) variant. */
-  function buildPaperHeaderHTML(templateId, info, isBW, boardCfg) {
-    const d = info || {};
+/* ── Download-side template headers ──────────────────────────────────────
+  HTML mirrors of the on-screen ClassicHeader / ModernHeader / FormalHeader so
+  the downloaded (PDF/Word) paper header matches the "Choose Paper Template"
+  design the user selected. `isBW` = colorless (low-ink) variant. */
+function buildPaperHeaderHTML(templateId, info, isBW) {
+  const d = info || {};
 
-    /* Board Pattern (Template 4) — board-family header, inline-styled. */
-    if (templateId === 4) return buildBoardHeaderHTML(boardCfg, d, isBW);
-
-    if (templateId === 2) {
-      /* Modern — logo + school block, blue underline, marks cards. */
-      const AC = isBW ? '#0F172A' : '#1E3A8A';
-      const school = d.school || pgSchoolName();
-      const campusLine = [d.campus, d.examTitle].filter(Boolean).join('  ·  ');
-      const classLine  = d.className ? `${pgClassLabel(d.className)}${d.section ? `  ·  Section ${d.section}` : ''}` : '';
-      const seal = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
-      const logoBox = d.logo
-        ? `<img src="${d.logo}" alt="logo" style="width:44px;height:44px;object-fit:contain;border-radius:10px;flex-shrink:0" />`
-        : `<div style="width:44px;height:44px;background:${isBW ? '#fff' : 'linear-gradient(135deg,#DBEAFE,#BFDBFE)'};border:${isBW ? '1px solid #0F172A' : 'none'};border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:${AC};flex-shrink:0">${seal}</div>`;
-      const objBox = d.showObj
-        ? `<div style="flex:1;background:${isBW ? '#fff' : '#EFF6FF'};border:1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'};border-radius:6px;padding:5px 10px;font-size:10.5px">
+  if (templateId === 2) {
+    /* Modern — logo + school block, blue underline, marks cards. */
+    const AC = isBW ? '#0F172A' : '#1E3A8A';
+    const school = d.school || 'The Oxford System';
+    const campusLine = [d.campus, d.examTitle].filter(Boolean).join('  ·  ');
+    const classLine = d.className ? `Class ${d.className}${d.section ? `  ·  Section ${d.section}` : ''}` : '';
+    const seal = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
+    const logoBox = d.logo
+      ? `<img src="${d.logo}" alt="logo" style="width:44px;height:44px;object-fit:contain;border-radius:10px;flex-shrink:0" />`
+      : `<div style="width:44px;height:44px;background:${isBW ? '#fff' : 'linear-gradient(135deg,#DBEAFE,#BFDBFE)'};border:${isBW ? '1px solid #0F172A' : 'none'};border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:${AC};flex-shrink:0">${seal}</div>`;
+    const objBox = d.showObj
+      ? `<div style="flex:1;background:${isBW ? '#fff' : '#EFF6FF'};border:1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'};border-radius:6px;padding:5px 10px;font-size:10.5px">
             <div style="font-size:8.5px;font-weight:700;color:${isBW ? '#64748B' : '#93C5FD'};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Objective</div>
             <div style="font-weight:700;color:${AC}">${d.objMarks || 0} Marks${d.objTime ? ` · ${d.objTime} Min` : ''}</div></div>` : '';
-      const subjBox = d.showSubj
-        ? `<div style="flex:1;background:${isBW ? '#fff' : '#F0FDF4'};border:1px solid ${isBW ? '#D1D5DB' : '#BBF7D0'};border-radius:6px;padding:5px 10px;font-size:10.5px">
+    const subjBox = d.showSubj
+      ? `<div style="flex:1;background:${isBW ? '#fff' : '#F0FDF4'};border:1px solid ${isBW ? '#D1D5DB' : '#BBF7D0'};border-radius:6px;padding:5px 10px;font-size:10.5px">
             <div style="font-size:8.5px;font-weight:700;color:${isBW ? '#64748B' : '#6EE7B7'};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Subjective</div>
             <div style="font-weight:700;color:${isBW ? '#0F172A' : '#15803D'}">${d.subjMarks || 0} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}</div></div>` : '';
-      const totalBox = `<div style="flex:1;background:${isBW ? '#fff' : '#1E3A8A'};border:${isBW ? '1px solid #0F172A' : 'none'};border-radius:6px;padding:5px 10px;font-size:10.5px;display:flex;flex-direction:column;justify-content:center">
+    const totalBox = `<div style="flex:1;background:${isBW ? '#fff' : '#1E3A8A'};border:${isBW ? '1px solid #0F172A' : 'none'};border-radius:6px;padding:5px 10px;font-size:10.5px;display:flex;flex-direction:column;justify-content:center">
             <div style="font-size:8.5px;font-weight:700;color:${isBW ? '#64748B' : '#93C5FD'};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Total</div>
             <div style="font-weight:800;color:${isBW ? '#0F172A' : '#fff'};font-size:13px">${d.totalMarks}</div></div>`;
-      return `<div style="display:flex;align-items:flex-start;gap:12px;padding-bottom:10px;margin-bottom:8px;border-bottom:3px solid ${AC}">
+    return `<div style="display:flex;align-items:flex-start;gap:12px;padding-bottom:10px;margin-bottom:8px;border-bottom:3px solid ${AC}">
           ${logoBox}
           <div style="flex:1">
             <div style="font-size:14px;font-weight:800;color:#0F172A">${pgEsc(school)}</div>
@@ -4970,34 +4465,34 @@ const setSubjLine = (ci, si, l) => {
         <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;color:#64748B;margin-top:4px">
           <span>Obtained: _______ / ${d.totalMarks}</span><span>Grade: _______</span><span>Rank: _______</span>
         </div>`;
-    }
+  }
 
-    if (templateId === 3) {
-      /* Formal — round seal, board tag, gradient divider, meta + student grids. */
-      const AC = isBW ? '#0F172A' : '#1E3A8A';
-      const schoolName = (d.school  || pgSchoolName()).toUpperCase();
-      const schoolSub  = (d.campus  ? d.campus.toUpperCase() : '');
-      const examTitle  = (d.examTitle || 'ANNUAL EXAMINATION').toUpperCase();
-      const seal = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
-      const metaCells = [
-        ['SUBJECT', d.subject || '—'],
-        ['CLASS', d.className ? `${d.className}${d.section ? ` ${d.section}` : ''}` : '—'],
-        ['TOTAL MARKS', String(d.totalMarks), true],
-        ['OBJ. MARKS', String(d.objMarks || 0)],
-        ['TOTAL TIME', d.time || '—'],
-      ];
-      const sealInner = d.logo
-        ? `<img src="${d.logo}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%" />`
-        : `<div style="font-size:15px;font-weight:900;color:${isBW ? '#0F172A' : '#fff'};letter-spacing:.02em">${seal}</div>`;
-      const metaHTML = metaCells.map(([k, v, accent], i) =>
-        `<div style="padding:6px 9px;border-right:${i === 4 ? 'none' : '1px solid #E2E8F0'};background:${isBW ? '#fff' : '#FAFBFF'}">
+  if (templateId === 3) {
+    /* Formal — round seal, board tag, gradient divider, meta + student grids. */
+    const AC = isBW ? '#0F172A' : '#1E3A8A';
+    const schoolName = (d.school || 'THE OXFORD SYSTEM').toUpperCase();
+    const schoolSub = (d.campus ? d.campus.toUpperCase() : 'LAHORE CAMPUS');
+    const examTitle = (d.examTitle || 'ANNUAL EXAMINATION').toUpperCase();
+    const seal = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
+    const metaCells = [
+      ['SUBJECT', d.subject || '—'],
+      ['CLASS', d.className ? `${d.className}${d.section ? ` ${d.section}` : ''}` : '—'],
+      ['TOTAL MARKS', String(d.totalMarks), true],
+      ['OBJ. MARKS', String(d.objMarks || 0)],
+      ['TOTAL TIME', d.time || '—'],
+    ];
+    const sealInner = d.logo
+      ? `<img src="${d.logo}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%" />`
+      : `<div style="font-size:15px;font-weight:900;color:${isBW ? '#0F172A' : '#fff'};letter-spacing:.02em">${seal}</div>`;
+    const metaHTML = metaCells.map(([k, v, accent], i) =>
+      `<div style="padding:6px 9px;border-right:${i === 4 ? 'none' : '1px solid #E2E8F0'};background:${isBW ? '#fff' : '#FAFBFF'}">
           <div style="font-size:8px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">${k}</div>
           <div style="font-size:${accent ? '14px' : '12px'};font-weight:700;color:${accent ? AC : '#0F172A'}">${pgEsc(v)}</div></div>`).join('');
-      const studentHTML = ['Student Name', 'Roll No.', 'Section', 'Date'].map((lbl, i) =>
-        `<div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;border-right:${i === 3 ? 'none' : '1px solid #E2E8F0'};background:#fff">
+    const studentHTML = ['Student Name', 'Roll No.', 'Section', 'Date'].map((lbl, i) =>
+      `<div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;border-right:${i === 3 ? 'none' : '1px solid #E2E8F0'};background:#fff">
           <span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em">${lbl}</span>
           <span style="display:block;border-bottom:1px solid #CBD5E1;margin-top:10px"></span></div>`).join('');
-      return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+    return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
           <div style="width:50px;height:50px;border-radius:50%;background:${isBW ? '#fff' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)'};border:${isBW ? '1px solid #0F172A' : 'none'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${sealInner}</div>
           <div style="flex:1">
             <div style="font-size:14px;font-weight:900;color:#0F172A;letter-spacing:.08em;text-transform:uppercase">${pgEsc(schoolName)}</div>
@@ -5014,26 +4509,26 @@ const setSubjLine = (ci, si, l) => {
           <div style="display:flex;align-items:center;gap:8px;flex:1;font-size:10px"><span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase">Grade</span><span style="flex:1;border-bottom:1px solid #CBD5E1"></span></div>
           <div style="display:flex;align-items:center;gap:8px;flex:1;font-size:10px"><span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase">Rank</span><span style="flex:1;border-bottom:1px solid #CBD5E1"></span></div>
         </div>`;
-    }
+  }
 
-    /* Classic (Template 1, default) — centered school bar, exam line, student &
-      marks grids, accent meta bar. */
-    const AC = isBW ? '#0F172A' : '#1E3A8A';
-    const barBg     = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
-    const barColor  = isBW ? '#0F172A' : '#fff';
-    const barBorder = isBW ? '1px solid #0F172A' : 'none';
-    const schoolBar = (d.school ? `${d.school}${d.campus ? ' — ' + d.campus : ''}` : pgSchoolName()).toUpperCase();
-    const examLine  = [d.examTitle, d.subject, d.className && `${pgClassLabel(d.className)}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ');
-    const objTxt    = `${d.objMarks  || 0} Marks${d.objTime  ? ` · ${d.objTime} Min`  : ''}`;
-    const subjTxt   = `${d.subjMarks || 0} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
-    const cell = (label, val, span, accent) =>
-      `<div style="border:1px solid ${isBW ? '#D1D5DB' : (accent ? '#BFDBFE' : '#E2E8F0')};border-radius:6px;padding:6px 8px;background:${isBW ? '#fff' : (accent ? '#EFF6FF' : '#F8FAFF')}${span ? ';grid-column:span 2' : ''}">
+  /* Classic (Template 1, default) — centered school bar, exam line, student &
+    marks grids, accent meta bar. */
+  const AC = isBW ? '#0F172A' : '#1E3A8A';
+  const barBg = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
+  const barColor = isBW ? '#0F172A' : '#fff';
+  const barBorder = isBW ? '1px solid #0F172A' : 'none';
+  const schoolBar = (d.school ? `${d.school}${d.campus ? ' — ' + d.campus : ''}` : 'THE OXFORD SYSTEM').toUpperCase();
+  const examLine = [d.examTitle, d.subject, d.className && `Class ${d.className}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ');
+  const objTxt = `${d.objMarks || 0} Marks${d.objTime ? ` · ${d.objTime} Min` : ''}`;
+  const subjTxt = `${d.subjMarks || 0} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
+  const cell = (label, val, span, accent) =>
+    `<div style="border:1px solid ${isBW ? '#D1D5DB' : (accent ? '#BFDBFE' : '#E2E8F0')};border-radius:6px;padding:6px 8px;background:${isBW ? '#fff' : (accent ? '#EFF6FF' : '#F8FAFF')}${span ? ';grid-column:span 2' : ''}">
         <span style="display:block;font-size:9px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">${label}</span>
         <span style="display:block;font-size:12px;font-weight:700;color:${AC}">${val}</span></div>`;
-    const classicLogo = d.logo
-      ? `<img src="${d.logo}" alt="logo" style="width:40px;height:40px;object-fit:contain;border-radius:8px;background:#fff;padding:2px;flex-shrink:0" />`
-      : '';
-    return `<div style="background:${barBg};color:${barColor};border:${barBorder};display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 16px;font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px 6px 0 0;margin-bottom:14px">${classicLogo}<span>${pgEsc(schoolBar)}</span></div>      <div style="text-align:center;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:12px">${pgEsc(examLine)}</div>
+  const classicLogo = d.logo
+    ? `<img src="${d.logo}" alt="logo" style="width:40px;height:40px;object-fit:contain;border-radius:8px;background:#fff;padding:2px;flex-shrink:0" />`
+    : '';
+  return `<div style="background:${barBg};color:${barColor};border:${barBorder};display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 16px;font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px 6px 0 0;margin-bottom:14px">${classicLogo}<span>${pgEsc(schoolBar)}</span></div>      <div style="text-align:center;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:12px">${pgEsc(examLine)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:#334155;margin-bottom:10px">
         <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Student Name: _______________________________</div>
         <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Roll No: _______________</div>
@@ -5045,100 +4540,100 @@ const setSubjLine = (ci, si, l) => {
         ${cell('Class', pgEsc(d.className || '—'))}
         ${cell('Time', pgEsc(d.time || '—'))}
         ${cell('Total Marks', d.totalMarks, false, true)}
-        ${d.showObj  ? cell('Objective', objTxt, true) : ''}
+        ${d.showObj ? cell('Objective', objTxt, true) : ''}
         ${d.showSubj ? cell('Subjective', subjTxt, true) : ''}
       </div>
-      <div style="display:flex;justify-content:space-between;border-top:2px solid ${AC};padding-top:8px;margin-top:6px;margin-bottom:16px;font-size:11px;font-weight:600;color:${AC}">
+      <div style="display:flex;justify-content:space-between;border-top:2px solid ${AC};padding-top:8px;margin-top:6px;font-size:11px;font-weight:600;color:${AC}">
         <span>Obtained Marks: ____________ / ${d.totalMarks}</span>
         <span>Grade: _______ &nbsp;&nbsp; Rank: _______</span>
       </div>`;
-  }
+}
 
-  function buildFullPaperHTML({ paper, cls, templateId = 1, boardCfg, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg, medium: mediumArg }) {
-    const schoolName = reportHeader?.branchName || pgSchoolName();
-    const schoolLogo = resolveMediaUrl(reportHeader?.branchLogo);
-    const schoolAddress = reportHeader?.address || '';
-    /* Prefer the setup-derived fmt/line (from the API submission detail); fall back
-      to the paper's own values. */
-    const fmt      = fmtArg || paper.format || 'with';
-    const line     = lineArg || paper.line || 'single';
-    // Urdu paper → RTL layout (questions dayen-se-bayen, Urdu-friendly font).
-    const isUrdu   = String(mediumArg || paper.medium || 'english').toLowerCase() === 'urdu';
-    const typ      = paper.type   || 'both';
-    const subject  = paper.subj   || 'English';
-    const title    = paper.title  || 'Question Paper';
-    const totalMin = (paper.objTime  || 0) + (paper.subjTime  || 0) || 100;
-    const objMarks  = paper.objMarks  || 0;
-    const subjMarks = paper.subjMarks || 0;
-    const totalMk  = (objMarks + subjMarks) || 100;
-    const className = cls?.name    || 'Class';
-    const section   = cls?.section || '';
+function buildFullPaperHTML({ paper, cls, templateId = 1, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg, medium: mediumArg }) {
+  const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
+  const schoolLogo = resolveMediaUrl(reportHeader?.branchLogo);
+  const schoolAddress = reportHeader?.address || '';
+  /* Prefer the setup-derived fmt/line (from the API submission detail); fall back
+    to the paper's own values. */
+  const fmt = fmtArg || paper.format || 'with';
+  const line = lineArg || paper.line || 'single';
+  // Urdu paper → RTL layout (questions dayen-se-bayen, Urdu-friendly font).
+  const isUrdu = String(mediumArg || paper.medium || 'english').toLowerCase() === 'urdu';
+  const typ = paper.type || 'both';
+  const subject = paper.subj || 'English';
+  const title = paper.title || 'Question Paper';
+  const totalMin = (paper.objTime || 0) + (paper.subjTime || 0) || 100;
+  const objMarks = paper.objMarks || 0;
+  const subjMarks = paper.subjMarks || 0;
+  const totalMk = (objMarks + subjMarks) || 100;
+  const className = cls?.name || 'Class';
+  const section = cls?.section || '';
 
-    const showObj  = typ === 'objective'  || typ === 'both';
-    const showSubj = typ === 'subjective' || typ === 'both';
+  const showObj = typ === 'objective' || typ === 'both';
+  const showSubj = typ === 'subjective' || typ === 'both';
 
-    /* Same info the on-screen preview feeds into the template header, so the
-      downloaded paper's header matches the "Choose Paper Template" design
-      (Classic / Modern / Formal) the user picked. */
-    const headerInfo = {
-      school:     schoolName,
-      campus:     schoolAddress,
-      logo:       schoolLogo,
-      examTitle:  title,
-      subject,
-      className,
-      section,
-      time:       `${totalMin} Min`,
-      objTime:    paper.objTime  || 0,
-      subjTime:   paper.subjTime || 0,
-      objMarks,
-      subjMarks,
-      totalMarks: totalMk,
-      showObj,
-      showSubj,
-    };
-    const headerHTML = buildPaperHeaderHTML(templateId, headerInfo, isBW, boardCfg);
+  /* Same info the on-screen preview feeds into the template header, so the
+    downloaded paper's header matches the "Choose Paper Template" design
+    (Classic / Modern / Formal) the user picked. */
+  const headerInfo = {
+    school: schoolName,
+    campus: schoolAddress,
+    logo: schoolLogo,
+    examTitle: title,
+    subject,
+    className,
+    section,
+    time: `${totalMin} Min`,
+    objTime: paper.objTime || 0,
+    subjTime: paper.subjTime || 0,
+    objMarks,
+    subjMarks,
+    totalMarks: totalMk,
+    showObj,
+    showSubj,
+  };
+  const headerHTML = buildPaperHeaderHTML(templateId, headerInfo, isBW);
 
-    // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
-    // Falls back to the static sample sections only if no API sections were supplied.
-    const apiBody     = Array.isArray(sections)
-      ? buildApiSectionsHTML(sections, typ, fmt, line, isUrdu ? 'urdu' : 'english')
-      : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
-    /* Answer sheet ab paper ke asal sawalon se banti hai: jo body abhi bani hai
-      usi se har sawal ka label utha kar ek cell banao — 13 sawal → 13 cells,
-      20 → 20, 50 → 50. Urdu paper me labels bhi Urdu hi rehte hain. */
-    const answerSheet = fmt === 'with'
-      ? buildAnswerSheetSection(pgExtractQuestionLabels(apiBody))
-      : '';
+  // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
+  // Falls back to the static sample sections only if no API sections were supplied.
+  const apiBody = Array.isArray(sections)
+    ? buildApiSectionsHTML(sections, typ, fmt, line, isUrdu ? 'urdu' : 'english')
+    : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
+  /* Answer sheet ab paper ke asal sawalon se banti hai: jo body abhi bani hai
+    usi se har sawal ka label utha kar ek cell banao — 13 sawal → 13 cells,
+    20 → 20, 50 → 50. Urdu paper me labels bhi Urdu hi rehte hain. */
+  const answerSheet = fmt === 'with'
+    ? buildAnswerSheetSection(pgExtractQuestionLabels(apiBody))
+    : '';
 
-    /* Two coordinated palettes:
-      • Colorful: brand-blue gradient header, blue-tinted info & table heads.
-      • Colorless: dedicated LOW-INK layout — white header (no fill), light
-        gray borders, no near-black section bands. Section titles become
-        a bordered/underlined heading instead of a filled band so the
-        paper prints with minimal toner. */
-    const headerBg    = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
-    const headerColor = isBW ? '#0F172A' : '#FFFFFF';
-    const headerBorder = isBW ? '1px solid #D1D5DB' : 'none';
-    const infoBg     = isBW ? '#FFFFFF' : '#F8FAFF';
-    const infoBorder = isBW ? '#D1D5DB' : '#BFDBFE';
-    const infoColor  = isBW ? '#111111' : '#1E40AF';
-    const sectionBg  = isBW ? '#FFFFFF' : '#1E3A8A';
-    const sectionColor = isBW ? '#0F172A' : '#FFFFFF';
-    const sectionBorder = isBW ? '1px solid #0F172A' : 'none';
-    const thBg       = isBW ? '#FFFFFF' : '#EFF6FF';
-    const thColor    = isBW ? '#111111' : '#1E40AF';
-    const thBorder   = isBW ? '#D1D5DB' : '#BFDBFE';
-    const printBg    = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
-    const printColor = isBW ? '#0F172A' : '#FFFFFF';
-    const printShadow = isBW ? '0 2px 8px rgba(0,0,0,.12)' : '0 4px 14px rgba(30,58,138,.4)';
-    const printBorder = isBW ? '1.5px solid #0F172A' : 'none';
-    /* Always render the PDF print button. When the chosen format is Word,
-      deliverReport() rewrites window.print() → __saveAsWord() and relabels
-      this button to "Save as Word" (rasterising logos/SVG into the .doc). */
-    const dlButton   = `<button class="print-btn no-print" onclick="window.print()">${isBW ? '' : '🖨 '}Print / Save as PDF</button>`;
+  /* Two coordinated palettes:
+    • Colorful: brand-blue gradient header, blue-tinted info & table heads.
+    • Colorless: dedicated LOW-INK layout — white header (no fill), light
+      gray borders, no near-black section bands. Section titles become
+      a bordered/underlined heading instead of a filled band so the
+      paper prints with minimal toner. */
+  const headerBg = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
+  const headerColor = isBW ? '#0F172A' : '#FFFFFF';
+  const headerBorder = isBW ? '1px solid #D1D5DB' : 'none';
+  const infoBg = isBW ? '#FFFFFF' : '#F8FAFF';
+  const infoBorder = isBW ? '#D1D5DB' : '#BFDBFE';
+  const infoColor = isBW ? '#111111' : '#1E40AF';
+  const sectionBg = isBW ? '#FFFFFF' : '#1E3A8A';
+  const sectionColor = isBW ? '#0F172A' : '#FFFFFF';
+  const sectionBorder = isBW ? '1px solid #0F172A' : 'none';
+  const thBg = isBW ? '#FFFFFF' : '#EFF6FF';
+  const thColor = isBW ? '#111111' : '#1E40AF';
+  const thBorder = isBW ? '#D1D5DB' : '#BFDBFE';
+  const printBg = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
+  const printColor = isBW ? '#0F172A' : '#FFFFFF';
+  const printShadow = isBW ? '0 2px 8px rgba(0,0,0,.12)' : '0 4px 14px rgba(30,58,138,.4)';
+  const printBorder = isBW ? '1.5px solid #0F172A' : 'none';
+  /* Always render the PDF print button. When the chosen format is Word,
+    deliverReport() rewrites window.print() → __saveAsWord() and relabels
+    this button to "Save as Word" (rasterising logos/SVG into the .doc). */
+  const dlButton = `<button class="print-btn no-print" onclick="window.print()">${isBW ? '' : '🖨 '}Print / Save as PDF</button>`;
 
-    return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
   <html><head>
   <meta charset="UTF-8">
   <title>${title} — ${subject}</title>
@@ -5242,19 +4737,17 @@ const setSubjLine = (ci, si, l) => {
   </table>
   ${dlButton}
   </body></html>`;
-  }
+}
 
-  /* ═══════════════════════════════════════════════════════════════════
-    DOWNLOAD MODAL — Print Style (Color/BW) + File Format (PDF/Word)
-    ═══════════════════════════════════════════════════════════════════ */
- function DownloadModal({
+/* ═══════════════════════════════════════════════════════════════════
+  DOWNLOAD MODAL — Print Style (Color/BW) + File Format (PDF/Word)
+  ═══════════════════════════════════════════════════════════════════ */
+function DownloadModal({
   paper,
   cls,
   templateId = 1,
-  boardCfg,
   onClose,
   toast,
-  setupMap,
 }) {
   const handleDownload = async ({ style, format }) => {
     /*
@@ -5335,7 +4828,7 @@ const setSubjLine = (ci, si, l) => {
         detail.fmt;
 
       line =
-        pgLineWithSetup(detail, setupMap);
+        detail.line;
 
       medium =
         detail.medium ||
@@ -5350,21 +4843,11 @@ const setSubjLine = (ci, si, l) => {
       );
     }
 
-    /* New tab / stale props: localStorage se selected format uthao. */
-    const storedTmpl = pgReadStoredTemplate(templateId || 1);
-    const effTemplateId = storedTmpl.templateId || templateId || 1;
-    const effBoardCfg = boardCfg || {
-      boardId: storedTmpl.boardId,
-      boardLevel: storedTmpl.boardLevel,
-      boardGroup: storedTmpl.boardGroup,
-    };
-
     const html =
       buildFullPaperHTML({
         paper,
         cls,
-        templateId: effTemplateId,
-        boardCfg: effBoardCfg,
+        templateId,
 
         isBW:
           style === 'bw',
@@ -5377,11 +4860,9 @@ const setSubjLine = (ci, si, l) => {
       });
 
     const reportName =
-      `${
-        paper.title ||
-        'Question Paper'
-      } - ${
-        cls?.name || ''
+      `${paper.title ||
+      'Question Paper'
+      } - ${cls?.name || ''
       }`;
 
     deliverReport(
@@ -5392,14 +4873,12 @@ const setSubjLine = (ci, si, l) => {
     );
 
     toast(
-      `Download ${
-        style === 'color'
-          ? 'Colorful'
-          : 'Colorless'
-      } ${
-        format === 'pdf'
-          ? 'PDF'
-          : 'Word'
+      `Download ${style === 'color'
+        ? 'Colorful'
+        : 'Colorless'
+      } ${format === 'pdf'
+        ? 'PDF'
+        : 'Word'
       } — opened in new window`,
       'success'
     );
@@ -5411,10 +4890,9 @@ const setSubjLine = (ci, si, l) => {
     <ReportDownloadDialog
       open={true}
       reportName={
-        `${paper.title || 'Question Paper'} — ${cls?.name || ''}${
-          cls?.section
-            ? ` · Section ${cls.section}`
-            : ''
+        `${paper.title || 'Question Paper'} — ${cls?.name || ''}${cls?.section
+          ? ` · Section ${cls.section}`
+          : ''
         }`
       }
       initialFormat="pdf"
@@ -5424,519 +4902,502 @@ const setSubjLine = (ci, si, l) => {
   );
 }
 
-  /* ═══════════════════════════════════════════════════════════════════
-    DELETE CONFIRMATION DIALOG
-    ═══════════════════════════════════════════════════════════════════ */
-  function DeleteConfirmDialog({ paper, cls, onClose, onConfirm , isOtherSession , toast }) {
-    useEffect(() => {
-      const onKey = e => { if (e.key === 'Escape') onClose(); };
-      document.addEventListener('keydown', onKey);
-      return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
+/* ═══════════════════════════════════════════════════════════════════
+  DELETE CONFIRMATION DIALOG
+  ═══════════════════════════════════════════════════════════════════ */
+function DeleteConfirmDialog({ paper, cls, onClose, onConfirm, isOtherSession, toast }) {
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
-    return createPortal(
-      <div
-        className="pg-delete-overlay open"
-        onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-      >
-        <div className="pg-delete-dialog">
-          <div className="pg-del-icon-wrap">
-            <div className="pg-del-icon-bg">
-              <i className="fa-solid fa-trash pg-del-icon"></i>
-            </div>
+  return createPortal(
+    <div
+      className="pg-delete-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="pg-delete-dialog">
+        <div className="pg-del-icon-wrap">
+          <div className="pg-del-icon-bg">
+            <i className="fa-solid fa-trash pg-del-icon"></i>
           </div>
+        </div>
 
-          <div className="pg-del-title">Delete Generated Paper?</div>
-          <div className="pg-del-subtitle">
-            This will permanently delete this paper and all its settings.{' '}
-            <strong>This action cannot be undone.</strong>
-          </div>
+        <div className="pg-del-title">Delete Generated Paper?</div>
+        <div className="pg-del-subtitle">
+          This will permanently delete this paper and all its settings.{' '}
+          <strong>This action cannot be undone.</strong>
+        </div>
 
-          <div className="pg-del-detail-pill">
-            <i className="fa-solid fa-school" style={{ color: '#6B7280', fontSize: 11, marginRight: 4 }}></i>
-            {cls.name} · Section {cls.section}
-            &nbsp;•&nbsp;
-            <i className="fa-solid fa-file-lines" style={{ color: '#6B7280', fontSize: 11, marginRight: 4 }}></i>
-            {paper.subj} — {paper.title}
-          </div>
+        <div className="pg-del-detail-pill">
+          <i className="fa-solid fa-school" style={{ color: '#6B7280', fontSize: 11, marginRight: 4 }}></i>
+          {cls.name} · Section {cls.section}
+          &nbsp;•&nbsp;
+          <i className="fa-solid fa-file-lines" style={{ color: '#6B7280', fontSize: 11, marginRight: 4 }}></i>
+          {paper.subj} — {paper.title}
+        </div>
 
-          <div className="pg-del-warning">
-            <i className="fa-solid fa-triangle-exclamation" style={{ color: '#DC2626', fontSize: 14, flexShrink: 0, marginTop: 1 }}></i>
-            <span>All configurations and question blocks for this paper will be permanently removed.</span>
-          </div>
+        <div className="pg-del-warning">
+          <i className="fa-solid fa-triangle-exclamation" style={{ color: '#DC2626', fontSize: 14, flexShrink: 0, marginTop: 1 }}></i>
+          <span>All configurations and question blocks for this paper will be permanently removed.</span>
+        </div>
 
-          <div className="pg-del-footer">
-            <Tooltip text="Cancel and close">
-              <button className="pg-del-btn-cancel" onClick={onClose}>Cancel</button>
+        <div className="pg-del-footer">
+          <Tooltip text="Cancel and close">
+            <button className="pg-del-btn-cancel" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text="Confirm delete this paper">
+            <button
+              className="pg-del-btn-confirm"
+              onClick={() => {
+                if (isOtherSession) {
+                  toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
+                  return;
+                }
+                onConfirm();
+              }}
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+            >
+              <i className="fa-solid fa-trash" style={{ fontSize: 13 }}></i> Yes, Delete
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+  TEMPLATE PREVIEW MODAL — Classic / Modern / Formal + With/Without
+  Answer Sheet + Single/Four-line answer style.
+  ═══════════════════════════════════════════════════════════════════ */
+function TemplatePreviewModal({ n, onClose, onSelect }) {
+  const [fmt, setFmt] = useState('with');     // 'with' | 'without'
+  const [line, setLine] = useState('single');   // 'single' | 'four'
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const titles = { 1: 'Classic (Template 1)', 2: 'Modern (Template 2)', 3: 'Formal (Template 3)' };
+
+  return createPortal(
+    <div
+      className="pg-tmpl-prev-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="pg-tmpl-prev-modal">
+        <div className="pg-tmpl-prev-header">
+          <div className="pg-tmpl-prev-title">Preview — {titles[n]}</div>
+          <Tooltip text="Close"><button className="pg-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="pg-tmpl-prev-body">
+          {/* Toolbar */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            <Tooltip text="Preview template with answer sheet">
+              <button
+                className={`pg-toggle-btn${fmt === 'with' ? ' active' : ''}`}
+                onClick={() => setFmt('with')}
+              >
+                <i className="fa-solid fa-file-lines"></i> With Answer Sheet
+              </button>
             </Tooltip>
-            <Tooltip text="Confirm delete this paper">
- <button
-                            className="pg-del-btn-confirm"
-                            onClick={() => {
-                                if (isOtherSession) {
-                                    toast("Today is outside this session's start and end dates, so changes are not allowed.", 'error');
-                                    return;
-                                }
-                                onConfirm();
-                            }}
-                            disabled={isOtherSession}
-                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                        >
-                <i className="fa-solid fa-trash" style={{ fontSize: 13 }}></i> Yes, Delete
+            <Tooltip text="Preview template without answer sheet">
+              <button
+                className={`pg-toggle-btn${fmt === 'without' ? ' active' : ''}`}
+                onClick={() => setFmt('without')}
+              >
+                <i className="fa-regular fa-file"></i> Without Answer Sheet
+              </button>
+            </Tooltip>
+            <Tooltip text={fmt === 'without' ? 'Available only when answer sheet is included' : 'Preview with single-line answer lines'}>
+              <button
+                className={`pg-toggle-btn${line === 'single' ? ' active' : ''}`}
+                onClick={() => setLine('single')}
+                style={{ marginLeft: 'auto' }}
+                disabled={fmt === 'without'}
+              >
+                <i className="fa-solid fa-minus"></i> Single Line
+              </button>
+            </Tooltip>
+            <Tooltip text={fmt === 'without' ? 'Available only when answer sheet is included' : 'Preview with four-line (handwriting) answer lines'}>
+              <button
+                className={`pg-toggle-btn${line === 'four' ? ' active' : ''}`}
+                onClick={() => setLine('four')}
+                disabled={fmt === 'without'}
+              >
+                <i className="fa-solid fa-bars"></i> Four Line
               </button>
             </Tooltip>
           </div>
-        </div>
-      </div>,
-      document.body
-    );
-  }
 
-  /* ═══════════════════════════════════════════════════════════════════
-    TEMPLATE PREVIEW MODAL — Classic / Modern / Formal + With/Without
-    Answer Sheet + Single/Four-line answer style.
-    ═══════════════════════════════════════════════════════════════════ */
-  function TemplatePreviewModal({ n, school, onClose, onSelect, boardId, setBoardId, boardLevel, setBoardLevel, boardGroup, setBoardGroup }) {
-    const [fmt, setFmt]   = useState('with');     // 'with' | 'without'
-    const [line, setLine] = useState('single');   // 'single' | 'four'
-
-    useEffect(() => {
-      const onKey = e => { if (e.key === 'Escape') onClose(); };
-      document.addEventListener('keydown', onKey);
-      return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
-    const titles = { 1: 'Classic (Template 1)', 2: 'Modern (Template 2)', 3: 'Formal (Template 3)', 4: 'Board Pattern (Template 4)' };
-
-    return createPortal(
-      <div
-        className="pg-tmpl-prev-overlay open"
-        onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-      >
-        <div className="pg-tmpl-prev-modal">
-          <div className="pg-tmpl-prev-header">
-            <div className="pg-tmpl-prev-title">Preview — {titles[n]}</div>
-            <Tooltip text="Close"><button className="pg-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-          </div>
-
-          <div className="pg-tmpl-prev-body">
-            {/* Toolbar */}
-            <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-              <Tooltip text="Preview template with answer sheet">
-                <button
-                  className={`pg-toggle-btn${fmt === 'with' ? ' active' : ''}`}
-                  onClick={() => setFmt('with')}
-                >
-                  <i className="fa-solid fa-file-lines"></i> With Answer Sheet
-                </button>
-              </Tooltip>
-              <Tooltip text="Preview template without answer sheet">
-                <button
-                  className={`pg-toggle-btn${fmt === 'without' ? ' active' : ''}`}
-                  onClick={() => setFmt('without')}
-                >
-                  <i className="fa-regular fa-file"></i> Without Answer Sheet
-                </button>
-              </Tooltip>
-              <Tooltip text={fmt === 'without' ? 'Available only when answer sheet is included' : 'Preview with single-line answer lines'}>
-                <button
-                  className={`pg-toggle-btn${line === 'single' ? ' active' : ''}`}
-                  onClick={() => setLine('single')}
-                  style={{ marginLeft: 'auto' }}
-                  disabled={fmt === 'without'}
-                >
-                  <i className="fa-solid fa-minus"></i> Single Line
-                </button>
-              </Tooltip>
-              <Tooltip text={fmt === 'without' ? 'Available only when answer sheet is included' : 'Preview with four-line (handwriting) answer lines'}>
-                <button
-                  className={`pg-toggle-btn${line === 'four' ? ' active' : ''}`}
-                  onClick={() => setLine('four')}
-                  disabled={fmt === 'without'}
-                >
-                  <i className="fa-solid fa-bars"></i> Four Line
-                </button>
-              </Tooltip>
-            </div>
-
-            {/* Board / Level / Group pickers — Board Pattern only */}
-            {n === 4 && (
-              <BoardPicker
-                className="pgx-bp-pick"
-                boardId={boardId} setBoardId={setBoardId}
-                boardLevel={boardLevel} setBoardLevel={setBoardLevel}
-                boardGroup={boardGroup} setBoardGroup={setBoardGroup}
-              />
-            )}
-
-            {/* Paper preview */}
-            <div className="pg-paper-preview-box">
-              {n === 1 && <ClassicHeader school={school} />}
-              {n === 2 && <ModernHeader school={school} />}
-              {n === 3 && <FormalHeader school={school} />}
-              {n === 4 && <BoardHeader board={pgBoardFind(boardId)} level={pgBoardLevel(boardLevel)} group={boardGroup} />}
-              {fmt === 'with' && <AnswerSheet line={line} />}
-            </div>
-          </div>
-
-          <div className="pg-tmpl-prev-footer">
-            <Tooltip text="Close preview">
-              <button className="pg-btn-secondary" onClick={onClose}>Close</button>
-            </Tooltip>
-            <Tooltip text={n === 4 ? 'Use this board for all generated papers' : `Use Template ${n} for all generated papers`}>
-              <button className="pg-btn-primary" onClick={() => onSelect(n)}>
-                <i className="fa-solid fa-check"></i> Use This Template
-              </button>
-            </Tooltip>
+          {/* Paper preview */}
+          <div className="pg-paper-preview-box">
+            {n === 1 && <ClassicHeader />}
+            {n === 2 && <ModernHeader />}
+            {n === 3 && <FormalHeader />}
+            {fmt === 'with' && <AnswerSheet line={line} />}
           </div>
         </div>
-      </div>,
-      document.body
-    );
-  }
 
-  /* ── Classic (Template 1) ──
-    `info` (optional) drives real paper data in the live view; omitted in the
-    template-preview modal so it keeps showing the sample layout. */
-  function ClassicHeader({ info, school: school0 = {} }) {
-    const d = pgHeaderData(info, school0);
-    const schoolBar = d.school
-      ? `${d.school}${d.campus ? ' — ' + d.campus : ''}`.toUpperCase()
-      : pgSchoolLine(school0).toUpperCase();
-    const examLine = d.examTitle
-      ? [d.examTitle, d.subject, d.className && `${pgClassLabel(d.className)}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ')
-      : 'Annual Examination 2026  •  English (A)  •  Class IV (White)';
-    const subject = d.subject || 'English (A)';
-    const klass   = d.className || 'IV';
-    const time    = d.time || '100 Min';
-    const total   = d.totalMarks ?? 100;
-    const objTxt  = `${d.objMarks ?? 40} Marks${d.objTime ? ` · ${d.objTime} Min` : ''}`;
-    const subjTxt = `${d.subjMarks ?? 60} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
-    return (
-      <>
-        <div className="pg-pp-school-bar">{schoolBar}</div>
-        <div className="pg-pp-exam-line">{examLine}</div>
-        <div className="pg-pp-student-grid">
-          <div className="pg-pp-student-field">Student Name: _______________________________</div>
-          <div className="pg-pp-student-field">Roll No: _______________</div>
-          <div className="pg-pp-student-field">Section: {d.section || '_______________'}</div>
-          <div className="pg-pp-student-field">Date: __________________</div>
+        <div className="pg-tmpl-prev-footer">
+          <Tooltip text="Close preview">
+            <button className="pg-btn-secondary" onClick={onClose}>Close</button>
+          </Tooltip>
+          <Tooltip text={`Use Template ${n} for all generated papers`}>
+            <button className="pg-btn-primary" onClick={() => onSelect(n)}>
+              <i className="fa-solid fa-check"></i> Use This Template
+            </button>
+          </Tooltip>
         </div>
-        <div className="pg-pp-marks-grid">
-          <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Subject</span><span className="pg-pp-marks-val">{subject}</span></div>
-          <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Class</span><span className="pg-pp-marks-val">{klass}</span></div>
-          <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Time</span><span className="pg-pp-marks-val">{time}</span></div>
-          <div className="pg-pp-marks-cell pg-pp-marks-cell--accent"><span className="pg-pp-marks-label">Total Marks</span><span className="pg-pp-marks-val">{total}</span></div>
-          {(d.showObj ?? true) && <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Objective</span><span className="pg-pp-marks-val">{objTxt}</span></div>}
-          {(d.showSubj ?? true) && <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Subjective</span><span className="pg-pp-marks-val">{subjTxt}</span></div>}
-        </div>
-        <div className="pg-pp-meta-bar">
-          <span>Obtained Marks: ____________ / {total}</span>
-          <span>Grade: _______ &nbsp;&nbsp; Rank: _______</span>
-        </div>
-      </>
-    );
-  }
+      </div>
+    </div>,
+    document.body
+  );
+}
 
-  /* ── Modern (Template 2) ── */
-  function ModernHeader({ info, school: school0 = {} }) {
-    const d = pgHeaderData(info, school0);
-    const school = d.school || school0.branchName || pgSchoolName();
-    const campusLine = d.campus
-      ? `${d.campus}${d.examTitle ? '  ·  ' + d.examTitle : ''}`
-      : [school0.address, 'Annual Examination 2026'].filter(Boolean).join('  ·  ');
-    const classLine = d.className ? `${pgClassLabel(d.className)}${d.section ? `  ·  Section ${d.section}` : ''}` : 'Class IV · Section White';
-    const subject = d.subject || 'English (A)';
-    const total   = d.totalMarks ?? 100;
-    const seal    = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
-    return (
-      <>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, paddingBottom: 10, marginBottom: 8, borderBottom: '3px solid #1E3A8A' }}>
-          {d.logo
-            ? <img src={d.logo} alt="logo" style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 10, flexShrink: 0 }} />
-            : <div style={{ width: 44, height: 44, background: 'linear-gradient(135deg,#DBEAFE,#BFDBFE)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900, color: '#1E3A8A', flexShrink: 0 }}>{seal}</div>}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: '#0F172A' }}>{school}</div>
-            <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>{campusLine}</div>
-          </div>
-          <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#1E3A8A' }}>{classLine}</div>
-            <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>{subject}</div>
-          </div>
+/* ── Classic (Template 1) ──
+  `info` (optional) drives real paper data in the live view; omitted in the
+  template-preview modal so it keeps showing the sample layout. */
+function ClassicHeader({ info }) {
+  const d = info || {};
+  const schoolBar = d.school
+    ? `${d.school}${d.campus ? ' — ' + d.campus : ''}`.toUpperCase()
+    : 'THE OXFORD SYSTEM — LAHORE CAMPUS';
+  const examLine = d.examTitle
+    ? [d.examTitle, d.subject, d.className && `Class ${d.className}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ')
+    : 'Annual Examination 2026  •  English (A)  •  Class IV (White)';
+  const subject = d.subject || 'English (A)';
+  const klass = d.className || 'IV';
+  const time = d.time || '100 Min';
+  const total = d.totalMarks ?? 100;
+  const objTxt = `${d.objMarks ?? 40} Marks${d.objTime ? ` · ${d.objTime} Min` : ''}`;
+  const subjTxt = `${d.subjMarks ?? 60} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
+  return (
+    <>
+      <div className="pg-pp-school-bar">{schoolBar}</div>
+      <div className="pg-pp-exam-line">{examLine}</div>
+      <div className="pg-pp-student-grid">
+        <div className="pg-pp-student-field">Student Name: _______________________________</div>
+        <div className="pg-pp-student-field">Roll No: _______________</div>
+        <div className="pg-pp-student-field">Section: {d.section || '_______________'}</div>
+        <div className="pg-pp-student-field">Date: __________________</div>
+      </div>
+      <div className="pg-pp-marks-grid">
+        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Subject</span><span className="pg-pp-marks-val">{subject}</span></div>
+        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Class</span><span className="pg-pp-marks-val">{klass}</span></div>
+        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Time</span><span className="pg-pp-marks-val">{time}</span></div>
+        <div className="pg-pp-marks-cell pg-pp-marks-cell--accent"><span className="pg-pp-marks-label">Total Marks</span><span className="pg-pp-marks-val">{total}</span></div>
+        {(d.showObj ?? true) && <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Objective</span><span className="pg-pp-marks-val">{objTxt}</span></div>}
+        {(d.showSubj ?? true) && <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Subjective</span><span className="pg-pp-marks-val">{subjTxt}</span></div>}
+      </div>
+      <div className="pg-pp-meta-bar">
+        <span>Obtained Marks: ____________ / {total}</span>
+        <span>Grade: _______ &nbsp;&nbsp; Rank: _______</span>
+      </div>
+    </>
+  );
+}
+
+/* ── Modern (Template 2) ── */
+function ModernHeader({ info }) {
+  const d = info || {};
+  const school = d.school || 'The Oxford System';
+  const campusLine = d.campus
+    ? `${d.campus}${d.examTitle ? '  ·  ' + d.examTitle : ''}`
+    : 'Lahore Campus  ·  Annual Examination 2026';
+  const classLine = d.className ? `Class ${d.className}${d.section ? `  ·  Section ${d.section}` : ''}` : 'Class IV · Section White';
+  const subject = d.subject || 'English (A)';
+  const total = d.totalMarks ?? 100;
+  const seal = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, paddingBottom: 10, marginBottom: 8, borderBottom: '3px solid #1E3A8A' }}>
+        {d.logo
+          ? <img src={d.logo} alt="logo" style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 10, flexShrink: 0 }} />
+          : <div style={{ width: 44, height: 44, background: 'linear-gradient(135deg,#DBEAFE,#BFDBFE)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900, color: '#1E3A8A', flexShrink: 0 }}>{seal}</div>}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#0F172A' }}>{school}</div>
+          <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>{campusLine}</div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 6, fontSize: 10.5, color: '#334155', marginBottom: 8 }}>
-          <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Student Name: _____________________</div>
-          <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Roll No: _________</div>
-          <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Date: ___________</div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#1E3A8A' }}>{classLine}</div>
+          <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>{subject}</div>
         </div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-          {(d.showObj ?? true) && (
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 6, fontSize: 10.5, color: '#334155', marginBottom: 8 }}>
+        <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Student Name: _____________________</div>
+        <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Roll No: _________</div>
+        <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Date: ___________</div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+        {(d.showObj ?? true) && (
           <div style={{ flex: 1, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '5px 10px', fontSize: 10.5 }}>
             <div style={{ fontSize: 8.5, fontWeight: 700, color: '#93C5FD', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Objective</div>
             <div style={{ fontWeight: 700, color: '#1E3A8A' }}>{d.objMarks ?? 40} Marks{d.objTime ? ` · ${d.objTime} Min` : ''}</div>
           </div>)}
-          {(d.showSubj ?? true) && (
+        {(d.showSubj ?? true) && (
           <div style={{ flex: 1, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '5px 10px', fontSize: 10.5 }}>
             <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6EE7B7', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Subjective</div>
             <div style={{ fontWeight: 700, color: '#15803D' }}>{d.subjMarks ?? 60} Marks{d.subjTime ? ` · ${d.subjTime} Min` : ''}</div>
           </div>)}
-          <div style={{ flex: 1, background: '#1E3A8A', borderRadius: 6, padding: '5px 10px', fontSize: 10.5, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div style={{ fontSize: 8.5, fontWeight: 700, color: '#93C5FD', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Total</div>
-            <div style={{ fontWeight: 800, color: '#fff', fontSize: 13 }}>{total}</div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 600, color: '#64748B', marginTop: 4 }}>
-          <span>Obtained: _______ / {total}</span>
-          <span>Grade: _______</span>
-          <span>Rank: _______</span>
-        </div>
-      </>
-    );
-  }
-
-  /* ── Formal (Template 3) ── */
-  function FormalHeader({ info, school: school0 = {} }) {
-    const d = pgHeaderData(info, school0);
-    const schoolName = (d.school || school0.branchName || pgSchoolName()).toUpperCase();
-    const schoolSub  = (d.campus ? d.campus.toUpperCase() : String(school0.address || '').toUpperCase());
-    const examTitle  = (d.examTitle || 'ANNUAL EXAMINATION — 2026').toUpperCase();
-    const seal       = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
-    const metaCells = [
-      ['SUBJECT', d.subject || 'English (A)'],
-      ['CLASS', d.className ? `${d.className}${d.section ? ` ${d.section}` : ''}` : 'IV White'],
-      ['TOTAL MARKS', String(d.totalMarks ?? 100), true],
-      ['OBJ. MARKS', String(d.objMarks ?? 40)],
-      ['TOTAL TIME', d.time || '100 Min'],
-    ];
-    return (
-      <div className="pg-pp-formal-wrap">
-        <div className="pg-pp-formal-top">
-          <div className="pg-pp-formal-seal">
-            {d.logo
-              ? <img src={d.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '50%' }} />
-              : <div className="pg-pp-formal-seal-inner">{seal}</div>}
-          </div>
-          <div className="pg-pp-formal-school-block">
-            <div className="pg-pp-formal-school-name">{schoolName}</div>
-            <div className="pg-pp-formal-school-sub">{schoolSub}</div>
-          </div>
-          <div className="pg-pp-formal-board-tag">BOARD PATTERN</div>
-        </div>
-        <div className="pg-pp-formal-divider"></div>
-        <div className="pg-pp-formal-exam-title">{examTitle}</div>
-        <div className="pg-pp-formal-meta-grid">
-          {metaCells.map(([k, v, accent], i) => (
-            <div key={i} className="pg-pp-formal-meta-cell">
-              <div className="pg-pp-formal-meta-label">{k}</div>
-              <div className={`pg-pp-formal-meta-val${accent ? ' pg-pp-formal-meta-accent' : ''}`}>{v}</div>
-            </div>
-          ))}
-        </div>
-        <div className="pg-pp-formal-student-grid">
-          {['Student Name', 'Roll No.', 'Section', 'Date'].map((lbl, i) => (
-            <div key={i} className="pg-pp-formal-student-field">
-              <span className="pg-pp-formal-field-label">{lbl}</span>
-              <span className="pg-pp-formal-field-line"></span>
-            </div>
-          ))}
-        </div>
-        <div className="pg-pp-formal-obtained-row">
-          <div className="pg-pp-formal-obtained-cell">
-            <span className="pg-pp-formal-field-label">Obtained Marks</span>
-            <span className="pg-pp-formal-field-line" style={{ flex: 1, minWidth: 50 }}></span>
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8' }}>/{d.totalMarks ?? 100}</span>
-          </div>
-          <div className="pg-pp-formal-obtained-cell">
-            <span className="pg-pp-formal-field-label">Grade</span>
-            <span className="pg-pp-formal-field-line" style={{ flex: 1, minWidth: 30 }}></span>
-          </div>
-          <div className="pg-pp-formal-obtained-cell">
-            <span className="pg-pp-formal-field-label">Rank</span>
-            <span className="pg-pp-formal-field-line" style={{ flex: 1, minWidth: 30 }}></span>
-          </div>
+        <div style={{ flex: 1, background: '#1E3A8A', borderRadius: 6, padding: '5px 10px', fontSize: 10.5, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div style={{ fontSize: 8.5, fontWeight: 700, color: '#93C5FD', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Total</div>
+          <div style={{ fontWeight: 800, color: '#fff', fontSize: 13 }}>{total}</div>
         </div>
       </div>
-    );
-  }
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 600, color: '#64748B', marginTop: 4 }}>
+        <span>Obtained: _______ / {total}</span>
+        <span>Grade: _______</span>
+        <span>Rank: _______</span>
+      </div>
+    </>
+  );
+}
 
-  /* ── Sample answer-sheet block ── */
-  function AnswerSheet({ line }) {
-    const isFour = line === 'four';
-    const AnsLine = () => isFour
-      ? <div className="pg-pp-answer-lines-four"><div /><div /><div /><div /></div>
-      : <div className="pg-pp-answer-lines-single" />;
+/* ── Formal (Template 3) ── */
+function FormalHeader({ info }) {
+  const d = info || {};
+  const schoolName = (d.school || 'THE OXFORD SYSTEM').toUpperCase();
+  const schoolSub = (d.campus ? d.campus.toUpperCase() : 'LAHORE CAMPUS · ESTABLISHED 2004');
+  const examTitle = (d.examTitle || 'ANNUAL EXAMINATION — 2026').toUpperCase();
+  const seal = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
+  const metaCells = [
+    ['SUBJECT', d.subject || 'English (A)'],
+    ['CLASS', d.className ? `${d.className}${d.section ? ` ${d.section}` : ''}` : 'IV White'],
+    ['TOTAL MARKS', String(d.totalMarks ?? 100), true],
+    ['OBJ. MARKS', String(d.objMarks ?? 40)],
+    ['TOTAL TIME', d.time || '100 Min'],
+  ];
+  return (
+    <div className="pg-pp-formal-wrap">
+      <div className="pg-pp-formal-top">
+        <div className="pg-pp-formal-seal">
+          {d.logo
+            ? <img src={d.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '50%' }} />
+            : <div className="pg-pp-formal-seal-inner">{seal}</div>}
+        </div>
+        <div className="pg-pp-formal-school-block">
+          <div className="pg-pp-formal-school-name">{schoolName}</div>
+          <div className="pg-pp-formal-school-sub">{schoolSub}</div>
+        </div>
+        <div className="pg-pp-formal-board-tag">BOARD PATTERN</div>
+      </div>
+      <div className="pg-pp-formal-divider"></div>
+      <div className="pg-pp-formal-exam-title">{examTitle}</div>
+      <div className="pg-pp-formal-meta-grid">
+        {metaCells.map(([k, v, accent], i) => (
+          <div key={i} className="pg-pp-formal-meta-cell">
+            <div className="pg-pp-formal-meta-label">{k}</div>
+            <div className={`pg-pp-formal-meta-val${accent ? ' pg-pp-formal-meta-accent' : ''}`}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div className="pg-pp-formal-student-grid">
+        {['Student Name', 'Roll No.', 'Section', 'Date'].map((lbl, i) => (
+          <div key={i} className="pg-pp-formal-student-field">
+            <span className="pg-pp-formal-field-label">{lbl}</span>
+            <span className="pg-pp-formal-field-line"></span>
+          </div>
+        ))}
+      </div>
+      <div className="pg-pp-formal-obtained-row">
+        <div className="pg-pp-formal-obtained-cell">
+          <span className="pg-pp-formal-field-label">Obtained Marks</span>
+          <span className="pg-pp-formal-field-line" style={{ flex: 1, minWidth: 50 }}></span>
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8' }}>/100</span>
+        </div>
+        <div className="pg-pp-formal-obtained-cell">
+          <span className="pg-pp-formal-field-label">Grade</span>
+          <span className="pg-pp-formal-field-line" style={{ flex: 1, minWidth: 30 }}></span>
+        </div>
+        <div className="pg-pp-formal-obtained-cell">
+          <span className="pg-pp-formal-field-label">Rank</span>
+          <span className="pg-pp-formal-field-line" style={{ flex: 1, minWidth: 30 }}></span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-    const SECTIONS = [
-      {
-        label: 'Section A — Objective',
-        qs: [
-          { q: 'Q.1 Choose the correct answer by circling (A), (B), (C) or (D)', marks: 10, items: [
+/* ── Sample answer-sheet block ── */
+function AnswerSheet({ line }) {
+  const isFour = line === 'four';
+  const AnsLine = () => isFour
+    ? <div className="pg-pp-answer-lines-four"><div /><div /><div /><div /></div>
+    : <div className="pg-pp-answer-lines-single" />;
+
+  const SECTIONS = [
+    {
+      label: 'Section A — Objective',
+      qs: [
+        {
+          q: 'Q.1 Choose the correct answer by circling (A), (B), (C) or (D)', marks: 10, items: [
             'i. The little red hen found some ________.  (A) wheat  (B) rice  (C) corn  (D) barley',
             'ii. The moral of the story is ________.  (A) share  (B) hard work pays  (C) be honest  (D) be kind',
-          ], answerEvery: false },
-          { q: 'Q.2 Write the Opposite of the following words', marks: 10, lines: 4 },
-        ],
-      },
-      {
-        label: 'Section B — Subjective',
-        qs: [
-          { q: 'Q.3 Answer the following Short Questions', marks: 15, items: [
+          ], answerEvery: false
+        },
+        { q: 'Q.2 Write the Opposite of the following words', marks: 10, lines: 4 },
+      ],
+    },
+    {
+      label: 'Section B — Subjective',
+      qs: [
+        {
+          q: 'Q.3 Answer the following Short Questions', marks: 15, items: [
             'i. Where did the little red hen live?',
             'ii. What did the hen find in the field?',
-          ], answerEvery: true },
-          { q: 'Q.4 Write a paragraph on any ONE of the following', marks: 10, items: [
+          ], answerEvery: true
+        },
+        {
+          q: 'Q.4 Write a paragraph on any ONE of the following', marks: 10, items: [
             'My Best Friend       A Rainy Day       The School Library',
-          ], answerEvery: true, extendedLines: isFour ? 2 : 3 },
-        ],
-      },
-    ];
+          ], answerEvery: true, extendedLines: isFour ? 2 : 3
+        },
+      ],
+    },
+  ];
 
-    return (
-      <>
-        {SECTIONS.map((sec, si) => (
-          <React.Fragment key={si}>
-            <div className="pg-pp-section-label">{sec.label}</div>
-            {sec.qs.map((q, qi) => (
-              <div key={qi} style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#0F172A', marginBottom: 5, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{q.q}</span>
-                  <span style={{ color: '#1E3A8A', fontWeight: 600 }}>[{q.marks} Marks]</span>
-                </div>
-                {q.items && q.items.map((it, ii) => (
-                  <React.Fragment key={ii}>
-                    <div style={{ fontSize: 10.5, color: '#334155', marginBottom: q.answerEvery ? 3 : 7, paddingLeft: 4 }}>{it}</div>
-                    {q.answerEvery && <AnsLine />}
-                  </React.Fragment>
-                ))}
-                {!q.items && q.lines && Array.from({ length: q.lines }).map((_, li) => (
-                  <React.Fragment key={li}>
-                    <div style={{ fontSize: 10.5, color: '#334155', marginBottom: 3, paddingLeft: 4 }}>{li + 1}. _______________________________________________</div>
-                    <AnsLine />
-                  </React.Fragment>
-                ))}
-                {q.extendedLines && Array.from({ length: q.extendedLines }).map((_, ei) => <AnsLine key={`ex-${ei}`} />)}
+  return (
+    <>
+      {SECTIONS.map((sec, si) => (
+        <React.Fragment key={si}>
+          <div className="pg-pp-section-label">{sec.label}</div>
+          {sec.qs.map((q, qi) => (
+            <div key={qi} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#0F172A', marginBottom: 5, display: 'flex', justifyContent: 'space-between' }}>
+                <span>{q.q}</span>
+                <span style={{ color: '#1E3A8A', fontWeight: 600 }}>[{q.marks} Marks]</span>
               </div>
-            ))}
-          </React.Fragment>
-        ))}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748B', borderTop: '1px solid #e2e8f0', paddingTop: 10, marginTop: 12 }}>
-          <span>Examiner: _______________________</span>
-          <span>Signature: _______________________</span>
-        </div>
-      </>
-    );
-  }
-
-  /* Small static preview for each template */
-  function TemplatePreview({ id, boardCfg, school }) {
-    /* QA C10: thumbnails par is branch ka naam/logo */
-    const tName = school?.branchName || pgSchoolName();
-    const tLogo = school?.branchLogo ? resolveMediaUrl(school.branchLogo) : '';
-    if (id === 4) {
-      return (
-        <div className="pg-tmpl-static pgx-bd-thumb">
-          <div className="pgx-bd-thumb-in">
-            <BoardHeader board={pgBoardFind(boardCfg?.boardId)} level={pgBoardLevel(boardCfg?.boardLevel)} group={boardCfg?.boardGroup} />
-          </div>
-        </div>
-      );
-    }
-    if (id === 1) {
-      return (
-        <div className="pg-tmpl-static">
-          <div className="pg-tmpl-hbar">{pgSchoolLine(school).toUpperCase()}</div>
-          <div className="pg-tmpl-content">
-            <div style={{ textAlign: 'center', fontSize: 5.5, fontWeight: 600, color: '#334155', padding: '2px 0', borderBottom: '1px solid #BFDBFE', marginBottom: 3 }}>
-              Annual Examination 2026 · English (A) · Class IV
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, marginBottom: 3 }}>
-              <div style={{ fontSize: 5, color: '#64748B', borderBottom: '1px solid #CBD5E1', paddingBottom: 2 }}>Name: __________</div>
-              <div style={{ fontSize: 5, color: '#64748B', borderBottom: '1px solid #CBD5E1', paddingBottom: 2 }}>Roll: ______</div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 2, marginBottom: 3 }}>
-              {['Eng A', 'IV', '100m', '100'].map((v, i) => (
-                <div key={i} style={{ background: i === 3 ? '#1E3A8A' : '#EFF6FF', border: i === 3 ? 'none' : '1px solid #BFDBFE', borderRadius: 2, padding: '2px 3px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 4, color: i === 3 ? '#93C5FD' : '#93C5FD', fontWeight: 700 }}>{['SUBJ','CLASS','TIME','MARKS'][i]}</div>
-                  <div style={{ fontSize: 5.5, fontWeight: 700, color: i === 3 ? '#fff' : '#1E3A8A' }}>{v}</div>
-                </div>
+              {q.items && q.items.map((it, ii) => (
+                <React.Fragment key={ii}>
+                  <div style={{ fontSize: 10.5, color: '#334155', marginBottom: q.answerEvery ? 3 : 7, paddingLeft: 4 }}>{it}</div>
+                  {q.answerEvery && <AnsLine />}
+                </React.Fragment>
               ))}
+              {!q.items && q.lines && Array.from({ length: q.lines }).map((_, li) => (
+                <React.Fragment key={li}>
+                  <div style={{ fontSize: 10.5, color: '#334155', marginBottom: 3, paddingLeft: 4 }}>{li + 1}. _______________________________________________</div>
+                  <AnsLine />
+                </React.Fragment>
+              ))}
+              {q.extendedLines && Array.from({ length: q.extendedLines }).map((_, ei) => <AnsLine key={`ex-${ei}`} />)}
             </div>
-            {[95, 80, 88, 72].map((w, i) => (
-              <div key={i} style={{ height: 3.5, borderRadius: 2, background: i === 0 ? '#DBEAFE' : '#EEF2FF', width: `${w}%`, marginTop: 3 }} />
-            ))}
-          </div>
-        </div>
-      );
-    }
-    if (id === 2) {
-      return (
-        <div className="pg-tmpl-static">
-          <div className="pg-tmpl-content" style={{ gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, borderBottom: '2.5px solid #1E3A8A', paddingBottom: 4, marginBottom: 4 }}>
-              <div style={{ width: 20, height: 20, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, color: '#fff', overflow: 'hidden' }}>{tLogo ? <img src={tLogo} alt='' style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} /> : tName.charAt(0).toUpperCase()}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 7, fontWeight: 800, color: '#0F172A' }}>{school?.branchName || pgSchoolName()}</div>
-                <div style={{ fontSize: 5, color: '#64748B' }}>{[school?.address, 'Annual Exam 2026'].filter(Boolean).join(' · ')}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 6.5, fontWeight: 800, color: '#1E3A8A' }}>Class IV</div>
-                <div style={{ fontSize: 5, color: '#64748B' }}>English (A)</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 2, marginBottom: 3 }}>
-              <div style={{ flex: 1, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '2px 4px' }}>
-                <div style={{ fontSize: 4, fontWeight: 700, color: '#93C5FD' }}>OBJECTIVE</div>
-                <div style={{ fontSize: 5.5, fontWeight: 700, color: '#1E3A8A' }}>40 Marks · 40m</div>
-              </div>
-              <div style={{ flex: 1, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 3, padding: '2px 4px' }}>
-                <div style={{ fontSize: 4, fontWeight: 700, color: '#6EE7B7' }}>SUBJECTIVE</div>
-                <div style={{ fontSize: 5.5, fontWeight: 700, color: '#15803D' }}>60 Marks · 60m</div>
-              </div>
-              <div style={{ flex: '0 0 28px', background: '#1E3A8A', borderRadius: 3, padding: '2px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ fontSize: 4, fontWeight: 700, color: '#93C5FD' }}>TOTAL</div>
-                <div style={{ fontSize: 7, fontWeight: 900, color: '#fff' }}>100</div>
-              </div>
-            </div>
-            {[92, 77, 84, 68].map((w, i) => (
-              <div key={i} style={{ height: 3.5, borderRadius: 2, background: i === 0 ? '#DBEAFE' : '#EEF2FF', width: `${w}%` }} />
-            ))}
-          </div>
-        </div>
-      );
-    }
-    // id === 3 — Formal
+          ))}
+        </React.Fragment>
+      ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748B', borderTop: '1px solid #e2e8f0', paddingTop: 10, marginTop: 12 }}>
+        <span>Examiner: _______________________</span>
+        <span>Signature: _______________________</span>
+      </div>
+    </>
+  );
+}
+
+/* Small static preview for each template */
+function TemplatePreview({ id }) {
+  if (id === 1) {
     return (
       <div className="pg-tmpl-static">
-        <div className="pg-tmpl-content" style={{ gap: 3 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-            <div style={{ width: 16, height: 16, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 5, fontWeight: 900, color: '#fff', border: '1.5px solid #60A5FA', overflow: 'hidden' }}>{tLogo ? <img src={tLogo} alt='' style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} /> : tName.replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase()}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 6.5, fontWeight: 900, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '.04em' }}>{school?.branchName || pgSchoolName()}</div>
-              <div style={{ fontSize: 4.5, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.04em' }}>{school?.address || ''}</div>
-            </div>
-            <div style={{ background: '#1E3A8A', color: '#fff', fontSize: 4, fontWeight: 800, padding: '2px 4px', borderRadius: 2, letterSpacing: '.06em' }}>BOARD</div>
+        <div className="pg-tmpl-hbar">THE OXFORD SYSTEM — LAHORE CAMPUS</div>
+        <div className="pg-tmpl-content">
+          <div style={{ textAlign: 'center', fontSize: 5.5, fontWeight: 600, color: '#334155', padding: '2px 0', borderBottom: '1px solid #BFDBFE', marginBottom: 3 }}>
+            Annual Examination 2026 · English (A) · Class IV
           </div>
-          <div style={{ height: 1.5, background: 'linear-gradient(90deg,#1E3A8A,#60A5FA,transparent)', borderRadius: 1, marginBottom: 2 }} />
-          <div style={{ textAlign: 'center', fontSize: 5, fontWeight: 800, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '.08em', borderTop: '1px solid #E2E8F0', borderBottom: '1px solid #E2E8F0', padding: '2px 0', marginBottom: 2 }}>
-            Annual Examination — 2026
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, marginBottom: 3 }}>
+            <div style={{ fontSize: 5, color: '#64748B', borderBottom: '1px solid #CBD5E1', paddingBottom: 2 }}>Name: __________</div>
+            <div style={{ fontSize: 5, color: '#64748B', borderBottom: '1px solid #CBD5E1', paddingBottom: 2 }}>Roll: ______</div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', border: '1px solid #CBD5E1', borderRadius: 3, overflow: 'hidden', marginBottom: 2 }}>
-            {[['SUBJ','EngA'],['CLASS','IV'],['MARKS','100'],['OBJ','40'],['TIME','100m']].map(([k, v], i) => (
-              <div key={i} style={{ padding: '2px 3px', borderRight: i < 4 ? '1px solid #E2E8F0' : 'none', background: i === 2 ? '#EFF6FF' : '#FAFBFF' }}>
-                <div style={{ fontSize: 4, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase' }}>{k}</div>
-                <div style={{ fontSize: i === 2 ? 6.5 : 5.5, fontWeight: i === 2 ? 900 : 700, color: i === 2 ? '#1E3A8A' : '#0F172A' }}>{v}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 2, marginBottom: 3 }}>
+            {['Eng A', 'IV', '100m', '100'].map((v, i) => (
+              <div key={i} style={{ background: i === 3 ? '#1E3A8A' : '#EFF6FF', border: i === 3 ? 'none' : '1px solid #BFDBFE', borderRadius: 2, padding: '2px 3px', textAlign: 'center' }}>
+                <div style={{ fontSize: 4, color: i === 3 ? '#93C5FD' : '#93C5FD', fontWeight: 700 }}>{['SUBJ', 'CLASS', 'TIME', 'MARKS'][i]}</div>
+                <div style={{ fontSize: 5.5, fontWeight: 700, color: i === 3 ? '#fff' : '#1E3A8A' }}>{v}</div>
               </div>
             ))}
           </div>
-          {[90, 75, 82].map((w, i) => (
+          {[95, 80, 88, 72].map((w, i) => (
             <div key={i} style={{ height: 3.5, borderRadius: 2, background: i === 0 ? '#DBEAFE' : '#EEF2FF', width: `${w}%`, marginTop: 3 }} />
           ))}
         </div>
       </div>
     );
   }
+  if (id === 2) {
+    return (
+      <div className="pg-tmpl-static">
+        <div className="pg-tmpl-content" style={{ gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, borderBottom: '2.5px solid #1E3A8A', paddingBottom: 4, marginBottom: 4 }}>
+            <div style={{ width: 20, height: 20, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, color: '#fff' }}>O</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 7, fontWeight: 800, color: '#0F172A' }}>The Oxford System</div>
+              <div style={{ fontSize: 5, color: '#64748B' }}>Lahore Campus · Annual Exam 2026</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 6.5, fontWeight: 800, color: '#1E3A8A' }}>Class IV</div>
+              <div style={{ fontSize: 5, color: '#64748B' }}>English (A)</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 2, marginBottom: 3 }}>
+            <div style={{ flex: 1, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '2px 4px' }}>
+              <div style={{ fontSize: 4, fontWeight: 700, color: '#93C5FD' }}>OBJECTIVE</div>
+              <div style={{ fontSize: 5.5, fontWeight: 700, color: '#1E3A8A' }}>40 Marks · 40m</div>
+            </div>
+            <div style={{ flex: 1, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 3, padding: '2px 4px' }}>
+              <div style={{ fontSize: 4, fontWeight: 700, color: '#6EE7B7' }}>SUBJECTIVE</div>
+              <div style={{ fontSize: 5.5, fontWeight: 700, color: '#15803D' }}>60 Marks · 60m</div>
+            </div>
+            <div style={{ flex: '0 0 28px', background: '#1E3A8A', borderRadius: 3, padding: '2px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ fontSize: 4, fontWeight: 700, color: '#93C5FD' }}>TOTAL</div>
+              <div style={{ fontSize: 7, fontWeight: 900, color: '#fff' }}>100</div>
+            </div>
+          </div>
+          {[92, 77, 84, 68].map((w, i) => (
+            <div key={i} style={{ height: 3.5, borderRadius: 2, background: i === 0 ? '#DBEAFE' : '#EEF2FF', width: `${w}%` }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // id === 3 — Formal
+  return (
+    <div className="pg-tmpl-static">
+      <div className="pg-tmpl-content" style={{ gap: 3 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+          <div style={{ width: 16, height: 16, background: 'linear-gradient(135deg,#1E3A8A,#3B82F6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 5, fontWeight: 900, color: '#fff', border: '1.5px solid #60A5FA' }}>OX</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 6.5, fontWeight: 900, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '.04em' }}>The Oxford System</div>
+            <div style={{ fontSize: 4.5, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '.04em' }}>Lahore Campus · Est. 2004</div>
+          </div>
+          <div style={{ background: '#1E3A8A', color: '#fff', fontSize: 4, fontWeight: 800, padding: '2px 4px', borderRadius: 2, letterSpacing: '.06em' }}>BOARD</div>
+        </div>
+        <div style={{ height: 1.5, background: 'linear-gradient(90deg,#1E3A8A,#60A5FA,transparent)', borderRadius: 1, marginBottom: 2 }} />
+        <div style={{ textAlign: 'center', fontSize: 5, fontWeight: 800, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '.08em', borderTop: '1px solid #E2E8F0', borderBottom: '1px solid #E2E8F0', padding: '2px 0', marginBottom: 2 }}>
+          Annual Examination — 2026
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', border: '1px solid #CBD5E1', borderRadius: 3, overflow: 'hidden', marginBottom: 2 }}>
+          {[['SUBJ', 'EngA'], ['CLASS', 'IV'], ['MARKS', '100'], ['OBJ', '40'], ['TIME', '100m']].map(([k, v], i) => (
+            <div key={i} style={{ padding: '2px 3px', borderRight: i < 4 ? '1px solid #E2E8F0' : 'none', background: i === 2 ? '#EFF6FF' : '#FAFBFF' }}>
+              <div style={{ fontSize: 4, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase' }}>{k}</div>
+              <div style={{ fontSize: i === 2 ? 6.5 : 5.5, fontWeight: i === 2 ? 900 : 700, color: i === 2 ? '#1E3A8A' : '#0F172A' }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        {[90, 75, 82].map((w, i) => (
+          <div key={i} style={{ height: 3.5, borderRadius: 2, background: i === 0 ? '#DBEAFE' : '#EEF2FF', width: `${w}%`, marginTop: 3 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-  const PG_CSS = `
+const PG_CSS = `
   /* ── Paper Generator — module styles ── */
   .pg-tabs-row {
     display:grid; grid-template-columns:1fr 1fr; gap:4px;
@@ -5968,7 +5429,7 @@ const setSubjLine = (ci, si, l) => {
 
   /* Template grid */
   .pg-tmpl-grid {
-    display:grid; grid-template-columns:repeat(4, 1fr); gap:16px;
+    display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;
   }
   .pg-tmpl-card {
     background:var(--bg-card);
@@ -6060,9 +5521,6 @@ const setSubjLine = (ci, si, l) => {
     background:rgba(30,64,175,.06);
   }
 
-  @media (max-width: 1200px) {
-    .pg-tmpl-grid { grid-template-columns:repeat(2, 1fr); }
-  }
   @media (max-width: 820px) {
     .pg-tmpl-grid { grid-template-columns:repeat(2, 1fr); }
     .pg-tabs-row { grid-template-columns:1fr; }

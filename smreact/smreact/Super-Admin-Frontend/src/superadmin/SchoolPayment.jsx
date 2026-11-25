@@ -18,7 +18,6 @@ import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
 import { SA_API_HOST } from './api/config';
 import { useSaPerms } from './saPerms';
 const NETWORK_SETUP_BASE = `${SA_API_HOST}/SchoolmentorChainManagementAPI/api/Network_Setup`;
-
 const branchCredentialApi = {
   save: async ({ branchId, username, password, createdBy = 0, modifiedBy = 0, customerTransactionCharge = 0, costPerTransaction = 0, effectiveFrom }) => {
     const res = await fetch(`${NETWORK_SETUP_BASE}/AddBranchCredential`, {
@@ -44,6 +43,7 @@ const branchCredentialApi = {
     return res.json().catch(() => null);
   },
 };
+
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOLS PAYMENT (Payment Status) — Super Admin module
 
@@ -124,7 +124,6 @@ const TABS = [
    is liye un dono me se kisi ek ka View kaafi hai. */
 const TAB_SCREEN = { setup: 'setup', challans: 'challans', receiving: 'receiving', automation: 'automation', notifications: 'reminders' };
 const tabVisible = (P, id) => (id === 'report' ? P.canView('challans') || P.canView('receiving') : P.canView(TAB_SCREEN[id]));
-
 /* Branch directory ki row → wohi school shape jo yeh screen padhti hai. */
 const branchToPaySchool = (b) => ({
   id: b.id,
@@ -135,7 +134,30 @@ const branchToPaySchool = (b) => ({
   initials: b.initials || 'SM',
   schoolCode: String(b.id).padStart(6, '0'),
 });
+function jwtUserId(token) {
+  try {
+    const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const key = Object.keys(payload).find((k) => k.endsWith('/nameidentifier'));
+    return key ? payload[key] : null;
+  } catch {
+    return null;
+  }
+}
 
+function getSaSessionUserId() {
+  const tryParse = (v) => { try { return JSON.parse(v); } catch { return null; } };
+  const candidates = [];
+  for (const st of [localStorage, sessionStorage]) {
+    const s = tryParse(st.getItem('sa-session'));
+    candidates.push(s?.user?.id, s?.raw?.id, st.getItem('superadminid'));
+    candidates.push(jwtUserId(s?.token || st.getItem('superadmintoken')));
+  }
+  for (const c of candidates) {
+    const id = Number(c);
+    if (Number.isFinite(id) && id > 0) return id;
+  }
+  return 0;
+}
 export default function SchoolPayment({ toast }) {
   const P = useSaPerms('schoolPayments');
   const [tabSel, setTab] = useState('setup');
@@ -937,7 +959,16 @@ export default function SchoolPayment({ toast }) {
       )}
 
       {/* ── MODALS ── */}
-      {modal?.type === 'setup' && <SetupModal school={modal.school} setup={payStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onSave={saveSetup} toast={toast} />}
+     {modal?.type === 'setup' && (
+  <SetupModal
+    school={modal.school}
+    setup={payStore[modal.school.id]}
+    saving={saving}
+    onClose={() => setModal(null)}
+    onSave={saveSetup}
+    toast={toast}
+  />
+)}
       {modal?.type === 'genChallan' && <GenChallanModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} period={period} saving={saving} onClose={() => setModal(null)} onGenerate={generateChallan} toast={toast} />}
       {modal?.type === 'bulk' && <BulkChallanModal schools={schools} payStore={payStore} period={period} saving={saving} onClose={() => setModal(null)} onGenerate={bulkGenerate} toast={toast} />}
       {modal?.type === 'slip' && <SlipModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} bank={bankStore[modal.school.id]} bankBusy={tabBusy.banks} onClose={() => setModal(null)} />}
@@ -1999,9 +2030,10 @@ function SetupSummaryStrip({ school, summary, loading }) {
   );
 }
 
-function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast }) {
+function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast, currentUserId = 0 }) {
   const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '', oneLinkUserName: '', oneLinkPassword: '', oneLink: defaultOneLink(), lateSurcharge: 0 };
 const [showOlPass, setShowOlPass] = useState(false);
+const [existingCred, setExistingCred] = useState(null);
 const [showCostPass, setShowCostPass] = useState(false);
   const [f, setF] = useState({ ...init, oneLink: { ...defaultOneLink(), ...(init.oneLink || {}) }, lateSurcharge: init.lateSurcharge ?? 0 });
    const [summary, setSummary] = useState(existing || null);
@@ -2042,11 +2074,11 @@ paymentsApi.getPaymentSummary(s.id)
   .catch(() => { /* strip optional — form phir bhi bhara ja sakta hai */ })
   .finally(() => { if (alive) setLoadingSummary(false); });
     setCredLoading(true);
-     branchCredentialApi.getByBranch(s.id)
-      .then((cred) => {
-        if (!alive || !cred) return;
-        const c = Array.isArray(cred) ? cred[0] : cred;
-        if (!c) return;
+  branchCredentialApi.getByBranch(s.id).then((cred) => {
+  if (!alive || !cred) return;
+  const c = Array.isArray(cred) ? cred[0] : cred;
+  if (!c) return;
+  setExistingCred(c);
         if (!dirty.current) {
           setF((prev) => ({
             ...prev,
@@ -2068,25 +2100,35 @@ paymentsApi.getPaymentSummary(s.id)
     if (f.formula === 'lumpsum' && !f.lumpAmount) { toast?.('Please enter the monthly lump sum amount', 'warn'); return; }
     if (f.formula === 'perstudent' && !f.perStudentRate) { toast?.('Please enter the per student rate', 'warn'); return; }
     if (f.freeTrial && !f.trialDays) { toast?.('Please enter trial duration in days', 'warn'); return; }
+     const uid = getSaSessionUserId();
+    if (!uid) {
+    toast?.('Could not find Login Session — Try Login Again', 'error');
+    return;
+  }
     /* id saath jata hai — mojood ho to UPDATE, warna ADD (branchID+type unique). */
         const hasCredData =
-      (f.oneLinkUserName || '').trim() || (f.oneLinkPassword || '').trim() ||
-      (f.customerTransactionCharge !== '' && f.customerTransactionCharge != null) ||
-      (f.costPerTransaction !== '' && f.costPerTransaction != null);
-    if (hasCredData) {
-      branchCredentialApi.save({
-        branchId: s.id,
-        username: (f.oneLinkUserName || '').trim(),
-        password: (f.oneLinkPassword || '').trim(),
-        createdBy: 0,
-        modifiedBy: 0,
-        customerTransactionCharge: Number(f.customerTransactionCharge) || 0,
-        costPerTransaction: Number(f.costPerTransaction) || 0,
-        effectiveFrom: new Date().toISOString(),
-     }).catch((e) => { console.error('save credential failed:', e); toast?.('Could not save payment credentials: ' + e.message, 'error'); });
-    }
-      onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(), oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
-  };
+    (f.oneLinkUserName || '').trim() || (f.oneLinkPassword || '').trim() ||
+    (f.customerTransactionCharge !== '' && f.customerTransactionCharge != null) ||
+    (f.costPerTransaction !== '' && f.costPerTransaction != null);
+
+  if (hasCredData) {
+    branchCredentialApi.save({
+      branchId: s.id,
+      username: (f.oneLinkUserName || '').trim(),
+      password: (f.oneLinkPassword || '').trim(),
+      createdBy: existingCred?.createdBy || uid,
+      modifiedBy: uid,
+      customerTransactionCharge: Number(f.customerTransactionCharge) || 0,
+      costPerTransaction: Number(f.costPerTransaction) || 0,
+      effectiveFrom: new Date().toISOString(),
+    }).catch((e) => {
+      console.error('save credential failed:', e);
+      toast?.('Could not save payment credentials: ' + e.message, 'error');
+    });
+  }
+
+  onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim(), oneLinkUserName: (f.oneLinkUserName || '').trim(), lateSurcharge: 0 });
+};
   return (
     <Ov cls="pay-ov" onClose={onClose} wrap="pay-modal">
       <div className="pay-modal-hdr">

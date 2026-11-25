@@ -2664,17 +2664,34 @@ function OtherResources({ a, fire, resources, onResources, canCreate = true, can
   const reset = () => { setQ(''); setFClass('all'); setFSubject('all'); setFCat('all'); setFStatus('all') }
 
   /* Live rows par server ka URL hota hai, snapshot rows par inline data URI. */
-  const viewPdf = (r) => {
-    if (r.fileUrl) { if (!window.open(r.fileUrl, '_blank', 'noopener')) fire('Allow pop-ups to view the PDF', 'warn'); return }
-    if (r.fileData) { const w = window.open('', '_blank'); if (!w) return fire('Allow pop-ups to view the PDF', 'warn'); w.document.write(`<title>${r.fileName || r.title}</title><iframe src="${r.fileData}" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>`); w.document.close(); return }
-    openResourceSample(r, a, fire)
+const viewPdf = (r) => {
+  if (r.fileUrl) {
+    if (!window.open(r.fileUrl, '_blank', 'noopener')) fire('Allow pop-ups to view the PDF', 'warn')
+    return
   }
-  const downloadPdf = (r) => {
-    const href = r.fileUrl || r.fileData
-    if (href) { const el = document.createElement('a'); el.href = href; el.download = r.fileName || `${r.title}.pdf`; el.target = '_blank'; el.rel = 'noopener'; document.body.appendChild(el); el.click(); el.remove(); fire('Download started'); return }
-    openResourceSample(r, a, fire)
+  if (r.fileData) {
+    const w = window.open('', '_blank')
+    if (!w) return fire('Allow pop-ups to view the PDF', 'warn')
+    w.document.write(`<title>${r.fileName || r.title}</title><iframe src="${r.fileData}" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>`)
+    w.document.close()
+    return
   }
+  fire('No Pdf is attatched with this resource', 'warn')
+}
 
+const downloadPdf = (r) => {
+  const href = r.fileUrl || r.fileData
+  if (!href) return fire('No Pdf is attatched with this resource', 'warn')
+  const el = document.createElement('a')
+  el.href = href
+  el.download = r.fileName || `${r.title}.pdf`
+  el.target = '_blank'
+  el.rel = 'noopener'
+  document.body.appendChild(el)
+  el.click()
+  el.remove()
+  fire('Download started')
+}
   return (
     <div className="section-card">
       <div className="card-header">
@@ -2766,24 +2783,40 @@ function ResourceModal({ a, live, classes, loadSubjects, busy, modal, onClose, o
       setSubs(rows)
       setSubjectId((cur) => (rows.some((s) => String(s.id) === String(cur)) ? cur : String(rows[0]?.id || '')))
     }
-    if (!live) { apply(subjectsOfClass(a, Number(classId))); return undefined }
+    if (!live) { apply(subjectonFilesOfClass(a, Number(classId))); return undefined }
     setSubs([])
     loadSubjects(Number(classId)).then(apply).catch(() => apply([]))
     return () => { alive = false }
   }, [classId, live, a, loadSubjects])
 
 const onFile = (e) => {
-  const f = e.target.files?.[0]; if (!f) return
-  if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { onToast('Please select a PDF file', 'warn'); return }
-  const safeName = sanitizeFileName(f.name)
-  const safeFile = new File([f], safeName, { type: f.type || 'application/pdf' })
-  setFileName(safeName)
-  setPdfFile(safeFile)
-  if (live) { setFileData(null); return }
-  const reader = new FileReader()
-  reader.onload = () => setFileData(reader.result)
-  reader.onerror = () => onToast('Could not read the file', 'warn')
-  reader.readAsDataURL(safeFile)
+  try {
+    const f = e.target.files && e.target.files[0]
+    if (!f) return
+    const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    if (!isPdf) { onToast('Please select a PDF file', 'warn'); e.target.value = ''; return }
+
+    // naam safe banana (yahin andar, kisi bahar ke function par depend nahi)
+    const dot = f.name.lastIndexOf('.')
+    const base = (dot > -1 ? f.name.slice(0, dot) : f.name)
+      .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'file'
+    const safeName = `${base}.pdf`
+
+    const safeFile = new File([f], safeName, { type: 'application/pdf' })
+    setFileName(safeName)
+    setPdfFile(safeFile)
+
+    if (live) { setFileData(null) }
+    else {
+      const reader = new FileReader()
+      reader.onload = () => setFileData(reader.result)
+      reader.onerror = () => onToast('Could not read the file', 'warn')
+      reader.readAsDataURL(safeFile)
+    }
+  } catch (err) {
+    console.error('PDF select error:', err)
+    onToast(`File select failed: ${err.message}`, 'warn')
+  }
 }
   const save = () => {
     if (!classId) return onToast('Select a class', 'warn')
@@ -2815,13 +2848,16 @@ const onFile = (e) => {
       </div>
       <div className="ac-field" style={{ marginBottom: 12 }}><label>Resource Title *</label><input className="ac-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. English Grammar Worksheet — Nouns" /></div>
       <div className="ac-field" style={{ marginBottom: 12 }}><label>Resource Description</label><textarea className="ac-input" rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description of this resource…" /></div>
-      <div className="ac-field"><label>Upload PDF</label>
-        <input ref={fileRef} type="file" accept="application/pdf,.pdf" style={{ display: 'none' }} onChange={onFile} />
-        <div className="res-upload" onClick={() => { if (!busy) fileRef.current?.click() }}>
-          <i className="fa-solid fa-file-arrow-up" />
-          <div>{fileName ? <strong>{fileName}</strong> : 'Click to select a PDF file'}<div className="res-upload-sub">{fileName ? (pdfFile || fileData ? 'Ready to save · click to replace' : 'Existing file') : 'PDF documents only'}</div></div>
-        </div>
-      </div>
+     <div className="ac-field"><label>Upload PDF</label>
+  <label className="res-upload" style={{ cursor: 'pointer' }}>
+    <input type="file" accept="application/pdf,.pdf" style={{ display: 'none' }} onChange={onFile} disabled={busy} />
+    <i className="fa-solid fa-file-arrow-up" />
+    <div>
+      {fileName ? <strong>{fileName}</strong> : 'Click to select a PDF file'}
+      <div className="res-upload-sub">{fileName ? (pdfFile || fileData ? 'Ready to save · click to replace' : 'Existing file') : 'PDF documents only'}</div>
+    </div>
+  </label>
+</div>
     </ModalShell>
   )
 }
