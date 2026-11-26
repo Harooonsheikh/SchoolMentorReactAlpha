@@ -1,4 +1,5 @@
 import { delay, clone } from './_http';
+import { buildSuperAdminUrl } from '../../utils/apiConfig';
 import { mockInternalTickets, CURRENT_SCHOOL } from '../mock/ticketJourney';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -124,10 +125,71 @@ function schoolTickets() {
     .sort((a, b) => b.reportedAt.localeCompare(a.reportedAt));
 }
 
-/** GET /api/school/tickets → SchoolTicket[] (newest first). */
+/* ── Real API: Super Admin → Tech tickets (this branch) ───────────────
+   GET {host}/SchoolMentorSuperAdminAPI/api/superadmin/tech-tickets
+       ?Action=list&SchoolBranchId=<branchID>
+   → { success, count, data: [{ id, ticketNo, ticketType, module, stage, title, description,
+        expectedBehaviour, actualBehaviour, reportedBy{name}, reportedAt,
+        assignment{assignedAt}, qa{sentForQaAt, approvedAt}, release{releasedAt, releaseNotes},
+        updatedAt, … }] }
+   Mapped here into the SchoolTicket shape the page already renders. */
+const SEEN_KEY = 'sm_ticket_seen';
+const readSeen = () => { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}; } catch (e) { return {}; } };
+const writeSeen = (m) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify(m)); } catch (e) { /* ignore */ } };
+
+function fromApiTicket(r, seen) {
+  const journeyStage = toJourneyStage({
+    stage: r.stage,
+    firstSentToQaAt: r.qa?.sentForQaAt || null,
+    assignedTo: r.assignment?.assignedTo || null,
+  });
+  const sprintAddedAt = r.assignment?.assignedAt || null;
+  const developmentCompletedAt = r.qa?.sentForQaAt || null;
+  const testingPassedAt = ['approved', 'released'].includes(journeyStage) ? (r.qa?.approvedAt || null) : null;
+  const releasedAt = journeyStage === 'released' ? (r.release?.releasedAt || null) : null;
+  const lastUpdatedAt = r.updatedAt || maxIso(r.reportedAt, sprintAddedAt, developmentCompletedAt, testingPassedAt, releasedAt);
+  return {
+    id: r.id,
+    ticketNumber: r.ticketNo,
+    type: r.ticketType === 'bug' ? 'bug' : 'improvement',
+    title: r.title || '',
+    description: r.description || '',
+    stepsToReproduce: [],
+    expectedBehaviour: r.expectedBehaviour || '',
+    actualBehaviour: r.actualBehaviour || '',
+    module: r.module || 'other',
+    reportedByName: r.reportedBy?.name || '',
+    journeyStage,
+    sprint: null,
+    reportedAt: r.reportedAt,
+    sprintAddedAt,
+    expectedDays: null,
+    expectedLiveBy: null,
+    developmentCompletedAt,
+    testingPassedAt,
+    releasedAt,
+    releaseNotes: journeyStage === 'released' ? (r.release?.releaseNotes || '') : '',
+    updates: [],
+    lastUpdatedAt,
+    hasNewUpdate: !seen[r.id] || (!!lastUpdatedAt && new Date(lastUpdatedAt).getTime() > seen[r.id]),
+  };
+}
+
+/** GET tech-tickets (this branch) → SchoolTicket[] (newest first). */
 export async function getMyTickets() {
-  await delay();
-  return clone(schoolTickets());
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  if (!branchId) return [];
+  const res = await fetch(
+    buildSuperAdminUrl(`/api/superadmin/tech-tickets?Action=list&SchoolBranchId=${branchId}`),
+    { method: 'GET', headers: { Accept: 'application/json' } },
+  );
+  if (!res.ok) throw new Error(`Could not load tickets (${res.status})`);
+  const json = await res.json().catch(() => null);
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  const seen = readSeen();
+  return rows
+    .map(r => fromApiTicket(r, seen))
+    .sort((x, y) => String(y.reportedAt || '').localeCompare(String(x.reportedAt || '')));
 }
 
 /** GET /api/school/tickets/{id} → SchoolTicket. Throws if not found. */
@@ -143,6 +205,8 @@ export async function markTicketSeen(id) {
   await delay(40);
   const t = mockInternalTickets.find(x => x.id === id && x.school?.id === CURRENT_SCHOOL.id);
   if (t) t.lastSchoolViewedAt = new Date().toISOString();
+  /* API tickets: remember locally so the "new update" dot stays cleared after reload. */
+  const seen = readSeen(); seen[id] = Date.now(); writeSeen(seen);
 }
 
 /** GET /api/school/tickets/unseen-count → number (sidebar badge). */
