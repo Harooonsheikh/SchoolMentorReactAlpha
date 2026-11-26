@@ -53,7 +53,7 @@ const EXTRA_NAV_BRANCHES = {};
 /* Modules that are live ONLY on the listed branchIDs and hidden on every other
    branch. Unlike BRANCH1_ONLY_NAV, the user's permission still applies on the
    allowed branches. Keyed by sidebar nav id. */
-const BRANCH_ONLY_NAV = {};
+const BRANCH_ONLY_NAV = { tickets: ['1', '15'] };
 
 /* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
    Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
@@ -113,6 +113,7 @@ const TeacherTrainings = lazyTab(() => import(/* webpackChunkName: "mod-training
 const ETube          = lazyTab(() => import(/* webpackChunkName: "mod-etube" */         '../pages/SchoolMentor/ETube.jsx'));
 const Chat           = lazyTab(() => import(/* webpackChunkName: "mod-chat" */          '../pages/SchoolMentor/Chat.jsx'));
 const Notifications  = lazyTab(() => import(/* webpackChunkName: "mod-notifications" */ '../pages/SchoolMentor/Notifications.jsx'));
+const TicketJourney  = lazyTab(() => import(/* webpackChunkName: "mod-tickets" */ '../pages/SchoolMentor/TicketJourney.jsx'));
 const UserPermissions  = lazyTab(() => import(/* webpackChunkName: "mod-permissions" */  '../pages/UserPermissions/UserPermissions.jsx'));
 const AuditLogs        = lazyTab(() => import(/* webpackChunkName: "mod-auditlogs"   */  '../pages/AuditLogs/AuditLogs.jsx'));
 const LaunchSetup      = lazyTab(() => import(/* webpackChunkName: "mod-launchsetup" */  '../pages/LaunchSetup/LaunchSetup.jsx'));
@@ -157,6 +158,7 @@ const NAV_LABELS = {
   etube: 'e-Tube',
   chat: 'Chat',
   notifications: 'Notifications',
+  tickets: 'My Tickets',
   launch: 'Launch Setup',
   settings: 'Settings',
   perm: 'User Permissions',
@@ -211,6 +213,7 @@ const NAV_SECTIONS = [
       { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },        /* branchID 1 only */
       { id: 'chat',          name: 'Chat',              icon: 'fa-comments' },           /* branchID 1 only */
       { id: 'notifications', name: 'Notifications',     icon: 'fa-bell' },               /* branchID 1 only */
+      { id: 'tickets',       name: 'My Tickets',        icon: 'fa-route' },              /* branchID 1 and 15 only */
       // Feedback has no route block yet — keep hidden until it's wired.
       // { id: 'feedback',  name: 'Feedback',          icon: 'fa-comment-dots' },
     ],
@@ -264,6 +267,18 @@ export default function App() {
      par (onUnreadChange) foran dobara. 0 par badge chhupta hai. null = abhi
      jawab nahi aaya. */
   const [chatUnread, setChatUnread] = useState(null);
+
+  /* Sidebar badge for My Tickets — unseen journey updates. Only on branch 1 and 15. */
+  const [ticketUpdates, setTicketUpdates] = useState(0);
+  useEffect(() => {
+    if (!['1', '15'].includes(String(sessionStorage.getItem('branchID')))) return undefined;
+    let alive = true;
+    import('../services/ticketJourneyService')
+      .then(svc => svc.getUnseenUpdateCount())
+      .then(n => { if (alive) setTicketUpdates(n); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const activeModuleRef = useRef(active);
   activeModuleRef.current = active;
   const refreshChatUnreadRef = useRef(() => {});
@@ -730,6 +745,11 @@ if (navId === 'mentorai') {
                         {chatUnread > 99 ? '99+' : chatUnread}
                       </div>
                     )}
+                    {item.id === 'tickets' && ticketUpdates > 0 && (
+                      <div className="nav-bx blue" title={`${ticketUpdates} update${ticketUpdates === 1 ? '' : 's'} on your tickets`}>
+                        {ticketUpdates > 99 ? '99+' : ticketUpdates}
+                      </div>
+                    )}
                     {item.badge && (
                       <div className={`nav-bx ${item.badge.tone}`}>
                         {item.badge.iconClass
@@ -970,6 +990,11 @@ if (navId === 'mentorai') {
                 <Chat toast={pushToast} onUnreadChange={onChatUnreadChange} />
               </Suspense>
             )}
+            {active === 'tickets' && (
+              <Suspense fallback={null}>
+                <TicketJourney toast={pushToast} onUnseenChange={setTicketUpdates} />
+              </Suspense>
+            )}
             {active === 'notifications' && (
               <Suspense fallback={null}>
                 <Notifications toast={pushToast} />
@@ -1010,7 +1035,7 @@ if (navId === 'mentorai') {
                 />
               </Suspense>
             )}
-            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'approvals' && active !== 'cmp' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
+            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'approvals' && active !== 'cmp' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'tickets' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
               <NavComingSoon label={NAV_LABELS[active] || 'This module'} />
             )}
           </main>

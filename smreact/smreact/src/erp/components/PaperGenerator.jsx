@@ -1,6 +1,8 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
+import DocViewer from '../reports/docKit/DocViewer';
+import { buildPaperDoc, viewerOptionsFor } from './paperDocAdapter';
 import TutorialModal from './TutorialModal';
 import * as paperService from '../services/paperService';
 import useAsync from '../hooks/useAsync';
@@ -1134,6 +1136,7 @@ export default function PaperGenerator({ toast = () => { } }) {
           paper={viewPaper.paper}
           cls={viewPaper.cls}
           templateId={templateId}
+          toast={toast}
           onClose={() => setViewPaper(null)}
           onDownload={() => { setDownloadPaper(viewPaper); setViewPaper(null); }}
           canDownload={canGenDownload}
@@ -4075,7 +4078,7 @@ function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single'
 /* ═══════════════════════════════════════════════════════════════════
   PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
   ═══════════════════════════════════════════════════════════════════ */
-function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload, canDownload = true }) {
+function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload, canDownload = true, toast = () => {} }) {
   const [tone, setTone] = useState('color'); // 'color' | 'bw'
   const [sections, setSections] = useState([]);
   /* Answer-space config from the class+subject setup (API submission detail). */
@@ -4124,6 +4127,14 @@ function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload, canDo
     return () => { alive = false; };
   }, [paper, cls]);
 
+  /* The saved paper as a docKit document — the QP template, shared by the
+    preview, the PDF, the Word file and print. */
+  const paperDoc = useMemo(() => buildPaperDoc({
+    paper, cls, sections,
+    meta,
+    header: { branchName: reportHeader?.branchName, logoUrl: resolveMediaUrl(reportHeader?.branchLogo) },
+  }), [paper, cls, sections, meta, reportHeader]);
+
   const isBW = tone === 'bw';
   // Urdu paper → RTL layout (questions right-to-left, Urdu-friendly font).
   const isUrdu = String(meta.medium || paper.medium || 'english').toLowerCase() === 'urdu';
@@ -4158,6 +4169,19 @@ function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload, canDo
     if (templateId === 3) return <FormalHeader info={headerInfo} />;
     return <ClassicHeader info={headerInfo} />;
   };
+
+  if (!loadingDetail) {
+    return (
+      <DocViewer
+        doc={paperDoc}
+        onClose={onClose}
+        toast={toast}
+        initialTheme={tone === 'bw' ? 'ink' : 'color'}
+        {...viewerOptionsFor(meta)}
+        fileName={`${paper.title || 'Question Paper'} - ${paper.subj || ''} - ${cls?.name || ''}${cls?.section ? ` ${cls.section}` : ''}`}
+      />
+    );
+  }
 
   return createPortal(
     <div

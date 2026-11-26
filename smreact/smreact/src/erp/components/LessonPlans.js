@@ -6,6 +6,9 @@ import { useActiveSessionName } from '../hooks/useActiveSession';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
 import { buildStandardReportHtml } from '../reports/reportKit';
+import DocViewer from '../reports/docKit/DocViewer';
+import { lessonDoc, unitDoc, questionBankDoc } from '../reports/docKit/adapters';
+import { contentToHtml } from '../reports/docKit/render';
 import { useModuleReadOnly, useSettings, validateSessionDate } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import { useAcademicsContentPerms } from '../services/academicsContentPermissions';
@@ -845,7 +848,15 @@ const [tbRefreshKey, setTbRefreshKey] = useState(0);
 
   /* Reports */
   const [reportPicker, setReportPicker] = useState(null); // { name, format, style, extra }
-  const openReport = (name, format = 'pdf', style = 'color', extra = null) => setReportPicker({ name, format, style, extra });
+  /* Unit / Lesson / Question Bank downloads open the docKit viewer
+     (Colourful + Inkless, real PDF + Word). Other report names keep the picker. */
+  const [docView, setDocView] = useState(null); // { doc, focus, fileName, subtitle }
+  const openReport = (name, format = 'pdf', style = 'color', extra = null) => {
+    const isNb = /—\s*Notebook\s*$/.test(name);
+    const v = lpDocFor(name, format, { units: isNb ? nbUnits : units, clpClass, clpSection, clpSubject });
+    if (v) { setDocView(v); return; }
+    setReportPicker({ name, format, style, extra });
+  };
   const [classesData, setClassesData] = useState([]);
 const getClassesData = async () => {
   /* No active session for this branch → don't fetch or show any class data. */
@@ -1398,6 +1409,17 @@ const getClassesData = async () => {
           setReportPicker(null);
         }}
       />
+
+      {docView && (
+        <DocViewer
+          doc={docView.doc}
+          focus={docView.focus}
+          fileName={docView.fileName}
+          subtitle={docView.subtitle}
+          onClose={() => setDocView(null)}
+          toast={toast}
+        />
+      )}
     </>
   );
 }
@@ -10775,6 +10797,9 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   const [lessons, setLessons] = useState([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const editorRefs = useRef({});
+  /* HTML each editor was loaded with — unchanged sections keep their
+     original JSON (minutes, blocks) instead of the HTML round-trip. */
+  const loadedHtmlRef = useRef({});
   /* Last selection that lived inside an editor. Popups (image/link/math URL
      inputs) steal focus and collapse the editor's selection, so we remember
      it and restore it before running any execCommand. */
@@ -10864,7 +10889,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     if (!ctx) return;
     sections.forEach(s => {
       const el = editorRefs.current[s.key];
-      if (el) el.innerHTML = currentLesson.contentMap?.[s.key] || '';
+      if (el) { el.innerHTML = contentToHtml(currentLesson.contentMap?.[s.key]); loadedHtmlRef.current[s.key] = el.innerHTML; }
     });
     setDuration(currentLesson.duration || '');
     setSecMins(currentLesson.secMins || { slo: '', intro: '', devel: '', recap: '' });
@@ -11008,10 +11033,11 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     setLessons(ls => ls.map((l, i) => i === idx ? { ...l, ...patch } : l));
 
   const captureEditors = () => {
-    const map = {};
+    /* keep keys the editor has no box for (support, resources, video…) */
+    const map = { ...(lessons[selectedIdx]?.contentMap || {}) };
     sections.forEach(s => {
       const el = editorRefs.current[s.key];
-      if (el) map[s.key] = el.innerHTML;
+      if (el && el.innerHTML !== loadedHtmlRef.current[s.key]) map[s.key] = el.innerHTML;
     });
     return map;
   };
@@ -13720,6 +13746,51 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   </div></body></html>`;
 
   deliverReport(`Unit ${u.unitNo || ''} ${acad ? 'Question Bank' : 'Notebook'}`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
+}
+
+/* Unit / Lesson / Question-Bank report names → docKit viewer config.
+   Returns null for any other report (those keep the classic picker). */
+function lpDocFor(name, format, { units = [], clpClass, clpSection, clpSubject }) {
+  const ctx = { className: [clpClass, clpSection].filter(Boolean).join(' · '), subject: clpSubject };
+  const focus = format === 'word' ? 'word' : 'pdf';
+  if (/—\s*Notebook\s*$/.test(name)) {
+    const m = name.match(/^Unit\s+(\S+)/);
+    const unit = units.find(u => String(u.unitNo) === String(m ? m[1] : ''));
+    if (!unit) return null;
+    return {
+      doc: questionBankDoc({ unit, ctx, labelOf: qbLabel, setsOf: qbSetsOf }),
+      focus,
+      fileName: `Unit ${unit.unitNo} - ${unit.unitName} - Question Bank`,
+      subtitle: `Unit ${unit.unitNo} · ${unit.unitName} · ${ctx.className} · ${clpSubject || ''}`,
+    };
+  }
+  if (name.startsWith('Lesson ')) {
+    const parts = name.match(/Unit\s+([^\s]+)$/);
+    const unit = units.find(u => String(u.unitNo) === String(parts ? parts[1] : ''));
+    const lm = name.match(/^Lesson\s+([^\s]+)\s+—/);
+    if (!unit || !lm) return null;
+    const index = (unit.lessons || []).findIndex(l => String(l.num) === String(lm[1]));
+    if (index < 0) return null;
+    const lesson = unit.lessons[index];
+    return {
+      doc: lessonDoc({ lesson, unit, ctx, index, total: unit.lessons.length }),
+      focus,
+      fileName: `Lesson ${lesson.num} - ${lesson.topic || 'Untitled'} - Unit ${unit.unitNo}`,
+      subtitle: `Lesson ${lesson.num} · ${lesson.topic || 'Untitled'} · Unit ${unit.unitNo}`,
+    };
+  }
+  if (name.startsWith('Unit ')) {
+    const m = name.match(/^Unit\s+([^\s—]+)/);
+    const unit = units.find(u => String(u.unitNo) === String(m ? m[1] : ''));
+    if (!unit) return null;
+    return {
+      doc: unitDoc({ unit, ctx }),
+      focus,
+      fileName: `Unit ${unit.unitNo} - ${unit.unitName} - Lesson Plan`,
+      subtitle: `Unit ${unit.unitNo} · ${unit.unitName} · ${(unit.lessons || []).length} lesson${(unit.lessons || []).length === 1 ? '' : 's'}`,
+    };
+  }
+  return null;
 }
 
 async function generateLessonPlanReport(name, style, format, ctx) {
