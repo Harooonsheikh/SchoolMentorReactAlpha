@@ -68,7 +68,8 @@ const dateOnly = (v) => {
   const m = String(v).match(/^\d{4}-\d{2}-\d{2}/);
   return m ? m[0] : '';
 };
-const todayISO = () => new Date().toISOString().slice(0, 10);
+/* Local (PKT) date — toISOString() UTC deta hai, raat 12–5 baje pichla din aata tha. */
+const todayISO = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 
 /* A placeholder ("-") the API stored for an irrelevant field reads back as
    empty in the UI. */
@@ -157,6 +158,13 @@ function mapSale(r) {
     discount: Number(r.discountAmount) || 0,
     discType: r.discountType === 'Percentage' ? 'pct' : 'rs',
     total:    Number(r.totalAmount) || 0,
+    /* Payment fields (list-sales). Purani sales me ye null aate hain → paid
+       undefined rehta hai aur UI puri raqam paid maanta hai (purana behaviour). */
+    studentId: r.isStudent ? (Number(r.studentID) || 0) : 0,
+    ...(r.receiveAmount != null ? { paid: Number(r.receiveAmount) || 0 } : {}),
+    walletId:  Number(r.wallatID) || 0,
+    method:    r.paymentMethod || '',
+    note:      r.receiptNote || '',
     _raw:     r,
   };
 }
@@ -297,9 +305,24 @@ export async function deleteInvProduct(product) {
 }
 
 /* Record a POS sale. `cart` lines carry { id, name, price, qty, cat?, barcode? }.
-   Stock is reduced server-side; the caller re-fetches products + sales after. */
-export async function saveInvSale({ cart = [], buyer, discAmount = 0, discType = 'rs', subtotal = 0, total = 0 }) {
+   Stock is reduced server-side; the caller re-fetches products + sales after.
+
+   Payment (MdlInventorySale):
+     Walk-in            → isStudent:false, studentID:null, receiveAmount = total
+     Student · Full     → isStudent:true,  studentID,      receiveAmount = total
+     Student · Partial  → isStudent:true,  studentID,      receiveAmount = paid now
+                          (0 … total-1) — baqi (total − receiveAmount) student ka
+                          shop credit hai, backend khud hisaab karta hai.
+   wallatID (server ki spelling) = jis wallet me paisa aaya; paid 0 ho to null.
+   `paid` na diya jaye to puri raqam received maani jati hai (purana flow). */
+export async function saveInvSale({
+  cart = [], buyer, discAmount = 0, discType = 'rs', subtotal = 0, total = 0,
+  studentId = null, paid = null, walletId = null, paymentMethod = 'Cash', receiptNote = '',
+}) {
   const b = branchId();
+  const grand       = Number(total) || 0;
+  const isStudent   = Number(studentId) > 0;
+  const receiveAmt  = paid == null ? grand : Math.max(0, Math.min(grand, Number(paid) || 0));
   const body = {
     id:             0,
     branchID:       b,
@@ -309,8 +332,15 @@ export async function saveInvSale({ cart = [], buyer, discAmount = 0, discType =
     discountAmount: Number(discAmount) || 0,
     subTotal:       Number(subtotal) || 0,
     items:          cart.reduce((a, c) => a + (Number(c.qty) || 0), 0),
-    totalAmount:    Number(total) || 0,
+    totalAmount:    grand,
     createdBy:      userId(),
+    isStudent,
+    studentID:      isStudent ? Number(studentId) : null,
+    wallatID:       receiveAmt > 0 && Number(walletId) > 0 ? Number(walletId) : null,
+    receiveAmount:  receiveAmt,
+    paymentMethod:  receiveAmt > 0 ? (paymentMethod || 'Cash') : null,
+    receiveDate:    receiveAmt > 0 ? todayISO() : null,
+    receiptNote:    (receiptNote || '').trim() || null,
     saleItems:      cart.map((c) => ({
       id: 0, masterID: 0, branchID: b,
       itemID:          c.id,
@@ -330,19 +360,49 @@ export async function saveInvSale({ cart = [], buyer, discAmount = 0, discType =
 }
 
 
-/* ─── POS student credit (session) ───
-   A sale billed to a student can be paid partly; the rest is that student's
-   credit, recovered later through credit receipts. The live sale API has no
-   paid / balance / student fields yet, so these are kept for this browser
-   session (like the Wallets port). Receipt ids are CRR-<n>. */
+/* ─── POS student credit (server) ───
+     GET  /api/student-credit/by-branch/{branchId}
+          → one row per student (all their credit sales merged):
+            { studentID, firstName, lastName, fatherName, className, sectionName,
+              saleCount, creditGiven (sum of sale totals), receivedAmount (all
+              money in, counter + later), outstanding, lastActivity,
+              receipts:[{ id, saleMasterID, receivedAmount, receivedDate,
+                          paymentMethod, note, wallatID, createdBy }] }
+            saleMasterID set   → paid at the counter with that sale
+            saleMasterID empty → later credit payment (/receive)
+     POST /api/student-credit/receive  (StudentCreditReceiveRequest) */
+export async function getStudentCredits() {
+  const res  = await fetch(buildUrl(`/api/student-credit/by-branch/${branchId()}`), { headers: authHeaders() });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not load student credit');
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+export async function receiveStudentCredit({ studentId, amount, date, walletId, method, note }) {
+  const res = await fetch(buildUrl('/api/student-credit/receive'), {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      branchID:       branchId(),
+      studentID:      Number(studentId) || 0,
+      receivedAmount: Number(amount) || 0,
+      receivedDate:   date || todayISO(),
+      wallatID:       Number(walletId) || 0,
+      paymentMethod:  method || 'Cash',
+      note:           (note || '').trim() || null,
+      userID:         userId(),
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save the credit payment');
+  return json;
+}
+
+/* ─── POS sale meta (session) ───
+   list-sales abhi student / paid fields null deta hai, is liye is session me
+   bani sale ka student / paid / balance yahan rakhte hain (Sales History ke
+   liye). Student credit + credit receipts ab server se aate hain
+   (getStudentCredits / receiveStudentCredit). */
 const posSessionSaleMeta = {};
-const posSessionCreditReceipts = [];
-let posSessionNextCreditNo = 1;
 export function getPosSaleMeta() { return posSessionSaleMeta; }
 export function setPosSaleMeta(no, meta) { posSessionSaleMeta[no] = meta; }
-export function listInvCreditReceipts() { return [...posSessionCreditReceipts]; }
-export async function saveInvCreditReceipt(payload) {
-  const record = { ...payload, id: `CRR-${posSessionNextCreditNo++}`, createdAt: new Date().toISOString() };
-  posSessionCreditReceipts.unshift(record);
-  return { ...record };
-}

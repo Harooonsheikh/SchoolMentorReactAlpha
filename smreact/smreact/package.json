@@ -11,6 +11,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
     "axios": "^1.20.0",
+    "docx": "^9.16.0",
     "exceljs": "^4.4.0",
     "html2canvas": "^1.4.1",
     "jsbarcode": "^3.12.3",
