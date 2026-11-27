@@ -215,7 +215,8 @@ export default function TicketJourney({ onUnseenChange = () => {} }) {
     const resolved = rows.filter(t => t.journeyStage === 'released');
     return {
       total: rows.length,
-      active: rows.length - resolved.length,
+      /* In progress = not yet "ready for release" and not released. */
+      active: rows.filter(t => t.journeyStage !== 'approved' && t.journeyStage !== 'released').length,
       resolved: resolved.length,
       improvementsLive: resolved.filter(t => t.type === 'improvement').length,
     };
@@ -224,7 +225,7 @@ export default function TicketJourney({ onUnseenChange = () => {} }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(t => {
-      if (statusFilter === 'active' && t.journeyStage === 'released') return false;
+      if (statusFilter === 'active' && (t.journeyStage === 'released' || t.journeyStage === 'approved')) return false;
       if (statusFilter === 'resolved' && t.journeyStage !== 'released') return false;
       if (typeFilter !== 'all' && t.type !== typeFilter) return false;
       if (q && !`${t.ticketNumber} ${t.title} ${MODULE_LABEL[t.module] || ''}`.toLowerCase().includes(q)) return false;
@@ -562,8 +563,8 @@ function ReportDetails({ ticket: t }) {
   return (
     <div className="tj-report" tabIndex={0} aria-label="Report details">
       <section>
-        <div className="tj-report-lbl"><i className="fa-solid fa-align-left" /> {isBug ? 'Problem' : 'Suggestion'}</div>
-        <p>{t.description}</p>
+        <div className="tj-report-lbl"><i className="fa-solid fa-align-left" /> Description</div>
+        <p style={{ whiteSpace: 'pre-wrap' }}>{t.description || 'No description was added to this ticket.'}</p>
       </section>
       {steps.length > 0 && (
         <section>

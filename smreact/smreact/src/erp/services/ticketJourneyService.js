@@ -211,6 +211,10 @@ export async function markTicketSeen(id) {
 
 /** GET /api/school/tickets/unseen-count → number (sidebar badge). */
 export async function getUnseenUpdateCount() {
+  /* Mock count (showed 5 to every school) — replaced by the real tickets API below.
   await delay();
   return schoolTickets().filter(t => t.hasNewUpdate).length;
+  */
+  const rows = await getMyTickets();
+  return rows.filter(t => t.hasNewUpdate).length;
 }
