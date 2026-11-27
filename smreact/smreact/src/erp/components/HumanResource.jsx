@@ -3849,9 +3849,10 @@ function PayRollModal({
                         <input
                           type="number" min={0}
                           value={securityRetentionDeduct}
-                          onChange={(e) => setSecurityRetentionDeduct(e.target.value)}
+                          disabled
+                          readOnly
                         />
-                        <div className="pr-field-hint">Configured: PKR {fmtMoney(configuredRetentionDeduct)} for {month} {year} — editable, set to 0 to skip this month</div>
+                        <div className="pr-field-hint">Configured: PKR {fmtMoney(configuredRetentionDeduct)} for {month} {year} — set in the employee's security retention setup</div>
                       </div>
                       <div className="pr-field pr-field-wide">
                         <label>Security Retention Notes</label>
