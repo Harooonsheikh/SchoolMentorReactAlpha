@@ -111,11 +111,24 @@ export async function downloadPdf(doc, opts, filename, onProgress) {
       const sheet = sheets[si];
       const height = Math.ceil(sheet.offsetHeight);
       iframe.style.height = `${height + 40}px`;
-      const canvas = await html2canvas(sheet, {
-        scale: 2, useCORS: true, allowTaint: false, backgroundColor: '#ffffff',
-        windowWidth: SHEET_W + 20, logging: false, imageTimeout: 8000,
-      });
-      const scale = canvas.width / sheet.offsetWidth;
+      /* Very tall sheets (e.g. a unit with dozens of lessons) exceed the browser's
+         maximum canvas size when captured in one go — the PDF then comes out blank
+         or fails silently. Those are captured in vertical bands instead; short
+         sheets keep the original single capture. */
+      const H2C = { scale: 2, useCORS: true, allowTaint: false, backgroundColor: '#ffffff', windowWidth: SHEET_W + 20, logging: false, imageTimeout: 8000 };
+      const tall = height * 2 > 12000;
+      const BAND = PAGE_H * 3;
+      const bandCache = new Map();
+      const sheetRect = sheet.getBoundingClientRect();
+      const getBand = async (bi) => {
+        if (!bandCache.has(bi)) {
+          const y0 = bi * BAND;
+          bandCache.set(bi, await html2canvas(sheet, { ...H2C, x: sheetRect.left, y: sheetRect.top + y0, width: sheet.offsetWidth, height: Math.min(BAND, height - y0) }));
+        }
+        return bandCache.get(bi);
+      };
+      const canvas = tall ? null : await html2canvas(sheet, H2C);
+      const scale = tall ? 2 : canvas.width / sheet.offsetWidth;
       const pts = breakPoints(sheet);
       const links = linkRects(sheet);
       let start = 0;
@@ -134,11 +147,23 @@ export async function downloadPdf(doc, opts, filename, onProgress) {
         const e0 = end;
         const sliceH = end - start;
         const c = document.createElement('canvas');
-        c.width = canvas.width;
+        c.width = Math.round(sheet.offsetWidth * scale);
         c.height = Math.max(1, Math.round(sliceH * scale));
         const g = c.getContext('2d');
         g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
-        g.drawImage(canvas, 0, Math.round(start * scale), canvas.width, c.height, 0, 0, canvas.width, c.height);
+        if (!tall) {
+          g.drawImage(canvas, 0, Math.round(start * scale), canvas.width, c.height, 0, 0, canvas.width, c.height);
+        } else {
+          /* copy the needed rows from every band this slice touches */
+          for (let bi = Math.floor(start / BAND); bi <= Math.floor((end - 1) / BAND); bi++) {
+            const band = await getBand(bi);
+            const bTop = bi * BAND;
+            const from = Math.max(start, bTop), to = Math.min(end, bTop + BAND);
+            if (to <= from) continue;
+            const sy = Math.round((from - bTop) * scale), sh = Math.min(Math.round((to - from) * scale), band.height - sy);
+            if (sh > 0) g.drawImage(band, 0, sy, band.width, sh, 0, Math.round((from - start) * scale), c.width, sh);
+          }
+        }
         if (pageCount > 0) pdf.addPage();
         pageCount++;
         pdf.addImage(c.toDataURL('image/jpeg', 0.93), 'JPEG', 0, offset * PX_TO_PT, A4_W_PT, sliceH * PX_TO_PT, undefined, 'FAST');

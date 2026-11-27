@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
+import { fetchReportHeader } from '../../utils/pdfReports';
 import { useActiveSessionName } from '../hooks/useActiveSession';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
@@ -851,10 +852,48 @@ const [tbRefreshKey, setTbRefreshKey] = useState(0);
   /* Unit / Lesson / Question Bank downloads open the docKit viewer
      (Colourful + Inkless, real PDF + Word). Other report names keep the picker. */
   const [docView, setDocView] = useState(null); // { doc, focus, fileName, subtitle }
-  const openReport = (name, format = 'pdf', style = 'color', extra = null) => {
+  const openReport = async (name, format = 'pdf', style = 'color', extra = null) => {
     const isNb = /—\s*Notebook\s*$/.test(name);
-    const v = lpDocFor(name, format, { units: isNb ? nbUnits : units, clpClass, clpSection, clpSubject });
-    if (v) { setDocView(v); return; }
+    /* The units list has no lesson content (SLO / Intro / Development / Recap) — it loads
+       per lesson from the detail API. Fetch it for the requested unit/lesson first so the
+       viewer / PDF / Word show real content instead of "No content has been added". */
+    let srcUnits = isNb ? nbUnits : units;
+    if (!isNb && /^(Unit|Lesson)\s/.test(name) && !/—\s*Question Bank\s*$/.test(name)) {
+      try { srcUnits = await lpHydrateLessonContent(units, name, clpCtx); } catch (e) { console.error('Lesson detail load failed:', e); }
+    }
+    const v = lpDocFor(name, format, { units: srcUnits, clpClass, clpSection, clpSubject });
+    if (v) {
+      /* Put the real school name + logo (live /report-header) on the document header. */
+      try {
+        const h = await fetchReportHeader();
+        if (h && v.doc) {
+          let logoUrl = h.branchLogo || '', logoNoCors = false;
+          if (logoUrl && !/^data:/i.test(logoUrl)) {
+            /* Inline the logo as a data URL so it always renders and can be drawn into the PDF.
+               If the image host blocks that (CORS), fall back to the plain URL (shown, not in PDF). */
+            /* Media hosts often send no CORS headers; the app's own origin proxies the same
+               bytes (IIS rule in prod, setupProxy in dev) — same approach the Word/Excel export uses. */
+            let sameOrigin = '';
+            try { const u = new URL(logoUrl, window.location.href); if (u.origin !== window.location.origin) sameOrigin = window.location.origin + u.pathname + u.search; } catch (e) { /* ignore */ }
+            let inlined = '';
+            for (const src of [logoUrl, sameOrigin].filter(Boolean)) {
+              try {
+                const res = await fetch(src);
+                const blob = res.ok ? await res.blob() : null;
+                if (!blob || !/^image\//i.test(blob.type)) continue;
+                inlined = await new Promise((res2, rej) => { const r = new FileReader(); r.onload = () => res2(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+                if (inlined) break;
+              } catch (e) { /* try next */ }
+            }
+            if (inlined) logoUrl = inlined; else logoNoCors = true;
+          }
+          const school = { ...(v.doc.school || {}), ...(h.branchName ? { name: h.branchName } : {}), ...(logoUrl ? { logoUrl, logoNoCors } : {}) };
+          const footer = v.doc.footer && school.name ? { ...v.doc.footer, center: String(v.doc.footer.center || '').replace(String(v.doc.school?.name || ''), school.name) } : v.doc.footer;
+          v.doc = { ...v.doc, school, ...(footer ? { footer } : {}) };
+        }
+      } catch (e) { /* header is optional */ }
+      setDocView(v); return;
+    }
     setReportPicker({ name, format, style, extra });
   };
   const [classesData, setClassesData] = useState([]);
@@ -13746,6 +13785,43 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   </div></body></html>`;
 
   deliverReport(`Unit ${u.unitNo || ''} ${acad ? 'Question Bank' : 'Notebook'}`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
+}
+
+/* Fills lesson.contentMap (+ timings) for the unit/lesson a report name points at.
+   Same detail API the Edit modal and clpUnitPdfReport use. Returns a new units array;
+   lessons that already have content, or fail to load, are left untouched. */
+async function lpHydrateLessonContent(units, name, clpCtx) {
+  const m = name.startsWith('Lesson ') ? name.match(/Unit\s+([^\s]+)$/) : name.match(/^Unit\s+([^\s—]+)/);
+  const unitNo = m ? m[1] : '';
+  const classID = clpCtx?.classID, subjectID = clpCtx?.subjectID;
+  if (!unitNo || !classID || !subjectID) return units;
+  const token = sessionStorage.getItem('token') || '';
+  const lm = name.startsWith('Lesson ') ? name.match(/^Lesson\s+([^\s]+)\s+—/) : null;
+  return Promise.all((units || []).map(async (u) => {
+    if (String(u.unitNo) !== String(unitNo)) return u;
+    const lessons = await Promise.all((u.lessons || []).map(async (l) => {
+      if (lm && String(l.num) !== String(lm[1])) return l;
+      if (l.contentMap && Object.keys(l.contentMap).length) return l;
+      const masterId = l?.record?.id;
+      if (!masterId) return l;
+      try {
+        const res = await fetch(
+          buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${masterId}&classID=${classID}&subjectID=${subjectID}&pageNo=1`),
+          { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+        );
+        const d = ((await res.json())?.data || [])[0];
+        if (!d) return l;
+        return {
+          ...l,
+          topic: d.lessonPlanTopic ?? l.topic,
+          duration: d.timeDuration || l.duration || '',
+          contentMap: { slo: d.learningObjective || '', intro: d.lessonIntroduction || '', devel: d.development || '', recap: d.recap || '' },
+          sectionMinutes: { slo: onlyNum(d.timeForLearning), intro: onlyNum(d.timeForLesson), devel: onlyNum(d.timeForDevelopment), recap: onlyNum(d.timeForRecap) },
+        };
+      } catch (e) { return l; }
+    }));
+    return { ...u, lessons };
+  }));
 }
 
 /* Unit / Lesson / Question-Bank report names → docKit viewer config.

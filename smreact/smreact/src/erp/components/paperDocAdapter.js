@@ -168,7 +168,7 @@ export function buildPaperDoc({ paper, cls, sections = [], meta = {}, header = {
     kind: 'paper',
     dir: urdu ? 'rtl' : 'ltr',
     locale: urdu ? 'ur' : 'en',
-    school: { name: school, logoUrl: header.logoUrl || '' },
+    school: { name: school, logoUrl: header.logoUrl || '', logoNoCors: !!header.logoNoCors },
     title,
     paper: {
       exam: title,

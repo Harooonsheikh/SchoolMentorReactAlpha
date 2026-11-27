@@ -254,7 +254,7 @@ function renderQuestionBox(set, ctx, idx) {
 
 /* ─────────── Sheets ─────────── */
 function crest(doc) {
-  if (doc.school.logoUrl) return `<div class="dk-crest"><img src="${esc(doc.school.logoUrl)}" alt="" crossorigin="anonymous"></div>`;
+  if (doc.school.logoUrl) return `<div class="dk-crest"><img src="${esc(doc.school.logoUrl)}" alt=""${doc.school.logoNoCors ? '' : ' crossorigin="anonymous"'}></div>`;
   const letter = esc((doc.school.initials || 'S')[0]);
   return `<div class="dk-crest"><svg viewBox="0 0 64 64" width="64" height="64" fill="none"><polygon points="32,4 58,18 58,46 32,60 6,46 6,18" stroke="#B8882A" stroke-width="1.8" fill="rgba(255,255,255,.04)"/><polygon points="32,11 51,22 51,42 32,53 13,42 13,22" stroke="#B8882A" stroke-opacity=".45" stroke-width=".8"/><text x="32" y="40" text-anchor="middle" font-family="Georgia,serif" font-size="21" font-weight="bold" fill="#B8882A">${letter}</text><line x1="21" y1="46" x2="43" y2="46" stroke="#B8882A" stroke-opacity=".6" stroke-width=".8"/></svg></div>`;
 }
@@ -266,7 +266,7 @@ function lessonMasthead(doc) {
 
 function paperMasthead(doc, teacherCopy, F = makeFormat('en')) {
   const p = doc.paper || {};
-  const logo = doc.school.logoUrl ? `<img src="${esc(doc.school.logoUrl)}" alt="" crossorigin="anonymous">` : esc((doc.school.initials || 'SM').slice(0, 3));
+  const logo = doc.school.logoUrl ? `<img src="${esc(doc.school.logoUrl)}" alt=""${doc.school.logoNoCors ? '' : ' crossorigin="anonymous"'}>` : esc((doc.school.initials || 'SM').slice(0, 3));
   return `<div class="qp-masthead"><div class="qp-logo">${logo}</div><div><div class="qp-school">${esc(doc.school.name)}${teacherCopy ? ` — ${F.T.teacherCopy}` : ''}</div><div class="qp-examname">${teacherCopy ? `${F.T.answerKey} · ` : ''}${esc(p.exam || doc.title || 'Question Paper')}</div></div></div><div class="qp-gold-bar"></div>`;
 }
 
