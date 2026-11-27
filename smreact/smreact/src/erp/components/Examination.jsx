@@ -20,7 +20,7 @@ import { studentMatchRank } from '../utils/studentSearch';
 import useUiPref from '../hooks/useUiPref';
 import useAsync from '../hooks/useAsync';
 import * as preschoolService from '../services/preschoolService';
-import { excludePreschoolClasses, preschoolLevelFor, preschoolClassKey, readPreschoolClassSetupSync } from '../services/preschoolClassSetupStore';
+import { excludePreschoolClasses, preschoolClassKey, readPreschoolClassSetupSync } from '../services/preschoolClassSetupStore';
 import {
   pProgressForStudent,
   pTemplateForExam,
@@ -1752,6 +1752,36 @@ export default function Examination({ toast = () => { } }) {
        return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pCardCtx, pPsdFields]);
+  /* Preschool card ka DOB / Admission No. getstudentsbybranchsectionandgrade DOB nahi deti,
+     is liye get-class-section-studentlist-by-branch (Students module wali) se is student
+     ka dateOfBirth (aur registerNo fallback) laate hain. */
+  const [pCardStuExtra, setPCardStuExtra] = useState(null);
+  useEffect(() => {
+    setPCardStuExtra(null);
+    if (!pCardCtx?.student?.id) return;
+    let alive = true;
+    (async () => {
+      try {
+        const branchID = sessionStorage.getItem('branchID') || 0;
+        const res = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
+          headers: { Authorization: `Bearer ${sessionStorage.getItem('token')}`, Accept: 'application/json' },
+        });
+        const json = await res.json().catch(() => null);
+        const sid = String(pCardCtx.student.id);
+        let found = null;
+        (json?.data || []).some(g => (g.sections || []).some(s => (s.students || []).some(st => {
+          if (String(st.id ?? st.studentID ?? st.studentId) === sid) { found = st; return true; }
+          return false;
+        })));
+        if (!alive || !found) return;
+        setPCardStuExtra({
+          dob: String(found.dateOfBirth || found.DateOfBirth || found.dob || '').slice(0, 10),
+          admissionNo: found.registerNo || found.registrationNo || '',
+        });
+      } catch (e) { console.error('Could not load student DOB:', e); }
+    })();
+    return () => { alive = false; };
+  }, [pCardCtx]);
   const [pConfirmPublish, setPConfirmPublish] = useState(null);
   const [pLevelPickCtx, setPLevelPickCtx] = useState(null);
   const [pConfirmDeleteRecords, setPConfirmDeleteRecords] = useState(null);
@@ -6671,8 +6701,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                     const levels = {};
                     classes.forEach((c, i) => {
                       const key = `rcls_${id}_${c.sectionID}_${i}`;   // render resExamId(=id) use karta hai
-                      /* Setup Preschool Classes mapping (this device) also marks a class as Preschool. */
-                      const isPre = c.isPreSchooling === true || !!preschoolLevelFor(null, c.classID, c.sectionID);
+                      /* SIRF getclassesinexam ka isPreSchooling decide karta hai. Setup Preschool
+                         Classes (local mapping) alag cheez hai — yahan us ka asar nahi. */
+                      const isPre = (c.isPreSchooling ?? c.IsPreSchooling) === true;
                       types[key] = isPre ? 'preschool' : 'grade';
                       if (isPre) {
                         const levelId = preschoolService.levelIdFromApiName(c.preLevelName);
@@ -7057,6 +7088,9 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
                                               name: raw.studentName || raw.name || '',
                                               father: raw.fatherName || raw.father || '',
                                               rollNo: raw.registrationNumber || raw.rollNo || raw.grNo || '—',
+                                              /* Preschool result card: Admission No = registrationNumber, DOB API se (date part). */
+                                              admissionNo: raw.registrationNumber || raw.RegistrationNumber || '',
+                                              dob: String(raw.dateOfBirth || raw.DateOfBirth || raw.dob || raw.birthDate || '').slice(0, 10),
                                               attendance: raw.attendance,
                                             };
                                             const ad = (pcd.students || []).find(s => String(s.studentId) === String(st.id));
@@ -9205,7 +9239,11 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
     <PreschoolResultCardViewer
       assessment={{ name: pCardCtx.examName, label: pCardCtx.examName }}
       cls={{ cls: pCardCtx.className, sec: '' }}
-      student={pCardCtx.student}
+      student={{
+        ...pCardCtx.student,
+        dob: pCardCtx.student?.dob || pCardStuExtra?.dob || '',
+        admissionNo: pCardCtx.student?.admissionNo || pCardStuExtra?.admissionNo || '',
+      }}
       ad={ad}
       school={branchSchool}   
       template={(() => { try { return sessionStorage.getItem('preschoolReportType'); } catch { return null; } })() || pReportType || pTemplateForExam(pCardCtx.examName)}

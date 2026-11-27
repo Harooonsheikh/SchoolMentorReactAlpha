@@ -1400,15 +1400,6 @@ function PreschoolAssessmentModal({ assessment, cls, examId, termId, student, ex
   );
 }
 
-function pAgeFromDob(dob) {
-  if (!dob) return '—';
-  const b = new Date(dob), n = new Date();
-  let years = n.getFullYear() - b.getFullYear();
-  const m = n.getMonth() - b.getMonth();
-  if (m < 0 || (m === 0 && n.getDate() < b.getDate())) years -= 1;
-  return `${years} yrs`;
-}
-
 /* ═══════════════════════════════════════════════════════════════════
    PreschoolResultCardViewer — mirrors ResultCardViewer exactly
    (same live-DOM-innerHTML print approach, same A4 print CSS shell). ─
@@ -1520,8 +1511,8 @@ function PreschoolResultCard({ variant = 'monthly', pRco, sigs, student = SAMPLE
         {[
           ['Student Name', student.name], ['Father Name', student.father],
           ['Roll Number', student.rollNo], ['Class / Section', `${cls.cls} - ${cls.sec}`],
-          ['Admission No', student.admissionNo || '—'], ['Date of Birth', `${student.dob || '—'}${student.dob ? ` (${pAgeFromDob(student.dob)})` : ''}`],
-          ['Teacher', student.teacher || '—'], ['Campus', student.campus || '—'],
+          ['Admission No', student.admissionNo || student.admission || student.registrationNumber || '—'],
+          ['Date of Birth', (() => { const d = String(student.dob || '').slice(0, 10); return d || '—'; })()],
         ].map(([l, v]) => (
           <div key={l}>
             <div style={{ fontSize: 8, fontWeight: 700, color: textMut, textTransform: 'uppercase', letterSpacing: '.4px' }}>{l}</div>

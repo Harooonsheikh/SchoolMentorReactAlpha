@@ -1790,6 +1790,14 @@ export async function deleteClassChallans(classKey, monthIdx) {
    challan (generate/receive/delete) invalidates it via
    invalidateMonthChallans() so the next read is always fresh. */
 const monthChallansCache = new Map(); // `${branchID}|${month}|${year}` -> promise
+
+/* Branch filter (client side) — API ko branchId bhejte hain, phir bhi response me
+   kisi aur branch ka row aa jaye to wo yahin hat jaye (doosri branch ke same
+   studentID ka baqaya Previous me na chipke). Row par branchID na ho to rakho. */
+function sameBranchRow(row, branchID) {
+  const b = row?.branchID ?? row?.branchId ?? row?.BranchID;
+  return b == null || b === '' || Number(b) === Number(branchID);
+}
 export function invalidateMonthChallans(month, year) {
   // A write can also change the "previous dues" range totals (ledgerRangeCache
   // below), so both caches are cleared together — same invalidation trigger.
@@ -1827,7 +1835,7 @@ export async function getMonthChallans(month, year) {
       throw new Error(apiMessage(json) || 'Could not load challans');
     }
     const rows = Array.isArray(json?.data) ? json.data : [];
-    return rows.map(normalizeLedgerInstallments);
+    return rows.filter(r => sameBranchRow(r, branchID)).map(normalizeLedgerInstallments);
   })();
 
   monthChallansCache.set(key, promise);
@@ -2156,8 +2164,8 @@ export async function getPrevDues(month, year) {
       throw new Error(apiMessage(json) || 'Could not load previous dues');
     }
     const data = json?.data || {};
-    const students = Array.isArray(data.students) ? data.students : [];
-    const heads    = Array.isArray(data.heads)    ? data.heads    : [];
+    const students = (Array.isArray(data.students) ? data.students : []).filter(s => sameBranchRow(s, branchID));
+    const heads    = (Array.isArray(data.heads)    ? data.heads    : []).filter(h => sameBranchRow(h, branchID));
 
     const out = {};
     // RS1 -> har prior-challan student (net 0 bhi) — prevOutFromLedgerRows jaisa
@@ -2206,7 +2214,7 @@ export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
       throw new Error(apiMessage(json) || 'Could not load ledger history');
     }
     return Array.isArray(json?.data)
-      ? json.data.map(normalizeLedgerInstallments)
+      ? json.data.filter(r => sameBranchRow(r, branchID)).map(normalizeLedgerInstallments)
       : [];
   })();
 

@@ -3282,8 +3282,9 @@ function FeeChallansList({ toast }) {
        bina TOTAL DUES turant; dues value validated-identical. */
     try {
       const fastPO = await feeService.getPrevDues(mIdx + 1, appliedYear);
+      const coverIds = await coveringStudentIds(mIdx + 1, appliedYear);
       const scoped = {};
-      studs.forEach(s => { const id = String(s.studentID); if (fastPO[id]) scoped[id] = fastPO[id]; });
+      studs.forEach(s => { const id = String(s.studentID); if (fastPO[id] && !coverIds.has(id)) scoped[id] = fastPO[id]; });
       if (Object.keys(scoped).length) setPrevOutMap(prev => ({ ...prev, ...scoped }));
     } catch { /* lean prev-dues optional */ }
     const allRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
@@ -3294,7 +3295,8 @@ function FeeChallansList({ toast }) {
     Object.keys(prevOut).forEach(id => {
       prevOut[id].fine = unpaidFineOf((prior[id] || [])[0], settingsRef.current);
     });
-    return { prevOut, prior };
+    const coverOnly = coverOnlyStudentIds(rows, prevOut, mIdx + 1, appliedYear);
+    return { prevOut, prior, coverOnly };
   }, [appliedMonth, appliedYear]);
 
   useEffect(() => {
@@ -3304,9 +3306,14 @@ function FeeChallansList({ toast }) {
     let cancelled = false;
     (async () => {
       try {
-        const { prevOut, prior } = await loadClassPrev(studs);
+        const { prevOut, prior, coverOnly } = await loadClassPrev(studs);
         if (cancelled) return;
-        setPrevOutMap(prev => ({ ...prev, ...prevOut }));
+        setPrevOutMap(prev => {
+          const next = { ...prev, ...prevOut };
+          /* Sirf covering multi-month challan wale — prev-dues SP ka (double) figure hatao. */
+          (coverOnly || new Set()).forEach(id => { delete next[id]; });
+          return next;
+        });
         setPriorByStudent(prev => ({ ...prev, ...prior }));
         /* cover-drop sirf IS class ke cover entries par (key `${classKey}|...`). */
         setCoverMap(prev => {
@@ -3767,7 +3774,11 @@ function FeeChallansList({ toast }) {
     const pick = (pm, s) => pm[String(s.studentID)] || pm[String(s.applicantsID)] || null;
     let pm = prevOutMap;
     if (students.some(s => !pick(pm, s))) {
-      try { const { prevOut } = await loadClassPrev(students); pm = { ...pm, ...prevOut }; }
+      try {
+        const { prevOut, coverOnly } = await loadClassPrev(students);
+        pm = { ...pm, ...prevOut };
+        (coverOnly || new Set()).forEach(id => { delete pm[id]; });
+      }
       catch (e) { /* loader fail → stored figures par hi fallback */ }
     }
     return students.map(s => {
@@ -8560,6 +8571,45 @@ function ledgerCoversMonth(rec, month, year) {
   return t >= (sy * 12 + sm) && t <= (ey * 12 + em);
 }
 
+/* Jin students ka view-mahine se pehle koi challan NAHI, sirf ek multi-month challan
+   hai jo view mahine ko cover karta hai (Sep–Nov challan, Oct/Nov view). Ledger compute
+   us challan ko skip karta hai → in ka prevOut nahi banta. Magar prev-dues SP
+   (/api/BranchLedger/prev-dues) usi challan ko "pichhla" gin kar us ka apna baqaya
+   (billed − disc − received) Previous Dues bana deta hai → Previous + Remaining dono
+   me wahi raqam (double). Aise ids ka SP figure hata dena hai. */
+function coverOnlyStudentIds(rows, prevOut, month, year) {
+  const ids = new Set();
+  (rows || []).forEach(r => {
+    if (!r || !ledgerCoversMonth(r, month, year)) return;
+    const id = String(r.studentID);
+    if (!prevOut || !prevOut[id]) ids.add(id);
+  });
+  return ids;
+}
+
+/* View mahine ke wo students jin ka challan multi-month hai aur pichhle mahine se shuru hua
+   (Sep–Nov challan, Oct/Nov view). prev-dues SP (/api/BranchLedger/prev-dues) is challan ko
+   "pichhla" gin kar us ka apna baqaya Previous bana deta hai → Previous = challan ka baqaya,
+   Remaining = double (jab tak ledger compute aa kar coverOnly se hata na de — pehle galat
+   phir 0 dikhta tha). Aise students par SP ka fast figure lagao hi mat. getMonthChallans
+   cached hai — extra call nahi. Fail ho to khali set (purana behaviour). */
+async function coveringStudentIds(month, year) {
+  try {
+    const rows = await feeService.getMonthChallans(month, year);
+    const own = new Set();
+    const cover = new Set();
+    (rows || []).forEach(r => {
+      const id = String(r.studentID);
+      if (isMultiMonthNonStartView(r, month, Number(year))) cover.add(id); else own.add(id);
+    });
+    /* Is mahine ka apna challan bhi ho to wahi chalta hai — SP figure theek. */
+    own.forEach(id => cover.delete(id));
+    return cover;
+  } catch (e) {
+    return new Set();
+  }
+}
+
 function isMultiMonthChallan(rec) {
   if (!rec) return false;
   if ((Number(rec.totalMonthChallan) || 0) > 1) return true;
@@ -9402,9 +9452,10 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
            kiye bina TOTAL DUES turant; dues value validated-identical. */
         try {
           const fastPO = await feeService.getPrevDues(mIdx + 1, appliedYear);
+          const coverIds = await coveringStudentIds(mIdx + 1, appliedYear);
           if (!cancelled) {
             const scoped = {};
-            studs.forEach(s => { const id = String(s.studentID); if (fastPO[id]) scoped[id] = fastPO[id]; });
+            studs.forEach(s => { const id = String(s.studentID); if (fastPO[id] && !coverIds.has(id)) scoped[id] = fastPO[id]; });
             if (Object.keys(scoped).length) setPrevOutMap(prev => ({ ...prev, ...scoped }));
           }
         } catch { /* lean prev-dues optional */ }
@@ -9449,7 +9500,13 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
           }
         } catch (e) { /* installments optional */ }
         if (cancelled) return;
-        setPrevOutMap(prev => ({ ...prev, ...prevOut }));
+        const coverOnly = coverOnlyStudentIds(prevRows, prevOut, mIdx + 1, appliedYear);
+        setPrevOutMap(prev => {
+          const next = { ...prev, ...prevOut };
+          /* Sirf covering multi-month challan wale — prev-dues SP ka (double) figure hatao. */
+          coverOnly.forEach(id => { delete next[id]; });
+          return next;
+        });
         setPriorByStudent(prev => ({ ...prev, ...prior }));
         /* cover-drop sirf IS class ke generated keys par (`${classKey}|...`). */
         const dropKeys = Object.keys(challanMap).filter(k => {
@@ -9517,12 +9574,18 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
     const challan = await loadPriorChallan(s, pc);
     if (!challan) { toast(`Could not load the pending challan for ${s.name}`, 'error'); return; }
     const payments = feeService.installmentsToPayments(challan);
-    const m = recStudentModel({
+    const m0 = recStudentModel({
       student: s, headsForClass: headsMap[c.key] || [], generated: true, classDisc: {},
       payments, challan, prevOverride: null,
     });
+    /* Purane challan (September) ka un-carried baqaya bhi isi modal me — save par usi challan par. */
+    const { model: m, olderMap } = viewOnly
+      ? { model: m0, olderMap: null }
+      : withOlderPendingHeads(m0, uncarriedOlderPending(
+        priorByStudent[String(s.studentID)] || [], challan,
+        (prevOutMap[String(s.studentID)] || {}).byHead || null));
     setReceiveCtx({
-      classMeta: c, student: s, model: m, payments, challan,
+      classMeta: c, student: s, model: m, payments, challan, olderMap,
       prevFine: carriedFineInto(challan, priorByStudent[String(s.studentID)] || [], settings),
       period: viewOnly ? ledgerMonthLabel(challan) : `${ledgerMonthLabel(challan)} (Pending)`,
       monthIdx: (Number(challan.startMonth || challan.month) || 1) - 1,
@@ -9826,14 +9889,16 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
     }
   };
 
-  const handleSaveReceipt = async (payload, saveOpts = {}) => {
+  const handleSaveReceipt = async (payloadIn, saveOpts = {}) => {
+    /* Purane challan (un-carried, e.g. September Old Dues) ki heads alag — wo usi challan par jaayengi. */
+    const { payload, parts: olderParts } = splitOlderPayload(payloadIn, receiveCtx?.olderMap || null);
     /* Pay Now & Next → slip nahi; save ke baad list ka agla student. */
     const goNext = !!saveOpts?.next;
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
-    const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
+    const hasPerHead = (payload.perHead && Object.keys(payload.perHead).some(
       k => Number(payload.perHead[k]) !== 0
-    );
+    )) || olderParts.length > 0;
     const hasGiveDisc = !!payload.isReceiving && payload.giveDisc
       && Object.keys(payload.giveDisc).some(k => Number(payload.giveDisc[k]) > 0);
     /* Full Discount Manager discount (net 0) par receiving 0 allow — warna yahi toast rokta tha. */
@@ -10001,7 +10066,7 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
         newHeads: (finePlan ? finePlan.newHeads : payload.newHeads) || [],
       });
       const finePayOpts = { paymentMethod: payMethodForApi, receivedDate: payload.date || '', modifiedBy: userID, walletId: payload.walletId || 0 };
-      if (!recvBody.detailRows.length && !finePlan) {
+      if (!recvBody.detailRows.length && !finePlan && !olderParts.length) {
         toast('Enter at least one head amount to receive', 'warning');
         return;
       }
@@ -10065,6 +10130,15 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
           if (!fp) carriedFinePaid = finePlan.parts.reduce((a, p) => a + p.amount, 0);
         } catch (e) {
           toast(`Previous fine could not be recorded: ${e.message || 'error'}`, 'error');
+        }
+      }
+      /* Purane challan (September) ki un-carried heads — usi challan ki rows par alag call. */
+      if (olderParts.length && !pendingFromResp(recvRes, '')) {
+        try {
+          const op = await payOlderParts(olderParts, finePayOpts);
+          if (op && !recvRes) recvRes = { success: false, pendingApproval: true, message: op.message, approvalID: op.approvalId, requestNo: op.requestNo };
+        } catch (e) {
+          toast(`Older challan amount could not be recorded: ${e.message || 'error'}`, 'error');
         }
       }
       receivePending = pendingFromResp(recvRes, 'Receiving sent for approval');
@@ -10553,7 +10627,13 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
                             : 0;
                           /* Previous Pending = is mahine se PEHLE ka baqaya (Nov ke baad Dec me 12,000),
                              Received = SIRF is mahine ki wasooli, Remaining = abhi ka baqaya. */
-                          const pv = pm
+                          /* Purane challans ka wo baqaya jo latest me carry nahi hua (September ka
+                             Old Dues Till Date) — Previous / Remaining me jodo, alag Receive link. */
+                          const olderOpen = showRec
+                            ? uncarriedOlderPending(priorList, showRec, (prevOutMap[String(s.studentID)] || {}).byHead || null)
+                            : [];
+                          const olderAmt = olderOpen.reduce((a, o) => a + o.amount, 0);
+                          const pv0 = pm
                             ? {
                               prev: pm.remaining + recvThisMonth, paid: recvThisMonth, remaining: pm.remaining,
                               fine: 0, label: ledgerMonthLabel(showRec), everPaid: pm.paid,
@@ -10561,6 +10641,9 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
                             : pc
                               ? { prev: pendTotal, paid: 0, remaining: pendTotal, fine: 0, label: ledgerMonthLabel(pc), everPaid: +pc.totalReceived || 0 }
                               : null;
+                          const pv = pv0 && olderAmt > 0
+                            ? { ...pv0, prev: pv0.prev + olderAmt, remaining: pv0.remaining + olderAmt }
+                            : pv0;
                           const pvStatus = pv ? (pv.remaining <= 0 ? 'full' : pv.paid > 0 ? 'partial' : 'none') : null;
                           /* View (eye) ke liye pichhla challan — /pending item ya ledger rec. */
                           const viewTarget = pc || (showRec ? {
@@ -10675,6 +10758,28 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
                                     <div className="fee-recv-status">
                                       {statusBadge(pvStatus)}
                                       <span className="fee-sub-eq">No {appliedMonth} challan · from {pv.label}</span>
+                                      {olderOpen.map(o => (
+                                        <span key={o.rec.id} className="fee-sub-eq">
+                                          + <b className="fee-neg">{money(o.amount)}</b> pending on {ledgerMonthLabel(o.rec)} ({o.heads.join(', ')})
+                                          {canRcvCreate && !isPastView && (
+                                            <Tooltip text={`Receive ${money(o.amount)} pending on the ${ledgerMonthLabel(o.rec)} challan`}>
+                                              <button
+                                                type="button"
+                                                className="fee-recv-link"
+                                                style={{ marginLeft: 6 }}
+                                                onClick={() => openPendingReceive(c, s, {
+                                                  ledgerId: o.rec.id,
+                                                  month: o.rec.month, year: o.rec.year,
+                                                  startMonth: o.rec.startMonth || o.rec.month,
+                                                  startYear: o.rec.startYear || o.rec.year,
+                                                })}
+                                              >
+                                                Receive <i className="fa-solid fa-hand-holding-dollar"></i>
+                                              </button>
+                                            </Tooltip>
+                                          )}
+                                        </span>
+                                      ))}
                                     </div>
                                   ) : pc ? (
                                     <span className="fee-recv-notice">
@@ -15752,6 +15857,149 @@ function pickReceivableChallan(priorList, pendList) {
   const pc = pend[0] || null;
   const rec = pc ? (prior.find(r => Number(r.id) === Number(pc.ledgerId)) || null) : latest;
   return { rec, pc };
+}
+
+/* Chune hue (latest) challan se PURANE challans ka wo baqaya jo kisi baad wale challan me
+   CARRY nahi hua. Backend har dafa carry nahi karta — e.g. September par partial receiving
+   ke baad October bana to September ka "Old Dues Till Date" 5,000 October me nahi aaya,
+   September par hi khula hai. Fee Challans tab (running ledger) usay ginta hai, Receiving
+   sirf latest challan dikhata tha → 15,000 vs 20,000. Head-wise check: P ka khula head
+   carried tab maana jata hai jab baad ke kisi challan me usi naam ki row ka
+   previousPendingorAdv ≠ 0 ho, ya baad wale challan me aggregate "Previous Pending" row ho.
+   Returns [{ rec, amount, heads:[names] }] naya-pehle. */
+/* SAFETY CAP (ledgerByHead = prevOutMap[sid].byHead, running ledger — Fee Challans tab ka
+   wahi hisaab): kisi head ki extra raqam kabhi (ledger ka us head ka kul baqaya − latest
+   challan par us head ka khula baqaya) se zyada nahi. Backend carried head poori pay hone par
+   previousPendingorAdv 0 kar deta hai — bina cap ke purane challan ka wo (asal me paid) baqaya
+   jhoota pending ban jaata. Ledger figure na ho (abhi load nahi) → kuch extra nahi (purana
+   behaviour). */
+function uncarriedOlderPending(priorList, pickedRec, ledgerByHead) {
+  const list = priorList || [];
+  if (!pickedRec || !ledgerByHead || typeof ledgerByHead !== 'object') return [];
+  const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const pickedStart = startOf(pickedRec);
+  /* Har head ki ijazat = ledger baqaya − latest challan par khula. */
+  const allow = {};
+  Object.entries(ledgerByHead).forEach(([k, v]) => { allow[norm(k)] = (allow[norm(k)] || 0) + (Math.round(+v) || 0); });
+  installmentHeadsOf(pickedRec).forEach(h => { allow[norm(h.name)] = (allow[norm(h.name)] || 0) - (+h.afterDiscount || 0); });
+  const older = list
+    .filter(P => P && Number(P.id) !== Number(pickedRec.id) && startOf(P) < pickedStart)
+    .sort((a, b) => (startOf(b) - startOf(a)) || (Number(b.id) - Number(a.id)));
+  const out = [];
+  older.forEach(P => {
+    const later = list.filter(L => L && Number(L.id) !== Number(P.id) && startOf(L) > startOf(P));
+    if (!list.some(L => Number(L.id) === Number(pickedRec.id))) later.push(pickedRec);
+    const aggCarried = later.some(L => (L.detailRows || []).some(r =>
+      isAggregateCarryRow(r) && (+r.challanAmount || 0) !== 0));
+    if (aggCarried) return;
+    const carriedHead = (name) => later.some(L => (L.detailRows || []).some(r =>
+      norm(r.subHead || r.head) === norm(name)
+      && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0));
+    const headRows = [];
+    installmentHeadsOf(P).forEach(h => {
+      if (carriedHead(h.name)) return;
+      const key = norm(h.name);
+      const amt = Math.min(+h.afterDiscount || 0, Math.max(0, allow[key] || 0));
+      if (amt <= 0) return;
+      allow[key] -= amt;
+      headRows.push({
+        name: h.name,
+        amount: amt,
+        rowId: Number(((P.detailRows || []).find(r => norm(r.subHead || r.head) === key) || {}).id) || 0,
+      });
+    });
+    const amount = headRows.reduce((a, h) => a + h.amount, 0);
+    if (amount > 0) out.push({ rec: P, amount, heads: headRows.map(h => h.name), headRows });
+  });
+  return out;
+}
+
+/* Receiving modal me purane challan ki un-carried heads bhi dikhao — naam ke saath mahina
+   ("Old Dues Till Date (September 2026)") taake latest challan ki same naam wali head se na
+   takraye. Save par ye raqam USI purane challan par jaati hai (olderMap → alag
+   receive-installment), latest challan par nayi row nahi banti. */
+function withOlderPendingHeads(model, olderOpen) {
+  const olderMap = {};
+  if (!model || !olderOpen || !olderOpen.length) return { model, olderMap: null };
+  const extra = [];
+  olderOpen.forEach(o => {
+    const label = ledgerMonthLabel(o.rec);
+    (o.headRows || []).forEach(h => {
+      if (!h.rowId || !(h.amount > 0)) return;
+      const name = `${h.name} (${label})`;
+      olderMap[name] = { ledgerId: Number(o.rec.id), rowId: h.rowId, head: h.name };
+      extra.push({ name, std: 0, disc: 0, net: 0, prev: h.amount, rawDisc: 0, _older: true });
+    });
+  });
+  if (!extra.length) return { model, olderMap: null };
+  const add = extra.reduce((a, h) => a + h.prev, 0);
+  return {
+    model: {
+      ...model,
+      heads: [...(model.heads || []), ...extra],
+      prev: (+model.prev || 0) + add,
+      payable: (+model.payable || 0) + add,
+      remaining: (+model.remaining || 0) + add,
+      status: model.status === 'full' ? 'partial' : model.status,
+    },
+    olderMap,
+  };
+}
+
+/* Modal payload me se purane-challan wali heads alag karo. Returns { payload, parts }. */
+function splitOlderPayload(payload, olderMap) {
+  if (!olderMap || !payload) return { payload, parts: [] };
+  const keys = Object.keys(olderMap);
+  const parts = [];
+  keys.forEach(k => {
+    const amt = Math.round(+(payload.perHead?.[k]) || 0);
+    const give = payload.isReceiving ? Math.max(0, Math.round(+(payload.giveDisc?.[k]) || 0)) : 0;
+    if (amt === 0 && give === 0) return;
+    const pend = payload.pendByHead && Object.prototype.hasOwnProperty.call(payload.pendByHead, k)
+      ? payload.pendByHead[k] : undefined;
+    parts.push({ ...olderMap[k], amount: amt, give, pend });
+  });
+  const strip = (obj) => {
+    if (!obj) return obj;
+    const n = { ...obj };
+    keys.forEach(k => { delete n[k]; });
+    return n;
+  };
+  return {
+    payload: {
+      ...payload,
+      perHead: strip(payload.perHead),
+      pendByHead: strip(payload.pendByHead),
+      giveDisc: strip(payload.giveDisc),
+      prevByHead: strip(payload.prevByHead),
+      newHeads: (payload.newHeads || []).filter(h => !olderMap[h.name]),
+    },
+    parts,
+  };
+}
+
+/* splitOlderPayload ke parts — har purane challan ki row par alag receive-installment. */
+async function payOlderParts(parts, { paymentMethod, receivedDate, modifiedBy, walletId }) {
+  let pending = null;
+  for (const p of parts) {
+    const body = feeService.buildReceiveInstallmentRequest({
+      ledgerId: p.ledgerId,
+      paymentMethod,
+      receivedDate,
+      modifiedBy,
+      isReceiving: true,
+      walletId,
+      detailRows: [{ id: p.rowId, subHead: p.head }],
+      perHead: { [p.head]: p.amount },
+      giveDisc: p.give > 0 ? { [p.head]: p.give } : {},
+      pendByHead: p.pend !== undefined ? { [p.head]: p.pend } : {},
+    });
+    if (!body.detailRows.length) continue;
+    const res = await feeService.receiveInstallment(body);
+    pending = pending || pendingFromResp(res, '');
+  }
+  return pending;
 }
 
 /* PICHHLE challans ka baqaya FINE jo is challan me carry hua (Option 2). Jab ye challan
