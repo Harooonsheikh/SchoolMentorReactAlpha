@@ -125,7 +125,6 @@ async function runFeePreload({ force = false } = {}) {
   /* Screens ki default period wahi hai jo server par active hai (settings ke baad), warna aaj ka mahina. */
   const settings = await getFeeSettings().catch(() => ({}));
   const { m, y } = feePeriodFor(settings);
-  const prev = previousRangeFor(m, y);
   await Promise.allSettled([
     getReportHeader(),
     getFeeGrades(),
@@ -151,15 +150,6 @@ export function feePeriodFor(settings) {
   }
   const d = new Date();
   return { m: d.getMonth(), y: d.getFullYear() };
-}
-
-/* The 12-month window the challan screens use for previous dues (ends at the month before). */
-function previousRangeFor(m0, y) {
-  let toM = m0, toY = y;
-  if (toM === 0) { toM = 12; toY = y - 1; }
-  let fromM = toM - 11, fromY = toY;
-  while (fromM <= 0) { fromM += 12; fromY -= 1; }
-  return { fromM, fromY, toM, toY };
 }
 
 /* Background refresh every 10 minutes while logged in — screens never fetch on open,
@@ -297,29 +287,6 @@ export async function getFeeGrades() {
         };
       });
     });
-}
-
-async function getFeeGradesByGradeOnly() {
-  const branchID = sessionStorage.getItem('branchID') || 0;
-  const res  = await trackedFetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), {
-    headers: { Accept: '*/*' },
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load classes');
-  const data = Array.isArray(json?.data) ? json.data : [];
-  return [...data]
-    .sort((a, b) => (a.orderBy || 0) - (b.orderBy || 0))
-    .map(g => ({
-      key:      `g${g.id}`,
-      cls:      g.name ?? g.gradeName ?? '—',
-      sec:      'No Section',
-      _gradeId: g.id,
-      heads:    (g.feeHeads || []).map(h => ({
-        feeStructureID: h.feeStructureID ?? h.id ?? 0,
-        name:           h.headName ?? h.name ?? '',
-        amt:            Number(h.amount ?? h.amt) || 0,
-      })),
-    }));
 }
 
 /* ── Class/section/student roster cache ─────────────────────────────

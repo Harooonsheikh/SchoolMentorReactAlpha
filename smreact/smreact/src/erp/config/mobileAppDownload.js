@@ -1,11 +1,14 @@
-/* Sandbox Mobile App download — sidebar ke "Download Sandbox Mobile APP" button
-   ka config.
+/* Sandbox Mobile App download — sidebar ke "Sandbox Mobile app" button ka config.
 
-   APK file ko public/downloads/ folder me rakho (naam wahi jo FILE_NAME me hai).
-   URL relative hai, is liye sandbox aur live dono par wahi file milegi jo
-   usi host par deploy hui hai. Jab tak file nahi rakhi, button click par
-   "abhi available nahi" ka toast dikhta hai (HTML fallback download nahi hota). */
+   APK file public/downloads/ folder me rakho (koi bhi naam). File ka naam
+   scripts/sync-mobile-app.js generate karta hai (mobileAppDownload.generated.js),
+   is liye APK badlo to: node scripts/sync-mobile-app.js
+   Folder me APK na ho to button click par "not available" toast dikhta hai. */
 
-export const MOBILE_APP_FILE_NAME = 'SchoolMentor-Sandbox.apk';
-export const MOBILE_APP_DOWNLOAD_URL = `/downloads/${MOBILE_APP_FILE_NAME}`;
+import { MOBILE_APP_FILE_NAME as GENERATED_FILE_NAME } from './mobileAppDownload.generated';
+
+export const MOBILE_APP_FILE_NAME = GENERATED_FILE_NAME;
+export const MOBILE_APP_DOWNLOAD_URL = MOBILE_APP_FILE_NAME
+  ? `/downloads/${encodeURIComponent(MOBILE_APP_FILE_NAME)}`
+  : null;
 export const MOBILE_APP_BUTTON_LABEL = 'Sandbox Mobile app';

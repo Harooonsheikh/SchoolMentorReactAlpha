@@ -572,17 +572,21 @@ if (navId === 'mentorai') {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   };
 
-  /* Sidebar ka "Download Sandbox Mobile APP" — click par APK khud download hoti hai.
+  /* Sidebar ka "Sandbox Mobile app" — click par APK khud download hoti hai.
      Pehle HEAD se check: file na ho ya SPA fallback (text/html) aaye to download
      nahi karte, warna user ko HTML file ".apk" naam se mil jati. */
   const downloadMobileApp = async () => {
+    if (!MOBILE_APP_DOWNLOAD_URL) {
+      pushToast('Mobile app is not available right now. Please try again later.', 'warning');
+      return;
+    }
     try {
       const res = await fetch(MOBILE_APP_DOWNLOAD_URL, { method: 'HEAD', cache: 'no-store' });
       const type = (res.headers.get('content-type') || '').toLowerCase();
       const missing = !res.ok && res.status !== 405 && res.status !== 501;
       if (missing || type.includes('text/html')) throw new Error('mobile app not available');
     } catch (e) {
-      pushToast('Mobile app abhi available nahi hai. Thori dair baad try karein.', 'warning');
+      pushToast('Mobile app is not available right now. Please try again later.', 'warning');
       return;
     }
     const a = document.createElement('a');

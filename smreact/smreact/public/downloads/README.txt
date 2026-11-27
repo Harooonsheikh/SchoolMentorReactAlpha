@@ -1,8 +1,11 @@
 Sandbox Mobile App APK folder.
 
-Put the app file here with this exact name:
+Put the app file (.apk) here with any file name.
 
-    SchoolMentor-Sandbox.apk
+After adding or replacing the APK, run this from the project root:
 
-The sidebar button "Download Sandbox Mobile APP" downloads /downloads/SchoolMentor-Sandbox.apk.
-To use a different name, change MOBILE_APP_FILE_NAME in src/erp/config/mobileAppDownload.js.
+    node scripts/sync-mobile-app.js
+
+It picks the newest .apk in this folder and writes its name to
+src/erp/config/mobileAppDownload.generated.js. The sidebar button
+"Sandbox Mobile app" then downloads that file.

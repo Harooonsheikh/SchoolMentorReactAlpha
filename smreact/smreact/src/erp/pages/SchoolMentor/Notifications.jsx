@@ -1,7 +1,7 @@
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { buildUrl } from '../../../utils/apiConfig';
 /* ═══════════════════════════════════════════════════════════════════
    NOTIFICATIONS — mobile-app push notifications
@@ -47,22 +47,7 @@ const SUB_LABELS = {
   'all-parents': 'All Parents', 'class-wise': 'Class Wise', 'class-section': 'Class + Section', 'specific-parent': 'Specific Parent',
 };
 
-const INITIAL_SENT = [
-  { id: 1001, title: 'PTM Reminder — This Friday', body: 'Parent-Teacher Meeting is scheduled for Friday, 27 June 2026 at 9:00 AM. All parents are requested to attend.', audience: 'Parents — All Parents', audienceType: 'parents', subAud: 'all-parents', cls: '', section: '', type: 'reminder', date: '22 Jun 2026', time: '10:00 am', recipients: 380, sentBy: 'Principal' },
-  { id: 1002, title: 'School Closed Tomorrow', body: 'Due to heavy rainfall, school will remain closed on Monday, 23 June 2026. Classes will resume on Tuesday.', audience: 'Parents — All Parents', audienceType: 'parents', subAud: 'all-parents', cls: '', section: '', type: 'important', date: '22 Jun 2026', time: '06:30 pm', recipients: 380, sentBy: 'Admin' },
-  { id: 1003, title: 'Staff Meeting — Monday 8 AM', body: 'All teaching staff are required to attend the monthly staff meeting on Monday at 8:00 AM in the conference room.', audience: 'Staff — Teaching Staff', audienceType: 'staff', subAud: 'teaching', cls: '', section: '', type: 'general', date: '21 Jun 2026', time: '04:15 pm', recipients: 28, sentBy: 'Principal' },
-  { id: 1004, title: 'Fee Submission Last Date', body: 'Last date for June fee submission is 25 June 2026. After this date, a late fine will be charged. Please submit fee on time.', audience: 'Parents — Class Wise · Class 5', audienceType: 'parents', subAud: 'class-wise', cls: 'Class 5', section: '', type: 'reminder', date: '20 Jun 2026', time: '11:00 am', recipients: 32, sentBy: 'Admin' },
-  { id: 1005, title: 'EMERGENCY: Gas Leak — Early Dismissal', body: 'Due to a gas supply issue, all students will be dismissed at 12:00 PM today. Parents please arrange pick-up urgently.', audience: 'Parents — All Parents', audienceType: 'parents', subAud: 'all-parents', cls: '', section: '', type: 'emergency', date: '19 Jun 2026', time: '09:45 am', recipients: 380, sentBy: 'Principal' },
-  { id: 1006, title: 'New Syllabus Uploaded', body: 'Updated syllabus for Term 2 has been uploaded to the school app. All staff are requested to review and plan lessons accordingly.', audience: 'Staff — All Staff', audienceType: 'staff', subAud: 'all-staff', cls: '', section: '', type: 'general', date: '18 Jun 2026', time: '03:00 pm', recipients: 47, sentBy: 'Principal' },
-  { id: 1007, title: 'Annual Sports Day — Registration Open', body: 'Annual Sports Day registrations are now open. Parents please register your children via the School Mentor app by 26 June.', audience: 'Parents — All Parents', audienceType: 'parents', subAud: 'all-parents', cls: '', section: '', type: 'general', date: '17 Jun 2026', time: '01:30 pm', recipients: 380, sentBy: 'Admin' },
-  { id: 1008, title: 'Salary Slip — June 2026', body: 'Salary slips for June 2026 have been uploaded to your staff portal. Please check and contact Admin for any discrepancies.', audience: 'Staff — All Staff', audienceType: 'staff', subAud: 'all-staff', cls: '', section: '', type: 'general', date: '16 Jun 2026', time: '05:00 pm', recipients: 47, sentBy: 'Admin' },
-];
-
 const counterClass = (len, max) => `nt-counter${len >= max ? ' over' : len > max * 0.9 ? ' warn' : ''}`;
-
-const DeliveredBadge = () => (
-  <span className="nt-delivered"><i className="fa-solid fa-circle-check" /> Delivered</span>
-);
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN
@@ -252,7 +237,7 @@ const loadSections = async (gradeId) => {
 
 const getBranchId = () => sessionStorage.getItem('branchID');
 
-const mapAudiencePayload = () => {
+const mapAudiencePayload = useCallback(() => {
   if (audience === 'staff') {
     if (subAud === 'department') {
       return {
@@ -305,7 +290,7 @@ const mapAudiencePayload = () => {
   return {
     audienceType: 'Parent'
   };
-};
+}, [audience, subAud, selectedStaff, selectedDepartment, selectedParent, cls, section]);
 
 const loadNotificationHistory = async () => {
   try {
@@ -360,16 +345,7 @@ const loadNotificationHistory = async () => {
 };
 
 
-useEffect(() => {
-  const updateEstimate = async () => {
-    const count = await getRecipientEstimate();
-    setRecipientEstimate(count);
-  };
-
-  updateEstimate();
-}, [audience, subAud, selectedStaff, selectedDepartment, selectedParent, cls, section]);
-
-const getRecipientEstimate = async () => {
+const getRecipientEstimate = useCallback(async () => {
   try {
     const branchID = getBranchId();
     const target = mapAudiencePayload();
@@ -398,7 +374,17 @@ const getRecipientEstimate = async () => {
   } catch {
     return 0;
   }
-};
+}, [mapAudiencePayload]);
+
+useEffect(() => {
+  const updateEstimate = async () => {
+    const count = await getRecipientEstimate();
+    setRecipientEstimate(count);
+  };
+
+  updateEstimate();
+}, [getRecipientEstimate]);
+
 
 const sendNotificationAPI = async () => {
   const branchID = getBranchId();
