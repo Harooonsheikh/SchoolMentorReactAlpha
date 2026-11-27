@@ -6220,7 +6220,9 @@ const isOldDuesHead = (name) => /old\s*dues/i.test(String(name || ''));
    ko advance (minus remaining) samajh leti thi. */
 const isPreviousDuesHead = (name) => /old\s*dues|previous\s*dues?|pending\s*dues?|previous\s*pending|arrears?/i.test(String(name || ''));
 
-function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onEditPayment }) {
+/* nextNav: { hasNext } → footer me "Pay Now & Next" + "Pay Now & Close" dono (list ke
+   agle student par chalne ke liye). null (pending / view) → purana single Pay Now. */
+function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onEditPayment, nextNav = null }) {
   /* Receiving Date par late fine ka poora hisaab chalta hai — is liye LOCAL date
      (localTodayISO), toISOString() nahi: wo UTC me badal kar Pakistan (UTC+5) me
      subah 5 baje se pehle PICHHLI date deta tha. Us soorat me due-date wale din
@@ -6273,6 +6275,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   const [advanceAdjustInput, setAdvanceAdjustInput] = useState('');
   /* Pay Now ek click ke baad save + slip tayar hone tak band — dohra click / dohri receiving na ho. */
   const [saving, setSaving] = useState(false);
+  /* Kaunsa button dabaya — 'next' (Pay Now & Next) ya 'close' — spinner usi par. */
+  const [saveMode, setSaveMode] = useState('close');
   useEffect(() => { setSaving(false); }, [cfg]);
 
   useEffect(() => {
@@ -6840,7 +6844,8 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
     ? `Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')} ${settings.fineType === 'daily' ? '/ day' : '(fixed)'}`
     : '—';
 
-  const handleReceive = () => {
+  /* goNext = "Pay Now & Next" — save ke baad slip nahi, agle student ka modal. */
+  const handleReceive = (goNext = false) => {
     /* Multiple Receiving OFF + is challan par pehle se receipt maujood → doosri
        receiving round bilkul mana. Inputs/button already disabled hain; ye guard
        last line of defence hai. */
@@ -6961,7 +6966,8 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
     if (cfg.kind === 'child') payload.famKey = cfg.famKey;
     else payload.classKey = classMeta.key;
     setSaving(true);
-    Promise.resolve(onSave(payload)).finally(() => setSaving(false));
+    setSaveMode(goNext ? 'next' : 'close');
+    Promise.resolve(onSave(payload, { next: !!goNext })).finally(() => setSaving(false));
   };
 
   return createPortal(
@@ -7537,7 +7543,46 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
           <Tooltip text="Discard and close">
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>{viewOnly ? 'Close' : 'Cancel'}</button>
           </Tooltip>
-          {!viewOnly && (
+          {!viewOnly && nextNav && (() => {
+            const blocked = multipleReceivingBlocked || saving;
+            const noNext = !nextNav.hasNext;
+            const verb = receivingNow < 0 ? 'Update' : 'Pay Now';
+            const baseTip = multipleReceivingBlocked
+              ? 'Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded'
+              : (receivingNow < 0
+                ? `Reduce recorded received amount by Rs. ${Math.abs(receivingNow).toLocaleString('en-PK')}`
+                : `Record Rs. ${receivingNow.toLocaleString('en-PK')} as received (Installment ${installmentCount + 1})`);
+            const spin = <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>;
+            return (
+              <>
+                <Tooltip text={noNext ? 'This is the last student in the list' : `${baseTip}, then open the next student`}>
+                  <button
+                    className="fee-btn fee-btn-primary"
+                    onClick={() => handleReceive(true)}
+                    disabled={blocked || noNext}
+                    style={(blocked || noNext) ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+                  >
+                    {saving && saveMode === 'next'
+                      ? spin
+                      : <><i className="fa-solid fa-forward"></i> {verb} &amp; Next</>}
+                  </button>
+                </Tooltip>
+                <Tooltip text={`${baseTip}, then show the receipt slip`}>
+                  <button
+                    className="fee-btn fee-btn-primary"
+                    onClick={() => handleReceive(false)}
+                    disabled={blocked}
+                    style={blocked ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+                  >
+                    {saving && saveMode === 'close'
+                      ? spin
+                      : <><i className="fa-solid fa-check"></i> {verb} &amp; Close</>}
+                  </button>
+                </Tooltip>
+              </>
+            );
+          })()}
+          {!viewOnly && !nextNav && (
             <Tooltip text={multipleReceivingBlocked
               ? 'Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded'
               : (receivingNow < 0
@@ -7545,7 +7590,7 @@ if (!anyHeadRecv && !anyGiveDisc && !anyZeroSettle) {
                 : `Record Rs. ${receivingNow.toLocaleString('en-PK')} as received`)}>
               <button
                 className="fee-btn fee-btn-primary"
-                onClick={handleReceive}
+                onClick={() => handleReceive(false)}
                 disabled={multipleReceivingBlocked || saving}
                 style={(multipleReceivingBlocked || saving) ? { opacity: .55, cursor: 'not-allowed' } : undefined}
               >
@@ -9607,6 +9652,74 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
     });
   };
 
+  /* ── Pay Now & Next ──
+     List ka order: classes (jaisi list me dikhti hain) → har class ke students. Next =
+     current ke BAAD wala student; class khatam → agli class ka pehla. Challan na bana ho
+     ya fee poori mil chuki ho to popup (Close / Next), Next par us se agla. */
+  const recvOrder = useMemo(() => {
+    const out = [];
+    (classes || []).forEach(c => (studentsMap[c.key] || []).forEach(s => out.push({ c, s })));
+    return out;
+  }, [classes, studentsMap]);
+  const recvIndexOf = (c, s) => (c && s
+    ? recvOrder.findIndex(x => x.c.key === c.key && x.s.reg === s.reg)
+    : -1);
+  const goNextReceive = (c, s) => {
+    const idx = recvIndexOf(c, s);
+    const nx = idx >= 0 ? recvOrder[idx + 1] : null;
+    if (!nx) { toast('This was the last student in the list', 'info'); return; }
+    setOpenKey(nx.c.key);
+    const m = modelFor(nx.c, nx.s);
+    const isLast = idx + 1 >= recvOrder.length - 1;
+    const skipPopup = (title, message, icon, extra = null) => setConfirm({
+      title,
+      message,
+      confirmStyle: 'primary',
+      icon,
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      cancelLabel: 'Close',
+      confirmLabel: <>Next <i className="fa-solid fa-forward"></i></>,
+      confirmDisabled: isLast,
+      /* Dialog onConfirm ke BAAD khud band hota hai (setConfirm(null)) — agla popup us ke
+         baad lagao warna wo foran band ho jaata. */
+      onConfirm: () => { setTimeout(() => goNextReceive(nx.c, nx.s), 0); },
+      ...(extra || {}),
+    });
+    if (!m.generated) {
+      skipPopup('Challan Not Generated',
+        <span>The challan for <strong>{nx.s.name}</strong> ({nx.c.cls} - {nx.c.sec}) has not been generated for <strong>{appliedMonth} {appliedYear}</strong>.</span>,
+        'fa-file-circle-xmark');
+      return;
+    }
+    if (m.status === 'full') {
+      skipPopup('Fee Fully Received',
+        <span>The fee for <strong>{nx.s.name}</strong> ({nx.c.cls} - {nx.c.sec}) has already been fully received for <strong>{appliedMonth} {appliedYear}</strong>.</span>,
+        'fa-circle-check');
+      return;
+    }
+    /* Partial: popup + "Receive More" (list wale button jaisa) → isi student ka modal.
+       Multiple Receiving OFF ho to list me bhi Receive More nahi — yahan bhi nahi. */
+    if (m.status === 'partial') {
+      skipPopup('Fee Partially Received',
+        <span><strong>{nx.s.name}</strong> ({nx.c.cls} - {nx.c.sec}) has partially paid the fee for <strong>{appliedMonth} {appliedYear}</strong>.</span>,
+        'fa-circle-half-stroke',
+        settings?.multipleReceiving !== false ? {
+          extraLabel: <>Receive More <i className="fa-solid fa-plus"></i></>,
+          onExtra: () => { openReceive(nx.c, nx.s, false); },
+        } : null);
+      return;
+    }
+    openReceive(nx.c, nx.s, false);
+  };
+  /* Receiving modal ke footer ke liye — pending / view / dashboard-scan me Next nahi. */
+  const recvNextNav = (receiveCtx && !receiveCtx.viewOnly && !receiveCtx.pendingMode)
+    ? (() => {
+      const idx = recvIndexOf(receiveCtx.classMeta, receiveCtx.student);
+      return idx >= 0 ? { hasNext: idx < recvOrder.length - 1 } : null;
+    })()
+    : null;
+
   /* Open the receipt slip. Prefer the latest session payment; if there is none
      (e.g. after a page refresh — the local receipts are session-only), rebuild
      the payment from the challan's persisted receivedAmount so the slip still
@@ -9713,7 +9826,9 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
     }
   };
 
-  const handleSaveReceipt = async (payload) => {
+  const handleSaveReceipt = async (payload, saveOpts = {}) => {
+    /* Pay Now & Next → slip nahi; save ke baad list ka agla student. */
+    const goNext = !!saveOpts?.next;
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
     const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
@@ -9965,9 +10080,11 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
           ...prev,
           [keyOf(payload.classKey, payload.reg)]: { approvalId: receivePending.approvalId, requestNo: receivePending.requestNo },
         }));
+        const pc0 = receiveCtx?.classMeta, ps0 = receiveCtx?.student;
         setReceiveCtx(null);
         toast(receivePending.message, 'info');
         await loadChallans(); loadPending(true); loadReceiveApprovals();
+        if (goNext && pc0 && ps0) goNextReceive(pc0, ps0);
         return;
       }
       loadChallans(); loadPending(true);
@@ -10064,7 +10181,9 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
       }
     }
     setReceiveCtx(null);
-    if (c && s) {
+    if (goNext && c && s) {
+      goNextReceive(c, s);
+    } else if (c && s) {
       setSlipCtx({
         classMeta: c, student: s, period: receiveCtx.period,
         payment: {
@@ -10738,6 +10857,7 @@ function FeeReceivingIndividual({ toast, focus = null, onFocusHandled = () => { 
         cfg={receiveCtx}
         onClose={() => setReceiveCtx(null)}
         onSave={handleSaveReceipt}
+        nextNav={recvNextNav}
         toast={toast}
         onDownloadPayment={(payment, combinedFlag) => {
           if (!receiveCtx) return;
@@ -11139,6 +11259,72 @@ function FamilyTreeReceiving({ toast }) {
     });
   };
 
+  /* ── Pay Now & Next (Family) ──
+     Order: families (list jaisi) → har family ke bachche. Next = usi family ka agla
+     bachcha; aakhri bachche ke baad agli family ka pehla. Challan na bana ho / fee poori
+     mil chuki ho → popup (Close / Next). */
+  const famRecvOrder = useMemo(() => {
+    const out = [];
+    (list || []).forEach(f => (f.children || []).forEach(ch => out.push({ f, ch })));
+    return out;
+  }, [list]);
+  const famRecvIndexOf = (f, ch) => (f && ch
+    ? famRecvOrder.findIndex(x => x.f.key === f.key && x.ch.reg === ch.reg)
+    : -1);
+  const goNextFamReceive = (f, ch) => {
+    const idx = famRecvIndexOf(f, ch);
+    const nx = idx >= 0 ? famRecvOrder[idx + 1] : null;
+    if (!nx) { toast('This was the last child in the list', 'info'); return; }
+    setOpenKey(nx.f.key);
+    const rec = nx.ch._challan || challanByStudent[String(nx.ch.applicantsID)] || null;
+    const m = modelFor(nx.ch, nx.f.key);
+    const isLast = idx + 1 >= famRecvOrder.length - 1;
+    const skipPopup = (title, message, icon, extra = null) => setConfirm({
+      title,
+      message,
+      confirmStyle: 'primary',
+      icon,
+      iconBg: 'rgba(30,58,138,.1)',
+      iconColor: '#1E40AF',
+      cancelLabel: 'Close',
+      confirmLabel: <>Next <i className="fa-solid fa-forward"></i></>,
+      confirmDisabled: isLast,
+      /* Dialog onConfirm ke baad khud band hota hai — agla popup us ke baad. */
+      onConfirm: () => { setTimeout(() => goNextFamReceive(nx.f, nx.ch), 0); },
+      ...(extra || {}),
+    });
+    if (!rec) {
+      skipPopup('Challan Not Generated',
+        <span>The challan for <strong>{nx.ch.name}</strong> ({nx.f.name}) has not been generated for <strong>{appliedMonth} {appliedYear}</strong>.</span>,
+        'fa-file-circle-xmark');
+      return;
+    }
+    if (m.status === 'full') {
+      skipPopup('Fee Fully Received',
+        <span>The fee for <strong>{nx.ch.name}</strong> ({nx.f.name}) has already been fully received for <strong>{appliedMonth} {appliedYear}</strong>.</span>,
+        'fa-circle-check');
+      return;
+    }
+    /* Partial: popup + "Receive More" → isi bachche ka modal. */
+    if (m.status === 'partial') {
+      skipPopup('Fee Partially Received',
+        <span><strong>{nx.ch.name}</strong> ({nx.f.name}) has partially paid the fee for <strong>{appliedMonth} {appliedYear}</strong>.</span>,
+        'fa-circle-half-stroke',
+        settings?.multipleReceiving !== false ? {
+          extraLabel: <>Receive More <i className="fa-solid fa-plus"></i></>,
+          onExtra: () => { openReceive(nx.f, nx.ch, false); },
+        } : null);
+      return;
+    }
+    openReceive(nx.f, nx.ch, false);
+  };
+  const famRecvNextNav = (receiveCtx && !receiveCtx.viewOnly && !receiveCtx.pendingMode)
+    ? (() => {
+      const idx = famRecvIndexOf(receiveCtx.family, receiveCtx.student);
+      return idx >= 0 ? { hasNext: idx < famRecvOrder.length - 1 } : null;
+    })()
+    : null;
+
   /* Open a child's receipt slip — prefer the latest session payment; otherwise
      rebuild it from the child's persisted challan receivedAmount (survives a
      refresh, since the local receipts are session-only). */
@@ -11273,7 +11459,9 @@ function FamilyTreeReceiving({ toast }) {
     }
   };
 
-  const handleSaveReceipt = (payload) => {
+  const handleSaveReceipt = (payload, saveOpts = {}) => {
+    /* Pay Now & Next → slip nahi; save ke baad agla bachcha. */
+    const goNext = !!saveOpts?.next;
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
     const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
@@ -11546,6 +11734,17 @@ function FamilyTreeReceiving({ toast }) {
         school: branchHeader,
       });
     };
+    /* Pay Now & Next: slip nahi — save background me chalta rahe (fail par error toast),
+       taaza record cache me rakho aur foran agle bachche ka modal kholo. */
+    if (goNext) {
+      if (famSaveDone) famSaveDone.then(res => {
+        if (!(res && res.ok && res.fresh) || pendingMode || !ch) return;
+        ledgerRecRef.current[`${payload.famKey}|${payload.reg}`] = res.fresh;
+        if (ch.applicantsID != null) setChallanByStudent(prev => ({ ...prev, [String(ch.applicantsID)]: res.fresh }));
+      });
+      if (f && ch) goNextFamReceive(f, ch);
+      return;
+    }
     /* Receive mukammal + taaza record aane ke baad slip; fail par slip nahi (error toast). */
     if (famSaveDone) famSaveDone.then(res => { if (res && res.ok) openFamSlip(res); });
     else openFamSlip();
@@ -12083,6 +12282,7 @@ function FamilyTreeReceiving({ toast }) {
         cfg={receiveCtx}
         onClose={() => setReceiveCtx(null)}
         onSave={handleSaveReceipt}
+        nextNav={famRecvNextNav}
         toast={toast}
         onDownloadPayment={(payment, combinedFlag) => {
           if (!receiveCtx) return;
@@ -21633,13 +21833,19 @@ function FeeConfirmDialog({ cfg, onClose }) {
     message,
     hint,
     confirmLabel = style === 'danger' ? 'Yes, Delete' : 'Yes, Confirm',
+    cancelLabel = 'Cancel',
+    confirmDisabled = false,
     icon = fallback.icon,
     iconBg = fallback.bg,
     iconColor = fallback.color,
     onConfirm,
+    /* Optional teesra button (e.g. Pay Now & Next ke partial popup par "Receive More"). */
+    extraLabel = null,
+    onExtra = null,
   } = cfg;
 
   const handle = () => { onConfirm && onConfirm(); onClose(); };
+  const handleExtra = () => { onExtra && onExtra(); onClose(); };
 
   const isString = typeof message === 'string';
 
@@ -21674,14 +21880,24 @@ function FeeConfirmDialog({ cfg, onClose }) {
             </div>
           )}
         </div>
-        <div className="fee-confirm-footer">
-          <button className="fee-confirm-btn fee-confirm-btn--cancel" onClick={onClose}>Cancel</button>
+        <div className="fee-confirm-footer" style={extraLabel ? { gridTemplateColumns: '1fr 1fr 1.35fr' } : undefined}>
+          <button className="fee-confirm-btn fee-confirm-btn--cancel" onClick={onClose}>{cancelLabel}</button>
           <button
             className={`fee-confirm-btn fee-confirm-btn--confirm${style === 'primary' ? ' primary-style' : ''}`}
             onClick={handle}
+            disabled={confirmDisabled}
+            style={confirmDisabled ? { opacity: .55, cursor: 'not-allowed' } : undefined}
           >
             {confirmLabel}
           </button>
+          {extraLabel && (
+            <button
+              className={`fee-confirm-btn fee-confirm-btn--confirm${style === 'primary' ? ' primary-style' : ''}`}
+              onClick={handleExtra}
+            >
+              {extraLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>,
